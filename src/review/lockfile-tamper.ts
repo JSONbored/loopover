@@ -20,12 +20,14 @@ import type { AdvisoryFinding, PullRequestFileRecord } from "../types";
 
 const NPM_REGISTRY_HOST_RE = /^https:\/\/registry\.npmjs\.org\//i;
 
-// Only a `resolved` value that IS an http(s) URL can be judged against the registry-host allowlist. An npm
+// Only a `resolved` value that IS a URL can be judged against the registry-host allowlist. An npm
 // workspace's own local packages (e.g. this repo's `packages/gittensory-mcp`, `apps/gittensory-ui` — see
 // `"link": true` entries in package-lock.json) have a `resolved` field that's a RELATIVE FILESYSTEM PATH, not a
 // URL at all (e.g. `"packages/gittensory-mcp"`). Such a value was never resolved FROM a registry, so it can't be
 // "off-registry" — it must be exempted rather than flagged just because it fails the npmjs.org prefix check.
-const HTTP_URL_RE = /^https?:\/\//i;
+// Remote npm lockfile entries are not limited to http(s): git+ssh://, git+https://, ssh://, and similar URL
+// schemes still fetch outside the npm registry and must stay visible to the supply-chain gate.
+const RESOLVED_URL_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 // Package-lock "packages" entries are keyed either `"node_modules/<pkg>"` (lockfileVersion 2/3) or a bare
 // `"<pkg>"` (lockfileVersion 1 "dependencies" tree, and yarn/pnpm equivalents keep a similar bare-name header).
@@ -77,7 +79,7 @@ type LockfileTamperCandidate = {
    *  somewhere in the diff (see versionChanged() below for the exact rule). */
   versionChanged: boolean;
   /** A `+resolved` URL seen for this package block that does not point at registry.npmjs.org, or null. Only
-   *  ever set for values that ARE http(s) URLs — see HTTP_URL_RE. */
+   *  ever set for values that ARE URLs — see RESOLVED_URL_RE. */
   offRegistryResolvedUrl: string | null;
 };
 
@@ -174,7 +176,7 @@ function scanPackageLockPatch(path: string, patch: string): LockfileTamperCandid
 
     const entry = entryFor(currentEntryKey, currentPackageName);
     entry.resolvedOrIntegrityChanged = true;
-    if (resolvedMatch && line.sign === "+" && resolvedMatch[1] && HTTP_URL_RE.test(resolvedMatch[1]) && !NPM_REGISTRY_HOST_RE.test(resolvedMatch[1])) {
+    if (resolvedMatch && line.sign === "+" && resolvedMatch[1] && RESOLVED_URL_RE.test(resolvedMatch[1]) && !NPM_REGISTRY_HOST_RE.test(resolvedMatch[1])) {
       entry.offRegistryResolvedUrl = resolvedMatch[1];
     }
   }

@@ -47,6 +47,12 @@ function normalizePlanId(planId) {
   return planId.trim();
 }
 
+function normalizePlanStatusFilter(status) {
+  if (status === undefined || status === null) return undefined;
+  if (!planStatusSet.has(status)) throw new Error("invalid_status");
+  return status;
+}
+
 function isBoundedString(value, min, max) {
   return typeof value === "string" && value.length >= min && value.length <= max;
 }
@@ -77,8 +83,37 @@ function validatePlanDag(plan) {
   if (!plan || typeof plan !== "object" || Array.isArray(plan)) throw new Error("invalid_plan");
   const keys = Object.keys(plan);
   if (keys.length !== 1 || keys[0] !== "steps") throw new Error("invalid_plan");
-  if (!Array.isArray(plan.steps) || plan.steps.length > 100) throw new Error("invalid_plan");
+  if (!Array.isArray(plan.steps) || plan.steps.length === 0 || plan.steps.length > 100) {
+    throw new Error("invalid_plan");
+  }
   if (!plan.steps.every(isValidStep)) throw new Error("invalid_plan");
+  const seenStepIds = new Set();
+  for (const step of plan.steps) {
+    if (seenStepIds.has(step.id)) throw new Error("invalid_plan");
+    seenStepIds.add(step.id);
+  }
+  for (const step of plan.steps) {
+    for (const dep of step.dependsOn) {
+      if (dep === step.id || !seenStepIds.has(dep)) throw new Error("invalid_plan");
+    }
+  }
+  const color = new Map();
+  const byId = new Map(plan.steps.map((step) => [step.id, step]));
+  const hasCycle = (id) => {
+    color.set(id, 1);
+    for (const dep of byId.get(id)?.dependsOn ?? []) {
+      const depColor = color.get(dep) ?? 0;
+      if (depColor === 1) return true;
+      if (depColor === 0 && byId.has(dep) && hasCycle(dep)) return true;
+    }
+    color.set(id, 2);
+    return false;
+  };
+  for (const step of plan.steps) {
+    if ((color.get(step.id) ?? 0) === 0 && hasCycle(step.id)) {
+      throw new Error("invalid_plan");
+    }
+  }
   return plan;
 }
 
@@ -157,9 +192,9 @@ export function openPlanStore(dbPath = resolvePlanStoreDbPath()) {
       return row ? rowToRecord(row) : null;
     },
     listPlans(filter = {}) {
-      if (filter.status !== undefined) {
-        if (!planStatusSet.has(filter.status)) throw new Error("invalid_status");
-        return listStatusStatement.all(filter.status).map(rowToRecord);
+      const status = normalizePlanStatusFilter(filter.status);
+      if (status !== undefined) {
+        return listStatusStatement.all(status).map(rowToRecord);
       }
       return listAllStatement.all().map(rowToRecord);
     },

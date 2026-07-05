@@ -2,6 +2,7 @@ import { recordAiUsageEvent, recordAuditEvent, sumAiEstimatedNeuronsSince } from
 import { sanitizePublicComment } from "../queue-intelligence";
 import type { JsonValue } from "../types";
 import type { AgentRunBundle } from "./agent-orchestrator";
+import { coerceAiUsage, type AiReviewActualUsage } from "./ai-review";
 
 const PR_INTELLIGENCE_MARKER = "<!-- gittensory-pr-intelligence -->";
 
@@ -26,15 +27,17 @@ export async function summarizeAgentBundleWithAi(env: Env, bundle: AgentRunBundl
   const publicEnabled = isEnabled(env.AI_PUBLIC_COMMENTS_ENABLED);
   if (!privateEnabled) return { status: "disabled", reason: "AI summaries are disabled." };
   if (visibility === "public" && !publicEnabled) return { status: "disabled", reason: "Public AI summaries are disabled." };
-  if (!env.AI) return { status: "unavailable", reason: "Workers AI binding is not configured." };
+  if (!env.AI) return { status: "unavailable", reason: "AI provider is not configured." };
 
-  const model = env.WORKERS_AI_SUMMARY_MODEL || "@cf/meta/llama-3.1-8b-instruct-fp8-fast";
+  // Empty string (not a Workers-AI `@cf/...` id — Workers AI has no live binding anywhere today, see
+  // CONVERGENCE_RUNBOOK.md): resolveModel's own per-provider default wins when no override is set.
+  const model = env.WORKERS_AI_SUMMARY_MODEL || "";
   const maxOutputTokens = clampNumber(Number(env.AI_MAX_OUTPUT_TOKENS || 256), 64, 512);
   const signalBundle = compactAgentSignalBundle(bundle, visibility);
   const prompt = buildPrompt(signalBundle, visibility);
   const estimatedNeurons = estimateNeurons(prompt, maxOutputTokens);
   // Resolve the SHARED daily neuron budget exactly like ai-review.ts / ai-slop.ts (#1369): all three
-  // Workers-AI features sum into one `sumAiEstimatedNeuronsSince` counter, so the old `|| 10000` default +
+  // AI features sum into one `sumAiEstimatedNeuronsSince` counter, so the old `|| 10000` default +
   // 1M ceiling here starved summaries into quota_exceeded once shared usage crossed 10k — well under the
   // real 10M shared budget — and capped a configured budget at 1M. Default HIGH (10M) and clamp to 10M.
   const rawNeuronBudget = Number(env.AI_DAILY_NEURON_BUDGET);
@@ -69,6 +72,7 @@ export async function summarizeAgentBundleWithAi(env: Env, bundle: AgentRunBundl
       temperature: 0.1,
     });
     const rawText = extractAiText(response);
+    const usage = coerceAiUsage(response);
     if (!rawText) throw new Error("empty_ai_summary");
     if (visibility === "public" && containsPublicForbiddenText(rawText)) {
       await recordAi(env, bundle, {
@@ -77,6 +81,7 @@ export async function summarizeAgentBundleWithAi(env: Env, bundle: AgentRunBundl
         status: "unsafe",
         estimatedNeurons,
         detail: "public summary failed sanitizer",
+        usage,
       });
       return { status: "unsafe", model, estimatedNeurons, reason: "public summary failed sanitizer" };
     }
@@ -88,10 +93,11 @@ export async function summarizeAgentBundleWithAi(env: Env, bundle: AgentRunBundl
       estimatedNeurons,
       detail: "summary generated",
       metadata: { visibility },
+      usage,
     });
     return { status: "ok", model, estimatedNeurons, text };
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "workers_ai_failed";
+    const reason = error instanceof Error ? error.message : "ai_summary_failed";
     await recordAi(env, bundle, {
       feature: `agent_${visibility}_summary`,
       model,
@@ -216,12 +222,24 @@ async function recordAi(
     estimatedNeurons: number;
     detail?: string;
     metadata?: Record<string, unknown>;
+    /** Real per-call usage from the configured provider (see `coerceAiUsage`), when available. */
+    usage?: AiReviewActualUsage | undefined;
   },
 ): Promise<void> {
   await recordAiUsageEvent(env, {
-    ...event,
+    feature: event.feature,
+    model: event.model,
+    status: event.status,
+    estimatedNeurons: event.estimatedNeurons,
+    detail: event.detail,
     actor: bundle.run.actorLogin,
     route: bundle.run.surface,
+    provider: event.usage?.provider,
+    effort: event.usage?.effort,
+    inputTokens: event.usage?.inputTokens,
+    outputTokens: event.usage?.outputTokens,
+    totalTokens: event.usage?.totalTokens,
+    costUsd: event.usage?.costUsd,
     metadata: { runId: bundle.run.id, ...(event.metadata ?? {}) },
   });
   await recordAuditEvent(env, {
@@ -273,14 +291,16 @@ export async function rewriteSignalBundleWithAi(env: Env, req: AiRewriteRequest)
   const publicEnabled = isEnabled(env.AI_PUBLIC_COMMENTS_ENABLED);
   if (!privateEnabled) return { status: "disabled", text: req.fallbackText, reason: "AI summaries are disabled." };
   if (req.visibility === "public" && !publicEnabled) return { status: "disabled", text: req.fallbackText, reason: "Public AI summaries are disabled." };
-  if (!env.AI) return { status: "unavailable", text: req.fallbackText, reason: "Workers AI binding is not configured." };
+  if (!env.AI) return { status: "unavailable", text: req.fallbackText, reason: "AI provider is not configured." };
 
-  const model = env.WORKERS_AI_SUMMARY_MODEL || "@cf/meta/llama-3.1-8b-instruct-fp8-fast";
+  // Empty string (not a Workers-AI `@cf/...` id — Workers AI has no live binding anywhere today, see
+  // CONVERGENCE_RUNBOOK.md): resolveModel's own per-provider default wins when no override is set.
+  const model = env.WORKERS_AI_SUMMARY_MODEL || "";
   const maxOutputTokens = clampNumber(Number(env.AI_MAX_OUTPUT_TOKENS || 256), 64, 512);
   const prompt = buildBundlePrompt(req.bundle, req.visibility);
   const estimatedNeurons = estimateNeurons(prompt, maxOutputTokens);
   // Resolve the SHARED daily neuron budget exactly like ai-review.ts / ai-slop.ts (#1369): all three
-  // Workers-AI features sum into one `sumAiEstimatedNeuronsSince` counter, so the old `|| 10000` default +
+  // AI features sum into one `sumAiEstimatedNeuronsSince` counter, so the old `|| 10000` default +
   // 1M ceiling here starved summaries into quota_exceeded once shared usage crossed 10k — well under the
   // real 10M shared budget — and capped a configured budget at 1M. Default HIGH (10M) and clamp to 10M.
   const rawNeuronBudget = Number(env.AI_DAILY_NEURON_BUDGET);
@@ -308,16 +328,17 @@ export async function rewriteSignalBundleWithAi(env: Env, req: AiRewriteRequest)
       temperature: 0.1,
     });
     const rawText = extractAiText(response);
+    const usage = coerceAiUsage(response);
     if (!rawText) throw new Error("empty_ai_summary");
     if (req.visibility === "public" && containsPublicForbiddenText(rawText)) {
-      await recordGenericAi(env, req, { model, status: "unsafe", estimatedNeurons, detail: "public summary failed sanitizer" });
+      await recordGenericAi(env, req, { model, status: "unsafe", estimatedNeurons, detail: "public summary failed sanitizer", usage });
       return { status: "unsafe", text: req.fallbackText, model, estimatedNeurons, reason: "public summary failed sanitizer" };
     }
     const text = sanitizeAiText(rawText, req.visibility);
-    await recordGenericAi(env, req, { model, status: "ok", estimatedNeurons, detail: "summary generated", metadata: { visibility: req.visibility } });
+    await recordGenericAi(env, req, { model, status: "ok", estimatedNeurons, detail: "summary generated", metadata: { visibility: req.visibility }, usage });
     return { status: "ok", text, model, estimatedNeurons };
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "workers_ai_failed";
+    const reason = error instanceof Error ? error.message : "ai_summary_failed";
     await recordGenericAi(env, req, { model, status: "error", estimatedNeurons: 0, detail: reason });
     return { status: "error", text: req.fallbackText, model, estimatedNeurons, reason };
   }
@@ -366,7 +387,15 @@ function buildBundlePrompt(signalBundle: Record<string, JsonValue>, visibility: 
 async function recordGenericAi(
   env: Env,
   req: AiRewriteRequest,
-  event: { model: string; status: string; estimatedNeurons: number; detail?: string; metadata?: Record<string, unknown> },
+  event: {
+    model: string;
+    status: string;
+    estimatedNeurons: number;
+    detail?: string;
+    metadata?: Record<string, unknown>;
+    /** Real per-call usage from the configured provider (see `coerceAiUsage`), when available. */
+    usage?: AiReviewActualUsage | undefined;
+  },
 ): Promise<void> {
   await recordAiUsageEvent(env, {
     feature: req.feature,
@@ -376,6 +405,12 @@ async function recordGenericAi(
     status: event.status,
     estimatedNeurons: event.estimatedNeurons,
     detail: event.detail,
+    provider: event.usage?.provider,
+    effort: event.usage?.effort,
+    inputTokens: event.usage?.inputTokens,
+    outputTokens: event.usage?.outputTokens,
+    totalTokens: event.usage?.totalTokens,
+    costUsd: event.usage?.costUsd,
     metadata: { ...(req.metadata ?? {}), ...(event.metadata ?? {}) },
   });
   await recordAuditEvent(env, {

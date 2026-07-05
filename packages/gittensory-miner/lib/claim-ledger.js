@@ -106,7 +106,10 @@ export function openClaimLedger(dbPath = resolveClaimLedgerDbPath()) {
     "SELECT * FROM miner_claims WHERE repo_full_name = ? AND issue_number = ?",
   );
   const releaseStatement = db.prepare(
-    "UPDATE miner_claims SET status = 'released' WHERE repo_full_name = ? AND issue_number = ?",
+    "UPDATE miner_claims SET status = 'released' WHERE repo_full_name = ? AND issue_number = ? AND status = 'active'",
+  );
+  const expireStatement = db.prepare(
+    "UPDATE miner_claims SET status = 'expired' WHERE repo_full_name = ? AND issue_number = ? AND status = 'active'",
   );
   const listAllStatement = db.prepare("SELECT * FROM miner_claims ORDER BY id ASC");
   const listRepoStatement = db.prepare(
@@ -119,8 +122,13 @@ export function openClaimLedger(dbPath = resolveClaimLedgerDbPath()) {
     "SELECT * FROM miner_claims WHERE repo_full_name = ? AND status = ? ORDER BY id ASC",
   );
 
+  function normalizeListRepoFilter(repoFullName) {
+    if (repoFullName === undefined || repoFullName === null) return undefined;
+    return normalizeRepoFullName(repoFullName);
+  }
+
   function normalizeStatusFilter(status) {
-    if (status === undefined) return undefined;
+    if (status === undefined || status === null) return undefined;
     if (!CLAIM_STATUSES.includes(status)) throw new Error("invalid_status");
     return status;
   }
@@ -138,14 +146,21 @@ export function openClaimLedger(dbPath = resolveClaimLedgerDbPath()) {
     releaseClaim(repoFullName, issueNumber) {
       const normalizedRepo = normalizeRepoFullName(repoFullName);
       const normalizedIssue = normalizeIssueNumber(issueNumber);
-      releaseStatement.run(normalizedRepo, normalizedIssue);
+      const result = releaseStatement.run(normalizedRepo, normalizedIssue);
+      if (result.changes === 0) return null;
+      const row = getStatement.get(normalizedRepo, normalizedIssue);
+      return row ? rowToClaim(row) : null;
+    },
+    expireClaim(repoFullName, issueNumber) {
+      const normalizedRepo = normalizeRepoFullName(repoFullName);
+      const normalizedIssue = normalizeIssueNumber(issueNumber);
+      const result = expireStatement.run(normalizedRepo, normalizedIssue);
+      if (result.changes === 0) return null;
       const row = getStatement.get(normalizedRepo, normalizedIssue);
       return row ? rowToClaim(row) : null;
     },
     listClaims(filter = {}) {
-      const repoFullName = filter.repoFullName === undefined
-        ? undefined
-        : normalizeRepoFullName(filter.repoFullName);
+      const repoFullName = normalizeListRepoFilter(filter.repoFullName);
       const status = normalizeStatusFilter(filter.status);
 
       let rows;
@@ -177,6 +192,10 @@ export function recordClaim(claim) {
 
 export function releaseClaim(repoFullName, issueNumber) {
   return getDefaultClaimLedger().releaseClaim(repoFullName, issueNumber);
+}
+
+export function expireClaim(repoFullName, issueNumber) {
+  return getDefaultClaimLedger().expireClaim(repoFullName, issueNumber);
 }
 
 export function listClaims(filter) {

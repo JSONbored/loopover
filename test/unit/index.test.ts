@@ -678,6 +678,40 @@ describe("worker entrypoint", () => {
     expect(sent.some((m) => m.type === "rag-index-repo")).toBe(false);
   });
 
+  it("enqueues the repo-doc refresh sweep once a day at 09:00 UTC on a self-hosted runtime (#3003)", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    const waitUntil: Promise<unknown>[] = [];
+
+    await worker.scheduled(controllerFor("2026-06-01T09:00:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+
+    expect(sent).toEqual(expect.arrayContaining([{ type: "repo-doc-refresh-sweep", requestedBy: "schedule" }]));
+  });
+
+  it("does NOT enqueue the repo-doc refresh sweep outside the 09:00 UTC window", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    const waitUntil: Promise<unknown>[] = [];
+
+    await worker.scheduled(controllerFor("2026-06-01T10:00:00.000Z"), env, executionContext(waitUntil)); // hourly but not 09:00
+    await Promise.all(waitUntil);
+
+    expect(sent.some((m) => m.type === "repo-doc-refresh-sweep")).toBe(false);
+  });
+
   it("enqueues weekly value report generation during the Monday report window", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({

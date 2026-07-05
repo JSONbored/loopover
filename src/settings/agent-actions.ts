@@ -1,5 +1,5 @@
 import type { AgentActionClass, AutoMaintainPolicy, AutoMergeMethod, AutonomyPolicy } from "../types";
-import type { GateCheckConclusion } from "../rules/advisory";
+import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckConclusion } from "../rules/advisory";
 import { DEFAULT_AUTO_MAINTAIN_POLICY, autonomyRequiresApproval, isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
 import { isGuardrailHit } from "../signals/change-guardrail";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../review/linked-issue-hard-rules";
@@ -15,10 +15,11 @@ const DEFAULT_SLOP_GATE_MIN_SCORE = 60;
 // demand strong positive signals.
 
 
-// The bucket labels the layer applies to reflect the gate verdict. Namespaced so a maintainer can filter on
-// them and they never collide with project labels.
-export const AGENT_LABEL_READY = "gittensory:ready-to-merge";
-export const AGENT_LABEL_CHANGES = "gittensory:changes-requested";
+// The bucket labels the layer applies to reflect the gate verdict. These are generic fallbacks only; self-host
+// operators can rename or disable them via config-as-code so engine behavior never depends on project-specific
+// `gittensory:*` labels.
+export const AGENT_LABEL_READY = "ready-to-merge";
+export const AGENT_LABEL_CHANGES = "changes-requested";
 // Default label applied to a blacklisted contributor's PR (#1425). NOT hardcoded into the action — it is
 // configurable per-repo via `.gittensory.yml` (`settings.blacklistLabel`); the planner uses the resolved label
 // and falls back to this default, so the disposition works regardless of the label a repo sets.
@@ -33,16 +34,15 @@ export const DEFAULT_CONTRIBUTOR_CAP_LABEL = "over-contributor-limit";
 export const DEFAULT_REVIEW_NAG_LABEL = "review-nag-cooldown";
 // Keep the review-nag lookback operationally bounded so repo-controlled config cannot overflow Date arithmetic.
 export const MAX_REVIEW_NAG_COOLDOWN_DAYS = 365;
-// A PR that PASSES the gate but touches a hard-guardrail path is NOT ready to auto-merge — it is withheld
-// for a human (the merge/approve/close dispositions are suppressed below). Labeling it `ready-to-merge`
-// would be misleading (the label promises an auto-merge that never happens), so a guarded passing PR gets
-// this distinct "needs a human" label instead. Blocking verdicts keep AGENT_LABEL_CHANGES.
-export const AGENT_LABEL_NEEDS_REVIEW = "gittensory:needs-human-review";
+// Default label for a PR that PASSES the gate but is intentionally held for manual review. This is only the
+// fallback; self-host operators can set `settings.manualReviewLabel` (or null to disable the label) while the
+// guardrail hold itself remains enforced by `settings.hardGuardrailGlobs`.
+export const AGENT_LABEL_NEEDS_REVIEW = "manual-review";
 // A PR that touches migrations/** and would otherwise auto-merge, but a LIVE recheck against the current tip
 // of the base branch found a migration-number collision with a sibling PR merged since this PR's CI last ran
 // (#2550). Distinct from AGENT_LABEL_NEEDS_REVIEW so an operator can filter/alert on this specific, proven-
 // recurring failure mode separately from an ordinary guardrail hold.
-export const AGENT_LABEL_MIGRATION_COLLISION = "gittensory:migration-collision";
+export const AGENT_LABEL_MIGRATION_COLLISION = "migration-collision";
 
 // Maintainer-managed automation accounts whose PRs are never auto-closed. A recurring accumulator (e.g.
 // github-actions[bot] opening automation/readme-refresh) or a dependency PR must not be killed by a duplicate
@@ -78,6 +78,10 @@ export type PlannedAgentAction = {
   reviewBody?: string;
   mergeMethod?: AutoMergeMethod;
   closeComment?: string;
+  // For a `close` action: the individual reasons that justified closure. `reason` stays as the flat,
+  // human-readable summary for legacy callers/public notification text; this structured list is persisted into
+  // audit metadata so a close caused by multiple independent signals remains historically reconstructable.
+  closeReasons?: string[];
   // For a `close` action: WHICH kind of close this is, so the close-precision circuit-breaker can scope itself.
   // "linked-issue-hard-rule" = the DETERMINISTIC flag-then-close state machine (zero hallucination risk — and on
   // the verify path it posts a comment PROMISING closure); "heuristic" = a verdict-driven close (gate-verdict /
@@ -96,13 +100,77 @@ export type PlannedAgentAction = {
   // ALWAYS set for a heuristic close (never omitted) -- see the field's doc comment on AgentPendingActionParams
   // in types.ts for why the tri-state (rather than an optional "failed") matters (#2478).
   closeRequiresCiState?: "failed" | "not_required";
+  // True when a base conflict was part of this close's justification -- see the doc comment on
+  // AgentPendingActionParams in types.ts for why the approval queue's accept-time recheck is scoped to this
+  // specific case rather than every non-CI heuristic close. ALWAYS set for a heuristic close (never omitted).
+  closeRequiresMergeableState?: boolean;
+  // For a "heuristic" close: true when the close is backed by CONCRETE, non-judgment evidence — a committed
+  // secret, a failing/red CI run, a base conflict, a deterministic linked-issue-overlap duplicate, or a
+  // rule-based lane/manifest/pre-merge rejection — rather than any AI/model-derived verdict or a fuzzy score.
+  // The close-precision circuit-breaker (downgradeCloseToHold) EXEMPTS a concrete-evidence close: it only
+  // exists to catch the class of error where a heuristic call turned out to be wrong, and a committed secret
+  // or a red CI run is not a plausible false positive. An AI verdict — even a dual-model CONSENSUS — is
+  // deliberately NOT concrete: two models agreeing is still a judgment call, not deterministic evidence, and a
+  // systematically wrong AI-driven close is exactly the failure mode this breaker exists to catch (gate review
+  // finding, round 2 — an AI-only blocker must not bypass its own precision safety net). Absent/false ⇒ the
+  // close stays subject to the breaker like any other heuristic close (the conservative default).
+  closeConcreteEvidence?: boolean;
   expectedHeadSha?: string;
   // For an `approve` action: retract the bot's own prior approval instead of posting a new one — a later commit
   // no longer qualifies for approval, but the PR isn't merging or closing this pass, so the stale APPROVE
   // (which still counts toward a "require approving reviews" branch-protection rule) must not be left in place.
   // (#2254)
   dismissStaleApproval?: boolean;
+  // For an `assign` action (#3182): the login to set as the PR's GitHub assignee -- the PR's own opening
+  // contributor. GitHub silently drops an assignee lacking push/triage access rather than erroring, so the
+  // executor falls back to a per-login label when the real assignment doesn't stick.
+  assignee?: string;
 };
+
+// Gate-blocker codes backed by CONCRETE, non-judgment evidence: a committed secret, a deterministic
+// linked-issue-overlap duplicate, or a rule-based content/surface-lane or manifest/pre-merge rejection — every
+// entry here is produced by an exact match / regex / deterministic rule, never by a model's output. NO AI- or
+// model-derived code belongs in this set, no matter how the verdict was reached (including a dual-model
+// CONSENSUS): the close-precision breaker exists specifically to catch a systematically-wrong AI/heuristic
+// judgment, and an AI-only blocker that could bypass its own precision safety net would defeat the point (gate
+// review finding, round 2 — `ai_consensus_defect` was wrongly included here and has been removed; both
+// `ai_consensus_defect` and `ai_review_split` stay fully subject to the breaker, defended below by explicitly
+// excluding advisory.ts's own AI_JUDGMENT_BLOCKER_CODES so this can't silently regress). Kept here (not in
+// rules/advisory.ts) because "which findings are trustworthy enough to survive the breaker" is a
+// disposition-planning concern, not a gate-evaluation one — the set of finding codes is itself generic
+// self-host engine vocabulary (src/rules/advisory.ts), not specific to any one repository. Every entry is a
+// plain string literal, deliberately NOT imported from its producer's own exported constant (even where one
+// exists, e.g. advisory.ts's DUPLICATE_ONLY_BLOCKER_CODES / pre-merge-checks.ts's PRE_MERGE_CHECK_BLOCKING_CODE):
+// this module sits inside a real module-load cycle
+// (scoring/model.ts -> db/repositories.ts -> agent-actions.ts -> advisory.ts -> scoring/preview.ts ->
+// scoring/model.ts), and spreading/reading another module's export INTO A TOP-LEVEL ARRAY LITERAL evaluates it
+// eagerly at module-load time, before that module has necessarily finished initializing on this cycle's first
+// pass -- confirmed by a real "X is not iterable" failure when that was tried. A plain literal has no such
+// hazard. A source-text parity test in the test file below guards all nine against producer-side drift instead.
+const CONCRETE_EVIDENCE_BLOCKER_CODES = new Set<string>([
+  "secret_leak",
+  "duplicate_pr_risk",
+  "surface_lane_reject",
+  "manifest_missing_tests",
+  "manifest_linked_issue_required",
+  "pre_merge_check_required",
+  "lockfile_tamper_risk",
+  "missing_linked_issue",
+  "self_authored_linked_issue",
+]);
+
+/** True when a would-CLOSE is justified by at least one piece of concrete, non-judgment evidence: red CI, a
+ *  base conflict, a deterministic duplicate-PR link, or a gate-blocker code in {@link CONCRETE_EVIDENCE_BLOCKER_CODES}.
+ *  Mixed blockers (one concrete + one ambiguous) still count as concrete — the concrete signal alone already
+ *  justifies the close regardless of what else is present. Defensively excludes advisory.ts's own
+ *  {@link AI_JUDGMENT_BLOCKER_CODES} even though none should ever land in CONCRETE_EVIDENCE_BLOCKER_CODES — a
+ *  belt-and-suspenders guard against exactly the regression a gate review already caught once (`ai_consensus_defect`
+ *  wrongly classified as concrete). */
+function hasConcreteCloseEvidence(input: AgentActionPlanInput, ciFailed: boolean, isConflict: boolean): boolean {
+  if (ciFailed || isConflict) return true;
+  if ((input.pr.linkedDuplicateCount ?? 0) > 0) return true;
+  return (input.gateBlockerCodes ?? []).some((code) => CONCRETE_EVIDENCE_BLOCKER_CODES.has(code) && !AI_JUDGMENT_BLOCKER_CODES.has(code));
+}
 
 export type AgentActionPlanInput = {
   conclusion: GateCheckConclusion;
@@ -122,6 +190,14 @@ export type AgentActionPlanInput = {
   // review-good PRs; blockers, red CI, and base conflicts still close for close-eligible contributors.
   changedPaths: string[];
   hardGuardrailGlobs: string[];
+  // Configured manual-review hold label. Undefined uses the default "manual-review"; null disables only the
+  // label, not the guardrail hold. Separate from review_state_label so operators can avoid ready/changes labels.
+  manualReviewLabel?: string | null | undefined;
+  // Optional disposition label overrides. Undefined uses generic defaults; null disables that specific label.
+  readyToMergeLabel?: string | null | undefined;
+  changesRequestedLabel?: string | null | undefined;
+  migrationCollisionLabel?: string | null | undefined;
+  pendingClosureLabel?: string | null | undefined;
   // True when the PR author is the repo owner (e.g. JSONbored). Standing rule: owner PRs are NEVER
   // auto-closed. They may still auto-merge when clean + passing.
   authorIsOwner: boolean;
@@ -221,7 +297,7 @@ export type AgentActionPlanInput = {
   // additions, and run collision detection — this input is already the resolved "yes, hold this merge"
   // verdict (or absent, meaning no live collision was found). When present, this SUPPRESSES the merge exactly
   // like a hard-guardrail hold (folded into `heldForManualReview`), and its `comment` is attached to the
-  // emitted `gittensory:migration-collision` label so the contributor knows why. Never causes a CLOSE — only
+  // emitted migration-collision label so the contributor knows why. Never causes a CLOSE — only
   // ever downgrades a would-merge into a held-for-review state, same risk profile as the guardrail hold.
   migrationCollisionHold?: { reason: string; comment: string } | undefined;
   pr: {
@@ -239,6 +315,11 @@ export type AgentActionPlanInput = {
     // does NOT reliably flip reviewDecision to APPROVED, so without this the bot re-approves every sweep). A new
     // commit makes the live head differ → the bot may approve the new code (correct).
     approvedHeadSha?: string | null | undefined;
+    // The PR's opening contributor (#3182), threaded through ONLY for the `assign` disposition below. Absent
+    // (undefined) on the several other, narrower callers of this planner (issue-cap/review-nag short-circuits)
+    // is harmless -- those all set `conclusion: "skipped"` or hit an earlier short-circuit `return`, so the
+    // `assign` block below is unreachable from them regardless.
+    authorLogin?: string | null | undefined;
   };
 };
 
@@ -246,41 +327,72 @@ function hasLabel(labels: string[], name: string): boolean {
   return labels.some((label) => label.toLowerCase() === name.toLowerCase());
 }
 
+function hasLabelOrPlanned(labels: string[], actions: PlannedAgentAction[], name: string): boolean {
+  return hasLabel(labels, name) || actions.some((action) => action.actionClass === "label" && action.labelOp !== "remove" && action.label?.toLowerCase() === name.toLowerCase());
+}
+
+export type AgentDispositionLabelSettings = {
+  manualReviewLabel?: string | null | undefined;
+  readyToMergeLabel?: string | null | undefined;
+  changesRequestedLabel?: string | null | undefined;
+  migrationCollisionLabel?: string | null | undefined;
+  pendingClosureLabel?: string | null | undefined;
+};
+
+type ResolvedAgentDispositionLabels = {
+  manualReview: string | null;
+  readyToMerge: string | null;
+  changesRequested: string | null;
+  migrationCollision: string | null;
+  pendingClosure: string | null;
+};
+
+function resolveAgentDispositionLabels(settings: AgentDispositionLabelSettings): ResolvedAgentDispositionLabels {
+  return {
+    manualReview: settings.manualReviewLabel === null ? null : (settings.manualReviewLabel ?? AGENT_LABEL_NEEDS_REVIEW),
+    readyToMerge: settings.readyToMergeLabel === null ? null : (settings.readyToMergeLabel ?? AGENT_LABEL_READY),
+    changesRequested: settings.changesRequestedLabel === null ? null : (settings.changesRequestedLabel ?? AGENT_LABEL_CHANGES),
+    migrationCollision: settings.migrationCollisionLabel === null ? null : (settings.migrationCollisionLabel ?? AGENT_LABEL_MIGRATION_COLLISION),
+    pendingClosure: settings.pendingClosureLabel === null ? null : (settings.pendingClosureLabel ?? AGENT_LABEL_PENDING_CLOSURE),
+  };
+}
+
 /**
  * Accuracy circuit-breaker (#self-improve / GAP-4): when auto-merge is DISABLED for a repo (the auto-tuner
  * engaged the holdonly flag after merge precision dropped, or a human set it), DOWNGRADE a would-MERGE into a
- * human HOLD — drop the `merge` action and surface the needs-human-review label so the PR is held for a person
+ * human HOLD — drop the `merge` action and surface the configured manual-review label so the PR is held for a person
  * instead of auto-merged. Mirrors reviewbot non-content-gate.ts (~212: a would-merge becomes a hold under the
  * breaker; close/label/approve are untouched).
  *
  * PURE + idempotent: with `holdOnly` false this returns the plan UNCHANGED (byte-identical, the common path);
  * with it true and no merge planned it is also a no-op. Only ever makes the system MORE cautious.
  */
-export function downgradeMergeToHold(planned: PlannedAgentAction[], holdOnly: boolean): PlannedAgentAction[] {
+export function downgradeMergeToHold(planned: PlannedAgentAction[], holdOnly: boolean, labelSettings: AgentDispositionLabelSettings = {}): PlannedAgentAction[] {
   if (!holdOnly || !planned.some((action) => action.actionClass === "merge")) return planned;
+  const labels = resolveAgentDispositionLabels(labelSettings);
   const next = planned.filter((action) => action.actionClass !== "merge");
-  // The dropped merge implies the PR is review-good — re-label it needs-human-review (replacing a stale
+  // The dropped merge implies the PR is review-good — re-label it for manual review (replacing a stale
   // ready-to-merge promise) so the held PR is clearly flagged for a person. Idempotent: only add when absent.
-  const alreadyNeedsReview = next.some((action) => action.actionClass === "label" && action.label === AGENT_LABEL_NEEDS_REVIEW && action.labelOp !== "remove");
+  const alreadyNeedsReview = labels.manualReview !== null && next.some((action) => action.actionClass === "label" && action.label === labels.manualReview && action.labelOp !== "remove");
   const stagedMerge = planned.find((action) => action.actionClass === "merge");
-  if (!alreadyNeedsReview) {
+  if (labels.manualReview !== null && !alreadyNeedsReview) {
     next.push({
       actionClass: "label",
       autonomyClass: "review_state_label",
       requiresApproval: stagedMerge?.requiresApproval ?? false,
       reason: "accuracy circuit-breaker engaged (merge precision dropped) — would-merge held for human review",
-      label: AGENT_LABEL_NEEDS_REVIEW,
+      label: labels.manualReview,
       labelOp: "add",
     });
   }
   // Drop any ready-to-merge label add (the auto-merge it promised is now suppressed).
-  return next.filter((action) => !(action.actionClass === "label" && action.label === AGENT_LABEL_READY && action.labelOp !== "remove"));
+  return next.filter((action) => !(labels.readyToMerge !== null && action.actionClass === "label" && action.label === labels.readyToMerge && action.labelOp !== "remove"));
 }
 
 /**
  * CLOSE-precision circuit-breaker (the symmetric mirror of {@link downgradeMergeToHold}): when auto-CLOSE is
  * DISABLED for a repo (the auto-tuner engaged the `closehold` flag after CLOSE precision dropped, or a human set
- * it), DOWNGRADE a would-CLOSE into a human HOLD — drop the `close` action(s) and surface the needs-human-review
+ * it), DOWNGRADE a would-CLOSE into a human HOLD — drop the `close` action(s) and surface the configured manual-review
  * label so the PR is held for a person instead of auto-closed.
  *
  * TIGHTENING-ONLY in the close direction: it can ONLY remove a `close` action + ADD a label. It NEVER adds or
@@ -293,26 +405,33 @@ export function downgradeMergeToHold(planned: PlannedAgentAction[], holdOnly: bo
  * would be incoherent. So a plan whose only close is the deterministic one is returned UNCHANGED. A plan with a
  * heuristic close gets it dropped; a deterministic close present alongside is KEPT.
  *
+ * It ALSO exempts a heuristic close carrying `closeConcreteEvidence: true` (red CI, a base conflict, a
+ * committed secret, a deterministic duplicate, or another code in {@link CONCRETE_EVIDENCE_BLOCKER_CODES}):
+ * the breaker exists to catch a heuristic call that turned out to be WRONG, and concrete evidence is not the
+ * class of error it is watching for. A heuristic close with no concrete evidence (an unconfirmed AI verdict,
+ * a bare gate-verdict=failure, or a slop-score threshold) stays fully subject to the breaker.
+ *
  * The existing changes-requested label is KEPT (it correctly says the PR is not mergeable). PURE + idempotent:
- * with `closeHoldOnly` false this returns the plan UNCHANGED (the common path); with no HEURISTIC close planned
- * it is also a no-op. Only ever makes the system MORE cautious.
+ * with `closeHoldOnly` false this returns the plan UNCHANGED (the common path); with no downgradable close
+ * planned it is also a no-op. Only ever makes the system MORE cautious.
  */
-export function downgradeCloseToHold(planned: PlannedAgentAction[], closeHoldOnly: boolean): PlannedAgentAction[] {
-  const isHeuristicClose = (action: PlannedAgentAction): boolean => action.actionClass === "close" && action.closeKind === "heuristic";
+export function downgradeCloseToHold(planned: PlannedAgentAction[], closeHoldOnly: boolean, labelSettings: AgentDispositionLabelSettings = {}): PlannedAgentAction[] {
+  const isHeuristicClose = (action: PlannedAgentAction): boolean => action.actionClass === "close" && action.closeKind === "heuristic" && action.closeConcreteEvidence !== true;
   if (!closeHoldOnly || !planned.some(isHeuristicClose)) return planned;
+  const labels = resolveAgentDispositionLabels(labelSettings);
   // Drop ONLY the heuristic close(s); a deterministic linked-issue-hard-rule close (if any) is left intact.
   const next = planned.filter((action) => !isHeuristicClose(action));
-  // The dropped close means the PR is held for a person — surface needs-human-review. Idempotent: only add when
+  // The dropped close means the PR is held for a person — surface the manual-review label. Idempotent: only add when
   // absent (e.g. a guarded-but-passing plan may already carry it). NEVER adds a merge/approve.
-  const alreadyNeedsReview = next.some((action) => action.actionClass === "label" && action.label === AGENT_LABEL_NEEDS_REVIEW && action.labelOp !== "remove");
+  const alreadyNeedsReview = labels.manualReview !== null && next.some((action) => action.actionClass === "label" && action.label === labels.manualReview && action.labelOp !== "remove");
   const droppedClose = planned.find(isHeuristicClose);
-  if (!alreadyNeedsReview) {
+  if (labels.manualReview !== null && !alreadyNeedsReview) {
     next.push({
       actionClass: "label",
       autonomyClass: "review_state_label",
       requiresApproval: droppedClose?.requiresApproval ?? false,
       reason: "close-precision circuit-breaker engaged — would-close held for human review",
-      label: AGENT_LABEL_NEEDS_REVIEW,
+      label: labels.manualReview,
       labelOp: "add",
     });
   }
@@ -321,7 +440,7 @@ export function downgradeCloseToHold(planned: PlannedAgentAction[], closeHoldOnl
 }
 
 function closeMessage(reasons: string[]): string {
-  return `Gittensory is closing this pull request on the maintainer's behalf (${reasons.join("; ")}). This is an automated maintenance action — to pursue this change, please open a new pull request with the issues resolved. Closed PRs are re-reviewed automatically, so an inaccurate close may be reopened, but that does not guarantee it can merge (e.g. if conflicts or failing CI remain).`;
+  return `Gittensory is closing this pull request on the maintainer's behalf (${reasons.join("; ")}). This is an automated maintenance action — to pursue this change, please open a new pull request with the issues resolved. Closed PRs may be analyzed later to improve review accuracy, but they are not automatically reopened or re-reviewed.`;
 }
 
 // The close comment for a blacklisted author (#1425). Do not interpolate maintainer-supplied blacklist metadata:
@@ -387,6 +506,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
         actionClass: "close",
         requiresApproval: approval("close"),
         reason: "blacklisted contributor",
+        closeReasons: ["blacklisted contributor"],
         closeComment: sanitizePublicComment(blacklistCloseMessage()),
         closeKind: "blacklist",
         // Pin like merge/approve (#2452): for an auto_with_approval stage this travels into the pending row so
@@ -413,6 +533,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
         actionClass: "close",
         requiresApproval: approval("close"),
         reason: "over the per-contributor open-item cap",
+        closeReasons: ["over the per-contributor open-item cap"],
         closeComment: sanitizePublicComment(contributorCapCloseMessage(authorLogin, openCount, cap, itemKind, scope)),
         closeKind: "contributor_cap",
       });
@@ -437,6 +558,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
         actionClass: "close",
         requiresApproval: approval("close"),
         reason: "review-nag cooldown",
+        closeReasons: ["review-nag cooldown"],
         closeComment: sanitizePublicComment(reviewNagCloseMessage(authorLogin, pingCount, maxPings)),
         closeKind: "review_nag",
         ...(input.pr.headSha ? { expectedHeadSha: input.pr.headSha } : {}),
@@ -452,16 +574,35 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   if (input.conclusion === "skipped") return actions;
 
   // CI state over ALL of the PR's checks (required OR not — codecov/patch included) — reviewbot's ci_red
-  // parity. A red CI is NEVER approved/merged and is itself a close-worthy signal (non-owner); while CI is
-  // still running we take NO action and wait for the check-completion webhook to re-run this planner.
+  // parity. A red CI is NEVER approved/merged and is itself a close-worthy signal (non-owner). While CI is
+  // still running, never approve or merge, but do not let unrelated pending checks mask terminal close reasons
+  // that are already known now (a base conflict, a blocking gate verdict, or CI that has already gone red even
+  // if some other, unrelated check is still pending).
   const ciPassed = input.ciState === "passed";
   const ciFailed = input.ciState === "failed";
-  // Settle-before-decide: never approve / merge / close on a half-finished CI run.
-  if (input.ciState === "pending" || input.ciHasPending === true) return actions;
+  const ciPending = input.ciState === "pending" || input.ciHasPending === true;
 
   // The gate verdict is authoritative. Green CI is still required for merge/approve, but it does not rewrite an AI
   // or review-thread blocker into success once the gate has classified it as blocking.
   const conclusion: GateCheckConclusion = input.conclusion;
+  const isConflict = input.pr.mergeableState === "dirty"; // conflicts with base — can't merge as-is
+  const isContributor = !input.authorIsOwner && !input.authorIsAdmin && !input.authorIsAutomationBot;
+  // The owner-close exemption is PER-REPO CONFIGURABLE (#configurable-owner-close): by default the repo owner's
+  // own PRs are exempt from auto-close (closeOwnerAuthors !== true ⇒ merge or manual-hold only), but a maintainer
+  // can opt in to closing them like a contributor's. #2133 folds the fleet-operator admin allowlist into the same
+  // trusted-identity exemption (a login honored as a maintainer everywhere else in the codebase must not be
+  // treated as an ordinary contributor here). Automation bots stay exempt regardless (a noise heuristic must not
+  // kill a recurring maintainer-managed accumulator).
+  const closeEligible = isContributor || ((input.authorIsOwner || input.authorIsAdmin) && input.closeOwnerAuthors === true);
+  // A terminal reason is one that CANNOT be un-decided by an unrelated check eventually settling: a confirmed
+  // gate failure, a base conflict, or CI already red (red is red regardless of what else is still pending —
+  // see #ci-fail-closes-guarded below, which closes on `ciFailed` once fully settled; this bypass just lets
+  // that same verdict fire immediately instead of waiting on unrelated pending checks to catch up).
+  const pendingCiMayStillCloseForTerminalReason = closeEligible && acting("close") && (conclusion === "failure" || isConflict || ciFailed);
+  // Settle-before-decide: pending CI suppresses success-path work, but not terminal close work. Otherwise a PR
+  // with a known base conflict, a blocking gate verdict, or already-red CI can sit open forever behind an
+  // unrelated stuck check.
+  if (ciPending && !pendingCiMayStillCloseForTerminalReason) return actions;
 
   // Only SUCCESS earns the review-good auto-merge. A NEUTRAL gate flows (no longer silently returns []) but is
   // NOT auto-merged — it falls through to a HELD + labeled state for review. (Auto-merging a neutral / grace
@@ -482,6 +623,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // hold reason: a high-volume author's clean PR still merges and their bad PR still closes — the quality
   // gate, not a submission count, is the defense (anti-farming-by-manual-hold removed).
   const heldForManualReview = guardrailHit || input.migrationCollisionHold !== undefined;
+  const labels = resolveAgentDispositionLabels(input);
   // Canonical (reviewbot non-content-gate) policy, tuned to the operator's minimize-manual goal: merge-or-close
   // with high accuracy; manual review is the RARE exception. A PR is "review-good" when the gate passes AND CI is
   // green — that's the only thing that earns an auto-merge or an approve. Everything else, for a CONTRIBUTOR, is a
@@ -489,16 +631,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // would-approve/would-merge dispositions into a manual hold.
   const ciUnverified = input.ciState === "unverified";
   const reviewGood = gatePassing && ciPassed;
-  const isContributor = !input.authorIsOwner && !input.authorIsAdmin && !input.authorIsAutomationBot;
-  // The owner-close exemption is PER-REPO CONFIGURABLE (#configurable-owner-close): by default the repo owner's
-  // own PRs are exempt from auto-close (closeOwnerAuthors !== true ⇒ merge or manual-hold only), but a maintainer
-  // can opt in to closing them like a contributor's. #2133 folds the fleet-operator admin allowlist into the same
-  // trusted-identity exemption (a login honored as a maintainer everywhere else in the codebase must not be
-  // treated as an ordinary contributor here). Automation bots stay exempt regardless (a noise heuristic must not
-  // kill a recurring maintainer-managed accumulator).
-  const closeEligible = isContributor || ((input.authorIsOwner || input.authorIsAdmin) && input.closeOwnerAuthors === true);
   const mergeableClean = input.pr.mergeableState === "clean";
-  const isConflict = input.pr.mergeableState === "dirty"; // conflicts with base — can't merge as-is
   // RC3: a prior merge attempt failed terminally for THIS exact head SHA (403/405/409/conflict) → never re-plan
   // the merge; it can't complete for this commit. A new commit makes the live head differ from mergeBlockedSha.
   const mergeTerminallyBlocked = input.pr.mergeBlockedSha != null && input.pr.headSha != null && input.pr.mergeBlockedSha === input.pr.headSha;
@@ -530,12 +663,12 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // evaluation, with the violation still present AND the label already on the PR — closes.
   const verifyBeforeClose = input.linkedIssueVerify?.verifyBeforeClose === true;
   const closeDelaySeconds = input.linkedIssueVerify?.closeDelaySeconds ?? 0;
-  const pendingClosureLabelPresent = hasLabel(input.pr.labels, AGENT_LABEL_PENDING_CLOSURE);
+  const pendingClosureLabelPresent = labels.pendingClosure !== null && hasLabel(input.pr.labels, labels.pendingClosure);
   // Pass 1 is only safe when the pending-closure state can be written immediately. If labels are disabled or
   // approval-gated, holding would fail open because Pass 2 is keyed on a label that cannot appear yet; fall back
   // to the original immediate close in that case. #label-scoping: this label lives in the review_state_label
   // family (see below), so its readiness check must use the SAME class the actual push is gated on.
-  const canApplyPendingClosureFlagNow = acting("review_state_label") && !approval("review_state_label");
+  const canApplyPendingClosureFlagNow = labels.pendingClosure !== null && acting("review_state_label") && !approval("review_state_label");
   // Pass 1 — violation present, verify-mode on, label NOT yet on the PR, and the state label can be applied now
   // → FLAG (label + comment), do NOT close.
   const flagForLinkedIssue = linkedIssueViolated && verifyBeforeClose && !pendingClosureLabelPresent && canApplyPendingClosureFlagNow;
@@ -555,18 +688,33 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       ? "CI could not be verified"
       : "";
 
-  // 1) review_state_label (#label-scoping) — ready-to-merge (review-good, unguarded) / needs-human-review
+  // 1) manual-review label — a configurable, single-purpose label for guardrail holds. This is intentionally
+  // separate from review_state_label so a one-shot repo can opt into `manual-review` without also enabling the
+  // older ready/changes disposition labels. It is authorized by merge autonomy because it only fires when a
+  // would-merge PR is held for a human by a guardrail.
+  if (reviewGood && guardrailHit && labels.manualReview !== null && acting("merge") && !hasLabelOrPlanned(input.pr.labels, actions, labels.manualReview)) {
+    actions.push({
+      actionClass: "label",
+      autonomyClass: "merge",
+      requiresApproval: false,
+      reason: `verdict=${conclusion}; guarded path → manual review`,
+      label: labels.manualReview,
+      labelOp: "add",
+    });
+  }
+
+  // 2) review_state_label (#label-scoping) — ready-to-merge (review-good, unguarded) / manual-review
   // (review-good but guarded) / changes-requested (not review-good → will be closed for a contributor, held for
   // the owner). A pending linked-issue hard-rule close (flag OR close pass) forces the changes-requested label
   // regardless of the gate verdict (the PR is about to be closed for an ineligible linked issue). Idempotent.
   // Gated on the DEDICATED `review_state_label` class, not the generic `label` — these are the bot's own
   // disposition-communication labels (advisory, not enforcement), default OFF like every autonomy class so a
-  // one-shot-mode repo never sees `gittensory:changes-requested`/`needs-human-review` without an explicit opt-in.
+  // one-shot-mode repo never sees disposition labels without an explicit opt-in.
   if (acting("review_state_label")) {
     // A live migration-collision hold takes priority over a plain guardrail hold when both are true — it is
     // the more specific, actionable signal (tells the contributor exactly what to do: rebase), and gets its
     // own distinct label (#2550) so an operator can filter/alert on it separately from an ordinary guardrail.
-    const label = linkedIssueCloseInFlight || !reviewGood ? AGENT_LABEL_CHANGES : input.migrationCollisionHold !== undefined ? AGENT_LABEL_MIGRATION_COLLISION : heldForManualReview ? AGENT_LABEL_NEEDS_REVIEW : AGENT_LABEL_READY;
+    const label = linkedIssueCloseInFlight || !reviewGood ? labels.changesRequested : input.migrationCollisionHold !== undefined ? labels.migrationCollision : heldForManualReview ? labels.manualReview : labels.readyToMerge;
     const reason = linkedIssueCloseInFlight
       ? `linked-issue hard rule: ${linkedIssueHardRule?.reason ?? "ineligible linked issue"}`
       : !reviewGood
@@ -576,7 +724,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
           : heldForManualReview
             ? `verdict=${conclusion}; guarded path → manual review`
             : `verdict=${conclusion}; CI green`;
-    if (!hasLabel(input.pr.labels, label)) {
+    if (label !== null && !hasLabelOrPlanned(input.pr.labels, actions, label)) {
       actions.push({
         actionClass: "label",
         autonomyClass: "review_state_label",
@@ -591,34 +739,49 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     // Flag-then-close double-check, Pass 1: add the pending-closure label + a warning comment citing the specific
     // rule and the verification window. The label's presence is the state that, persisting to the next pass with
     // the violation still present, triggers the close. Idempotent (the flag only fires when the label is absent).
-    if (flagForLinkedIssue) {
+    if (flagForLinkedIssue && labels.pendingClosure !== null) {
       const ruleReason = linkedIssueHardRule?.reason ?? "the linked issue is not eligible for a community PR";
       const window = closeDelaySeconds > 0 ? `~${closeDelaySeconds}s` : "the next verification";
       actions.push({
         actionClass: "label",
         autonomyClass: "review_state_label",
+        closeKind: "linked-issue-hard-rule",
         requiresApproval: approval("review_state_label"),
         reason: `linked-issue hard rule (flagged for verification): ${ruleReason}`,
-        label: AGENT_LABEL_PENDING_CLOSURE,
+        label: labels.pendingClosure,
         labelOp: "add",
         comment: `⚠️ This PR links an ineligible issue (${ruleReason}) and will be closed on re-verification in ${window} unless the linked issue changes.`,
       });
     }
     // Violation CLEARED but a stale pending-closure flag remains → remove it (+ a resolved note). Never closes.
-    if (clearLinkedIssueFlag) {
+    if (clearLinkedIssueFlag && labels.pendingClosure !== null) {
       actions.push({
         actionClass: "label",
         autonomyClass: "review_state_label",
+        closeKind: "linked-issue-hard-rule",
         requiresApproval: approval("review_state_label"),
         reason: "linked-issue hard rule resolved — clearing the pending-closure flag",
-        label: AGENT_LABEL_PENDING_CLOSURE,
+        label: labels.pendingClosure,
         labelOp: "remove",
         comment: "✓ The linked-issue hard-rule violation is resolved — this PR is no longer pending closure.",
       });
     }
   }
 
-  // 2) review — APPROVE a review-good PR only when it is NOT on a guarded path; a guarded PR falls through to the
+  // 2b) assign (#3182) — best-effort: set the PR's own opening contributor as its GitHub assignee, purely for
+  // triage (who is this PR's author, at a glance). Independent of merge/close/CI outcome, exactly like
+  // review_state_label above: gated on its own `assign` class (default OFF), not tied to any other disposition.
+  // Idempotent at the executor (a live GET before the POST), so replanning this every sweep is harmless.
+  if (acting("assign") && input.pr.authorLogin) {
+    actions.push({
+      actionClass: "assign",
+      requiresApproval: approval("assign"),
+      reason: "auto-assign PR opener",
+      assignee: input.pr.authorLogin,
+    });
+  }
+
+  // 3) review — APPROVE a review-good PR only when it is NOT on a guarded path; a guarded PR falls through to the
   // owner's manual safety review (never auto-approved). The bot NEVER posts a formal CHANGES_REQUESTED review: a
   // blocking review counts against required approvals and STRANDS a PR when it later goes green (a stale
   // request-changes keeps it un-mergeable forever). A not-good CONTRIBUTOR PR is CLOSED below; a not-good
@@ -671,7 +834,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     });
   }
 
-  // 3) disposition — FLAG-HOLD (linked-issue Pass 1: flagged this pass, verification pending → NO disposition) /
+  // 4) disposition — FLAG-HOLD (linked-issue Pass 1: flagged this pass, verification pending → NO disposition) /
   // LINKED-ISSUE HARD-RULE CLOSE (deterministic, fires even on a guarded path; precedes merge) / MERGE
   // (review-good, unguarded, mergeable, approvals) / CLOSE (not-good OR conflicting CONTRIBUTOR PR, one-shot) /
   // MANUAL (guarded, or any not-good OWNER/automation PR — held, never closed). Mutually exclusive.
@@ -692,6 +855,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       actionClass: "close",
       requiresApproval: approval("close"),
       reason,
+      closeReasons: [reason],
       closeComment: closeMessage([reason]),
       closeKind: "linked-issue-hard-rule",
       // Pin like merge/approve (#2452): lets the accept-time supersede check detect a force-push after staging.
@@ -719,24 +883,54 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     if (input.pr.slopRisk != null && input.pr.slopRisk >= slopGateMinScore) closeReasons.push(`slop score ${input.pr.slopRisk} ≥ ${slopGateMinScore}`);
     if ((input.pr.linkedDuplicateCount ?? 0) > 0) closeReasons.push("duplicate of another open PR");
     if (closeReasons.length === 0) closeReasons.push("the review gate is not satisfied");
-    // Tagged "heuristic": a verdict-driven close (gate-verdict / duplicate / slop / CI). This is the ONLY close
-    // the close-precision breaker downgrades to a hold when close precision has dropped.
+    // Tagged "heuristic": a verdict-driven close (gate-verdict / duplicate / slop / CI). The close-precision
+    // breaker downgrades this to a hold when close precision has dropped — UNLESS it is also backed by concrete,
+    // non-judgment evidence (see closeConcreteEvidence's doc comment), in which case the breaker leaves it alone.
     actions.push({
       actionClass: "close",
       requiresApproval: approval("close"),
       reason: closeReasons.join("; "),
+      closeReasons,
       closeComment: closeMessage(closeReasons),
       closeKind: "heuristic",
+      closeConcreteEvidence: hasConcreteCloseEvidence(input, ciFailed, isConflict),
       // Pin like merge/approve (#2452): lets the accept-time supersede check detect a force-push after staging;
       // the executor's own step-6 live-CI re-check (#2128) separately covers the CI-driven reason above.
       ...(input.pr.headSha ? { expectedHeadSha: input.pr.headSha } : {}),
       // Always explicit (never omitted) -- see the field's doc comment (#2478): an omitted value on a REPLAYED
       // staged action must unambiguously mean "legacy row, predates this field", not "not CI-driven".
       closeRequiresCiState: ciFailed ? "failed" : "not_required",
+      // Always explicit (never omitted), mirroring closeRequiresCiState's own discipline above.
+      closeRequiresMergeableState: isConflict,
     });
   }
-  // else: guarded → manual (needs-human/changes label above); not-good OWNER/automation → held
-  // (request-changes above); review-good-but-not-yet-mergeable → held briefly (rebase/approve resolves it next pass).
+  // else: guarded → manual; not-good OWNER/automation → manual; action-required/unverified → manual;
+  // review-good-but-not-yet-mergeable → held briefly (rebase/approve resolves it next pass).
+  const manualHoldReason =
+    guardrailHit
+      ? `verdict=${conclusion}; guarded path → manual review`
+      : ciUnverified
+        ? "CI could not be verified"
+        : conclusion === "action_required"
+          ? "review requires maintainer action"
+          : !reviewGood && !closeEligible
+            ? `verdict=${conclusion}${ciReason ? `; ${ciReason}` : ""}`
+            : null;
+  if (
+    manualHoldReason !== null &&
+    labels.manualReview !== null &&
+    !actions.some((action) => action.actionClass === "merge" || action.actionClass === "close") &&
+    !hasLabelOrPlanned(input.pr.labels, actions, labels.manualReview)
+  ) {
+    actions.push({
+      actionClass: "label",
+      autonomyClass: reviewGood ? "merge" : "close",
+      requiresApproval: false,
+      reason: manualHoldReason,
+      label: labels.manualReview,
+      labelOp: "add",
+    });
+  }
 
   return actions;
 }

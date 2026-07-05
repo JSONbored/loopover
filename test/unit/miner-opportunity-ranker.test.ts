@@ -56,12 +56,22 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
         rawIssue(),
         { ...rawIssue(), issueNumber: "nope" as unknown as number },
         { ...rawIssue(), repoFullName: "" },
+        { ...rawIssue(), repoFullName: "owner-only" },
         null as unknown as ReturnType<typeof rawIssue>,
       ],
       { nowMs: NOW },
     );
     expect(ranked).toHaveLength(1);
     expect(ranked[0]?.issueNumber).toBe(42);
+  });
+
+  it("counts malformed repo slugs as skipped invalid in the summary", () => {
+    const summary = rankCandidateIssuesWithSummary(
+      [rawIssue(), rawIssue({ repoFullName: "owner-only" })],
+      { nowMs: NOW },
+    );
+    expect(summary.issues).toHaveLength(1);
+    expect(summary.skippedInvalid).toBe(1);
   });
 
   it("parses per-repo goal-spec YAML content when ranking", () => {
@@ -72,6 +82,26 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
       },
     });
     expect(ranked[0]?.laneFit).toBeGreaterThanOrEqual(0.85);
+  });
+
+  it("excludes repositories that explicitly opt out of miner targeting", () => {
+    const ranked = rankCandidateIssues([rawIssue({ labels: ["help wanted", "feature"] })], {
+      nowMs: NOW,
+      goalSpecContentByRepo: {
+        "acme/widgets": "minerEnabled: false\npreferredLabels: [feature]\n",
+      },
+    });
+    const summary = rankCandidateIssuesWithSummary([rawIssue()], {
+      nowMs: NOW,
+      goalSpecContentByRepo: {
+        "acme/widgets": "minerEnabled: false\n",
+      },
+    });
+
+    expect(ranked).toEqual([]);
+    expect(summary.issues).toEqual([]);
+    expect(summary.skippedInvalid).toBe(0);
+    expect(summary.usedDefaultGoalSpec).toBe(false);
   });
 
   it("raises dupRisk when repo-level contention inputs are provided", () => {
@@ -98,6 +128,42 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
     const summary = rankCandidateIssuesWithSummary([rawIssue(), rawIssue()], { nowMs: NOW });
     expect(summary.issues).toHaveLength(1);
     expect(summary.skippedInvalid).toBe(0);
+  });
+
+  it("summary reports default goal-spec usage when supplied specs do not match ranked repos", () => {
+    const summary = rankCandidateIssuesWithSummary([rawIssue()], {
+      nowMs: NOW,
+      goalSpecsByRepo: {
+        "other/repo": {
+          minerEnabled: true,
+          wantedPaths: [],
+          blockedPaths: [],
+          preferredLabels: ["feature"],
+          blockedLabels: [],
+          maxConcurrentClaims: 2,
+          issueDiscoveryPolicy: "neutral",
+        },
+      },
+    });
+    expect(summary.usedDefaultGoalSpec).toBe(true);
+  });
+
+  it("summary reports custom goal-spec usage when a ranked repo has a matching spec", () => {
+    const summary = rankCandidateIssuesWithSummary([rawIssue()], {
+      nowMs: NOW,
+      goalSpecsByRepo: {
+        "acme/widgets": {
+          minerEnabled: true,
+          wantedPaths: [],
+          blockedPaths: [],
+          preferredLabels: ["help wanted"],
+          blockedLabels: [],
+          maxConcurrentClaims: 2,
+          issueDiscoveryPolicy: "neutral",
+        },
+      },
+    });
+    expect(summary.usedDefaultGoalSpec).toBe(false);
   });
 
   it("prefers fresher, better-labeled opportunities over stale question threads", () => {
@@ -182,6 +248,22 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
     expect(ranked[0]?.owner).toBe("acme");
     expect(ranked[0]?.repo).toBe("widgets");
     expect(ranked[0]?.aiPolicySource).toBe("AI-USAGE.md");
+  });
+
+  it("ignores conflicting owner/repo fields when repoFullName is valid", () => {
+    const ranked = rankCandidateIssues(
+      [
+        rawIssue({
+          owner: "wrong",
+          repo: "name",
+          repoFullName: "acme/widgets",
+        }),
+      ],
+      { nowMs: NOW },
+    );
+    expect(ranked[0]?.owner).toBe("acme");
+    expect(ranked[0]?.repo).toBe("widgets");
+    expect(ranked[0]?.repoFullName).toBe("acme/widgets");
   });
 
   it("uses Date.now when nowMs is not finite", () => {

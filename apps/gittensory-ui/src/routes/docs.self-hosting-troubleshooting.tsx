@@ -236,6 +236,34 @@ curl -X DELETE "$QDRANT_URL/collections/gittensory"`}
         the fastest way to confirm whether the loop is even running, before digging into the error
         counters.
       </p>
+      <p>
+        <code>selfhost_orb_relay_register_failed</code> means the container could not announce
+        itself to the broker at boot. What it means depends on <code>ORB_RELAY_MODE</code> (see{" "}
+        <Link to="/docs/self-hosting-github-app">choosing a relay mode</Link>):
+      </p>
+      <ul>
+        <li>
+          <strong>Push mode</strong> (default) — logged at <code>error</code> and{" "}
+          <strong>release-blocking</strong>: the container looks healthy but never receives an
+          event, since there is no fallback delivery path. Check that <code>PUBLIC_API_ORIGIN</code>{" "}
+          is a real, internet-reachable, TLS-terminated URL — the broker rejects a loopback or
+          private address at registration time, so a misconfigured or unreachable origin fails here
+          every time, not intermittently.
+        </li>
+        <li>
+          <strong>Pull mode</strong> — logged at <code>warn</code> and non-fatal: the drain loop (
+          <code>gittensory_orb_relay_drains_total</code>) keeps retrying on its own schedule
+          regardless, so a transient failure here recovers on its own once the broker is reachable
+          again. A registration failure that never clears across many retries still points at{" "}
+          <code>ORB_ENROLLMENT_SECRET</code> being wrong, revoked, or not yet provisioned
+          server-side.
+        </li>
+      </ul>
+      <p>
+        Either mode: confirm <code>ORB_BROKER_URL</code> is reachable from inside the container
+        first — a broker that is down or unreachable produces the same registration-failed event
+        regardless of relay mode or credential correctness.
+      </p>
 
       <h2>AI provider circuit breaker keeps opening</h2>
       <p>

@@ -269,6 +269,18 @@ describe("api routes", () => {
     await expect(response.json()).resolves.toMatchObject({ repoFullName: "acme/badged", badgeEnabled: true });
   });
 
+  it("REGRESSION (#2907): defaults checkRunDetailLevel to minimal, matching the DB column's own default, when omitted", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const response = await app.request(
+      "/v1/internal/repos/acme/detail-level-default/settings",
+      { method: "POST", headers: { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ checkRunMode: "enabled" }) },
+      env,
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ checkRunMode: "enabled", checkRunDetailLevel: "minimal" });
+  });
+
   it("downgrades qualityGateMode: block to advisory through the internal settings write endpoint too (#2267)", async () => {
     // Readiness/quality can never hard-block a PR — the internal full-settings write path (used by tooling,
     // not just the maintainer dashboard) gets the identical downgrade so it can't persist "block" either.
@@ -281,6 +293,38 @@ describe("api routes", () => {
     );
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ repoFullName: "acme/readiness-block", qualityGateMode: "advisory" });
+  });
+
+  it("derives reviewCheckMode from a legacy gateCheckMode-only body through the internal settings write endpoint (#2852)", async () => {
+    // The internal full-replace route is a non-partial schema (every field defaults independently) -- a
+    // caller that only ever knows about gateCheckMode must still get its historical effect on reviewCheckMode,
+    // the actual check-run publish authority, not silently leave it at the schema's own "disabled" default.
+    const app = createApp();
+    const env = createTestEnv();
+    const enabled = await app.request(
+      "/v1/internal/repos/acme/legacy-gate-enable/settings",
+      { method: "POST", headers: { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ gateCheckMode: "enabled" }) },
+      env,
+    );
+    expect(enabled.status).toBe(200);
+    await expect(enabled.json()).resolves.toMatchObject({ gateCheckMode: "enabled", reviewCheckMode: "required" });
+
+    const disabled = await app.request(
+      "/v1/internal/repos/acme/legacy-gate-disable/settings",
+      { method: "POST", headers: { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ gateCheckMode: "off" }) },
+      env,
+    );
+    expect(disabled.status).toBe(200);
+    await expect(disabled.json()).resolves.toMatchObject({ gateCheckMode: "off", reviewCheckMode: "disabled" });
+
+    // An explicit reviewCheckMode still wins over the gateCheckMode-derived value in the same request.
+    const explicit = await app.request(
+      "/v1/internal/repos/acme/legacy-gate-explicit/settings",
+      { method: "POST", headers: { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ gateCheckMode: "off", reviewCheckMode: "visible" }) },
+      env,
+    );
+    expect(explicit.status).toBe(200);
+    await expect(explicit.json()).resolves.toMatchObject({ gateCheckMode: "off", reviewCheckMode: "visible" });
   });
 
   it("rejects invalid public GitHub repo stats paths before calling GitHub", async () => {
@@ -2155,8 +2199,8 @@ describe("api routes", () => {
     });
     expect(JSON.stringify(unknownSessionBody)).not.toMatch(/wallet|hotkey|raw trust|payout|reward estimate|farming|private reviewability|public score estimate|\/Users|github_pat|ghp_/i);
     const unknownOverview = await app.request("/v1/app/overview", { headers: unknownHeaders }, unknownEnv);
-    expect(unknownOverview.status).toBe(200);
-    await expect(unknownOverview.json()).resolves.toMatchObject({ roleSummary: { roles: [], onboarding: { status: "needs_setup" } } });
+    expect(unknownOverview.status).toBe(403);
+    await expect(unknownOverview.json()).resolves.toMatchObject({ error: "insufficient_role" });
     expect((await app.request("/v1/app/operator-dashboard", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/app/maintainer-dashboard", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/app/commands/usefulness", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
@@ -2301,6 +2345,10 @@ describe("api routes", () => {
     expect(settingsUpdate.status).toBe(200);
     await expect(settingsUpdate.json()).resolves.toMatchObject({
       gateCheckMode: "enabled",
+      // #2852: a legacy client sending ONLY gateCheckMode (never reviewCheckMode, matching the current
+      // untouched dashboard) must still get the check-run actually publishing -- reviewCheckMode is derived
+      // from this same request's gateCheckMode, not silently left at its "disabled" default.
+      reviewCheckMode: "required",
       slopGateMode: "block",
       slopGateMinScore: 55,
       qualityGateMode: "advisory", // #2267: downgraded, not persisted as "block"
@@ -2309,6 +2357,16 @@ describe("api routes", () => {
       agentPaused: true, // #776 kill-switch
       agentDryRun: true,
     });
+    // #2852: the other direction of the same legacy-write derivation — gateCheckMode: "off" alone (still no
+    // reviewCheckMode sent) must derive reviewCheckMode: "disabled", not silently leave it at whatever the
+    // prior save left it (still "required" from the write immediately above).
+    const settingsUpdateOff = await app.request(
+      "/v1/repos/repo-owner/owned-repo/settings",
+      { method: "PUT", headers: ownerHeaders, body: JSON.stringify({ gateCheckMode: "off" }) },
+      ownerEnv,
+    );
+    expect(settingsUpdateOff.status).toBe(200);
+    await expect(settingsUpdateOff.json()).resolves.toMatchObject({ gateCheckMode: "off", reviewCheckMode: "disabled" });
     // requireApprovals is bounded at the API boundary — an out-of-range value is rejected, not silently clamped.
     const settingsBadApprovals = await app.request(
       "/v1/repos/repo-owner/owned-repo/settings",
@@ -5691,7 +5749,6 @@ describe("api routes", () => {
     });
 
     await upsertRepoFocusManifest(env, "entrius/allways-ui", {
-      blockedPaths: ["dist/"],
       linkedIssuePolicy: "optional",
       issueDiscoveryPolicy: "discouraged",
       maintainerNotes: [
@@ -5709,14 +5766,12 @@ describe("api routes", () => {
         previewOnly: true,
         present: true,
         publicWarnings: expect.arrayContaining([
-          expect.objectContaining({ code: "blocked_work_without_wanted_scope" }),
+          expect.objectContaining({ code: "contribution_scope_unclear" }),
           expect.objectContaining({ code: "linked_issue_policy_mismatch" }),
           expect.objectContaining({ code: "validation_expectations_missing" }),
         ]),
       },
-      warnings: expect.arrayContaining([
-        expect.stringContaining("Blocked work lacks a positive lane"),
-      ]),
+      warnings: expect.arrayContaining([expect.stringContaining("Contribution scope is unclear")]),
     });
     expect(policyPayload.policyReadiness).not.toHaveProperty("ownerContext");
     expect(JSON.stringify(policyPayload.policyReadiness.publicWarnings)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
@@ -6234,7 +6289,6 @@ describe("api routes", () => {
         headers: internalHeaders(env),
         body: JSON.stringify({
           wantedPaths: ["src/"],
-          blockedPaths: ["dist/"],
           preferredLabels: ["bug"],
           linkedIssuePolicy: "required",
           issueDiscoveryPolicy: "discouraged",
@@ -6257,7 +6311,6 @@ describe("api routes", () => {
         present: true,
         source: "api_record",
         wantedPaths: ["src/"],
-        blockedPaths: ["dist/"],
         maintainerNotes: [privateNote],
       },
       policy: {
@@ -6270,7 +6323,7 @@ describe("api routes", () => {
               id: "direct-pr",
               preference: "preferred",
               preferredPaths: ["src/"],
-              discouragedPaths: ["dist/"],
+              discouragedPaths: [],
               validationExpectations: ["Run npm run test:ci."],
               publicNotes: ["Prefer small, focused PRs."],
             }),
@@ -6278,7 +6331,7 @@ describe("api routes", () => {
               id: "issue-discovery",
               preference: "discouraged",
               preferredPaths: [],
-              discouragedPaths: ["dist/"],
+              discouragedPaths: [],
             }),
           ],
           labelPolicy: { preferredLabels: ["bug"], required: true },

@@ -121,7 +121,9 @@ export const PLAN_TEMPLATE_BUILDERS: Readonly<Record<PlanTemplateStage, (context
 // Build the raw-step template for a stage. Pure — a thin dispatcher over `PLAN_TEMPLATE_BUILDERS` that rejects an
 // unknown stage with a clear error rather than a generic "not a function" TypeError (guards non-TypeScript callers).
 export function buildPlanTemplate(stage: PlanTemplateStage, context: PlanTemplateContext = {}): RawPlanStep[] {
-  const builder = PLAN_TEMPLATE_BUILDERS[stage];
-  if (!builder) throw new Error(`Unknown plan-template stage: ${String(stage)}`);
+  const builder = Object.prototype.hasOwnProperty.call(PLAN_TEMPLATE_BUILDERS, stage)
+    ? PLAN_TEMPLATE_BUILDERS[stage]
+    : undefined;
+  if (typeof builder !== "function") throw new Error(`Unknown plan-template stage: ${String(stage)}`);
   return builder(context);
 }

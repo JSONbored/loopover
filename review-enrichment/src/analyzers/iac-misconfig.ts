@@ -4,7 +4,7 @@ const MAX_FINDINGS = 25;
 const MAX_LINE_CHARS = 2000;
 
 const CONFIG_PATH_RE =
-  /(?:^|\/)(?:docker-compose[^/]*\.ya?ml|compose[^/]*\.ya?ml|values(?:\.[^/]+)?\.ya?ml|.*\.(?:tf|ya?ml|json|toml|ini|conf|env)|Dockerfile(?:\.[^/]+)?|nginx[^/]*\.conf)$/i;
+  /(?:^|\/)(?:docker-compose[^/]*\.ya?ml|compose[^/]*\.ya?ml|values(?:\.[^/]+)?\.ya?ml|\.env(?:\.[^/]+)?|.*\.(?:tf|ya?ml|json|toml|ini|conf|env)|Dockerfile(?:\.[^/]+)?|nginx[^/]*\.conf)$/i;
 
 const CORS_ORIGIN_RE =
   /\b(?:access-control-allow-origin|allow_origin|cors_origin|origin)\b[\s"'=:,\[\]-]*\*/i;
@@ -19,12 +19,71 @@ const PUBLIC_BUCKET_RE =
 const SAME_SITE_NONE_RE = /\bsameSite\b[\s"'=:,-]*["']?none["']?\b/i;
 const SECURE_FALSE_RE = /\bsecure\b[\s"'=:,-]*false\b/i;
 const TLS_DISABLED_RE =
-  /\brejectUnauthorized\b[\s"'=:,-]*false\b|\bverify\s*=\s*False\b|\bssl_verify\b[\s"'=:,-]*false\b|\binsecureSkipTLSVerify\b[\s"'=:,-]*true\b|\bskipTLSVerify\b[\s"'=:,-]*true\b/i;
+  /\brejectUnauthorized\b[\s"'=:,-]*false\b|\bverify\s*=\s*False\b|\bssl_verify\b[\s"'=:,-]*false\b|\binsecureSkipTLSVerify\b[\s"'=:,-]*true\b|\bskipTLSVerify\b[\s"'=:,-]*true\b|\bNODE_TLS_REJECT_UNAUTHORIZED\b[\s"'=:,-]*["']?0\b|\bPYTHONHTTPSVERIFY\b[\s"'=:,-]*["']?0\b/i;
 const PROD_RE =
   /\b(?:NODE_ENV|ENVIRONMENT|APP_ENV)\b[\s"'=:,-]*production\b|\bproduction\s*:/i;
 const DEBUG_TRUE_RE = /\bdebug\b[\s"'=:,-]*true\b|\bDEBUG\b[\s"'=:,-]*true\b/i;
 const HARDCODED_URL_RE =
   /\b(?:[A-Z][A-Z0-9_]*(?:URL|URI|ENDPOINT)|(?:api|base|service|backend|frontend|server|webhook)[_-]?(?:url|uri|endpoint)|baseUrl)\b[\s"'=:,-]*https?:\/\/[^\s"',#}]+/i;
+
+// Container securityContext / Kubernetes Pod Security Standards (restricted profile). Each matches a single
+// `key: <insecure-value>` line; the secure value (e.g. `privileged: false`) never matches. `\bprivileged\b`
+// deliberately does NOT fire on the safe `unprivileged: true` (word boundary fails after the `un` prefix).
+const PRIVILEGED_RE = /\bprivileged\b[\s"'=:,-]*true\b/i;
+const PRIVILEGE_ESCALATION_RE = /\ballowPrivilegeEscalation\b[\s"'=:,-]*true\b/i;
+const HOST_PID_RE = /\bhostPID\b[\s"'=:,-]*true\b/i;
+const HOST_IPC_RE = /\bhostIPC\b[\s"'=:,-]*true\b/i;
+const RUN_AS_ROOT_RE = /\brunAsNonRoot\b[\s"'=:,-]*false\b/i;
+// `runAsUser: 0` is root. The separators are zero-width-optional, so a non-zero uid like `runAsUser: 1000`
+// cannot match (the value must begin with a `0` immediately after the separators).
+const RUN_AS_UID_ZERO_RE = /\brunAsUser\b[\s"'=:,-]*0\b/i;
+const WRITABLE_ROOTFS_RE = /\breadOnlyRootFilesystem\b[\s"'=:,-]*false\b/i;
+const UNMASKED_PROC_RE = /\bprocMount\b[\s"'=:,-]*["']?Unmasked\b/i;
+
+// Cloud / Terraform resource hardening. `\b(?:storage_encrypted|encrypted)\b` matches the standalone
+// `encrypted` key and the `storage_encrypted` key, but never the `_encrypted` tail of an unrelated identifier.
+const UNENCRYPTED_STORAGE_RE = /\b(?:storage_encrypted|encrypted)\b[\s"'=:,-]*false\b/i;
+const PUBLIC_DB_RE = /\bpublicly_accessible\b[\s"'=:,-]*true\b/i;
+const IMDS_V1_RE = /\bhttp_tokens\b[\s"'=:,-]*["']?optional\b/i;
+// World-writable `0777`/`777` via `chmod`, a `mode:`/`file_mode` assignment. A leading sticky/setuid digit
+// (`chmod 1777`) does not match because the value must begin at the optional `0` then `777`.
+const WORLD_WRITABLE_RE = /\b(?:chmod\s+|(?:file_)?mode[\s"'=:,-]*["']?)0?777\b/i;
+
+// Dockerfile build-security hardening (hadolint / checkov CKV_DOCKER_*). Dockerfile instruction
+// keywords are case-insensitive, so match ADD/FROM/USER/EXPOSE/RUN without relying on casing.
+// The flag/shell shapes are risky in any build/config file the path gate already admits.
+const DOCKER_ADD_REMOTE_RE = /\bADD\s+(?:--\S+\s+)*https?:\/\/\S/i;
+const DOCKER_LATEST_TAG_RE = /\bFROM\s+(?:--\S+\s+)*\S+:latest\b/i;
+const DOCKER_ROOT_USER_RE = /\bUSER\s+(?:root|0)\b/i;
+// A remote download piped straight into a shell — the classic `curl … | sh` run-remote-code-at-build shape.
+const REMOTE_SHELL_PIPE_RE =
+  /\b(?:curl|wget)\b[^\n]*?\|\s*(?:sudo\s+)?(?:bash|zsh|ksh|dash|ash|sh)\b/;
+// Build flags that disable download / TLS certificate verification (wget/apt/curl/pip).
+const INSECURE_DOWNLOAD_FLAG_RE =
+  /--(?:no-check-certificate|allow-unauthenticated|force-yes|trusted-host)\b/;
+const SSH_PORT_EXPOSED_RE = /\bEXPOSE\s+(?:\d+(?:\/\w+)?\s+)*22(?:\/tcp)?\b/i;
+const NPM_UNSAFE_PERM_RE = /--unsafe-perm\b/;
+// `sudo` invoked inside a RUN layer (privilege elevation during build). `RUN apt-get install sudo` does NOT
+// match because sudo does not immediately follow `RUN`/`&&`.
+const SUDO_IN_BUILD_RE = /\bRUN\s+sudo\s|&&\s*sudo\s/i;
+// A credential-shaped value hardcoded into an image layer via ENV/ARG WITH a value (build secrets persist in
+// the image history). A bare `ARG DB_PASSWORD` (no `=value`) is a legitimate build-arg declaration and is skipped.
+const HARDCODED_BUILD_SECRET_RE =
+  /\b(?:ENV|ARG)\s+\w*(?:PASSWORD|PASSWD|SECRET|TOKEN|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY)\w*\s*=\s*\S/i;
+// A package installer pointed at a plaintext-HTTP index (dependency-download MITM).
+const INSECURE_PIP_INDEX_RE = /--(?:extra-)?index-url[=\s]+http:\/\//i;
+
+// TLS / certificate-verification bypass across ecosystems. In every case the MATCHED VALUE is the bypass
+// action itself (disabling verification / trusting any certificate), so there is no "safe value" form of the
+// same line — the secure setting uses a different value the regex never matches. Complements the existing
+// `tls-verification-disabled` rule with database-, Go-, Git-, SSH-, PHP-, .NET-, and Kubernetes-specific forms.
+const DB_SSL_DISABLED_RE = /\bssl[_-]?mode\s*[=:]\s*["']?(?:disable|disabled|none)\b/i;
+const GIT_SSL_NO_VERIFY_RE = /\bGIT_SSL_NO_VERIFY\b[\s"'=:,-]*["']?(?:1|true|yes)\b/i;
+const SSH_HOST_KEY_OFF_RE = /\bStrictHostKeyChecking\b[\s"'=:,-]*["']?(?:no|false)\b/i;
+const VERIFY_SSL_OFF_RE = /\bverify[_-]?(?:ssl|certs?|certificate)\b[\s"'=:,-]*["']?(?:false|no|0)\b/i;
+const VALIDATE_CERTS_OFF_RE = /\bvalidate_certs\b[\s"'=:,-]*["']?(?:no|false)\b/i;
+const TLS_SKIP_VERIFY_RE = /\b(?:tls_skip_verify|insecure_skip_verify)\b[\s"'=:,-]*true\b/i;
+const TRUST_ALL_CERTS_RE = /\bTrustServerCertificate\s*=\s*["']?true\b/i;
 
 function* patchLines(patch: string): Generator<string> {
   let start = 0;
@@ -96,7 +155,10 @@ export function scanPatchForIacMisconfig(
     // Skip pre-hunk preamble; inside a hunk `+++x`/`+++ x` is added content, not a header.
     if (!inHunk) continue;
     if (!line.startsWith("+")) {
-      if (!line.startsWith("-")) newLine++;
+      // A `\ No newline at end of file` marker is not a content line, so it must not advance the
+      // new-file line counter — otherwise every finding after it is reported one line too high. Mirrors
+      // the sibling analyzers (e.g. undocumented-export.ts) that already skip `\`-prefixed markers.
+      if (!line.startsWith("-") && !line.startsWith("\\")) newLine++;
       continue;
     }
 
@@ -193,6 +255,201 @@ export function scanPatchForIacMisconfig(
         "hardcoded-service-url",
         maxFindings,
       )
+    ) {
+      return findings;
+    }
+    if (
+      PRIVILEGED_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "privileged-container", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      PRIVILEGE_ESCALATION_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "privilege-escalation", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      HOST_PID_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "host-pid-namespace", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      HOST_IPC_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "host-ipc-namespace", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      RUN_AS_ROOT_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "run-as-root", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      RUN_AS_UID_ZERO_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "run-as-root-uid", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      WRITABLE_ROOTFS_RE.test(body) &&
+      pushFinding(
+        findings,
+        seen,
+        path,
+        newLine,
+        "writable-root-filesystem",
+        maxFindings,
+      )
+    ) {
+      return findings;
+    }
+    if (
+      UNMASKED_PROC_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "unmasked-proc-mount", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      UNENCRYPTED_STORAGE_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "unencrypted-storage", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      PUBLIC_DB_RE.test(body) &&
+      pushFinding(
+        findings,
+        seen,
+        path,
+        newLine,
+        "publicly-accessible-database",
+        maxFindings,
+      )
+    ) {
+      return findings;
+    }
+    if (
+      IMDS_V1_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "imdsv1-allowed", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      WORLD_WRITABLE_RE.test(body) &&
+      pushFinding(
+        findings,
+        seen,
+        path,
+        newLine,
+        "world-writable-permissions",
+        maxFindings,
+      )
+    ) {
+      return findings;
+    }
+    if (
+      DOCKER_ADD_REMOTE_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "docker-add-remote-url", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      DOCKER_LATEST_TAG_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "docker-image-latest-tag", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      DOCKER_ROOT_USER_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "docker-root-user", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      REMOTE_SHELL_PIPE_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "remote-shell-pipe", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      INSECURE_DOWNLOAD_FLAG_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "insecure-download-flag", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      SSH_PORT_EXPOSED_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "ssh-port-exposed", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      NPM_UNSAFE_PERM_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "npm-unsafe-perm", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      SUDO_IN_BUILD_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "sudo-in-build", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      HARDCODED_BUILD_SECRET_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "hardcoded-build-secret", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      INSECURE_PIP_INDEX_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "insecure-pip-index", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      DB_SSL_DISABLED_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "db-ssl-disabled", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      GIT_SSL_NO_VERIFY_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "git-ssl-no-verify", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      SSH_HOST_KEY_OFF_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "ssh-host-key-check-off", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      VERIFY_SSL_OFF_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "verify-ssl-off", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      VALIDATE_CERTS_OFF_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "validate-certs-off", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      TLS_SKIP_VERIFY_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "tls-skip-verify", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      TRUST_ALL_CERTS_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "trust-all-server-certs", maxFindings)
     ) {
       return findings;
     }

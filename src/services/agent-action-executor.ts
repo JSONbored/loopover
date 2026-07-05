@@ -16,17 +16,17 @@ import { isAuthorBlacklisted } from "../settings/contributor-blacklist";
 import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
 import { cancelInFlightWorkflowRunsForHeadSha, createInstallationToken, githubErrorStatus, isGitHubRateLimitedError } from "../github/app";
-import { fetchLiveCiAggregate, refreshInstallationHealthForInstallation } from "../github/backfill";
+import { fetchLiveCiAggregate, mergeRequiredCiContexts, refreshInstallationHealthForInstallation } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
+import { ensurePullRequestAssignee } from "../github/assignees";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
 import { closeIssue, closePullRequest, createIssueComment, createPullRequestReview, dismissLatestBotApproval, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
 import { fetchPullRequestFreshness, pullRequestFreshnessDetail } from "../github/pr-freshness";
 import { isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
-import { buildAgentActionAudit, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness, type AgentActionMode } from "../settings/agent-execution";
+import { boundStructuredCloseReasonsForPersistence, buildAgentActionAudit, formatAgentPermissionDenial, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness, type AgentActionMode } from "../settings/agent-execution";
 import type { PlannedAgentAction } from "../settings/agent-actions";
 import type { AgentActionClass, AgentPendingActionParams, AutonomyLevel, AutonomyPolicy } from "../types";
 import { errorMessage } from "../utils/json";
-import { AGENT_LABEL_PENDING_CLOSURE } from "../review/linked-issue-hard-rules";
 import {
   MODERATION_VIOLATION_EVENT_TYPE,
   moderationTierForViolationCount,
@@ -40,10 +40,33 @@ import { incr } from "../selfhost/metrics";
 // autonomy (the config IS the authorization; there is no human commenter to authorize, unlike #824).
 const AGENT_ACTOR = "gittensory";
 
-// The PR-state action classes that require GitHub `pull_requests: write`. `label` mutates via the Issues API
-// (`issues: write`, always held), so it is exempt from the write-permission readiness gate. Exported so the
-// agent-execution test can enforce the invariant that every member is also counted by agentRequiresPrWrite
-// (PR_WRITE_ACTION_CLASSES is a superset), so this runtime guard never disagrees with the readiness gate.
+// Bound on audit_events.detail / the reason embedded in buildAgentActionAudit (#terminal-outcome-audit). A
+// heuristic close/hold reason is built by joining every blocker's title (agent-actions.ts), so an unbounded PR
+// with many blockers could otherwise write an arbitrarily large string; matches the existing 280-char bound
+// already used for mergeBlockedReason (db/repositories.ts) and the merge_blocked audit metadata below.
+const AUDIT_REASON_MAX_LENGTH = 280;
+
+function boundAuditReason(detail: string): string {
+  return detail.length > AUDIT_REASON_MAX_LENGTH ? `${detail.slice(0, AUDIT_REASON_MAX_LENGTH)}…` : detail;
+}
+
+function closeReasonsForAudit(action: PlannedAgentAction): { closeReasons: string[]; closeReasonCount: number } | undefined {
+  if (action.actionClass !== "close") return undefined;
+  const rawReasons = action.closeReasons?.length ? action.closeReasons : [action.reason];
+  // Bound the COUNT first (a cheap slice) so the per-reason string truncation below only ever runs over the
+  // persisted subset, never a potentially unbounded array -- the ORIGINAL count is carried separately as
+  // closeReasonCount so buildAgentActionAudit can still flag truncation correctly even though closeReasons
+  // itself is already bounded by the time it gets there (#3213 review: an unbounded .map(boundAuditReason)
+  // here could exhaust Worker CPU/memory before any cap ran).
+  return {
+    closeReasons: boundStructuredCloseReasonsForPersistence(rawReasons).map((reason) => boundAuditReason(reason)),
+    closeReasonCount: rawReasons.length,
+  };
+}
+
+// The PR-visible action classes that require an elevated GitHub App write permission. Most use
+// `pull_requests: write`; merge uses `contents: write`; `label` mutates through the Issues API, so it is exempt
+// from this readiness gate.
 export const PR_WRITE_CLASSES = new Set<AgentActionClass>(["request_changes", "approve", "merge", "close", "update_branch"]);
 
 const INSTALLATION_HEALTH_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
@@ -58,6 +81,11 @@ function shouldRefreshInstallationHealthAfterPrWriteFailure(installationId: numb
   return true;
 }
 
+/** Test-only: clear the module-level installation health refresh cooldown so each test starts fresh. */
+export function clearInstallationHealthRefreshCooldownForTest(): void {
+  installationHealthRefreshAttempts.clear();
+}
+
 // A known-denied PR-write action (missing pull_requests:write) must not re-run the freshness + live-CI GitHub
 // calls and re-write an identical audit record on every sweep (#selfhost-runtime-drift) -- that burns queue/API
 // cycles on an outcome that cannot change until the maintainer re-consents (which itself only refreshes on the
@@ -68,6 +96,7 @@ function shouldRefreshInstallationHealthAfterPrWriteFailure(installationId: numb
 // for one PR must never silently suppress the FIRST denial audit for a different PR in the same repo/window,
 // or that PR's maintainer never sees why it was denied.
 const PR_WRITE_DENIAL_COOLDOWN_MS = 15 * 60 * 1000;
+const PR_WRITE_DENIAL_COOLDOWN_MAX_ENTRIES = 1024;
 const writePermissionDenialCooldown = new Map<string, number>();
 
 function writePermissionDenialKey(installationId: number, repoFullName: string, pullNumber: number, actionClass: AgentActionClass): string {
@@ -80,7 +109,19 @@ function writePermissionDenialKey(installationId: number, repoFullName: string, 
  *  here -- arming the cooldown before that write lands would mean a transient audit DB failure on the first
  *  denial permanently swallows it (the retry within the window would see the cooldown already armed and never
  *  attempt the audit again). */
+function pruneWritePermissionDenialCooldown(nowMs: number): void {
+  for (const [key, lastDeniedMs] of writePermissionDenialCooldown) {
+    if (nowMs - lastDeniedMs >= PR_WRITE_DENIAL_COOLDOWN_MS) writePermissionDenialCooldown.delete(key);
+  }
+}
+
+function evictOldestWritePermissionDenialCooldownEntry(): void {
+  const oldestKey = writePermissionDenialCooldown.keys().next().value as string;
+  writePermissionDenialCooldown.delete(oldestKey);
+}
+
 function shouldSuppressWritePermissionDenial(key: string, nowMs: number): boolean {
+  pruneWritePermissionDenialCooldown(nowMs);
   const lastDeniedMs = writePermissionDenialCooldown.get(key);
   return lastDeniedMs !== undefined && nowMs - lastDeniedMs < PR_WRITE_DENIAL_COOLDOWN_MS;
 }
@@ -89,12 +130,19 @@ function shouldSuppressWritePermissionDenial(key: string, nowMs: number): boolea
  *  exact denial has actually succeeded, so a failed audit write is retried on the very next pass instead of
  *  being silently suppressed for the whole cooldown window. */
 function markWritePermissionDenialAudited(key: string, nowMs: number): void {
+  pruneWritePermissionDenialCooldown(nowMs);
+  if (writePermissionDenialCooldown.size >= PR_WRITE_DENIAL_COOLDOWN_MAX_ENTRIES) evictOldestWritePermissionDenialCooldownEntry();
   writePermissionDenialCooldown.set(key, nowMs);
 }
 
 /** Test-only: clear the module-level write-permission denial cooldown so each test starts fresh. */
 export function clearWritePermissionDenialCooldownForTest(): void {
   writePermissionDenialCooldown.clear();
+}
+
+/** Test-only: inspect the module-level write-permission denial cooldown size. */
+export function writePermissionDenialCooldownSizeForTest(): number {
+  return writePermissionDenialCooldown.size;
 }
 
 export type AgentActionExecutionContext = {
@@ -119,6 +167,14 @@ export type AgentActionExecutionContext = {
   // executor via getGlobalModerationConfig -- a single extra DB read only on the rare path where a
   // moderation-tracked close actually completed, not threaded through every caller.
   moderationSettings?: ModerationContextSettings | undefined;
+  // settings.expectedCiContexts (#selfhost-ci-verification), resolved by the CALLER (same "the executor has no
+  // settings access" shape as the fields above): the final pre-mutation live-CI re-verification (step 8 below)
+  // must honor the SAME configured-required-contexts view the planning pass already evaluated against, or a
+  // maintainer-configured expectedCiContexts repo could see the plan and its own execution-time re-check
+  // disagree on ciState (e.g. a still-in-progress NON-required check reading "pending" here when the plan's
+  // required-only view was already clean). Absent/undefined ⇒ fold-all mode, unchanged from before this field
+  // existed.
+  expectedCiContexts?: ReadonlyArray<string> | null | undefined;
 };
 
 export type ModerationContextSettings = {
@@ -139,7 +195,7 @@ export type AgentActionOutcome = {
 // establish the label-backed state the verification pass reads, so re-enqueuing the delayed re-review off the plan
 // alone would create a verification loop. `outcomes[i]` is the outcome of `planned[i]` (1:1, same order).
 export function pendingClosureLabelApplied(plan: PlannedAgentAction[], outcomes: AgentActionOutcome[]): boolean {
-  return plan.some((action, index) => action.actionClass === "label" && action.label === AGENT_LABEL_PENDING_CLOSURE && action.labelOp === "add" && outcomes[index]?.outcome === "completed");
+  return plan.some((action, index) => action.actionClass === "label" && action.closeKind === "linked-issue-hard-rule" && action.labelOp === "add" && outcomes[index]?.outcome === "completed");
 }
 
 // #label-close-split-brain: the outcome of the `close` action tagged with `closeKind`, among the actions ALREADY
@@ -162,7 +218,7 @@ function coupledCloseOutcome(planned: PlannedAgentAction[], outcomes: AgentActio
  *   API budget) → label/close correlation → freshness → live-CI re-verification → the real mutation.
  * Only `live` mode performs a real mutation; `dry_run` records what it WOULD do. Every path writes one
  * `agent.action.<class>` audit record (#776) EXCEPT a write-permission denial repeated within
- * PR_WRITE_DENIAL_COOLDOWN_MS of the last one for the same installation/repo/action-class, which is counted but
+ * PR_WRITE_DENIAL_COOLDOWN_MS of the last one for the same installation/repo/PR/action-class, which is counted but
  * not re-audited (#selfhost-runtime-drift). A failed mutation is recorded as `error`, never swallowed.
  */
 export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionExecutionContext, planned: PlannedAgentAction[]): Promise<AgentActionOutcome[]> {
@@ -182,10 +238,15 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     const autonomyLevel = resolveAutonomy(ctx.autonomy, action.autonomyClass ?? action.actionClass);
     const audit = (outcome: AgentActionOutcome["outcome"], detail: string) => {
       const auditOutcome = outcome === "dry_run" ? "completed" : outcome;
-      outcomes.push({ actionClass: action.actionClass, outcome, detail });
+      // Bounded like every other audit-facing reason field in this codebase (agent-action-executor.ts's own
+      // merge_blocked path below, db/repositories.ts's mergeBlockedReason) -- a heuristic close's reason is
+      // built by joining every blocker title, so a PR with many blockers could otherwise write an arbitrarily
+      // large, un-truncated string into audit_events.detail (#terminal-outcome-audit).
+      const boundedDetail = boundAuditReason(detail);
+      outcomes.push({ actionClass: action.actionClass, outcome, detail: boundedDetail });
       return recordAuditEvent(
         env,
-        buildAgentActionAudit({ actionClass: action.actionClass, autonomyLevel, mode, outcome: auditOutcome, repoFullName: ctx.repoFullName, targetKey, actor: AGENT_ACTOR, reason: detail }),
+        buildAgentActionAudit({ actionClass: action.actionClass, autonomyLevel, mode, outcome: auditOutcome, repoFullName: ctx.repoFullName, targetKey, actor: AGENT_ACTOR, reason: boundedDetail, ...closeReasonsForAudit(action) }),
       );
     };
 
@@ -212,11 +273,11 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       await audit("queued", `awaiting maintainer approval — ${action.reason}`);
       continue;
     }
-    // 5) Write-permission readiness: a PR-write action needs `pull_requests: write` granted. Checked here --
-    //    before the freshness/live-CI GitHub calls below -- so a known-denied action never spends that API
-    //    budget on an outcome that cannot change until the maintainer re-consents (#selfhost-runtime-drift).
-    //    `label` mutates via the Issues API (`issues: write`, always held), so it is exempt from this gate.
-    if (PR_WRITE_CLASSES.has(action.actionClass) && resolveAgentPermissionReadiness({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions }) !== "ready") {
+    // 5) Write-permission readiness: a PR-visible action needs its exact GitHub App write permission granted.
+    //    Merge is Contents: write, while review/close/update_branch are Pull requests: write. Checked here
+    //    before the freshness/live-CI GitHub calls below so a known-denied action never spends that API budget on
+    //    an outcome that cannot change until the maintainer re-consents (#selfhost-runtime-drift).
+    if (PR_WRITE_CLASSES.has(action.actionClass) && resolveAgentPermissionReadiness({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions, actionClass: action.actionClass }) !== "ready") {
       incr("gittensory_agent_action_permission_denied_total", { actionClass: action.actionClass });
       const cooldownKey = writePermissionDenialKey(ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.actionClass);
       if (shouldSuppressWritePermissionDenial(cooldownKey, Date.now())) {
@@ -226,11 +287,11 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
         outcomes.push({
           actionClass: action.actionClass,
           outcome: "denied",
-          detail: "pull_requests: write not granted — maintainer must re-consent (suppressed repeat)",
+          detail: formatAgentPermissionDenial({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions, actionClass: action.actionClass, suppressed: true }),
         });
         continue;
       }
-      await audit("denied", "pull_requests: write not granted — maintainer must re-consent");
+      await audit("denied", formatAgentPermissionDenial({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions, actionClass: action.actionClass }));
       markWritePermissionDenialAudited(cooldownKey, Date.now());
       continue;
     }
@@ -240,30 +301,37 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     //    leave a PR mislabeled "closed for X" while still open. A coupled close that is still "queued" (awaiting
     //    the SAME approval) or "completed" lets the label through unchanged; a close with no `closeKind` match
     //    (e.g. a plain review_state_label) is unaffected.
+    let pairedCloseOutcome: AgentActionOutcome["outcome"] | undefined;
     if (action.actionClass === "label" && action.closeKind) {
-      const closeOutcome = coupledCloseOutcome(planned, outcomes, action.closeKind);
-      if (closeOutcome === "denied" || closeOutcome === "error") {
-        await audit("denied", `paired ${action.closeKind} close did not complete (${closeOutcome}) — skipping the companion label so the PR isn't mislabeled while still open`);
+      pairedCloseOutcome = coupledCloseOutcome(planned, outcomes, action.closeKind);
+      if (pairedCloseOutcome === "denied" || pairedCloseOutcome === "error") {
+        await audit("denied", `paired ${action.closeKind} close did not complete (${pairedCloseOutcome}) — skipping the companion label so the PR isn't mislabeled while still open`);
         continue;
       }
     }
     // 7) Freshness guard: every supported live action mutates PR state or PR-visible output, so it must still
     //    target the reviewed, open head. This protects approval-queue replays and slow webhook jobs from
-    //    force-pushes or manual closes that happen after the review was planned.
+    //    force-pushes or manual closes that happen after the review was planned. A companion anti-abuse label
+    //    whose paired close just completed in this same batch reuses the close's already-passed guard: the
+    //    successful close intentionally flips the PR to closed, so a second open-PR freshness read would deny
+    //    the label for the state transition this executor just performed.
     const expectedHeadSha = action.expectedHeadSha ?? ctx.headSha ?? null;
-    if (!expectedHeadSha) {
-      await audit("denied", "live PR head guard unavailable — action not executed");
-      continue;
-    }
-    const freshness = await fetchPullRequestFreshness(env, {
-      installationId: ctx.installationId,
-      repoFullName: ctx.repoFullName,
-      pullNumber: ctx.pullNumber,
-      expectedHeadSha,
-    });
-    if (freshness.status !== "current") {
-      await audit("denied", `${pullRequestFreshnessDetail(freshness)} — action not executed`);
-      continue;
+    const freshnessAlreadyProvenByPairedClose = action.actionClass === "label" && action.closeKind !== undefined && pairedCloseOutcome === "completed";
+    if (!freshnessAlreadyProvenByPairedClose) {
+      if (!expectedHeadSha) {
+        await audit("denied", "live PR head guard unavailable — action not executed");
+        continue;
+      }
+      const freshness = await fetchPullRequestFreshness(env, {
+        installationId: ctx.installationId,
+        repoFullName: ctx.repoFullName,
+        pullNumber: ctx.pullNumber,
+        expectedHeadSha,
+      });
+      if (freshness.status !== "current") {
+        await audit("denied", `${pullRequestFreshnessDetail(freshness)} — action not executed`);
+        continue;
+      }
     }
     // 8) Live CI re-verification for a merge or a CI-driven heuristic close (#2128): the CI aggregate that drove
     //    either decision was read seconds-to-tens-of-seconds earlier, in the planning pass, and the freshness
@@ -283,7 +351,10 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     if (action.actionClass === "merge" || (action.actionClass === "close" && action.closeRequiresCiState === "failed") || isAmbiguousLegacyHeuristicClose) {
       const ciToken = await createInstallationToken(env, ctx.installationId).catch(() => undefined);
       const admissionKey = githubRateLimitAdmissionKeyForToken(env, ciToken, ctx.installationId);
-      const liveCi = await fetchLiveCiAggregate(env, ctx.repoFullName, expectedHeadSha, ciToken, undefined, admissionKey);
+      // mergeRequiredCiContexts(null, ...) -- no live branch-protection re-fetch here, just the maintainer's own
+      // configured expectedCiContexts (or null/fold-all when unset), matching the "no branch protection" arm of
+      // the planning pass's own merge (mergeRequiredCiContexts is pure and already exported for that call site).
+      const liveCi = await fetchLiveCiAggregate(env, ctx.repoFullName, expectedHeadSha, ciToken, mergeRequiredCiContexts(null, ctx.expectedCiContexts), admissionKey);
       // The planner itself only ever stages a merge when ciState === "passed" exactly (reviewGood in
       // agent-actions.ts; "pending" short-circuits to no actions at all upstream) -- the live re-check must
       // require the SAME exact state, not just "not failed". Otherwise a check that regressed to pending or
@@ -335,9 +406,9 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       }
     } catch (error) {
       await audit("error", errorMessage(error));
-      // RC3 terminal-fail merges: a merge that fails on perms (403/405) / required-check-absent (409) / a real
-      // conflict can NEVER complete for this commit — mark it terminally merge-blocked so the planner stops
-      // re-planning it every sweep. A possibly-transient failure is retried up to MERGE_RETRY_CAP then held.
+      // RC3 terminal-fail merges: immediate terminal failures (401/405/409/conflict) are marked once; generic
+      // GitHub 403s are retryable first because branch-protection/check/conversation state can converge shortly
+      // after the gate publishes. A possibly-transient failure is retried up to MERGE_RETRY_CAP, then held.
       if (action.actionClass === "merge" && ctx.headSha) {
         await handleMergeFailure(env, ctx, error);
       }
@@ -453,7 +524,7 @@ async function auditContributorCapCiCancelFailed(env: Env, targetKey: string, re
 
 async function recordContributorCapCiCancelOutcome(env: Env, ctx: AgentActionExecutionContext, headSha: string): Promise<void> {
   const targetKey = `${ctx.repoFullName}#${ctx.pullNumber}`;
-  const outcome = await cancelInFlightWorkflowRunsForHeadSha(env, ctx.installationId, ctx.repoFullName, headSha);
+  const outcome = await cancelInFlightWorkflowRunsForHeadSha(env, ctx.installationId, ctx.repoFullName, headSha, ctx.pullNumber);
   if (outcome.kind === "cancelled") {
     await auditContributorCapCiCancelled(env, targetKey, ctx.repoFullName, headSha, outcome);
     return;
@@ -512,10 +583,15 @@ export async function executeIssueMaintenanceActions(env: Env, ctx: IssueActionE
     const autonomyLevel = resolveAutonomy(ctx.autonomy, action.autonomyClass ?? action.actionClass);
     const audit = (outcome: AgentActionOutcome["outcome"], detail: string) => {
       const auditOutcome = outcome === "dry_run" ? "completed" : outcome;
-      outcomes.push({ actionClass: action.actionClass, outcome, detail });
+      // Bounded like every other audit-facing reason field in this codebase (agent-action-executor.ts's own
+      // merge_blocked path below, db/repositories.ts's mergeBlockedReason) -- a heuristic close's reason is
+      // built by joining every blocker title, so a PR with many blockers could otherwise write an arbitrarily
+      // large, un-truncated string into audit_events.detail (#terminal-outcome-audit).
+      const boundedDetail = boundAuditReason(detail);
+      outcomes.push({ actionClass: action.actionClass, outcome, detail: boundedDetail });
       return recordAuditEvent(
         env,
-        buildAgentActionAudit({ actionClass: action.actionClass, autonomyLevel, mode, outcome: auditOutcome, repoFullName: ctx.repoFullName, targetKey, actor: AGENT_ACTOR, reason: detail }),
+        buildAgentActionAudit({ actionClass: action.actionClass, autonomyLevel, mode, outcome: auditOutcome, repoFullName: ctx.repoFullName, targetKey, actor: AGENT_ACTOR, reason: boundedDetail, ...closeReasonsForAudit(action) }),
       );
     };
 
@@ -558,11 +634,9 @@ export async function executeIssueMaintenanceActions(env: Env, ctx: IssueActionE
   return outcomes;
 }
 
-// RC3: persist the outcome of a FAILED merge so it is never retried blindly forever. A non-transient failure
-// (403/405 perms, 409 required-check-absent, merge conflict) is terminal immediately; an otherwise-unclassified
-// failure (e.g. base moved during the merge — a benign TOCTOU race) is retried up to MERGE_RETRY_CAP and then
-// escalated to the same terminal hold. Either way the planner suppresses the merge for this head SHA and the PR
-// is held for a human (never auto-closed).
+// RC3: persist only TERMINAL failed-merge outcomes. Auth/policy/conflict failures are terminal immediately; a
+// generic GitHub 403 is not, because it also covers branch-protection/check/conversation convergence after the
+// bot publishes its own review/check. Retry those up to MERGE_RETRY_CAP before holding the PR for a human.
 async function handleMergeFailure(env: Env, ctx: AgentActionExecutionContext, error: unknown): Promise<void> {
   const headSha = ctx.headSha;
   /* v8 ignore next -- guarded at the call site; defensive. */
@@ -653,18 +727,35 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
       await updatePullRequestBranch(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, updateSha ?? undefined);
       return;
     }
+    case "assign": {
+      const login = action.assignee ?? "";
+      if (!login) return;
+      const result = await ensurePullRequestAssignee(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, login);
+      if (!result.applied) {
+        // GitHub silently drops an assignee lacking push/triage access to the repo -- the common case for an
+        // external contributor. Fall back to a per-login label instead of a comment: ensurePullRequestLabel's
+        // own GET dedup makes this idempotent, so a repeated sweep never re-posts/spams once the label exists.
+        // Prefix kept short ("by:", not "contributor:") -- GitHub logins run up to 39 chars and label names cap
+        // at 50, so a longer prefix can push a valid max-length login past the limit and fail this fallback for
+        // exactly the contributors it exists to cover.
+        await ensurePullRequestLabel(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, `by:${login}`, { createMissingLabel: true });
+      }
+      return;
+    }
   }
 }
 
 /** The execute-time payload of a planned action, persisted so the approval queue (#779) can run it on accept. */
 export function actionParams(action: PlannedAgentAction): AgentPendingActionParams {
   return {
+    ...(action.autonomyClass !== undefined ? { autonomyClass: action.autonomyClass } : {}),
     ...(action.label !== undefined ? { label: action.label } : {}),
     ...(action.labelOp !== undefined ? { labelOp: action.labelOp } : {}),
     ...(action.comment !== undefined ? { comment: action.comment } : {}),
     ...(action.reviewBody !== undefined ? { reviewBody: action.reviewBody } : {}),
     ...(action.mergeMethod !== undefined ? { mergeMethod: action.mergeMethod } : {}),
     ...(action.closeComment !== undefined ? { closeComment: action.closeComment } : {}),
+    ...(action.closeReasons !== undefined ? { closeReasons: [...boundStructuredCloseReasonsForPersistence(action.closeReasons)] } : {}),
     ...(action.expectedHeadSha !== undefined ? { expectedHeadSha: action.expectedHeadSha } : {}),
     ...(action.dismissStaleApproval !== undefined ? { dismissStaleApproval: action.dismissStaleApproval } : {}),
     // Round-trip closeKind so a staged close's kind survives to accept-time — without it, the close-precision
@@ -674,6 +765,11 @@ export function actionParams(action: PlannedAgentAction): AgentPendingActionPara
     // Round-trip the CI dependency separately from closeKind: closeKind is intentionally broad (gate-verdict /
     // duplicate / slop / CI) for the close-precision breaker, but only red-CI closes need the live-CI guard.
     ...(action.closeRequiresCiState !== undefined ? { closeRequiresCiState: action.closeRequiresCiState } : {}),
+    // Round-trip the mergeable-state dependency likewise: only a conflict-justified close needs the approval
+    // queue's accept-time mergeable-state recheck (see the field's doc comment on AgentPendingActionParams).
+    ...(action.closeRequiresMergeableState !== undefined ? { closeRequiresMergeableState: action.closeRequiresMergeableState } : {}),
+    // Round-trip the concrete-evidence tag so the breaker's exemption still applies when a staged close accepts.
+    ...(action.closeConcreteEvidence !== undefined ? { closeConcreteEvidence: action.closeConcreteEvidence } : {}),
   };
 }
 

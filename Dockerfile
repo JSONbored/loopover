@@ -45,8 +45,12 @@ RUN mkdir -p /home/node/.npm-global /home/node/.npm \
     && ln -s /data/codex /home/node/.codex \
     && chown -h node:node /home/node/.codex \
     && chown -R node:node /home/node/.npm-global /home/node/.npm
+# `npm install -g` populates ~/.npm/_cacache (the download cache) as a side effect, but nothing at
+# runtime ever reads it -- left alone it becomes ~180MB of dead weight baked permanently into this
+# layer (measured: node_modules for both CLIs together is ~465MB, the npm cache adds another ~180MB
+# on top for zero runtime benefit). `npm cache clean --force` after the install trims that for free.
 USER node
-RUN if [ "$INSTALL_AI_CLIS" = "true" ]; then npm install -g --foreground-scripts @anthropic-ai/claude-code@2.1.187 @openai/codex@0.142.0; fi
+RUN if [ "$INSTALL_AI_CLIS" = "true" ]; then npm install -g --foreground-scripts @anthropic-ai/claude-code@2.1.187 @openai/codex@0.142.0 && npm cache clean --force; fi
 USER root
 # Optional: enable visual review via an external Chrome sidecar (e.g. `browserless/chrome:latest`).
 # Build with `--build-arg INSTALL_VISUAL_REVIEW=true` then set BROWSER_WS_ENDPOINT=<ws-url> at runtime.

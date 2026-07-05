@@ -6,10 +6,11 @@ export const AUTONOMY_LEVELS = ["observe", "suggest", "propose", "auto_with_appr
 
 // The write-action classes the maintainer auto-maintain layer (#778) can take on a PR. `review_state_label`
 // (#label-scoping) is a separate class from `label`: it gates the planner's own disposition-communication
-// labels (ready-to-merge / changes-requested / needs-human-review / migration-collision / pending-closure /
+// labels (ready-to-merge / changes-requested / manual-review / migration-collision / pending-closure /
 // new-account), independent of the anti-abuse enforcement labels (blacklist/contributor-cap/review-nag), which
-// ride on `close` instead -- see agent-actions.ts.
-export const AGENT_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label", "review_state_label", "update_branch"] as const;
+// ride on `close` instead -- see agent-actions.ts. `assign` (#3182) is its own independent class, same shape:
+// best-effort assignment of the PR's opening contributor, unrelated to merge/close/approve.
+export const AGENT_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label", "review_state_label", "update_branch", "assign"] as const;
 
 // Deny-by-default: any action class with no explicit, valid level resolves to this.
 export const DEFAULT_AUTONOMY_LEVEL: AutonomyLevel = "observe";

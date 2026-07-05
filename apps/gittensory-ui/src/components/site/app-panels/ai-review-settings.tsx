@@ -176,9 +176,9 @@ export function AiReviewSettings({ reviewability }: { reviewability: Array<{ pr:
             AI review &amp; BYOK
           </h2>
           <p className="mt-1 text-token-xs text-muted-foreground">
-            Free Cloudflare Workers AI by default. Bring your own Anthropic/OpenAI key for a
-            frontier-quality advisory write-up — your key, your provider account. Consensus blocking
-            always uses the free models and only applies to confirmed contributors.
+            Uses the operator's default reviewer by default. Bring your own Anthropic/OpenAI key for
+            a frontier-quality advisory write-up — your key, your provider account. Consensus
+            blocking always uses the default reviewer and only applies to confirmed contributors.
           </p>
         </div>
         <StatusPill status={mode === "off" ? "info" : mode === "block" ? "warn" : "ready"}>

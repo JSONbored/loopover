@@ -101,6 +101,13 @@ MCP_ACTUATION_REPO_ALLOWLIST=owner/repo-one, owner/repo-two
 # Restore pre-upgrade any-repo behavior:
 # MCP_ACTUATION_REPO_ALLOWLIST=*`}
       />
+      <p>
+        <code>MCP_READ_REPO_ALLOWLIST</code> is the same fail-closed/wildcard model, kept as a{" "}
+        <strong>separate</strong> allowlist so read-only MCP tools (repo context, issue quality,
+        watch subscriptions) can be granted independently of actuation trust. The full{" "}
+        <code>*</code>/<code>all</code> wildcard additionally unlocks the non-repo-scoped
+        contributor/operator tools.
+      </p>
 
       <h2>GitHub API cache</h2>
       <p>
@@ -157,8 +164,12 @@ GITTENSORY_REVIEW_REPUTATION=false`}
 
       <h2>Private per-repo config</h2>
       <p>
-        Mount a gitignored directory and point <code>GITTENSORY_REPO_CONFIG_DIR</code> at it. The
-        first matching file wins and replaces the public repo config for that review.
+        Mount a gitignored directory and point <code>GITTENSORY_REPO_CONFIG_DIR</code> at it. If
+        either a per-repo file or the dir-root global default (<code>.gittensory.yml</code> at the
+        mount root) exists, the public repo <code>.gittensory.yml</code> is never fetched for that
+        review. With only one of the two present, its contents are used as-is; with both present,
+        they are deep-merged — the per-repo file overlaid onto the global default, nested mappings
+        merging key by key and arrays replacing wholesale.
       </p>
       <CodeBlock
         filename="config directory"

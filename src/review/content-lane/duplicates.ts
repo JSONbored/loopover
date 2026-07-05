@@ -176,6 +176,20 @@ function normalizeHostname(hostname: string): string {
   return hostname.toLowerCase().replace(/^www\./, "");
 }
 
+// RFC 3986 §2.3 unreserved set: a percent-encoding of one of these characters is equivalent to the bare character.
+const UNRESERVED_CHARACTER = /^[A-Za-z0-9\-._~]$/;
+
+// Canonicalize percent-encoding so two URLs that differ only in how a character is encoded collapse to one form
+// (RFC 3986 §2.1/§2.3): decode a triplet that encodes an unreserved character (`%7E`→`~`, `%41`→`A`), and
+// uppercase the hex digits of every other triplet (`%2f`→`%2F`). Reserved/other encodings are preserved and only
+// case-normalized, so `%2F` never collapses into a literal `/` — a genuinely different path is never conflated.
+function normalizePercentEncoding(segment: string): string {
+  return segment.replace(/%[0-9A-Fa-f]{2}/g, (triplet) => {
+    const char = String.fromCharCode(parseInt(triplet.slice(1), 16));
+    return UNRESERVED_CHARACTER.test(char) ? char : triplet.toUpperCase();
+  });
+}
+
 function normalizeUrl(value: unknown, spec: ContentRepoSpec): string {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -208,7 +222,9 @@ function normalizeUrl(value: unknown, spec: ContentRepoSpec): string {
       }
     }
 
-    parsed.pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+    // RFC 3986 §2.1/§2.3 percent-encoding normalization so a path that differs only in how a character is encoded
+    // (`/%7Euser` ≡ `/~user`, `/a%2fb` ≡ `/a%2Fb`) collapses to one canonical form for duplicate detection.
+    parsed.pathname = normalizePercentEncoding(parsed.pathname).replace(/\/+$/, "") || "/";
     return parsed.toString().replace(/\/$/, "");
   } catch {
     return "";

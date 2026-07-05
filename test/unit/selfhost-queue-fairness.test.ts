@@ -122,6 +122,40 @@ describe("pickBacklogRepo (#selfhost-backlog-convergence)", () => {
     expect(pickBacklogRepo(candidates, "owner/a")).toBe("owner/b");
   });
 
+  it("advances to the successor of the last-claimed repo even when older repos remain pending", () => {
+    const candidates = [
+      { repo: "owner/a", oldestPendingAgeMs: 5000 },
+      { repo: "owner/b", oldestPendingAgeMs: 3000 },
+      { repo: "owner/c", oldestPendingAgeMs: 1000 },
+    ];
+    // sorted stalest-first: a(5000), b(3000), c(1000) — last-claimed b -> rotate to c.
+    expect(pickBacklogRepo(candidates, "owner/b")).toBe("owner/c");
+  });
+
+  it("visits every repo under sustained backlog instead of alternating between the top two", () => {
+    const candidates = [
+      { repo: "owner/a", oldestPendingAgeMs: 5000 },
+      { repo: "owner/b", oldestPendingAgeMs: 3000 },
+      { repo: "owner/c", oldestPendingAgeMs: 1000 },
+    ];
+    const claimed: string[] = [];
+    let lastClaimedRepo: string | null = null;
+
+    for (let claim = 0; claim < 6; claim += 1) {
+      const repo = pickBacklogRepo(candidates, lastClaimedRepo);
+      expect(repo).not.toBeNull();
+      claimed.push(repo as string);
+      lastClaimedRepo = repo;
+    }
+
+    expect(claimed).toEqual(["owner/a", "owner/b", "owner/c", "owner/a", "owner/b", "owner/c"]);
+  });
+
+  it("re-serves the only candidate even when it was the last-claimed repo (nothing else to rotate to)", () => {
+    const candidates = [{ repo: "owner/b", oldestPendingAgeMs: 5000 }];
+    expect(pickBacklogRepo(candidates, "owner/b")).toBe("owner/b");
+  });
+
   it("falls back to the stalest repo when the last-claimed repo has since drained (no longer a candidate)", () => {
     const candidates = [{ repo: "owner/b", oldestPendingAgeMs: 5000 }];
     expect(pickBacklogRepo(candidates, "owner/a")).toBe("owner/b");

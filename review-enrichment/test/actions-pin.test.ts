@@ -99,6 +99,42 @@ test("scanWorkflowPins ignores patches without added mutable third-party uses", 
   );
 });
 
+test("scanWorkflowPins does not let a no-newline marker skew the line number", () => {
+  // `\ No newline at end of file` is not a new-file line; advancing past it would cite the
+  // mutable uses: one line too high (same class as the iac-misconfig / redos regression).
+  // First added line is an official action (not flagged) so only the third-party pin is asserted.
+  const findings = scanWorkflowPins(
+    workflowPath,
+    [
+      "@@ -1,1 +1,2 @@",
+      "-    - uses: actions/checkout@v3",
+      "\\ No newline at end of file",
+      "+    - uses: actions/checkout@v4",
+      "+    - uses: pnpm/action-setup@v3",
+    ].join("\n"),
+  );
+  assert.deepEqual(findings, [
+    { file: workflowPath, line: 2, action: "pnpm/action-setup", ref: "v3" },
+  ]);
+});
+
+test("scanWorkflowPins accepts uppercase and mixed-case 40-char SHA pins", () => {
+  // Git SHAs are case-insensitive; an uppercase/mixed-case full SHA is still an immutable pin.
+  const upperSha = "A".repeat(40);
+  const mixedSha = `${"a".repeat(20)}${"B".repeat(20)}`;
+  assert.deepEqual(
+    scanWorkflowPins(
+      workflowPath,
+      [
+        "@@ -1,0 +1,2 @@",
+        `+    - uses: tj-actions/changed-files@${upperSha}`,
+        `+    - uses: docker/login-action@${mixedSha}`,
+      ].join("\n"),
+    ),
+    [],
+  );
+});
+
 test("scanActionPins scans only changed workflow YAML files with patches", async () => {
   const findings = await scanActionPins({
     repoFullName: "o/r",

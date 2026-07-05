@@ -31,9 +31,14 @@ declare global {
       /** Atomic "set only if absent": returns true when this call newly claimed the key, false when it was
        *  already held by someone else. Unlike a get-then-set pair, there is no window where two concurrent
        *  callers can both observe an absent key and both claim it — the store (e.g. Redis SET NX) performs the
-       *  check-and-set as one operation. Optional so a cache adapter that hasn't implemented it yet still
-       *  type-checks; callers fall back to the non-atomic get/set pair when absent (#2129). */
+       *  check-and-set as one operation. Must be paired with `releaseIfValue` — self-host boot rejects
+       *  `claim()` without it; runtime callers fail open without exclusivity rather than pin locks (#2129). */
       claim?(key: string, value: string, ttlSeconds: number): Promise<boolean>;
+      /** Atomic compare-and-delete: deletes `key` only when its current value equals `value`, returning whether
+       *  it was removed. Lets a lock holder release its OWN claim without risking a stale post-TTL release
+       *  deleting a different holder's live claim on the same key. Required on any adapter that implements
+       *  `claim()` (validated at self-host boot). */
+      releaseIfValue?(key: string, value: string): Promise<boolean>;
     };
     /** TODO (convergence follow-up): a per-PR LOCK Durable Object (`SubmissionLock` mutex) is a separate,
      *  more-involved sub-task — it needs the ported DO class + its own migration tag, not just a binding here.
@@ -42,7 +47,13 @@ declare global {
     PUBLIC_SITE_ORIGIN?: string;
     AI_SUMMARIES_ENABLED?: string;
     AI_PUBLIC_COMMENTS_ENABLED?: string;
+    /** Model id for a genuine Cloudflare Workers AI binding only — no live deployment (hosted or self-host)
+     *  binds `env.AI` to Workers AI today (see CONVERGENCE_RUNBOOK.md), and self-host discards any
+     *  `@cf/`-prefixed value here. Self-host operators should use the provider-specific `*_AI_MODEL` vars below. */
     WORKERS_AI_SUMMARY_MODEL?: string;
+    /** Daily spend cap in Cloudflare Workers AI "neurons" for the free/default-reviewer path (shared across
+     *  ai-review/ai-slop/ai-summaries/planner). The unit name is a Workers-AI holdover; it's applied as a
+     *  provider-agnostic heuristic budget regardless of which configured provider actually serves the request. */
     AI_DAILY_NEURON_BUDGET?: string;
     /** Per-repository/day cap for maintainer-paid BYOK AI review provider calls. */
     AI_BYOK_DAILY_REPO_LIMIT?: string;
@@ -50,12 +61,15 @@ declare global {
     /** Optional Cloudflare AI Gateway id for legacy env.AI-compatible adapters. Self-host review execution should
      *  prefer provider-specific AI_* configuration instead. */
     AI_GATEWAY_ID?: string;
-    /** Self-host AI provider selection + dual-review config (#dual-ai-combiner). `AI_PROVIDER` is a comma list of
-     *  providers (claude-code, codex, anthropic, ollama, …); `AI_COMBINE` picks single|consensus|synthesis (default
-     *  synthesis for two); `AI_ON_MERGE` is the synthesis rule either|both. Provider-specific model/effort/timeout
-     *  vars keep Claude/Codex/OpenAI/Ollama/Anthropic config explicit. `AI_REVIEW_PLAN` is the resolved plan
-     *  (computed from these at boot in server.ts and read at the review call site); undefined on cloud. */
+    /** Self-host AI provider selection + reviewer config (#dual-ai-combiner). `AI_PROVIDER` is a comma list of
+     *  providers (claude-code, codex, anthropic, ollama, ...). By default, the first provider is the reviewer and
+     *  the first distinct later provider is its fallback; `AI_DUAL_REVIEW=1` makes the first two providers run as
+     *  independent reviewers. In dual mode, `AI_COMBINE` picks single|consensus|synthesis and `AI_ON_MERGE` is the
+     *  synthesis rule either|both. Provider-specific model/effort/timeout vars keep Claude/Codex/OpenAI/Ollama/
+     *  Anthropic config explicit. `AI_REVIEW_PLAN` is the resolved plan (computed from these at boot in server.ts
+     *  and read at the review call site); undefined on cloud. */
     AI_PROVIDER?: string;
+    AI_DUAL_REVIEW?: string;
     AI_COMBINE?: string;
     AI_ON_MERGE?: string;
     CLAUDE_AI_MODEL?: string;
@@ -75,7 +89,7 @@ declare global {
     ANTHROPIC_AI_BASE_URL?: string;
     ANTHROPIC_AI_MODEL?: string;
     AI_REVIEW_PLAN?: {
-      reviewers: Array<{ model: string }>;
+      reviewers: Array<{ model: string; fallback?: string | null | undefined }>;
       combine: import("./services/ai-review").CombineStrategy;
       onMerge?: import("./services/ai-review").OnMerge | undefined;
     };

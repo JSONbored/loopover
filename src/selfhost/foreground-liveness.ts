@@ -23,11 +23,18 @@ const DEFAULT_MAX_DEFER_MS = 10 * 60_000; // 10 minutes -- long enough to not fi
 // (which typically resolves within DEFAULT_GITHUB_RATE_LIMIT_RETRY_MS + jitter, see queue-common.ts), short
 // enough that live contributor-PR-review work is never parked anywhere near the ~65-minute worst case.
 const DEFAULT_CHECK_INTERVAL_MS = 60_000; // 1 minute
+// Ramp-up cap (#selfhost-queue-liveness): a large inherited backlog (the production incident this module
+// exists for had ~190 over-deferred foreground jobs) must not release ALL of it in one sweep tick -- that
+// many jobs re-attempting GitHub reads at once can immediately re-trip the same rate-limit bucket they were
+// deferred for, undoing the release. Draining a couple dozen per minute clears even a large backlog within
+// several minutes while never presenting GitHub with more than a bounded burst.
+const DEFAULT_MAX_RELEASE_PER_SWEEP = 25;
 
 export interface ForegroundLivenessConfig {
   enabled: boolean;
   maxDeferMs: number;
   checkIntervalMs: number;
+  maxReleasePerSweep: number;
 }
 
 function foregroundLivenessEnabled(): boolean {
@@ -43,6 +50,7 @@ export function resolveForegroundLivenessConfig(): ForegroundLivenessConfig {
     enabled: foregroundLivenessEnabled(),
     maxDeferMs: parsePositiveIntEnv("FOREGROUND_LIVENESS_MAX_DEFER_MS", { min: 60_000, fallback: DEFAULT_MAX_DEFER_MS }),
     checkIntervalMs: parsePositiveIntEnv("FOREGROUND_LIVENESS_CHECK_INTERVAL_MS", { min: 5_000, fallback: DEFAULT_CHECK_INTERVAL_MS }),
+    maxReleasePerSweep: parsePositiveIntEnv("FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP", { min: 1, fallback: DEFAULT_MAX_RELEASE_PER_SWEEP }),
   };
 }
 
@@ -55,4 +63,30 @@ export function resolveForegroundLivenessConfig(): ForegroundLivenessConfig {
  *  MAINTENANCE_ADMISSION_ENABLED=false). */
 export function isForegroundDeferralStale(config: ForegroundLivenessConfig, pendingSinceMs: number, nowMs: number): boolean {
   return config.enabled && nowMs - pendingSinceMs >= config.maxDeferMs;
+}
+
+/** PURE ramp-up selection: given every candidate ELIGIBLE for release this sweep (already filtered by
+ *  isForegroundDeferralStale or a live rate-limit-clear check -- this function does not itself decide
+ *  eligibility), pick at most `maxReleasePerSweep` of them, prioritizing candidates whose rate-limit bucket is
+ *  CURRENTLY clear before using age order. The stale-age backstop must not let an older still-blocked bucket
+ *  monopolize the global ramp-up cap and starve newer clear-bucket foreground work across repeated sweeps.
+ *  When candidates already fit within the cap, every one is released (a small/moderate backlog is never
+ *  artificially throttled) -- the cap only engages for a genuinely large backlog, gradually draining it over
+ *  several sweep ticks instead of releasing hundreds of jobs into one instant. Ties broken by the original
+ *  array order (stable) so behavior is deterministic given the same input. Pure. */
+export function selectForegroundDeferralsToRelease<T extends { pendingSinceMs: number; rateLimitClear: boolean }>(
+  candidates: readonly T[],
+  maxReleasePerSweep: number,
+): T[] {
+  if (candidates.length <= maxReleasePerSweep) return [...candidates];
+  return [...candidates]
+    .map((candidate, index) => ({ candidate, index }))
+    .sort(
+      (a, b) =>
+        Number(b.candidate.rateLimitClear) - Number(a.candidate.rateLimitClear) ||
+        a.candidate.pendingSinceMs - b.candidate.pendingSinceMs ||
+        a.index - b.index,
+    )
+    .slice(0, maxReleasePerSweep)
+    .map(({ candidate }) => candidate);
 }

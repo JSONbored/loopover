@@ -13,6 +13,8 @@
 #   this file  >  per-repo dashboard/API settings  >  built-in safe defaults
 #   The typed `gate:` block below is an alias for the gate fields and wins over
 #   the generic `settings:` block for those same fields.
+#   Hard path guardrails are an explicit config-as-code exception: omitted or
+#   [] means no path guardrails, never hidden engine defaults.
 #
 # SAFE BY DEFAULT: with no file and no dashboard row, a repo falls back to a
 # quiet, non-blocking profile — gate off, AI review off, slop scoring off,
@@ -95,6 +97,32 @@ gate:
   # Bool. Default: false (gate off).
   enabled: true
 
+  # Review-CHECK publish mode (#2852) — controls ONLY whether/how the "Gittensory Orb Review Agent"
+  # check-run is created/updated on GitHub. Never affects gate evaluation, comments, labels, audit
+  # records, or autonomous merge/close — all of those run identically in every mode (the autonomous
+  # decision engine already excludes the bot's own check-run from the live CI it merges/closes against,
+  # specifically to avoid a self-deadlock). Takes precedence over the legacy `enabled` boolean above
+  # when both are set; when unset, `enabled: true` maps to `required` and `enabled: false` maps to
+  # `disabled` for backward compatibility.
+  #   required — legacy/current behavior: publish/update the check exactly as before. Use this if you
+  #              intentionally keep it as a required branch-protection status check.
+  #   visible  — publish/update the SAME check-run, but for UI visibility only. Never add this check as
+  #              a required branch-protection status check — behaves identically to `required` on the
+  #              publish side (same API calls); the distinction is purely how you configure GitHub.
+  #   disabled — never create/update the check-run at all. RECOMMENDED for high-volume autonomous
+  #              self-hosting: avoids GitHub showing "Expected — Waiting for status to be reported"
+  #              under review-queue pressure, and reduces GitHub API calls (no check-run create/update).
+  #              Before switching to `disabled`, remove "Gittensory Orb Review Agent" from this repo's
+  #              branch-protection / ruleset required-status-checks list — Gittensory cannot do this on
+  #              your behalf (it is a GitHub branch-protection setting), and leaving it required with
+  #              nothing to satisfy it means GitHub will show a pending status forever. Keep your real
+  #              CI/codecov/security checks required — this only ever affects Gittensory's own check.
+  # required | visible | disabled. Default: disabled for a never-configured repo (matches the existing
+  # opt-in default); an already-configured repo keeps its current effective behavior. RECOMMENDED for
+  # high-volume autonomous self-hosting: `visible` or `disabled`, not `required` — Gittensory's own
+  # merge/close decisions never depend on this check either way.
+  checkMode: visible
+
   # Policy pack.
   #   gittensor      — confirmed-contributor-gated, registry-aware.
   #   oss-anti-slop  — runs the deterministic rules against ANY author on ANY repo.
@@ -139,9 +167,9 @@ gate:
     # the gate. Bool. Default: false.
     aiAdvisory: false
 
-  # Oversized-PR gate. A PR at/above BOTH the file-count and line-count thresholds
+  # Oversized-PR gate. A PR at/above EITHER the file-count or line-count threshold
   # (engine defaults, not configurable here) gets a manual-review HOLD finding —
-  # never a hard blocker, so it's dry-run/advisory friendly regardless of mode.
+  # never a hard blocker; mode only turns this hold signal on or off.
   # off | advisory | block. Default: off. Config-as-code only — no DB column or
   # dashboard toggle; this can only be set here.
   size:
@@ -206,11 +234,12 @@ gate:
   # DB-backed (dashboard-settable too); this overrides the stored value.
   selfAuthoredLinkedIssue: advisory
 
-  # Gate-wide dry-run. When true, the gate evaluates and posts its verdict as
-  # normal but never actually blocks/merges/closes based on it — useful for
-  # trialing a stricter pack or mode change against real traffic before
-  # enforcing it. Bool. Default: false. Config-as-code only — no DB column or
-  # dashboard toggle; this can only be set here.
+  # Gate-check dry-run. When true, the posted check conclusion remains the real
+  # non-enforcing verdict while comments/check text may also show the would-be
+  # stricter verdict for AI-review blocker mode. It does not disable downstream
+  # merge/close planning for failures from already-enforced gates. Bool.
+  # Default: false. Config-as-code only — no DB column or dashboard toggle;
+  # this can only be set here.
   dryRun: false
 
   # First-time-contributor grace. RESERVED / currently INERT: this value is
@@ -265,8 +294,9 @@ gate:
     # String or null. Default: null (the key record's model, else a conservative
     # per-provider default).
     model: null
-    # Minimum calibrated AI-reviewer confidence (0-1) for a consensus defect to
-    # become a blocker; below this it stays advisory-only. Number 0–1, or null.
+    # Minimum calibrated AI-reviewer confidence (0-1) recorded for cache and
+    # calibration context. Under `mode: block`, consensus and split AI-review
+    # defects still block regardless of this floor. Number 0–1, or null.
     # Default: null (engine uses 0.93). Config-as-code only — no DB column or
     # dashboard toggle; this can only be set here.
     closeConfidence: null
@@ -320,12 +350,23 @@ settings:
   # Bool. Default: true.
   typeLabelsEnabled: true
 
-  # Per-repo override of the three TYPE label NAMES. Omit any key to keep its default. Map with
-  # string values bug/feature/priority. Default: gittensor:bug / gittensor:feature / gittensor:priority.
+  # Per-repo TYPE label config: an open `category -> label name` map, not fixed to three names.
+  # `bug`/`feature`/`priority` are the built-in categories `deriveKindFromTitle` and
+  # `linkedIssueLabelPropagation` classify (default gittensor:bug / gittensor:feature /
+  # gittensor:priority, shown below as an EXAMPLE, not an engine requirement) -- omit any of the three
+  # to keep its default. Add any number of your OWN categories beyond them (they are never chosen by
+  # title-classification, only ever by a `linkedIssueLabelPropagation` mapping below, but registering
+  # the name here makes it participate in the same mutual-exclusivity cleanup). An explicit `{}` means
+  # zero configured categories for this repo -- distinct from omitting `typeLabels` entirely, which
+  # inherits whatever the dashboard/API has stored.
   # typeLabels:
   #   bug: gittensor:bug
   #   feature: gittensor:feature
   #   priority: gittensor:priority
+  #   security: area:security
+  #   docs: area:docs
+  #   dependency: area:dependency
+  #   custom: maintainer:custom
 
   # Linked-issue label propagation (#priority-linked-issue-gate): the ONLY mechanism that can select a
   # label like `gittensor:priority` -- it is NEVER inferred from a PR's title, changed files, AI
@@ -355,6 +396,18 @@ settings:
   # Bool. Default: false.
   includeMaintainerAuthors: false
 
+  # Standing rule: the repo OWNER's own PRs (and ADMIN_GITHUB_LOGINS fleet-operator PRs, #2133) are NEVER
+  # auto-closed by default -- they may still auto-merge when clean + passing, or fall to a manual hold.
+  # Set true to make owner/admin-authored PRs eligible for auto-close like a contributor's (still gated by
+  # the `close` autonomy class below + adverse-signal conditions). Automation-bot PRs stay exempt regardless
+  # of this setting. Bool. Default: false.
+  closeOwnerAuthors: false
+
+  # Hard manual-review path guardrails are config-as-code only. Omit or use [] for no path guardrails;
+  # set concrete globs when otherwise-mergeable PRs touching those paths must be held for a person.
+  # This never falls back to hidden engine path defaults.
+  hardGuardrailGlobs: []
+
   # Require a linked issue on every PR (dashboard equivalent of the toggle that
   # can auto-promote gate.linkedIssue to block). Bool. Default: false.
   requireLinkedIssue: false
@@ -381,10 +434,12 @@ settings:
   # #label-scoping):
   #   1. Context label (`gittensorLabel`, gated by `autoLabelEnabled` above) — the base per-PR marker shown
   #      to the public surface, subject to `publicAudienceMode`/`publicSurface`/author-qualification.
-  #   2. Taxonomy/type label (`gittensor:bug`/`gittensor:feature`/`gittensor:priority`, gated by
-  #      `typeLabelsEnabled` above) — internal triage metadata, applied independently of #1. bug/
-  #      feature come from the PR title; priority ONLY from `linkedIssueLabelPropagation` above —
-  #      never inferred from title, files, AI, or existing PR labels (#priority-linked-issue-gate).
+  #   2. Taxonomy/type labels (`typeLabels` above, gated by `typeLabelsEnabled`) — internal triage
+  #      metadata, applied independently of #1. Shown above with the gittensor:* default names, but
+  #      the category set itself is config, not fixed to three (#label-modularity): bug/feature come
+  #      from the PR title; priority (or any other category you register) ONLY from
+  #      `linkedIssueLabelPropagation` above — never inferred from title, files, AI, or existing PR
+  #      labels (#priority-linked-issue-gate).
   #   3. Autonomy-outcome labels (`gittensory:ready-to-merge` etc.) — gated by the `review_state_label`
   #      autonomy class below, advisory commentary on the bot's own verdict.
   #   4. Anti-abuse enforcement labels (blacklist/contributor-cap/review-nag) — gated by the `close`
@@ -484,3 +539,26 @@ settings:
   # commandRateLimitMaxPerWindow: 20        # Positive integer. Per-command invocation limit for a CHEAP command (cache-only, no AI call) within the window. Default: 20.
   # commandRateLimitAiMaxPerWindow: 5       # Positive integer. Tighter limit for an AI-cost-bearing command (ask/blockers/preflight/reviewability/packet/duplicate-check/next-action/repo-fit). Default: 5.
   # commandRateLimitWindowHours: 24         # Positive integer. Rolling window (hours) both limits above count against. Default: 24.
+
+# Per-repo activation overrides for the converged review features that ship behind a deployment-wide
+# GITTENSORY_REVIEW_* env kill-switch (rag/reputation/unifiedComment/safety). Each key is `true` (force on
+# for this repo, subject to the env flag still being enabled), `false` (force off), or omitted (falls back
+# to the GITTENSORY_REVIEW_REPOS allowlist default -- an operator who sets nothing keeps today's behavior).
+# features:
+#   rag: true
+#   reputation: false
+#   unifiedComment: true
+#   safety: true
+
+# Registry-review lane (#2435): lets a self-hosted maintainer point gittensory at their OWN structured
+# registry (e.g. a subnet/plugin/package catalog) without a gittensory code change -- reviewing additions
+# to a data file the same way it reviews code. Uncomment and set at least entryFileGlob + collectionField
+# (both required; the block is ignored with a warning if either is missing).
+# contentLane:
+#   entryFileGlob: registry/*.json      # Glob for the structured entry files this lane reviews. Required.
+#   collectionField: entries            # The JSON field holding the collection this lane diffs. Required.
+#   providerFileGlob: providers/*.ts    # Optional glob for source files the entries are validated against.
+#   artifactGlob: dist/registry.json    # Optional glob for a generated/build artifact to cross-check.
+#   maxAppendedEntries: 1               # Positive integer cap on new entries per PR. Default: unbounded.
+#   duplicateKeyFields: [slug]          # Field name(s) used to detect a duplicate entry. Default: [] (no dedup check).
+#   validatorId: my-registry-validator  # Optional identifier for a custom per-entry validator. Default: none.

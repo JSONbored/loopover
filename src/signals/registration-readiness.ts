@@ -1,4 +1,5 @@
 import type { RegistryRepoConfig, RepositoryRecord, RepositorySettings } from "../types";
+import { shouldPublishReviewCheck } from "../review/check-names";
 import { nowIso } from "../utils/json";
 import type { ConfigQuality, ContributorIntakeHealth, LabelAudit, LaneAdvice, MaintainerCutReadiness, QueueHealth } from "./engine";
 import { compileFocusManifestPolicy, type FocusManifest } from "./focus-manifest";
@@ -36,6 +37,7 @@ export type GithubAppBehavior = {
   publicAudienceMode: RepositorySettings["publicAudienceMode"];
   checkRunMode: RepositorySettings["checkRunMode"];
   gateCheckMode: RepositorySettings["gateCheckMode"];
+  reviewCheckMode: RepositorySettings["reviewCheckMode"];
   quietByDefault: boolean;
   behavior: string;
   warnings: string[];
@@ -129,11 +131,12 @@ function buildGithubAppBehavior(repo: RepositoryRecord | null, settings: Reposit
     publicAudienceMode: settings.publicAudienceMode,
     checkRunMode: settings.checkRunMode,
     gateCheckMode: settings.gateCheckMode,
+    reviewCheckMode: settings.reviewCheckMode,
     quietByDefault,
     behavior: !installed
       ? "Gittensory would stay silent because the GitHub App is not installed."
       : settings.publicSurface === "off"
-        ? `Gittensory stays quiet: no public comments or labels${settings.gateCheckMode === "enabled" ? ", with the opt-in gate check still enabled" : ""}.`
+        ? `Gittensory stays quiet: no public comments or labels${shouldPublishReviewCheck(settings.reviewCheckMode) ? ", with the opt-in gate check still enabled" : ""}.`
         : `Gittensory posts ${settings.publicSurface.replace(/_/g, " ")} in ${settings.publicAudienceMode.replace(/_/g, " ")} mode, ${quietByDefault ? "quiet by default" : "for all PRs"}.`,
     warnings,
   };

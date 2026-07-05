@@ -35,6 +35,13 @@ const EXPECTED_ANALYZERS = [
   "approvalIntegrity",
   "ciCheckSignals",
   "undocumentedExport",
+  "staleBranch",
+  "commitHygiene",
+  "pendingReviewRequests",
+  "testRatio",
+  "migrationSafety",
+  "looseRange",
+  "terminology",
 ];
 
 test("analyzer descriptors cover the runtime registry in stable order", () => {

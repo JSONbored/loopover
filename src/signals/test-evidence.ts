@@ -2,7 +2,7 @@ export function isTestPath(file: string): boolean {
   return (
     /(^|\/)(test|tests|spec|__tests__)\//i.test(file) ||
     /(^|\/)src\/test\//i.test(file) ||
-    /(^|\/)[^/]+_test\.(go|py|rb)$/i.test(file) ||
+    /(^|\/)[^/]+_test\.(go|py|rb|dart)$/i.test(file) || // Dart/Flutter `foo_test.dart` co-located with source
     /(^|\/)test_[^/]*\.py$/i.test(file) || // pytest's default `test_*.py` prefix convention (the suffix rule above only catches `*_test.py`)
     /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
     /\.(test|spec)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs)$/i.test(file) ||

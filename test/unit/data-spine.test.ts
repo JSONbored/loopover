@@ -20,6 +20,7 @@ import {
   listPullRequestReviews,
   listRecentMergedPullRequests,
   listRepoLabels,
+  listLatestSignalSnapshotsForTargets,
   listRepoSyncStates,
   listSignalSnapshots,
   countOpenIssues,
@@ -487,5 +488,28 @@ describe("data spine repositories", () => {
 
     // No-op (no throw) when the PR row does not exist yet.
     await expect(updatePullRequestSlopAssessment(env, "owner/sloppr", 999, { slopRisk: 5, slopBand: "low" })).resolves.toBeUndefined();
+  });
+});
+
+describe("listLatestSignalSnapshotsForTargets (#3202 — bulk latest-per-target lookup)", () => {
+  it("returns an empty map without querying the DB for an empty target-key list", async () => {
+    const env = createTestEnv();
+    expect(await listLatestSignalSnapshotsForTargets(env, "queue-health", [])).toEqual(new Map());
+  });
+
+  it("resolves the LATEST snapshot per target key in one call, ignores other signal types, and omits an unmatched key", async () => {
+    const env = createTestEnv();
+    await persistSignalSnapshot(env, { id: "a-old", signalType: "repo-doc-refresh-attempt", targetKey: "owner/a", payload: {}, generatedAt: "2026-01-01T00:00:00.000Z" });
+    await persistSignalSnapshot(env, { id: "a-new", signalType: "repo-doc-refresh-attempt", targetKey: "owner/a", payload: {}, generatedAt: "2026-06-01T00:00:00.000Z" });
+    await persistSignalSnapshot(env, { id: "b-only", signalType: "repo-doc-refresh-attempt", targetKey: "owner/b", payload: {}, generatedAt: "2026-03-01T00:00:00.000Z" });
+    // Same target key, but a DIFFERENT signal type -- must not leak into the result.
+    await persistSignalSnapshot(env, { id: "a-other-signal", signalType: "queue-health", targetKey: "owner/a", payload: {}, generatedAt: "2026-12-01T00:00:00.000Z" });
+
+    const result = await listLatestSignalSnapshotsForTargets(env, "repo-doc-refresh-attempt", ["owner/a", "owner/b", "owner/c"]);
+
+    expect(result.size).toBe(2);
+    expect(result.get("owner/a")).toMatchObject({ id: "a-new", generatedAt: "2026-06-01T00:00:00.000Z" });
+    expect(result.get("owner/b")).toMatchObject({ id: "b-only", generatedAt: "2026-03-01T00:00:00.000Z" });
+    expect(result.has("owner/c")).toBe(false);
   });
 });

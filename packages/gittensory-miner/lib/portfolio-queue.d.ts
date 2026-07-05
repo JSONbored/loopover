@@ -11,14 +11,14 @@ export type QueueEntry = {
 export type EnqueueItem = {
   repoFullName: string;
   identifier: string;
-  priority?: number;
+  priority?: number | null;
 };
 
 export type PortfolioQueueStore = {
   dbPath: string;
   enqueue(item: EnqueueItem): QueueEntry;
   dequeueNext(): QueueEntry | null;
-  listQueue(repoFullName?: string): QueueEntry[];
+  listQueue(repoFullName?: string | null): QueueEntry[];
   markDone(repoFullName: string, identifier: string): QueueEntry | null;
   close(): void;
 };
@@ -33,7 +33,7 @@ export function enqueue(item: EnqueueItem): QueueEntry;
 
 export function dequeueNext(): QueueEntry | null;
 
-export function listQueue(repoFullName?: string): QueueEntry[];
+export function listQueue(repoFullName?: string | null): QueueEntry[];
 
 export function markDone(repoFullName: string, identifier: string): QueueEntry | null;
 

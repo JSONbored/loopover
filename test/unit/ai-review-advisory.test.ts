@@ -189,7 +189,9 @@ describe("runAiReviewForAdvisory", () => {
     const env = aiEnv(async () => { throw new Error("ollama unavailable"); });
     Object.assign(env as unknown as Record<string, unknown>, {
       AI_PROVIDER: "anthropic,ollama",
-      AI_REVIEW_PLAN: { reviewers: [{ model: "ollama" }], combine: "single" },
+      ANTHROPIC_AI_MODEL: "claude-sonnet-4-6",
+      OLLAMA_AI_MODEL: "llama3.1",
+      AI_REVIEW_PLAN: { reviewers: [{ model: "anthropic", fallback: "ollama" }], combine: "single" },
     });
     const result = await runAiReviewForAdvisory(env, { settings: { aiReviewMode: "advisory" } as RepositorySettings, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", confirmedContributor: true });
     expect(result).toMatchObject({
@@ -197,7 +199,7 @@ describe("runAiReviewForAdvisory", () => {
       findings: [expect.objectContaining({ code: "ai_review_inconclusive" })],
     });
     const usage = await env.DB.prepare("SELECT model FROM ai_usage_events WHERE feature = 'ai_review_pr' ORDER BY created_at DESC LIMIT 1").first<{ model: string }>();
-    expect(usage?.model).toBe("ollama");
+    expect(usage?.model).toBe("anthropic:claude-sonnet-4-6->ollama:llama3.1");
   });
 
   it("no-ops for a non-confirmed contributor under the gittensor pack and when there is no head SHA", async () => {
@@ -582,7 +584,7 @@ describe("runAiReviewForAdvisory", () => {
     // Simulate a webhook pass already in-flight for this exact (repo, PR, head, mode) tuple — the caller under
     // test (a sweep-shaped pass, say) must defer instead of racing it with a second, independently-decided
     // LLM call.
-    expect(await claimAiReviewLock(env, "acme/widgets", 3, "sha3", "block")).toBe(true);
+    expect((await claimAiReviewLock(env, "acme/widgets", 3, "sha3", "block")).acquired).toBe(true);
 
     const result = await runAiReviewForAdvisory(env, {
       settings: { aiReviewMode: "block" } as RepositorySettings,

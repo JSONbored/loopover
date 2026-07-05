@@ -7,7 +7,7 @@
 
 import type { AdvisoryFinding } from "../types";
 import { neutralizePromptInjection, safeReviewTitle } from "./prompt-injection";
-import { scanForSecrets } from "./secrets-scan";
+import { scanDiffForSecretsWithLocations } from "./secrets-scan";
 
 // Concrete credential formats only — NOT the weak heuristics (`seed_or_mnemonic` / `bittensor_key`) that
 // false-positive on legitimate config/workflow content. A `coldkey:` / `hotkey =` line or the word
@@ -29,6 +29,11 @@ const HARD_SECRET_KINDS = new Set([
   "aws_access_key",
   "slack_token",
   "google_api_key",
+  "gitlab_token",
+  "npm_token",
+  "stripe_secret_key",
+  "sendgrid_key",
+  "huggingface_token",
   "jwt",
   "generic_secret_assignment",
 ]);
@@ -80,6 +85,10 @@ export function defangReviewInput(input: SafetyReviewInput): {
   return { title, body, diff, changedFiles };
 }
 
+// #3041: cap the number of locations listed in a finding's `detail` so a single PR with dozens of hits still
+// produces a readable comment; anything past the cap is summarized as an omitted count instead of listed.
+const MAX_REPORTED_SECRET_LOCATIONS = 5;
+
 /**
  * Scan the PR diff for leaked secrets and, on a hit, return ONE critical `secret_leak` advisory finding (else
  * null). Mapped to gittensory's {@link AdvisoryFinding} shape. The gate treats this code as a hard blocker
@@ -89,34 +98,37 @@ export function defangReviewInput(input: SafetyReviewInput): {
  * in *.toml, .github/workflows/**, or wrangler/workers config). This is UNCONDITIONAL (#audit-3.4): a concrete,
  * real-format committed credential is a leak on any repo, so the caller runs it regardless of the safety flag /
  * review allowlist (unlike the prompt-injection defang, which stays flag-gated).
+ *
+ * #3041: scans the RAW diff directly — `scanDiffForSecretsWithLocations` does its own +/- line-type
+ * distinguishing (only added lines and added/renamed file paths are scanned, matching the previous
+ * added-only-text behavior) while also tracking each hit's file:line, so the finding can point a maintainer
+ * straight at the flagged content instead of forcing them to re-derive it from the whole diff.
  */
 export function secretLeakFinding(diff: string): AdvisoryFinding | null {
-  // Scan ONLY additions — the secrets THIS change introduces. A token on a removed/context line is not being
-  // committed by the PR, so flagging it would wrongly block a change that merely REMOVES or refactors a
-  // secret-shaped string (e.g. deleting/defanging a test fixture, or rotating a credential out). Added/renamed
-  // file paths are also committed PR state, but buildSecretScanDiff carries them only in `### path (status)`
-  // headers, so keep those metadata lines while still dropping modified/removed headers and `+++` patch headers.
-  const added = diff
-    .split("\n")
-    .filter(
-      (line) =>
-        (line.startsWith("+") && !line.startsWith("+++")) ||
-        /^### .+ \((?:added|renamed)\) /.test(line),
-    )
-    .join("\n");
   // Only CONCRETE credential formats hard-block. The raw scanner also returns the weak `seed_or_mnemonic` /
   // `bittensor_key` heuristics, which false-positive on `coldkey:` / `hotkey =` / "mnemonic" lines in
   // legitimate config/workflow files (RC6); those are filtered out here so they never produce a `secret_leak`
   // blocker. A real token (github_token, aws_access_key, …) still blocks regardless of which file it is in.
-  const kinds = scanForSecrets(added).kinds.filter((kind) =>
-    HARD_SECRET_KINDS.has(kind),
+  const hits = scanDiffForSecretsWithLocations(diff).filter((match) =>
+    HARD_SECRET_KINDS.has(match.kind),
   );
-  if (kinds.length === 0) return null;
+  if (hits.length === 0) return null;
+  const kinds = [...new Set(hits.map((hit) => hit.kind))].sort();
+  const locations = hits.map((hit) =>
+    hit.line === 0 ? `${hit.path} (filename)` : `${hit.path}:${hit.line}`,
+  );
+  const uniqueLocations = [...new Set(locations)];
+  const shown = uniqueLocations.slice(0, MAX_REPORTED_SECRET_LOCATIONS);
+  const omitted = uniqueLocations.length - shown.length;
+  const locationSummary =
+    omitted > 0
+      ? `Found at: ${shown.join(", ")} (+${omitted} more location${omitted === 1 ? "" : "s"})`
+      : `Found at: ${shown.join(", ")}`;
   return {
     code: "secret_leak",
     severity: "critical",
     title: `Possible leaked secret in the diff (${kinds.join(", ")})`,
-    detail: `The PR diff matches secret pattern(s): ${kinds.join(", ")}. A committed credential must be rotated and removed from the change before merge.`,
+    detail: `The PR diff matches secret pattern(s): ${kinds.join(", ")}. ${locationSummary}. A committed credential must be rotated and removed from the change before merge.`,
     action:
       "Remove the secret from the diff, rotate the exposed credential, then re-run the gate.",
   };

@@ -137,6 +137,8 @@ jobs:
           # Full history so Codecov can resolve the merge base for patch coverage.
           fetch-depth: 0
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Neutralize untrusted npm config
+        run: rm -f .npmrc
       - name: Setup Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
@@ -203,9 +205,35 @@ jobs:
       - name: cf-typegen drift check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run cf-typegen:check
+      # Same drift class as cf-typegen/schema-drift above, just a different generated artifact: this file's
+      # firstReference line numbers point into src/selfhost/ai.ts, so any backend change that shifts those
+      # lines (not just one that adds/removes an env var) can make it stale. Was previously enforced ONLY by
+      # the local `npm run test:ci` aggregate script, never by this workflow -- went stale twice in one day
+      # (2026-07-04) with zero CI signal until someone happened to run the full local script. Gated on `ui`
+      # too, not just `backend`: the generated file itself lives under apps/gittensory-ui/**, so a PR that
+      # hand-edits it (or a docs page docs:drift-check below cross-checks) without touching backend source
+      # would otherwise never re-run this check.
+      - name: Selfhost env-reference drift check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.ui == 'true' }}
+        run: npm run selfhost:env-reference:check
+      # Same generated-artifact-drift class, extracted from src/github/commands.ts's command catalogs (#3046).
+      # Also local-only until now; same backend-or-ui gating rationale as the step above.
+      - name: Command reference drift check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.ui == 'true' }}
+        run: npm run command-reference:check
+      # Cross-checks docs pages against source-of-truth enumerable surfaces (feature flags, commands, gate
+      # modes) -- see the script's own header comment. Also local-only until now; gated on `ui` as well as
+      # `backend` since the docs pages it validates are themselves UI-side content that can drift on their
+      # own (a docs-only edit that renames/drops a documented flag/command/gate-mode) with no backend change
+      # to trigger a re-check otherwise.
+      - name: Docs drift check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.ui == 'true' }}
+        run: npm run docs:drift-check
       - name: Validate observability configs
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.observability == 'true' }}
-        run: npm run selfhost:validate-observability
+        env:
+          NODE_OPTIONS: ""
+        run: node scripts/validate-observability-configs.mjs
       - name: Typecheck
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run typecheck

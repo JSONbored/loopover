@@ -58,7 +58,10 @@ export function resolveAiPolicyVerdict(docs: {
   aiUsage: string | null | undefined;
   contributing: string | null | undefined;
 }): AiPolicyVerdict {
-  if (docs.aiUsage !== null && docs.aiUsage !== undefined) {
+  // An empty or whitespace-only AI-USAGE.md carries no policy and must fall through to CONTRIBUTING.md,
+  // exactly as an absent (null/undefined) file does — otherwise a stub AI-USAGE.md silently fails open and
+  // swallows a real ban declared in CONTRIBUTING.md (#2305).
+  if (docs.aiUsage !== null && docs.aiUsage !== undefined && docs.aiUsage.trim().length > 0) {
     return scanAiPolicyText(docs.aiUsage, "AI-USAGE.md");
   }
   if (docs.contributing !== null && docs.contributing !== undefined) {

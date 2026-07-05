@@ -18,11 +18,6 @@ wantedPaths:
   - wrangler.jsonc
   - apps/gittensory-ui/
 
-blockedPaths:
-  - site/
-  - CNAME
-  - "**/lovable/**"
-
 preferredLabels:
   - bug
   - enhancement
@@ -49,7 +44,7 @@ gate:
     minScore: 60
   # aiReview:                  # opt-in AI maintainer review (off by default; needs the AI flags enabled)
   #   mode: advisory           # block | advisory | off — block only blocks on a dual-model consensus defect
-  #   byok: false              # use a maintainer Anthropic/OpenAI key for the write-up; consensus stays free Workers AI
+  #   byok: false              # use a maintainer Anthropic/OpenAI key for the write-up; consensus stays on the free/default reviewer
   #   allAuthors: false        # true reviews every PR author with the selected self-host model(s)
   #   provider: anthropic      # anthropic | openai — which BYOK provider (the secret key is set via the dashboard, never here)
   #   model: claude-3-5-sonnet-latest   # optional model override for the BYOK write-up
@@ -63,6 +58,13 @@ gate:
 #   fields:                                             # show/hide rows (default: all shown). Stable keys:
 #     relatedWork: false                                # linkedIssue | relatedWork | reviewLoad (Change scope) |
 #     openPrQueue: false                                # validationEvidence (Validation posture) | openPrQueue (Contributor workload) | contributorContext | gateResult
+
+# Repo-doc generation roadmap (#2993/#3002) — opt-in only, off by default. Uncomment to let Gittensory open a
+# PR generating AGENTS.md/CLAUDE.md from this repo's own profile.
+# repoDocGeneration:
+#   enabled: true                   # default false — must be explicitly turned on per repo
+#   scope: [agents]                 # agents | skills — which generated file types are in play
+#   allowOverwriteExisting: false   # required before Gittensory will touch an existing hand-maintained file
 
 publicNotes:
   - Prefer backend Workers, MCP, GitHub App, registry, and scoring work when scope allows.

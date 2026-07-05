@@ -71,24 +71,23 @@ export function nextForegroundLane(
 export type BacklogRepoCandidate = { repo: string; oldestPendingAgeMs: number };
 
 /**
- * Per-repo round-robin for the backlog lane: pick the repo whose oldest pending backlog job is stalest,
- * EXCEPT when that repo was also the last one served — in that case, rotate to the next-stalest so a single
- * repo with a deep backlog cannot monopolize every backlog-lane claim and starve every other repo's backlog.
- * A `lastClaimedRepo` no longer present in `candidates` (its backlog fully drained since) falls back to the
- * stalest overall, same as a first-ever pick. Pure.
+ * Per-repo round-robin for the backlog lane: sort repos by their oldest pending backlog job, then pick the
+ * successor of the last served repo in that deterministic order. The first-ever pick, or a drained
+ * `lastClaimedRepo` no longer present in `candidates`, starts at the stalest repo. Pure.
  */
 export function pickBacklogRepo(candidates: readonly BacklogRepoCandidate[], lastClaimedRepo: string | null): string | null {
   if (candidates.length === 0) return null;
   const sorted = [...candidates].sort((a, b) => b.oldestPendingAgeMs - a.oldestPendingAgeMs || a.repo.localeCompare(b.repo));
-  // sorted.length is provably >0 past the early return above, so every index below is in bounds.
-  const stalest = sorted[0] as BacklogRepoCandidate;
-  if (!lastClaimedRepo) return stalest.repo;
-  const lastIndex = sorted.findIndex((candidate) => candidate.repo === lastClaimedRepo);
-  if (lastIndex === -1) return stalest.repo;
-  return (sorted[(lastIndex + 1) % sorted.length] as BacklogRepoCandidate).repo;
+  const lastIndex = lastClaimedRepo === null ? -1 : sorted.findIndex((candidate) => candidate.repo === lastClaimedRepo);
+  const next = sorted[(lastIndex + 1) % sorted.length] as BacklogRepoCandidate;
+  return next.repo;
 }
 
-const AGENT_REGATE_PR_JOB_KEY_PREFIX = "agent-regate-pr:";
+// Exported so the queue backends' own topBacklogRepos SQL (COUNT/GROUP BY/ORDER BY/LIMIT pushed into the
+// database, #selfhost-lane-observability gate review) can bind the identical prefix rather than duplicating
+// the literal — this module stays the single source of truth for the `agent-regate-pr:{repo}#{pr}` job_key
+// shape (queue-common.ts's jobCoalesceKey).
+export const AGENT_REGATE_PR_JOB_KEY_PREFIX = "agent-regate-pr:";
 
 /**
  * Derive per-repo backlog candidates from raw pending backlog-lane job rows (job_key + created_at), rather than
@@ -115,3 +114,5 @@ export function backlogRepoCandidatesFromJobKeys(
   }
   return [...oldestAgeByRepo.entries()].map(([repo, oldestPendingAgeMs]) => ({ repo, oldestPendingAgeMs }));
 }
+
+export type BacklogRepoCount = { repo: string; count: number };

@@ -40,12 +40,12 @@ describe("Workers AI summaries", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("reports unavailable Workers AI bindings when summaries are enabled", async () => {
+  it("reports unavailable AI provider when summaries are enabled", async () => {
     const env = createTestEnv({ AI_SUMMARIES_ENABLED: "true" });
 
     await expect(summarizeAgentBundleWithAi(env, bundleFixture(), "private")).resolves.toEqual({
       status: "unavailable",
-      reason: "Workers AI binding is not configured.",
+      reason: "AI provider is not configured.",
     });
   });
 
@@ -63,7 +63,7 @@ describe("Workers AI summaries", () => {
     expect(result).toMatchObject({ status: "ok" });
     expect(result.status === "ok" ? result.text : "").not.toMatch(/wallet|payout/i);
     expect(run).toHaveBeenCalledWith(
-      "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+      "",
       expect.objectContaining({
         messages: expect.arrayContaining([expect.objectContaining({ role: "user", content: expect.not.stringContaining("source code") })]),
       }),
@@ -249,7 +249,7 @@ describe("Workers AI summaries", () => {
     });
     await expect(summarizeAgentBundleWithAi(thrown, bundleFixture(), "private")).resolves.toMatchObject({
       status: "error",
-      reason: "workers_ai_failed",
+      reason: "ai_summary_failed",
     });
   });
 
@@ -336,8 +336,8 @@ describe("optional deterministic-summary rewrite layer", () => {
     const run = vi.fn(async () => ({ response: "Default-config summary." }));
     const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
     const result = await rewriteSignalBundleWithAi(env, rewriteReq());
-    expect(result).toMatchObject({ status: "ok", model: "@cf/meta/llama-3.1-8b-instruct-fp8-fast" });
-    expect(run).toHaveBeenCalledWith("@cf/meta/llama-3.1-8b-instruct-fp8-fast", expect.objectContaining({ max_tokens: 256 }));
+    expect(result).toMatchObject({ status: "ok", model: "" });
+    expect(run).toHaveBeenCalledWith("", expect.objectContaining({ max_tokens: 256 }));
   });
 
   it("resolves the rewrite path's SHARED neuron budget like ai-review/ai-slop: default 10M, ceiling 10M, invalid → default (#1369)", async () => {
@@ -367,7 +367,7 @@ describe("optional deterministic-summary rewrite layer", () => {
     await expect(rewriteSignalBundleWithAi(publicEnv({}, throwingRun), rewriteReq())).resolves.toMatchObject({
       status: "error",
       text: DETERMINISTIC_BODY,
-      reason: "workers_ai_failed",
+      reason: "ai_summary_failed",
     });
   });
 

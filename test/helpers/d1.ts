@@ -117,6 +117,13 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
         transientCache.set(key, value);
         return true;
       },
+      // Mirrors createRedisCache's atomic compare-and-delete (#2129): only deletes when the stored value still
+      // equals the caller's own token, so a stale holder's release can never delete a different, live claim.
+      async releaseIfValue(key: string, value: string) {
+        if (transientCache.get(key) !== value) return false;
+        transientCache.delete(key);
+        return true;
+      },
     },
     // Per-repo review allowlist: default to the test repos so flag-ON wiring tests activate the
     // gated review features. Override to "" to assert the dormant (no-repo) default.

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { issueOrbEnrollment } from "../../src/orb/broker";
 import { relayForward } from "../../src/orb/webhook";
@@ -12,6 +12,10 @@ const seedInstall = (e: Env, id: number, cols: Record<string, string | number | 
   return db(e).prepare(`INSERT INTO orb_github_installations (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`).bind(...keys.map((k) => all[k] as string | number | null)).run();
 };
 const brokeredEnv = () => createTestEnv({ ORB_BROKER_ENABLED: "true", TOKEN_ENCRYPTION_SECRET: "test-encryption-key-material-0001" });
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 const enroll = async (e: Env, id: number): Promise<string> => {
   await seedInstall(e, id);
   return ((await issueOrbEnrollment(e, id)) as { secret: string }).secret;
@@ -239,11 +243,27 @@ describe("relayForward (deferred forward + failure persistence, #orb-ack-fast)",
     expect(row).toMatchObject({ installation_id: 820, event_name: "pull_request" });
   });
 
-  it("does NOT persist when the forward is skipped (enrolled but no relay) and never throws", async () => {
+  it("persists a TRANSIENT skip (enrolled push mode, relay not registered yet) for the retry cron", async () => {
     const e = brokeredEnv();
+    const warnLog = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await enroll(e, 821); // enrolled, but no relay registered → forwardOrbEvent skips before any fetch
     await expect(relayForward(e, { eventName: "pull_request", installationId: 821, deliveryId: "rf-skip", rawBody: "{}" })).resolves.toBeUndefined();
-    expect(await db(e).prepare("SELECT delivery_id FROM orb_relay_failures WHERE delivery_id='rf-skip'").first()).toBeFalsy();
+    const row = await db(e).prepare("SELECT installation_id, event_name FROM orb_relay_failures WHERE delivery_id='rf-skip'").first<{ installation_id: number; event_name: string }>();
+    expect(row).toMatchObject({ installation_id: 821, event_name: "pull_request" });
+    expect(warnLog.mock.calls.some(([line]) => String(line).includes("orb_relay_transient_skip") && String(line).includes('"phase":"initial"'))).toBe(true);
+  });
+
+  it("does NOT persist terminal no-enrollment skips for the retry cron", async () => {
+    const e = brokeredEnv();
+    await relayForward(e, { eventName: "pull_request", installationId: 822, deliveryId: "rf-no-enrollment", rawBody: '{"payload":true}' });
+    expect(await db(e).prepare("SELECT delivery_id FROM orb_relay_failures WHERE delivery_id='rf-no-enrollment'").first()).toBeFalsy();
+  });
+
+  it("does NOT persist permanently non-forwardable skips (check_run)", async () => {
+    const e = brokeredEnv();
+    await enroll(e, 8211);
+    await relayForward(e, { eventName: "check_run", installationId: 8211, deliveryId: "rf-check-run", rawBody: "{}" });
+    expect(await db(e).prepare("SELECT delivery_id FROM orb_relay_failures WHERE delivery_id='rf-check-run'").first()).toBeFalsy();
   });
 });
 
@@ -380,6 +400,37 @@ describe("retryFailedRelays", () => {
     expect(row ?? null).toBeNull(); // skipped = no longer applicable → cleaned up
   });
 
+  it("DELETES a row when the installation no longer has an active enrollment", async () => {
+    const e = brokeredEnv();
+    await storeRelayFailure(e, { deliveryId: "no-enrollment-retry", eventName: "pull_request", installationId: 9604, rawBody: "{}" });
+    await retryFailedRelays(e);
+    const row = await db(e).prepare("SELECT delivery_id FROM orb_relay_failures WHERE delivery_id='no-enrollment-retry'").first();
+    expect(row ?? null).toBeNull();
+  });
+
+  it("KEEPS retrying a forwardable event when forwardOrbEvent skips due to transient config (no relay URL)", async () => {
+    const e = brokeredEnv();
+    const warnLog = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await enroll(e, 9602); // enrolled push mode, relay not registered yet
+    await storeRelayFailure(e, { deliveryId: "transient-skip", eventName: "pull_request", installationId: 9602, rawBody: "{}" });
+    await retryFailedRelays(e);
+    const row = await db(e).prepare("SELECT attempts, last_attempt_at FROM orb_relay_failures WHERE delivery_id='transient-skip'").first<{ attempts: number; last_attempt_at: string | null }>();
+    expect(row?.attempts).toBe(1); // transient skip must not delete the row — backoff and retry
+    expect(row?.last_attempt_at).toBeTruthy(); // follows normal retry bookkeeping, not a silent delete
+    expect(warnLog.mock.calls.some(([line]) => String(line).includes("orb_relay_transient_skip") && String(line).includes('"phase":"retry"'))).toBe(true);
+  });
+
+  it("KEEPS retrying when the encryption secret is temporarily missing", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 9603);
+    await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay");
+    await storeRelayFailure(e, { deliveryId: "no-key-skip", eventName: "pull_request", installationId: 9603, rawBody: "{}" });
+    const noKey = { ...e, TOKEN_ENCRYPTION_SECRET: undefined } as unknown as Env;
+    await retryFailedRelays(noKey);
+    const row = await db(noKey).prepare("SELECT attempts FROM orb_relay_failures WHERE delivery_id='no-key-skip'").first<{ attempts: number }>();
+    expect(row?.attempts).toBe(1);
+  });
+
   it("PAGES retry work and bounds concurrent forwards", async () => {
     const e = brokeredEnv();
     const secret = await enroll(e, 9500);
@@ -420,7 +471,6 @@ describe("retryFailedRelays", () => {
     expect(row ?? null).toBeNull(); // pruned on the DELETE pass before the SELECT
     // The drop is no longer silent OR warn-only — an alertable level:error log reaches the Sentry forwarder.
     expect(errLog.mock.calls.some(([line]) => String(line).includes("orb_relay_events_dropped") && String(line).includes('"level":"error"'))).toBe(true);
-    errLog.mockRestore();
   });
 
   it("PRUNES expired rows (expires_at in the past) without attempting to forward", async () => {
@@ -738,7 +788,6 @@ describe("pullRelayPending", () => {
     expect(stale ?? null).toBeNull();
     // Pull-mode loss is now traced for the operator at error level (parity with the push-path drop).
     expect(errLog.mock.calls.some(([line]) => String(line).includes("orb_relay_pending_dropped") && String(line).includes('"level":"error"'))).toBe(true);
-    errLog.mockRestore();
   });
 });
 
@@ -762,10 +811,10 @@ describe("forwardOrbEvent (pull mode #16)", () => {
     expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 8101, deliveryId: "d", rawBody: "{}" })).toBe("skipped");
   });
 
-  it("SKIPS a forwardable event for an install with NO enrollment row at all (the !row arm)", async () => {
+  it("IGNORES a forwardable event for an install with NO enrollment row at all (the !row arm)", async () => {
     const e = brokeredEnv();
-    // installationId 8199 is never enrolled → the enrollment lookup returns no row.
-    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 8199, deliveryId: "d", rawBody: "{}" })).toBe("skipped");
+    // installationId 8199 is never enrolled → terminal no-enrollment skips are not retryable.
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 8199, deliveryId: "d", rawBody: "{}" })).toBe("ignored");
   });
 
   it("re-registering a pull enrollment in push mode flips relay_mode back so it PUSHES again", async () => {

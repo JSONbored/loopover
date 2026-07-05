@@ -50,10 +50,22 @@ function isGeneratedFileFrom(parts: NormalizedPath): boolean {
   return (
     /(^|\/)(__generated__|generated)\//.test(norm) ||
     /\.(generated|gen)\.[^/]+$/.test(norm) ||
-    /\.pb\.(go|ts|js)$/.test(norm) ||
-    /_pb2\.pyi?$/.test(norm) ||
-    /\.g\.dart$/.test(norm) ||
-    /\.(js|jsx|ts|tsx|css)\.map$/.test(norm) ||
+    // protoc output: Go/TS/JS plugins emit `.pb.{go,ts,js}`, the reference C++ plugin emits
+    // `.pb.cc` / `.pb.h`, and the Swift plugin emits `.pb.swift` (the `.pb` infix keeps a
+    // hand-written `.h`/`.cc`/`.swift` from matching).
+    /\.pb\.(go|ts|js|cc|h|swift)$/.test(norm) ||
+    // Python protobuf: message stubs are `*_pb2.py[i]`; the gRPC plugin emits sibling
+    // `*_pb2_grpc.py[i]` service stubs, which are the same machine-generated output.
+    /_pb2(_grpc)?\.pyi?$/.test(norm) ||
+    // Dart codegen: build_runner (`.g.dart`), freezed (`.freezed.dart`), and
+    // retrofit/injectable (`.gr.dart`) all emit generated part files.
+    /\.(g|freezed|gr)\.dart$/.test(norm) ||
+    // C# codegen: WinForms/WPF designer partials (`.designer.cs`) and XAML/T4 output (`.g.cs`).
+    /\.(designer|g)\.cs$/.test(norm) ||
+    // Source maps for every first-class JS/TS bundle extension. `.mjs`/`.cjs` are already
+    // recognized code extensions (isCodeFile), so their bundlers' `.mjs.map` / `.cjs.map`
+    // maps are generated output too — the same as `.js.map`.
+    /\.(js|jsx|mjs|cjs|ts|tsx|css)\.map$/.test(norm) ||
     base === "worker-configuration.d.ts"
   );
 }
@@ -119,6 +131,14 @@ const LOCKFILE_NAMES: ReadonlySet<string> = new Set([
   "pdm.lock",
   "conan.lock",
   "pixi.lock",
+  // More ecosystems' resolved-dependency lockfiles, siblings to the above: a
+  // committed lockfile is generated, not hand-authored contributor effort.
+  "cartfile.resolved", // Carthage (Swift/Obj-C)
+  "gopkg.lock", // dep (legacy Go)
+  "shard.lock", // Shards (Crystal)
+  "rebar.lock", // rebar3 (Erlang)
+  "renv.lock", // renv (R)
+  "chart.lock", // Helm charts
 ]);
 
 const DEPENDENCY_MANIFEST_NAMES: ReadonlySet<string> = new Set([
@@ -143,6 +163,29 @@ const DEPENDENCY_MANIFEST_NAMES: ReadonlySet<string> = new Set([
   // manifests they resolve belong in the same dependency-manifest category.
   "package.swift",
   "podfile",
+  // Conan (C/C++) manifests — conan.lock is already recognized above, so the
+  // manifests it resolves belong here for the same reason as the Swift/CocoaPods
+  // pair. Conan accepts either the classic .txt or the Python-based recipe.
+  "conanfile.txt",
+  "conanfile.py",
+  // sbt (Scala/JVM) build definition — the JVM ecosystem is already represented
+  // by build.gradle(.kts) and pom.xml; build.sbt is sbt's dependency manifest.
+  "build.sbt",
+  // setuptools (Python) manifests — the Python ecosystem is already represented
+  // by requirements.txt/pyproject.toml/pipfile; setup.py/setup.cfg are the
+  // classic setuptools packaging manifests.
+  "setup.py",
+  "setup.cfg",
+  // Crystal (shards) + Erlang (rebar3) manifests — their lockfiles (shard.lock,
+  // rebar.lock) are already recognized above, so the manifests they resolve
+  // belong here for the same reason as the Conan/Swift/CocoaPods pairs.
+  "shard.yml",
+  "rebar.config",
+  // Further well-known dependency manifests for ecosystems not yet represented.
+  "elm.json", // Elm
+  "deps.edn", // Clojure (tools.deps)
+  "project.clj", // Clojure (Leiningen)
+  "environment.yml", // conda
 ]);
 
 const DOCS_EXTENSIONS: ReadonlySet<string> = new Set(["md", "mdx", "markdown", "rst", "adoc", "asciidoc"]);
@@ -170,6 +213,14 @@ const CONFIG_FILE_NAMES: ReadonlySet<string> = new Set([
   ".gitignore",
   ".gitattributes",
   ".dockerignore",
+  // Further tool ignore-files, siblings to .gitignore/.dockerignore above. (The
+  // .eslintignore/.prettierignore variants are already covered by the .eslint/
+  // .prettier prefixes.)
+  ".npmignore",
+  ".stylelintignore",
+  ".vercelignore",
+  ".helmignore",
+  ".gcloudignore",
   // Dependency automation and local toolchain version pins.
   "renovate.json",
   "dependabot.yml",

@@ -10,6 +10,7 @@ import {
   updateUpstreamDriftReportIssue,
   upsertUpstreamDriftReport,
 } from "../db/repositories";
+import { resolveGittensorySelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
 import { timeoutFetch } from "../github/client";
 import { resolveUpstreamCommitSha } from "./commit";
 import { isGlobalAgentPause } from "../settings/agent-execution";
@@ -34,7 +35,6 @@ import { errorMessage, jsonString, nowIso } from "../utils/json";
 
 // The Gittensor upstream repo/ref defaults are single-sourced from src/scoring/model.ts (where the same
 // env.GITTENSOR_UPSTREAM_* override is honoured) — see DEFAULT_GITTENSOR_UPSTREAM_REPO/REF.
-const DEFAULT_DRIFT_ISSUE_REPO = "JSONbored/gittensory";
 const UPSTREAM_STALE_MS = 2 * 60 * 60 * 1000;
 const REGISTRY_HYPERPARAMETER_DRIFT_LIMIT = 100;
 
@@ -285,7 +285,7 @@ export async function fileUpstreamDriftIssues(env: Env): Promise<Record<string, 
   }
   const token = env.GITTENSORY_DRIFT_ISSUE_TOKEN ?? env.GITHUB_PUBLIC_TOKEN;
   if (!token) return { status: "skipped", reason: "missing_issue_token", created: 0, updated: 0, skipped: 0 };
-  const repo = env.GITTENSORY_DRIFT_ISSUE_REPO || DEFAULT_DRIFT_ISSUE_REPO;
+  const repo = resolveGittensorySelfRepoFullName(env);
   const assignees = resolveDriftAssignees(env);
   const reports = (await listUpstreamDriftReports(env, 20)).filter((report) => report.status === "open");
   let created = 0;

@@ -37,6 +37,12 @@ Gittensory CI and gittensory review score, gate, and comment on pull requests. T
 - **Unified review comment** — renders the public PR feedback as one in-place comment instead of multiple panels.
 - **Per-repo activation** — capabilities roll forward (and back) one flag and one repo at a time via the `GITTENSORY_REVIEW_REPOS` allowlist.
 
+**Check-run and comment surfaces, disambiguated** (a common point of confusion — these are three independent, separately-configured things, not layers of the same feature):
+
+- **`Gittensory Orb Review Agent`** (`gate.*` / `settings.gateCheckMode` / `settings.reviewCheckMode`, off by default) — the authoritative GitHub Check Run carrying the gate's pass/fail verdict. This is the one worth making a required status check.
+- **`Gittensory Context`** (`settings.checkRunMode` / `settings.checkRunDetailLevel`, off by default) — a separate, purely advisory Check Run. At its default `checkRunDetailLevel: minimal` it publishes no findings at all; even at `standard`/`deep` it only re-renders content already shown elsewhere. Never make this one required.
+- **Inline review comments** (`GITTENSORY_REVIEW_INLINE_COMMENTS` + `.gittensory.yml`'s `review.inline_comments`, off by both by default) — real, reply-able line-anchored PR review comment threads (CodeRabbit-style). This is the ONLY one of the three that posts an interactive per-line thread; the two check runs above never do.
+
 See [Tuning your reviews](https://gittensory.aethereal.dev/docs/tuning) for the full flag, setting, and `.gittensory.yml` reference.
 
 ## Start Here

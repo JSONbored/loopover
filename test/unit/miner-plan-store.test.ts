@@ -82,12 +82,68 @@ describe("gittensory-miner plan store (#2318)", () => {
     expect(() => store.listPlans({ status: "bogus" as never })).toThrow("invalid_status");
   });
 
+  it("treats a null listPlans status filter as unscoped", () => {
+    const store = tempStore();
+    store.savePlan("a", PLAN);
+    store.savePlan("b", {
+      steps: [{ id: "x", title: "done", dependsOn: [], status: "completed", attempts: 1, maxAttempts: 1 }],
+    });
+    expect(store.listPlans({ status: null }).map((record) => record.planId)).toEqual(["a", "b"]);
+  });
+
   it("rejects a malformed plan on save rather than persisting it", () => {
     const store = tempStore();
     expect(() => store.savePlan("x", { steps: [{ id: "s1", title: "no status", dependsOn: [], attempts: 0, maxAttempts: 1 } as never] })).toThrow("invalid_plan");
     expect(() => store.savePlan("x", { steps: "nope" as never })).toThrow("invalid_plan");
+    expect(() => store.savePlan("empty", { steps: [] })).toThrow("invalid_plan");
     expect(() => store.savePlan("x", { steps: [], extra: 1 } as never)).toThrow("invalid_plan"); // strict: no unknown keys
     expect(() => store.savePlan("", PLAN)).toThrow("invalid_plan_id");
+    expect(() =>
+      store.savePlan("dup", {
+        steps: [
+          { id: "a", title: "A", dependsOn: [], status: "pending", attempts: 0, maxAttempts: 1 },
+          { id: "a", title: "B", dependsOn: [], status: "pending", attempts: 0, maxAttempts: 1 },
+        ],
+      }),
+    ).toThrow("invalid_plan");
+  });
+
+  it("rejects unknown or self-referential dependsOn entries on save", () => {
+    const store = tempStore();
+    const pendingStep = { id: "a", title: "A", dependsOn: [] as string[], status: "pending" as const, attempts: 0, maxAttempts: 1 };
+    expect(() =>
+      store.savePlan("missing-dep", {
+        steps: [{ ...pendingStep, dependsOn: ["ghost"] }],
+      }),
+    ).toThrow("invalid_plan");
+    expect(() =>
+      store.savePlan("self-dep", {
+        steps: [{ ...pendingStep, dependsOn: ["a"] }],
+      }),
+    ).toThrow("invalid_plan");
+  });
+
+  it("rejects cyclic dependsOn graphs on save", () => {
+    const store = tempStore();
+    const step = (id: string, dependsOn: string[]) => ({
+      id,
+      title: id,
+      dependsOn,
+      status: "pending" as const,
+      attempts: 0,
+      maxAttempts: 1,
+    });
+
+    expect(() =>
+      store.savePlan("two-cycle", {
+        steps: [step("a", ["b"]), step("b", ["a"])],
+      }),
+    ).toThrow("invalid_plan");
+    expect(() =>
+      store.savePlan("three-cycle", {
+        steps: [step("a", ["c"]), step("b", ["a"]), step("c", ["b"])],
+      }),
+    ).toThrow("invalid_plan");
   });
 
   it("rejects a corrupted plan blob on load instead of returning a malformed plan", () => {

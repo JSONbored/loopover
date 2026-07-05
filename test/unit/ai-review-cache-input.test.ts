@@ -74,6 +74,29 @@ describe("aiReviewCacheInputFingerprint", () => {
     expect(updated).not.toBe(original);
   });
 
+  it("changes when the self-host reviewer fallback changes", async () => {
+    const original = await aiReviewCacheInputFingerprint({
+      ...baseInput(),
+      reviewerPlan: { combine: "single", reviewers: [{ model: "codex", fallback: "claude-code" }] },
+    });
+    const fallbackChanged = await aiReviewCacheInputFingerprint({
+      ...baseInput(),
+      reviewerPlan: { combine: "single", reviewers: [{ model: "codex", fallback: "anthropic" }] },
+    });
+    const omittedFallback = await aiReviewCacheInputFingerprint({
+      ...baseInput(),
+      reviewerPlan: { combine: "single", reviewers: [{ model: "codex" }] },
+    });
+    const repeated = await aiReviewCacheInputFingerprint({
+      ...baseInput(),
+      reviewerPlan: { combine: "single", reviewers: [{ model: "codex", fallback: "claude-code" }] },
+    });
+
+    expect(fallbackChanged).not.toBe(original);
+    expect(omittedFallback).not.toBe(original);
+    expect(repeated).toBe(original);
+  });
+
   it("normalizes sparse reviewer plan fields deterministically", async () => {
     const omittedReviewers = await aiReviewCacheInputFingerprint({
       ...baseInput(),
@@ -89,7 +112,7 @@ describe("aiReviewCacheInputFingerprint", () => {
     });
     const explicit = await aiReviewCacheInputFingerprint({
       ...baseInput(),
-      reviewerPlan: { combine: null, reviewers: [{ model: null }] },
+      reviewerPlan: { combine: null, reviewers: [{ model: null, fallback: null }] },
     });
 
     expect(omittedReviewers).toBe(explicitEmpty);

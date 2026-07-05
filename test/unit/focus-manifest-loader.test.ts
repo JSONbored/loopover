@@ -271,13 +271,13 @@ describe("focus-manifest loader", () => {
       return repoFullName === "owner/a"
         ? JSON.stringify({ wantedPaths: ["src/"] })
         : repoFullName === "owner/b"
-          ? JSON.stringify({ blockedPaths: ["dist/"] })
+          ? JSON.stringify({ preferredLabels: ["feature"] })
           : null;
     };
     const repos = ["owner/a", "owner/b", "owner/c", "owner/d", "owner/e", "owner/f"];
     const map = await loadRepoFocusManifests(env, repos, { fetcher });
     expect(map.get("owner/a")?.wantedPaths).toEqual(["src/"]);
-    expect(map.get("owner/b")?.blockedPaths).toEqual(["dist/"]);
+    expect(map.get("owner/b")?.preferredLabels).toEqual(["feature"]);
     expect(map.get("owner/c")?.present).toBe(false);
     expect(maxActive).toBeGreaterThan(1);
     expect(maxActive).toBeLessThanOrEqual(REPO_FOCUS_MANIFEST_MAX_CONCURRENT_LOADS);
@@ -351,10 +351,10 @@ describe("focus-manifest loader", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
       call += 1;
       if (call === 1) throw new Error("network down");
-      return new Response('{"blockedPaths":["dist/"]}', { status: 200 });
+      return new Response('{"wantedPaths":["src/"]}', { status: 200 });
     });
     const text = await fetchRepoFocusManifestFile("owner/repo");
-    expect(text).toBe('{"blockedPaths":["dist/"]}');
+    expect(text).toBe('{"wantedPaths":["src/"]}');
   });
 
   it("exposes a reasonable default max-age", () => {

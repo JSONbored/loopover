@@ -37,6 +37,46 @@ describe("isGeneratedFile", () => {
       expect(isGeneratedFile(path)).toBe(false);
     }
   });
+
+  it("matches source maps for every first-class JS/TS bundle extension", () => {
+    // `.mjs`/`.cjs` are recognized code extensions (isCodeFile), so their bundlers' source
+    // maps are generated output too — the same as `.js.map` / `.tsx.map`.
+    for (const path of ["dist/bundle.mjs.map", "dist/bundle.cjs.map", "lib/index.jsx.map"]) {
+      expect(isGeneratedFile(path)).toBe(true);
+    }
+  });
+
+  it("matches C++ protobuf output alongside the Go/TS/JS plugins", () => {
+    for (const path of ["proto/service.pb.cc", "proto/service.pb.h", "gen/messages.pb.cc"]) {
+      expect(isGeneratedFile(path)).toBe(true);
+    }
+    // The `.pb` infix keeps hand-written headers/sources from matching.
+    for (const path of ["src/service.h", "include/foo.h", "src/service.cc"]) {
+      expect(isGeneratedFile(path)).toBe(false);
+    }
+  });
+
+  it("matches Python gRPC protobuf stubs alongside the message stubs", () => {
+    for (const path of ["gen/service_pb2_grpc.py", "gen/service_pb2_grpc.pyi"]) {
+      expect(isGeneratedFile(path)).toBe(true);
+    }
+  });
+
+  it("matches Swift protobuf, Dart freezed/retrofit, and C# designer/XAML codegen", () => {
+    for (const path of [
+      "proto/messages.pb.swift",
+      "lib/user.freezed.dart",
+      "lib/api_client.gr.dart",
+      "ui/MainForm.Designer.cs",
+      "views/App.g.cs",
+    ]) {
+      expect(isGeneratedFile(path)).toBe(true);
+    }
+    // hand-written siblings must NOT match (the codegen infix is required).
+    for (const path of ["src/MainForm.cs", "lib/user.dart", "net/message.swift"]) {
+      expect(isGeneratedFile(path)).toBe(false);
+    }
+  });
 });
 
 describe("isVendoredFile", () => {
@@ -82,6 +122,13 @@ describe("isLockfile", () => {
       "pdm.lock",
       "conan.lock",
       "pixi.lock",
+      "Cartfile.resolved",
+      "ios/Cartfile.resolved",
+      "Gopkg.lock",
+      "shard.lock",
+      "rebar.lock",
+      "renv.lock",
+      "charts/app/Chart.lock",
     ]) {
       expect(isLockfile(path)).toBe(true);
     }
@@ -146,6 +193,17 @@ describe("isDependencyManifestFile", () => {
       "pubspec.yaml",
       "backend/mix.exs",
       "go.work",
+      "conanfile.txt",
+      "libs/native/conanfile.py",
+      "build.sbt",
+      "setup.py",
+      "packages/py/setup.cfg",
+      "shard.yml",
+      "erlang/rebar.config",
+      "elm.json",
+      "deps.edn",
+      "project.clj",
+      "conda/environment.yml",
     ]) {
       expect(isDependencyManifestFile(path)).toBe(true);
     }
@@ -199,6 +257,11 @@ describe("isConfigFile", () => {
       "packages/app/.gitignore",
       ".gitattributes",
       "services/api/.dockerignore",
+      ".npmignore",
+      "libs/ui/.stylelintignore",
+      ".vercelignore",
+      "charts/app/.helmignore",
+      ".gcloudignore",
     ]) {
       expect(isConfigFile(path)).toBe(true);
     }

@@ -8,6 +8,7 @@ export const DEFAULT_OUTPUT_PATH = "apps/gittensory-ui/src/lib/selfhost-env-refe
 export const DEFAULT_SOURCE_ROOTS = [
   "src/selfhost",
   "src/server.ts",
+  "src/services/notify-discord.ts",
   "scripts/build-selfhost.mjs",
   "scripts/migrate-selfhost-sqlite-to-postgres.ts",
   "scripts/smoke-observability-traces.mjs",
@@ -69,11 +70,40 @@ function collectEnvReads(source, fileName) {
         const name = bindingElementName(element);
         if (name) addRead(name, element.propertyName ?? element.name);
       }
+    } else if (ts.isCallExpression(node) && isStaticEnvHelperCall(node)) {
+      addRead(node.arguments[1].text, node.arguments[1]);
+    } else if (ts.isCallExpression(node) && isProcessEnvNameHelperCall(node)) {
+      addRead(node.arguments[0].text, node.arguments[0]);
     }
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
   return reads;
+}
+
+function isStaticEnvHelperCall(node) {
+  return (
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "envString" &&
+    node.arguments.length >= 2 &&
+    isEnvContainer(node.arguments[0]) &&
+    ts.isStringLiteralLike(node.arguments[1])
+  );
+}
+
+// Some self-host helpers read `process.env` internally by name rather than taking an env container argument --
+// e.g. `parsePositiveIntEnv("QUEUE_CONCURRENCY", { min: 1, fallback: 4 })`. Recognized separately from
+// isStaticEnvHelperCall above (envString) because these take the var NAME as arg[0], not arg[1] after a
+// container.
+const PROCESS_ENV_NAME_HELPERS = new Set(["parsePositiveIntEnv"]);
+
+function isProcessEnvNameHelperCall(node) {
+  return (
+    ts.isIdentifier(node.expression) &&
+    PROCESS_ENV_NAME_HELPERS.has(node.expression.text) &&
+    node.arguments.length >= 1 &&
+    ts.isStringLiteralLike(node.arguments[0])
+  );
 }
 
 function bindingElementName(element) {
@@ -82,7 +112,16 @@ function bindingElementName(element) {
   return null;
 }
 
-function isEnvContainer(node) {
+// Unwraps `(x)` and `x as T` (including chained casts like `env as unknown as Record<string, unknown>`, the
+// pattern src/services/notify-discord.ts uses to read an env key TypeScript's Env type doesn't declare) so
+// isEnvContainer sees the underlying identifier/property-access instead of the cast wrapper (#2907).
+function unwrapEnvExpression(node) {
+  if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node)) return unwrapEnvExpression(node.expression);
+  return node;
+}
+
+function isEnvContainer(rawNode) {
+  const node = unwrapEnvExpression(rawNode);
   if (ts.isIdentifier(node)) return node.text === "env";
   return (
     ts.isPropertyAccessExpression(node) &&

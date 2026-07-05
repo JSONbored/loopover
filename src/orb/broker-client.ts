@@ -44,7 +44,7 @@ export function isOrbBrokerMode(env: { ORB_ENROLLMENT_SECRET?: string | undefine
   return Boolean(env.ORB_ENROLLMENT_SECRET);
 }
 
-export type BrokeredInstallationToken = { token: string; installationId: number; expiresAtMs: number };
+export type BrokeredInstallationToken = { token: string; installationId: number; expiresAtMs: number; permissions: Record<string, string> };
 
 /** Exchange the enrollment secret for a brokered installation token + its expiry (ms epoch). Throws on a non-OK
  *  response (401 invalid_enrollment / 403 installation_not_eligible / 5xx) or a tokenless body — a brokered
@@ -53,17 +53,22 @@ export type BrokeredInstallationToken = { token: string; installationId: number;
 export async function fetchBrokeredInstallationToken(
   env: { ORB_ENROLLMENT_SECRET?: string | undefined; ORB_BROKER_URL?: string | undefined },
   fetchImpl: typeof fetch = fetch,
+  options: { forceRefresh?: boolean } = {},
 ): Promise<BrokeredInstallationToken> {
   const base = orbBrokerBaseUrl(env);
   const response = await fetchImpl(`${base}/v1/orb/token`, {
     method: "POST",
-    headers: { authorization: `Bearer ${env.ORB_ENROLLMENT_SECRET ?? ""}` },
+    headers: {
+      authorization: `Bearer ${env.ORB_ENROLLMENT_SECRET ?? ""}`,
+      ...(options.forceRefresh ? { "content-type": "application/json" } : {}),
+    },
+    ...(options.forceRefresh ? { body: JSON.stringify({ forceRefresh: true }) } : {}),
     signal: AbortSignal.timeout(BROKER_TIMEOUT_MS),
   });
   if (!response.ok) {
     throw new Error(`Orb broker token exchange failed (${response.status}).`);
   }
-  const payload = (await response.json()) as { token?: string; installationId?: number; expiresAt?: string };
+  const payload = (await response.json()) as { token?: string; installationId?: number; expiresAt?: string; permissions?: Record<string, string> };
   if (!payload.token) {
     throw new Error("Orb broker token response did not include a token.");
   }
@@ -72,7 +77,7 @@ export async function fetchBrokeredInstallationToken(
   // false for NaN — re-minting a brokered token on every GitHub call instead of caching it for ~an hour.
   const parsedExpiry = payload.expiresAt ? Date.parse(payload.expiresAt) : Number.NaN;
   const expiresAtMs = Number.isFinite(parsedExpiry) ? parsedExpiry : Date.now() + 50 * 60_000;
-  return { token: payload.token, installationId: payload.installationId ?? 0, expiresAtMs };
+  return { token: payload.token, installationId: payload.installationId ?? 0, expiresAtMs, permissions: payload.permissions ?? {} };
 }
 
 // Diagnosing a broker register failure (#selfhost-runtime-drift) needs more than a bare status code, but the
@@ -82,11 +87,49 @@ export async function fetchBrokeredInstallationToken(
 const ORB_RELAY_REGISTER_ERROR_BODY_MAX_BYTES = 2_000;
 const ORB_RELAY_REGISTER_ERROR_HINT_MAX_CHARS = 200;
 
+async function boundedResponseText(res: Response, maxBytes: number): Promise<string | undefined> {
+  const contentLength = res.headers.get("content-length");
+  if (contentLength && Number(contentLength) > maxBytes) {
+    await res.body?.cancel();
+    return undefined;
+  }
+  if (!res.body) return undefined;
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    while (received < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const remaining = maxBytes - received;
+      const chunk = value.length > remaining ? value.slice(0, remaining) : value;
+      chunks.push(chunk);
+      received += chunk.length;
+      if (value.length > remaining || received >= maxBytes) {
+        await reader.cancel();
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (received === 0) return undefined;
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 async function safeOrbRelayRegisterErrorHint(res: Response): Promise<string | undefined> {
   try {
-    const text = await res.text();
+    const text = await boundedResponseText(res, ORB_RELAY_REGISTER_ERROR_BODY_MAX_BYTES);
     if (!text) return undefined;
-    const parsed = JSON.parse(text.slice(0, ORB_RELAY_REGISTER_ERROR_BODY_MAX_BYTES)) as { error?: unknown; message?: unknown };
+    const parsed = JSON.parse(text) as { error?: unknown; message?: unknown };
     const hint = typeof parsed.error === "string" ? parsed.error : typeof parsed.message === "string" ? parsed.message : undefined;
     return hint ? hint.slice(0, ORB_RELAY_REGISTER_ERROR_HINT_MAX_CHARS) : undefined;
   } catch {

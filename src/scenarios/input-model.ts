@@ -372,7 +372,10 @@ function optionalScenarioText(value: string | undefined, maxLength: number): str
 }
 
 function sortEntries(entries: ScenarioSignalEntry[]): ScenarioSignalEntry[] {
-  return [...entries].sort((left, right) => left.id.localeCompare(right.id));
+  // Numeric-aware compare so sequentially numbered ids sort in natural order — otherwise a plain
+  // lexicographic compare orders `assumption_10` before `assumption_2`, scrambling caller-supplied
+  // note order (and any other numeric-suffixed bucket) once there are 10+ entries.
+  return [...entries].sort((left, right) => left.id.localeCompare(right.id, undefined, { numeric: true }));
 }
 
 function compactRepoConfig(args: { repoFullName: string; registered?: boolean; maintainerLane?: boolean }): ScenarioRepoConfig {

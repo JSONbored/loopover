@@ -430,7 +430,10 @@ export function buildMaintainerNoiseReport(
   const queueHealth = buildQueueHealth(repo, issues, pullRequests, collisions);
   const intake = buildContributorIntakeHealth(repo, issues, pullRequests, fullName, collisions);
   const unlinked = pullRequests.filter((pr) => pr.state === "open" && pr.linkedIssues.length === 0).length;
-  const broadDiffSignals = pullRequests.filter((pr) => pr.title.length > 120 || /refactor|cleanup|misc|various/i.test(pr.title)).length;
+  // Only OPEN PRs are live maintainer-queue noise. Without the state guard (which the sibling `unlinked`
+  // count above already applies), already-merged/closed PRs with common churn titles ("refactor", "cleanup",
+  // "various", …) are miscounted as active noise, inflating noiseSources and depressing the score.
+  const broadDiffSignals = pullRequests.filter((pr) => pr.state === "open" && (pr.title.length > 120 || /refactor|cleanup|misc|various/i.test(pr.title))).length;
   const noiseSources = [
     ...(unlinked > 0 ? [`${unlinked} open PR(s) lack linked issue context.`] : []),
     ...(collisions.summary.highRiskCount > 0 ? [`${collisions.summary.highRiskCount} high-risk duplicate/WIP cluster(s).`] : []),
@@ -768,7 +771,11 @@ function analysisRank(analysis: RepoRewardRisk): number {
 function bestFitLabels(repo: RepositoryRecord | null): string[] {
   const multipliers = repo?.registryConfig?.labelMultipliers ?? {};
   const labels = Object.entries(multipliers)
-    .filter(([label]) => !/status|source|contributor|verified|risk|codex/i.test(label))
+    // Exclude meta labels only at a keyword boundary (a real separator or end-of-string after the keyword),
+    // not mid-word — mirroring the anchored `suspiciousConfiguredLabels` matcher in engine.ts. The old
+    // unanchored regex over-matched substrings (e.g. "opensource" via "source", "risky-refactor" via "risk"),
+    // wrongly dropping a legitimate high-multiplier label from the best-fit suggestion.
+    .filter(([label]) => !/^(status|source|contributor|verified|risk|codex)([:/-]|$)/i.test(label))
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
     .map(([label]) => label);
   return labels.slice(0, 1);
@@ -834,16 +841,34 @@ function opportunityCompetitionFactor(highRiskDuplicateClusters: number, openPul
 function opportunityFreshnessFactor(issues: IssueRecord[]): number {
   const openIssues = issues.filter((issue) => issue.state === "open");
   if (openIssues.length === 0) return 0;
-  const mostRecentAgeDays = Math.min(...openIssues.map((issue) => issueAgeDays(issue.updatedAt ?? issue.createdAt)));
+  let mostRecentAgeDays = Number.POSITIVE_INFINITY;
+  for (const issue of openIssues) {
+    const ageDays = issueAgeDays(pickIssueTimestamp(issue));
+    if (ageDays < mostRecentAgeDays) mostRecentAgeDays = ageDays;
+  }
   // Freshness decays exponentially: ~1.0 at 0 days, ~0.6 at 7 days, ~0.2 at 30 days, ~0.05 at 90 days.
   return round(clamp(Math.exp(-mostRecentAgeDays / 20), 0.05, 1));
 }
 
-function issueAgeDays(value: string | null | undefined): number {
-  if (!value) return 0;
+function isParseableIssueTimestamp(value: string): boolean {
+  return Number.isFinite(Date.parse(value));
+}
+
+function pickIssueTimestamp(issue: IssueRecord): string | null {
+  const updated = typeof issue.updatedAt === "string" ? issue.updatedAt.trim() : "";
+  if (updated && isParseableIssueTimestamp(updated)) return updated;
+
+  const created = typeof issue.createdAt === "string" ? issue.createdAt.trim() : "";
+  if (created && isParseableIssueTimestamp(created)) return created;
+
+  return null;
+}
+
+/** Unknown/unparseable timestamps floor freshness (parity with gittensory-engine opportunity-freshness.ts). */
+function issueAgeDays(value: string | null): number {
+  if (!value) return Number.POSITIVE_INFINITY;
   const parsed = Date.parse(value);
-  /* v8 ignore next -- Invalid provider timestamps normalize to fresh; stale timestamp handling is covered by signal tests. */
-  if (!Number.isFinite(parsed)) return 0;
+  if (!Number.isFinite(parsed)) return Number.POSITIVE_INFINITY;
   return Math.floor((Date.now() - parsed) / 86_400_000);
 }
 
@@ -892,3 +917,11 @@ function round(value: number): number {
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
+
+/* v8 ignore start -- Test-only export surface for branch coverage. */
+export const rewardRiskFreshnessInternals = {
+  pickIssueTimestamp,
+  issueAgeDays,
+  bestFitLabels,
+};
+/* v8 ignore stop */

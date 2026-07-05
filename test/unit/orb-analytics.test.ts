@@ -146,4 +146,16 @@ describe("computeFleetAnalytics()", () => {
     expect(a.fleet.cycleP50Ms).toBe(1000);
     expect(a.fleet.cycleP95Ms).toBe(1000);
   });
+
+  it("reports cycle P50 as a nearest-rank percentile, not the upper-half boundary", async () => {
+    const env = createTestEnv();
+    // Sorted cycle = [1000×5, 3000×5]. The P50 must be a lower-half value, never the maximum.
+    await signals(env, "fast", 5, { verdict: "merge", outcome: "merged", ms: 1000 });
+    await signals(env, "slow", 5, { verdict: "merge", outcome: "merged", ms: 3000 });
+    await register(env, "fast", "slow");
+    const a = await computeFleetAnalytics(env);
+    expect(a.instanceCount).toBe(2);
+    expect(a.fleet.cycleP50Ms).toBe(1000); // floor-based index returned 3000 (the max) here
+    expect(a.fleet.cycleP95Ms).toBe(3000);
+  });
 });

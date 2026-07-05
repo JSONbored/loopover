@@ -16,6 +16,13 @@
 # Baseline gate policy shared by every repo unless a per-repo file overrides it.
 gate:
   enabled: true
+  # Review-check publish mode (#2852): required | visible | disabled. RECOMMENDED fleet-wide default
+  # for high-volume autonomous self-hosting is `visible` or `disabled`, NOT `required` — Gittensory's
+  # own merge/close decisions never depend on this check either way. If you set this to `disabled`
+  # instance-wide, remove "Gittensory Orb Review Agent" from every repo's branch-protection required-
+  # status-checks list first (Gittensory cannot do this for you — it's a GitHub branch-protection
+  # setting), or GitHub will show a pending status forever on repos that still require it.
+  checkMode: visible
   duplicates: block
   linkedIssue: advisory
 
@@ -25,7 +32,7 @@ settings:
   # terminal merge/close/hold disposition AND every anti-abuse enforcement label (blacklist/
   # contributor-cap/review-nag) below — no separate `label` grant needed for those.
   # `review_state_label` is left at the default `observe` so the bot's own advisory disposition
-  # labels (gittensory:ready-to-merge/changes-requested/needs-human-review) never appear — a
+  # labels (ready-to-merge/changes-requested/manual-review) never appear — a
   # one-shot review merges, closes, or holds through the required gate check alone, with no running
   # commentary as GitHub labels. Set `review_state_label: auto` only if you specifically want that
   # commentary too.
@@ -40,6 +47,18 @@ settings:
   # owner/admin/automation-bot exemption). Replace with your own maintainer/admin logins.
   autoCloseExemptLogins:
     - your-admin-login
+
+  # Hard manual-review path guardrails are config-as-code only. Omit or use [] for no path
+  # guardrails; set a concrete list when you want otherwise-mergeable PRs held for a person.
+  hardGuardrailGlobs: []
+
+  # Disposition label names are config-as-code, not engine identity. Set any value to your repo's
+  # preferred label name, or explicit null to disable that label while preserving the action/hold.
+  manualReviewLabel: manual-review
+  readyToMergeLabel: null
+  changesRequestedLabel: null
+  migrationCollisionLabel: migration-collision
+  pendingClosureLabel: pending-closure
 
   # Maintainer-mention nag moderation (#label-scoping): throttle a contributor who repeatedly tags a
   # configured maintainer login for review/status, reusing the review-nag cooldown below. Replace with

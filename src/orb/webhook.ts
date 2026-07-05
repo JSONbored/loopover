@@ -13,7 +13,7 @@ import { sha256Hex, verifyGitHubSignature } from "../utils/crypto";
 import { parsePositiveInt } from "../utils/json";
 import { upsertOrbInstallation } from "./installations";
 import { recordOrbPrOutcome } from "./outcomes";
-import { forwardOrbEvent, storeRelayFailure } from "./relay";
+import { forwardOrbEvent, persistRelayForwardOutcome } from "./relay";
 
 const DEFAULT_MAX_ORB_WEBHOOK_BODY_BYTES = 1024 * 1024;
 
@@ -88,8 +88,8 @@ export async function handleOrbWebhook(c: Context<{ Bindings: Env }>): Promise<R
   return c.json({ ok: true, deliveryId, eventName, status: "received" }, 202);
 }
 
-/** Forward an Orb webhook to the brokered self-host registered for the installation, persisting a FAILED push for
- *  the retry-orb-relay cron (a temporarily-down container recovers without losing events; max 5 attempts / 1h TTL).
+/** Forward an Orb webhook to the brokered self-host registered for the installation, persisting retryable
+ *  outcomes (HTTP push failure OR transient skip for a forwardable event) for the retry-orb-relay cron.
  *  Self-contained + fail-safe (never throws) so it can run AFTER the response via {@link scheduleAfterResponse}. */
 export async function relayForward(
   env: Env,
@@ -97,12 +97,8 @@ export async function relayForward(
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
   try {
-    const relayResult = await forwardOrbEvent(env, args, fetchImpl);
-    // forwardOrbEvent returns "failed" only for an ENROLLED install (a null/absent id "skips"), so installationId is
-    // non-null here — persist the failed push so the retry-orb-relay cron re-attempts it.
-    if (relayResult === "failed") {
-      await storeRelayFailure(env, { deliveryId: args.deliveryId, eventName: args.eventName, installationId: args.installationId!, rawBody: args.rawBody });
-    }
+    const outcome = await forwardOrbEvent(env, args, fetchImpl);
+    await persistRelayForwardOutcome(env, args, outcome);
   } catch {
     /* v8 ignore next -- fail-safe: a forward/persist error must never surface from the deferred task */
   }

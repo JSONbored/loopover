@@ -58,6 +58,12 @@ function parseSemver(version) {
   };
 }
 
+// Numeric identifiers are compared as decimal strings, not via Number(), which loses precision beyond
+// Number.MAX_SAFE_INTEGER (2^53-1): two distinct digit strings past that width can round to the SAME float,
+// making Number(leftId) !== Number(rightId) wrongly report them as equal (mirrors the same fix already applied
+// to compareMcpSemver's comparePrerelease in src/services/mcp-compatibility.ts, #3049). With no leading zeros
+// (semver's own numeric-identifier rule), a longer digit string is the larger number, and equal-length strings
+// compare lexicographically.
 function comparePrerelease(a, b) {
   const left = a.split(".");
   const right = b.split(".");
@@ -69,8 +75,8 @@ function comparePrerelease(a, b) {
     const leftNumeric = /^\d+$/.test(leftId);
     const rightNumeric = /^\d+$/.test(rightId);
     if (leftNumeric && rightNumeric) {
-      if (Number(leftId) !== Number(rightId))
-        return Number(leftId) < Number(rightId) ? -1 : 1;
+      if (leftId.length !== rightId.length) return leftId.length < rightId.length ? -1 : 1;
+      if (leftId !== rightId) return leftId < rightId ? -1 : 1;
     } else if (leftNumeric !== rightNumeric) {
       return leftNumeric ? -1 : 1;
     } else if (leftId !== rightId) {

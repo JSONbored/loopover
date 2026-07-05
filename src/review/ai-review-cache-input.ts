@@ -34,12 +34,12 @@ export type AiReviewCacheInput = {
   reviewerPlan:
     | {
         combine?: string | null | undefined;
-        reviewers?: readonly { model?: string | null | undefined }[] | undefined;
+        reviewers?: readonly { model?: string | null | undefined; fallback?: string | null | undefined }[] | undefined;
       }
     | null
     | undefined;
-  // reviewerPlan only names WHICH self-host provider(s) are active (e.g. "claude-code") -- it does not carry that
-  // provider's own model/effort/timeout/base-url, which are resolved separately at review-call time (see
+  // reviewerPlan only names WHICH self-host provider(s) are active (e.g. "codex" with fallback "claude-code") --
+  // it does not carry that provider's own model/effort/timeout/base-url, which are resolved separately at review-call time (see
   // src/selfhost/ai.ts's buildProvider). Fingerprint those too so switching a provider's underlying model or
   // endpoint (while the provider name/plan stays the same) forces a cache miss instead of reusing a review
   // produced against a different configuration. Deliberately excludes API keys (secrets, and irrelevant to output).
@@ -119,7 +119,10 @@ export async function aiReviewCacheInputFingerprint(input: AiReviewCacheInput): 
     reviewerPlan: input.reviewerPlan
       ? {
           combine: input.reviewerPlan.combine ?? null,
-          reviewers: (input.reviewerPlan.reviewers ?? []).map((reviewer) => reviewer.model ?? null),
+          reviewers: (input.reviewerPlan.reviewers ?? []).map((reviewer) => ({
+            model: reviewer.model ?? null,
+            fallback: reviewer.fallback ?? null,
+          })),
         }
       : null,
     selfHostProviderConfig: input.selfHostProviderConfig

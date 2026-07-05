@@ -67,14 +67,27 @@ Authorization: Bearer ••••••••
 Content-Type: application/json
 
 {
-  "repo": { "owner": "entrius", "repo": "gittensor" },
-  "refs": { "base": "main", "head": "feat/scorer-cleanup" },
-  "files": [ { "path": "src/scorer.ts", "added": 42, "removed": 8 } ],
+  "login": "your-github-login",
+  "repoFullName": "entrius/gittensor",
+  "baseRef": "main",
+  "headRef": "feat/scorer-cleanup",
+  "changedFiles": [
+    { "path": "src/scorer.ts", "additions": 42, "deletions": 8, "status": "modified" }
+  ],
   "labels": ["scorer", "ready-for-review"],
-  "linked_issues": [421],
-  "commits": ["refactor scorer gating", "fix linked-issue projection"]
+  "linkedIssues": [421],
+  "commitMessages": ["refactor scorer gating", "fix linked-issue projection"],
+  "validation": [
+    { "command": "npm run typecheck", "status": "passed" }
+  ]
 }`}
       />
+      <p>
+        The request body is a strict schema — every field must match a known key exactly (
+        <code>repoFullName</code> not a nested repo object, <code>changedFiles</code> with{" "}
+        <code>additions</code>/<code>deletions</code>, <code>linkedIssues</code> not{" "}
+        <code>linked_issues</code>) and unknown keys are rejected rather than ignored.
+      </p>
 
       <Callout variant="safety">
         File <strong>metadata</strong> is allowed (path, line counts). File contents are not

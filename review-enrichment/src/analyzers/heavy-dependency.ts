@@ -17,6 +17,8 @@ const TRIVIAL_USAGE_MAX = 2;
 const MIN_INSTALL_BYTES = 500_000;
 const MIN_BUNDLE_BYTES = 80_000;
 const MIN_GZIP_BYTES = 25_000;
+const MAX_NPM_PACKAGE_NAME_CHARS = 214;
+const MAX_NPM_PACKAGE_VERSION_CHARS = 256;
 
 // In-process TTL cache for bundlephobia size results. Keyed by "pkg@version".
 // Caching prevents redundant calls that would exhaust bundlephobia's rate limit
@@ -79,7 +81,12 @@ interface ScanOptions {
 }
 
 function isSafeNpmPackageVersion(name: string, version: string): boolean {
-  return NPM_PACKAGE_RE.test(name) && SEMVER_RE.test(version);
+  return (
+    name.length <= MAX_NPM_PACKAGE_NAME_CHARS &&
+    version.length <= MAX_NPM_PACKAGE_VERSION_CHARS &&
+    NPM_PACKAGE_RE.test(name) &&
+    SEMVER_RE.test(version)
+  );
 }
 
 function addedPatchLines(
@@ -181,6 +188,7 @@ export async function queryPackageWeight(
   options: Pick<ScanOptions, "analysis" | "diagnostics"> = {},
 ): Promise<PackageWeight | null> {
   if (signal?.aborted) return null;
+  if (!isSafeNpmPackageVersion(pkg, version)) return null;
 
   const cacheKey = `${pkg}@${version}`;
   const cached = weightCache.get(cacheKey);

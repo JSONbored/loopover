@@ -5,6 +5,7 @@ import { scanChurnHotspot } from "./churn-hotspot.js";
 import { scanBlameLink } from "./blame-link.js";
 import { scanCiCheckSignals } from "./ci-check-signals.js";
 import { scanCodeowners } from "./codeowners.js";
+import { scanCommitHygiene } from "./commit-hygiene.js";
 import { scanCommitSignature } from "./commit-signature.js";
 import { dependencyAnalyzer } from "./dependency/descriptor.js";
 import { scanDocCommentDrift } from "./doc-comment-drift.js";
@@ -17,10 +18,16 @@ import { scanInstallScripts } from "./install-scripts.js";
 import { scanLicenses } from "./license-check.js";
 import { scanLockfileDrift } from "./lockfile-drift.js";
 import { scanNativeBuild } from "./native-build.js";
+import { scanPendingReviewRequests } from "./pending-review-requests.js";
 import { scanProvenance } from "./provenance.js";
 import { scanRedos } from "./redos.js";
 import { secretAnalyzer } from "./secret/descriptor.js";
 import { scanSecretLog } from "./secret-log.js";
+import { scanStaleBranch } from "./stale-branch.js";
+import { scanTestRatio } from "./test-ratio.js";
+import { scanMigrationSafety } from "./migration-safety.js";
+import { scanLooseRanges } from "./loose-range.js";
+import { scanTerminology } from "./terminology.js";
 import { scanTyposquat } from "./typosquat.js";
 import { scanUndocumentedExport } from "./undocumented-export.js";
 import type {
@@ -150,7 +157,8 @@ export const ANALYZER_DESCRIPTORS = [
     limits: { maxFiles: 40, maxPatchLines: 1000, maxPins: 80 },
     docs: {
       summary: "Checks changed runtime and base-image pins against EOL calendars.",
-      looksAt: "Dockerfile FROM lines, .nvmrc, and go.mod runtime pins.",
+      looksAt:
+        "Dockerfile FROM lines, version-manager pin files (.nvmrc, .python-version, …), Heroku runtime.txt, Gemfile ruby directives, and go.mod runtime pins.",
       reports:
         "File, product, version, EOL date, and whether the release is already EOL or close to EOL.",
       network: "Calls endoflife.date. No GitHub token required.",
@@ -584,6 +592,237 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanUndocumentedExport(req, fetch, { signal }),
+  }),
+  descriptor({
+    name: "staleBranch",
+    title: "Stale branch signal",
+    category: "history",
+    cost: "github-light",
+    defaultEnabled: true,
+    requires: ["github-token", "head-sha"],
+    limits: { behindThreshold: 100 },
+    docs: {
+      summary:
+        "Flags a PR whose head is significantly behind the repo's current default branch — a staleness risk a clean `mergeable` check alone would not surface.",
+      looksAt: "The repo's current default branch and how many commits behind it the PR's head is (the GitHub compare API).",
+      reports: "The default branch name and the commit count behind it — never commit content.",
+      network: "Calls the GitHub repo API once and the compare API once.",
+      notes:
+        "Structured-fields-only: reads default_branch and behind_by, never diff or commit text. Fail-safe on missing token/head SHA/either fetch failing.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Stale branch signal"];
+      for (const item of findings) {
+        lines.push(
+          `- This PR is ${item.behindBy} commits behind ${helpers.safeCodeSpan(item.defaultBranch)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal, analysis, diagnostics }) =>
+      scanStaleBranch(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "commitHygiene",
+    title: "Commit-history hygiene",
+    category: "history",
+    cost: "github-light",
+    defaultEnabled: true,
+    requires: ["github-token"],
+    limits: { maxCommits: 100, maxFindings: 25 },
+    docs: {
+      summary:
+        "Flags commit-history hygiene issues: a merge commit pulled into the PR's own history, a commit left with git's fixup!/squash! autosquash marker, and a commit carrying a Co-authored-by trailer.",
+      looksAt: "The PR's commits (one bounded page) — each commit's message subject/trailers and parent count.",
+      reports: "A short commit-SHA prefix, the finding kind, and (for fixup/co-author) the subject line or co-author — never full diff/file content.",
+      network: "Calls the GitHub PR-commits API once, bounded to one page.",
+      notes:
+        "Structured-fields-only: reads commit.message and parents, matched one line at a time, never cross-line state. Fail-safe on missing token/fetch error.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Commit-history hygiene"];
+      for (const item of findings) {
+        if (item.kind === "merge-commit-in-history") {
+          lines.push(`- ${helpers.safeCodeSpan(item.shaPrefix)} is a merge commit pulled into this PR's own history`);
+        } else if (item.kind === "fixup-commit-present") {
+          lines.push(`- ${helpers.safeCodeSpan(item.shaPrefix)} is an unsquashed fixup/squash commit: ${helpers.safeCodeSpan(item.subject)}`);
+        } else {
+          lines.push(`- ${helpers.safeCodeSpan(item.shaPrefix)} credits a co-author: ${helpers.safeCodeSpan(item.coAuthor)}`);
+        }
+      }
+      return lines;
+    },
+    run: (req, { signal, analysis, diagnostics }) =>
+      scanCommitHygiene(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "pendingReviewRequests",
+    title: "Pending review-request staleness",
+    category: "history",
+    cost: "github-light",
+    defaultEnabled: true,
+    requires: ["github-token"],
+    limits: { staleThresholdHours: 48, maxTimelinePages: 5 },
+    docs: {
+      summary:
+        "Flags a reviewer or team whose review request has been outstanding 48+ hours with no response yet.",
+      looksAt: "The PR's currently pending requested reviewers/teams, matched against the issue timeline's review_requested events (bounded, page-confirmed complete).",
+      reports: "The reviewer login (or team:slug) and hours pending — never review content.",
+      network: "Calls the GitHub requested-reviewers API once and the issue-timeline API, paginated and bounded to a fixed page cap.",
+      notes:
+        "Structured-fields-only: reads user.login/team.slug/event/created_at, never diff or comment text. Fail-safe on missing token/fetch error/an unconfirmed-complete timeline.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Pending review-request staleness"];
+      for (const item of findings) {
+        lines.push(`- ${helpers.safeCodeSpan(item.reviewer)}'s review request has been pending for ${item.hoursPending}h`);
+      }
+      return lines;
+    },
+    run: (req, { signal, analysis, diagnostics }) =>
+      scanPendingReviewRequests(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "testRatio",
+    title: "Test-to-code ratio",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { materialSourceLines: 20, ratioThreshold: 0.3 },
+    docs: {
+      summary: "Flags a PR whose source change is material but ships with disproportionately little (or zero) accompanying test change.",
+      looksAt: "Each changed file's path (classified source vs test by naming convention) and added-line count.",
+      reports: "Source/test added-line and file counts and the resulting ratio — never file content.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "A cheap, always-available complement to the coverage-delta analyzer: works even when no CI coverage artifact exists.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Test-to-code ratio"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`+${item.sourceAdded} source`)} vs ${helpers.safeCodeSpan(`+${item.testAdded} test`)} added lines (ratio ${item.ratio.toFixed(2)}) across ${item.sourceFiles} source file(s) and ${item.testFiles} test file(s)`,
+        );
+      }
+      return lines;
+    },
+    run: (req) => scanTestRatio(req),
+  }),
+  descriptor({
+    name: "migrationSafety",
+    title: "SQL migration safety",
+    category: "config",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 20, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags risky schema operations in added migration SQL: drops, renames, non-nullable columns without a default, and blocking table rewrites.",
+      looksAt: "Added lines in migration paths (migrations/, db/migrate/, *.sql).",
+      reports: "File, line, and public-safe rule kind — never SQL content.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Detection is line-anchored single-statement shapes only; statements split across lines are skipped rather than tracked with cross-line state.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const explain = (kind: (typeof findings)[number]["kind"]): string => {
+        switch (kind) {
+          case "drop":
+            return "drops a table or column; still-running deployments that read the old schema break immediately";
+          case "rename":
+            return "renames a table or column in one step; code still using the old name fails until fully rolled out";
+          case "not-null-no-default":
+            return "adds a NOT NULL column without a DEFAULT; inserts from not-yet-updated code omit it and fail";
+          case "blocking-rewrite":
+            return "changes a column type, which rewrites (and locks) the table in most engines while it runs";
+        }
+      };
+      const lines = ["### SQL migration safety (deploy-breaking schema changes)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${explain(item.kind)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanMigrationSafety(req, signal),
+  }),
+  descriptor({
+    name: "looseRange",
+    title: "Loose dependency version range",
+    category: "supply-chain",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 20, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags newly-added npm dependency specifiers that use dangerously loose ranges instead of a pinned/caret/tilde range.",
+      looksAt: "Added specifier lines in package.json patches.",
+      reports: "Manifest file, line, package, raw specifier, and loose-range kind.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Judges only the version specifier, never the package; wildcard, latest, unbounded >=, and bare-major ranges let any future publish flow into the next install.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const explain = (kind: (typeof findings)[number]["kind"]): string => {
+        switch (kind) {
+          case "wildcard":
+            return "a wildcard range accepts ANY published version, including a compromised one";
+          case "latest":
+            return "the `latest` dist-tag floats to whatever is published next; installs are not reproducible";
+          case "unbounded-gte":
+            return "an unbounded `>=` range accepts every future major version, breaking changes included";
+          case "bare":
+            return "a bare-major range floats across every future minor/patch of the major line";
+        }
+      };
+      const lines = ["### Loose dependency version ranges (supply-chain drift risk)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.package}@"${item.range}"`)} (${helpers.safeCodeSpan(`${item.file}:${item.line}`)}) — ${explain(item.kind)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanLooseRanges(req, signal),
+  }),
+  descriptor({
+    name: "terminology",
+    title: "Non-inclusive terminology",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags non-inclusive terms newly added in identifiers or comments (whitelist/blacklist, master/slave) and suggests the neutral replacement.",
+      looksAt: "Added lines in any changed file, tokenized on camelCase/snake_case/word boundaries.",
+      reports: "File, line, the matched term, and the suggested replacement.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Token-based matching avoids substring false positives (masterclass/postmaster are never flagged), and URLs are skipped. The term→suggestion table is a bounded in-file policy.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Non-inclusive terminology (suggested neutral replacements)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${helpers.safeCodeSpan(item.term)} → ${helpers.safeCodeSpan(item.suggestion)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanTerminology(req, signal),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

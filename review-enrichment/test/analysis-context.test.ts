@@ -7,6 +7,7 @@ import {
   createAnalysisContext,
   filesHaveAddedLines,
 } from "../dist/analysis-context.js";
+import { planAnalyzers } from "../dist/scheduler.js";
 import {
   queryOsvBatch,
   scanDependencyChanges,
@@ -39,6 +40,30 @@ test("collectAddedLines keeps added lines whose content starts with ++ (rendered
   assert.equal(
     filesHaveAddedLines([{ path: "src/inc.ts", patch: "@@ -1,0 +1,1 @@\n+++x" }]),
     true,
+  );
+});
+
+test("collectAddedLines does not let a no-newline marker skew line numbers", () => {
+  // `\ No newline at end of file` is not a new-file line; advancing past it would cite every
+  // subsequent added line one too high (same class as the iac-misconfig / redos regression).
+  const files = [
+    {
+      path: "src/app.ts",
+      patch: [
+        "@@ -1,1 +1,2 @@",
+        "-const x = 1;",
+        "\\ No newline at end of file",
+        "+const x = 1;",
+        "+const y = 2;",
+      ].join("\n"),
+    },
+  ];
+  assert.deepEqual(
+    collectAddedLines(files).map((added) => [added.line, added.text]),
+    [
+      [1, "const x = 1;"],
+      [2, "const y = 2;"],
+    ],
   );
 });
 
@@ -471,6 +496,53 @@ test("createAnalysisContext classifies workflow paths case-insensitively", () =>
       ["docs/readme.md", "docs"],
     ],
   );
+});
+
+test("createAnalysisContext classifies Zstandard archives as assets for scheduler gating", () => {
+  const context = createAnalysisContext({
+    repoFullName: "JSONbored/gittensory",
+    prNumber: 3128,
+    headSha: "abcdef1234567890",
+    githubToken: "github_pat_test",
+    analyzers: ["assetWeight"],
+    files: [
+      {
+        path: "cache/model.zst",
+        patch: null,
+        status: "added",
+      },
+      {
+        path: "dist/bundle.tar.ZST",
+        patch: null,
+        status: "added",
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    context.fileCategories.map((file) => [file.path, file.extension, file.category]),
+    [
+      ["cache/model.zst", ".zst", "asset"],
+      ["dist/bundle.tar.ZST", ".zst", "asset"],
+    ],
+  );
+
+  const plan = planAnalyzers(
+    {
+      repoFullName: "JSONbored/gittensory",
+      prNumber: 3128,
+      headSha: "abcdef1234567890",
+      githubToken: "github_pat_test",
+      analyzers: ["assetWeight"],
+      files: context.changedFiles,
+    },
+    { assetWeight: async () => [] },
+    context,
+    { budgetMs: 5_000, startedAtMs: 0 },
+  );
+
+  assert.deepEqual(plan.runnable.map((item) => item.name), ["assetWeight"]);
+  assert.deepEqual(plan.skipped.map((item) => [item.name, item.skipReason]), []);
 });
 
 test("createAnalysisContext classifies lockfile paths case-insensitively", () => {

@@ -8,40 +8,12 @@ export interface Readiness {
   durationsMs: Record<string, number>;
 }
 
-export type HealthBackend = "sqlite" | "postgres";
-
 export interface HealthBody {
   status: "ok";
-  version: string;
-  uptimeSeconds: number;
-  backend: HealthBackend;
 }
 
-function nonBlank(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
-export function resolveHealthVersion(
-  env: { GITTENSORY_VERSION?: string | undefined },
-  packageVersion?: string,
-): string {
-  const envVersion = nonBlank(env.GITTENSORY_VERSION);
-  if (envVersion) return envVersion;
-  return nonBlank(packageVersion) ?? "unknown";
-}
-
-export function buildHealthBody(opts: {
-  version?: string;
-  startedAt: number;
-  dbBackend: HealthBackend;
-}): HealthBody {
-  return {
-    status: "ok",
-    version: nonBlank(opts.version) ?? "unknown",
-    uptimeSeconds: Math.max(0, Math.floor((Date.now() - opts.startedAt) / 1000)),
-    backend: opts.dbBackend,
-  };
+export function buildHealthBody(): HealthBody {
+  return { status: "ok" };
 }
 
 /** An extra readiness check for a CONFIGURED optional backend (Redis, Qdrant …). `check` resolves true when the

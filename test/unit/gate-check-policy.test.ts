@@ -597,9 +597,9 @@ describe("review-thread blocker gate", () => {
 });
 
 describe("focus-manifest policy gate (#555)", () => {
-  // The three enforceable manifest-policy findings buildFocusManifestGuidance emits.
+  // The manifest-policy findings buildFocusManifestGuidance emits and the gate can enforce.
+  // Path-based manual review lives in settings.hardGuardrailGlobs, not manifest policy.
   const POLICY_FINDINGS = {
-    manifest_blocked_path: { code: "manifest_blocked_path", title: "Change touches a maintainer-blocked area", severity: "critical" as const, detail: "Changed paths match maintainer-blocked patterns.", action: "Move out of the blocked area." },
     manifest_linked_issue_required: { code: "manifest_linked_issue_required", title: "Maintainer requires a linked issue", severity: "warning" as const, detail: "Manifest requires a linked issue.", action: "Link the issue." },
     manifest_missing_tests: { code: "manifest_missing_tests", title: "Maintainer test expectations unmet", severity: "warning" as const, detail: "Manifest expects test evidence.", action: "Add tests." },
   };
@@ -632,60 +632,38 @@ describe("focus-manifest policy gate (#555)", () => {
     });
   }
 
-  describe("manifest_blocked_path", () => {
-    it("holds for manual review when manifestPolicy: block", () => {
-      const result = evaluateGateCheck(manifestAdvisory("manifest_blocked_path"), { manifestPolicyGateMode: "block", confirmedContributor: true });
-      expect(result.conclusion).toBe("neutral");
-      expect(result.blockers).toEqual([]);
-      expect(result.warnings.map((finding) => finding.code)).toContain("manifest_blocked_path");
-      expect(result.summary).toMatch(/held for manual review/i);
-    });
-
-    it("preserves public blocked-path context on the manual-review hold warning", () => {
-      const advisory = manifestAdvisory("manifest_blocked_path");
-      advisory.findings[0] = {
-        ...advisory.findings[0]!,
-        publicText: "Matched guarded paths: .github/workflows/**.",
-      };
-      const result = evaluateGateCheck(advisory, {
-        manifestPolicyGateMode: "block",
-        confirmedContributor: true,
-      });
-      const hold = result.warnings.find(
-        (finding) => finding.code === "manifest_blocked_path",
-      );
-      expect(result.conclusion).toBe("neutral");
-      expect(hold?.publicText).toBe("Matched guarded paths: .github/workflows/**.");
-    });
-
-    it("also holds non-confirmed contributors for manual review instead of closing", () => {
-      const result = evaluateGateCheck(manifestAdvisory("manifest_blocked_path"), { manifestPolicyGateMode: "block", confirmedContributor: false });
-      expect(result.conclusion).toBe("neutral");
-      expect(result.blockers).toEqual([]);
-    });
-
-    it("does not block when manifestPolicy: off/advisory", () => {
-      expect(evaluateGateCheck(manifestAdvisory("manifest_blocked_path"), { manifestPolicyGateMode: "off", confirmedContributor: true }).conclusion).toBe("success");
-      expect(evaluateGateCheck(manifestAdvisory("manifest_blocked_path"), { manifestPolicyGateMode: "advisory", confirmedContributor: true }).conclusion).toBe("success");
-    });
+  it("ignores legacy manifest_blocked_path findings even when manifestPolicy:block is enabled", () => {
+    const advisory: Advisory = {
+      ...missingIssueAdvisory(),
+      findings: [{
+        code: "manifest_blocked_path",
+        title: "Change touches a maintainer-blocked area",
+        severity: "critical",
+        detail: "Changed paths match maintainer-blocked patterns.",
+        action: "Move out of the blocked area.",
+      }],
+    };
+    const result = evaluateGateCheck(advisory, { manifestPolicyGateMode: "block", confirmedContributor: true });
+    expect(result.conclusion).toBe("success");
+    expect(result.blockers).toEqual([]);
+    expect(result.warnings.map((finding) => finding.code)).not.toContain("manifest_blocked_path");
   });
 
   it("is an INDEPENDENT dimension: mergeReadiness: block does NOT promote a manifest-policy finding (kept out of the composite)", () => {
     const eff = resolveEffectiveSettings(settings({ manifestPolicyGateMode: "off", mergeReadinessGateMode: "block" }), parseFocusManifest(null));
-    expect(evaluateGateCheck(manifestAdvisory("manifest_blocked_path"), gateCheckPolicy(eff, null, true)).conclusion).toBe("success");
+    expect(evaluateGateCheck(manifestAdvisory("manifest_missing_tests"), gateCheckPolicy(eff, null, true)).conclusion).toBe("success");
   });
 
   it("gateCheckPolicy threads manifestPolicyGateMode into the policy", () => {
     expect(gateCheckPolicy(settings({ manifestPolicyGateMode: "block" }), null, true).manifestPolicyGateMode).toBe("block");
   });
 
-  it("end-to-end: a manifest gate.manifestPolicy: block sets effective.manifestPolicyGateMode and holds a blockedPath PR", () => {
+  it("end-to-end: a manifest gate.manifestPolicy: block sets effective.manifestPolicyGateMode and blocks enforceable manifest policy", () => {
     const eff = resolveEffectiveSettings(settings({ manifestPolicyGateMode: "off" }), parseFocusManifest({ gate: { manifestPolicy: "block" } }));
     expect(eff.manifestPolicyGateMode).toBe("block");
-    const result = evaluateGateCheck(manifestAdvisory("manifest_blocked_path"), gateCheckPolicy(eff, null, true));
-    expect(result.conclusion).toBe("neutral");
-    expect(result.blockers).toEqual([]);
-    expect(result.warnings.map((finding) => finding.code)).toContain("manifest_blocked_path");
+    const result = evaluateGateCheck(manifestAdvisory("manifest_missing_tests"), gateCheckPolicy(eff, null, true));
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.map((finding) => finding.code)).toContain("manifest_missing_tests");
   });
 });
 
@@ -833,9 +811,18 @@ describe("size + guardrail manual-review HOLD (#gate-size / #gate-guardrail)", (
     expect(evaluateGateCheck(clean(), { sizeGateMode: "advisory" }).conclusion).toBe("success"); // no counts ⇒ 0 ⇒ no hold
   });
   it("holds (neutral) on a guardrail hit, surfacing the hold finding in warnings", () => {
-    const out = evaluateGateCheck(clean(), { guardrailHit: true });
+    const out = evaluateGateCheck(clean(), { guardrailHit: true, guardrailMatches: [{ path: "src/settings/agent-actions.ts", glob: "src/settings/**" }] });
     expect(out.conclusion).toBe("neutral");
-    expect(out.warnings.map((w) => w.code)).toContain("guardrail_hold");
+    const hold = out.warnings.find((w) => w.code === "guardrail_hold");
+    expect(hold).toBeTruthy();
+    expect(hold?.detail).toContain("src/settings/agent-actions.ts");
+    expect(hold?.detail).toContain("src/settings/**");
+  });
+  it("holds fail-closed when the caller reports a guardrail hit without match details", () => {
+    const out = evaluateGateCheck(clean(), { guardrailHit: true });
+    const hold = out.warnings.find((w) => w.code === "guardrail_hold");
+    expect(out.conclusion).toBe("neutral");
+    expect(hold?.detail).toContain("could not be verified");
   });
   it("a real hard blocker WINS over a size/guardrail hold (failure, not neutral)", () => {
     const out = evaluateGateCheck(missingIssueAdvisory(), { linkedIssueGateMode: "block", sizeGateMode: "advisory", changedFileCount: 50, changedLineCount: 9000, guardrailHit: true });

@@ -102,14 +102,13 @@ export function resolveEffectiveModerationRules(globalRules: readonly Moderation
 
 export type ModerationGateMode = "inherit" | "off" | "enabled";
 
-/** Whether the WHOLE moderation layer runs for one repo: `off` force-disables regardless of the global
- *  default (an operator piloting the feature on some repos only), `enabled` force-enables regardless of the
- *  global default (a repo that wants it before the operator flips the global default on), `inherit` (the
- *  default) defers to the global master switch. */
+/** Whether the WHOLE moderation layer runs for one repo: the global master switch is authoritative;
+ *  `off` lets a repo opt out while the global layer is enabled, and `enabled`/`inherit` both require the
+ *  global switch to be on. */
 export function resolveModerationGateEnabled(globalEnabled: boolean, gateMode: ModerationGateMode): boolean {
+  if (!globalEnabled) return false;
   if (gateMode === "off") return false;
-  if (gateMode === "enabled") return true;
-  return globalEnabled;
+  return true;
 }
 
 export type ModerationTier = "none" | "warning" | "banned";

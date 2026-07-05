@@ -73,32 +73,52 @@ docker pull ghcr.io/jsonbored/gittensory-selfhost:latest`}
       </Callout>
       <Callout variant="safety">
         Before tagging any <code>orb-v*</code> release or prerelease, run the{" "}
-        <Link to="/docs/self-hosting-release-checklist">beta release checklist</Link> against the
-        built image — CI only smoke-tests the plain SQLite + Redis + direct-App default, not
-        brokered mode, air-gapped mode, or any AI provider.
+        <Link to="/docs/self-hosting-release-checklist">release checklist</Link> against the built
+        image — CI only smoke-tests the plain SQLite + Redis + direct-App default, not brokered
+        mode, air-gapped mode, or any AI provider.
       </Callout>
 
       <h2>Upgrade flow</h2>
       <ol>
         <li>Read release notes for env, migration, or behavior changes.</li>
         <li>Back up the database or confirm Litestream health.</li>
-        <li>Pull the new image tag.</li>
-        <li>Recreate the app container.</li>
+        <li>
+          Pull and restart with <code>scripts/deploy-selfhost-image.sh</code> (or rebuild the
+          checkout with <code>scripts/deploy-selfhost-prebuilt.sh</code>) — both restart only the{" "}
+          <code>gittensory</code> service (<code>--no-deps</code>) and wait for it to report{" "}
+          <code>healthy</code> before returning, instead of a bare <code>docker compose up -d</code>{" "}
+          that returns as soon as the container starts.
+        </li>
         <li>
           Check <code>/ready</code>, logs, queue metrics, and one test PR.
         </li>
       </ol>
       <CodeBlock
         lang="bash"
-        code={`docker compose pull gittensory
-docker compose up -d gittensory
-curl http://localhost:8787/ready`}
+        code={`# Recommended: pull a published tag, restart, wait for healthy
+./scripts/deploy-selfhost-image.sh ghcr.io/jsonbored/gittensory-selfhost:orb-v0.1.0
+curl http://localhost:8787/ready
+
+# Building from the current checkout instead of pulling
+./scripts/deploy-selfhost-prebuilt.sh`}
       />
+      <Callout variant="note">
+        Both scripts pin a version: the image script accepts a tag/digest argument or{" "}
+        <code>GITTENSORY_IMAGE</code>; the prebuilt script derives <code>SENTRY_RELEASE</code>/
+        <code>GITTENSORY_VERSION</code> from the checked-out commit (
+        <code>git rev-parse --short=8 HEAD</code>) unless you set <code>SENTRY_RELEASE</code>{" "}
+        yourself. A plain{" "}
+        <code>docker compose pull gittensory &amp;&amp; docker compose up -d gittensory</code> still
+        works, but skips the health-check wait loop and input validation both scripts provide.
+      </Callout>
 
       <h2>Custom images</h2>
       <p>
-        Custom builds are useful for testing local changes or including subscription CLIs. They
-        should not contain secrets.
+        Custom builds are useful for testing local changes, including subscription CLIs, or trimming
+        the image. They should not contain secrets. <code>INSTALL_AI_CLIS</code> (default{" "}
+        <code>true</code>) installs the Claude Code and Codex CLIs; a sibling build-arg,{" "}
+        <code>INSTALL_VISUAL_REVIEW</code> (default <code>false</code>), adds{" "}
+        <code>puppeteer-core</code> for visual capture.
       </p>
       <CodeBlock
         lang="bash"
@@ -115,10 +135,20 @@ docker compose up -d gittensory`}
 
       <h2>Rollback</h2>
       <p>
-        Roll back by pinning the prior image tag and recreating the container. Database migrations
-        can make rollback harder, so keep backups and read release notes before upgrading a live
-        maintainer instance.
+        There is no dedicated rollback command. Roll back by re-running{" "}
+        <code>scripts/deploy-selfhost-image.sh</code> pinned to the prior image tag or digest (or{" "}
+        <code>scripts/deploy-selfhost-prebuilt.sh</code> against an older checkout) — the same
+        script you upgrade with, pointed backward.
       </p>
+      <Callout variant="warn" title="Migrations are forward-only">
+        This repo has no down-migration convention (<code>scripts/check-migrations.mjs</code> and{" "}
+        <code>migrations/</code> only ever add forward). If a migration already ran forward before
+        you need to roll back, reverting the app image does not revert the schema — the rolled-back
+        code now runs against a newer schema than it expects. Keep backups and read release notes
+        for migration changes before upgrading a live maintainer instance, and treat a
+        post-migration rollback as a case that needs a manual schema/data plan, not just an image
+        swap.
+      </Callout>
     </DocsPage>
   );
 }

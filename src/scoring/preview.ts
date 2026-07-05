@@ -421,9 +421,11 @@ function computeScoreCore(
   const issueCredibilityFloor = constant(constants, "MIN_ISSUE_CREDIBILITY");
   const validSolvedIssuesObserved = input.validSolvedIssues !== undefined ? nonNegative(input.validSolvedIssues) : undefined;
   const issueCredibilityObserved = input.issueCredibility !== undefined ? clamp(input.issueCredibility, 0, 1) : undefined;
-  // Issue-discovery validity mirrors upstream's separate issue lane — only gate previews that
-  // actually claim linked-issue / issue-discovery scoring, not every repo with a non-zero share.
-  const issueDiscoveryRelevant = (input.linkedIssueMode ?? "none") !== "none";
+  // Issue-discovery validity mirrors upstream's separate issue lane, which is the `standard` linked-issue
+  // lane only. The `maintainer` lane explicitly does not require solved-by-PR issue linkage (see
+  // decideLinkedIssueMultiplier), so it must not be gated by the solved-issue history floor — otherwise a
+  // maintainer preview with sparse issue history is wrongly zeroed and flagged issue_discovery_validity_floor.
+  const issueDiscoveryRelevant = (input.linkedIssueMode ?? "none") === "standard";
   const issueDiscoveryHistoryKnown = validSolvedIssuesObserved !== undefined && issueCredibilityObserved !== undefined;
   const issueDiscoveryHistoryMultiplier =
     !issueDiscoveryRelevant || !issueDiscoveryHistoryKnown
@@ -906,13 +908,26 @@ function deltaExplanationFor(core: ScoreCore, blockedBy: ScoreGateBlocker[]): st
   return `Effective score ${core.scoreEstimate.estimatedMergedScore}; underlying potential ${core.scoreEstimate.pendingSaturationScore}; blocked or reduced by ${blockedBy.map((blocker) => blocker.code).join(", ")}.`;
 }
 
+// A label multiplier must be a positive, finite number (mirrors the validity rule signals/engine.ts's own
+// config-quality check already documents and enforces for its ADVISORY health score: "0, negative, NaN, or
+// Infinity are config errors that would silently misweight scoring"). That check only ever adjusted a
+// repo's informational config-quality score -- it never stopped an invalid value from reaching the REAL
+// scoring formula here, where `labelMultiplier` multiplies directly into `estimatedMergedScore`. A
+// registry-sourced label multiplier of 0 or a negative number is valid JSON and passed neither `numberValue`
+// (only applied to the scalar overrides, not this map) nor any check in this function, so it would zero out
+// or invert any PR/issue score for a matching label. Filtering here closes the gap where it actually matters.
+function isValidLabelMultiplier(value: number): boolean {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
 function selectLabelMultiplier(labels: string[], multipliers: Record<string, number>, fallback: number): number {
   const normalized = labels.map((label) => label.toLowerCase());
   const matched = Object.entries(multipliers).flatMap(([pattern, multiplier]) => {
+    if (!isValidLabelMultiplier(multiplier)) return [];
     const matcher = labelPatternToRegExp(pattern.toLowerCase());
     return normalized.some((label) => matcher.test(label)) ? [multiplier] : [];
   });
-  return matched.length > 0 ? Math.max(...matched) : fallback || 1;
+  return matched.length > 0 ? Math.max(...matched) : isValidLabelMultiplier(fallback) ? fallback : 1;
 }
 
 /** True when `label` matches the configured multiplier `pattern` under the SAME case-insensitive fnmatch glob
@@ -1046,8 +1061,19 @@ function escapeRegExpLiteral(value: string): string {
 
 function hasDescendingCharacterRange(body: string): boolean {
   const start = body.startsWith("!") ? 1 : 0;
-  for (let i = start + 1; i < body.length - 1; i += 1) {
-    if (body.charAt(i) === "-" && body.charCodeAt(i - 1) > body.charCodeAt(i + 1)) return true;
+  // Walk the class left-to-right, consuming each `X-Y` range as a unit so a range endpoint can't be
+  // misread as the start of a spurious second range. Only a genuinely inverted range like `[z-a]` — the
+  // case JS `RegExp` actually throws on — must degrade the class to never-match; a literal `-` that
+  // follows a completed range (as in `[a-z-9]`, a valid class) must NOT be suppressed. The prior scan
+  // flagged any `-` whose left neighbor outranked its right neighbor, so it wrongly killed `[a-z-9]`.
+  let i = start;
+  while (i < body.length) {
+    if (i + 2 < body.length && body.charAt(i + 1) === "-") {
+      if (body.charCodeAt(i) > body.charCodeAt(i + 2)) return true;
+      i += 3;
+    } else {
+      i += 1;
+    }
   }
   return false;
 }
@@ -1327,11 +1353,32 @@ export function resolveTimeDecay(
   overrides?: RepoTimeDecayOverrides | null,
 ): { gracePeriodHours: number; sigmoidMidpointDays: number; sigmoidSteepness: number; minMultiplier: number } {
   return {
-    gracePeriodHours: Math.trunc(pickOverride(overrides?.gracePeriodHours, constant(constants, "TIME_DECAY_GRACE_PERIOD_HOURS"))),
+    gracePeriodHours: clampGracePeriodHours(Math.trunc(pickOverride(overrides?.gracePeriodHours, constant(constants, "TIME_DECAY_GRACE_PERIOD_HOURS")))),
     sigmoidMidpointDays: pickOverride(overrides?.sigmoidMidpointDays, constant(constants, "TIME_DECAY_SIGMOID_MIDPOINT")),
     sigmoidSteepness: pickOverride(overrides?.sigmoidSteepness, constant(constants, "TIME_DECAY_SIGMOID_STEEPNESS_SCALAR")),
-    minMultiplier: pickOverride(overrides?.minMultiplier, constant(constants, "TIME_DECAY_MIN_MULTIPLIER")),
+    minMultiplier: clampMinMultiplier(pickOverride(overrides?.minMultiplier, constant(constants, "TIME_DECAY_MIN_MULTIPLIER"))),
   };
+}
+
+// Documented bound (see the parity note above): upstream validates 0 <= grace_period_hours <= 168. The
+// override reaches this resolver via a bare Number.isFinite check (registry/normalize.ts's parseTimeDecayOverrides),
+// so an out-of-band value (negative, or beyond a week) would otherwise apply verbatim.
+const GRACE_PERIOD_HOURS_MIN = 0;
+const GRACE_PERIOD_HOURS_MAX = 168;
+
+function clampGracePeriodHours(value: number): number {
+  return clamp(value, GRACE_PERIOD_HOURS_MIN, GRACE_PERIOD_HOURS_MAX);
+}
+
+// minMultiplier is the sigmoid's floor (calculateTimeDecay: Math.max(sigmoid, minMultiplier)), and the
+// sigmoid itself is always in (0, 1). A per-repo override above 1 would floor every aged PR ABOVE a fresh
+// PR's multiplier -- inverting time decay into an age bonus -- and a negative override applied verbatim
+// today has no floor semantics at all. Bound to the sigmoid's own range so the floor invariant always holds.
+const MIN_MULTIPLIER_MIN = 0;
+const MIN_MULTIPLIER_MAX = 1;
+
+function clampMinMultiplier(value: number): number {
+  return clamp(value, MIN_MULTIPLIER_MIN, MIN_MULTIPLIER_MAX);
 }
 
 function pickOverride(value: number | null | undefined, fallback: number): number {

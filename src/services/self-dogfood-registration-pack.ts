@@ -1,3 +1,4 @@
+import { GITTENSOR_SELF_REPO_DEFAULT, resolveGittensorySelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
 import {
   buildGittensorConfigRecommendation,
   buildRegistrationReadiness,
@@ -8,7 +9,10 @@ import {
 } from "../signals/registration-readiness";
 import { nowIso } from "../utils/json";
 
-export const DEFAULT_SELF_DOGFOOD_REPO = "JSONbored/gittensory";
+// Re-exported for backward compatibility with existing callers/tests (#2911); the actual default value and
+// resolver logic live in config/gittensory-repo-focus-manifest.ts, the single source of truth shared with
+// upstream/ruleset.ts.
+export const DEFAULT_SELF_DOGFOOD_REPO = GITTENSOR_SELF_REPO_DEFAULT;
 
 export type SelfDogfoodActionArea = {
   area: string;
@@ -32,11 +36,7 @@ export type SelfDogfoodRegistrationPack = {
   rerunHint: string;
 };
 
-export function resolveSelfDogfoodRepoFullName(env: { GITTENSORY_DRIFT_ISSUE_REPO?: string }): string {
-  const configured = env.GITTENSORY_DRIFT_ISSUE_REPO?.trim();
-  if (!configured || !configured.includes("/")) return DEFAULT_SELF_DOGFOOD_REPO;
-  return configured;
-}
+export const resolveSelfDogfoodRepoFullName = resolveGittensorySelfRepoFullName;
 
 export function buildSelfDogfoodRegistrationPack(args: {
   repoFullName: string;

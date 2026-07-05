@@ -84,6 +84,7 @@ describe("gittensory-miner claim ledger (#2314)", () => {
     ledger.recordClaim({ repoFullName: "o/a", issueNumber: 9, note: "v1" });
     const released = ledger.releaseClaim("o/a", 9);
     expect(released?.status).toBe("released");
+    expect(ledger.releaseClaim("o/a", 9)).toBeNull();
     // Re-claim after release: same single row, back to active, note refreshed.
     const reclaimed = ledger.recordClaim({ repoFullName: "o/a", issueNumber: 9, note: "v2" });
     expect(reclaimed).toMatchObject({ status: "active", note: "v2", id: released?.id });
@@ -101,6 +102,15 @@ describe("gittensory-miner claim ledger (#2314)", () => {
     expect(ledger.listClaims({ repoFullName: "o/a" }).map((c) => c.issueNumber)).toEqual([1, 2]);
     expect(ledger.listClaims({ status: "active" }).map((c) => c.repoFullName)).toEqual(["o/a", "o/b"]);
     expect(ledger.listClaims({ repoFullName: "o/a", status: "released" }).map((c) => c.issueNumber)).toEqual([2]);
+  });
+
+  it("treats null listClaims filters as unscoped", () => {
+    const ledger = tempLedger();
+    ledger.recordClaim({ repoFullName: "o/a", issueNumber: 1 });
+    ledger.recordClaim({ repoFullName: "o/b", issueNumber: 2 });
+    expect(ledger.listClaims({ repoFullName: null })).toHaveLength(2);
+    expect(ledger.listClaims({ status: null })).toHaveLength(2);
+    expect(ledger.listClaims({ repoFullName: null, status: null })).toHaveLength(2);
   });
 
   it("rejects malformed inputs rather than persisting them", () => {

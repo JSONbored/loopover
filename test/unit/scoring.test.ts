@@ -791,6 +791,50 @@ NOVELTY_BONUS_SCALAR = 3
     expect(preview.scoreEstimate.labelMultiplier).toBe(1);
   });
 
+  it("REGRESSION: ignores a non-positive or non-finite label multiplier instead of letting it corrupt the score", () => {
+    const baseInput: ScorePreviewInput = {
+      repoFullName: repo.fullName,
+      sourceTokenScore: 60,
+      totalTokenScore: 90,
+      sourceLines: 50,
+      openPrCount: 0,
+      credibility: 1,
+      linkedIssueMode: "none",
+    };
+    // A registry-sourced label multiplier of 0 or negative is valid JSON and previously reached
+    // Math.max(...) unfiltered, zeroing out or inverting the whole estimatedMergedScore for a matching label.
+    const zeroMultiplier = buildScorePreview({
+      repo: { ...repo, registryConfig: { ...repo.registryConfig!, labelMultipliers: { bug: 0 } } },
+      snapshot,
+      input: { ...baseInput, labels: ["bug"] },
+    });
+    const negativeMultiplier = buildScorePreview({
+      repo: { ...repo, registryConfig: { ...repo.registryConfig!, labelMultipliers: { bug: -2 } } },
+      snapshot,
+      input: { ...baseInput, labels: ["bug"] },
+    });
+    // An invalid entry alongside a valid one: the valid one still wins, the invalid one is simply excluded
+    // from the candidate set (not treated as 0 or as a Math.max(...) contender).
+    const mixedValidity = buildScorePreview({
+      repo: { ...repo, registryConfig: { ...repo.registryConfig!, labelMultipliers: { bug: -2, refactor: 1.4 } } },
+      snapshot,
+      input: { ...baseInput, labels: ["bug", "refactor"] },
+    });
+    // A negative fallback (defaultLabelMultiplier) is truthy in JS, so the old `fallback || 1` never caught it.
+    const negativeFallback = buildScorePreview({
+      repo: { ...repo, registryConfig: { ...repo.registryConfig!, defaultLabelMultiplier: -3, labelMultipliers: {} } },
+      snapshot,
+      input: { ...baseInput, labels: ["unmatched"] },
+    });
+
+    expect(zeroMultiplier.scoreEstimate.labelMultiplier).toBe(1);
+    expect(negativeMultiplier.scoreEstimate.labelMultiplier).toBe(1);
+    expect(mixedValidity.scoreEstimate.labelMultiplier).toBe(1.4);
+    expect(negativeFallback.scoreEstimate.labelMultiplier).toBe(1);
+    expect(zeroMultiplier.scoreEstimate.estimatedMergedScore).toBeGreaterThan(0);
+    expect(negativeMultiplier.scoreEstimate.estimatedMergedScore).toBeGreaterThan(0);
+  });
+
   it("applies penalty label multipliers instead of flooring them to 1 (#994)", () => {
     const baseInput: ScorePreviewInput = {
       repoFullName: repo.fullName,
@@ -1590,6 +1634,34 @@ NOVELTY_BONUS_SCALAR = 3
       ).toBe(true);
     });
 
+    it("does not gate the maintainer lane by the issue-discovery validity floor (#808)", () => {
+      const issueDiscoveryRepo: RepositoryRecord = {
+        ...repo,
+        registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 0.25 },
+      };
+      // The same sparse solved-issue history that zeroes a `standard` preview must not gate the maintainer
+      // lane, which does not require solved-by-PR issue linkage.
+      const maintainer = buildScorePreview({
+        repo: issueDiscoveryRepo,
+        snapshot,
+        input: {
+          repoFullName: issueDiscoveryRepo.fullName,
+          sourceTokenScore: 60,
+          totalTokenScore: 90,
+          sourceLines: 50,
+          openPrCount: 0,
+          credibility: 1,
+          mergedPullRequests: 5,
+          linkedIssueMode: "maintainer" as const,
+          validSolvedIssues: 2,
+          issueCredibility: 0.9,
+        },
+      });
+      expect(maintainer.scoreEstimate.issueDiscoveryHistoryMultiplier).toBe(1);
+      expect(maintainer.effectiveEstimatedScore).toBeGreaterThan(0);
+      expect(maintainer.blockedBy.some((b) => b.code === "issue_discovery_validity_floor")).toBe(false);
+    });
+
     it("issue-discovery validity floor is skipped when issue-discovery is not relevant or history is unknown", () => {
       const issueDiscoveryRepo: RepositoryRecord = {
         ...repo,
@@ -1812,6 +1884,24 @@ NOVELTY_BONUS_SCALAR = 3
       expect(calculateTimeDecay(13.5, c, { gracePeriodHours: 13.9 })).toBeLessThan(1);
     });
 
+    it("clamps an out-of-band grace_period_hours override to the documented [0, 168] range", () => {
+      const c = DEFAULT_SCORING_CONSTANTS;
+      // Negative override clamps to 0 rather than applying verbatim.
+      expect(resolveTimeDecay(c, { gracePeriodHours: -10 }).gracePeriodHours).toBe(0);
+      // An override beyond the documented week-long ceiling clamps to 168.
+      expect(resolveTimeDecay(c, { gracePeriodHours: 500 }).gracePeriodHours).toBe(168);
+    });
+
+    it("clamps an out-of-band minMultiplier override to the sigmoid's own [0, 1] floor range", () => {
+      const c = DEFAULT_SCORING_CONSTANTS;
+      expect(resolveTimeDecay(c, { minMultiplier: -0.5 }).minMultiplier).toBe(0);
+      expect(resolveTimeDecay(c, { minMultiplier: 1.5 }).minMultiplier).toBe(1);
+      // Before the fix, an override above 1 floored every aged PR ABOVE a fresh PR's 1.0 multiplier,
+      // inverting decay into an age bonus. After the fix the floor caps at 1, so a very old PR decays
+      // down to at most the fresh multiplier -- never above it.
+      expect(calculateTimeDecay(2400, c, { minMultiplier: 1.5 })).toBe(1);
+    });
+
     it("applies each live repo's resolved curve in the preview (per-repo, not global)", () => {
       const input: ScorePreviewInput = { repoFullName: repo.fullName, sourceTokenScore: 58, totalTokenScore: 600, sourceLines: 60, openPrCount: 0, credibility: 1, applyTimeDecay: true, prAgeHours: 18 };
       // Repo with a 24h grace override (like JSONbored/gittensory) → an 18h-old PR is still fresh.
@@ -1930,6 +2020,26 @@ describe("label pattern matcher memoization (#2106)", () => {
     // A literal key (no glob metacharacter) matches only its exact label.
     expect(labelMatchesPattern("bug", "bug")).toBe(true);
     expect(labelMatchesPattern("bugfix", "bug")).toBe(false);
+  });
+
+  it("REGRESSION: a literal `-` following a completed range keeps the class valid, not a descending range", () => {
+    // `[a-z-9]` is `a`-`z` plus a literal `-` plus `9` — a valid class that JS `RegExp` compiles and Python
+    // fnmatch matches, so the preview must too. The descending-range suppressor previously misread the
+    // trailing `-9` as an inverted range and degraded the whole class to never-match, silently dropping any
+    // `label_multipliers` key shaped like this to the neutral default. Only a genuinely inverted range
+    // (the case JS `RegExp` throws on) may be suppressed.
+    expect(labelMatchesPattern("m", "[a-z-9]")).toBe(true); // inside the a-z range
+    expect(labelMatchesPattern("9", "[a-z-9]")).toBe(true); // the trailing literal member
+    expect(labelMatchesPattern("-", "[a-z-9]")).toBe(true); // the literal dash member
+    expect(labelMatchesPattern("5", "[a-z-9]")).toBe(false); // 5 is not in {a-z, -, 9}
+    // A genuinely inverted range stays a never-match — the fix preserves the JS-`RegExp`-throws case.
+    expect(labelMatchesPattern("m", "[z-a]")).toBe(false);
+    // The same literal-dash handling applies inside a negated class `[!a-z-9]` (matches only chars OUTSIDE it).
+    expect(labelMatchesPattern("5", "[!a-z-9]")).toBe(true);
+    expect(labelMatchesPattern("a", "[!a-z-9]")).toBe(false);
+    // A plain multi-character class with no range exercises the non-range walk arm.
+    expect(labelMatchesPattern("b", "[abc]")).toBe(true);
+    expect(labelMatchesPattern("d", "[abc]")).toBe(false);
   });
 
   it("SECURITY (ReDoS, #2456): a label pattern with too many chained wildcards no longer risks catastrophic backtracking — it fails SAFE TOWARD NO MULTIPLIER (never matches) instead of ever compiling the pathological pattern", () => {

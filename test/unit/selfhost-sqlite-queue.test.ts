@@ -6,6 +6,7 @@ import { jobCoalesceKey, queueSnapshotFromBinding } from "../../src/selfhost/que
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { RetryableJobError } from "../../src/queue/retryable";
 import { hostLoadAvg1PerCore } from "../../src/selfhost/host-pressure";
+import * as sentryModule from "../../src/selfhost/sentry";
 import type { JobMessage } from "../../src/types";
 
 // Real host CPU load is nondeterministic (and can legitimately spike on a busy CI runner), so every
@@ -1308,7 +1309,7 @@ describe("createSqliteQueue (durable #980)", () => {
       driver.query("PRAGMA index_info(_selfhost_jobs_claim)", []).rows.map(
         (row) => (row as { name: string }).name,
       ),
-    ).toEqual(["status", "run_after", "priority"]);
+    ).toEqual(["status", "priority", "claim_sort_key", "run_after"]);
   });
 
   it("rebuilds an old claim index so priority participates in future claims", async () => {
@@ -1332,7 +1333,7 @@ describe("createSqliteQueue (durable #980)", () => {
       driver.query("PRAGMA index_info(_selfhost_jobs_claim)", []).rows.map(
         (row) => (row as { name: string }).name,
       ),
-    ).toEqual(["status", "run_after", "priority"]);
+    ).toEqual(["status", "priority", "claim_sort_key", "run_after"]);
   });
 
   it("claims webhook work before regate work, and regate work before earlier background jobs", async () => {
@@ -1367,13 +1368,14 @@ describe("createSqliteQueue (durable #980)", () => {
   });
 
   describe("claim-time backlog-vs-fresh-intake fairness (#selfhost-backlog-convergence)", () => {
-    const backlogJob = (repo: string, prNumber: number): JobMessage =>
+    const backlogJob = (repo: string, prNumber: number, prCreatedAt?: string): JobMessage =>
       ({
         type: "agent-regate-pr",
         deliveryId: `backlog-convergence:${repo}#${prNumber}`,
         repoFullName: repo,
         prNumber,
         installationId: 1,
+        ...(prCreatedAt ? { prCreatedAt } : {}),
       }) as unknown as JobMessage;
 
     it("prefers 3 backlog-lane claims for every 1 fresh-intake claim (default ratio), deterministically", async () => {
@@ -1393,7 +1395,7 @@ describe("createSqliteQueue (durable #980)", () => {
       ]);
     });
 
-    it("repeats the ratio cycle across a longer run (6 backlog : 2 fresh -> B,B,B,F,B,B,B,F)", async () => {
+    it("repeats the ratio cycle with one plain-priority slot per fairness window", async () => {
       const driver = makeDriver();
       const seen: string[] = [];
       const q = createSqliteQueue(driver, async (m) => void seen.push((m as unknown as { deliveryId: string }).deliveryId), { concurrency: 1 });
@@ -1408,11 +1410,24 @@ describe("createSqliteQueue (durable #980)", () => {
         "backlog-convergence:owner/repo#2",
         "backlog-convergence:owner/repo#3",
         "fresh-1",
+        "fresh-2",
         "backlog-convergence:owner/repo#4",
         "backlog-convergence:owner/repo#5",
         "backlog-convergence:owner/repo#6",
-        "fresh-2",
       ]);
+    });
+
+    it("does not let a lower-priority classified lane starve a higher-priority manual regate", async () => {
+      const driver = makeDriver();
+      const seen: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void seen.push((m as unknown as { deliveryId: string }).deliveryId), { concurrency: 1 });
+      await q.binding.send({
+        ...backlogJob("owner/repo", 1),
+        deliveryId: "manual-regate:owner/repo#1:operator",
+      } as JobMessage);
+      await q.binding.send(backlogJob("owner/repo", 2));
+      await q.drain();
+      expect(seen).toEqual(["manual-regate:owner/repo#1:operator", "backlog-convergence:owner/repo#2"]);
     });
 
     it("falls through to the plain unscoped foreground claim when the preferred lane has nothing pending", async () => {
@@ -1452,6 +1467,100 @@ describe("createSqliteQueue (durable #980)", () => {
         "backlog-convergence:owner/a#2",
         "backlog-convergence:owner/a#3",
       ]);
+    });
+
+    it("REGRESSION: drains one repo's backlog-convergence PR jobs by original PR age, not enqueue timing", async () => {
+      const driver = makeDriver();
+      const seen: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void seen.push((m as unknown as { deliveryId: string }).deliveryId), { concurrency: 1 });
+      await q.binding.send(backlogJob("owner/repo", 12, "2026-07-03T12:00:00.000Z"), { delaySeconds: 60 });
+      await q.binding.send(backlogJob("owner/repo", 10, "2026-07-03T10:00:00.000Z"), { delaySeconds: 60 });
+      await q.binding.send(backlogJob("owner/repo", 11, "2026-07-03T11:00:00.000Z"), { delaySeconds: 60 });
+      driver.query("UPDATE _selfhost_jobs SET run_after=0", []);
+
+      await q.drain();
+
+      expect(seen).toEqual([
+        "backlog-convergence:owner/repo#10",
+        "backlog-convergence:owner/repo#11",
+        "backlog-convergence:owner/repo#12",
+      ]);
+    });
+
+    it("backfills stale claim-sort keys and skips rows that already match the derived key", async () => {
+      const driver = makeDriver();
+      createSqliteQueue(driver, async () => undefined, { concurrency: 1 }); // create the durable schema first
+      const stale = backlogJob("owner/repo", 12, "2026-07-03T12:00:00.000Z");
+      const normalized = backlogJob("owner/repo", 13, "2026-07-03T13:00:00.000Z");
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane, claim_sort_key) VALUES (?, 'pending', 0, 0, ?, 9, ?, 'backlog', 0)",
+        [
+          JSON.stringify(stale),
+          1,
+          "agent-regate-pr:owner/repo#12",
+        ],
+      );
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane, claim_sort_key) VALUES (?, 'pending', 0, 0, ?, 9, ?, 'backlog', ?)",
+        [
+          JSON.stringify(normalized),
+          1,
+          "agent-regate-pr:owner/repo#13",
+          Date.parse("2026-07-03T13:00:00.000Z"),
+        ],
+      );
+
+      createSqliteQueue(driver, async () => undefined, { concurrency: 1 }); // startup backfill pass
+
+      const rows = driver.query("SELECT job_key, claim_sort_key FROM _selfhost_jobs ORDER BY job_key", []).rows as Array<{ job_key: string; claim_sort_key: number }>;
+      expect(rows).toEqual([
+        { job_key: "agent-regate-pr:owner/repo#12", claim_sort_key: Date.parse("2026-07-03T12:00:00.000Z") },
+        { job_key: "agent-regate-pr:owner/repo#13", claim_sort_key: Date.parse("2026-07-03T13:00:00.000Z") },
+      ]);
+    });
+
+    it("REGRESSION: does not claim a duplicate PR re-gate while the same job_key is already processing", async () => {
+      const driver = makeDriver();
+      const seen: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void seen.push((m as unknown as { deliveryId: string }).deliveryId), { concurrency: 1 });
+      const now = Date.now();
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane, claim_sort_key) VALUES (?, 'processing', 0, ?, ?, 9, ?, 'backlog', ?)",
+        [
+          JSON.stringify(backlogJob("owner/repo", 10, "2026-07-03T10:00:00.000Z")),
+          now,
+          now,
+          "agent-regate-pr:owner/repo#10",
+          Date.parse("2026-07-03T10:00:00.000Z"),
+        ],
+      );
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane, claim_sort_key) VALUES (?, 'pending', 0, 0, ?, 9, ?, 'backlog', ?)",
+        [
+          JSON.stringify(backlogJob("owner/repo", 10, "2026-07-03T10:00:00.000Z")),
+          now,
+          "agent-regate-pr:owner/repo#10",
+          Date.parse("2026-07-03T10:00:00.000Z"),
+        ],
+      );
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane, claim_sort_key) VALUES (?, 'pending', 0, 0, ?, 9, ?, 'backlog', ?)",
+        [
+          JSON.stringify(backlogJob("owner/repo", 11, "2026-07-03T11:00:00.000Z")),
+          now,
+          "agent-regate-pr:owner/repo#11",
+          Date.parse("2026-07-03T11:00:00.000Z"),
+        ],
+      );
+
+      await q.drain();
+
+      expect(seen).toEqual(["backlog-convergence:owner/repo#11"]);
+      const duplicate = driver.query(
+        "SELECT status FROM _selfhost_jobs WHERE job_key=? ORDER BY id DESC LIMIT 1",
+        ["agent-regate-pr:owner/repo#10"],
+      ).rows[0] as { status: string };
+      expect(duplicate.status).toBe("pending");
     });
 
     it("defaults the claim sequence to 0 when the fairness singleton row is missing (defensive, never crashes)", async () => {
@@ -1503,6 +1612,290 @@ describe("createSqliteQueue (durable #980)", () => {
       const row = driver.query("SELECT foreground_lane FROM _selfhost_jobs", []).rows[0] as { foreground_lane: string | null };
       expect(row.foreground_lane).toBe("fresh");
     });
+
+    it("increments the lane-claim counter on a successful backlog-lane claim (#selfhost-lane-observability)", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined, { concurrency: 1 });
+      await q.binding.send(backlogJob("owner/repo", 1));
+      await q.drain();
+      expect(await renderMetrics()).toContain('gittensory_jobs_claimed_by_lane_total{lane="backlog"} 1');
+      expect(await renderMetrics()).not.toContain('lane="fresh"');
+    });
+
+    it("increments the lane-claim counter on a successful fresh-intake claim (#selfhost-lane-observability)", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined, { concurrency: 1 });
+      // Sequence 0/1/2 prefer "backlog" (default 3:1 ratio) -- pre-populate 3 backlog rows so those claims
+      // actually hit the backlog-scoped branch, THEN sequence 3 prefers "fresh" and the fresh row is pending,
+      // so the scoped fresh claim itself (not the unscoped fallback) is what claims it.
+      await q.binding.send(backlogJob("owner/repo", 1));
+      await q.binding.send(backlogJob("owner/repo", 2));
+      await q.binding.send(backlogJob("owner/repo", 3));
+      await q.binding.send(prWebhook("fresh-1"));
+      await q.drain();
+      expect(await renderMetrics()).toContain('gittensory_jobs_claimed_by_lane_total{lane="fresh"} 1');
+      expect(await renderMetrics()).toContain('gittensory_jobs_claimed_by_lane_total{lane="backlog"} 3');
+    });
+
+    it("does NOT increment the lane-claim counter when the preferred lane has nothing pending (falls through unscoped)", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined, { concurrency: 1 });
+      // Sequence 0 prefers "backlog", but only a "fresh" row is pending -- the backlog-scoped claim misses (no
+      // increment) and the row is claimed via the PLAIN UNSCOPED fallback (claimNext()'s own `??`), not via
+      // claimNextForegroundLane's "fresh" branch -- so NEITHER lane value is recorded for this claim.
+      await q.binding.send(prWebhook("fresh-only"));
+      await q.drain();
+      expect(await renderMetrics()).not.toContain("gittensory_jobs_claimed_by_lane_total");
+    });
+
+    it("does NOT increment the lane-claim counter when the picked repo's candidate row can't actually be claimed (defensive)", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined, { concurrency: 1 });
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane) VALUES (?, 'pending', 0, 0, 1000, 0, ?, 'backlog')",
+        [JSON.stringify(backlogJob("owner/repo", 1)), "agent-regate-pr:owner/repo#1"],
+      );
+      await q.drain();
+      expect(await renderMetrics()).not.toContain("gittensory_jobs_claimed_by_lane_total");
+    });
+  });
+
+  describe("topBacklogRepos (#selfhost-lane-observability)", () => {
+    const backlogJob = (repo: string, prNumber: number): JobMessage =>
+      ({
+        type: "agent-regate-pr",
+        deliveryId: `backlog-convergence:${repo}#${prNumber}`,
+        repoFullName: repo,
+        prNumber,
+        installationId: 1,
+      }) as unknown as JobMessage;
+
+    it("returns an empty array when no backlog-lane row is pending", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      expect(q.topBacklogRepos(10)).toEqual([]);
+    });
+
+    it("counts pending AND processing backlog-lane rows, grouped by repo, sorted by depth", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      const rows: Array<{ repo: string; prNumber: number; status: string }> = [
+        { repo: "owner/a", prNumber: 1, status: "pending" },
+        { repo: "owner/b", prNumber: 1, status: "pending" },
+        { repo: "owner/b", prNumber: 2, status: "processing" },
+        { repo: "owner/b", prNumber: 3, status: "pending" },
+      ];
+      for (const { repo, prNumber, status } of rows) {
+        driver.query(
+          `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane) VALUES (?, ?, 0, 0, 1000, 9, ?, 'backlog')`,
+          [JSON.stringify(backlogJob(repo, prNumber)), status, `agent-regate-pr:${repo}#${prNumber}`],
+        );
+      }
+      expect(q.topBacklogRepos(10)).toEqual([
+        { repo: "owner/b", count: 3 },
+        { repo: "owner/a", count: 1 },
+      ]);
+    });
+
+    it("excludes fresh-lane and unclassified rows, and honors the limit", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, foreground_lane) VALUES (?, 'pending', 0, 0, 1000, 10, 'fresh')",
+        [JSON.stringify(prWebhook("fresh-1"))],
+      );
+      for (const repo of ["owner/a", "owner/b", "owner/c"]) {
+        driver.query(
+          "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane) VALUES (?, 'pending', 0, 0, 1000, 9, ?, 'backlog')",
+          [JSON.stringify(backlogJob(repo, 1)), `agent-regate-pr:${repo}#1`],
+        );
+      }
+      expect(q.topBacklogRepos(2)).toHaveLength(2);
+    });
+
+    it("excludes a terminal (dead/cancelled) backlog-lane row", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane) VALUES (?, 'dead', 0, 0, 1000, 9, ?, 'backlog')",
+        [JSON.stringify(backlogJob("owner/repo", 1)), "agent-regate-pr:owner/repo#1"],
+      );
+      expect(q.topBacklogRepos(10)).toEqual([]);
+    });
+  });
+
+  describe("listDeadLetterJobs (#2214)", () => {
+    it("returns an empty array when there are no dead-letter rows", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      expect(q.listDeadLetterJobs(10, 0)).toEqual([]);
+    });
+
+    it("maps dead rows newest-death-first, extracting job type/attempts/error, and excludes non-dead rows", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, last_error, dead_at) VALUES (?, 'dead', 3, 0, 1000, 'boom', 5000)",
+        [JSON.stringify(msg("agent-regate-pr"))],
+      );
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, last_error, dead_at) VALUES (?, 'dead', 1, 0, 2000, 'kaboom', 9000)",
+        [JSON.stringify(msg("github-webhook"))],
+      );
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES (?, 'pending', 0, 0, 500)",
+        [JSON.stringify(msg("agent-regate-sweep"))],
+      );
+      expect(q.listDeadLetterJobs(10, 0)).toEqual([
+        { id: 2, jobType: "github-webhook", attempts: 1, lastError: "kaboom", createdAtMs: 2000, deadAtMs: 9000 },
+        { id: 1, jobType: "agent-regate-pr", attempts: 3, lastError: "boom", createdAtMs: 1000, deadAtMs: 5000 },
+      ]);
+    });
+
+    it("falls back to created_at ordering and reports deadAtMs null for a legacy row with no dead_at", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      // Legacy row: no dead_at, but its created_at (7000) is newer than the other row's real dead_at (3000) --
+      // COALESCE(dead_at, created_at) must use 7000 here, so this row sorts FIRST despite having a null deadAtMs.
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, last_error) VALUES (?, 'dead', 2, 0, 7000, 'legacy failure')",
+        [JSON.stringify(msg("agent-regate-pr"))],
+      );
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, last_error, dead_at) VALUES (?, 'dead', 1, 0, 1000, 'recent failure', 3000)",
+        [JSON.stringify(msg("agent-regate-pr"))],
+      );
+      expect(q.listDeadLetterJobs(10, 0)).toEqual([
+        { id: 1, jobType: "agent-regate-pr", attempts: 2, lastError: "legacy failure", createdAtMs: 7000, deadAtMs: null },
+        { id: 2, jobType: "agent-regate-pr", attempts: 1, lastError: "recent failure", createdAtMs: 1000, deadAtMs: 3000 },
+      ]);
+    });
+
+    it("reports jobType 'unknown' for an unparseable payload", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, last_error, dead_at) VALUES ('not-json', 'dead', 0, 0, 1000, 'unparseable payload', 1000)",
+        [],
+      );
+      expect(q.listDeadLetterJobs(10, 0)).toEqual([
+        { id: 1, jobType: "unknown", attempts: 0, lastError: "unparseable payload", createdAtMs: 1000, deadAtMs: 1000 },
+      ]);
+    });
+
+    it("paginates via limit/offset", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      for (let i = 0; i < 3; i++) {
+        driver.query(
+          "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, dead_at) VALUES (?, 'dead', 0, 0, ?, ?)",
+          [JSON.stringify(msg("agent-regate-pr")), 1000 + i, 1000 + i],
+        );
+      }
+      expect(q.listDeadLetterJobs(1, 1).map((job) => job.createdAtMs)).toEqual([1001]);
+    });
+  });
+
+  describe("replay/delete/purge dead-letter jobs (#2215)", () => {
+    it("replayDeadLetterJob requeues an existing dead row with a fresh retry budget", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, last_error, dead_at) VALUES (?, 'dead', 3, 0, 1000, 'boom', 5000)",
+        [JSON.stringify(msg("agent-regate-pr"))],
+      );
+      expect(q.replayDeadLetterJob(1)).toBe(true);
+      const row = driver.query("SELECT status, attempts, last_error, dead_at, run_after FROM _selfhost_jobs WHERE id=1", [])
+        .rows[0] as { status: string; attempts: number; last_error: string | null; dead_at: number | null; run_after: number };
+      expect(row.status).toBe("pending");
+      expect(row.attempts).toBe(0);
+      expect(row.last_error).toBeNull();
+      expect(row.dead_at).toBeNull();
+      expect(row.run_after).toBeGreaterThan(0);
+    });
+
+    it("replayDeadLetterJob returns false for a non-existent id", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      expect(q.replayDeadLetterJob(999)).toBe(false);
+    });
+
+    it("replayDeadLetterJob returns false and leaves a non-dead row untouched", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES (?, 'pending', 0, 42, 1000)",
+        [JSON.stringify(msg("agent-regate-pr"))],
+      );
+      expect(q.replayDeadLetterJob(1)).toBe(false);
+      const row = driver.query("SELECT status, run_after FROM _selfhost_jobs WHERE id=1", []).rows[0] as {
+        status: string;
+        run_after: number;
+      };
+      expect(row.status).toBe("pending");
+      expect(row.run_after).toBe(42);
+    });
+
+    it("deleteDeadLetterJob removes an existing dead row", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, dead_at) VALUES (?, 'dead', 1, 0, 1000, 1000)",
+        [JSON.stringify(msg("agent-regate-pr"))],
+      );
+      expect(q.deleteDeadLetterJob(1)).toBe(true);
+      expect(driver.query("SELECT id FROM _selfhost_jobs WHERE id=1", []).rows).toEqual([]);
+    });
+
+    it("deleteDeadLetterJob returns false for a non-existent id", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      expect(q.deleteDeadLetterJob(999)).toBe(false);
+    });
+
+    it("deleteDeadLetterJob returns false and does not delete a non-dead row", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES (?, 'processing', 0, 0, 1000)",
+        [JSON.stringify(msg("agent-regate-pr"))],
+      );
+      expect(q.deleteDeadLetterJob(1)).toBe(false);
+      expect(driver.query("SELECT id FROM _selfhost_jobs WHERE id=1", []).rows).toHaveLength(1);
+    });
+
+    it("purgeDeadLetterJobs deletes every dead row and leaves non-dead rows untouched", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      for (let i = 0; i < 3; i++) {
+        driver.query(
+          "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, dead_at) VALUES (?, 'dead', 0, 0, ?, ?)",
+          [JSON.stringify(msg("agent-regate-pr")), 1000 + i, 1000 + i],
+        );
+      }
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES (?, 'pending', 0, 0, 2000)",
+        [JSON.stringify(msg("agent-regate-pr"))],
+      );
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES (?, 'processing', 0, 0, 3000)",
+        [JSON.stringify(msg("agent-regate-pr"))],
+      );
+      expect(q.purgeDeadLetterJobs()).toBe(3);
+      expect((driver.query("SELECT COUNT(*) AS c FROM _selfhost_jobs WHERE status='dead'", []).rows[0] as { c: number }).c).toBe(0);
+      expect((driver.query("SELECT COUNT(*) AS c FROM _selfhost_jobs WHERE status!='dead'", []).rows[0] as { c: number }).c).toBe(2);
+    });
+
+    it("purgeDeadLetterJobs returns 0 and touches nothing when there are no dead rows", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES (?, 'pending', 0, 0, 1000)",
+        [JSON.stringify(msg("agent-regate-pr"))],
+      );
+      expect(q.purgeDeadLetterJobs()).toBe(0);
+      expect((driver.query("SELECT COUNT(*) AS c FROM _selfhost_jobs", []).rows[0] as { c: number }).c).toBe(1);
+    });
   });
 
   it("retries then dead-letters after maxRetries", async () => {
@@ -1521,6 +1914,10 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(calls).toBe(3);
     expect(q.deadCount()).toBe(1);
     expect(q.size()).toBe(0);
+    // #2214: a max-retries death also stamps dead_at, so the DLQ table can sort/report a real death time.
+    const [row] = q.listDeadLetterJobs(10, 0);
+    expect(row).toMatchObject({ jobType: "x", attempts: 3, lastError: "boom" });
+    expect(row!.deadAtMs).not.toBeNull();
   });
 
   describe("reviveDeadLetterJobs (#audit-rate-headroom)", () => {
@@ -1564,6 +1961,10 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(row.status).not.toBe("dead");
       expect(row.attempts).toBe(1); // untouched -- one more failure re-dead-letters it, not a fresh budget
       expect(row.last_error).toBeNull();
+      // #2214: dead_at is cleared on revival too, so a re-dead-lettered job gets a fresh death timestamp
+      // instead of reporting when it FIRST died.
+      const { rows: deadAtRows } = driver.query("SELECT dead_at FROM _selfhost_jobs", []);
+      expect((deadAtRows[0] as { dead_at: number | null }).dead_at).toBeNull();
 
       await q.drain(); // the one extra attempt the revival granted
       expect(calls).toBe(1);
@@ -1666,12 +2067,70 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(logged.some((line) => line.includes("selfhost_queue_dead_letter_revive_crashed") && line.includes("disk I/O error"))).toBe(true);
       await q.stop();
     });
+
+    // (#1824): dead-letter revival stopping SILENTLY is worse than one throwing tick -- a Sentry cron monitor
+    // now wraps every tick so a stopped timer shows up as a missed check-in, not silence.
+    it("wraps each revive tick in the queue-dead-letter-revive Sentry monitor", async () => {
+      process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS = "1000";
+      vi.useFakeTimers();
+      const monitorSpy = vi.spyOn(sentryModule, "withSentryMonitor");
+      try {
+        const driver = makeDriver();
+        const q = createSqliteQueue(driver, async () => undefined, { maxRetries: 1 });
+
+        q.start();
+        await vi.advanceTimersByTimeAsync(1000); // the revive interval fires once
+
+        expect(monitorSpy).toHaveBeenCalledWith(
+          "queue-dead-letter-revive",
+          { jobType: "queue-dead-letter-revive" },
+          expect.any(Function),
+        );
+        await q.stop();
+      } finally {
+        monitorSpy.mockRestore();
+      }
+    });
+
+    // The monitor rethrows on failure (withSentryMonitor's own contract) -- confirms that rethrow is still caught
+    // by reviveDeadLetterJobsSafely's own try/catch, so a crashing tick behaves exactly as it did before the
+    // monitor was added: logged + captured, never an uncaught exception.
+    it("still catches a revive crash after adding the Sentry monitor wrapper (no regression on #2581)", async () => {
+      process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS = "1000";
+      vi.useFakeTimers();
+      const monitorSpy = vi.spyOn(sentryModule, "withSentryMonitor");
+      try {
+        const driver = makeDriver();
+        const realQuery = driver.query.bind(driver);
+        vi.spyOn(driver, "query").mockImplementation((sql: string, params: unknown[]) => {
+          if (sql.includes("WHERE status='dead' AND attempts<?")) throw new Error("disk I/O error");
+          return realQuery(sql, params);
+        });
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const q = createSqliteQueue(driver, async () => undefined, { maxRetries: 1 });
+
+        q.start();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(monitorSpy).toHaveBeenCalledWith(
+          "queue-dead-letter-revive",
+          { jobType: "queue-dead-letter-revive" },
+          expect.any(Function),
+        );
+        const logged = errorSpy.mock.calls.map(([line]) => String(line));
+        expect(logged.some((line) => line.includes("selfhost_queue_dead_letter_revive_crashed") && line.includes("disk I/O error"))).toBe(true);
+        await q.stop();
+      } finally {
+        monitorSpy.mockRestore();
+      }
+    });
   });
 
   describe("releaseStaleForegroundDeferrals (#selfhost-queue-liveness)", () => {
     afterEach(() => {
       delete process.env.FOREGROUND_LIVENESS_ENABLED;
       delete process.env.FOREGROUND_LIVENESS_MAX_DEFER_MS;
+      delete process.env.FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP;
     });
 
     /** Directly inserts a foreground-priority (>=8 by default) pending row with an explicit created_at/run_after,
@@ -1771,6 +2230,39 @@ describe("createSqliteQueue (durable #980)", () => {
       const row = driver.query("SELECT run_after FROM _selfhost_jobs", []).rows[0] as { run_after: number };
       expect(row.run_after).toBe(futureRunAfter);
       expect(await renderMetrics()).not.toContain("gittensory_jobs_foreground_liveness_released_total");
+    });
+
+    it("caches foreground-liveness admission reads for candidates sharing the same rate-limit target", async () => {
+      process.env.FOREGROUND_LIVENESS_MAX_DEFER_MS = "600000";
+      const driver = makeDriver();
+      const now = Date.now();
+      seedExhaustedRateLimitObservation(driver, "installation:123", new Date(now + 30 * 60_000).toISOString());
+      const realQuery = driver.query.bind(driver);
+      const querySpy = vi.spyOn(driver, "query").mockImplementation((sql: string, params: unknown[]) => realQuery(sql, params));
+      const q = createSqliteQueue(driver, async () => undefined);
+      const futureRunAfter = now + 60 * 60_000;
+      for (const deliveryId of ["fg-fresh-1", "fg-fresh-2"]) {
+        driver.query(
+          `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+           VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0)`,
+          [
+            JSON.stringify({
+              type: "github-webhook",
+              deliveryId,
+              eventName: "x",
+              payload: { installation: { id: 123 } },
+            }),
+            futureRunAfter,
+            now - 1_000,
+          ],
+        );
+      }
+
+      const released = q.releaseStaleForegroundDeferrals();
+
+      expect(released).toBe(0);
+      const admissionReads = querySpy.mock.calls.filter(([sql]) => String(sql).includes("FROM github_rate_limit_observations"));
+      expect(admissionReads).toHaveLength(1);
     });
 
     // CONDITION-BASED recovery (the second OR arm): a foreground job whose created_at is nowhere near stale but
@@ -1885,6 +2377,121 @@ describe("createSqliteQueue (durable #980)", () => {
       // the next poll tick -- drain() confirms all three are now genuinely runnable.
       await q.drain();
       expect(started.length).toBe(3);
+    });
+
+    // Ramp-up cap (#selfhost-queue-liveness): a large inherited backlog (the production incident had ~190
+    // over-deferred rows) must not release ALL of it in one sweep -- that many jobs re-attempting GitHub reads
+    // at once can immediately re-trip the same rate-limit bucket they were deferred for. With the cap set below
+    // the eligible count, assert exactly `cap` rows release (not all of them), and that the OLDEST rows
+    // (smallest created_at) are the ones chosen -- the newest-of-the-batch row must still be pending afterward.
+    it("caps releases at FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP, releasing the oldest rows first", async () => {
+      process.env.FOREGROUND_LIVENESS_MAX_DEFER_MS = "60000"; // 1m floor
+      process.env.FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP = "2";
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      const now = Date.now();
+      const farFuture = now + 60 * 60_000;
+      // 4 stale-eligible rows at distinct ages; only the 2 OLDEST should be released.
+      const ages = [10 * 60_000, 8 * 60_000, 6 * 60_000, 5 * 60_000]; // minutes-old, oldest first
+      for (const ageMs of ages) {
+        seedForegroundPendingRow(driver, { createdAt: now - ageMs, runAfter: farFuture });
+      }
+
+      const released = q.releaseStaleForegroundDeferrals();
+
+      expect(released).toBe(2);
+      expect(await renderMetrics()).toContain("gittensory_jobs_foreground_liveness_released_total 2");
+      const remainingFuture = driver.query(
+        `SELECT COUNT(*) AS c FROM _selfhost_jobs WHERE status='pending' AND run_after>?`,
+        [now],
+      ).rows[0] as { c: number };
+      // 2 of the 4 seeded rows remain deferred into the future -- the 2 NEWEST (least stale) ones.
+      expect(remainingFuture.c).toBe(2);
+    });
+
+    it("does not let older still-blocked stale rows consume the cap before a newer clear row", async () => {
+      process.env.FOREGROUND_LIVENESS_MAX_DEFER_MS = "60000";
+      process.env.FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP = "2";
+      const driver = makeDriver();
+      const now = Date.now();
+      seedExhaustedRateLimitObservation(driver, "installation:111", new Date(now + 30 * 60_000).toISOString());
+      const q = createSqliteQueue(driver, async () => undefined);
+      const farFuture = now + 60 * 60_000;
+      const rows = [
+        { deliveryId: "blocked-oldest", installationId: 111, createdAt: now - 10 * 60_000 },
+        { deliveryId: "blocked-second", installationId: 111, createdAt: now - 9 * 60_000 },
+        { deliveryId: "clear-newer", installationId: 222, createdAt: now - 5 * 60_000 },
+      ];
+      for (const row of rows) {
+        driver.query(
+          `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+           VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0)`,
+          [
+            JSON.stringify({
+              type: "github-webhook",
+              deliveryId: row.deliveryId,
+              eventName: "x",
+              payload: { installation: { id: row.installationId } },
+            }),
+            farFuture,
+            row.createdAt,
+          ],
+        );
+      }
+
+      const released = q.releaseStaleForegroundDeferrals();
+
+      expect(released).toBe(2);
+      const releasedIds = driver.query(`SELECT payload FROM _selfhost_jobs WHERE run_after<?`, [farFuture]).rows.map((row) =>
+        JSON.parse((row as { payload: string }).payload).deliveryId,
+      );
+      expect(releasedIds).toEqual(["blocked-oldest", "clear-newer"]);
+    });
+
+    // REGRESSION (#selfhost-queue-liveness clear-bucket starvation): the test above only seeds 3 rows, well
+    // under the OLD single-window candidateLimit (maxReleasePerSweep * 2 = 4), so it can't actually distinguish
+    // "the fix" from "the bug" -- a single `ORDER BY created_at ASC LIMIT 4` query would have returned all 3
+    // rows there too. This test seeds MORE older still-blocked rows than that old limit, against a REAL SQLite
+    // engine (not a mock), so the candidate query genuinely truncates. Under the pre-fix single-window query,
+    // "clear-newer" (the single newest pending row) would never even be SELECTed into `eligible` -- proving the
+    // starvation this fix closes, not just describing it.
+    it("REGRESSION: a large glut of older still-blocked rows does not hide a newer clear-bucket row from the candidate window", async () => {
+      process.env.FOREGROUND_LIVENESS_MAX_DEFER_MS = "60000";
+      process.env.FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP = "2"; // old candidateLimit would have been 4
+      const driver = makeDriver();
+      const now = Date.now();
+      seedExhaustedRateLimitObservation(driver, "installation:111", new Date(now + 30 * 60_000).toISOString());
+      const q = createSqliteQueue(driver, async () => undefined);
+      const farFuture = now + 60 * 60_000;
+      // 6 older still-blocked rows -- more than the old single-window candidateLimit of 4, so a naive
+      // "oldest N" window is entirely consumed by these and never reaches the newer row below.
+      for (let i = 0; i < 6; i += 1) {
+        driver.query(
+          `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+           VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0)`,
+          [
+            JSON.stringify({ type: "github-webhook", deliveryId: `blocked-${i}`, eventName: "x", payload: { installation: { id: 111 } } }),
+            farFuture,
+            now - (20 - i) * 60_000, // ages 20m down to 15m, oldest first
+          ],
+        );
+      }
+      // The single newest pending row, on a different (clear) admission target.
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0)`,
+        [JSON.stringify({ type: "github-webhook", deliveryId: "clear-newer", eventName: "x", payload: { installation: { id: 222 } } }), farFuture, now - 1_000],
+      );
+
+      const released = q.releaseStaleForegroundDeferrals();
+
+      const releasedIds = driver.query(`SELECT payload FROM _selfhost_jobs WHERE run_after<?`, [farFuture]).rows.map((row) =>
+        JSON.parse((row as { payload: string }).payload).deliveryId,
+      );
+      expect(released).toBe(2);
+      // clear-newer wins a release slot despite the 6-row older-blocked glut; the remaining slot goes to the
+      // single oldest age-stale row, exactly matching selectForegroundDeferralsToRelease's own ordering.
+      expect(releasedIds.sort()).toEqual(["blocked-0", "clear-newer"]);
     });
 
     // Mirrors reviveDeadLetterJobsSafely's own regression test: the foreground-liveness interval had no error
@@ -2524,7 +3131,7 @@ describe("createSqliteQueue (durable #980)", () => {
     // Only claimNextWhere's SELECT starts with this exact column list — spreadDueJobsOnStartup (which already
     // ran during construction above) selects a different column set, so this doesn't clobber setup.
     vi.spyOn(driver, "query").mockImplementation((sql: string, params: unknown[]) => {
-      if (sql.includes("SELECT id, payload, attempts, job_key, priority")) throw new Error("database is locked");
+      if (sql.includes("SELECT candidate.id, candidate.payload, candidate.attempts")) throw new Error("database is locked");
       return realQuery(sql, params);
     });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -2577,6 +3184,13 @@ describe("createSqliteQueue (durable #980)", () => {
     driver.query("INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES ('not-json','pending',0,0,0)", []);
     await q.drain();
     expect(q.deadCount()).toBe(1);
+    // #2214: an unparseable payload has no `type` field to extract -- the DLQ table falls back to "unknown".
+    const [row] = q.listDeadLetterJobs(10, 0);
+    expect(row).toMatchObject({ jobType: "unknown", lastError: "unparseable payload" });
+    expect(row!.deadAtMs).not.toBeNull();
+    // A malformed payload consumes the same bounded retry budget as a normal failure (previously left `attempts`
+    // at its pre-death value, so the dead-letter reviver would requeue the same unparseable row forever).
+    expect(row!.attempts).toBe(1);
   });
 
   it("sendBatch enqueues all; default backoff reschedules a failure into the future", async () => {
@@ -2929,10 +3543,44 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(signals.oldestLivePendingAgeMs).toBeNull();
       expect(signals.maintenancePendingCount).toBe(0);
       expect(signals.oldestMaintenancePendingAgeMs).toBeNull();
+      expect(signals.backlogConvergencePendingCount).toBe(0);
+      expect(signals.freshIntakePendingCount).toBe(0);
       // Zero foreground rows at all -- SQLite's SUM(CASE...)/MIN(CASE...) return NULL (not 0) over a zero-row
       // aggregate group, exercising the `?? 0` nullish arm on runnable_cnt (see maintenancePressureSignals).
       expect(signals.liveRunnableNowCount).toBe(0);
       expect(signals.oldestLiveRunnableAgeMs).toBeNull();
+    });
+
+    it("pressureSignals() reports the backlog-convergence lane pending count (#selfhost-backlog-convergence)", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      await q.binding.send({
+        type: "agent-regate-pr",
+        deliveryId: "backlog-convergence:owner/repo#1",
+        repoFullName: "owner/repo",
+        prNumber: 1,
+        installationId: 1,
+      } as unknown as JobMessage);
+      // A fresh-intake row (foreground_lane='fresh') must NOT count toward the backlog-convergence signal.
+      await q.binding.send(prWebhook("fresh-unrelated"));
+      const signals = q.pressureSignals();
+      expect(signals.backlogConvergencePendingCount).toBe(1);
+    });
+
+    it("pressureSignals() reports the fresh-intake lane pending count (#selfhost-lane-observability)", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      await q.binding.send(prWebhook("fresh-1"));
+      // A backlog-convergence row (foreground_lane='backlog') must NOT count toward the fresh-intake signal.
+      await q.binding.send({
+        type: "agent-regate-pr",
+        deliveryId: "backlog-convergence:owner/repo#1",
+        repoFullName: "owner/repo",
+        prNumber: 1,
+        installationId: 1,
+      } as unknown as JobMessage);
+      const signals = q.pressureSignals();
+      expect(signals.freshIntakePendingCount).toBe(1);
     });
 
     // #selfhost-queue-liveness: liveRunnableNowCount/oldestLiveRunnableAgeMs must reflect only the SUBSET of
@@ -3080,6 +3728,228 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(started).not.toContain("build-contributor-evidence");
       expect(q.stats()).not.toHaveProperty("gittensory_jobs_maintenance_admission_deferred_total");
       expect(await renderMetrics()).not.toContain("gittensory_jobs_maintenance_admission_deferred_by_reason_total");
+    });
+  });
+
+  describe("installation-concurrency admission (#selfhost-installation-concurrency)", () => {
+    const oldLimit = process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT;
+
+    afterEach(() => {
+      if (oldLimit === undefined) delete process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT;
+      else process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = oldLimit;
+    });
+
+    // backfill-repo-segment is used as the background fixture throughout these general-behavior cases;
+    // agent-regate-sweep gets its own dedicated regression test below (#selfhost-installation-concurrency-sweep-gap)
+    // because its row priority (8, PRIORITY_BY_TYPE) equals FOREGROUND_QUEUE_PRIORITY_FLOOR (also 8) -- a priority-
+    // based exclusion guard would have silently exempted it, which is exactly the gap that test guards against.
+    // q.binding.send(...) computes real priority via jobPriority(), so (unlike a hand-built mock row) every job
+    // here carries an authentic priority value.
+
+    it("a second concurrent background job for the SAME installation is deferred at the limit", async () => {
+      process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
+      const driver = makeDriver();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let started = 0;
+      const q = createSqliteQueue(
+        driver,
+        async () => {
+          started++;
+          await gate;
+        },
+        { concurrency: 2, backgroundConcurrency: 2, pollIntervalMs: 100_000 },
+      );
+      await q.binding.send({ type: "backfill-repo-segment", installationId: 42, repoFullName: "owner/a" } as unknown as JobMessage);
+      // The second (to-be-deferred) row is inserted directly with job_key=NULL (a raw/legacy shape) --
+      // q.binding.send() would compute a real jobCoalesceKey for this type, which would never exercise the
+      // `job.job_key ?? ""` jitter-seed fallback's nullish arm.
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'pending', 0, 0, ?, 0, NULL, 0)`,
+        [JSON.stringify({ type: "backfill-repo-segment", installationId: 42, repoFullName: "owner/b" }), Date.now()],
+      );
+      try {
+        q.start();
+        for (let i = 0; i < 20 && started < 1; i += 1) await new Promise((r) => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 30));
+        expect(started).toBe(1);
+        const row = driver.query(
+          "SELECT last_error FROM _selfhost_jobs WHERE status='pending' AND payload LIKE '%backfill-repo-segment%'",
+          [],
+        ).rows[0] as { last_error: string } | undefined;
+        expect(row?.last_error).toContain("installation concurrency admission deferred: concurrency_high");
+        expect(await renderMetrics()).toContain(
+          'gittensory_jobs_installation_concurrency_deferred_by_reason_total{job_type="backfill-repo-segment",reason="concurrency_high"} 1',
+        );
+      } finally {
+        release();
+        await q.stop();
+      }
+    });
+
+    // Regression (#selfhost-installation-concurrency-sweep-gap): agent-regate-sweep's own row priority (8,
+    // PRIORITY_BY_TYPE) equals FOREGROUND_QUEUE_PRIORITY_FLOOR (also 8), so a priority-based exclusion guard
+    // (`isForegroundJobPriority(job.priority) ? null : ...`) would classify it as foreground and silently exempt
+    // it from this policy entirely -- exactly the background sweep/backfill fan-out this limiter exists to bound.
+    // installationConcurrencyKeyForJob must exclude ONLY agent-regate-pr by type, not by priority, so sweep jobs
+    // are still admission-checked like every other GITHUB_BUDGET_BACKGROUND_TYPES member.
+    it("a second concurrent agent-regate-sweep job for the SAME installation is deferred at the limit", async () => {
+      process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
+      const driver = makeDriver();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let started = 0;
+      const q = createSqliteQueue(
+        driver,
+        async () => {
+          started++;
+          await gate;
+        },
+        { concurrency: 2, backgroundConcurrency: 2, pollIntervalMs: 100_000 },
+      );
+      await q.binding.send({ type: "agent-regate-sweep", installationId: 42, repoFullName: "owner/a" } as unknown as JobMessage);
+      await q.binding.send({ type: "agent-regate-sweep", installationId: 42, repoFullName: "owner/b" } as unknown as JobMessage);
+      try {
+        q.start();
+        for (let i = 0; i < 20 && started < 1; i += 1) await new Promise((r) => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 30));
+        expect(started).toBe(1);
+        const row = driver.query(
+          "SELECT last_error FROM _selfhost_jobs WHERE status='pending' AND payload LIKE '%agent-regate-sweep%'",
+          [],
+        ).rows[0] as { last_error: string } | undefined;
+        expect(row?.last_error).toContain("installation concurrency admission deferred: concurrency_high");
+        expect(await renderMetrics()).toContain(
+          'gittensory_jobs_installation_concurrency_deferred_by_reason_total{job_type="agent-regate-sweep",reason="concurrency_high"} 1',
+        );
+      } finally {
+        release();
+        await q.stop();
+      }
+    });
+
+    it("a background job for a DIFFERENT installation is admitted concurrently with one already at its own limit", async () => {
+      process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
+      const driver = makeDriver();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let concurrent = 0;
+      let maxConcurrent = 0;
+      const q = createSqliteQueue(
+        driver,
+        async () => {
+          concurrent++;
+          maxConcurrent = Math.max(maxConcurrent, concurrent);
+          await gate;
+          concurrent--;
+        },
+        { concurrency: 2, backgroundConcurrency: 2, pollIntervalMs: 100_000 },
+      );
+      await q.binding.send({ type: "backfill-repo-segment", installationId: 42, repoFullName: "owner/a" } as unknown as JobMessage);
+      await q.binding.send({ type: "backfill-repo-segment", installationId: 99, repoFullName: "owner/b" } as unknown as JobMessage);
+      try {
+        q.start();
+        for (let i = 0; i < 20 && maxConcurrent < 2; i += 1) await new Promise((r) => setTimeout(r, 10));
+        expect(maxConcurrent).toBe(2);
+      } finally {
+        release();
+        await q.stop();
+      }
+    });
+
+    it("never defers a foreground agent-regate-pr job regardless of installation in-flight count", async () => {
+      process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
+      const driver = makeDriver();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const seen: string[] = [];
+      const q = createSqliteQueue(
+        driver,
+        async (j) => {
+          seen.push(typeOf(j));
+          if (typeOf(j) === "backfill-repo-segment") await gate;
+        },
+        { concurrency: 2, backgroundConcurrency: 2, pollIntervalMs: 100_000 },
+      );
+      await q.binding.send({ type: "backfill-repo-segment", installationId: 42, repoFullName: "owner/a" } as unknown as JobMessage);
+      await q.binding.send(regateJob(42, 1630));
+      try {
+        q.start();
+        for (let i = 0; i < 20 && seen.length < 2; i += 1) await new Promise((r) => setTimeout(r, 10));
+        expect(seen).toContain("agent-regate-pr");
+      } finally {
+        release();
+        await q.stop();
+      }
+    });
+
+    it("the tracker decrements on completion, so a subsequent job for the same installation is admitted again", async () => {
+      process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
+      const driver = makeDriver();
+      const seen: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)), { backgroundConcurrency: 1 });
+      await q.binding.send({ type: "backfill-repo-segment", installationId: 42, repoFullName: "owner/a" } as unknown as JobMessage);
+      await q.drain();
+      expect(seen).toEqual(["backfill-repo-segment"]);
+
+      await q.binding.send({ type: "backfill-repo-segment", installationId: 42, repoFullName: "owner/b" } as unknown as JobMessage);
+      await q.drain();
+      expect(seen).toEqual(["backfill-repo-segment", "backfill-repo-segment"]);
+    });
+
+    it("skips the installation-concurrency-deferred metric when the defer update changes no rows", async () => {
+      process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
+      const base = makeDriver();
+      // The row raced out from under this UPDATE (already claimed/mutated by another path) -- mirrors the
+      // maintenance-admission "changes no rows" test above, which intercepts the identical UPDATE shape.
+      const driver = {
+        exec: base.exec.bind(base),
+        query: vi.fn((sql: string, params: unknown[]) => {
+          if (sql.includes("SET status='pending', run_after=max(run_after, ?), last_error=coalesce(last_error, ?)")) {
+            return { rows: [], changes: 0 };
+          }
+          return base.query(sql, params);
+        }),
+      } as ReturnType<typeof nodeSqliteDriver>;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let started = 0;
+      const q = createSqliteQueue(
+        driver,
+        async () => {
+          started++;
+          await gate;
+        },
+        { concurrency: 2, backgroundConcurrency: 2, pollIntervalMs: 100_000 },
+      );
+      await q.binding.send({ type: "backfill-repo-segment", installationId: 42, repoFullName: "owner/a" } as unknown as JobMessage);
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'pending', 0, 0, ?, 0, NULL, 0)`,
+        [JSON.stringify({ type: "backfill-repo-segment", installationId: 42, repoFullName: "owner/b" }), Date.now()],
+      );
+      try {
+        q.start();
+        for (let i = 0; i < 20 && started < 1; i += 1) await new Promise((r) => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 30));
+        expect(started).toBe(1);
+        expect(await renderMetrics()).not.toContain("gittensory_jobs_installation_concurrency_deferred_total");
+        expect(await renderMetrics()).not.toContain("gittensory_jobs_installation_concurrency_deferred_by_reason_total");
+      } finally {
+        release();
+        await q.stop();
+      }
     });
   });
 });

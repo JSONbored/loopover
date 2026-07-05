@@ -5,6 +5,9 @@
 # Backups land in the `gittensory-backups` volume at /backups/{postgres,sqlite,qdrant}.
 set -eu
 
+# shellcheck source=selfhost-pg-url.sh
+. "$(dirname "$0")/selfhost-pg-url.sh"
+
 normalize_backup_retain() {
   retain_value=$1
   case "$retain_value" in
@@ -53,32 +56,6 @@ mkdir -p "$OUT/postgres" "$OUT/sqlite" "$OUT/qdrant"
 # Set to 1 if the SQLite online backup fails verification, so we skip its retention prune
 # (never delete the last good backup) and still exit non-zero at the end (fail loudly).
 SQLITE_BACKUP_FAILED=0
-
-# Percent-decodes a URI userinfo component (RFC 3986). Deliberately does NOT treat '+' as a space -- that
-# convention is specific to application/x-www-form-urlencoded query values, not URI userinfo, where '+' is
-# an ordinary sub-delims character allowed unencoded; the only caller of this function decodes a password
-# extracted from the userinfo section, and a literal '+' there must stay a '+', not become a space.
-url_decode() {
-  printf '%s' "$1" | awk '
-    BEGIN { for (i = 0; i < 256; i++) hex[sprintf("%02X", i)] = sprintf("%c", i); }
-    {
-      out = "";
-      for (i = 1; i <= length($0); i++) {
-        c = substr($0, i, 1);
-        if (c == "%" && i + 2 <= length($0)) {
-          h = toupper(substr($0, i + 1, 2));
-          if (h in hex) { out = out hex[h]; i += 2; } else { out = out c; }
-        } else {
-          out = out c;
-        }
-      }
-      printf "%s", out;
-    }'
-}
-
-pgpass_escape() {
-  printf '%s' "$1" | sed 's/\\/\\\\/g; s/:/\\:/g'
-}
 
 json_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
@@ -136,6 +113,13 @@ write_manifest() {
 # this script makes, and is deleted immediately after via the `cleanup` trap, so there's no scoped value
 # in re-deriving the exact host/port/dbname libpq will resolve -- which the query string can override
 # anyway -- just to match them precisely).
+#
+# NOT extracted alongside url_decode/pgpass_escape into selfhost-pg-url.sh (#2910): verify-backup.sh's
+# pg_connect_arg() shares this exact URI-parsing algorithm, but the two are not safe to collapse into one
+# function -- this one reads $PG_DB from a global and runs once per invocation; pg_connect_arg() takes the
+# URL as an argument, unsets PGPASSFILE at the top of every call (a reentrancy guard this script doesn't
+# need, since it only ever connects once), and tracks a LIST of created passfiles instead of one. See
+# verify-backup.sh's pg_connect_arg for the full rationale.
 prepare_pg_env() {
   pg_rest=${PG_DB#postgres://}
   pg_rest=${pg_rest#postgresql://}

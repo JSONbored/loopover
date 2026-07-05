@@ -22,13 +22,18 @@ import {
   jobCoalesceMergeKeyPrefix,
   jobCoalesceMergedPayload,
   jobCoalesceSupersededKeyPrefix,
+  jobClaimSortKey,
   jobPriority,
   matchesGitHubRateLimitAdmissionTarget,
   nonConsumingRetryDelayMs,
   parsePositiveIntEnv,
   queueBackgroundConcurrency,
   queueDeadLetterAutoRetryMaxExtraAttempts,
+  queueDeadLetterPageFromBinding,
   queueDeadLetterReviveIntervalMs,
+  queueDeleteDeadLetterJobViaBinding,
+  queuePurgeDeadLetterJobsViaBinding,
+  queueReplayDeadLetterJobViaBinding,
   queueProcessingTimeoutMs,
   queueRecoveryJitterMs,
   queueSnapshotBacklog,
@@ -121,6 +126,136 @@ describe("self-host queue common helpers", () => {
 
     await expect(queueSnapshotFromBinding(binding)).resolves.toBe(snapshot);
     await expect(queueSnapshotFromBinding({ async send() {}, async sendBatch() {} } as unknown as Queue)).resolves.toBeNull();
+  });
+
+  it("reads a dead-letter-queue page only from self-host bindings that expose BOTH admin methods (#2214)", async () => {
+    const items = [
+      { id: 1, jobType: "agent-regate-pr", attempts: 3, lastError: "boom", createdAtMs: 1000, deadAtMs: 5000 },
+    ];
+    const binding = {
+      async send() {},
+      async sendBatch() {},
+      listDeadLetterJobs: (limit: number, offset: number) => {
+        expect(limit).toBe(25);
+        expect(offset).toBe(10);
+        return items;
+      },
+      deadCount: () => 7,
+    } as unknown as Queue;
+
+    await expect(queueDeadLetterPageFromBinding(binding, 25, 10)).resolves.toEqual({ items, total: 7 });
+
+    // Cloudflare's real Queue binding (and any binding missing either half of the surface) returns null rather
+    // than a false "zero dead-letter jobs" -- callers 501 instead of rendering a misleadingly-empty table.
+    await expect(
+      queueDeadLetterPageFromBinding({ async send() {}, async sendBatch() {} } as unknown as Queue, 25, 0),
+    ).resolves.toBeNull();
+    await expect(
+      queueDeadLetterPageFromBinding(
+        { async send() {}, async sendBatch() {}, deadCount: () => 0 } as unknown as Queue,
+        25,
+        0,
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      queueDeadLetterPageFromBinding(
+        { async send() {}, async sendBatch() {}, listDeadLetterJobs: () => [] } as unknown as Queue,
+        25,
+        0,
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("rejects the whole page (not a partial/filtered one) when a binding returns a malformed row or total (#2214)", async () => {
+    const validItem = { id: 1, jobType: "agent-regate-pr", attempts: 3, lastError: "boom", createdAtMs: 1000, deadAtMs: 5000 };
+
+    const malformedItemBinding = {
+      async send() {},
+      async sendBatch() {},
+      listDeadLetterJobs: () => [validItem, { id: "not-a-number" }],
+      deadCount: () => 2,
+    } as unknown as Queue;
+    await expect(queueDeadLetterPageFromBinding(malformedItemBinding, 25, 0)).resolves.toBeNull();
+
+    // A falsy row (not just a truthy-but-wrong-shaped object) must also be rejected -- exercises isDeadLetterJob's
+    // own `!value` branch, distinct from `typeof value !== "object"` on a wrong-shaped object.
+    const nullItemBinding = {
+      async send() {},
+      async sendBatch() {},
+      listDeadLetterJobs: () => [validItem, null],
+      deadCount: () => 2,
+    } as unknown as Queue;
+    await expect(queueDeadLetterPageFromBinding(nullItemBinding, 25, 0)).resolves.toBeNull();
+
+    const malformedTotalBinding = {
+      async send() {},
+      async sendBatch() {},
+      listDeadLetterJobs: () => [validItem],
+      deadCount: () => "seven",
+    } as unknown as Queue;
+    await expect(queueDeadLetterPageFromBinding(malformedTotalBinding, 25, 0)).resolves.toBeNull();
+  });
+
+  it("awaits async (Postgres-backed) admin methods for a dead-letter-queue page", async () => {
+    const items = [
+      { id: 2, jobType: "github-webhook", attempts: 1, lastError: "kaboom", createdAtMs: 2000, deadAtMs: 9000 },
+    ];
+    const binding = {
+      async send() {},
+      async sendBatch() {},
+      listDeadLetterJobs: async () => items,
+      deadCount: async () => 1,
+    } as unknown as Queue;
+
+    await expect(queueDeadLetterPageFromBinding(binding, 25, 0)).resolves.toEqual({ items, total: 1 });
+  });
+
+  it("replays/deletes/purges dead-letter jobs only via a binding that exposes the admin surface (#2215)", async () => {
+    const bareBinding = { async send() {}, async sendBatch() {} } as unknown as Queue;
+    await expect(queueReplayDeadLetterJobViaBinding(bareBinding, 1)).resolves.toBeNull();
+    await expect(queueDeleteDeadLetterJobViaBinding(bareBinding, 1)).resolves.toBeNull();
+    await expect(queuePurgeDeadLetterJobsViaBinding(bareBinding)).resolves.toBeNull();
+
+    const syncBinding = {
+      async send() {},
+      async sendBatch() {},
+      replayDeadLetterJob: (id: number) => {
+        expect(id).toBe(42);
+        return true;
+      },
+      deleteDeadLetterJob: (id: number) => {
+        expect(id).toBe(42);
+        return false;
+      },
+      purgeDeadLetterJobs: () => 3,
+    } as unknown as Queue;
+    await expect(queueReplayDeadLetterJobViaBinding(syncBinding, 42)).resolves.toBe(true);
+    await expect(queueDeleteDeadLetterJobViaBinding(syncBinding, 42)).resolves.toBe(false);
+    await expect(queuePurgeDeadLetterJobsViaBinding(syncBinding)).resolves.toBe(3);
+
+    const asyncBinding = {
+      async send() {},
+      async sendBatch() {},
+      replayDeadLetterJob: async () => false,
+      deleteDeadLetterJob: async () => true,
+      purgeDeadLetterJobs: async () => 0,
+    } as unknown as Queue;
+    await expect(queueReplayDeadLetterJobViaBinding(asyncBinding, 7)).resolves.toBe(false);
+    await expect(queueDeleteDeadLetterJobViaBinding(asyncBinding, 7)).resolves.toBe(true);
+    await expect(queuePurgeDeadLetterJobsViaBinding(asyncBinding)).resolves.toBe(0);
+
+    // A binding that returns the wrong result TYPE (a future bug, or a misbehaving plugin binding) is treated
+    // the same as "admin unavailable" -- null -- not coerced/trusted as if it were a real boolean/count.
+    const malformedBinding = {
+      async send() {},
+      async sendBatch() {},
+      replayDeadLetterJob: () => "yes",
+      deleteDeadLetterJob: () => 1,
+      purgeDeadLetterJobs: () => "three",
+    } as unknown as Queue;
+    await expect(queueReplayDeadLetterJobViaBinding(malformedBinding, 1)).resolves.toBeNull();
+    await expect(queueDeleteDeadLetterJobViaBinding(malformedBinding, 1)).resolves.toBeNull();
+    await expect(queuePurgeDeadLetterJobsViaBinding(malformedBinding)).resolves.toBeNull();
   });
 
   it("identifies GitHub-budget background jobs without pre-yielding fresh webhooks or manual re-gates", () => {
@@ -876,16 +1011,55 @@ describe("self-host queue common helpers", () => {
     ).toBeNull();
   });
 
+  it("orders per-PR re-gate jobs by GitHub PR creation time, with a deterministic legacy fallback", () => {
+    expect(
+      jobClaimSortKey(
+        payload({
+          type: "agent-regate-pr",
+          repoFullName: "owner/repo",
+          prNumber: 42,
+          prCreatedAt: "2026-07-03T12:34:56.000Z",
+        }),
+        999,
+      ),
+    ).toBe(Date.parse("2026-07-03T12:34:56.000Z"));
+    expect(
+      jobClaimSortKey(
+        payload({ type: "agent-regate-pr", repoFullName: "owner/repo", prNumber: 42 }),
+        999,
+      ),
+    ).toBe(Date.parse("2000-01-01T00:00:00.000Z") + 42);
+    expect(
+      jobClaimSortKey(
+        payload({
+          type: "agent-regate-pr",
+          repoFullName: "owner/repo",
+          prNumber: 43,
+          prCreatedAt: "not-a-date",
+        }),
+        999,
+      ),
+    ).toBe(Date.parse("2000-01-01T00:00:00.000Z") + 43);
+    expect(jobClaimSortKey(payload({ type: "agent-regate-pr", repoFullName: "owner/repo", prNumber: "x" }), "567.8" as unknown as number)).toBe(567);
+    expect(jobClaimSortKey(payload({ type: "rag-index-repo" }), 1234.9)).toBe(1234);
+    expect(jobClaimSortKey(payload({ type: "rag-index-repo" }), -5)).toBe(0);
+    expect(jobClaimSortKey(payload({ type: "rag-index-repo" }), {} as unknown as number)).toBe(0);
+    expect(jobClaimSortKey("not-json", Number.NaN)).toBe(0);
+  });
+
   it("coalesces the event-driven jobs by their stable per-invocation id — and only true duplicates (#1942)", () => {
     // A DUPLICATE re-enqueue of the SAME job (same id — e.g. a webhook redelivery) coalesces.
     expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "github_comment", runId: "run-abc123" }))).toBe("run-agent:run-abc123");
     expect(jobCoalesceKey(payload({ type: "notify-deliver", requestedBy: "notify-evaluate", deliveryId: "del-77" }))).toBe("notify-deliver:del-77");
     expect(jobCoalesceKey(payload({ type: "submit-draft", requestedBy: "api", draftId: "draft-9" }))).toBe("submit-draft:draft-9");
+    // notify-evaluate keys off a fixed-length digest of the batch's dedup keys, not the raw keys themselves
+    // (#selfhost-maintenance-self-pin, tested for shape/order-independence/collision-avoidance below) --
+    // still a stable per-invocation key, so it belongs in this "coalesces by stable id" suite too.
     expect(
       jobCoalesceKey(
         payload({ type: "notify-evaluate", requestedBy: "webhook", events: [{ dedupKey: "review_requested:o/r#3:bob" }] }),
       ),
-    ).toBe("notify-evaluate:review_requested:o/r#3:bob");
+    ).toMatch(/^notify-evaluate:sha256:[a-f0-9]{64}$/);
     // Two DISTINCT invocations have distinct ids → distinct keys, so they never merge.
     expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "github_comment", runId: "run-xyz789" }))).toBe("run-agent:run-xyz789");
     // A payload missing its id → null (uncoalesced), never a shared key that could drop a distinct job.
@@ -897,7 +1071,7 @@ describe("self-host queue common helpers", () => {
     expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "test", events: [{}] }))).toBeNull();
   });
 
-  it("batches a notify-evaluate job's coalesce key off the FULL sorted set of dedup keys (#selfhost-maintenance-self-pin)", () => {
+  it("batches a notify-evaluate job's coalesce key off a fixed-length digest of the FULL sorted set of dedup keys (#selfhost-maintenance-self-pin)", () => {
     // Order-independent: the same two events in either order produce the same key, so a redelivery with the
     // events reordered still coalesces.
     const forward = jobCoalesceKey(
@@ -914,7 +1088,7 @@ describe("self-host queue common helpers", () => {
         events: [{ dedupKey: "issue_watch_match:o/r#9:alice" }, { dedupKey: "review_requested:o/r#3:bob" }],
       }),
     );
-    expect(forward).toBe("notify-evaluate:issue_watch_match:o/r#9:alice,review_requested:o/r#3:bob");
+    expect(forward).toMatch(/^notify-evaluate:sha256:[a-f0-9]{64}$/);
     expect(reversed).toBe(forward);
     // A batch with even one different event gets a DIFFERENT key -- never silently merges with an unrelated batch.
     const differentBatch = jobCoalesceKey(
@@ -925,6 +1099,18 @@ describe("self-host queue common helpers", () => {
       }),
     );
     expect(differentBatch).not.toBe(forward);
+    expect(differentBatch).toMatch(/^notify-evaluate:sha256:[a-f0-9]{64}$/);
+    const many = jobCoalesceKey(
+      payload({
+        type: "notify-evaluate",
+        requestedBy: "webhook",
+        events: Array.from({ length: 5_000 }, (_, index) => ({
+          dedupKey: `issue_watch_match:owner/repo#9:watcher-${String(index).padStart(4, "0")}`,
+        })),
+      }),
+    );
+    expect(many).toMatch(/^notify-evaluate:sha256:[a-f0-9]{64}$/);
+    expect(many!.length).toBe("notify-evaluate:sha256:".length + 64);
     // If ANY event in the batch is missing its dedup key, the whole batch is left uncoalesced (null) rather than
     // key off a partial set that could collide with -- and silently drop the malformed event from -- an
     // unrelated batch.

@@ -10,9 +10,12 @@ const MAX_FINDINGS = 25; // keep the brief bounded
 const MAX_LINE_CHARS = 2000; // skip pathologically long lines (defensive)
 
 // All matchers below are FLAT alternations (no group is itself quantified), so each is linear-time — the analyzer
-// can never be the DoS class it sits beside (#1503). Logging / stdout sinks:
+// can never be the DoS class it sits beside (#1503). Logging / stdout sinks. The console branch is kept separate
+// from the logger branch: `dir` and `table` dump an object/collection straight to stdout (`console.dir(req.headers)`,
+// `console.table(users)`) — the same egress path as `console.log` — but they are console-only methods, so a
+// `pino.table(...)`/`winston.dir(...)` (not a real logging call) is deliberately NOT treated as a sink.
 const SINK_RE =
-  /\b(?:console|logger|log|winston|pino|bunyan)\s*\.\s*(?:log|info|warn|error|debug|trace|fatal|verbose|silly)\s*\(|\bprocess\s*\.\s*std(?:out|err)\s*\.\s*write\s*\(/;
+  /\bconsole\s*\.\s*(?:log|info|warn|error|debug|trace|dir|table)\s*\(|\b(?:logger|log|winston|pino|bunyan)\s*\.\s*(?:log|info|warn|error|debug|trace|fatal|verbose|silly)\s*\(|\bprocess\s*\.\s*std(?:out|err)\s*\.\s*write\s*\(/;
 
 // Sensitive names, matched only against CODE (after string messages are stripped) so a hit means the value is
 // actually referenced, not merely named in a log message.
@@ -145,7 +148,9 @@ export function scanPatchForSecretLog(
         }
       }
       newLine++;
-    } else if (!line.startsWith("-")) {
+    } else if (!line.startsWith("-") && !line.startsWith("\\")) {
+      // A `\ No newline at end of file` marker is not a new-file line — do not advance the cursor
+      // (same class as the iac-misconfig / redos fix).
       newLine++;
     }
   }

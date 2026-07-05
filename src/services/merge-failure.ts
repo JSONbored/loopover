@@ -9,8 +9,10 @@ import { errorMessage } from "../utils/json";
 //     401 inside the merge call itself, so a 401 reaching HERE means that retry also failed — a genuinely,
 //     persistently unauthorized installation, not a one-off stale-token race. Burning the full MERGE_RETRY_CAP
 //     against the same known-bad credential wastes calls for nothing; fail fast instead (#2264).
-//   • 403 Resource not accessible by integration → the App lacks pull_requests:write / the branch is
-//     protected against the App. A human must re-consent or merge.
+//   • 403 Resource not accessible by integration → GitHub returned a generic branch-protection / ruleset /
+//     installation-visibility rejection. The executor already checked the concrete App permissions before the
+//     merge call, so this is retryable first: required checks, conversation resolution, and permission snapshots
+//     can converge shortly after the review/check publication boundary.
 //   • 405 Method Not Allowed → merge not allowed (e.g. required reviews/checks policy forbids an App merge).
 //   • 409 Conflict → a required status check is absent / head moved into a non-mergeable state.
 //   • merge-conflict text → the branch genuinely conflicts with base; only the contributor can resolve it.
@@ -19,8 +21,6 @@ import { errorMessage } from "../utils/json";
 // benign TOCTOU race that a re-attempt against the new base resolves), so the executor retries it up to
 // MERGE_RETRY_CAP before escalating to the same terminal hold.
 export const MERGE_RETRY_CAP = 5;
-
-const TERMINAL_MERGE_STATUSES = new Set([403, 405, 409]);
 
 /** True when the merge error TEXT describes a real content conflict (vs a behind-but-clean branch). */
 function isMergeConflictMessage(message: string): boolean {
@@ -31,6 +31,10 @@ function isMergeConflictMessage(message: string): boolean {
  *  TOCTOU race (the base advanced between plan and merge) that a re-attempt against the new base resolves. */
 function isBaseBranchMovedMessage(message: string): boolean {
   return /base branch was modified/i.test(message);
+}
+
+function isConvergenceForbiddenMessage(message: string): boolean {
+  return /resource not accessible by integration|secondary rate limit|api rate limit|abuse detection/i.test(message);
 }
 
 /** Read the HTTP status off an Octokit RequestError (it sets `.status`); undefined for non-HTTP errors. */
@@ -46,13 +50,13 @@ export function classifyMergeFailure(error: unknown): { terminal: boolean; reaso
   const message = errorMessage(error);
   const status = httpStatus(error);
   if (status === 401) return { terminal: true, reason: `installation token rejected: App suspended or key rotated (401): ${message}` };
-  if (status === 403) return { terminal: true, reason: `merge forbidden (403 — pull_requests:write or branch protection): ${message}` };
+  if (status === 403 && isConvergenceForbiddenMessage(message)) return { terminal: false, reason: `merge forbidden for now (403 — branch protection or GitHub permission visibility may still be converging): ${message}` };
+  if (status === 403) return { terminal: true, reason: `merge forbidden (403): ${message}` };
   // A 405 "Base branch was modified" is a benign TOCTOU race, not a policy rejection — retry against the new base
   // (the executor caps retries at MERGE_RETRY_CAP before escalating to the same terminal hold).
   if (status === 405 && isBaseBranchMovedMessage(message)) return { terminal: false, reason: `base branch moved during merge — retrying: ${message}` };
   if (status === 405) return { terminal: true, reason: `merge not allowed (405 — repo merge policy forbids an automated merge): ${message}` };
   if (status === 409) return { terminal: true, reason: `merge conflict / required check absent (409): ${message}` };
-  if (status !== undefined && TERMINAL_MERGE_STATUSES.has(status)) return { terminal: true, reason: `merge rejected (${status}): ${message}` };
   if (isMergeConflictMessage(message)) return { terminal: true, reason: `branch conflicts with base — contributor must rebase: ${message}` };
   return { terminal: false, reason: message };
 }

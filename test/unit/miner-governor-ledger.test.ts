@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@jsonbored/gittensory-engine", async () => {
@@ -100,6 +101,20 @@ describe("gittensory-miner governor ledger (#2328)", () => {
     expect(() => ledger.readGovernorEvents({ repoFullName: 42 as unknown as string })).toThrow(
       /invalid_repo_full_name/,
     );
+  });
+
+  it("rejects a corrupted payload blob on read instead of returning malformed data", () => {
+    const ledger = tempLedger();
+    ledger.appendGovernorEvent({
+      eventType: "allowed",
+      actionClass: "analyze",
+      decision: "allow",
+      reason: "ok",
+    });
+    const raw = new DatabaseSync(ledger.dbPath);
+    raw.prepare("UPDATE governor_events SET payload_json = ? WHERE id = 1").run("{bad");
+    raw.close();
+    expect(() => ledger.readGovernorEvents()).toThrow("corrupted_governor_row");
   });
 
   it("records throttled and kill_switch outcomes for later audit", () => {

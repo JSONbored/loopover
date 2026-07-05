@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "hono";
 import { enqueueWebhookByEnv, handleGitHubWebhook, handleOrbRelay } from "../../src/github/webhook";
 import { getWebhookEvent, recordWebhookEvent } from "../../src/db/repositories";
@@ -73,12 +73,26 @@ describe("github webhook enqueue failure (#786)", () => {
       },
     } as unknown as Context<{ Bindings: Env }>;
 
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const response = await handleGitHubWebhook(context);
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toMatchObject({ error: "enqueue_failed" });
     const event = await getWebhookEvent(env, "enqueue-missing-binding-1");
     expect(event?.status).toBe("error");
     expect(await renderMetrics()).toContain('gittensory_webhook_enqueue_total{action="opened",event="pull_request",result="enqueue_failed"} 1');
+    // ERROR level so the central Sentry forwarder captures a missing-binding webhook ingest failure (#1824) --
+    // previously this only moved a Prometheus counter, invisible without comparing dashboards.
+    expect(
+      errorSpy.mock.calls.some((c) => {
+        const line = String(c[0]);
+        return (
+          line.includes("selfhost_webhook_enqueue_binding_missing") &&
+          line.includes('"eventName":"pull_request"') &&
+          line.includes("JSONbored/gittensory")
+        );
+      }),
+    ).toBe(true);
+    errorSpy.mockRestore();
   });
 
   it("flags the event 'error' and returns 500 when the queue send fails", async () => {
@@ -109,6 +123,7 @@ describe("github webhook enqueue failure (#786)", () => {
       },
     } as unknown as Context<{ Bindings: Env }>;
 
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const response = await handleGitHubWebhook(context);
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toMatchObject({ error: "enqueue_failed" });
@@ -116,6 +131,91 @@ describe("github webhook enqueue failure (#786)", () => {
     const event = await getWebhookEvent(env, "enqueue-fail-1");
     expect(event?.status).toBe("error");
     expect(await renderMetrics()).toContain('gittensory_webhook_enqueue_total{action="opened",event="pull_request",result="enqueue_failed"} 1');
+    // ERROR level so the central Sentry forwarder captures a failing webhook enqueue (#1824). Never logs rawBody
+    // or the parsed payload -- only delivery routing metadata + the thrown error's message.
+    expect(
+      errorSpy.mock.calls.some((c) => {
+        const line = String(c[0]);
+        return (
+          line.includes("selfhost_webhook_enqueue_failed") &&
+          line.includes('"eventName":"pull_request"') &&
+          line.includes("JSONbored/gittensory") &&
+          line.includes("queue unavailable")
+        );
+      }),
+    ).toBe(true);
+    errorSpy.mockRestore();
+  });
+
+  it("never logs the raw webhook body or parsed payload alongside an enqueue failure (secret-scrub boundary, #1824)", async () => {
+    const env = createTestEnv();
+    env.WEBHOOKS = {
+      send: async () => {
+        throw new Error("queue unavailable");
+      },
+    } as unknown as Queue;
+    const rawBody = JSON.stringify({
+      action: "opened",
+      repository: { full_name: "JSONbored/gittensory" },
+      installation: { id: 1 },
+      pull_request: { title: "raw diff with a secret token UNIQUE-PAYLOAD-MARKER-THAT-MUST-NEVER-LEAK" },
+    });
+    const signature = await signWebhook(rawBody, env.GITHUB_WEBHOOK_SECRET);
+    const request = new Request("https://example.com/webhook", { method: "POST", body: rawBody });
+    const headers: Record<string, string> = {
+      "x-github-delivery": "enqueue-fail-scrub-1",
+      "x-github-event": "pull_request",
+      "x-hub-signature-256": signature,
+    };
+    const context = {
+      req: {
+        raw: request,
+        header(name: string) {
+          return headers[name.toLowerCase()] ?? null;
+        },
+      },
+      env,
+      json(payload: unknown, status?: number) {
+        return Response.json(payload, status === undefined ? undefined : { status });
+      },
+    } as unknown as Context<{ Bindings: Env }>;
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await handleGitHubWebhook(context);
+    const logged = errorSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain("selfhost_webhook_enqueue_failed");
+    expect(logged).not.toContain("raw diff");
+    expect(logged).not.toContain("UNIQUE-PAYLOAD-MARKER-THAT-MUST-NEVER-LEAK");
+    errorSpy.mockRestore();
+  });
+
+  it("stringifies a non-Error throw from WEBHOOKS.send in the Sentry-forwarded log (branch coverage)", async () => {
+    const env = createTestEnv();
+    env.WEBHOOKS = {
+      send: async () => {
+        throw "queue rejected: not an Error instance"; // non-Error throw, exercises the String(error) branch
+      },
+    } as unknown as Queue;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await enqueueWebhookByEnv(
+      env,
+      "enqueue-fail-non-error-1",
+      "pull_request",
+      JSON.stringify({ action: "opened", repository: { full_name: "JSONbored/gittensory" }, installation: { id: 1 } }),
+    );
+
+    expect(result).toBe("enqueue_failed");
+    expect(
+      errorSpy.mock.calls.some((c) => {
+        const line = String(c[0]);
+        return (
+          line.includes("selfhost_webhook_enqueue_failed") &&
+          line.includes("queue rejected: not an Error instance")
+        );
+      }),
+    ).toBe(true);
+    errorSpy.mockRestore();
   });
 });
 

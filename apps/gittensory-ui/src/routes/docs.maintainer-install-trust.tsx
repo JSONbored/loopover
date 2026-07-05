@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { DocsPage } from "@/components/site/docs-page";
 import { Callout, CodeBlock, FeatureRow } from "@/components/site/primitives";
+import { MAINTAINER_COMMAND_LIST, PUBLIC_COMMAND_LIST } from "@/lib/command-reference";
 
 export const Route = createFileRoute("/docs/maintainer-install-trust")({
   head: () => ({
@@ -127,24 +128,25 @@ POST /v1/repos/:owner/:repo/settings-preview`}
           {
             title: "Command access",
             description:
-              "PR-thread commands are maintainer-authorized. Untrusted contributors should not be able to trigger private maintainer packets.",
+              "PR-thread commands default to maintainers, collaborators, and confirmed miners. Untrusted contributors should not be able to trigger private maintainer packets.",
           },
         ]}
       />
 
       <h2>Command authorization</h2>
       <p>
-        Maintainer commands should be treated like privileged review actions. Use them to fetch
-        context on demand, not to create always-on public scoring.
+        Commands should be treated like privileged review actions. Use them to fetch context on
+        demand, not to create always-on public scoring. The default authorized roles are{" "}
+        <strong>maintainer</strong>, <strong>collaborator</strong>, and{" "}
+        <strong>confirmed miner</strong> — a repo can narrow (or further restrict) this per command
+        via <code>commandAuthorization</code> in its settings.
       </p>
-      <CodeBlock
-        code={`@gittensory help
-@gittensory preflight
-@gittensory blockers
-@gittensory duplicate-check
-@gittensory miner-context
-@gittensory next-action`}
-      />
+      <CodeBlock code={PUBLIC_COMMAND_LIST} />
+      <p>
+        A separate maintainer-only queue-digest command family defaults to maintainers and
+        collaborators only:
+      </p>
+      <CodeBlock code={MAINTAINER_COMMAND_LIST} />
       <p>
         If a command would include private reviewability, private scoreability, duplicate-risk, or
         contributor-history context, the result must stay in maintainer-visible surfaces. Public

@@ -45,8 +45,27 @@ describe("rag: code-not-content filtering (free-tier cost guard)", () => {
   it("indexes source code + docs, skips content/data/deps/binaries", () => {
     expect(classifyRepoFile("src/core/runtime.ts")).toBe("code");
     expect(classifyRepoFile("scripts/build.mjs")).toBe("code");
+    // additional source languages (parity with the changed-file source classifiers)
+    for (const p of [
+      "lib/widget.dart",
+      "scripts/hook.lua",
+      "lib/app.ex",
+      "test/app_test.exs",
+      "src/core.clj",
+      "web/app.cljs",
+      "src/Main.hs",
+      "analysis/model.jl",
+      "src/server.nim",
+      "src/fast.zig",
+      "pipeline/Jenkinsfile.groovy",
+    ]) {
+      expect(classifyRepoFile(p)).toBe("code");
+    }
     expect(classifyRepoFile("README.md")).toBe("doc");
     expect(classifyRepoFile("docs/architecture.mdx")).toBe("doc");
+    // long-form doc spellings (parity with signals/path-matchers DOCS_EXTENSIONS)
+    expect(classifyRepoFile("NOTES.markdown")).toBe("doc");
+    expect(classifyRepoFile("docs/guide.asciidoc")).toBe("doc");
     // skipped: the huge content corpus, data, deps, build output, binaries, lockfiles
     expect(classifyRepoFile("content/mcp/some-entry.mdx")).toBe("skip");
     expect(classifyRepoFile("data/fixtures.json")).toBe("skip");
@@ -56,6 +75,45 @@ describe("rag: code-not-content filtering (free-tier cost guard)", () => {
     expect(classifyRepoFile("pnpm-lock.yaml")).toBe("skip");
     expect(classifyRepoFile("public/logo.png")).toBe("skip");
     expect(classifyRepoFile("app.min.js")).toBe("skip");
+    // more binary blobs: media/archives/fonts/compiled artifacts and ML model weights
+    for (const p of [
+      "assets/photo.bmp",
+      "assets/scan.tiff",
+      "media/clip.webm",
+      "audio/track.flac",
+      "release/app.7z",
+      "release/pkg.zst",
+      "fonts/Inter.otf",
+      "build/App.class",
+      "lib/app.jar",
+      "cache/mod.pyc",
+      "db/local.sqlite",
+      "models/qwen3.gguf",
+      "models/weights.safetensors",
+      "checkpoints/model.ckpt",
+      "data/embeddings.npy",
+    ]) {
+      expect(classifyRepoFile(p)).toBe("skip");
+    }
+  });
+
+  it("skips more build/cache/dependency output directories", () => {
+    for (const p of [
+      "target/release/app.rs",
+      ".venv/lib/site.py",
+      "venv/bin/thing.py",
+      "src/__pycache__/mod.cpython-312.pyc",
+      ".mypy_cache/3.12/foo.data.json",
+      ".pytest_cache/v/cache/lastfailed",
+      ".tox/py312/log.txt",
+      "web/.svelte-kit/generated/root.svelte",
+      "app/.nuxt/app.config.mjs",
+      ".gradle/caches/x.bin",
+      "backend/_build/dev/lib/app.beam",
+      "infra/.terraform/providers/plugin.go",
+    ]) {
+      expect(classifyRepoFile(p)).toBe("skip");
+    }
   });
 
   it("skips oversized files and orders source before docs", () => {

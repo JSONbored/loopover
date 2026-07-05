@@ -16,95 +16,9 @@ SERVICE="${SELFHOST_SERVICE:-gittensory}"
 SKIP_SENTRY_UPLOAD="${SELFHOST_SKIP_SENTRY_UPLOAD:-0}"
 SENTRY_CLI_PACKAGE="${SENTRY_CLI_PACKAGE:-@sentry/cli@3.6.0}"
 
-require_cmd() {
-  if ! command -v "$1" >/dev/null 2>&1; then
-    echo "error: required command not found: $1" >&2
-    exit 1
-  fi
-}
-
-env_get() {
-  local key="$1"
-  local file="${2:-$ENV_FILE}"
-
-  [ -f "$file" ] || return 1
-
-  awk -v key="$key" '
-    /^[[:space:]]*(#|$)/ { next }
-    {
-      line = $0
-      sub(/^[[:space:]]*/, "", line)
-      if (line !~ "^" key "[[:space:]]*=") {
-        next
-      }
-      sub(/^[^=]*=/, "", line)
-      sub(/^[[:space:]]*/, "", line)
-      sub(/[[:space:]]*$/, "", line)
-      if (length(line) >= 2) {
-        first = substr(line, 1, 1)
-        last = substr(line, length(line), 1)
-        if ((first == "\"" && last == "\"") || (first == "'\''" && last == "'\''")) {
-          line = substr(line, 2, length(line) - 2)
-        }
-      }
-      print line
-      found = 1
-      exit
-    }
-    END { exit found ? 0 : 1 }
-  ' "$file"
-}
-
-env_put() {
-  local key="$1"
-  local value="$2"
-  local file="${3:-$ENV_FILE}"
-  local tmp
-
-  touch "$file"
-  tmp="$(mktemp)"
-  awk -v key="$key" -v value="$value" '
-    BEGIN { written = 0 }
-    {
-      line = $0
-      sub(/^[[:space:]]*/, "", line)
-      if (line ~ "^" key "[[:space:]]*=") {
-        print key "=" value
-        written = 1
-      } else {
-        print $0
-      }
-    }
-    END {
-      if (!written) {
-        print key "=" value
-      }
-    }
-  ' "$file" >"$tmp"
-  cat "$tmp" >"$file"
-  rm -f "$tmp"
-}
-
-compose_file_args() {
-  local files=()
-  local file
-
-  if [ -n "${SELFHOST_COMPOSE_FILES:-}" ]; then
-    # shellcheck disable=SC2206
-    files=(${SELFHOST_COMPOSE_FILES})
-  else
-    files=(docker-compose.yml)
-    [ -f docker-compose.override.yml ] && files+=(docker-compose.override.yml)
-  fi
-
-  for file in "${files[@]}"; do
-    if [ ! -f "$file" ]; then
-      echo "error: compose file not found: $file" >&2
-      exit 1
-    fi
-    printf '%s\n' -f "$file"
-  done
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/selfhost-deploy-common.sh
+. "$SCRIPT_DIR/lib/selfhost-deploy-common.sh"
 
 run_node_build() {
   local uid gid

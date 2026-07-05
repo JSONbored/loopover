@@ -235,6 +235,27 @@ export function latestGitHubRestRateLimitObservation(admissionKey: GitHubRateLim
   return latestRestRateLimitObservations.get(admissionKey) ?? null;
 }
 
+/** gaugeVector sampler (see selfhost/metrics.ts + server.ts) for a genuine "remaining right now" GitHub REST
+ *  rate-limit gauge -- the existing gittensory_github_rest_rate_limit_observations_total counter only supports a
+ *  bucketed `rate()` over a window, never the actual current value. Grouped by key_scope (installation / public /
+ *  global / unknown / other -- a small, fixed set, NOT per-installation, so cardinality stays bounded regardless
+ *  of how many installations a self-host deploy has), picking the NEWEST observation (by observedAtMs) among
+ *  every admission key sharing that scope -- multiple installations all fall under "installation", and a stale
+ *  observation from an installation that hasn't made a request recently must never mask a fresher one from a
+ *  DIFFERENT installation in the same scope. Pure given the current contents of latestRestRateLimitObservations. */
+export function githubRestRateLimitRemainingSamples(): Array<{ labels: { key_scope: string }; value: number }> {
+  const newestByScope = new Map<string, LocalGitHubRestRateLimitObservation>();
+  for (const [admissionKey, observation] of latestRestRateLimitObservations) {
+    const scope = githubAdmissionKeyScope(admissionKey);
+    const existing = newestByScope.get(scope);
+    if (!existing || observation.observedAtMs > existing.observedAtMs) newestByScope.set(scope, observation);
+  }
+  return [...newestByScope.entries()].map(([key_scope, observation]) => ({
+    labels: { key_scope },
+    value: observation.remaining,
+  }));
+}
+
 async function sha256Short(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16);

@@ -6,10 +6,11 @@
 //   • flag-OFF (default) → isPlannerEnabled is false, the handler short-circuits BEFORE parsing, and the worker
 //     is byte-identical to today (`@gittensory plan` falls through to the existing mention path → help card).
 //   • flag-ON → only a MAINTAINER can trigger it; the model sees only the (already-public) issue title + body;
-//     shared AI budget accounting runs before Workers AI; the output is public-safe-sanitized before posting;
-//     any model/error degrades to a no-plan no-op.
+//     shared AI budget accounting runs before the configured reviewer (self-host Codex/Claude Code/etc, or the
+//     legacy Workers-AI pair); the output is public-safe-sanitized before posting; any model/error degrades to
+//     a no-plan no-op.
 
-import { BEST_REVIEW_MODELS, clampNumber, coerceAiText, estimateNeurons, RELIABLE_FALLBACK_MODELS, utcDayStartIso } from "../services/ai-review";
+import { type AiReviewActualUsage, BEST_REVIEW_MODELS, clampNumber, coerceAiText, coerceAiUsage, estimateNeurons, RELIABLE_FALLBACK_MODELS, utcDayStartIso } from "../services/ai-review";
 import { recordAiUsageEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
 import { sanitizePublicComment } from "../github/commands";
 import { AGENT_COMMAND_COMMENT_MARKER } from "../github/comments";
@@ -72,7 +73,18 @@ function plannerDailyBudget(env: Env): number {
   return clampNumber(env.AI_DAILY_NEURON_BUDGET && Number.isFinite(raw) ? raw : 10_000_000, 0, 10_000_000);
 }
 
-async function recordPlannerUsage(env: Env, args: { actor?: string | null | undefined; repoFullName?: string | null | undefined; issueNumber?: number | null | undefined; status: string; estimatedNeurons: number; detail: string }): Promise<void> {
+async function recordPlannerUsage(
+  env: Env,
+  args: {
+    actor?: string | null | undefined;
+    repoFullName?: string | null | undefined;
+    issueNumber?: number | null | undefined;
+    status: string;
+    estimatedNeurons: number;
+    detail: string;
+    usage?: AiReviewActualUsage | undefined;
+  },
+): Promise<void> {
   await recordAiUsageEvent(env, {
     feature: "issue_plan",
     actor: args.actor ?? null,
@@ -80,16 +92,25 @@ async function recordPlannerUsage(env: Env, args: { actor?: string | null | unde
     model: [BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0]].join("+"),
     status: args.status,
     estimatedNeurons: args.estimatedNeurons,
+    provider: args.usage?.provider,
+    effort: args.usage?.effort,
+    inputTokens: args.usage?.inputTokens,
+    outputTokens: args.usage?.outputTokens,
+    totalTokens: args.usage?.totalTokens,
+    costUsd: args.usage?.costUsd,
     detail: args.detail,
     metadata: { repoFullName: args.repoFullName ?? null, issueNumber: args.issueNumber ?? null },
   });
 }
 
-/** One Workers-AI text completion for the planner: primary model, one reliable fallback, a single retry each.
+type PlannerModelResult = { text: string | null; usage?: AiReviewActualUsage | undefined };
+
+/** One reviewer text completion for the planner (whichever provider `env.AI` resolves to — self-host Codex/
+ *  Claude Code/etc, or the legacy Workers-AI pair): primary model, one reliable fallback, a single retry each.
  *  Fail-safe — any error or empty output returns null. Mirrors runWorkersOpinion's routing (AI Gateway when set). */
-async function runPlannerModel(env: Env, system: string, user: string): Promise<string | null> {
+async function runPlannerModel(env: Env, system: string, user: string): Promise<PlannerModelResult> {
   const ai = env.AI as unknown as { run?: (model: string, options: Record<string, unknown>, extra?: unknown) => Promise<unknown> } | undefined;
-  if (!ai || typeof ai.run !== "function") return null;
+  if (!ai || typeof ai.run !== "function") return { text: null };
   const gatewayId = env.AI_GATEWAY_ID?.trim();
   const extra = gatewayId ? { gateway: { id: gatewayId } } : undefined;
   for (const model of [BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0]]) {
@@ -97,18 +118,18 @@ async function runPlannerModel(env: Env, system: string, user: string): Promise<
       try {
         const result = await ai.run(model, { max_tokens: PLANNER_MAX_TOKENS, temperature: 0.2, messages: [{ role: "system", content: system }, { role: "user", content: user }] }, extra);
         const text = coerceAiText(result).trim();
-        if (text) return text;
+        if (text) return { text, usage: coerceAiUsage(result) };
       } catch {
         /* retry, then fall through to the fallback model */
       }
     }
   }
-  return null;
+  return { text: null };
 }
 
-/** Generate an implementation plan (markdown) from an issue's title + body via Workers AI. Returns null when AI
- *  is unavailable or returns nothing (the caller then posts no plan). The returned text is bounded; the caller
- *  still sanitizes it before posting. */
+/** Generate an implementation plan (markdown) from an issue's title + body via the configured reviewer. Returns
+ *  null when AI is unavailable or returns nothing (the caller then posts no plan). The returned text is bounded;
+ *  the caller still sanitizes it before posting. */
 export async function generateIssuePlan(
   env: Env,
   issue: { title?: string | null | undefined; body?: string | null | undefined },
@@ -124,8 +145,8 @@ export async function generateIssuePlan(
     await recordPlannerUsage(env, { ...accounting, status: "quota_exceeded", estimatedNeurons: 0, detail: `estimated ${estimatedNeurons} neurons exceeds remaining ${remainingBudget}` });
     return null;
   }
-  const plan = await runPlannerModel(env, PLANNER_SYSTEM_PROMPT, user);
-  await recordPlannerUsage(env, { ...accounting, status: plan ? "ok" : "no_output", estimatedNeurons: plan ? estimatedNeurons : 0, detail: plan ? "issue plan generated" : "no usable output" });
+  const { text: plan, usage } = await runPlannerModel(env, PLANNER_SYSTEM_PROMPT, user);
+  await recordPlannerUsage(env, { ...accounting, status: plan ? "ok" : "no_output", estimatedNeurons: plan ? estimatedNeurons : 0, detail: plan ? "issue plan generated" : "no usable output", usage });
   if (!plan) return null;
   return plan.slice(0, MAX_PLAN_CHARS);
 }

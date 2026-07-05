@@ -19,16 +19,19 @@ function normalizeCandidate(candidate) {
     typeof candidate.repoFullName === "string" ? candidate.repoFullName.trim() : "";
   const issueNumber = candidate.issueNumber;
   const title = typeof candidate.title === "string" ? candidate.title.trim() : "";
-  if (!repoFullName || !Number.isInteger(issueNumber) || issueNumber <= 0 || !title) return null;
+  const [owner, repo, extra] = repoFullName.split("/");
+  if (!owner || !repo || extra !== undefined) return null;
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0 || !title) return null;
+  const canonicalRepoFullName = `${owner}/${repo}`;
   const labels = Array.isArray(candidate.labels)
     ? candidate.labels
         .filter((label) => typeof label === "string" && label.trim())
         .map((label) => label.trim())
     : [];
   return {
-    owner: typeof candidate.owner === "string" ? candidate.owner : repoFullName.split("/")[0] ?? "",
-    repo: typeof candidate.repo === "string" ? candidate.repo : repoFullName.split("/")[1] ?? "",
-    repoFullName,
+    owner,
+    repo,
+    repoFullName: canonicalRepoFullName,
     issueNumber,
     title,
     labels,
@@ -84,6 +87,16 @@ function collectCandidates(candidates) {
   return { normalized, skippedInvalid };
 }
 
+function rankedUsesDefaultGoalSpec(ranked, options = {}) {
+  const goalSpecsByRepo = buildGoalSpecsByRepo(options);
+  const specRepos = Object.keys(goalSpecsByRepo);
+  if (ranked.length === 0) return specRepos.length === 0;
+  return ranked.some((issue) => {
+    const target = issue.repoFullName.trim().toLowerCase();
+    return !specRepos.some((repo) => repo.trim().toLowerCase() === target);
+  });
+}
+
 /**
  * Rank metadata-only fan-out candidates locally. Never clones source, never uploads metadata, and never writes to
  * GitHub — it only composes deterministic engine signals and returns the sorted list.
@@ -99,7 +112,7 @@ export function rankCandidateIssuesWithSummary(candidates, options = {}) {
   return {
     issues: ranked,
     skippedInvalid,
-    usedDefaultGoalSpec: Object.keys(buildGoalSpecsByRepo(options)).length === 0,
+    usedDefaultGoalSpec: rankedUsesDefaultGoalSpec(ranked, options),
     defaultGoalSpec: DEFAULT_MINER_GOAL_SPEC,
   };
 }

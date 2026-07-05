@@ -25,7 +25,7 @@ export type PlanRecord = {
 };
 
 export type ListPlansFilter = {
-  status?: PlanStatus;
+  status?: PlanStatus | null;
 };
 
 export type PlanStore = {

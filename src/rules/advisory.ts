@@ -11,6 +11,7 @@ import type {
 } from "../types";
 import type { CollisionCluster, CollisionReport } from "../signals/engine";
 import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
+import type { GuardrailPathMatch } from "../signals/change-guardrail";
 import { isCodeFile } from "../signals/local-branch";
 import { isTestPath } from "../signals/test-evidence";
 import { nowIso } from "../utils/json";
@@ -45,8 +46,8 @@ export type GateCheckPolicy = {
    *  linked-issue, duplicate, quality/readiness, slop — to its mode, so a maintainer flips ONE switch instead
    *  of four and the review-agent check stays the single required check. `off` = sub-gates use their own modes. */
   mergeReadinessGateMode?: GateRuleMode | undefined;
-  /** Focus-manifest policy gate (#555). When `block`, linked-issue/test policy findings become hard blockers;
-   *  blocked-path findings become manual-review holds because guardrailed paths should be reviewed, not closed.
+  /** Focus-manifest policy gate (#555). When `block`, linked-issue/test policy findings become hard blockers.
+   *  Path-based manual-review holds are configured only with `settings.hardGuardrailGlobs`.
    *  An INDEPENDENT dimension, deliberately NOT folded into the merge-readiness composite so #555 stays focused.
    *  `off`/`advisory` = the findings stay advisory (never block). Default off. */
   manifestPolicyGateMode?: GateRuleMode | undefined;
@@ -87,10 +88,13 @@ export type GateCheckPolicy = {
   /** Aggregate change size, threaded from the resolved file list (changedLineCount = additions + deletions). */
   changedFileCount?: number | null | undefined;
   changedLineCount?: number | null | undefined;
-  /** True when the PR's diff trips a hard guardrail path (caller computes via loadHardGuardrailGlobs + isGuardrailHit).
+  /** True when the PR's diff trips a configured hard guardrail path.
    *  A guardrail hit HOLDS an otherwise-passing gate for manual review (neutral → "manual"), never auto-merged.
-   *  Always-on (the guardrail globs default to the crucial/config-as-code/engine paths). (#gate-guardrail) */
+   *  Empty/absent guardrail globs disable this path. (#gate-guardrail) */
   guardrailHit?: boolean | undefined;
+  /** Matched changed paths/globs for the guardrail hold. Empty when the caller only knows "unknown path set"
+   *  (fail-safe guardrail hit) rather than exact paths. */
+  guardrailMatches?: GuardrailPathMatch[] | undefined;
   /** Dry-run disposition (#gate-dryrun). When true, the gate ALSO computes the would-be conclusion with every
    *  `advisory` sub-gate promoted to `block` and exposes it as `displayConclusion` (the rendered merge/close/manual
    *  verdict), WITHOUT changing the posted, non-enforcing `conclusion`. Lets advisory mode show exactly what it WOULD
@@ -454,34 +458,20 @@ function buildSizeHoldFinding(policy: GateCheckPolicy): AdvisoryFinding | null {
 }
 
 /** Guardrail-path manual-review HOLD finding (#gate-guardrail). A HOLD (neutral gate), never a hard blocker. */
-function buildGuardrailHoldFinding(): AdvisoryFinding {
+function buildGuardrailHoldFinding(matches: GuardrailPathMatch[] = []): AdvisoryFinding {
+  const detail =
+    matches.length > 0
+      ? `This PR changes guardrail-protected path(s): ${matches
+          .slice(0, 5)
+          .map((match) => `\`${match.path}\` (matched \`${match.glob}\`)`)
+          .join(", ")}${matches.length > 5 ? `, and ${matches.length - 5} more` : ""}.`
+      : "This PR changes a guardrail-protected path, or the changed-file list could not be verified while guardrails are configured.";
   return {
     code: "guardrail_hold",
     severity: "warning",
     title: "Touches a guarded path — held for manual review",
-    detail: "This PR changes a guardrail-protected path, so it is held for a maintainer to review and merge manually.",
+    detail,
     action: "A maintainer must review and merge this change.",
-  };
-}
-
-function buildManifestBlockedPathHoldFinding(
-  findings: AdvisoryFinding[],
-  policy: GateCheckPolicy,
-): AdvisoryFinding | null {
-  if (gateMode(policy.manifestPolicyGateMode ?? "off") !== "block")
-    return null;
-  const blocked = findings.find(
-    (finding) => finding.code === "manifest_blocked_path",
-  );
-  if (!blocked) return null;
-  return {
-    code: "manifest_blocked_path",
-    severity: "warning",
-    title: "Touches a maintainer-blocked path — held for manual review",
-    detail:
-      "This PR changes a maintainer-blocked path, so it is held for a maintainer to review and merge manually.",
-    action: "A maintainer must review and merge this change.",
-    ...(blocked.publicText !== undefined ? { publicText: blocked.publicText } : {}),
   };
 }
 
@@ -562,12 +552,8 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
     // a guarded path is HELD for a human (neutral → "manual" verdict) rather than auto-approved — never a failure,
     // so neutral never blocks the merge (dry-run/advisory friendly) and a contributor PR is never auto-closed for size.
     const sizeHold = buildSizeHoldFinding(effective);
-    const guardrailHold = effective.guardrailHit ? buildGuardrailHoldFinding() : null;
-    const manifestBlockedPathHold = buildManifestBlockedPathHoldFinding(
-      advisoryResult.findings,
-      effective,
-    );
-    const holds = [sizeHold, guardrailHold, manifestBlockedPathHold].filter(
+    const guardrailHold = effective.guardrailHit ? buildGuardrailHoldFinding(effective.guardrailMatches) : null;
+    const holds = [sizeHold, guardrailHold].filter(
       (f): f is AdvisoryFinding => f !== null,
     );
     if (holds.length > 0) {
@@ -892,7 +878,7 @@ function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPoli
   // warning and is never blocked here. No AI judgment is involved, so this can never cause an AI false-close.
   if (code === "pre_merge_check_required") return true;
   // Focus-manifest policy (#555): linked-issue/test policy findings block ONLY when the maintainer opts into
-  // manifestPolicy: block. Blocked paths are guardrails, so they are handled as manual-review holds above.
+  // manifestPolicy: block. Path holds are intentionally separate and configured via hardGuardrailGlobs.
   if (code === "manifest_linked_issue_required" || code === "manifest_missing_tests") {
     return gateMode(policy.manifestPolicyGateMode ?? "off") === "block";
   }

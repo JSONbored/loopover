@@ -32,9 +32,46 @@ describe("PR freshness guards", () => {
     expect(pullRequestFreshnessDetail(result)).toBe("live PR state could not be verified");
   });
 
+  it("carries internal unavailable metadata without changing the public detail", () => {
+    const result = classifyPullRequestFreshness(undefined, "sha1", {
+      unavailableSource: "pull_request_fetch",
+      unavailableDetail: "GitHub API failed for owner/repo/pulls/1 (503)",
+    });
+    expect(result).toMatchObject({
+      status: "stale",
+      reason: "unavailable",
+      expectedHeadSha: "sha1",
+      unavailableSource: "pull_request_fetch",
+      unavailableDetail: "GitHub API failed for owner/repo/pulls/1 (503)",
+    });
+    expect(pullRequestFreshnessDetail(result)).toBe("live PR state could not be verified");
+  });
+
   it("treats malformed live PR responses without state as unverifiable", () => {
     const result = classifyPullRequestFreshness({ state: undefined as unknown as string, head: { sha: "sha1" } }, "sha1");
-    expect(result).toMatchObject({ status: "stale", reason: "unavailable", liveHeadSha: "sha1", liveState: null });
+    expect(result).toMatchObject({
+      status: "stale",
+      reason: "unavailable",
+      liveHeadSha: "sha1",
+      liveState: null,
+      unavailableSource: "live_payload",
+    });
+  });
+
+  it("preserves a supplied unavailable source for malformed live PR payloads", () => {
+    const result = classifyPullRequestFreshness(
+      { state: undefined as unknown as string, head: { sha: "sha1" } },
+      "sha1",
+      { unavailableSource: "pull_request_fetch", unavailableDetail: "malformed replay" },
+    );
+    expect(result).toMatchObject({
+      status: "stale",
+      reason: "unavailable",
+      liveHeadSha: "sha1",
+      liveState: null,
+      unavailableSource: "pull_request_fetch",
+      unavailableDetail: "malformed replay",
+    });
   });
 
   it("treats closed PRs as stale even when the head still matches", () => {
@@ -146,6 +183,26 @@ describe("PR freshness guards", () => {
     ).resolves.toMatchObject({ status: "current", liveHeadSha: "sha7" });
   });
 
+  it("classifies live PR fetch failures as retryable unavailable freshness metadata", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      expect(String(input)).toContain("/repos/owner/repo/pulls/7");
+      return new Response("temporary outage", { status: 503 });
+    });
+    const result = await fetchPullRequestFreshness(env, {
+      installationId: 123,
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      expectedHeadSha: "sha7",
+    });
+    expect(result).toMatchObject({
+      status: "stale",
+      reason: "unavailable",
+      unavailableSource: "pull_request_fetch",
+      unavailableDetail: expect.stringContaining("503"),
+    });
+  });
+
   it("fails closed when no token can verify live PR state", async () => {
     const env = createTestEnv();
     const result = await fetchPullRequestFreshness(env, {
@@ -154,6 +211,11 @@ describe("PR freshness guards", () => {
       pullNumber: 7,
       expectedHeadSha: "sha7",
     });
-    expect(result).toMatchObject({ status: "stale", reason: "unavailable" });
+    expect(result).toMatchObject({
+      status: "stale",
+      reason: "unavailable",
+      unavailableSource: "token",
+      unavailableDetail: expect.any(String),
+    });
   });
 });

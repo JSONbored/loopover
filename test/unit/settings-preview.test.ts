@@ -40,6 +40,7 @@ function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettin
     checkRunMode: "off",
     checkRunDetailLevel: "standard",
     gateCheckMode: "off",
+    reviewCheckMode: "disabled",
     gatePack: "gittensor",
     linkedIssueGateMode: "advisory",
     duplicatePrGateMode: "advisory",
@@ -251,7 +252,7 @@ describe("buildRepoSettingsPreview", () => {
   it("explains a missing Checks: write permission when the opt-in gate is enabled", () => {
     const preview = buildRepoSettingsPreview({
       ...base,
-      settings: settings({ publicSurface: "off", commentMode: "off", autoLabelEnabled: false, gateCheckMode: "enabled" }),
+      settings: settings({ publicSurface: "off", commentMode: "off", autoLabelEnabled: false, gateCheckMode: "enabled", reviewCheckMode: "required" }),
       installation: { ...healthyInstall, status: "needs_attention", missingPermissions: ["checks"] },
       sample: { authorLogin: "contributor", minerStatus: "not_found" },
     });
@@ -393,5 +394,17 @@ describe("buildRepoSettingsPreview", () => {
 
     const actualReadPerms = (preview.installPreview.permissions.required as string[]).filter((p) => p.endsWith(": read")).sort();
     expect(actualReadPerms).toEqual(expectedReadPerms);
+  });
+
+  it("REGRESSION: merge autonomy requires contents: write in the install preview", () => {
+    const preview = buildRepoSettingsPreview({
+      ...base,
+      settings: settings({ publicSurface: "label_only", autoLabelEnabled: false, commentMode: "off", checkRunMode: "off", autonomy: { merge: "auto" } }),
+      installation: { ...healthyInstall, missingPermissions: ["contents"] },
+      sample: { authorLogin: "miner", minerStatus: "confirmed" },
+    });
+
+    expect(preview.installPreview.permissions.required).toContain("contents: write");
+    expect(preview.installPreview.permissions.missing).toContain("contents");
   });
 });

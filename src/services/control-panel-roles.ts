@@ -292,7 +292,7 @@ function isMaintainerAssociation(value: string | null | undefined): boolean {
 export function sanitizeRoleText(value: string): string {
   const redacted = value
     .replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<redacted-path>")
-    .replace(/\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g, "<redacted-token>")
+    .replace(/\b(?:ghp_|github_pat_|gts_|orbenr_|orbsec_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g, "<redacted-token>")
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, "Bearer <redacted-token>");
   if (/\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey|payout|reward estimate|farming|private reviewability|public score estimate)\b/i.test(redacted)) return "<redacted>";
   return redacted.slice(0, 200);

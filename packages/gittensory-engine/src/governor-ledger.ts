@@ -1,5 +1,3 @@
-import { isDeepStrictEqual } from "node:util";
-
 /** Immutable governor decision vocabulary — unknown values fail closed before insert. */
 export const GOVERNOR_LEDGER_EVENT_TYPES = Object.freeze([
   "allowed",
@@ -46,6 +44,27 @@ function normalizeOptionalRepoFullName(repoFullName: unknown): string | null {
   return `${owner}/${repo}`;
 }
 
+// Structural equality between a JSON.parse() result and the plain object it was stringified from. One side is
+// always JSON-safe (parsed from JSON text); this only needs to compare plain objects/arrays/primitives, not the
+// full generality of node:util's isDeepStrictEqual (no Dates/RegExp/Maps/getters/symbols to worry about) — this
+// package's tsconfig deliberately sets `types: []` (no Node ambient types leak into its public .d.ts surface),
+// so importing "node:util" here isn't viable; a small local check avoids that entirely.
+function jsonRoundTripEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== typeof b || a === null || b === null) return false;
+  if (typeof a !== "object") return false;
+  const aIsArray = Array.isArray(a);
+  if (aIsArray !== Array.isArray(b)) return false;
+  if (aIsArray) {
+    const bArr = b as unknown[];
+    const aArr = a as unknown[];
+    return aArr.length === bArr.length && aArr.every((value, index) => jsonRoundTripEqual(value, bArr[index]));
+  }
+  const aKeys = Object.keys(a as object);
+  const bRecord = b as Record<string, unknown>;
+  return aKeys.length === Object.keys(bRecord).length && aKeys.every((key) => Object.hasOwn(bRecord, key) && jsonRoundTripEqual((a as Record<string, unknown>)[key], bRecord[key]));
+}
+
 function serializePayload(payload: unknown): string {
   if (payload === undefined) return "{}";
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
@@ -57,7 +76,7 @@ function serializePayload(payload: unknown): string {
   } catch {
     throw new Error("invalid_payload");
   }
-  if (!isDeepStrictEqual(JSON.parse(json), payload)) {
+  if (!jsonRoundTripEqual(JSON.parse(json), payload)) {
     throw new Error("invalid_payload");
   }
   return json;

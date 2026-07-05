@@ -37,6 +37,20 @@ describe("registry normalization", () => {
     expect(snapshot.repositories[0]!.timeDecay ?? null).toBeNull();
   });
 
+  it("REGRESSION: drops non-finite label multiplier values (NaN/Infinity are typeof 'number' but not finite)", () => {
+    const snapshot = normalizeRegistryPayload(
+      {
+        "JSONbored/awesome-claude": {
+          label_multipliers: { bug: 1.2, broken: Number.NaN, unbounded: Number.POSITIVE_INFINITY },
+        },
+      },
+      { kind: "raw-github", url: "https://example.test/master_repositories.json" },
+      "2026-05-22T00:00:00.000Z",
+    );
+
+    expect(snapshot.repositories[0]!.labelMultipliers).toEqual({ bug: 1.2 });
+  });
+
   it("dedupes case-variant repo names so snapshot totals match the single row that persists", () => {
     const snapshot = normalizeRegistryPayload(
       {

@@ -1,4 +1,4 @@
-import { getInstallation, getPullRequest, getPendingAgentAction, recordAuditEvent, setPendingAgentActionStatus } from "../db/repositories";
+import { claimPendingAgentActionDecision, getInstallation, getPullRequest, getPendingAgentAction, recordAuditEvent, setPendingAgentActionStatus } from "../db/repositories";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { createInstallationToken } from "../github/app";
 import { loadLinkedIssueHardRules, resolveLinkedIssueHardRule } from "../review/linked-issue-hard-rules";
@@ -6,7 +6,7 @@ import { executeAgentMaintenanceActions, pendingActionToPlanned } from "./agent-
 import { downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, type PlannedAgentAction } from "../settings/agent-actions";
 import { findBlacklistEntry } from "../settings/contributor-blacklist";
 import { isCloseHoldOnly, isHoldOnly } from "../review/outcomes-wire";
-import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision } from "../github/backfill";
+import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision, mergeRequiredCiContexts } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import type { AgentPendingActionParams, AgentPendingActionRecord } from "../types";
 
@@ -23,7 +23,10 @@ export type ApprovalDecisionResult = {
  * Decide a staged approval-queue action (#779). Accept → run the action through the current executor gates
  * (the maintainer's accept IS the approval, so only the approval queue gate is bypassed). Reject → cancel.
  * Either decision marks the row decided (idempotent: a second decision is a no-op) and records an audit event
- * that feeds the trust loop.
+ * that feeds the trust loop. Concurrent decisions on the same row are serialized by an atomic pending→decided
+ * claim (#2423-concurrent): two overlapping accept/reject calls (a double-click, a retried request) both read
+ * `status: "pending"` before either write lands, so a plain read-then-write would let BOTH proceed to execute
+ * the action — claimPendingAgentActionDecision's conditional UPDATE ensures only the winner proceeds.
  */
 export async function decidePendingAgentAction(env: Env, input: { id: string; decision: ApprovalDecision; decidedBy: string }): Promise<ApprovalDecisionResult> {
   const pending = await getPendingAgentAction(env, input.id);
@@ -33,9 +36,20 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
   const baseMetadata = { pendingId: pending.id, repoFullName: pending.repoFullName, pullNumber: pending.pullNumber, actionClass: pending.actionClass, autonomyLevel: pending.autonomyLevel };
 
   if (input.decision === "reject") {
-    await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });
+    if (!(await claimPendingAgentActionDecision(env, pending.id, { status: "rejected", decidedBy: input.decidedBy }))) {
+      const current = await getPendingAgentAction(env, pending.id);
+      /* v8 ignore next -- the row was just read moments ago and this system never deletes pending-action rows; the pending fallback guards a theoretical concurrent-delete only. */
+      return { status: "already_decided", action: current ?? pending };
+    }
     await recordAuditEvent(env, { eventType: "agent.pending_action.rejected", actor: input.decidedBy, targetKey, outcome: "completed", detail: `rejected ${pending.actionClass}`, metadata: baseMetadata });
     return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy } };
+  }
+
+  // Claim before any async re-validation or execution so two concurrent accepts cannot both reach the executor.
+  if (!(await claimPendingAgentActionDecision(env, pending.id, { status: "accepted", decidedBy: input.decidedBy }))) {
+    const current = await getPendingAgentAction(env, pending.id);
+    /* v8 ignore next -- the row was just read moments ago and this system never deletes pending-action rows; the pending fallback guards a theoretical concurrent-delete only. */
+    return { status: "already_decided", action: current ?? pending };
   }
 
   // accept → execute the staged action live, then record the result.
@@ -145,6 +159,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
         body: pr.body,
         linkedIssues: pr.linkedIssues,
         ciToken,
+        prAuthorLogin: pr.authorLogin,
         installationId: pending.installationId,
       });
       stillJustified = linkedIssueHardRule?.violated === true;
@@ -169,13 +184,27 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     }
   }
 
-  // Re-derive live justification for a staged MERGE at accept time. auto_with_approval rows have no expiry, so
-  // CI can flip red, the base can go dirty, or a reviewer can request changes while the row just sits waiting for
-  // a maintainer — none of which move the head SHA, so the check above alone would not catch it. Best-effort: a
-  // failed live read fails OPEN on that specific check (the executor's own mutation call independently needs a
-  // valid token/state and will fail cleanly if something is actually wrong). (#2126)
+  // Re-derive live justification for a staged MERGE or non-CI heuristic CLOSE at accept time. auto_with_approval
+  // rows have no expiry, so CI can flip red, the base can go dirty/clean, or a reviewer can request/unrequest
+  // changes while the row just sits waiting for a maintainer — none of which move the head SHA, so the check above
+  // alone would not catch it. Best-effort: a failed live read fails OPEN on that specific check (the executor's own
+  // mutation call independently needs a valid token/state and will fail cleanly if something is actually wrong).
+  // (#2126, #2478)
   let liveParams: AgentPendingActionParams = pending.params;
-  if (pending.actionClass === "merge" && pr?.headSha) {
+  // For close, scoped to closeRequiresMergeableState !== false -- i.e. `true` (a base-conflict-justified
+  // heuristic close) OR `undefined` (a LEGACY row staged before this field existed, whose original
+  // justification is unknown). NOT the broader closeRequiresCiState === "not_required" (any non-CI reason).
+  // A duplicate/slop/blocker-only close (closeRequiresMergeableState === false, always explicit per the
+  // field's own doc comment) has no cheap live re-derivation, so it is intentionally left out of this
+  // recheck. But `undefined` must NOT be treated the same as `false`: a strict `=== true` comparison would
+  // silently skip the live recheck for any pre-existing auto_with_approval close row staged before this
+  // field was introduced, even one that WAS originally conflict-justified -- exactly the safety gap this
+  // recheck exists to close. Fail toward "revalidate" for the unknown case, not "skip" (gate review finding).
+  const shouldRecheckLiveDisposition =
+    pr?.headSha &&
+    (pending.actionClass === "merge" ||
+      (pending.actionClass === "close" && pending.params.closeKind === "heuristic" && pending.params.closeRequiresMergeableState !== false));
+  if (shouldRecheckLiveDisposition) {
     const token = await createInstallationToken(env, pending.installationId).catch(() => undefined);
     const admissionKey = githubRateLimitAdmissionKeyForToken(env, token, pending.installationId);
     // Promise.allSettled, not Promise.all: each live re-check is independently best-effort (per the comment
@@ -183,7 +212,10 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     // out of decidePendingAgentAction. A settled-rejected check is treated the same as "nothing concerning
     // found" -- exactly what each function's own internal fail-safe catch already resolves to on success.
     const [ciResult, mergeableResult, reviewResult] = await Promise.allSettled([
-      fetchLiveCiAggregate(env, pending.repoFullName, pr.headSha, token, undefined, admissionKey),
+      // mergeRequiredCiContexts(null, ...) -- no live branch-protection re-fetch here, just the maintainer's own
+      // configured expectedCiContexts (or null/fold-all when unset), so this accept-time re-check honors the
+      // same required-contexts view the original plan was evaluated against (#selfhost-ci-verification).
+      fetchLiveCiAggregate(env, pending.repoFullName, pr.headSha, token, mergeRequiredCiContexts(null, settings.expectedCiContexts), admissionKey),
       fetchLivePullRequestMergeState(env, pending.repoFullName, pending.pullNumber, token, admissionKey),
       fetchLivePullRequestReviewDecision(env, pending.repoFullName, pending.pullNumber, token, admissionKey),
     ]);
@@ -192,15 +224,29 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     // non-stale-tolerant signal that the staged merge's justification no longer holds (#2126).
     const ciState = ciResult.status === "fulfilled" ? ciResult.value.ciState : undefined;
     const mergeableState = mergeableResult.status === "fulfilled" ? mergeableResult.value : undefined;
-    const reviewDecision = reviewResult.status === "fulfilled" ? reviewResult.value : undefined;
+    // Tracked separately from reviewDecision's VALUE: a REJECTED promise also resolves reviewDecision to
+    // undefined below, which must not be indistinguishable from "fetched successfully and confirmed not
+    // CHANGES_REQUESTED" -- otherwise a transient read failure silently satisfies the close-staleness check
+    // below instead of failing open on it (gate review finding).
+    const reviewFetchSucceeded = reviewResult.status === "fulfilled";
+    const reviewDecision = reviewFetchSucceeded ? reviewResult.value : undefined;
     const staleReason =
-      ciState !== undefined && ciState !== "passed"
-        ? `live CI is no longer passing (now: ${ciState})`
-        : mergeableState === "dirty"
-          ? "the base branch now conflicts (mergeable_state: dirty)"
-          : reviewDecision === "CHANGES_REQUESTED"
-            ? "a reviewer has since requested changes"
-            : null;
+      pending.actionClass === "merge"
+        ? ciState !== undefined && ciState !== "passed"
+          ? `live CI is no longer passing (now: ${ciState})`
+          : mergeableState === "dirty"
+            ? "the base branch now conflicts (mergeable_state: dirty)"
+            : reviewDecision === "CHANGES_REQUESTED"
+              ? "a reviewer has since requested changes"
+              : null
+        : // Only reached when closeRequiresMergeableState !== false (see shouldRecheckLiveDisposition above), so
+          // CI state is irrelevant to this specific close's justification and the only live signal that matters
+          // is whether the conflict has cleared. reviewFetchSucceeded is required alongside the value check --
+          // see its own comment above -- so a failed live-review read fails open instead of masquerading as
+          // "confirmed no changes requested".
+          reviewFetchSucceeded && mergeableState === "clean" && reviewDecision !== "CHANGES_REQUESTED"
+          ? "the conflict that justified this close has since cleared"
+          : null;
     if (staleReason) {
       await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });
       await recordAuditEvent(env, {
@@ -228,8 +274,15 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
   // precision drop) still holds this sticky pending row instead of executing it unmodified. (#2127)
   const [holdOnly, closeHoldOnly] = await Promise.all([isHoldOnly(env, pending.repoFullName), isCloseHoldOnly(env, pending.repoFullName)]);
   let plan: PlannedAgentAction[] = [pendingActionToPlanned({ actionClass: pending.actionClass, params: liveParams, reason: pending.reason })];
-  if (holdOnly) plan = downgradeMergeToHold(plan, true);
-  if (closeHoldOnly) plan = downgradeCloseToHold(plan, true);
+  const labelSettings = {
+    manualReviewLabel: settings.manualReviewLabel,
+    readyToMergeLabel: settings.readyToMergeLabel,
+    changesRequestedLabel: settings.changesRequestedLabel,
+    migrationCollisionLabel: settings.migrationCollisionLabel,
+    pendingClosureLabel: settings.pendingClosureLabel,
+  };
+  if (holdOnly) plan = downgradeMergeToHold(plan, true, labelSettings);
+  if (closeHoldOnly) plan = downgradeCloseToHold(plan, true, labelSettings);
 
   // Re-validate a staged MERGE against the CURRENT linked-issue hard-rule state (#2132). The hard rule is
   // evaluated fresh on every planning pass and takes precedence over merge (see planAgentMaintenanceActions),
@@ -238,7 +291,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
   // still merge a now-ineligible PR. Mirrors the planner's own owner/automation exemption (closeEligible) so an
   // owner's staged merge, which the hard rule never blocks in the first place, is not wrongly denied here.
   // Gated on the POST-downgrade `plan`, not `pending.actionClass`: the precision-breaker downgrade immediately
-  // above can already have replaced a staged merge with a needs-human-review label (downgradeMergeToHold) — that
+  // above can already have replaced a staged merge with a manual-review label (downgradeMergeToHold) — that
   // downgraded plan isn't going to merge anything, so a stale linked-issue violation must not reject the whole
   // row and suppress the hold label; it only matters while a merge is still the thing about to execute.
   if (plan.some((action) => action.actionClass === "merge") && pr) {
@@ -266,6 +319,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
         body: pr.body,
         linkedIssues: pr.linkedIssues,
         ciToken,
+        prAuthorLogin: pr.authorLogin,
         installationId: pending.installationId,
       });
       if (linkedIssueHardRule?.violated) {
@@ -298,6 +352,10 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       // approval (close autonomy = auto_with_approval), so the accept-replay path needs this resolved the
       // same way the live webhook path does (src/queue/processors.ts) for the cancel hook to fire here too.
       contributorCapCancelCi: settings.contributorCapCancelCi ?? env.CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT === "true",
+      // #selfhost-ci-verification: the executor's OWN final pre-mutation live-CI re-check (step 8 of
+      // executeAgentMaintenanceActions) needs the same configured expectedCiContexts this accept-time
+      // re-check (above) and the original plan were both evaluated against.
+      expectedCiContexts: settings.expectedCiContexts,
     },
     plan,
   );
@@ -315,7 +373,12 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     eventType: "agent.pending_action.accepted",
     actor: input.decidedBy,
     targetKey,
-    outcome: execOutcome === "completed" ? "completed" : "error",
+    // The audit outcome must reflect execOutcome the same way finalStatus's comment above describes it, not
+    // collapse every non-"completed" result into "error": "denied"/"queued" pass through as themselves, and
+    // "dry_run" folds into "completed" (mirroring agent-action-executor.ts's own audit() helper), since
+    // AuditEventRecord's outcome type has no "dry_run" member. Only a real executor failure — "error", or the
+    // defensive "no_outcome" fallback above — should ever surface as "error" here.
+    outcome: execOutcome === "dry_run" ? "completed" : execOutcome === "denied" || execOutcome === "queued" ? execOutcome : execOutcome === "completed" ? "completed" : "error",
     detail: `accepted ${pending.actionClass} → ${execOutcome}`,
     metadata: { ...baseMetadata, executionOutcome: execOutcome },
   });

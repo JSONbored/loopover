@@ -12,12 +12,22 @@ import { renderBrief } from "../dist/render.js";
 const npmAdd = (name, version = "1.0.0") => ({
   repoFullName: "o/r",
   prNumber: 1,
-  files: [{ path: "package.json", patch: `@@ -1,0 +1,1 @@\n+  "${name}": "^${version}"` }],
+  files: [
+    {
+      path: "package.json",
+      patch: `@@ -1,0 +1,1 @@\n+  "${name}": "^${version}"`,
+    },
+  ],
 });
 const pypiAdd = (name, version = "1.0.0") => ({
   repoFullName: "o/r",
   prNumber: 1,
-  files: [{ path: "requirements.txt", patch: `@@ -1,0 +1,1 @@\n+${name}==${version}` }],
+  files: [
+    {
+      path: "requirements.txt",
+      patch: `@@ -1,0 +1,1 @@\n+${name}==${version}`,
+    },
+  ],
 });
 const jsonResponse = (body, init) => new Response(JSON.stringify(body), init);
 const npmFetch = (meta) => async () =>
@@ -43,28 +53,51 @@ test("npmNativeBuild: install script running node-gyp flags a compile", () => {
 });
 
 test("npmNativeBuild: a prebuilt-binary path is reported as a fallback compile", () => {
-  const viaBinary = npmNativeBuild({ gypfile: true, binary: { module_name: "x" } });
+  const viaBinary = npmNativeBuild({
+    gypfile: true,
+    binary: { module_name: "x" },
+  });
   assert.equal(viaBinary?.prebuiltFallback, true);
   assert.match(viaBinary.reason, /prebuilt/);
-  const viaScript = npmNativeBuild({ scripts: { install: "node-pre-gyp install --fallback-to-build" } });
+  const viaScript = npmNativeBuild({
+    scripts: { install: "node-pre-gyp install --fallback-to-build" },
+  });
   assert.equal(viaScript?.prebuiltFallback, true);
 });
 
+test("npmNativeBuild: node-gyp-build is a prebuilt-fallback path, not compile-only", () => {
+  // `node-gyp-build` matches NATIVE_TOOL_RE via `\bnode-gyp\b` and downloads prebuilds when available —
+  // same role as `node-pre-gyp` / `prebuild-install`. Without it in PREBUILT_TOOL_RE the finding
+  // wrongly claimed a cold compile on every install.
+  const hit = npmNativeBuild({ scripts: { install: "node-gyp-build" } });
+  assert.equal(hit?.prebuiltFallback, true);
+  assert.match(hit.reason, /prebuilt/);
+});
+
 test("npmNativeBuild: a pure-JS package is not flagged", () => {
-  assert.equal(npmNativeBuild({ scripts: { build: "tsc", postinstall: "echo hi" } }), null);
+  assert.equal(
+    npmNativeBuild({ scripts: { build: "tsc", postinstall: "echo hi" } }),
+    null,
+  );
   assert.equal(npmNativeBuild({}), null);
 });
 
 test("pypiSdistOnly: true only when an sdist exists and no wheel does", () => {
   assert.equal(pypiSdistOnly([{ packagetype: "sdist" }]), true);
-  assert.equal(pypiSdistOnly([{ packagetype: "sdist" }, { packagetype: "bdist_wheel" }]), false);
+  assert.equal(
+    pypiSdistOnly([{ packagetype: "sdist" }, { packagetype: "bdist_wheel" }]),
+    false,
+  );
   assert.equal(pypiSdistOnly([{ packagetype: "bdist_wheel" }]), false); // wheel present
   assert.equal(pypiSdistOnly([{ packagetype: "bdist_egg" }]), false); // no sdist → not "sdist-only"
   assert.equal(pypiSdistOnly([]), false); // undeterminable → no finding
 });
 
 test("scanNativeBuild: npm gypfile dependency is flagged native-addon", async () => {
-  const findings = await scanNativeBuild(npmAdd("bcrypt"), npmFetch({ gypfile: true }));
+  const findings = await scanNativeBuild(
+    npmAdd("bcrypt"),
+    npmFetch({ gypfile: true }),
+  );
   assert.equal(findings.length, 1);
   assert.equal(findings[0].kind, "native-addon");
   assert.equal(findings[0].package, "bcrypt");
@@ -120,11 +153,20 @@ test("scanNativeBuild treats version-identifying exact metadata as top-level des
 });
 
 test("scanNativeBuild: a pure-JS npm dependency is not flagged", async () => {
-  assert.deepEqual(await scanNativeBuild(npmAdd("lodash"), npmFetch({ scripts: { build: "tsc" } })), []);
+  assert.deepEqual(
+    await scanNativeBuild(
+      npmAdd("lodash"),
+      npmFetch({ scripts: { build: "tsc" } }),
+    ),
+    [],
+  );
 });
 
 test("scanNativeBuild: PyPI sdist-only release is flagged", async () => {
-  const findings = await scanNativeBuild(pypiAdd("ujson"), pypiFetch([{ packagetype: "sdist" }]));
+  const findings = await scanNativeBuild(
+    pypiAdd("ujson"),
+    pypiFetch([{ packagetype: "sdist" }]),
+  );
   assert.equal(findings.length, 1);
   assert.equal(findings[0].kind, "sdist-only");
   assert.match(findings[0].reason, /compiles from source/);
@@ -132,7 +174,10 @@ test("scanNativeBuild: PyPI sdist-only release is flagged", async () => {
 
 test("scanNativeBuild: a PyPI release with a wheel is not flagged", async () => {
   assert.deepEqual(
-    await scanNativeBuild(pypiAdd("requests"), pypiFetch([{ packagetype: "bdist_wheel" }])),
+    await scanNativeBuild(
+      pypiAdd("requests"),
+      pypiFetch([{ packagetype: "bdist_wheel" }]),
+    ),
     [],
   );
 });
@@ -142,8 +187,14 @@ test("scanNativeBuild: unsupported ecosystems and invalid names/versions are nev
     repoFullName: "o/r",
     prNumber: 1,
     files: [
-      { path: "go.mod", patch: `@@ -1,0 +1,1 @@\n+require example.com/x v1.0.0` }, // Go — unsupported
-      { path: "package.json", patch: `@@ -1,0 +1,1 @@\n+  "BadCaps": "^1.0.0"` }, // invalid npm name
+      {
+        path: "go.mod",
+        patch: `@@ -1,0 +1,1 @@\n+require example.com/x v1.0.0`,
+      }, // Go — unsupported
+      {
+        path: "package.json",
+        patch: `@@ -1,0 +1,1 @@\n+  "BadCaps": "^1.0.0"`,
+      }, // invalid npm name
     ],
   };
   let called = false;
@@ -157,7 +208,10 @@ test("scanNativeBuild: unsupported ecosystems and invalid names/versions are nev
 
 test("scanNativeBuild: the query cap counts only queryable changes (skips don't starve a later native dep)", async () => {
   // 25 unsupported Go changes precede one native npm dep; with filter-before-cap the npm dep is still queried.
-  const goLines = Array.from({ length: 25 }, (_, i) => `+require example.com/m${i} v1.0.0`).join("\n");
+  const goLines = Array.from(
+    { length: 25 },
+    (_, i) => `+require example.com/m${i} v1.0.0`,
+  ).join("\n");
   const req = {
     repoFullName: "o/r",
     prNumber: 1,
@@ -166,13 +220,18 @@ test("scanNativeBuild: the query cap counts only queryable changes (skips don't 
       { path: "package.json", patch: `@@ -1,0 +1,1 @@\n+  "bcrypt": "^1.0.0"` },
     ],
   };
-  const findings = await scanNativeBuild(req, npmFetch({ gypfile: true }), { limits: { maxQueries: 25 } });
+  const findings = await scanNativeBuild(req, npmFetch({ gypfile: true }), {
+    limits: { maxQueries: 25 },
+  });
   assert.equal(findings.length, 1);
   assert.equal(findings[0].package, "bcrypt");
 });
 
 test("scanNativeBuild: a PyPI PEP 440 (non-semver) sdist-only version is flagged", async () => {
-  const findings = await scanNativeBuild(pypiAdd("ujson", "24.1"), pypiFetch([{ packagetype: "sdist" }]));
+  const findings = await scanNativeBuild(
+    pypiAdd("ujson", "24.1"),
+    pypiFetch([{ packagetype: "sdist" }]),
+  );
   assert.equal(findings.length, 1);
   assert.equal(findings[0].kind, "sdist-only");
   assert.equal(findings[0].version, "24.1");
@@ -206,23 +265,45 @@ test("scanNativeBuild fails safe before parsing registry JSON with an oversized 
 
 test("scanNativeBuild fails safe when streamed registry JSON exceeds the byte cap", async () => {
   const bigMetadata = `${" ".repeat(2 * 1024 * 1024)}{"versions":{"1.0.0":{"gypfile":true}}}`;
-  const findings = await scanNativeBuild(npmAdd("bcrypt"), async () => new Response(bigMetadata));
+  const findings = await scanNativeBuild(
+    npmAdd("bcrypt"),
+    async () => new Response(bigMetadata),
+  );
 
   assert.deepEqual(findings, []);
 });
 
 test("scanNativeBuild stops on an already-aborted signal", async () => {
-  const findings = await scanNativeBuild(npmAdd("bcrypt"), npmFetch({ gypfile: true }), {
-    signal: AbortSignal.abort(),
-  });
+  const findings = await scanNativeBuild(
+    npmAdd("bcrypt"),
+    npmFetch({ gypfile: true }),
+    {
+      signal: AbortSignal.abort(),
+    },
+  );
   assert.deepEqual(findings, []);
 });
 
 test("renderBrief emits a public-safe native-build block", () => {
   const { promptSection } = renderBrief({
     nativeBuild: [
-      { ecosystem: "npm", package: "bcrypt", version: "5.1.0", kind: "native-addon", prebuiltFallback: false, reason: "compiles a native addon (node-gyp) on install — cold-CI build cost and a cross-platform breakage source" },
-      { ecosystem: "PyPI", package: "ujson", version: "5.0.0", kind: "sdist-only", reason: "no prebuilt wheel for this version — pip compiles from source (sdist) on install" },
+      {
+        ecosystem: "npm",
+        package: "bcrypt",
+        version: "5.1.0",
+        kind: "native-addon",
+        prebuiltFallback: false,
+        reason:
+          "compiles a native addon (node-gyp) on install — cold-CI build cost and a cross-platform breakage source",
+      },
+      {
+        ecosystem: "PyPI",
+        package: "ujson",
+        version: "5.0.0",
+        kind: "sdist-only",
+        reason:
+          "no prebuilt wheel for this version — pip compiles from source (sdist) on install",
+      },
     ],
   });
   assert.match(promptSection, /Native-build \/ install-cost dependencies/);

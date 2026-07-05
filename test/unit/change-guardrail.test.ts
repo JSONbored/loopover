@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { changedPathsHittingGuardrail, globToRegExp, isGuardrailHit, matchesAny } from "../../src/signals/change-guardrail";
+import { changedPathsHittingGuardrail, globToRegExp, guardrailPathMatches, isGuardrailHit, matchesAny } from "../../src/signals/change-guardrail";
 
 describe("globToRegExp (the exported compiler itself — must be safe for ANY direct caller, not just matchesAny)", () => {
   it("compiles an ordinary glob to a working anchored RegExp", () => {
@@ -81,6 +81,16 @@ describe("change-guardrail glob matching", () => {
     expect(changedPathsHittingGuardrail(["src/scoring/x.ts"], [])).toEqual([]);
   });
 
+  it("guardrailPathMatches returns exact changed path + matching configured glob for review output", () => {
+    const globs = ["src/scoring/**", "scripts/**"];
+    expect(guardrailPathMatches(["docs/a.md", "src/scoring/x.ts", "scripts/y.mjs"], globs)).toEqual([
+      { path: "src/scoring/x.ts", glob: "src/scoring/**" },
+      { path: "scripts/y.mjs", glob: "scripts/**" },
+    ]);
+    expect(guardrailPathMatches(["docs/a.md"], globs)).toEqual([]);
+    expect(guardrailPathMatches([], globs)).toEqual([]);
+  });
+
   it("isGuardrailHit: boolean form shared by the disposition + the comment (#guarded-hold-comment)", () => {
     const globs = ["src/scoring/**", "scripts/**"];
     // No guardrails configured ⇒ never a hit (permissive).
@@ -108,6 +118,7 @@ describe("change-guardrail glob matching", () => {
     expect(matchesAny("", [pathological])).toBe(true);
     expect(Date.now() - start).toBeLessThan(1000);
     expect(changedPathsHittingGuardrail(["unrelated/file.ts"], [pathological])).toEqual(["unrelated/file.ts"]);
+    expect(guardrailPathMatches(["unrelated/file.ts"], [pathological])).toEqual([{ path: "unrelated/file.ts", glob: pathological }]);
     expect(isGuardrailHit(["unrelated/file.ts"], [pathological])).toBe(true);
   });
 
@@ -133,10 +144,9 @@ describe("change-guardrail glob matching", () => {
   });
 });
 
-// #flood-readiness: the live hard-guardrail globs must guard crucial files that live OUTSIDE the dir-prefix
-// guards (the awesome-claude #4196 class — a weakened sensitive file slipping through because its folder
-// wasn't covered), while leaving clean non-crucial PRs auto-mergeable.
-describe("hard-guardrail covers content-crucial files outside the dir-prefix guards", () => {
+// Operator-configured hard-guardrail globs can still cover sensitive files outside broad dir-prefix guards,
+// while leaving ordinary paths auto-mergeable. These examples are not runtime defaults.
+describe("configured hard-guardrail glob examples", () => {
   const GITTENSORY_GLOBS = [
     ".github/**", "scripts/**", "packages/**", "apps/gittensory-ui/**",
     "src/scoring/**", "src/signals/**", "src/rules/**", "src/gittensor/**", "src/auth/**",

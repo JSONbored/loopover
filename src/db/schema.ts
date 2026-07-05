@@ -51,6 +51,8 @@ export const repositorySettings = sqliteTable("repository_settings", {
   checkRunMode: text("check_run_mode").notNull().default("off"),
   checkRunDetailLevel: text("check_run_detail_level").notNull().default("minimal"),
   gateCheckMode: text("gate_check_mode").notNull().default("off"),
+  reviewCheckMode: text("review_check_mode").notNull().default("disabled"),
+  projectMilestoneMatchMode: text("project_milestone_match_mode").notNull().default("off"),
   gatePack: text("gate_pack").notNull().default("gittensor"),
   // Missing a linked issue is advisory-only by default -- issues aren't always available, so it only
   // blocks when a repo explicitly opts in (linkedIssueGateMode: "block" or the requireLinkedIssue toggle;
@@ -290,6 +292,27 @@ export const pullRequestDetailSyncState = sqliteTable(
     prMergeableState: text("pr_mergeable_state"),
     prState: text("pr_state"),
     prStateFetchedAt: text("pr_state_fetched_at"),
+    // Durable CI-state snapshot cache (#selfhost-installation-concurrency's sibling feature): mirrors the
+    // reduced LiveCiAggregate the gate's own live-CI fetch already produces, so a second job/webhook-delivery
+    // within the TTL can skip re-fetching check-runs/status/check-suites from GitHub entirely. ciHeadSha is a
+    // SEPARATE column from the files-cache's own `headSha` above -- reusing that column here would entangle two
+    // independent cache lifecycles on one field (the exact "field A fresh, field B never fetched" bug class the
+    // prMergeableState/prState/prStateFetchedAt trio above already exists to avoid). ciRequiredContextsKey stores
+    // the same stable, order-independent fragment of settings.expectedCiContexts the request-scoped LiveGithubFacts
+    // memo already keys on, so a maintainer's config change invalidates this cache even when head_sha hasn't
+    // moved. NEVER read by the act-boundary merge/close decision (services/agent-approval-queue.ts,
+    // services/agent-action-executor.ts) -- both intentionally force a live read immediately before acting, same
+    // as the PR-state trio above.
+    ciHeadSha: text("ci_head_sha"),
+    ciState: text("ci_state"),
+    ciHasPending: integer("ci_has_pending", { mode: "boolean" }),
+    ciHasVisiblePending: integer("ci_has_visible_pending", { mode: "boolean" }),
+    ciHasMissingRequiredContext: integer("ci_has_missing_required_context", { mode: "boolean" }),
+    ciFailingDetailsJson: text("ci_failing_details_json"),
+    ciNonRequiredFailingDetailsJson: text("ci_non_required_failing_details_json"),
+    ciCompletenessWarning: text("ci_completeness_warning"),
+    ciRequiredContextsKey: text("ci_required_contexts_key"),
+    ciStateFetchedAt: text("ci_state_fetched_at"),
     updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
@@ -1200,8 +1223,14 @@ export const aiUsageEvents = sqliteTable(
     actor: text("actor"),
     route: text("route"),
     model: text("model").notNull(),
+    provider: text("provider"),
+    effort: text("effort"),
     status: text("status").notNull(),
     estimatedNeurons: integer("estimated_neurons").notNull().default(0),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    totalTokens: integer("total_tokens").notNull().default(0),
+    costUsd: real("cost_usd").notNull().default(0),
     detail: text("detail"),
     metadataJson: text("metadata_json").notNull().default("{}"),
     createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
@@ -1209,6 +1238,7 @@ export const aiUsageEvents = sqliteTable(
   (table) => ({
     featureCreated: index("ai_usage_events_feature_created_idx").on(table.feature, table.createdAt),
     actorCreated: index("ai_usage_events_actor_created_idx").on(table.actor, table.createdAt),
+    providerCreated: index("ai_usage_events_provider_created_idx").on(table.provider, table.createdAt),
     // Covers the daily-budget query (sumAiEstimatedNeuronsSince): WHERE status='ok' AND created_at >= ?.
     // Without it that aggregate full-scans ai_usage_events, which runs on every AI review/summary.
     statusCreated: index("ai_usage_events_status_created_idx").on(table.status, table.createdAt),

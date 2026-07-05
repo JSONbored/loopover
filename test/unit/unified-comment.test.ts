@@ -330,13 +330,13 @@ describe("renderUnifiedReviewComment", () => {
         ...base,
         decision: "manual",
         recommendations: ["manual_review"],
-        verdictReason: "Touches a guarded path — held for manual review; Touches a maintainer-blocked path — held for manual review",
+        verdictReason: "Touches a guarded path — held for manual review; Needs human review before automation proceeds",
       },
       {},
     );
     expect(md).toContain("**⏸️ Suggested Action - Manual Review**");
     expect(md).toContain("- Touches a guarded path — held for manual review");
-    expect(md).toContain("- Touches a maintainer-blocked path — held for manual review");
+    expect(md).toContain("- Needs human review before automation proceeds");
     expect(md).not.toContain("Suggested Action - Manual Review — Touches");
   });
 

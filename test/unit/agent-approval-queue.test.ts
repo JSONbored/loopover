@@ -30,7 +30,7 @@ vi.mock("../../src/github/app", async (importOriginal) => ({
 // override these to exercise the staleness-supersede / staleness-denial paths.
 vi.mock("../../src/github/backfill", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/github/backfill")>()),
-  fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null })),
+  fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null })),
   fetchLivePullRequestMergeState: vi.fn(async () => "clean"),
   fetchLivePullRequestReviewDecision: vi.fn(async () => undefined),
 }));
@@ -50,6 +50,7 @@ import { ensurePullRequestLabel } from "../../src/github/labels";
 import { createInstallationToken } from "../../src/github/app";
 import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision } from "../../src/github/backfill";
 import { resolveLinkedIssueHardRule } from "../../src/review/linked-issue-hard-rules";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { actionParams, executeAgentMaintenanceActions, pendingActionToPlanned, type AgentActionExecutionContext } from "../../src/services/agent-action-executor";
 import { decidePendingAgentAction } from "../../src/services/agent-approval-queue";
 import {
@@ -64,7 +65,7 @@ import {
   upsertPullRequestFromGitHub,
   upsertRepositorySettings,
 } from "../../src/db/repositories";
-import type { PlannedAgentAction } from "../../src/settings/agent-actions";
+import { AGENT_LABEL_NEEDS_REVIEW, type PlannedAgentAction } from "../../src/settings/agent-actions";
 import { createTestEnv } from "../helpers/d1";
 
 function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecutionContext {
@@ -76,7 +77,7 @@ function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecut
     autonomy: { merge: "auto_with_approval" },
     agentPaused: false,
     agentDryRun: false,
-    installationPermissions: { pull_requests: "write", issues: "write" },
+    installationPermissions: { contents: "write", pull_requests: "write", issues: "write" },
     ...over,
   };
 }
@@ -89,7 +90,7 @@ async function seedInstallation(env: Env): Promise<void> {
       id: 5,
       account: { login: "owner", id: 1, type: "User" },
       repository_selection: "selected",
-      permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+      permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" },
       events: ["pull_request"],
     },
     repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
@@ -411,7 +412,7 @@ describe("agent approval queue (#779)", () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "solorepo", autonomy: { close: "auto_with_approval" } });
     await upsertInstallation(env, {
-      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
       repositories: [{ name: "solorepo", full_name: "solorepo", private: false, owner: { login: "owner" } }],
     });
     await upsertPullRequestFromGitHub(env, "solorepo", { number: 7, title: "PR", state: "open", head: { sha: "h7" }, labels: [], body: "Closes #9" });
@@ -479,7 +480,7 @@ describe("agent approval queue (#779)", () => {
     await seedInstallation(env);
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
     const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
-    vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({ ciState: "failed", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
+    vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({ ciState: "failed", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
     // Also exercise a best-effort-failed mergeable/review read (undefined) alongside the CI failure — the
     // audit metadata's nullish fallback must not throw, and ciState alone is still sufficient to deny.
     vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce(undefined);
@@ -493,6 +494,25 @@ describe("agent approval queue (#779)", () => {
     expect(audit?.detail).toContain("live CI is no longer passing (now: failed)");
   });
 
+  // REGRESSION (gate-flagged gap, #selfhost-ci-verification): this accept-time re-check used to always pass
+  // `undefined` for requiredContexts (fold-all mode), even for a repo with settings.expectedCiContexts
+  // configured -- so this re-check could disagree with the plan it is meant to validate.
+  it("threads the repo's settings.expectedCiContexts into the accept-time live CI re-check", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    // expectedCiContexts (#selfhost-ci-verification) is config-as-code only, resolved from the repo's focus
+    // manifest (.gittensory.yml gate.expectedCiContexts) — not a repository_settings DB column.
+    await upsertRepoFocusManifest(env, "owner/repo", { gate: { expectedCiContexts: ["build", "test"] } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted");
+    expect(fetchLiveCiAggregate).toHaveBeenCalledWith(env, "owner/repo", "h7", expect.any(String), new Set(["build", "test"]), expect.any(String));
+  });
+
   it("accept supersedes a staged merge when live CI has since turned pending, not just failed (#2126)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
@@ -501,7 +521,7 @@ describe("agent approval queue (#779)", () => {
     const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
     // A FULFILLED "pending" read is a genuine non-passing signal — distinct from a REJECTED read (fail-open,
     // covered by the "ITSELF rejects" test below), which must NOT supersede.
-    vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({ ciState: "pending", hasPending: true, hasVisiblePending: true, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
+    vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({ ciState: "pending", hasPending: true, hasVisiblePending: true, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
 
     const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
     expect(result.status).toBe("rejected");
@@ -567,7 +587,7 @@ describe("agent approval queue (#779)", () => {
     expect(fetchLiveCiAggregate).toHaveBeenCalledTimes(2);
   });
 
-  it("accept downgrades a staged merge to a needs-human-review label when the precision breaker engaged after staging (#2127)", async () => {
+  it("accept downgrades a staged merge to a manual-review label when the precision breaker engaged after staging (#2127)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval", review_state_label: "auto" } });
     await seedInstallation(env);
@@ -579,12 +599,12 @@ describe("agent approval queue (#779)", () => {
     const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
     expect(result.status).toBe("accepted");
     expect(mergePullRequest).not.toHaveBeenCalled();
-    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 7, "gittensory:needs-human-review", { createMissingLabel: true });
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 7, AGENT_LABEL_NEEDS_REVIEW, { createMissingLabel: true });
   });
 
   it("REGRESSION: a precision-breaker-downgraded merge still executes the hold/label plan even when the linked issue would now violate the hard rule", async () => {
     // Before the fix, the linked-issue recheck gated on pending.actionClass (the ORIGINAL staged class), not the
-    // post-downgrade plan -- so a merge already downgraded to a needs-human-review label by the #2127 precision
+    // post-downgrade plan -- so a merge already downgraded to a manual-review label by the #2127 precision
     // breaker above would still get its whole row rejected on a stale linked-issue violation, silently swallowing
     // the hold label the breaker was supposed to guarantee.
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
@@ -600,7 +620,7 @@ describe("agent approval queue (#779)", () => {
     expect(result.status).toBe("accepted");
     expect(result.executionOutcome).toBe("completed");
     expect(mergePullRequest).not.toHaveBeenCalled();
-    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 7, "gittensory:needs-human-review", { createMissingLabel: true });
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 7, AGENT_LABEL_NEEDS_REVIEW, { createMissingLabel: true });
     // The recheck must not even run once the plan no longer contains a merge -- there's nothing left to validate.
     expect(resolveLinkedIssueHardRule).not.toHaveBeenCalled();
   });
@@ -692,7 +712,7 @@ describe("agent approval queue (#779)", () => {
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
     const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
     vi.mocked(fetchLivePullRequestMergeState).mockRejectedValueOnce(new Error("GitHub API transient 502"));
-    vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({ ciState: "failed", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
+    vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({ ciState: "failed", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
 
     const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
     expect(result.status).toBe("rejected");
@@ -700,19 +720,248 @@ describe("agent approval queue (#779)", () => {
     expect(mergePullRequest).not.toHaveBeenCalled();
   });
 
-  it("accept downgrades a staged heuristic close to a needs-human-review label when the close breaker engaged (#2127)", async () => {
+  it("REGRESSION (#2478): accept supersedes a conflict-justified heuristic close when the conflict cleared", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, {
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      installationId: 5,
+      actionClass: "close",
+      autonomyLevel: "auto_with_approval",
+      params: { closeComment: "base conflict", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: true, expectedHeadSha: "h7" },
+      reason: "base branch now conflicts",
+    });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("stale_disposition");
+    const { closePullRequest } = await import("../../src/github/pr-actions");
+    expect(closePullRequest).not.toHaveBeenCalled();
+    expect(fetchLiveCiAggregate).toHaveBeenCalledTimes(1);
+    expect(fetchLivePullRequestMergeState).toHaveBeenCalledWith(env, "owner/repo", 7, "test-installation-token", expect.any(String));
+    const audit = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ detail: string; metadata_json: string }>();
+    expect(audit?.detail).toContain("the conflict that justified this close has since cleared");
+    expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({ ciState: "passed", mergeableState: "clean" });
+  });
+
+  it("accept still executes a conflict-justified heuristic close when the live conflict signal remains", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce("dirty");
+    const { action } = await createPendingAgentActionIfAbsent(env, {
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      installationId: 5,
+      actionClass: "close",
+      autonomyLevel: "auto_with_approval",
+      params: { closeComment: "base conflict", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: true, expectedHeadSha: "h7" },
+      reason: "base branch now conflicts",
+    });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    const { closePullRequest } = await import("../../src/github/pr-actions");
+    expect(closePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
+  });
+
+  it("accept still executes a conflict-justified heuristic close when a reviewer has since requested changes", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    vi.mocked(fetchLivePullRequestReviewDecision).mockResolvedValueOnce("CHANGES_REQUESTED");
+    const { action } = await createPendingAgentActionIfAbsent(env, {
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      installationId: 5,
+      actionClass: "close",
+      autonomyLevel: "auto_with_approval",
+      params: { closeComment: "base conflict", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: true, expectedHeadSha: "h7" },
+      reason: "base branch now conflicts",
+    });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    const { closePullRequest } = await import("../../src/github/pr-actions");
+    expect(closePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
+  });
+
+  it("REGRESSION (#2478): supersedes a conflict-justified heuristic close on a cleared conflict even when live CI has not settled to passed", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    // This close's justification never depended on CI (closeRequiresCiState "not_required"), so a live CI read
+    // of "pending" (rather than "passed") must NOT mask a cleared conflict (mergeableState "clean", the default mock).
+    vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({
+      ciState: "pending",
+      hasPending: true,
+      hasVisiblePending: true,
+      hasMissingRequiredContext: false,
+      failingDetails: [],
+      nonRequiredFailingDetails: [],
+      ciCompletenessWarning: null,
+    });
+    const { action } = await createPendingAgentActionIfAbsent(env, {
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      installationId: 5,
+      actionClass: "close",
+      autonomyLevel: "auto_with_approval",
+      params: { closeComment: "base conflict", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: true, expectedHeadSha: "h7" },
+      reason: "base branch now conflicts",
+    });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("stale_disposition");
+    const { closePullRequest } = await import("../../src/github/pr-actions");
+    expect(closePullRequest).not.toHaveBeenCalled();
+    const audit = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ detail: string; metadata_json: string }>();
+    expect(audit?.detail).toContain("the conflict that justified this close has since cleared");
+    expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({ ciState: "pending", mergeableState: "clean" });
+  });
+
+  it("REGRESSION (gate review): a duplicate/slop/blocker-only close (no conflict) is never touched by the mergeable-state recheck", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    // mergeableState reads "clean" (the default mock) and this close was NEVER conflict-justified
+    // (closeRequiresMergeableState: false) -- a duplicate/slop/blocker close's mergeability was never the
+    // signal that justified it, so it must execute as staged rather than being superseded just because the
+    // PR happens to have clean mergeability (the gate-review-flagged over-broad-predicate regression).
+    const { action } = await createPendingAgentActionIfAbsent(env, {
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      installationId: 5,
+      actionClass: "close",
+      autonomyLevel: "auto_with_approval",
+      params: { closeComment: "duplicate of another open PR", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: false, expectedHeadSha: "h7" },
+      reason: "duplicate of another open PR",
+    });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    const { closePullRequest } = await import("../../src/github/pr-actions");
+    expect(closePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
+    // No live recheck was even attempted for this close -- it isn't scoped by closeRequiresMergeableState.
+    expect(fetchLiveCiAggregate).not.toHaveBeenCalled();
+    expect(fetchLivePullRequestMergeState).not.toHaveBeenCalled();
+    expect(fetchLivePullRequestReviewDecision).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION (gate review): a LEGACY heuristic close row (closeRequiresMergeableState undefined, staged before the field existed) still gets the live recheck", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    // mergeableState reads "clean" (the default mock). This row predates closeRequiresMergeableState entirely
+    // (never planned with it, so it's undefined, NOT explicitly false) -- its original justification is
+    // unknown, so a strict `=== true` scoping would silently skip the live recheck and execute unchecked. The
+    // fix must fail toward "revalidate" for the unknown/legacy case, not "skip" (the exact gap the gittensory
+    // orb flagged: undefined must not be treated the same as the explicit `false` case above).
+    const { action } = await createPendingAgentActionIfAbsent(env, {
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      installationId: 5,
+      actionClass: "close",
+      autonomyLevel: "auto_with_approval",
+      params: { closeComment: "base conflict", closeKind: "heuristic", closeRequiresCiState: "not_required", expectedHeadSha: "h7" },
+      reason: "base branch now conflicts",
+    });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("stale_disposition");
+    const { closePullRequest } = await import("../../src/github/pr-actions");
+    expect(closePullRequest).not.toHaveBeenCalled();
+    const audit = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ detail: string }>();
+    expect(audit?.detail).toContain("the conflict that justified this close has since cleared");
+  });
+
+  it("REGRESSION (gate review): a LEGACY heuristic close row still executes when the live conflict signal remains", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    // Same legacy row shape (closeRequiresMergeableState undefined) but the live mergeable-state read still
+    // shows "dirty" -- the recheck fires (per the test above) but finds nothing stale, so the close proceeds.
+    vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce("dirty");
+    const { action } = await createPendingAgentActionIfAbsent(env, {
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      installationId: 5,
+      actionClass: "close",
+      autonomyLevel: "auto_with_approval",
+      params: { closeComment: "base conflict", closeKind: "heuristic", closeRequiresCiState: "not_required", expectedHeadSha: "h7" },
+      reason: "base branch now conflicts",
+    });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    const { closePullRequest } = await import("../../src/github/pr-actions");
+    expect(closePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
+  });
+
+  it("REGRESSION (gate review): a failed live review-decision read fails open instead of masquerading as 'no changes requested'", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    // The live review-decision read itself FAILS (transient API error) -- this must fail open (not stale),
+    // not be silently treated as "confirmed no changes requested" merely because the resolved value is undefined.
+    vi.mocked(fetchLivePullRequestReviewDecision).mockRejectedValueOnce(new Error("GitHub API transient 502"));
+    const { action } = await createPendingAgentActionIfAbsent(env, {
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      installationId: 5,
+      actionClass: "close",
+      autonomyLevel: "auto_with_approval",
+      params: { closeComment: "base conflict", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: true, expectedHeadSha: "h7" },
+      reason: "base branch now conflicts",
+    });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    const { closePullRequest } = await import("../../src/github/pr-actions");
+    expect(closePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
+  });
+
+  it("accept downgrades a staged heuristic close to a manual-review label when the close breaker engaged (#2127)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval", review_state_label: "auto" } });
     await seedInstallation(env);
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 8, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h8" }, labels: [], body: "x" });
-    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 8, installationId: 5, actionClass: "close", autonomyLevel: "auto_with_approval", params: { closeComment: "noise", closeKind: "heuristic", expectedHeadSha: "h8" }, reason: "ci-failed" });
+    // closeRequiresCiState/closeRequiresMergeableState explicitly set (this is a CI-driven close, not
+    // conflict-justified) so the accept-time mergeable-state recheck's legacy-row fallback doesn't treat
+    // this fixture as an unknown-justification row and supersede it before the close breaker even runs.
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 8, installationId: 5, actionClass: "close", autonomyLevel: "auto_with_approval", params: { closeComment: "noise", closeKind: "heuristic", closeRequiresCiState: "failed", closeRequiresMergeableState: false, expectedHeadSha: "h8" }, reason: "ci-failed" });
     await env.DB.prepare("INSERT INTO system_flags (key, value) VALUES (?, ?)").bind("closehold:owner/repo", "true").run();
 
     const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
     expect(result.status).toBe("accepted");
     const { closePullRequest } = await import("../../src/github/pr-actions");
     expect(closePullRequest).not.toHaveBeenCalled();
-    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 8, "gittensory:needs-human-review", { createMissingLabel: true });
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 8, AGENT_LABEL_NEEDS_REVIEW, { createMissingLabel: true });
   });
 
   it("accept supersedes a staged merge when the linked issue trips a hard rule after staging (#2132)", async () => {
@@ -787,7 +1036,7 @@ describe("agent approval queue (#779)", () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "solorepo", autonomy: { merge: "auto_with_approval" } });
     await upsertInstallation(env, {
-      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
       repositories: [{ name: "solorepo", full_name: "solorepo", private: false, owner: { login: "owner" } }],
     });
     // No `user` on the payload → authorLogin stored null; repoFullName has no "/" → repoOwner falls back to "".
@@ -866,6 +1115,35 @@ describe("agent approval queue (#779)", () => {
     expect((await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.pending_action.rejected").first<{ outcome: string }>())?.outcome).toBe("completed");
   });
 
+  it("REGRESSION: two concurrent rejects decide the row exactly once", async () => {
+    const env = createTestEnv({});
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });
+    const [first, second] = await Promise.all([
+      decidePendingAgentAction(env, { id: action.id, decision: "reject", decidedBy: "owner" }),
+      decidePendingAgentAction(env, { id: action.id, decision: "reject", decidedBy: "owner" }),
+    ]);
+    expect([first.status, second.status].sort()).toEqual(["already_decided", "rejected"]);
+    const audit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.pending_action.rejected").first<{ n: number }>();
+    expect(audit?.n).toBe(1);
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("rejected");
+  });
+
+  it("REGRESSION (#2423): two concurrent accepts execute the staged action at most once", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const [first, second] = await Promise.all([
+      decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" }),
+      decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" }),
+    ]);
+    expect([first.status, second.status].sort()).toEqual(["accepted", "already_decided"]);
+    expect(mergePullRequest).toHaveBeenCalledTimes(1);
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("accepted");
+  });
+
   it("a second decision on a decided action is a no-op", async () => {
     const env = createTestEnv({});
     const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });
@@ -880,7 +1158,7 @@ describe("agent approval queue (#779)", () => {
     expect((await decidePendingAgentAction(env, { id: "nope", decision: "accept", decidedBy: "owner" })).status).toBe("not_found");
   });
 
-  it("accept records error when the staged action cannot execute (no write permission)", async () => {
+  it("REGRESSION: accept audits 'denied' (not 'error') when the staged action cleanly declines to run (no write permission)", async () => {
     const env = createTestEnv({});
     // No settings/installation seeded → autonomy is empty + no pull_requests:write → the merge is denied.
     const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
@@ -888,7 +1166,24 @@ describe("agent approval queue (#779)", () => {
     expect(result.status).toBe("accepted"); // the decision is recorded...
     expect(result.executionOutcome).toBe("denied"); // ...but the action could not run
     expect(mergePullRequest).not.toHaveBeenCalled();
-    expect((await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.pending_action.accepted").first<{ outcome: string }>())?.outcome).toBe("error");
+    // A "denied" execution outcome is an intentional policy decision, not a failure -- the audit row must say
+    // so, not collapse it into "error" alongside a genuine executor exception (see the #2423 regression below).
+    expect((await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.pending_action.accepted").first<{ outcome: string }>())?.outcome).toBe("denied");
+  });
+
+  it("REGRESSION: accept audits 'completed' (not 'error') when the executor runs in dry-run mode", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" }, agentDryRun: true });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("dry_run");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+    // AuditEventRecord's outcome type has no "dry_run" member -- it must fold into "completed" (mirroring
+    // agent-action-executor.ts's own audit() helper), not the unrelated "error" outcome.
+    expect((await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.pending_action.accepted").first<{ outcome: string }>())?.outcome).toBe("completed");
   });
 
   it("REGRESSION (#2423): accept persists status=errored, not accepted, when the executor's mutation call throws", async () => {
@@ -913,12 +1208,18 @@ describe("agent approval queue (#779)", () => {
 
   it("actionParams extracts only the field for the action class", () => {
     expect(actionParams({ actionClass: "label", requiresApproval: false, reason: "x", label: "L" })).toEqual({ label: "L" });
+    expect(actionParams({ actionClass: "label", autonomyClass: "review_state_label", requiresApproval: false, reason: "x", label: "L" })).toEqual({ autonomyClass: "review_state_label", label: "L" });
     expect(actionParams({ actionClass: "request_changes", requiresApproval: false, reason: "x", reviewBody: "B" })).toEqual({ reviewBody: "B" });
     expect(actionParams({ actionClass: "merge", requiresApproval: false, reason: "x", mergeMethod: "rebase" })).toEqual({ mergeMethod: "rebase" });
-    expect(actionParams({ actionClass: "close", requiresApproval: false, reason: "x", closeComment: "C" })).toEqual({ closeComment: "C" });
+    expect(actionParams({ actionClass: "close", requiresApproval: false, reason: "x", closeComment: "C", closeReasons: ["x"] })).toEqual({ closeComment: "C", closeReasons: ["x"] });
     // closeKind must round-trip through staging — without it the close-precision breaker could never match a
     // staged close as heuristic on accept (#2127).
     expect(actionParams({ actionClass: "close", requiresApproval: false, reason: "x", closeComment: "C", closeKind: "heuristic", closeRequiresCiState: "failed" })).toEqual({ closeComment: "C", closeKind: "heuristic", closeRequiresCiState: "failed" });
+    // closeRequiresMergeableState must ALSO round-trip — without it, a replayed conflict-justified close would
+    // lose the discriminator the approval queue's accept-time mergeable-state recheck depends on.
+    expect(
+      actionParams({ actionClass: "close", requiresApproval: false, reason: "x", closeComment: "C", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: true }),
+    ).toEqual({ closeComment: "C", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: true });
   });
 
   it("lists all pending actions unfiltered and stores a null reason when omitted", async () => {
@@ -931,6 +1232,12 @@ describe("agent approval queue (#779)", () => {
   it("pendingActionToPlanned clears requiresApproval and defaults the reason", () => {
     expect(pendingActionToPlanned({ actionClass: "merge", params: { mergeMethod: "squash" } })).toMatchObject({ actionClass: "merge", requiresApproval: false, reason: "maintainer-approved", mergeMethod: "squash" });
     expect(pendingActionToPlanned({ actionClass: "label", params: { label: "L" }, reason: "explicit" }).reason).toBe("explicit");
+    expect(pendingActionToPlanned({ actionClass: "close", params: { closeReasons: ["ci failed", "blocker"] }, reason: "ci failed; blocker" })).toMatchObject({
+      actionClass: "close",
+      requiresApproval: false,
+      reason: "ci failed; blocker",
+      closeReasons: ["ci failed", "blocker"],
+    });
   });
 
   it("countPendingAgentActions respects both the repo filter and the status filter", async () => {

@@ -30,7 +30,7 @@ vi.mock("../../src/github/backfill", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/github/backfill")>();
   return {
     ...actual,
-    fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [] })),
+    fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null })),
   };
 });
 
@@ -46,7 +46,7 @@ const headers = (env: Env) => ({ authorization: `Bearer ${env.GITTENSORY_API_TOK
 async function seedPending(env: Env) {
   await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
   await upsertInstallation(env, {
-    installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+    installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
     repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
   });
   await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
@@ -135,6 +135,38 @@ describe("agent approval-queue routes (#779)", () => {
     await app.request(`/v1/repos/owner/repo/agent/pending-actions/${action.id}/reject`, { method: "POST", headers: headers(env) }, env);
     const again = await app.request(`/v1/repos/owner/repo/agent/pending-actions/${action.id}/accept`, { method: "POST", headers: headers(env) }, env);
     expect(again.status).toBe(409);
+  });
+
+  it("allows a repository owner session to list the approval queue", async () => {
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
+    await upsertInstallation(env, {
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
+    });
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await seedPending(env);
+    const { token } = await createSessionForGitHubUser(env, { login: "owner", id: 1 });
+
+    const list = await app.request("/v1/repos/owner/repo/agent/pending-actions", { headers: { cookie: `gittensory_session=${token}` } }, env);
+
+    expect(list.status).toBe(200);
+    await expect(list.json()).resolves.toMatchObject({ repoFullName: "owner/repo", pendingActions: [{ actionClass: "merge", status: "pending" }] });
+  });
+
+  it("forbids a contributor (non-maintainer) session even though the coarse allowlist permits the path", async () => {
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
+    await upsertInstallation(env, {
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read" }, events: ["pull_request"] },
+    });
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await seedPending(env);
+    const { token } = await createSessionForGitHubUser(env, { login: "contributor", id: 999 });
+
+    const list = await app.request("/v1/repos/owner/repo/agent/pending-actions", { headers: { authorization: `Bearer ${token}` } }, env);
+    expect([401, 403]).toContain(list.status);
+
+    const decide = await app.request("/v1/repos/owner/repo/agent/pending-actions/x/reject", { method: "POST", headers: { authorization: `Bearer ${token}` } }, env);
+    expect([401, 403]).toContain(decide.status);
   });
 });
 

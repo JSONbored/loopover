@@ -64,28 +64,34 @@ function SelfHostingQuickstart() {
 
       <h2>2. Choose your AI provider (optional)</h2>
       <p>
-        Skip this step for a fully deterministic review (no AI). Otherwise uncomment ONE of the
-        three blocks below in <code>.env.selfhost.example</code> — they're mutually exclusive, each
-        sets its own <code>AI_PROVIDER</code>. The self-host image bundles both CLIs by default;
-        credentials and provider choice are runtime-only.
+        Skip this step for a fully deterministic review (no AI). Otherwise set{" "}
+        <code>AI_PROVIDER</code> to one provider or a fallback chain. The self-host image bundles
+        both CLIs by default; credentials and provider choice are runtime-only.
       </p>
       <CodeBlock
         filename=".env — Claude Code only"
         code={`AI_PROVIDER=claude-code
+CLAUDE_AI_EFFORT=medium
 CLAUDE_CODE_OAUTH_TOKEN=          # from \`claude setup-token\``}
       />
       <CodeBlock
         filename=".env — Codex only"
         code={`AI_PROVIDER=codex
+CODEX_AI_EFFORT=medium
 GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1   # required opt-in; see Callout below`}
       />
       <CodeBlock
-        filename=".env — both, synthesized into one decision"
-        code={`AI_PROVIDER=claude-code,codex
-AI_COMBINE=synthesis
+        filename=".env — Codex primary, Claude Code fallback"
+        code={`AI_PROVIDER=codex,claude-code
+CODEX_AI_EFFORT=medium
+CLAUDE_AI_EFFORT=medium
 CLAUDE_CODE_OAUTH_TOKEN=
 GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1`}
       />
+      <p>
+        Set <code>AI_DUAL_REVIEW=1</code> only when you deliberately want the first two providers to
+        run as independent reviewers instead of a fallback chain.
+      </p>
       <Callout variant="warn" title="Codex is fail-closed by default">
         Codex stores its OAuth credential in <code>auth.json</code> on the same filesystem that
         prompt-influenced reviews can read, so it requires explicit opt-in (
@@ -117,7 +123,11 @@ GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost@sha256:... ./scripts/depl
         Contributors and anyone customizing the Dockerfile can still build locally —{" "}
         <code>docker compose up -d --build</code> builds the <code>gittensory</code> service from
         the checkout instead of pulling a published image. Everything else in this quickstart (env,
-        health checks, GitHub App) is identical either way.
+        health checks, GitHub App) is identical either way. Two build-args trim the image:{" "}
+        <code>--build-arg INSTALL_AI_CLIS=false</code> skips the Claude Code/Codex CLIs (default{" "}
+        <code>true</code>), and <code>--build-arg INSTALL_VISUAL_REVIEW=true</code> adds{" "}
+        <code>puppeteer-core</code> for visual capture (default <code>false</code> — needs a{" "}
+        <code>BROWSER_WS_ENDPOINT</code> at runtime).
       </Callout>
       <FeatureRow
         items={[
@@ -144,6 +154,11 @@ GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost@sha256:... ./scripts/depl
         and open a small PR. The direct App and Orb modes are covered in{" "}
         <Link to="/docs/self-hosting-github-app">GitHub App and Orb</Link>.
       </p>
+      <Callout variant="note">
+        Set <code>ADMIN_GITHUB_LOGINS</code> to a comma/whitespace-separated list of GitHub logins
+        before signing in to the control panel — it's the only allowlist for the operator role
+        (operator dashboard, drift status). No login is authorized as operator without it.
+      </Callout>
 
       <h2>5. Watch the first review</h2>
       <p>Look for these logs during boot and the first webhook:</p>

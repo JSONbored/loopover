@@ -99,7 +99,7 @@ function stepFromBlocker(source: RemediationPlanSource, blocker: string, finding
 
 function impactFor(source: RemediationPlanSource, blocker: string): "high" | "medium" {
   if (source === "account_state") return "high";
-  if (/GitHub checks|validation failed|maintainer-blocked|duplicate|ineligible/i.test(blocker)) return "high";
+  if (/GitHub checks|validation failed|guarded path|duplicate|ineligible/i.test(blocker)) return "high";
   return source === "branch_quality" ? "high" : "medium";
 }
 

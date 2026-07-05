@@ -85,9 +85,9 @@ describe("resolveModerationGateEnabled (#selfhost-mod-engine)", () => {
     expect(resolveModerationGateEnabled(false, "off")).toBe(false);
   });
 
-  it("'enabled' force-enables regardless of the global default", () => {
+  it("'enabled' still requires the global master switch", () => {
     expect(resolveModerationGateEnabled(true, "enabled")).toBe(true);
-    expect(resolveModerationGateEnabled(false, "enabled")).toBe(true);
+    expect(resolveModerationGateEnabled(false, "enabled")).toBe(false);
   });
 
   it("'inherit' defers to the global default", () => {

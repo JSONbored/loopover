@@ -20,31 +20,8 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-# Percent-decodes a URI userinfo component (RFC 3986). Deliberately does NOT treat '+' as a space -- that
-# convention is specific to application/x-www-form-urlencoded query values, not URI userinfo, where '+' is
-# an ordinary sub-delims character allowed unencoded; the only caller of this function decodes a password
-# extracted from the userinfo section, and a literal '+' there must stay a '+', not become a space.
-url_decode() {
-  printf '%s' "$1" | awk '
-    BEGIN { for (i = 0; i < 256; i++) hex[sprintf("%02X", i)] = sprintf("%c", i); }
-    {
-      out = "";
-      for (i = 1; i <= length($0); i++) {
-        c = substr($0, i, 1);
-        if (c == "%" && i + 2 <= length($0)) {
-          h = toupper(substr($0, i + 1, 2));
-          if (h in hex) { out = out hex[h]; i += 2; } else { out = out c; }
-        } else {
-          out = out c;
-        }
-      }
-      printf "%s", out;
-    }'
-}
-
-pgpass_escape() {
-  printf '%s' "$1" | sed 's/\\/\\\\/g; s/:/\\:/g'
-}
+# shellcheck source=selfhost-pg-url.sh
+. "$(dirname "$0")/selfhost-pg-url.sh"
 
 # Strips the password from a postgres(ql):// URI -- from EITHER the userinfo (user:password@host) or a
 # `password=` libpq query-string parameter (postgresql://user@host/db?password=secret is equally valid
@@ -58,6 +35,11 @@ pgpass_escape() {
 # unsets PGPASSFILE first, so a previous call's password can never leak into a connection for a URL that
 # doesn't have one of its own. Sets $PG_SANITIZED_URL; exports PGPASSFILE (tracked in $PG_PASSFILES for
 # cleanup) if the given URL had a password.
+#
+# NOT extracted into selfhost-pg-url.sh alongside url_decode/pgpass_escape (#2910): despite sharing the
+# same URI-parsing algorithm as backup.sh's prepare_pg_env(), the two are not safe to collapse into one
+# function given the PGPASSFILE-lifecycle differences described above (arg vs. global URL, unset-at-start
+# reentrancy guard, a tracked LIST of passfiles vs. one). See prepare_pg_env in backup.sh.
 pg_connect_arg() {
   # Cleared up front, not just when this URL turns out to have no password: any helper command invoked
   # below (e.g. url_decode) would otherwise inherit a still-exported PGPASSFILE left over from a PREVIOUS

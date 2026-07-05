@@ -24,7 +24,6 @@ describe("miner dashboard recommendation metadata", () => {
             linkedIssuePolicy: "optional",
             issueDiscoveryPolicy: "allowed",
             wantedPathCount: 1,
-            blockedPathCount: 0,
           },
         }),
       ],
@@ -44,7 +43,6 @@ describe("miner dashboard recommendation metadata", () => {
             linkedIssuePolicy: "required",
             issueDiscoveryPolicy: "restricted",
             wantedPathCount: 2,
-            blockedPathCount: 1,
           },
         }),
       ],
@@ -93,7 +91,7 @@ describe("miner dashboard recommendation metadata", () => {
           queue: { openPullRequests: 0, openIssues: 1, mergedPullRequests: 0, closedUnmergedPullRequests: 0 },
           outcome: { openPullRequests: 0, mergedPullRequests: 1, closedPullRequests: 0 },
           scoreBlockers: [],
-          manifestSummary: { linkedIssuePolicy: "optional", issueDiscoveryPolicy: "allowed", wantedPathCount: 1, blockedPathCount: 0 },
+          manifestSummary: { linkedIssuePolicy: "optional", issueDiscoveryPolicy: "allowed", wantedPathCount: 1 },
         }),
       ],
       topActions: [action({ actionKind: "file_issue_discovery", lane: "issue-discovery", recommendation: "watch", priorityScore: 35 })],
@@ -108,7 +106,7 @@ describe("miner dashboard recommendation metadata", () => {
           queue: { openPullRequests: 3, openIssues: 4, mergedPullRequests: 1, closedUnmergedPullRequests: 0 },
           outcome: { openPullRequests: 2, mergedPullRequests: 0, closedPullRequests: 1 },
           scoreBlockers: [{ code: "open_pr_pressure" }],
-          manifestSummary: { linkedIssuePolicy: "required", issueDiscoveryPolicy: "restricted", wantedPathCount: 2, blockedPathCount: 1 },
+          manifestSummary: { linkedIssuePolicy: "required", issueDiscoveryPolicy: "restricted", wantedPathCount: 2 },
         }),
       ],
       topActions: [action({ actionKind: "open_new_direct_pr", lane: "direct-pr", recommendation: "pursue", priorityScore: 82 })],
@@ -227,7 +225,6 @@ describe("miner dashboard recommendation metadata", () => {
             linkedIssuePolicy: "required",
             issueDiscoveryPolicy: "restricted",
             wantedPathCount: 2,
-            blockedPathCount: 1,
           },
         },
       ],
@@ -246,7 +243,7 @@ describe("miner dashboard recommendation metadata", () => {
         expect.objectContaining({ label: "Action changed", before: "file_issue_discovery", after: "open_new_direct_pr" }),
         expect.objectContaining({ label: "Recommendation changed", before: "watch", after: "pursue" }),
         expect.objectContaining({ label: "Priority bucket changed", before: "medium", after: "none" }),
-        expect.objectContaining({ label: "Repo policy changed", before: "unknown/unknown/0 wanted/0 blocked", after: "required/restricted/2 wanted/1 blocked" }),
+        expect.objectContaining({ label: "Repo policy changed", before: "unknown/unknown/0 wanted", after: "required/restricted/2 wanted" }),
       ]),
     );
     expect(repoWithoutName?.change.status).toBe("new");
@@ -343,6 +340,33 @@ describe("miner dashboard recommendation metadata", () => {
     expect(JSON.stringify(enriched?.rerunReasons)).not.toMatch(/\/root\/work|\/var\/log|C:\/Users\/alice|c:\\Users\\bob/);
   });
 
+  // Regression (#1825): the Orb broker's enrollment id/secret (createOpaqueToken("orbenr"/"orbsec"),
+  // src/orb/broker.ts) are bare opaque tokens with no "token"/"secret"-named field to trip elsewhere — the
+  // rerun-reason text scrubber must recognize the orbenr_/orbsec_ shape too, not just ghp_/github_pat_/gts_.
+  it("redacts orbenr_/orbsec_ Orb broker tokens from rerun reasons (#1825)", () => {
+    const fakeEnrollId = `orbenr_${"a".repeat(20)}`;
+    const fakeSecret = `orbsec_${"b".repeat(20)}`;
+    const current = decisionPack({
+      generatedAt: "2026-06-02T00:00:00.000Z",
+      topActions: [action()],
+      actionPortfolio: {
+        topActions: [
+          {
+            repoFullName: "JSONbored/gittensory",
+            actionKind: "open_new_direct_pr",
+            rerunWhen: `Rerun once the broker recovers from enrollment ${fakeEnrollId} secret ${fakeSecret}.`,
+          },
+        ],
+      },
+    });
+
+    const [enriched] = buildMinerDashboardNextActions(current);
+    const repoStateReasons = enriched?.rerunReasons.find((group) => group.group === "repo_state")?.reasons.join(" ") ?? "";
+    expect(repoStateReasons).toContain("private context");
+    expect(JSON.stringify(enriched?.rerunReasons)).not.toContain(fakeEnrollId);
+    expect(JSON.stringify(enriched?.rerunReasons)).not.toContain(fakeSecret);
+  });
+
   it("selects the previous ready decision-pack snapshot", () => {
     const current = decisionPack({ generatedAt: "2026-06-02T00:00:00.000Z" });
     const previous = decisionPack({ generatedAt: "2026-06-01T00:00:00.000Z" });
@@ -421,7 +445,6 @@ function repoDecision(overrides: Record<string, unknown> = {}): Record<string, u
       linkedIssuePolicy: "required",
       issueDiscoveryPolicy: "allowed",
       wantedPathCount: 1,
-      blockedPathCount: 0,
     },
     ...overrides,
   };

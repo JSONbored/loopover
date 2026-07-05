@@ -29,8 +29,16 @@ describe("classifyMergeFailure", () => {
     expect(result.reason).toMatch(/suspended or key rotated/i);
   });
 
-  it("treats 403, 409, and real merge-conflict text as terminal", () => {
-    expect(classifyMergeFailure(httpError(403, "Resource not accessible by integration")).terminal).toBe(true);
+  it("retries GitHub's generic 403 merge rejection because branch protection can still converge", () => {
+    for (const message of ["Resource not accessible by integration", "secondary rate limit", "API rate limit exceeded", "abuse detection mechanism triggered"]) {
+      const result = classifyMergeFailure(httpError(403, message));
+      expect(result.terminal).toBe(false);
+      expect(result.reason).toMatch(/converging/i);
+    }
+  });
+
+  it("treats non-convergence 403s, 409, and real merge-conflict text as terminal", () => {
+    expect(classifyMergeFailure(httpError(403, "Repository does not allow squash merges")).terminal).toBe(true);
     expect(classifyMergeFailure(httpError(409, "Required status check is expected.")).terminal).toBe(true);
     expect(classifyMergeFailure(new Error("The branch has conflicts that must be resolved")).terminal).toBe(true);
   });

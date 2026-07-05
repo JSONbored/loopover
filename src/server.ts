@@ -13,6 +13,7 @@ import { DatabaseSync } from "node:sqlite";
 import { serve } from "@hono/node-server";
 import packageJson from "../package.json";
 import worker from "./index";
+import { githubRestRateLimitRemainingSamples } from "./github/client";
 import { processJob } from "./queue/processors";
 import {
   createOpenAiCompatibleAi,
@@ -46,16 +47,16 @@ import {
   codexAuthReadinessProbe,
   githubAppReadinessProbe,
   readiness,
-  resolveHealthVersion,
   sqliteBackupAdvisory,
   type ReadinessProbe,
 } from "./selfhost/health";
-import { gauge, incr, observe, renderMetrics } from "./selfhost/metrics";
+import { gauge, gaugeVector, incr, observe, renderMetrics, setSelfHostedMetricsMode } from "./selfhost/metrics";
 import { runSelfHostMigrations } from "./selfhost/migrate";
 import { createPgAdapter, tuneGithubRateLimitObservationsAutovacuum } from "./selfhost/pg-adapter";
 import { createPgQueue } from "./selfhost/pg-queue";
 import { createPgVectorize, initPgVectorize } from "./selfhost/pg-vectorize";
 import { resolvePostgresPoolMax, type SelfHostQueueSnapshot } from "./selfhost/queue-common";
+import type { BacklogRepoCount } from "./selfhost/queue-fairness";
 import type { MaintenancePressureSignals } from "./selfhost/maintenance-admission";
 import { createSqliteQueue } from "./selfhost/sqlite-queue";
 import { createSqliteVectorize } from "./selfhost/vectorize";
@@ -97,6 +98,7 @@ import {
   setLocalReviewContextReader,
 } from "./signals/focus-manifest-loader";
 import { probeReesSecretAtStartup } from "./review/enrichment-wire";
+import { sampleRecentDeadLetters } from "./selfhost/dlq-recent";
 import type { JobMessage } from "./types";
 
 /** Resolve `<NAME>_FILE` env vars (Docker secrets / multi-line keys) into `<NAME>` at startup. */
@@ -134,6 +136,7 @@ interface Backend {
     stats(): Record<string, number> | Promise<Record<string, number>>;
     pressureSignals(): MaintenancePressureSignals | Promise<MaintenancePressureSignals>;
     snapshot(): SelfHostQueueSnapshot | Promise<SelfHostQueueSnapshot>;
+    topBacklogRepos(limit: number): BacklogRepoCount[] | Promise<BacklogRepoCount[]>;
   };
   vectorize?: Vectorize;
   shutdown(): Promise<void>;
@@ -273,6 +276,11 @@ async function main(): Promise<void> {
   loadFileSecrets();
   /* v8 ignore next -- importing this entrypoint starts the Node server; pure validation is covered in selfhost-preflight tests. */
   assertSelfHostPreflight(process.env);
+  // This entrypoint IS the self-host runtime by definition (the cloud worker never imports server.ts), so the
+  // /metrics endpoint it serves is the operator's own private scrape target, not a publicly reachable one --
+  // stop redacting the `repo` label PRIVATE_REPO_LABEL_METRICS otherwise drops for every deployment
+  // (#terminal-outcome-audit).
+  setSelfHostedMetricsMode(true);
   // Container-private per-repo config (self-host): register the GITTENSORY_REPO_CONFIG_DIR reader so the focus-
   // manifest loader prefers a mounted `{owner}__{repo}.yml`, deep-merged over an optional root `.gittensory.yml`
   // global default, over the public `.gittensory.yml` (review policy stays private; see
@@ -285,6 +293,18 @@ async function main(): Promise<void> {
   // repo's conventions. Unset dir ⇒ null reader ⇒ no change.
   setLocalReviewContextReader(
     makeLocalReviewContextReader(process.env.GITTENSORY_REPO_CONFIG_DIR),
+  );
+  // Boot-time visibility (config-drift guardrail): state which config dir is actually in effect, unconditionally
+  // -- neither reader above logs anything, so an operator previously had no way to confirm from the logs alone
+  // which directory (if any) was live, which is exactly the ambiguity that let a stale, no-longer-mounted config
+  // path get mistaken for the real one during a past incident. Never touches or validates any file; this is
+  // purely a log line, same "state what's in effect" shape as the sentry/otel boot logs below.
+  console.log(
+    JSON.stringify({
+      event: "selfhost_config_dir",
+      configured: Boolean(process.env.GITTENSORY_REPO_CONFIG_DIR?.trim()),
+      dir: process.env.GITTENSORY_REPO_CONFIG_DIR?.trim() || null,
+    }),
   );
   // Error tracking (#1468): opt-in via SENTRY_DSN — a complete no-op when unset. When on, capture uncaught crashes
   // + unhandled rejections (flush before exit for the fatal case); per-subsystem captures (queue dead-letter,
@@ -347,10 +367,6 @@ async function main(): Promise<void> {
     ? await buildPostgresBackend(databaseUrl as string, consume)
     : buildSqliteBackend(consume);
   const dbBackend = usePostgres ? "postgres" : "sqlite";
-  const healthVersion = resolveHealthVersion(
-    { GITTENSORY_VERSION: process.env.GITTENSORY_VERSION },
-    packageJson.version,
-  );
   console.log(
     JSON.stringify({
       event: "selfhost_backend",
@@ -463,9 +479,10 @@ async function main(): Promise<void> {
   const { Redis } = await import("ioredis");
   const redisClient = new Redis(redisUrl);
   const { createRedisRateLimiter } = await import("./selfhost/redis-ratelimit");
-  const { createRedisCache } = await import("./selfhost/redis-cache");
+  const { createRedisCache, assertSelfhostTransientCacheOwnershipRelease } = await import("./selfhost/redis-cache");
   const rateLimiter = createRedisRateLimiter(redisClient);
   const webhookCache = createRedisCache(redisClient);
+  assertSelfhostTransientCacheOwnershipRelease(webhookCache);
   // Persist the installation-token cache in Redis so warm GitHub App tokens survive restarts/deploys and are
   // shared across replicas (the in-isolate Map otherwise re-mints — an Orb round-trip — per replica/cold start).
   const { createRedisTokenCache } = await import("./selfhost/redis-token-cache");
@@ -605,6 +622,7 @@ async function main(): Promise<void> {
 
   gauge("gittensory_queue_pending", () => backend.queue.size());
   gauge("gittensory_queue_dead", () => backend.queue.deadCount());
+  gauge("gittensory_dlq_dead_lettered_recent", () => sampleRecentDeadLetters(env));
   gauge("gittensory_queue_processing", () => backend.queue.processingCount());
   const durableJobMetric = async (name: string): Promise<number> =>
     Number((await backend.queue.stats())[name] ?? 0);
@@ -651,6 +669,22 @@ async function main(): Promise<void> {
   // -1 (not 0) when unavailable -- a genuine idle host reads 0, so a dashboard can tell "known idle" apart
   // from "no signal on this platform" (see host-pressure.ts).
   gauge("gittensory_host_load_avg1_per_core", async () => (await maintenancePressure()).hostLoadAvg1PerCore ?? -1);
+  // Backlog-vs-fresh-intake fairness lanes (#selfhost-lane-observability, see queue-fairness.ts): the SAME
+  // `foreground_lane` classification the claim-time fairness mechanism itself consults, so an operator can see
+  // whether a stuck-looking queue is actually a real, unresolved PR-review backlog (high backlog-convergence
+  // pending) or a burst of brand-new webhook traffic (high fresh-intake pending) -- two very different causes
+  // that both otherwise just show up as "live pending is high."
+  gauge("gittensory_queue_backlog_convergence_pending", async () => (await maintenancePressure()).backlogConvergencePendingCount);
+  gauge("gittensory_queue_fresh_intake_pending", async () => (await maintenancePressure()).freshIntakePendingCount);
+  // Top-10 repos by backlog-convergence depth, recomputed fresh every scrape (gaugeVector -- see metrics.ts) so
+  // a repo that drains out of the top-10 stops appearing on its own, with no stale per-repo series lingering.
+  // Bounded to 10 regardless of how many repos a self-host install has registered.
+  gaugeVector("gittensory_queue_backlog_by_repo", async () =>
+    (await backend.queue.topBacklogRepos(10)).map((r) => ({ labels: { repo: r.repo }, value: r.count })),
+  );
+  // A genuine "remaining right now" gauge, by key_scope -- gittensory_github_rest_rate_limit_observations_total
+  // only supports a bucketed rate() over a window, never the actual current value (#selfhost-lane-observability).
+  gaugeVector("gittensory_github_rest_rate_limit_remaining", () => githubRestRateLimitRemainingSamples());
   gauge("gittensory_uptime_seconds", () =>
     Math.floor((Date.now() - startedAt) / 1000),
   );
@@ -688,7 +722,7 @@ async function main(): Promise<void> {
         const path = new URL(request.url).pathname;
         if (path === "/health")
           return new Response(
-            JSON.stringify(buildHealthBody({ version: healthVersion, startedAt, dbBackend })),
+            JSON.stringify(buildHealthBody()),
             { headers: { "content-type": "application/json" } },
           );
         if (path === "/ready") {

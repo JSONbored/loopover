@@ -12,14 +12,16 @@
 //   • Fail-safe on every path: AI off / no binding / over-budget / unparseable / unsafe text → no finding.
 //   • Opt-in: only runs when the repo set `gate.slop.aiAdvisory: true` on top of `gate.slop.mode != off`.
 //
-// Free Cloudflare Workers AI only (bounded retry/fallback attempts, metered against the shared daily neuron
-// budget). BYOK is a possible later enhancement; slop assessment does not need a frontier model. Every
-// public string is forced through `toPublicSafe`; anything tripping the public/private boundary is dropped,
-// not published.
+// Free/default-reviewer only (bounded retry/fallback attempts, metered against the shared daily neuron
+// budget) — the configured self-host provider (Codex/Claude Code/etc via `env.AI`), or the legacy Workers-AI
+// pair when none is configured (Workers AI has no live binding anywhere today, see CONVERGENCE_RUNBOOK.md).
+// BYOK is a possible later enhancement; slop assessment does not need a frontier model. Every public string
+// is forced through `toPublicSafe`; anything tripping the public/private boundary is dropped, not published.
 import type { SignalFinding } from "../signals/engine";
 import type { SlopBand } from "../signals/slop";
 import { countByokAiEventsForRepoSince, recordAiUsageEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
 import {
+  type AiReviewActualUsage,
   type AiReviewProviderKey,
   BEST_REVIEW_MODELS,
   DEFAULT_BYOK_DAILY_REPO_LIMIT,
@@ -27,6 +29,7 @@ import {
   callAiProvider,
   clampNumber,
   coerceAiText,
+  coerceAiUsage,
   estimateNeurons,
   isEnabled,
   toPublicSafe,
@@ -64,8 +67,8 @@ export type AiSlopInput = {
    *  or temper it. Never used to override the model's own judgement. */
   deterministicBand?: SlopBand | undefined;
   /** Optional BYOK: when present, the maintainer's frontier model writes the advisory (billed to their
-   *  account, counted against the shared per-repo/day BYOK cap) instead of free Workers AI. Advisory-only
-   *  either way — BYOK never changes whether this can block (it can't). */
+   *  account, counted against the shared per-repo/day BYOK cap) instead of the free/default reviewer.
+   *  Advisory-only either way — BYOK never changes whether this can block (it can't). */
   providerKey?: AiReviewProviderKey | null | undefined;
 };
 
@@ -134,10 +137,13 @@ export function slopFindingFromOpinion(opinion: SlopOpinion): SignalFinding | nu
   };
 }
 
-/** Free Workers-AI slop opinion with bounded retry/fallback attempts, all pre-budgeted. */
-async function runWorkersSlopOpinion(env: Env, system: string, user: string, maxTokens: number): Promise<SlopOpinion | null> {
+type WorkersSlopOpinionResult = { opinion: SlopOpinion | null; usage?: AiReviewActualUsage | undefined };
+
+/** One free/default-reviewer slop opinion (whichever provider `env.AI` resolves to — self-host Codex/Claude
+ *  Code/etc, or the legacy Workers-AI pair) with bounded retry/fallback attempts, all pre-budgeted. */
+async function runWorkersSlopOpinion(env: Env, system: string, user: string, maxTokens: number): Promise<WorkersSlopOpinionResult> {
   const ai = env.AI as unknown as AiRunner | undefined;
-  if (!ai || typeof ai.run !== "function") return null;
+  if (!ai || typeof ai.run !== "function") return { opinion: null };
   const gatewayId = env.AI_GATEWAY_ID?.trim();
   const extra: AiGatewayOptions | undefined = gatewayId ? { gateway: { id: gatewayId } } : undefined;
   // Primary then a reliable per-slot fallback (distinct model families), 3× retry each before giving up.
@@ -150,13 +156,13 @@ async function runWorkersSlopOpinion(env: Env, system: string, user: string, max
           extra,
         );
         const parsed = parseSlopOpinion(coerceAiText(result));
-        if (parsed) return parsed;
+        if (parsed) return { opinion: parsed, usage: coerceAiUsage(result) };
       } catch {
         /* retry / fall through to fallback */
       }
     }
   }
-  return null;
+  return { opinion: null };
 }
 
 function buildUserPrompt(input: AiSlopInput): string {
@@ -180,14 +186,14 @@ function buildUserPrompt(input: AiSlopInput): string {
 export async function runGittensoryAiSlopAdvisory(env: Env, input: AiSlopInput): Promise<AiSlopResult> {
   if (!isEnabled(env.AI_SUMMARIES_ENABLED)) return { status: "disabled", reason: "AI summaries are disabled." };
   if (!isEnabled(env.AI_PUBLIC_COMMENTS_ENABLED)) return { status: "disabled", reason: "Public AI comments are disabled." };
-  if (!env.AI) return { status: "unavailable", reason: "Workers AI binding is not configured." };
+  if (!env.AI) return { status: "unavailable", reason: "AI provider is not configured." };
 
   const maxTokens = clampNumber(Number(env.AI_MAX_OUTPUT_TOKENS || 256), 256, 1024);
   const user = buildUserPrompt(input);
   // BYOK bills the maintainer's own account, so it does NOT draw on the free neuron budget — it has a
-  // separate per-repo/day cap shared with the AI review path. Free Workers-AI retry/fallback attempts are
-  // pre-budgeted at their worst case so malformed output or transient failures cannot amplify spend beyond
-  // the daily neuron budget.
+  // separate per-repo/day cap shared with the AI review path. Free/default-reviewer retry/fallback attempts
+  // are pre-budgeted at their worst case so malformed output or transient failures cannot amplify spend
+  // beyond the daily neuron budget.
   const freeCalls = input.providerKey ? 0 : WORKERS_SLOP_MAX_CALLS;
   const estimatedNeurons = freeCalls === 0 ? 0 : estimateNeurons(SLOP_SYSTEM_PROMPT.length + user.length, maxTokens, freeCalls);
   // Resolve the shared daily neuron budget IDENTICALLY to the AI review path (ai-review.ts): default HIGH
@@ -210,24 +216,33 @@ export async function runGittensoryAiSlopAdvisory(env: Env, input: AiSlopInput):
     }
   }
 
-  // BYOK frontier model if configured, else the free Workers-AI primary (with fallback). Both fail-safe to null.
+  // BYOK frontier model if configured, else the free/default-reviewer primary (with fallback). Both fail-safe to null.
   let opinion: SlopOpinion | null;
+  let usage: AiReviewActualUsage | undefined;
   if (input.providerKey) {
     const { text } = await callAiProvider(input.providerKey, SLOP_SYSTEM_PROMPT, user, maxTokens);
     opinion = text ? parseSlopOpinion(text) : null;
   } else {
-    opinion = await runWorkersSlopOpinion(env, SLOP_SYSTEM_PROMPT, user, maxTokens);
+    ({ opinion, usage } = await runWorkersSlopOpinion(env, SLOP_SYSTEM_PROMPT, user, maxTokens));
   }
   const finding = opinion ? slopFindingFromOpinion(opinion) : null;
   await record(env, input, "ok", estimatedNeurons, finding ? `advisory finding (${opinion?.band})` : opinion ? `clean/no-op (${opinion.band})` : "no usable output", {
     band: opinion?.band ?? null,
     surfaced: Boolean(finding),
     byok: Boolean(input.providerKey),
-  });
+  }, usage);
   return { status: "ok", finding, band: opinion?.band ?? null, estimatedNeurons };
 }
 
-async function record(env: Env, input: AiSlopInput, status: string, estimatedNeurons: number, detail: string, metadata?: Record<string, unknown>): Promise<void> {
+async function record(
+  env: Env,
+  input: AiSlopInput,
+  status: string,
+  estimatedNeurons: number,
+  detail: string,
+  metadata?: Record<string, unknown>,
+  usage?: AiReviewActualUsage | undefined,
+): Promise<void> {
   await recordAiUsageEvent(env, {
     feature: "ai_slop_pr",
     actor: input.actor ?? null,
@@ -236,6 +251,12 @@ async function record(env: Env, input: AiSlopInput, status: string, estimatedNeu
     model: input.providerKey ? `byok:${input.providerKey.provider}` : WORKERS_SLOP_MODELS.join("+"),
     status,
     estimatedNeurons,
+    provider: usage?.provider,
+    effort: usage?.effort,
+    inputTokens: usage?.inputTokens,
+    outputTokens: usage?.outputTokens,
+    totalTokens: usage?.totalTokens,
+    costUsd: usage?.costUsd,
     detail,
     metadata: { repoFullName: input.repoFullName, pullNumber: input.prNumber, ...(metadata ?? {}) },
   });

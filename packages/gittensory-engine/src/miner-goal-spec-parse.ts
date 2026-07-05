@@ -32,7 +32,11 @@ function parseStringList(value: unknown, field: string, warnings: string[]): str
   }
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const entry of value) {
+  for (const [index, entry] of value.entries()) {
+    if (index >= MAX_LIST_ENTRIES) {
+      warnings.push(`MinerGoalSpec field "${field}" is capped at ${MAX_LIST_ENTRIES} entries; dropping the rest.`);
+      break;
+    }
     if (typeof entry !== "string") {
       warnings.push(`MinerGoalSpec field "${field}" entries must be strings; skipping non-string.`);
       continue;

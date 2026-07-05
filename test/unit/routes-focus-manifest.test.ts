@@ -82,7 +82,7 @@ describe("focus-manifest route auth", () => {
       {
         method: "PUT",
         headers: { cookie, "content-type": "application/json" },
-        body: JSON.stringify({ wantedPaths: ["src/"], blockedPaths: ["dist/"] }),
+        body: JSON.stringify({ wantedPaths: ["src/"], preferredLabels: ["bug"] }),
       },
       env,
     );
@@ -217,7 +217,6 @@ describe("focus-manifest route auth", () => {
       manifest: {
         present: true,
         wantedPaths: expect.arrayContaining(["apps/gittensory-ui/"]),
-        blockedPaths: expect.arrayContaining(["site/"]),
       },
       policy: {
         present: true,
@@ -225,7 +224,7 @@ describe("focus-manifest route auth", () => {
           contributionLanes: expect.arrayContaining([
             expect.objectContaining({
               id: "direct-pr",
-              discouragedPaths: expect.arrayContaining(["site/"]),
+              discouragedPaths: [],
             }),
           ]),
         }),
@@ -305,7 +304,6 @@ describe("focus-manifest route auth", () => {
         headers: apiHeaders(env),
         body: JSON.stringify({
           wantedPaths: ["src/"],
-          blockedPaths: ["dist/"],
           publicNotes: ["Keep changes focused."],
         }),
       },
@@ -318,7 +316,6 @@ describe("focus-manifest route auth", () => {
         present: true,
         source: "api_record",
         wantedPaths: ["src/"],
-        blockedPaths: ["dist/"],
       },
     });
   });

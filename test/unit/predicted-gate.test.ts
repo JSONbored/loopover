@@ -336,23 +336,22 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.conclusion).toBe("neutral");
   });
 
-  it("predicts a manifest path-policy HOLD when a changed path hits a blocked glob and manifestPolicy:block (#12)", () => {
+  it("ignores legacy blockedPaths even when manifestPolicy:block is enabled (#12)", () => {
     const result = verdict({
       gate: { manifestPolicy: "block" },
       manifestExtra: { blockedPaths: ["dist/**"] },
       changedPaths: ["dist/bundle.js"],
     });
-    expect(result.conclusion).toBe("neutral");
+    expect(result.conclusion).toBe("success");
     expect(result.blockers.some((b) => b.code === "manifest_blocked_path")).toBe(false);
-    expect(result.warnings.some((w) => w.code === "manifest_blocked_path")).toBe(true);
+    expect(result.warnings.some((w) => w.code === "manifest_blocked_path")).toBe(false);
     // The note no longer disclaims path-policy once paths are supplied, but slop stays disclaimed.
     expect(result.note).not.toContain("Provide the PR's changed paths");
     expect(result.note.toLowerCase()).toContain("slop");
   });
 
-  it("manifestPolicy:advisory does NOT block on a blocked path (parity with the live advisory gate) (#12)", () => {
-    // The blocked-path finding is critical, so under advisory mode it neither blocks nor surfaces as a warning —
-    // exactly how the live gate treats it. The meaningful parity is that advisory never fails the prediction.
+  it("manifestPolicy:advisory does NOT block on legacy blockedPaths (parity with the live advisory gate) (#12)", () => {
+    // Path holds are configured through settings.hardGuardrailGlobs, not manifest blockedPaths.
     const result = verdict({
       gate: { manifestPolicy: "advisory" },
       manifestExtra: { blockedPaths: ["dist/**"] },
@@ -362,7 +361,7 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.blockers.some((b) => b.code === "manifest_blocked_path")).toBe(false);
   });
 
-  it("manifestPolicy:off (default) emits NO manifest finding even when a blocked path is touched", () => {
+  it("manifestPolicy:off (default) emits NO manifest finding for legacy blockedPaths", () => {
     const result = verdict({
       gate: { manifestPolicy: "off" },
       manifestExtra: { blockedPaths: ["dist/**"] },
@@ -372,9 +371,9 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.warnings.some((w) => w.code === "manifest_blocked_path")).toBe(false);
   });
 
-  it("ignores non-policy guidance findings (e.g. off-focus) — only the three enforceable policy codes are threaded (#12)", () => {
+  it("ignores non-policy guidance findings (e.g. off-focus) — only enforceable policy codes are threaded (#12)", () => {
     // The path isn't blocked but it's outside the wanted areas → guidance emits the NON-policy `manifest_off_focus`.
-    // The predictor must skip it (only manifest_blocked_path / _linked_issue_required / _missing_tests are gateable).
+    // The predictor must skip it (only linked-issue-required / missing-tests are gateable).
     const result = verdict({
       gate: { manifestPolicy: "block" },
       manifestExtra: { wantedPaths: ["src/**"] },
@@ -384,7 +383,7 @@ describe("buildPredictedGateVerdict", () => {
     expect([...result.blockers, ...result.warnings].some((f) => f.code === "manifest_off_focus")).toBe(false);
   });
 
-  // Regression tests for #2458: the predictor previously never threaded size/guardrail signals into
+  // Regression tests for #2458: the predictor previously never threaded size/configured guardrail signals into
   // evaluateGateCheck, so it always predicted "success" even when the live gate would hold the same PR for
   // manual review (neutral → "manual").
   it("REGRESSION (#2458): predicts a size HOLD (neutral) when changedPaths exceeds the file-count threshold and gate.size.mode is on", () => {
@@ -408,11 +407,31 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.warnings.some((w) => w.code === "oversized_pr")).toBe(false);
   });
 
-  it("REGRESSION (#2458): predicts a guardrail HOLD (neutral) when changedPaths hits a hard-guardrail path — always-on, no gate config needed", () => {
-    const result = verdict({ gate: { duplicates: "block" }, changedPaths: [".github/workflows/ci.yml"] });
+  it("REGRESSION (#2458): predicts a guardrail HOLD (neutral) when changedPaths hits a configured hard-guardrail path", () => {
+    const result = verdict({
+      gate: { duplicates: "block" },
+      manifestExtra: { settings: { hardGuardrailGlobs: [".github/workflows/**"] } },
+      changedPaths: [".github/workflows/ci.yml"],
+    });
     expect(result.conclusion).toBe("neutral");
     expect(result.warnings.some((w) => w.code === "guardrail_hold")).toBe(true);
     expect(result.blockers).toHaveLength(0);
+  });
+
+  it("does NOT predict a guardrail hold when hardGuardrailGlobs is omitted", () => {
+    const result = verdict({ gate: { duplicates: "block" }, changedPaths: [".github/workflows/ci.yml"] });
+    expect(result.conclusion).toBe("success");
+    expect(result.warnings.some((w) => w.code === "guardrail_hold")).toBe(false);
+  });
+
+  it("does NOT predict a guardrail hold when hardGuardrailGlobs is explicitly empty", () => {
+    const result = verdict({
+      gate: { duplicates: "block" },
+      manifestExtra: { settings: { hardGuardrailGlobs: [] } },
+      changedPaths: [".github/workflows/ci.yml"],
+    });
+    expect(result.conclusion).toBe("success");
+    expect(result.warnings.some((w) => w.code === "guardrail_hold")).toBe(false);
   });
 
   it("does NOT predict a guardrail hold for an ordinary changed path", () => {

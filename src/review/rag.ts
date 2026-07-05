@@ -22,7 +22,7 @@
 // additive module. The host injects concrete adapters at the call site.
 
 // ── Injected infra interfaces (inlined from reviewbot src/platform/types.ts) ──────────────────────
-// These mirror the platform-adapter shapes so the host can pass its Vectorize/Workers-AI/D1-backed
+// These mirror the platform-adapter shapes so the host can pass its Vectorize/self-host-AI/D1-backed
 // implementations unchanged; nothing here depends on env bindings.
 
 /** Vector search surface (Vectorize → Qdrant / pgvector / sqlite-vec). */
@@ -43,7 +43,8 @@ export interface VectorAdapter {
   deleteByIds(ids: string[]): Promise<void>;
 }
 
-/** Inference (Workers AI → Ollama / OpenAI-compatible). Mirrors `ai.run(model, options)`. */
+/** Inference (the configured AI provider — self-host Codex/Claude Code/Ollama/OpenAI-compatible, or the
+ *  legacy Workers-AI binding). Mirrors `ai.run(model, options)`. */
 export interface InferenceAdapter {
   run(model: string, options: Record<string, unknown>): Promise<unknown>;
 }
@@ -87,7 +88,10 @@ export type RagRetrievalResult = {
 };
 
 /** bge-m3: large context window → a whole file/function embeds as one coherent chunk (fewer vectors
- *  than 512-token models, which helps both quality and the free-tier vector budget). */
+ *  than 512-token models, which helps both quality and the free-tier vector budget). This is a Workers-AI
+ *  model id; the self-host embed path (`createOpenAiCompatibleAi` in src/selfhost/ai.ts) discards any
+ *  `@cf/`-prefixed id and substitutes its own configured/default embed model (`AI_EMBED_MODEL`), so this
+ *  constant only matters for a genuine Cloudflare Workers AI inference binding. */
 export const EMBED_MODEL = "@cf/baai/bge-m3";
 /** Default bge-m3 output dimension. Self-host can override this when QDRANT_DIM selects another model width. */
 export const RAG_DIMENSIONS = 1024;
@@ -96,7 +100,8 @@ const CHUNK_CHARS = 16000; // per-file chunk budget; only files larger than this
 const CHUNK_OVERLAP = 1500;
 /** Hard per-repo stored-vector cap — the free-tier guard. Source is prioritized so it survives the cap. */
 export const MAX_CHUNKS_PER_REPO = 1500;
-const EMBED_BATCH = 96; // Workers AI caps embedding input at 100 items/call
+const EMBED_BATCH = 96; // Workers AI caps embedding input at 100 items/call; kept as a conservative general
+// bound — other embed providers (Ollama/vLLM/etc via the self-host adapter) may not share this exact cap.
 const MAX_CONTEXT_CHARS = 14000; // bound the injected block (mirrors diff/knowledge budgets)
 export const MAX_FILE_BYTES = 1_000_000; // skip files larger than ~1MB
 
@@ -116,14 +121,18 @@ export function ragDimensionsFromEnv(value: string | undefined): number {
 
 // ── Filtering: index CODE, not content/data corpora (the primary free-tier cost guard) ───────────
 const SKIP_DIR_RE =
-  /(^|\/)(node_modules|dist|build|out|coverage|vendor|\.git|\.next|\.turbo|\.cache|content|data|fixtures|__snapshots__|__fixtures__|testdata|generated|public)\//i;
+  /(^|\/)(node_modules|dist|build|out|coverage|vendor|\.git|\.next|\.nuxt|\.svelte-kit|\.turbo|\.cache|target|\.gradle|_build|\.venv|venv|__pycache__|\.mypy_cache|\.pytest_cache|\.ruff_cache|\.tox|\.terraform|content|data|fixtures|__snapshots__|__fixtures__|testdata|generated|public)\//i;
 const SKIP_FILE_RE =
   /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb|cargo\.lock|poetry\.lock|composer\.lock|go\.sum)$|\.(min\.(js|css)|map|lock|snap)$/i;
 const BINARY_EXT_RE =
-  /\.(png|jpe?g|gif|webp|avif|svg|ico|pdf|zip|gz|tgz|tar|wasm|woff2?|ttf|eot|mp4|mov|mp3|wav|bin|exe|dll|so|dylib|node|parquet|onnx)$/i;
+  /\.(png|jpe?g|gif|webp|avif|bmp|tiff?|heic|psd|svg|ico|pdf|zip|gz|tgz|tar|bz2|xz|zst|7z|rar|wasm|woff2?|otf|ttf|eot|mp4|mov|webm|mkv|mp3|wav|flac|ogg|opus|bin|exe|dll|so|dylib|node|class|jar|pyc|sqlite|db|parquet|onnx|gguf|safetensors|pt|pth|ckpt|npy|npz)$/i;
 const CODE_EXT_RE =
-  /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|kts|rb|php|c|h|cc|cpp|hpp|cs|swift|scala|sh|bash|zsh|sql|graphql|proto|toml|yaml|yml|json|jsonc|css|scss|less|vue|svelte|astro|tf|hcl)$/i;
-const DOC_EXT_RE = /\.(md|mdx|rst|txt|adoc)$/i;
+  /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|kts|rb|php|c|h|cc|cpp|hpp|cs|swift|scala|sh|bash|zsh|sql|graphql|proto|toml|yaml|yml|json|jsonc|css|scss|less|vue|svelte|astro|tf|hcl|dart|lua|ex|exs|clj|cljs|cljc|hs|jl|nim|zig|groovy)$/i;
+// Doc extensions mirror the canonical DOCS_EXTENSIONS set in signals/path-matchers.ts
+// (md, mdx, markdown, rst, adoc, asciidoc); the long-form `markdown`/`asciidoc`
+// spellings were missing here, so e.g. NOTES.markdown / guide.asciidoc were
+// misclassified as skip instead of doc.
+const DOC_EXT_RE = /\.(md|mdx|markdown|rst|adoc|asciidoc|txt)$/i;
 const ALLOW_EXTLESS_RE = /(^|\/)(Dockerfile|Makefile|Justfile|Procfile)$/i;
 
 /** code | doc | skip. Skips dependency/build/content/data/binary paths — RAG indexes code for code

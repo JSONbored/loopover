@@ -501,6 +501,43 @@ describe("GitHub backfill", () => {
       expect(await getInstallationHealth(env, 900)).toMatchObject({ authMode: "broker" });
     });
 
+    it("REGRESSION: broker-mode refresh replaces stale local permissions with the broker token permission snapshot", async () => {
+      const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" });
+      await upsertInstallation(env, {
+        installation: {
+          id: 912,
+          account: { login: "brokered-owner", id: 9, type: "User" },
+          repository_selection: "selected",
+          permissions: { metadata: "read", pull_requests: "read", issues: "write", contents: "read" },
+        },
+      });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 912);
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto" } });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith("/v1/orb/token")) {
+          return Response.json({
+            token: "ghs_brokered",
+            installationId: 912,
+            permissions: { metadata: "read", pull_requests: "read", issues: "write", contents: "write" },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      const result = await refreshInstallationHealth(env);
+
+      expect(result.installations[0]).toMatchObject({
+        status: "healthy",
+        authMode: "broker",
+        missingPermissions: [],
+      });
+      expect(await getInstallationHealth(env, 912)).toMatchObject({
+        permissions: { metadata: "read", pull_requests: "read", issues: "write", contents: "write" },
+        missingPermissions: [],
+      });
+    });
+
     it("REGRESSION (gate finding): never reports healthy when the broker mints a token for a DIFFERENT installation than the one being refreshed", async () => {
       const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" });
       // Two local rows exist (e.g. a stale row left over from a prior re-registration), but a brokered
@@ -606,6 +643,27 @@ describe("GitHub backfill", () => {
         expect.arrayContaining([expect.objectContaining({ event: "issues", ok: false })]),
       );
       expect(healthy.repairSteps.join(" ")).toMatch(/token broker is reachable/i);
+
+      const staleSnapshot = enrichInstallationHealth({
+        installationId: 905,
+        accountLogin: "brokered-owner",
+        repositorySelection: "selected",
+        installedReposCount: 1,
+        registeredInstalledCount: 1,
+        status: "needs_attention",
+        missingPermissions: ["contents"],
+        missingEvents: [],
+        permissions: { metadata: "read", pull_requests: "read", issues: "write", contents: "read" },
+        events: [],
+        checkedAt: "2026-07-03T00:00:00.000Z",
+        authMode: "broker",
+      });
+      expect(staleSnapshot.requiredPermissions).toMatchObject({ contents: "write" });
+      expect(staleSnapshot.permissionRemediation).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ permission: "contents", requiredAccess: "write", currentAccess: "read", ok: false }),
+        ]),
+      );
 
       const degraded = enrichInstallationHealth({
         installationId: 903,
@@ -800,6 +858,48 @@ describe("GitHub backfill", () => {
     );
   });
 
+  it("REGRESSION: merge autonomy requires contents:write, so contents:read is needs_attention before merge 403s", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedRegisteredRepo(env);
+    await upsertInstallation(env, {
+      installation: {
+        id: 125,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read", issues: "write", contents: "read" },
+        events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+      },
+    });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 125);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto" } });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/app/installations/125")) {
+        return Response.json({
+          id: 125,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          repository_selection: "selected",
+          permissions: { metadata: "read", pull_requests: "read", issues: "write", contents: "read" },
+          events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshInstallationHealth(env);
+
+    expect(refreshed.installations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          installationId: 125,
+          status: "needs_attention",
+          missingPermissions: ["contents"],
+          requiredPermissions: expect.objectContaining({ pull_requests: "read", contents: "write" }),
+        }),
+      ]),
+    );
+  });
+
   it("marks comment, label, and check repair impacts disabled by repo settings", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
@@ -828,6 +928,7 @@ describe("GitHub backfill", () => {
 
     expect(repair.repairSteps).toEqual(["No repair needed."]);
     expect(repair.requiredPermissions).not.toHaveProperty("checks");
+    expect(repair.requiredPermissions).not.toHaveProperty("contents");
     expect(repair.requiredPermissions.pull_requests).toBe("read"); // non-acting → baseline read, NOT upgraded to write
     expect(repair.modeImpacts).toEqual(
       expect.arrayContaining([
@@ -838,7 +939,40 @@ describe("GitHub backfill", () => {
     );
   });
 
-  it("repair diagnostics upgrade pull_requests to write for an acting autonomy (#audit-install-health display)", async () => {
+  it("REGRESSION (#2912): repair diagnostics honor a .gittensory.yml-only checkRunMode: enabled override (DB row left at off)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
+    // DB row explicitly says checkRunMode: off; only the yml manifest turns it on, so this only passes if the
+    // resolver (not the raw DB accessor) is consulted for the installed-repo settings scan.
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", checkRunMode: "off" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/.gittensory.yml")) return new Response("settings:\n  checkRunMode: enabled\n", { status: 200 });
+      return new Response("Not Found", { status: 404 });
+    });
+
+    const repair = await buildInstallationRepairDiagnostics(env, {
+      installationId: 123,
+      accountLogin: "JSONbored",
+      repositorySelection: "selected",
+      installedReposCount: 1,
+      registeredInstalledCount: 0,
+      status: "healthy",
+      missingPermissions: [],
+      missingEvents: [],
+      permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+      events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+      checkedAt: "2026-05-28T00:00:00.000Z",
+      authMode: "local",
+    });
+
+    expect(repair.requiredPermissions).toHaveProperty("checks");
+    expect(repair.modeImpacts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ mode: "check_run", enabled: true, affectedRepoCount: 1 })]),
+    );
+  });
+
+  it("repair diagnostics require contents:write for merge autonomy (#audit-install-health display)", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto" } });
@@ -850,15 +984,21 @@ describe("GitHub backfill", () => {
       installedReposCount: 1,
       registeredInstalledCount: 0,
       status: "needs_attention",
-      missingPermissions: ["pull_requests"],
+      missingPermissions: ["contents"],
       missingEvents: [],
-      permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+      permissions: { metadata: "read", pull_requests: "read", issues: "write", contents: "read" },
       events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
       checkedAt: "2026-05-28T00:00:00.000Z",
       authMode: "local",
     });
 
-    expect(repair.requiredPermissions.pull_requests).toBe("write");
+    expect(repair.requiredPermissions.pull_requests).toBe("read");
+    expect(repair.requiredPermissions.contents).toBe("write");
+    expect(repair.modeImpacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ mode: "agent_merge", enabled: true, requiredPermissions: [expect.objectContaining({ permission: "contents", missing: true })] }),
+      ]),
+    );
   });
 
   it("counts comment-only and label-only repair surfaces separately", async () => {
@@ -1008,6 +1148,22 @@ describe("GitHub backfill", () => {
       checkRunDetailLevel: "standard",
       backfillEnabled: false,
       privateTrustEnabled: true,
+    });
+
+    const result = await backfillRegisteredRepositories(env);
+
+    expect(result.repos[0]).toMatchObject({ status: "skipped", warnings: ["Backfill is disabled for this repository."] });
+  });
+
+  it("REGRESSION (#2912): honors a .gittensory.yml-only backfillEnabled: false override (DB row left at its true default)", async () => {
+    const env = createTestEnv();
+    await seedRegisteredRepo(env);
+    // No upsertRepositorySettings call: the DB row stays at its default (backfillEnabled: true). Only the
+    // yml manifest disables it, so this only passes if the resolver (not the raw DB accessor) is consulted.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/.gittensory.yml")) return new Response("settings:\n  backfillEnabled: false\n", { status: 200 });
+      return new Response("Not Found", { status: 404 });
     });
 
     const result = await backfillRegisteredRepositories(env);
@@ -3961,7 +4117,7 @@ describe("GitHub backfill", () => {
 
       const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", null, "public-token", null);
 
-      expect(aggregate).toEqual({ ciState: "unverified", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
+      expect(aggregate).toEqual({ ciState: "unverified", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
@@ -4558,6 +4714,68 @@ describe("GitHub backfill", () => {
         const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", requiredContexts);
 
         expect(aggregate.ciState).toBe("pending");
+        // #selfhost-ci-deferral-staleness: a required context that never appeared is an INFERRED absence, not
+        // observed activity — distinct from hasVisiblePending, which stays false here (nothing is actively
+        // queued/in_progress; the context simply never posted at all).
+        expect(aggregate.hasMissingRequiredContext).toBe(true);
+        expect(aggregate.hasVisiblePending).toBe(false);
+      });
+
+      it("does NOT flag a missing required context as confidently absent when the check-runs page read was incomplete", async () => {
+        const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url.includes("/check-runs?") && url.includes("&page=1")) {
+            return Response.json(
+              { check_runs: [] },
+              { headers: { link: '<https://api.github.com/repos/x/y/commits/abc/check-runs?page=2>; rel="next"' } },
+            );
+          }
+          if (url.includes("/check-runs?")) return new Response("upstream error", { status: 500 }); // page 2 fails → incomplete
+          if (url.includes("/status?")) return Response.json({ statuses: [] });
+          return new Response("not found", { status: 404 });
+        });
+
+        const requiredContexts = mergeRequiredCiContexts(null, ["build"]);
+        const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", requiredContexts);
+
+        // "build" never appeared on the pages read, but the read did not COMPLETE — a partial page can't tell
+        // "never appears" from "appears on a page we didn't fetch", so this must NOT be a confident absence.
+        expect(aggregate.ciState).toBe("pending");
+        expect(aggregate.hasMissingRequiredContext).toBe(false);
+      });
+
+      it("does not flag a missing NON-required context in fold-all mode (no branch protection, no expectedCiContexts)", async () => {
+        const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url.includes("/check-runs?")) return Response.json({ check_runs: [] });
+          if (url.includes("/status?")) return Response.json({ statuses: [] });
+          return new Response("not found", { status: 404 });
+        });
+
+        // No requiredContexts configured at all → fold-all mode (enforceRequiredOnly false); the
+        // missing-required-context signal only ever applies under enforceRequiredOnly.
+        const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+
+        expect(aggregate.hasMissingRequiredContext).toBe(false);
+      });
+
+      it("keeps hasVisiblePending authoritative when one required context is missing and another is actively queued", async () => {
+        const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "build", status: "in_progress", conclusion: null }] });
+          if (url.includes("/status?")) return Response.json({ statuses: [] });
+          return new Response("not found", { status: 404 });
+        });
+
+        // "build" is actively queued (Class A); "deploy" is required but never appears (Class B) — both true at once.
+        const requiredContexts = mergeRequiredCiContexts(null, ["build", "deploy"]);
+        const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", requiredContexts);
+
+        expect(aggregate.hasVisiblePending).toBe(true);
+        expect(aggregate.hasMissingRequiredContext).toBe(true);
       });
 
       it("fails when branch protection is unreadable and the expected context completes red", async () => {

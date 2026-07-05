@@ -1260,7 +1260,7 @@
     },
     {
       "type": "timeseries",
-      "title": "AI requests by model + effort (last 1h)",
+      "title": "AI requests + fallbacks (last 1h)",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -1280,6 +1280,14 @@
           },
           "expr": "sum by (model, effort) (increase(gittensory_ai_requests_total[1h]))",
           "legendFormat": "{{model}} \u00b7 {{effort}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by (primary, fallback) (increase(gittensory_ai_review_model_fallback_total[1h]))",
+          "legendFormat": "fallback {{primary}}\u2192{{fallback}}"
         }
       ],
       "fieldConfig": {
@@ -2784,6 +2792,163 @@
           "expr": "sum by (reason) (rate(gittensory_jobs_foreground_liveness_released_by_reason_total[15m])) or vector(0)",
           "legendFormat": "{{reason}}",
           "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 182 },
+      "id": 152,
+      "title": "Backlog-vs-Fresh-Intake Lane Fairness (#selfhost-lane-observability)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 30 }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 183 },
+      "id": 153,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "title": "Backlog-Convergence Pending",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "gittensory_queue_backlog_convergence_pending",
+          "legendFormat": "backlog pending"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 30 }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 183 },
+      "id": 154,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "title": "Fresh-Intake Pending",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "gittensory_queue_fresh_intake_pending",
+          "legendFormat": "fresh pending"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 }, "unit": "short" }
+      },
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 183 },
+      "id": 155,
+      "options": {
+        "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "GitHub REST Rate Limit Remaining (by scope)",
+      "description": "The NEWEST observed x-ratelimit-remaining per key_scope -- unlike gittensory_github_rest_rate_limit_observations_total (a bucketed rate() counter), this is the actual current remaining count.",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "gittensory_github_rest_rate_limit_remaining",
+          "legendFormat": "{{key_scope}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 }, "unit": "ops" }
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 189 },
+      "id": 156,
+      "options": {
+        "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "Foreground Claims by Lane (rate)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum by (lane) (rate(gittensory_jobs_claimed_by_lane_total[5m])) or vector(0)",
+          "legendFormat": "{{lane}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 189 },
+      "id": 157,
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": { "show": false, "reducer": ["sum"], "fields": "" }
+      },
+      "title": "Top Repos by Backlog Depth",
+      "description": "Top-10 repos by backlog-convergence pending depth, recomputed fresh every scrape -- bounded so a large multi-repo self-host install never explodes this panel's series count.",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "gittensory_queue_backlog_by_repo",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true },
+            "indexByName": { "repo": 0, "Value": 1 }
+          }
         }
       ]
     }

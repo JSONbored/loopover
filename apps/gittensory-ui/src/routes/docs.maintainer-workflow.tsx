@@ -3,6 +3,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { DocsPage } from "@/components/site/docs-page";
 import { CodeBlock, Callout } from "@/components/site/primitives";
 import { WorkflowMirror, type MirroredStep } from "@/components/site/workflow-mirror";
+import { MAINTAINER_COMMAND_LIST, PUBLIC_COMMAND_LIST } from "@/lib/command-reference";
 
 export const Route = createFileRoute("/docs/maintainer-workflow")({
   head: () => ({
@@ -146,17 +147,17 @@ GET /v1/repos/:owner/:repo/registration-readiness`}
 
       <h2>On-demand commands</h2>
       <p>
-        Maintainers (and only maintainers) can trigger context with a comment. Output is scoped to
-        maintainer-visible packets when appropriate.
+        By default, the public commands below are authorized for maintainers, collaborators, and
+        confirmed miners (not the general public) — output stays scoped to maintainer-visible
+        packets when appropriate. A repo can narrow this per command via{" "}
+        <code>commandAuthorization</code> in its settings.
       </p>
-      <CodeBlock
-        code={`@gittensory help
-@gittensory preflight
-@gittensory blockers
-@gittensory duplicate-check
-@gittensory miner-context
-@gittensory next-action`}
-      />
+      <CodeBlock code={PUBLIC_COMMAND_LIST} />
+      <p>
+        A separate maintainer-only queue-digest family defaults to maintainers and collaborators
+        only:
+      </p>
+      <CodeBlock code={MAINTAINER_COMMAND_LIST} />
 
       <Callout variant="safety">
         Public-facing comments are sanitized before they leave the Worker. Private scoring, reward,

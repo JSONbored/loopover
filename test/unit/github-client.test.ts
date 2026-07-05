@@ -6,6 +6,7 @@ import {
   githubRateLimitAdmissionKeyForInstallation,
   githubRateLimitAdmissionKeyForPublicToken,
   githubRateLimitAdmissionKeyForToken,
+  githubRestRateLimitRemainingSamples,
   GITHUB_RESPONSE_CACHE_REPLAY_HEADER,
   githubResponseCacheTtlSeconds,
   isCacheableGithubUrl,
@@ -1213,6 +1214,101 @@ describe("timeoutFetch", () => {
     expect(metrics).toContain('gittensory_github_response_cache_total{class="non_get",result="bypassed"} 1');
     expect(metrics).toContain('gittensory_github_response_cache_total{class="non_github",result="bypassed"} 1');
     expect(metrics).toContain('gittensory_github_response_cache_total{class="sensitive",result="bypassed"} 1');
+  });
+});
+
+describe("githubRestRateLimitRemainingSamples (#selfhost-lane-observability)", () => {
+  function stubCoreRateLimit(remaining: string, resetIso = "2026-06-24T12:10:00.000Z"): void {
+    vi.stubGlobal("fetch", async () =>
+      new Response("ok", {
+        headers: {
+          "x-ratelimit-resource": "core",
+          "x-ratelimit-remaining": remaining,
+          "x-ratelimit-reset": String(Math.floor(Date.parse(resetIso) / 1000)),
+        },
+      }),
+    );
+  }
+
+  it("returns an empty array when no observation has ever been recorded", () => {
+    expect(githubRestRateLimitRemainingSamples()).toEqual([]);
+  });
+
+  it("returns one sample for a single observed admission key", async () => {
+    stubCoreRateLimit("42");
+    await timeoutFetch("https://api.github.com/repos/o/r/issues", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(1),
+    });
+
+    expect(githubRestRateLimitRemainingSamples()).toEqual([{ labels: { key_scope: "installation" }, value: 42 }]);
+  });
+
+  it("picks the NEWEST observation among multiple admission keys sharing the same scope", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse("2026-06-24T12:00:00.000Z"));
+    stubCoreRateLimit("100");
+    // Installation 1 observed FIRST (older).
+    await timeoutFetch("https://api.github.com/repos/o/r/issues", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(1),
+    });
+
+    vi.setSystemTime(Date.parse("2026-06-24T12:05:00.000Z"));
+    stubCoreRateLimit("30");
+    // Installation 2 observed LATER (newer) -- both share the "installation" scope.
+    await timeoutFetch("https://api.github.com/repos/o/r/issues", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(2),
+    });
+
+    // The newer (installation 2, remaining=30) observation wins -- NOT installation 1's remaining=100, and NOT
+    // two separate series (key_scope, not admission key, is the label).
+    expect(githubRestRateLimitRemainingSamples()).toEqual([{ labels: { key_scope: "installation" }, value: 30 }]);
+  });
+
+  it("keeps the already-recorded newer observation when an OLDER one for the same scope is processed after it", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse("2026-06-24T12:05:00.000Z"));
+    stubCoreRateLimit("30");
+    // Installation 2 observed FIRST in Map iteration order, and it is the NEWER of the two.
+    await timeoutFetch("https://api.github.com/repos/o/r/issues", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(2),
+    });
+
+    vi.setSystemTime(Date.parse("2026-06-24T12:00:00.000Z"));
+    stubCoreRateLimit("100");
+    // Installation 1 is a NEW map key inserted SECOND, but its observation is OLDER -- exercises the "existing
+    // entry is already newer" false-comparison arm, not just the "no existing entry yet" arm.
+    await timeoutFetch("https://api.github.com/repos/o/r/issues", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(1),
+    });
+
+    expect(githubRestRateLimitRemainingSamples()).toEqual([{ labels: { key_scope: "installation" }, value: 30 }]);
+  });
+
+  it("returns one sample per DISTINCT scope when scopes differ", async () => {
+    stubCoreRateLimit("10");
+    await timeoutFetch("https://api.github.com/repos/o/r/issues", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(1),
+    });
+    stubCoreRateLimit("20");
+    await timeoutFetch("https://api.github.com/repos/o/r/issues", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForPublicToken(),
+    });
+
+    const samples = githubRestRateLimitRemainingSamples();
+    expect(samples).toHaveLength(2);
+    expect(samples).toEqual(
+      expect.arrayContaining([
+        { labels: { key_scope: "installation" }, value: 10 },
+        { labels: { key_scope: "public" }, value: 20 },
+      ]),
+    );
   });
 });
 

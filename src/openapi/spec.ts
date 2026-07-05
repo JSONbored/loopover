@@ -713,6 +713,7 @@ export function buildOpenApiSpec() {
     responses: {
       200: { description: "Live app overview assembled from backend data", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       401: { description: "Unauthorized" },
+      403: { description: "Insufficient role" },
     },
   });
   for (const path of [
@@ -735,6 +736,73 @@ export function buildOpenApiSpec() {
       },
     });
   }
+  registry.registerPath({
+    method: "post",
+    path: "/v1/app/selfhost/queue/dead/{id}/replay",
+    request: {
+      params: z.object({
+        id: z.string().openapi({ param: { description: "Dead-letter job id." }, example: "812" }),
+      }),
+    },
+    responses: {
+      200: { description: "Job replayed", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      400: { description: "Invalid job id" },
+      401: { description: "Unauthorized" },
+      403: { description: "Insufficient app role (operator only)" },
+      404: { description: "Dead-letter job not found" },
+      501: { description: "This deployment's queue backend does not expose dead-letter admin" },
+    },
+  });
+  registry.registerPath({
+    method: "delete",
+    path: "/v1/app/selfhost/queue/dead/{id}",
+    request: {
+      params: z.object({
+        id: z.string().openapi({ param: { description: "Dead-letter job id." }, example: "812" }),
+      }),
+    },
+    responses: {
+      200: { description: "Job deleted", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      400: { description: "Invalid job id" },
+      401: { description: "Unauthorized" },
+      403: { description: "Insufficient app role (operator only)" },
+      404: { description: "Dead-letter job not found" },
+      501: { description: "This deployment's queue backend does not expose dead-letter admin" },
+    },
+  });
+  registry.registerPath({
+    method: "delete",
+    path: "/v1/app/selfhost/queue/dead",
+    responses: {
+      200: { description: "Dead-letter jobs purged", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      401: { description: "Unauthorized" },
+      403: { description: "Insufficient app role (operator only)" },
+      501: { description: "This deployment's queue backend does not expose dead-letter admin" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/app/selfhost/queue/dead",
+    request: {
+      query: z.object({
+        limit: z.string().optional().openapi({
+          param: { description: "Maximum rows to return, clamped from 1 to 100." },
+          example: "25",
+        }),
+        offset: z.string().optional().openapi({
+          param: { description: "Pagination offset, floored to 0." },
+          example: "0",
+        }),
+      }),
+    },
+    responses: {
+      200: { description: "Paginated dead-letter jobs for the self-host queue backend", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      400: { description: "Invalid query" },
+      401: { description: "Unauthorized" },
+      403: { description: "Insufficient app role (operator only)" },
+      501: { description: "This deployment's queue backend does not expose dead-letter admin (e.g. Cloudflare)" },
+    },
+  });
   registry.registerPath({
     method: "get",
     path: "/v1/app/analytics/weekly-value-report",

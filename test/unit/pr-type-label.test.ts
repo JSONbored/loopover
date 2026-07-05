@@ -3,9 +3,11 @@ import { DEFAULT_TYPE_LABELS, deriveKindFromTitle, normalizeTypeLabelSet, resolv
 import type { LinkedIssueLabelPropagationConfig } from "../../src/types";
 
 describe("deriveKindFromTitle", () => {
-  it("maps feat/feature → feature; everything else → bug", () => {
-    expect(deriveKindFromTitle("feat: add X")).toBe("feature");
-    expect(deriveKindFromTitle("feature(api): boards")).toBe("feature");
+  it("maps substantial feat/feature titles to feature and keeps small feat-style work as bug", () => {
+    expect(deriveKindFromTitle("feat: add provider fallback")).toBe("feature");
+    expect(deriveKindFromTitle("feature(api): support board exports")).toBe("feature");
+    expect(deriveKindFromTitle("feat(signals): recognize Conan dependency manifests")).toBe("bug");
+    expect(deriveKindFromTitle("feature(api): boards")).toBe("bug");
     expect(deriveKindFromTitle("fix: bug")).toBe("bug");
     expect(deriveKindFromTitle("test: add coverage")).toBe("bug");
     expect(deriveKindFromTitle("docs: readme")).toBe("bug");
@@ -22,7 +24,7 @@ function propagation(overrides: Partial<LinkedIssueLabelPropagationConfig> = {})
 
 describe("resolvePrTypeLabel (#priority-linked-issue-gate)", () => {
   it("returns the feature label by title when propagation is not configured", () => {
-    const result = resolvePrTypeLabel({ title: "feat: x" });
+    const result = resolvePrTypeLabel({ title: "feat: add provider fallback" });
     expect(result).toEqual({ applyLabels: [DEFAULT_TYPE_LABELS.feature], removeLabels: [DEFAULT_TYPE_LABELS.bug, DEFAULT_TYPE_LABELS.priority], source: "title" });
   });
 
@@ -92,14 +94,14 @@ describe("resolvePrTypeLabel (#priority-linked-issue-gate)", () => {
   });
 
   it("does not crash on an empty mappings array and falls through to title-based", () => {
-    const result = resolvePrTypeLabel({ title: "feat: x", linkedIssueLabels: ["anything"], propagation: propagation({ mappings: [] }) });
+    const result = resolvePrTypeLabel({ title: "feat: add provider fallback", linkedIssueLabels: ["anything"], propagation: propagation({ mappings: [] }) });
     expect(result.applyLabels).toEqual([DEFAULT_TYPE_LABELS.feature]);
     expect(result.source).toBe("title");
   });
 
   it("does not crash when linkedIssueLabels is omitted entirely (propagation enabled with mappings configured)", () => {
     const result = resolvePrTypeLabel({
-      title: "feat: x",
+      title: "feat: add provider fallback",
       propagation: propagation({ mappings: [{ issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: true }] }),
     });
     expect(result.applyLabels).toEqual([DEFAULT_TYPE_LABELS.feature]);
@@ -123,8 +125,45 @@ describe("resolvePrTypeLabel (#priority-linked-issue-gate)", () => {
 
   it("respects a custom typeLabels set for both the title fallback and the removal set", () => {
     const custom = { bug: "kind:bug", feature: "kind:feature", priority: "kind:priority" };
-    const result = resolvePrTypeLabel({ title: "feat: x", labels: custom });
+    const result = resolvePrTypeLabel({ title: "feat: add provider fallback", labels: custom });
     expect(result).toEqual({ applyLabels: ["kind:feature"], removeLabels: ["kind:bug", "kind:priority"], source: "title" });
+  });
+
+  describe("arbitrary configured categories (#label-modularity)", () => {
+    it("includes arbitrary extra categories in the removal set without ever choosing them by title", () => {
+      const custom = { bug: "gittensor:bug", feature: "gittensor:feature", priority: "gittensor:priority", security: "area:security", docs: "area:docs" };
+      const result = resolvePrTypeLabel({ title: "fix: y", labels: custom });
+      expect(result.applyLabels).toEqual(["gittensor:bug"]);
+      expect(result.removeLabels.slice().sort()).toEqual(["area:docs", "area:security", "gittensor:feature", "gittensor:priority"]);
+    });
+
+    it("never removes a label that isn't part of the configured type-label set (invariant: unrelated maintainer labels are untouched)", () => {
+      const result = resolvePrTypeLabel({ title: "fix: y", labels: { bug: "gittensor:bug" } });
+      expect(result.removeLabels).toEqual([]);
+      expect(result.removeLabels).not.toContain("needs-review");
+      expect(result.removeLabels).not.toContain("gittensor");
+    });
+
+    it("applies nothing and removes nothing when the configured type-label set is empty", () => {
+      const result = resolvePrTypeLabel({ title: "fix: y", labels: {} });
+      expect(result).toEqual({ applyLabels: [], removeLabels: [], source: "title" });
+    });
+
+    it("still applies a propagated custom-category label additively when the base type-label set is empty", () => {
+      const result = resolvePrTypeLabel({
+        title: "fix: y",
+        labels: {},
+        linkedIssueLabels: ["needs-security-review"],
+        propagation: propagation({ mappings: [{ issueLabel: "needs-security-review", prLabel: "area:security", removeOtherTypeLabels: false }] }),
+      });
+      expect(result).toEqual({ applyLabels: ["area:security"], removeLabels: [], source: "propagation_additive" });
+    });
+
+    it("only cleans up categories actually configured when a repo drops down to a subset of the built-in triad", () => {
+      // A self-hoster who only wants a bug/feature split, no priority category at all.
+      const result = resolvePrTypeLabel({ title: "feat: add provider fallback", labels: { bug: "gittensor:bug", feature: "gittensor:feature" } });
+      expect(result).toEqual({ applyLabels: ["gittensor:feature"], removeLabels: ["gittensor:bug"], source: "title" });
+    });
   });
 });
 
@@ -169,6 +208,48 @@ describe("normalizeTypeLabelSet (#priority-linked-issue-gate)", () => {
       bug: "kind:bug",
       feature: DEFAULT_TYPE_LABELS.feature,
       priority: DEFAULT_TYPE_LABELS.priority,
+    });
+  });
+
+  it("returns the full default set for an explicitly empty object, matching an omitted/legacy value (backward compat: legacy type_labels_json rows default to '{}')", () => {
+    const warnings: string[] = [];
+    expect(normalizeTypeLabelSet({}, warnings)).toEqual(DEFAULT_TYPE_LABELS);
+    expect(warnings).toEqual([]);
+  });
+
+  describe("arbitrary custom categories (#label-modularity)", () => {
+    it("includes an arbitrary custom category alongside the defaults-filled built-in categories", () => {
+      const warnings: string[] = [];
+      expect(normalizeTypeLabelSet({ security: "area:security" }, warnings)).toEqual({
+        bug: DEFAULT_TYPE_LABELS.bug,
+        feature: DEFAULT_TYPE_LABELS.feature,
+        priority: DEFAULT_TYPE_LABELS.priority,
+        security: "area:security",
+      });
+      expect(warnings).toEqual([]);
+    });
+
+    it("trims and keeps multiple custom categories at once", () => {
+      const warnings: string[] = [];
+      expect(normalizeTypeLabelSet({ security: "  area:security  ", docs: "area:docs" }, warnings)).toEqual({
+        bug: DEFAULT_TYPE_LABELS.bug,
+        feature: DEFAULT_TYPE_LABELS.feature,
+        priority: DEFAULT_TYPE_LABELS.priority,
+        security: "area:security",
+        docs: "area:docs",
+      });
+    });
+
+    it("drops an invalid custom category entirely (no built-in default to fall back to) and warns", () => {
+      const warnings: string[] = [];
+      expect(normalizeTypeLabelSet({ security: 42 }, warnings)).toEqual(DEFAULT_TYPE_LABELS);
+      expect(warnings.some((w) => w.includes("settings.typeLabels.security") && w.includes("ignoring"))).toBe(true);
+    });
+
+    it("drops an empty-string custom category and warns, without touching the built-in defaults", () => {
+      const warnings: string[] = [];
+      expect(normalizeTypeLabelSet({ security: "   " }, warnings)).toEqual(DEFAULT_TYPE_LABELS);
+      expect(warnings.some((w) => w.includes("settings.typeLabels.security"))).toBe(true);
     });
   });
 });

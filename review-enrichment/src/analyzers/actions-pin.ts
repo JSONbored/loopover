@@ -5,8 +5,11 @@
 import type { EnrichRequest, ActionPinFinding } from "../types.js";
 import { isWorkflowPath } from "../workflow-path.js";
 
-const USES_RE = /^\s*-?\s*["']?uses["']?\s*:\s*["']?([\w.-]+\/[\w./-]+)@([^\s"'#]+)/;
-const FULL_SHA = /^[0-9a-f]{40}$/;
+const USES_RE =
+  /^\s*-?\s*["']?uses["']?\s*:\s*["']?([\w.-]+\/[\w./-]+)@([^\s"'#]+)/;
+// Git commit SHAs are case-insensitive; accept uppercase/mixed-case 40-char hex so a pin like
+// `@A1B2…` is not mis-flagged as a mutable tag/branch.
+const FULL_SHA = /^[0-9a-f]{40}$/i;
 // GitHub org/user names are case-insensitive (mirrors isWorkflowPath's case-insensitive path match), so the
 // official-action exclusion matches case-insensitively — otherwise `Actions/checkout` would be mis-flagged as a
 // mutable third-party action. GitHub reserves the `actions`/`github` orgs, so this can never over-match a real one.
@@ -39,7 +42,9 @@ export function scanWorkflowPins(
         }
       }
       newLine++;
-    } else if (!line.startsWith("-")) {
+    } else if (!line.startsWith("-") && !line.startsWith("\\")) {
+      // A `\ No newline at end of file` marker is not a new-file line — do not advance the cursor
+      // (same class as the iac-misconfig / redos / secret-log / secret-scan fix).
       newLine++;
     }
   }

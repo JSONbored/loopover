@@ -16,14 +16,15 @@ export type RecordClaimInput = {
 };
 
 export type ListClaimsFilter = {
-  repoFullName?: string;
-  status?: ClaimStatus;
+  repoFullName?: string | null;
+  status?: ClaimStatus | null;
 };
 
 export type ClaimLedger = {
   dbPath: string;
   recordClaim(claim: RecordClaimInput): ClaimEntry;
   releaseClaim(repoFullName: string, issueNumber: number): ClaimEntry | null;
+  expireClaim(repoFullName: string, issueNumber: number): ClaimEntry | null;
   listClaims(filter?: ListClaimsFilter): ClaimEntry[];
   close(): void;
 };
@@ -37,6 +38,8 @@ export function openClaimLedger(dbPath?: string): ClaimLedger;
 export function recordClaim(claim: RecordClaimInput): ClaimEntry;
 
 export function releaseClaim(repoFullName: string, issueNumber: number): ClaimEntry | null;
+
+export function expireClaim(repoFullName: string, issueNumber: number): ClaimEntry | null;
 
 export function listClaims(filter?: ListClaimsFilter): ClaimEntry[];
 

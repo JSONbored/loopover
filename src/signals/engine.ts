@@ -32,7 +32,8 @@ import { isDuplicateClusterWinnerByClaim } from "./duplicate-winner";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
 import type { UnifiedCollapsible } from "../review/unified-comment";
 import { splitAiReviewNits } from "../review/ai-notes";
-import { GITTENSORY_GATE_CHECK_NAME } from "../review/check-names";
+import { GITTENSORY_GATE_CHECK_NAME, shouldPublishReviewCheck } from "../review/check-names";
+import { isAgentConfigured } from "../settings/autonomy";
 import { diffFilePriority } from "../review/review-diff";
 
 export type ParticipationLane = "direct_pr" | "issue_discovery" | "split" | "inactive" | "unknown";
@@ -1514,11 +1515,14 @@ export function buildContributorFit(
 ): ContributorFit {
   const opportunities = buildContributorOpportunities(profile, repositories, issues, pullRequests, bounties, issueQualityByRepo);
   const languageSet = new Set(profile.github.topLanguages.map((language) => language.toLowerCase()));
-  const syncByRepo = new Map(repoSyncStates.map((state) => [state.repoFullName, state]));
+  // Key by lowercased repo name: sync-state repoFullName (GitHub-canonical) and the registered repo.fullName
+  // can differ in case, and every other repo-keyed map in this module folds case for the same reason. Without
+  // it, a case mismatch misses the language lookup and emits a spurious no_language_fit.
+  const syncByRepo = new Map(repoSyncStates.map((state) => [state.repoFullName.toLowerCase(), state]));
   const languageFit = repositories
     .filter((repo) => repo.isRegistered)
     .map((repo) => {
-      const language = syncByRepo.get(repo.fullName)?.primaryLanguage ?? null;
+      const language = syncByRepo.get(repo.fullName.toLowerCase())?.primaryLanguage ?? null;
       return {
         repoFullName: repo.fullName,
         language,
@@ -2506,7 +2510,7 @@ export function buildPreflightResult(
   issueQuality?: IssueQualityReport | null | undefined,
 ): PreflightResult {
   const lane = buildLaneAdvice(repo, input.repoFullName);
-  const linkedIssues = [...new Set([...(input.linkedIssues ?? []), ...extractLinkedIssueNumbers(truncateText(input.body ?? "", PREFLIGHT_LIMITS.bodyChars))])].sort(
+  const linkedIssues = [...new Set([...(input.linkedIssues ?? []), ...extractLinkedIssueNumbers(truncateText(input.body ?? "", PREFLIGHT_LIMITS.bodyChars), input.repoFullName)])].sort(
     (left, right) => left - right,
   );
   // Flag an existing open-work cluster as a possible duplicate when it shares a
@@ -2621,7 +2625,7 @@ export function buildLocalDiffPreflightResult(
 ): LocalDiffPreflightResult {
   /* v8 ignore next -- Undefined metadata arrays are normalized at API/MCP boundaries; local analysis tests cover empty metadata behavior. */
   const changedFiles = [...new Set([...(input.changedFiles ?? []), ...(input.testFiles ?? [])])];
-  const linkedFromCommit = extractLinkedIssueNumbers([input.commitMessage, input.body, input.title].filter(Boolean).join("\n"));
+  const linkedFromCommit = extractLinkedIssueNumbers([input.commitMessage, input.body, input.title].filter(Boolean).join("\n"), input.repoFullName);
   const base = buildPreflightResult(
     {
       ...input,
@@ -4278,7 +4282,11 @@ export function buildPublicPrIntelligenceComment(args: {
     /* v8 ignore next -- Public findings may omit actions; public comment tests cover sanitized action inclusion. */
     ...(publicFindings.length > 0 ? publicFindings.flatMap((finding) => (finding.action ? [finding.action] : [])) : []),
   ].filter((step) => !containsPrivatePublicTerm(step));
-  const gateEnabled = args.settings.gateCheckMode === "enabled";
+  // #2852: gate presentation follows the SAME evaluation/policy signal as shouldEvaluateGate in
+  // processors.ts (published check-run OR autonomy needs a verdict) -- not the check-run publish flag
+  // alone, so a `reviewCheckMode: disabled` repo with autonomy configured still shows its real gate
+  // result in the public comment instead of silently downgrading to "no gate at all".
+  const gateEnabled = shouldPublishReviewCheck(args.settings.reviewCheckMode) || isAgentConfigured(args.settings.autonomy);
   const hardLinkedIssueBlock =
     args.settings.linkedIssueGateMode === "block" && args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
   // Duplicate-winner adjudication (#dup-winner): when the flag is ON and this PR is the earliest observed
@@ -4519,7 +4527,10 @@ export function buildPublicPrPanelSignalRows(args: {
   const readiness = buildPublicReadinessScore({ pr: args.pr, preflight: args.preflight, queueHealth: args.queueHealth, linkedDuplicatePrs: visibleLinkedDuplicatePrs, scopedOverlapCount });
   const linkedIssueResult = linkedIssuePanelResult(args.pr);
   const relatedWorkResult = relatedWorkPanelResult(visibleLinkedDuplicatePrs, scopedOverlapCount);
-  const gateEnabled = args.settings.gateCheckMode === "enabled";
+  // #2852: see the matching comment in buildPublicPrIntelligenceComment -- gate presentation must
+  // track whether a gate is actually evaluated (check-run published OR autonomy configured), not
+  // merely whether the check-run itself is published.
+  const gateEnabled = shouldPublishReviewCheck(args.settings.reviewCheckMode) || isAgentConfigured(args.settings.autonomy);
   const hardLinkedIssueBlock = args.settings.linkedIssueGateMode === "block" && args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
   // Duplicate-winner adjudication (#dup-winner): suppress the earliest known claimant's hard-duplicate block
   // (see the comment builder). Sparse legacy rows fail closed; flag-OFF keeps legacy behavior.
@@ -5228,7 +5239,7 @@ function itemKey(item: CollisionItem): string {
   return `${item.type}-${item.number}`;
 }
 
-type CollisionTerms = {
+export type CollisionTerms = {
   terms: Set<string>;
   size: number;
 };
@@ -5259,7 +5270,7 @@ function plannedContributionTerms(input: PreflightInput): CollisionTerms {
   return { terms, size: terms.size };
 }
 
-function termOverlap(left: CollisionTerms, right: CollisionTerms): { score: number; shared: number } {
+export function termOverlap(left: CollisionTerms, right: CollisionTerms): { score: number; shared: number } {
   if (left.size === 0 || right.size === 0) return { score: 0, shared: 0 };
   let shared = 0;
   const [smaller, larger] = left.size <= right.size ? [left.terms, right.terms] : [right.terms, left.terms];
@@ -5287,16 +5298,26 @@ function truncateText(value: string, maxChars: number): string {
   return value.length > maxChars ? value.slice(0, maxChars) : value;
 }
 
-function tokenize(value: string): string[] {
+// Exported (#3183) so the project/milestone text matcher (src/integrations/project-tracker-adapter.ts) can
+// reuse the exact same term-overlap heuristic already proven here for duplicate-PR collision detection, rather
+// than re-implementing a second, subtly different tokenizer.
+export function tokenize(value: string): string[] {
   return value
     .toLowerCase()
     .split(/[^a-z0-9]+/g)
     .filter((term) => term.length > 2 && !STOPWORDS.has(term));
 }
 
-function extractLinkedIssueNumbers(text: string): number[] {
-  const matches = [...text.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi)];
-  return [...new Set(matches.map((match) => Number(match[1])).filter((value) => Number.isInteger(value) && value > 0))];
+function extractLinkedIssueNumbers(text: string, repoFullName: string): number[] {
+  const numbers = [...text.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi)].map((match) => Number(match[1]));
+  // GitHub also auto-closes via the fully-qualified `KEYWORD owner/repo#N` form (e.g. Renovate/Dependabot bodies).
+  // Count it only when owner/repo case-insensitively equals THIS repo — a reference to a different repo closes an
+  // issue elsewhere, not here, so it must not spoof a same-repo link. Same `\b`-anchored keywords as above (#1988).
+  const target = repoFullName.toLowerCase();
+  for (const match of text.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+([\w.-]+\/[\w.-]+)#(\d+)\b/gi)) {
+    if (match[1]!.toLowerCase() === target) numbers.push(Number(match[2]));
+  }
+  return [...new Set(numbers.filter((value) => Number.isInteger(value) && value > 0))];
 }
 
 function outcomeSuccessPatterns(history: ContributorOutcomeHistory): OutcomePattern[] {
@@ -5515,11 +5536,11 @@ function sanitizeOutcomeDimensionKey(key: string): string {
 }
 
 function isCodeFile(file: string): boolean {
-  // Mirrors isCodeFile in local-branch.ts — kept in sync (cs/swift/groovy added
-  // so C#/Swift/Groovy source counts as code, matching the test conventions
+  // Mirrors isCodeFile in local-branch.ts — kept in sync (cs/swift/groovy/php and C/C++/Objective-C added
+  // so native/C#/Swift/Groovy/PHP source counts as code, matching the test conventions
   // isTestPath already recognizes).
   return (
-    /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs|kt|scala|java|go|sql|cs|swift|groovy)$/i.test(file) &&
+    /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs|kt|scala|java|go|sql|cs|swift|groovy|php|cpp|c|h|m)$/i.test(file) &&
     !isTestFile(file)
   );
 }

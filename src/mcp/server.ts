@@ -20,7 +20,6 @@ import {
   getPendingAgentAction,
   getPullRequest,
   getRepository,
-  getRepositorySettings,
   isGlobalAgentFrozen,
   getRepoQueueTrendSnapshot,
   listAgentAuditEvents,
@@ -50,6 +49,7 @@ import { decidePendingAgentAction } from "../services/agent-approval-queue";
 import { buildNotificationFeed } from "../notifications/service";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { getRepositoryCollaboratorPermission } from "../github/app";
+import { performRepoDocRefresh } from "../github/repo-doc-refresh-runner";
 import { sanitizePublicComment } from "../github/commands";
 import { fetchPublicContributorProfile } from "../github/public";
 import { listLatestRegistrySnapshots } from "../registry/sync";
@@ -117,6 +117,7 @@ import {
 import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePlanDag, type PlanDag } from "../services/plan-dag";
 import { isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
 import { AGENT_ACTION_CLASSES, isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
+import { resolveRepositorySettings } from "../settings/repository-settings";
 import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
 import { loadPublicRepoFocusManifest, loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict } from "../rules/predicted-gate";
@@ -436,6 +437,22 @@ const decidePendingActionOutputSchema = {
   status: z.string().optional(),
   executionOutcome: z.string().optional(),
   action: pendingActionEntrySchema.optional(),
+};
+
+// #3003 (part of #2993) — on-demand repo-doc refresh, the manual counterpart to the scheduled sweep
+// (src/queue/processors.ts's "repo-doc-refresh-sweep"). Both call the SAME performRepoDocRefresh runner, which
+// itself calls openRepoDocPullRequest -- the one place enable/scope/eligibility/diffing is decided.
+const refreshRepoDocsShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+};
+
+const refreshRepoDocsOutputSchema = {
+  opened: z.boolean().optional(),
+  reused: z.boolean().optional(),
+  pullNumber: z.number().optional(),
+  url: z.string().optional(),
+  reason: z.string().optional(),
 };
 
 // #784 (MCP slice) — the agent audit feed: executed actions + approval decisions for a repo.
@@ -1481,6 +1498,17 @@ export class GittensoryMcp {
     );
 
     server.registerTool(
+      "gittensory_refresh_repo_docs",
+      {
+        description:
+          "Force an immediate repo-doc refresh (AGENTS.md/CLAUDE.md, and a skill file when warranted) for one repo, without waiting for the scheduled interval. Only ever opens a pull request -- never a direct commit -- and only when repoDocGeneration is enabled for this repo and the generated content actually changed. Maintainer access required.",
+        inputSchema: refreshRepoDocsShape,
+        outputSchema: refreshRepoDocsOutputSchema,
+      },
+      async (input) => this.toolResult(await this.refreshRepoDocs(input)),
+    );
+
+    server.registerTool(
       "gittensory_get_agent_audit_feed",
       {
         description:
@@ -2450,7 +2478,7 @@ export class GittensoryMcp {
     await this.requireRepoAccess(fullName);
     const [repo, settings, pendingActionCount] = await Promise.all([
       getRepository(this.env, fullName),
-      getRepositorySettings(this.env, fullName),
+      resolveRepositorySettings(this.env, fullName),
       countPendingAgentActions(this.env, { repoFullName: fullName, status: "pending" }),
     ]);
     const autonomy = settings.autonomy;
@@ -2574,6 +2602,23 @@ export class GittensoryMcp {
           createdAt: action.createdAt,
         },
       },
+    };
+  }
+
+  // #3003 — on-demand repo-doc refresh. This action only ever OPENS A PULL REQUEST (never merges/closes/commits
+  // directly), so -- unlike propose/decide's stage-then-accept pattern for genuinely destructive actions --
+  // executing it synchronously in one call is appropriately safe. requireRepoManageAccess is checked FIRST,
+  // before performRepoDocRefresh touches anything.
+  private async refreshRepoDocs(input: z.infer<z.ZodObject<typeof refreshRepoDocsShape>>): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoManageAccess(fullName);
+    const result = await performRepoDocRefresh(this.env, fullName);
+    if (!result.opened) {
+      return { summary: `No repo-doc pull request opened for ${fullName}: ${result.reason}`, data: { opened: false, reason: result.reason } };
+    }
+    return {
+      summary: `${result.reused ? "Found the already-open" : "Opened a new"} repo-doc pull request for ${fullName}: ${result.url}`,
+      data: { opened: true, reused: result.reused, pullNumber: result.pullNumber, url: result.url },
     };
   }
 

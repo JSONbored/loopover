@@ -12,6 +12,8 @@ import {
 } from "../../src/review/outcomes-wire";
 import { applyAutoTune, type GateEvalReport } from "../../src/review/auto-tune";
 import {
+  AGENT_LABEL_NEEDS_REVIEW,
+  AGENT_LABEL_READY,
   downgradeMergeToHold,
   type PlannedAgentAction,
 } from "../../src/settings/agent-actions";
@@ -167,6 +169,31 @@ describe("recordPrOutcome — realized merge/close ground truth", () => {
     });
     expect((await auditEventRows(env, "pr_outcome"))[0]).toMatchObject({
       detail: "closed",
+    });
+  });
+
+  it("REGRESSION: does not send a duplicate Discord notification from the pull_request.closed outcome webhook", async () => {
+    const env = Object.assign(createTestEnv(), { DISCORD_REPO_WEBHOOKS: JSON.stringify({ "owner/repo": "https://discord.com/api/webhooks/repo/token" }) }) as Env;
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    await recordPrOutcome(env, "pull_request", {
+      action: "closed",
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
+      pull_request: pullRequestPayload({
+        number: 44,
+        merged_at: null,
+        user: { login: "contributor", type: "User" },
+      }),
+      sender: { login: "gittensory[bot]", type: "Bot" },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect((await reviewAuditRows(env, "pr_outcome"))[0]).toMatchObject({
+      target_id: "owner/repo#44",
+      decision: "closed",
     });
   });
 
@@ -443,7 +470,7 @@ describe("downgradeMergeToHold (pure)", () => {
     actionClass: "label",
     requiresApproval: false,
     reason: "ready",
-    label: "gittensory:ready-to-merge",
+    label: AGENT_LABEL_READY,
     labelOp: "add",
   };
   const closeAction: PlannedAgentAction = {
@@ -457,20 +484,20 @@ describe("downgradeMergeToHold (pure)", () => {
     expect(downgradeMergeToHold(plan, false)).toBe(plan);
   });
 
-  it("holdOnly=true + a planned merge → drops the merge + ready label, adds needs-human-review", () => {
+  it("holdOnly=true + a planned merge → drops the merge + ready label, adds manual-review", () => {
     const out = downgradeMergeToHold([readyLabel, mergeAction], true);
     expect(out.some((a) => a.actionClass === "merge")).toBe(false);
     expect(
       out.some(
         (a) =>
-          a.actionClass === "label" && a.label === "gittensory:ready-to-merge",
+              a.actionClass === "label" && a.label === AGENT_LABEL_READY,
       ),
     ).toBe(false);
     expect(
       out.some(
         (a) =>
           a.actionClass === "label" &&
-          a.label === "gittensory:needs-human-review" &&
+          a.label === AGENT_LABEL_NEEDS_REVIEW &&
           a.labelOp === "add",
       ),
     ).toBe(true);
@@ -730,6 +757,118 @@ describe("runSelfTuneBreaker — reads recorded pr_outcome ground truth + engage
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await expect(runSelfTuneBreaker(env)).resolves.toBeUndefined();
     warn.mockRestore();
+  });
+
+  // Seed a gate_decision/pr_outcome pair under an ARBITRARY source (e.g. the pre-convergence 'reviewbot'
+  // engine), independent of the gittensory-native-only seedDecisionAndOutcome helper above.
+  async function seedDecisionAndOutcomeForSource(env: Env, project: string, pr: number, pred: "merge" | "close", truth: "merged" | "closed", source: string): Promise<void> {
+    await env.DB.prepare(
+      "INSERT INTO review_audit (id, project, target_id, event_type, decision, source, head_sha, summary, created_at) VALUES (?, ?, ?, 'gate_decision', ?, ?, ?, NULL, CURRENT_TIMESTAMP)",
+    )
+      .bind(`gd:${source}:${project}#${pr}`, project, `${project}#${pr}`, pred, source, `sha${pr}`)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO review_audit (id, project, target_id, event_type, decision, source, head_sha, summary, created_at) VALUES (?, ?, ?, 'pr_outcome', ?, ?, NULL, NULL, CURRENT_TIMESTAMP)",
+    )
+      .bind(`po:${source}:${project}#${pr}`, project, `${project}#${pr}`, truth, source)
+      .run();
+  }
+
+  it("#autoclear-deadlock (stale-source): a FROZEN legacy 'reviewbot' close-precision failure does NOT engage the LIVE close breaker — the tick is scoped to source='gittensory-native'", async () => {
+    const env = createTestEnv();
+    // 12 would-CLOSE predictions from the pre-convergence 'reviewbot' engine, 33% precision — would trip the
+    // floor if read, but this source stopped writing long ago and must not drive the LIVE self-host breaker.
+    for (let i = 0; i < 4; i += 1) await seedDecisionAndOutcomeForSource(env, "owner/repo", i, "close", "closed", "reviewbot");
+    for (let i = 4; i < 12; i += 1) await seedDecisionAndOutcomeForSource(env, "owner/repo", i, "close", "merged", "reviewbot");
+
+    await runSelfTuneBreaker(env);
+
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(false);
+  });
+
+  it("#autoclear-deadlock: a per-project closehold flag with NO fresh gittensory-native decided sample (report.rows empty for it) still auto-clears once the cooldown elapses", async () => {
+    const env = createTestEnv();
+    const flags = createFlagStore(env);
+    // Engage the CLOSE breaker directly (as the auto-tuner would have) and backdate past the 24h cooldown.
+    await flags.setFlag("closehold:owner/repo", true);
+    await env.DB.prepare("UPDATE system_flags SET updated_at = datetime('now', '-2 days') WHERE key = 'closehold:owner/repo'").run();
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(true);
+    // No gittensory-native gate_decision/pr_outcome rows are seeded at all for this project — pre-fix, the
+    // auto-clear loop only walked report.rows and would never reconsider a project with zero decided samples,
+    // stranding the flag engaged forever regardless of the cooldown.
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runSelfTuneBreaker(env);
+    log.mockRestore();
+
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(false);
+  });
+
+  it("#autoclear-deadlock: does NOT auto-clear a stranded closehold flag before its cooldown has elapsed", async () => {
+    const env = createTestEnv();
+    const flags = createFlagStore(env);
+    await flags.setFlag("closehold:owner/repo", true); // freshly engaged (updated_at = now) — still within cooldown
+    await runSelfTuneBreaker(env);
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(true);
+  });
+
+  it("#autoclear-deadlock: a human-set GLOBAL closehold flag is never entered into the widened auto-clear candidate set", async () => {
+    const env = createTestEnv();
+    const flags = createFlagStore(env);
+    await flags.setFlag("closehold:global", true);
+    await env.DB.prepare("UPDATE system_flags SET updated_at = datetime('now', '-2 days') WHERE key = 'closehold:global'").run();
+    await runSelfTuneBreaker(env);
+    // The global scope stays a human-only clear — the cooldown-elapsed widening must never touch it.
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(true);
+  });
+
+  it("#autoclear-deadlock: the merge-side holdonly flag gets the same widened-candidate auto-clear treatment", async () => {
+    const env = createTestEnv();
+    const flags = createFlagStore(env);
+    await flags.setFlag("holdonly:owner/repo", true);
+    await env.DB.prepare("UPDATE system_flags SET updated_at = datetime('now', '-2 days') WHERE key = 'holdonly:owner/repo'").run();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runSelfTuneBreaker(env);
+    log.mockRestore();
+    expect(await isHoldOnly(env, "owner/repo")).toBe(false);
+  });
+
+  it("#autoclear-deadlock: a holdonly/closehold row with a falsy value is excluded from the widened candidate set (flagTruthy false arm)", async () => {
+    const env = createTestEnv();
+    // A stray row exists but is NOT truthy — must not be treated as an engaged breaker (would otherwise call
+    // maybeAutoClear* for a project that was never really engaged).
+    await env.DB.prepare("INSERT OR REPLACE INTO system_flags (key, value, updated_at) VALUES ('closehold:owner/repo', '0', CURRENT_TIMESTAMP)").run();
+    await expect(runSelfTuneBreaker(env)).resolves.toBeUndefined();
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(false);
+  });
+
+  it("#autoclear-deadlock: tolerates an all() result with no `results` array when scanning for engaged scopes (the ?? [] fallback arm)", async () => {
+    const env = createTestEnv();
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = ((sql: string) => {
+      if (/SELECT key, value FROM system_flags WHERE key LIKE/i.test(sql)) {
+        return { all: async () => ({}) } as unknown as ReturnType<typeof realPrepare>;
+      }
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+    await expect(runSelfTuneBreaker(env)).resolves.toBeUndefined();
+  });
+
+  it("#autoclear-deadlock: fails safe (empty candidate widening) when the engaged-scopes scan throws, without breaking the tick", async () => {
+    const env = createTestEnv();
+    const flags = createFlagStore(env);
+    await flags.setFlag("closehold:owner/repo", true);
+    await env.DB.prepare("UPDATE system_flags SET updated_at = datetime('now', '-2 days') WHERE key = 'closehold:owner/repo'").run();
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = ((sql: string) => {
+      if (/SELECT key, value FROM system_flags WHERE key LIKE/i.test(sql)) throw new Error("d1 down");
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(runSelfTuneBreaker(env)).resolves.toBeUndefined();
+    warn.mockRestore();
+    // The scan failed, so the widened candidate set fell back to report.rows alone (empty here) — the flag,
+    // with no fresh decided sample either, is correctly left engaged rather than incorrectly cleared.
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(true);
   });
 });
 

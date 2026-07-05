@@ -1681,7 +1681,6 @@ describe("decision-pack service", () => {
     const manifest = parseFocusManifest({
       source: "repo_file",
       wantedPaths: ["src/"],
-      blockedPaths: ["migrations/"],
       preferredLabels: ["bug"],
       linkedIssuePolicy: "required",
       issueDiscoveryPolicy: "discouraged",
@@ -1703,11 +1702,10 @@ describe("decision-pack service", () => {
       linkedIssuePolicy: "required",
       issueDiscoveryPolicy: "discouraged",
       wantedPathCount: 1,
-      blockedPathCount: 1,
       preferredLabels: ["bug"],
       publicNotes: ["Prefer small, focused PRs."],
     });
-    expect(decision.riskReasons.join(" ")).toMatch(/maintainer focus manifest blocks/i);
+    expect(decision.riskReasons.join(" ")).not.toMatch(/blocked path|blocked area/i);
     expect(decision.whyThisHelps.join(" ")).toMatch(/wanted path/i);
     expect(decision.publicNextActions.join(" ")).toMatch(/maintainer requires linked issues/i);
     expect(decision.publicNextActions.join(" ")).toMatch(/Prefer small, focused PRs/);
@@ -1747,7 +1745,7 @@ describe("decision-pack service", () => {
     const { parseFocusManifest } = await import("../../src/signals/focus-manifest");
     const manifest = parseFocusManifest({
       source: "api_record",
-      blockedPaths: ["migrations/"],
+      publicNotes: ["Keep PRs small."],
       linkedIssuePolicy: "optional",
       issueDiscoveryPolicy: "neutral",
     });
@@ -1776,7 +1774,6 @@ describe("decision-pack service", () => {
       present: true,
       source: "repo_file",
       wantedPaths: ["src/"],
-      blockedPaths: [],
       preferredLabels: [],
       linkedIssuePolicy: "optional",
       testExpectations: [],

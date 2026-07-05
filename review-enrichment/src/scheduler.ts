@@ -4,6 +4,7 @@ import {
   ANALYZER_NAMES,
   getAnalyzerDescriptor,
 } from "./analyzers/registry.js";
+import { isRuntimePinPath } from "./analyzers/eol-check.js";
 import type {
   AnalyzerCostClass,
   AnalyzerDescriptor,
@@ -396,13 +397,4 @@ function historyCanRunWithoutGitHub(
   name: AnalyzerName,
 ): boolean {
   return name === "history" && Boolean(req.linkedIssue && (req.diff || req.files?.length));
-}
-
-function isRuntimePinPath(path: string): boolean {
-  const basename = path.split("/").pop() ?? path;
-  return (
-    /^Dockerfile(?:\..*)?$/.test(basename) ||
-    basename === ".nvmrc" ||
-    basename === "go.mod"
-  );
 }

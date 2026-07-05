@@ -82,11 +82,15 @@ import {
   backfillRegisteredRepositories,
   backfillRepositorySegment,
   cachedFetchLivePullRequestMergeState,
+  CI_STATE_CACHE_METRIC,
+  deserializeCachedCiAggregate,
   enqueueRepositoryOpenDataBackfill,
   fetchAndStorePullRequestFilesForReview,
   fetchLinkedIssueFacts,
   fetchLiveBaseBranchAdvancedAt,
   fetchLiveCiAggregatePreferGraphQl,
+  invalidateCiStateCache,
+  isCiStateCacheFresh,
   type LiveCiAggregate,
   fetchLiveIssueState,
   fetchLivePullRequest,
@@ -105,6 +109,7 @@ import {
   refreshContributorActivity,
   refreshInstallationHealth,
   refreshPullRequestDetails,
+  writeThroughCiStateCache,
 } from "../github/backfill";
 import {
   contributorRepoStatsFromGittensor,
@@ -169,6 +174,7 @@ import {
 } from "../github/pr-freshness";
 import { DEFAULT_TYPE_LABELS, resolvePrTypeLabel } from "../settings/pr-type-label";
 import { fetchLinkedIssueLabelsForPropagation } from "../review/linked-issue-label-propagation-fetch";
+import { shouldPublishReviewCheck } from "../review/check-names";
 import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
 import {
@@ -217,6 +223,7 @@ import {
   isAuthorBlacklisted,
 } from "../settings/contributor-blacklist";
 import {
+  DEFAULT_AUTO_MAINTAIN_POLICY,
   autonomyRequiresApproval,
   isAgentConfigured,
   resolveAutonomy,
@@ -251,6 +258,7 @@ import {
   MAX_REVIEW_NAG_COOLDOWN_DAYS,
   isProtectedAutomationAuthor,
   planAgentMaintenanceActions,
+  type AgentDispositionLabelSettings,
   type PlannedAgentAction,
 } from "../settings/agent-actions";
 import { isAutoCloseExempt } from "../settings/auto-close-exempt";
@@ -274,11 +282,8 @@ import {
   QUEUE_TREND_HISTORY_DAYS,
 } from "../services/queue-trends";
 import {
-  buildUpstreamRulesetSnapshot,
-  detectAndPersistUpstreamDrift,
   fileUpstreamDriftIssues,
   refreshUpstreamDrift,
-  refreshUpstreamSourceSnapshots,
 } from "../upstream/ruleset";
 import {
   buildFreshnessSloReport,
@@ -315,6 +320,7 @@ import {
 import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
 import { buildUnifiedReviewDiff } from "../review/review-diff";
 import { buildUnifiedCommentBody } from "../review/unified-comment-bridge";
+import { randomUUID } from "node:crypto";
 import { isRetryableJobError, RetryableJobError } from "./retryable";
 import { screenshotsAllowed } from "../review/visual-wire";
 import { isVisualPath } from "../review/visual/paths";
@@ -337,6 +343,7 @@ import {
   buildFocusManifestGuidance,
   composeRepoReviewContext,
   excludeReviewPaths,
+  resolveRepoEnrichmentToggles,
   resolveReviewPathInstructions,
   resolveReviewPreMergeChecks,
   resolveReviewPromptOverrides,
@@ -346,9 +353,12 @@ import {
 } from "../signals/focus-manifest";
 import {
   loadRepoFocusManifest,
+  loadRepoFocusManifests,
   loadRepoReviewContext,
 } from "../signals/focus-manifest-loader";
 import { resolveRepositorySettings } from "../settings/repository-settings";
+import { getLastRepoDocRefreshAttemptedAtBulk, performRepoDocRefresh } from "../github/repo-doc-refresh-runner";
+import { isRepoDocRefreshDue } from "../review/repo-doc-refresh-schedule";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import {
   hasPublicReviewAssessment,
@@ -414,8 +424,8 @@ import {
   deploymentStatusToPreview,
   type DeploymentStatusPayload,
 } from "../review/visual/preview-url";
-import { loadHardGuardrailGlobs } from "../review/guardrail-config";
-import { isGuardrailHit } from "../signals/change-guardrail";
+import { resolveHardGuardrailGlobs } from "../review/guardrail-config";
+import { guardrailPathMatches, isGuardrailHit } from "../signals/change-guardrail";
 import {
   closePullRequest,
   createIssueComment,
@@ -435,7 +445,7 @@ import {
   recordReversalSignals,
   runSelfTuneBreaker,
 } from "../review/outcomes-wire";
-import { recordNativeGateDecision } from "../review/parity-wire";
+import { neutralHoldReasonCode, recordNativeGateDecision } from "../review/parity-wire";
 import type { SubmissionOutcome } from "../review/submitter-reputation";
 import type {
   AdvisoryFinding,
@@ -455,6 +465,7 @@ import type {
 import { retryFailedRelays } from "../orb/relay";
 import { sha256Hex } from "../utils/crypto";
 import { errorMessage, nowIso } from "../utils/json";
+import { maybeSuggestMilestoneMatchForPr } from "../integrations/project-tracker-adapter";
 
 const OFFICIAL_MINER_DETECTION_TTL_MS = 5 * 60 * 1000;
 const OFFICIAL_MINER_DETECTION_UNAVAILABLE_TTL_MS = 60 * 1000;
@@ -469,9 +480,12 @@ const PR_PUBLIC_SURFACE_ACTIONS = new Set([
 ]);
 const PR_GATE_CLOSED_ACTIONS = new Set(["closed"]);
 const ISSUE_PLAN_COOLDOWN_MS = 10 * 60 * 1000;
+const NOTIFY_EVALUATE_EVENTS_PER_JOB = 100;
+
+type RequiredStatusContextsLookup = { requiredContexts: Set<string> | null; resolved: boolean };
 
 interface LiveGithubFacts {
-  requiredContexts: Map<string, Promise<Set<string> | null>>;
+  requiredContexts: Map<string, Promise<RequiredStatusContextsLookup>>;
   ciAggregates: Map<string, Promise<LiveCiAggregate>>;
   mergeStates: Map<string, Promise<string | undefined>>;
 }
@@ -496,6 +510,14 @@ function liveFactTokenPart(token: string | undefined): string {
     hash = Math.imul(hash, 0x01000193);
   }
   return `token:${token.length}:${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function chunkNotificationEvents(events: DetectedNotificationEvent[]): DetectedNotificationEvent[][] {
+  const chunks: DetectedNotificationEvent[][] = [];
+  for (let start = 0; start < events.length; start += NOTIFY_EVALUATE_EVENTS_PER_JOB) {
+    chunks.push(events.slice(start, start + NOTIFY_EVALUATE_EVENTS_PER_JOB));
+  }
+  return chunks;
 }
 
 function githubAdmissionKeyForToken(
@@ -528,6 +550,17 @@ function expectedCiContextsKeyPart(expectedCiContexts: ReadonlyArray<string> | n
   return [...expectedCiContexts].sort().join(" ");
 }
 
+// Stable, order-independent cache-key fragment for the RESOLVED required-contexts set (#selfhost-ci-verification):
+// unlike expectedCiContextsKeyPart above (the raw, unresolved settings.expectedCiContexts config), this reflects
+// mergeRequiredCiContexts' actual output -- live branch-protection required contexts unioned with config. The
+// durable cross-job CI-state cache (cachedFetchLiveCiAggregate) MUST key on this, not on the raw config: branch
+// protection can change server-side while expectedCiContexts config stays put, and a stale durable row keyed only
+// on the unchanged config would keep serving an aggregate computed against the old required-context set.
+function resolvedRequiredContextsKeyPart(requiredContexts: ReadonlySet<string> | null | undefined): string {
+  if (!requiredContexts || requiredContexts.size === 0) return "";
+  return JSON.stringify([...requiredContexts].sort());
+}
+
 // RC2 + #selfhost-ci-verification: the EFFECTIVE required-status-check contexts for this repo/baseRef, merging
 // live branch-protection required contexts with the maintainer-configured settings.expectedCiContexts fallback
 // (mergeRequiredCiContexts — branch protection stays authoritative when readable; expectedCiContexts is the
@@ -541,16 +574,20 @@ function cachedRequiredStatusContexts(
   token: string | undefined,
   expectedCiContexts: ReadonlyArray<string> | null | undefined,
   admissionKey?: GitHubRateLimitAdmissionKey,
-): Promise<Set<string> | null> {
+): Promise<RequiredStatusContextsLookup> {
   const key = liveFactKey(repoFullName, baseRef, liveFactTokenPart(token), expectedCiContextsKeyPart(expectedCiContexts));
   const cached = facts.requiredContexts.get(key);
   if (cached) return cached;
+  let branchProtectionFetchFailed = false;
   const next = evictLiveFactOnReject(
     facts.requiredContexts,
     key,
-    fetchRequiredStatusContexts(env, repoFullName, baseRef, token, admissionKey).then((branchProtectionContexts) =>
-      mergeRequiredCiContexts(branchProtectionContexts, expectedCiContexts),
-    ),
+    fetchRequiredStatusContexts(env, repoFullName, baseRef, token, admissionKey, () => {
+      branchProtectionFetchFailed = true;
+    }).then((branchProtectionContexts) => ({
+      requiredContexts: mergeRequiredCiContexts(branchProtectionContexts, expectedCiContexts),
+      resolved: !branchProtectionFetchFailed,
+    })),
   );
   facts.requiredContexts.set(key, next);
   return next;
@@ -567,23 +604,84 @@ function evictLiveFactOnReject<T>(
   });
 }
 
+/**
+ * Cached read of the live CI aggregate, backed by pull_request_detail_sync_state (#selfhost-ci-verification,
+ * sibling to the #2537 PR-state cache in backfill.ts). A fresh cache row (webhook-invalidated on
+ * check_run/check_suite `completed` via invalidateCiStateCache, capped at CI_STATE_CACHE_MAX_AGE_MS) is served
+ * without a GitHub call; otherwise fetches live via fetchLiveCiAggregatePreferGraphQl and write-throughs the
+ * result via writeThroughCiStateCache. Fail-open throughout: any cache read/write hiccup falls back to /
+ * degrades to a live fetch, never blocks it.
+ *
+ * `forceRefresh` (set by refreshLiveCiAggregate below, mirroring refreshLiveMergeState's OWN "never durable-
+ * cached" contract for merge-state): skips the freshness CHECK entirely (the existing row is still fetched, to
+ * carry its `status` field into the write-through's previousState, but is never treated as a hit), so this always
+ * fetches live -- a "refresh" caller needs a genuinely fresh read even within the SAME job pass (e.g. re-checking
+ * CI right after this pass's own gate/check-run publication, which can flip a status GitHub hasn't sent a webhook
+ * for yet). The WRITE-through still happens on a forced refresh, so a LATER pass/job still benefits from this read.
+ *
+ * Deliberately implemented HERE, not in backfill.ts (where writeThroughCiStateCache/isCiStateCacheFresh/
+ * deserializeCachedCiAggregate live) -- a same-module call from backfill.ts to its own
+ * fetchLiveCiAggregatePreferGraphQl would be invisible to `vi.spyOn(backfillModule,
+ * "fetchLiveCiAggregatePreferGraphQl")`, which many existing tests already rely on to intercept the CROSS-module
+ * call this file has always made. Keeping the orchestration here preserves that exact, already-tested call shape.
+ *
+ * NEVER call this from an act-boundary merge/close decision -- services/agent-approval-queue.ts and
+ * services/agent-action-executor.ts call fetchLiveCiAggregate/fetchLiveCiAggregatePreferGraphQl directly, by
+ * design, and must keep doing so.
+ */
+async function cachedFetchLiveCiAggregate(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  headSha: string | null | undefined,
+  token: string | undefined,
+  requiredContexts: ReadonlySet<string> | null | undefined,
+  requiredContextsKey: string,
+  forceRefresh: boolean,
+  // False when the caller's own required-context lookup FAILED (not merely resolved to "none configured") --
+  // that fail-open aggregate must never be persisted under the normal key, or a transient lookup error would
+  // mask the repo's real required-context state for every other reader until the entry's TTL expires (#selfhost-
+  // ci-verification gate review finding). The live-fetched aggregate is still returned to THIS caller either way.
+  requiredContextsResolved: boolean,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<LiveCiAggregate> {
+  const cached = await getPullRequestDetailSyncState(env, repoFullName, prNumber).catch(() => null);
+  if (!forceRefresh && cached && isCiStateCacheFresh(cached, headSha, requiredContextsKey)) {
+    const deserialized = deserializeCachedCiAggregate(cached);
+    if (deserialized) {
+      incr(CI_STATE_CACHE_METRIC, { field: "aggregate", result: "hit" });
+      return deserialized;
+    }
+  }
+  incr(CI_STATE_CACHE_METRIC, { field: "aggregate", result: forceRefresh ? "forced" : "miss" });
+  const live = await fetchLiveCiAggregatePreferGraphQl(env, repoFullName, headSha, token, requiredContexts, admissionKey);
+  if (requiredContextsResolved) {
+    await writeThroughCiStateCache(env, repoFullName, prNumber, cached, headSha, requiredContextsKey, live);
+  }
+  return live;
+}
+
 function fetchLiveCiAggregateWithRequiredContexts(
   env: Env,
   repoFullName: string,
   facts: LiveGithubFacts,
+  prNumber: number,
   headSha: string | null | undefined,
   baseRef: string | null | undefined,
   token: string | undefined,
   expectedCiContexts: ReadonlyArray<string> | null | undefined,
+  forceRefresh: boolean,
   admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<LiveCiAggregate> {
   // CI refresh callers need fresh check/status state; branch protection contexts move slowly enough to stay
   // request-cached. When the #1941 flag is on, fetchLiveCiAggregatePreferGraphQl collapses the check/status reads
   // into one GraphQL rollup (reusing these requiredContexts), else it uses the proven REST aggregate.
+  // cachedFetchLiveCiAggregate (#selfhost-ci-verification) is the durable, cross-job snapshot cache sibling to
+  // this request-scoped LiveGithubFacts memo -- it is only ever consulted here, on a LiveGithubFacts miss.
   return cachedRequiredStatusContexts(env, repoFullName, facts, baseRef, token, expectedCiContexts, admissionKey)
-    .catch(() => null)
-    .then((requiredContexts) =>
-      fetchLiveCiAggregatePreferGraphQl(env, repoFullName, headSha, token, requiredContexts, admissionKey),
+    .catch(() => ({ requiredContexts: null, resolved: false }))
+    .then(({ requiredContexts, resolved }) =>
+      cachedFetchLiveCiAggregate(env, repoFullName, prNumber, headSha, token, requiredContexts, resolvedRequiredContextsKeyPart(requiredContexts), forceRefresh, resolved, admissionKey),
     );
 }
 
@@ -591,6 +689,7 @@ function cachedLiveCiAggregate(
   env: Env,
   repoFullName: string,
   facts: LiveGithubFacts,
+  prNumber: number,
   headSha: string | null | undefined,
   baseRef: string | null | undefined,
   token: string | undefined,
@@ -607,10 +706,12 @@ function cachedLiveCiAggregate(
       env,
       repoFullName,
       facts,
+      prNumber,
       headSha,
       baseRef,
       token,
       expectedCiContexts,
+      false,
       admissionKey,
     ),
   );
@@ -622,6 +723,7 @@ function refreshLiveCiAggregate(
   env: Env,
   repoFullName: string,
   facts: LiveGithubFacts,
+  prNumber: number,
   headSha: string | null | undefined,
   baseRef: string | null | undefined,
   token: string | undefined,
@@ -636,10 +738,12 @@ function refreshLiveCiAggregate(
       env,
       repoFullName,
       facts,
+      prNumber,
       headSha,
       baseRef,
       token,
       expectedCiContexts,
+      true,
       admissionKey,
     ),
   );
@@ -726,11 +830,6 @@ const PUBLIC_MANIFEST_POLICY_FINDING_OVERRIDES: Partial<
     Pick<AdvisoryFinding, "detail" | "action">
   >
 > = {
-  manifest_blocked_path: {
-    detail: "Changed paths match maintainer-blocked areas.",
-    action:
-      "Move this work out of the maintainer-blocked area or confirm with the maintainer before opening a PR.",
-  },
   manifest_missing_tests: {
     detail: "Maintainer test expectations are not satisfied by this PR.",
     action:
@@ -833,15 +932,6 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
     case "refresh-scoring-model":
       await refreshScoringModelSnapshot(env);
       return;
-    case "refresh-upstream-sources":
-      await refreshUpstreamSourceSnapshots(env);
-      return;
-    case "build-upstream-ruleset":
-      await buildUpstreamRulesetSnapshot(env);
-      return;
-    case "detect-upstream-drift":
-      await detectAndPersistUpstreamDrift(env);
-      return;
     case "refresh-upstream-drift":
       await refreshUpstreamDrift(env);
       return;
@@ -900,6 +990,13 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       }
       await sweepRepoBacklogConvergence(env, message.repoFullName, message.requestedBy);
       return;
+    case "repo-doc-refresh-sweep":
+      if (!message.repoFullName && message.requestedBy !== "test") {
+        await fanOutRepoDocRefreshSweepJobs(env, message.requestedBy);
+        return;
+      }
+      if (message.repoFullName) await performRepoDocRefresh(env, message.repoFullName);
+      return;
     case "agent-regate-pr":
       // One bounded re-gate unit fanned out by the sweep (#audit-sweep-fanout): re-review + stamp a single PR.
       await regatePullRequest(
@@ -909,6 +1006,7 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
         message.installationId,
         message.deliveryId,
         message.force,
+        message.prCreatedAt,
       );
       return;
     case "run-agent":
@@ -1412,7 +1510,7 @@ async function sweepRepoRegate(
     env,
     repoFullName,
     openPullRequests,
-    settings.gateCheckMode === "enabled",
+    shouldPublishReviewCheck(settings.reviewCheckMode),
   );
   const regateBacklog = requestedBy === "schedule" ? await currentRegateBacklog(env) : 0;
   // Normal stale maintenance yields behind existing per-PR repairs. Missing current Gate checks are outage repair:
@@ -1550,6 +1648,7 @@ async function sweepRepoRegate(
         repoFullName,
         prNumber: pr.number,
         installationId: sweepInstallationId,
+        ...(pr.createdAt ? { prCreatedAt: pr.createdAt } : {}),
       };
       const delaySeconds = Math.min(index * 10, 600);
       await (delaySeconds > 0
@@ -1625,6 +1724,47 @@ async function fanOutBacklogConvergenceSweepJobs(
   });
 }
 
+// Repo-doc refresh sweep (#3003, part of #2993): enumerate every installed repo, bulk-load their
+// .gittensory.yml manifests, and enqueue one per-repo job for each repo that (a) has
+// repoDocGeneration.enabled: true and (b) is due per its own refreshIntervalDays (default weekly). No atomic
+// fan-out dedup (unlike agent-regate-sweep) -- this runs once a day, not every tick, so a burst of overlapping
+// fan-outs is not a realistic risk. Eligibility/scope/diffing itself lives entirely inside
+// openRepoDocPullRequest (via performRepoDocRefresh) -- this fan-out is purely an enumeration + rate-limiting
+// optimization so a stable repo isn't re-checked more often than its own configured interval.
+async function fanOutRepoDocRefreshSweepJobs(env: Env, requestedBy: "schedule" | "api" | "test"): Promise<void> {
+  const now = nowIso();
+  const repoFullNames = (await listRepositories(env)).map((repo) => repo.fullName);
+  const manifests = await loadRepoFocusManifests(env, repoFullNames);
+  const enabledRepos = repoFullNames.flatMap((repoFullName) => {
+    const manifest = manifests.get(repoFullName.toLowerCase());
+    return manifest?.repoDocGeneration.enabled ? [{ repoFullName, manifest }] : [];
+  });
+  // Bulk-loaded in ONE round trip rather than one `getLastRepoDocRefreshAttemptedAt` call per repo (#3202
+  // review finding) -- this sweep runs daily across every installed repo, so a per-repo query here would scale
+  // linearly in DB round trips with the installed-repo count.
+  const lastAttempts = await getLastRepoDocRefreshAttemptedAtBulk(
+    env,
+    enabledRepos.map((entry) => entry.repoFullName),
+  );
+  const due = enabledRepos
+    .filter((entry) =>
+      isRepoDocRefreshDue(lastAttempts.get(entry.repoFullName)?.generatedAt ?? null, entry.manifest.repoDocGeneration.refreshIntervalDays, now),
+    )
+    .map((entry) => entry.repoFullName);
+  await Promise.all(
+    due.map((repoFullName, index) => {
+      const message: JobMessage = { type: "repo-doc-refresh-sweep", requestedBy, repoFullName };
+      const delaySeconds = Math.min(index * 10, 600);
+      return delaySeconds > 0 ? env.JOBS.send(message, { delaySeconds }) : env.JOBS.send(message);
+    }),
+  );
+  await recordAuditEvent(env, {
+    eventType: "repo_doc.refresh.fanout",
+    outcome: "queued",
+    metadata: { repoCount: due.length, requestedBy },
+  });
+}
+
 // #selfhost-backlog-convergence: sweep one repo's open PRs for a stale/missing public review surface at the
 // current head (see selfhost/backlog-convergence.ts for why this is a distinct signal from the re-gate sweep's
 // own staleness check) and fan out one `agent-regate-pr` job per candidate, tagged with a `backlog-convergence:`
@@ -1668,6 +1808,7 @@ async function sweepRepoBacklogConvergence(
         repoFullName,
         prNumber: pr.number,
         installationId: sweepInstallationId,
+        ...(pr.createdAt ? { prCreatedAt: pr.createdAt } : {}),
       };
       const delaySeconds = Math.min(index * 10, 600);
       return delaySeconds > 0
@@ -1706,6 +1847,7 @@ async function regatePullRequest(
   installationId: number,
   deliveryId: string,
   force?: boolean,
+  prCreatedAt?: string | null,
 ): Promise<void> {
   // Reserve installation rate-limit headroom (#audit-rate-headroom): all repos share ONE GitHub App installation
   // = ONE REST bucket, so when the shared budget is low, DEFER this re-review until the reset instead of
@@ -1728,6 +1870,7 @@ async function regatePullRequest(
         repoFullName,
         prNumber,
         installationId,
+        ...(prCreatedAt ? { prCreatedAt } : {}),
         ...(force ? { force: true } : {}),
       },
       { delaySeconds: delayUntil(rateResetAt) },
@@ -1844,9 +1987,108 @@ export function applyPrecisionBreakers(
   planned: PlannedAgentAction[],
   holdOnly: boolean,
   closeHoldOnly: boolean,
+  labelSettings: AgentDispositionLabelSettings = {},
 ): PlannedAgentAction[] {
-  const afterMerge = holdOnly ? downgradeMergeToHold(planned, true) : planned;
-  return closeHoldOnly ? downgradeCloseToHold(afterMerge, true) : afterMerge;
+  const afterMerge = holdOnly ? downgradeMergeToHold(planned, true, labelSettings) : planned;
+  return closeHoldOnly ? downgradeCloseToHold(afterMerge, true, labelSettings) : afterMerge;
+}
+
+/** PURE: which precision-breaker directions actually rewrote the plan — i.e. `planned` had a merge/close that
+ *  `breakerOnPlan` (the post-{@link applyPrecisionBreakers} result) no longer has. Extracted from the call site
+ *  so the bounded-cardinality observability counter (#terminal-outcome-audit) is unit-tested directly, the same
+ *  way applyPrecisionBreakers itself is. Returns at most one entry per direction, in a stable merge-then-close
+ *  order; empty on the common (not-engaged, or nothing downgraded) path. */
+export function precisionBreakerDowngradeDirections(planned: PlannedAgentAction[], breakerOnPlan: PlannedAgentAction[]): Array<"merge" | "close"> {
+  // Reference identity, not "is the class still present anywhere in the array": downgradeMergeToHold /
+  // downgradeCloseToHold both filter() the input (preserving object identity for every KEPT action) and only
+  // ever push brand-new label actions, so a specific planned action survives iff the SAME object reference is
+  // still in breakerOnPlan. A coarse `!breakerOnPlan.some(actionClass === "close")` check would miss a downgrade
+  // when a plan carries TWO close actions and only one (the heuristic one) is dropped — the surviving
+  // deterministic close keeps that check from ever firing even though the breaker did rewrite the plan (gate
+  // review finding, round 2).
+  const kept = new Set(breakerOnPlan);
+  const directions: Array<"merge" | "close"> = [];
+  if (planned.some((action) => action.actionClass === "merge" && !kept.has(action))) directions.push("merge");
+  if (planned.some((action) => action.actionClass === "close" && !kept.has(action))) directions.push("close");
+  return directions;
+}
+
+/** PURE: the bounded `{actionClass, blockerClass}` label pair for the `gittensory_agent_disposition_total`
+ *  counter (#terminal-outcome-audit), derived from the FINAL post-breaker plan and the gate's own blocker/hold
+ *  codes -- never from free text. `actionClass` is "merge"/"close" when the final plan still contains that
+ *  action, else "hold" (guardrail, owner-exemption, migration-collision, not-yet-mergeable, breaker-downgraded,
+ *  or any other bucket that produces no merge/close action). `blockerClass` is the first gate-blocker code
+ *  (a `failure` conclusion); when the gate reported none, it falls back to `holdReasonCode` -- the bounded
+ *  reason class for a `neutral` conclusion (guardrail_hold/oversized_pr/ai_review_inconclusive/etc., see
+ *  `neutralHoldReasonCode`) -- so a real, nameable hold is never flattened to the same "none" bucket as a
+ *  merge-ready PR waiting on nothing more than pending CI. */
+export function agentDispositionLabels(
+  breakerOnPlan: PlannedAgentAction[],
+  gateBlockerCodes: string[],
+  holdReasonCode: string | null,
+): { actionClass: "merge" | "close" | "hold"; blockerClass: string } {
+  const actionClass = breakerOnPlan.some((action) => action.actionClass === "merge")
+    ? "merge"
+    : breakerOnPlan.some((action) => action.actionClass === "close")
+      ? "close"
+      : "hold";
+  return { actionClass, blockerClass: gateBlockerCodes[0] ?? holdReasonCode ?? "none" };
+}
+
+const AGENT_HOLD_AUDIT_REASON_MAX_LENGTH = 240;
+
+function boundAgentHoldAuditReason(reason: string): string {
+  return reason.length > AGENT_HOLD_AUDIT_REASON_MAX_LENGTH
+    ? `${reason.slice(0, AGENT_HOLD_AUDIT_REASON_MAX_LENGTH)}...`
+    : reason;
+}
+
+export function agentHoldAuditDetail(args: {
+  planned: PlannedAgentAction[];
+  breakerOnPlan: PlannedAgentAction[];
+  gateConclusion: string;
+  gateBlockerCodes: string[];
+  ciState: string;
+  ciHasPending: boolean;
+  mergeableState: string | null | undefined;
+  approvalsSatisfied: boolean;
+  authorIsOwner: boolean;
+  authorIsAdmin: boolean;
+  authorIsAutomationBot: boolean;
+  closeOwnerAuthors: boolean;
+  mergeAutonomy: string;
+  closeAutonomy: string;
+}): string {
+  const plannedTerminalAction = args.planned.some((action) => action.actionClass === "merge" || action.actionClass === "close");
+  const finalTerminalAction = args.breakerOnPlan.some((action) => action.actionClass === "merge" || action.actionClass === "close");
+  if (plannedTerminalAction && !finalTerminalAction)
+    return "auto-action held by precision circuit breaker";
+  if (args.ciHasPending || args.ciState === "pending")
+    return "auto-action held because CI is still pending";
+  if (args.ciState === "failed")
+    return "auto-action held because CI is failing but no close action was planned";
+  if (args.gateConclusion === "success") {
+    if (args.mergeableState === "dirty")
+      return "merge withheld because the PR conflicts with the base branch";
+    if (args.mergeableState && args.mergeableState !== "clean")
+      return boundAgentHoldAuditReason(`merge withheld because mergeable_state is ${args.mergeableState}`);
+    if (!args.approvalsSatisfied)
+      return "merge withheld because required approvals are not satisfied";
+    if (args.mergeAutonomy !== "auto" && args.mergeAutonomy !== "auto_with_approval")
+      return boundAgentHoldAuditReason(`merge withheld because merge autonomy is ${args.mergeAutonomy}`);
+    return "merge withheld because no merge action was planned";
+  }
+  const protectedAuthor = args.authorIsAutomationBot || args.authorIsOwner || args.authorIsAdmin;
+  if (args.gateBlockerCodes.length > 0) {
+    if (protectedAuthor && args.closeOwnerAuthors !== true)
+      return boundAgentHoldAuditReason(`close withheld for protected author on gate blocker ${args.gateBlockerCodes[0]}`);
+    if (args.closeAutonomy !== "auto" && args.closeAutonomy !== "auto_with_approval")
+      return boundAgentHoldAuditReason(`close withheld because close autonomy is ${args.closeAutonomy}`);
+    return boundAgentHoldAuditReason(`held on gate blocker ${args.gateBlockerCodes[0]}`);
+  }
+  if (protectedAuthor && args.closeOwnerAuthors !== true)
+    return "auto-action held for protected author";
+  return "no auto-action planned";
 }
 
 /**
@@ -1873,6 +2115,16 @@ function freshnessBlocksReviewOutput(
   freshness: PullRequestFreshness,
 ): freshness is BlockingPullRequestFreshness {
   return freshness.status === "stale";
+}
+
+class RetryablePullRequestFreshnessUnavailableError extends RetryableJobError {
+  constructor() {
+    super("live PR state unavailable; retrying review output publication", {
+      retryAfterMs: 60_000,
+      retryKind: "pr_freshness_unavailable",
+    });
+    this.name = "RetryablePullRequestFreshnessUnavailableError";
+  }
 }
 
 async function reviewTargetFreshness(
@@ -1908,6 +2160,12 @@ async function reviewTargetFreshness(
       expectedHeadSha: freshness.expectedHeadSha,
       liveHeadSha: freshness.liveHeadSha,
       liveState: freshness.liveState,
+      ...(freshness.reason === "unavailable"
+        ? {
+            unavailableSource: freshness.unavailableSource ?? "unknown",
+            unavailableDetail: freshness.unavailableDetail ?? null,
+          }
+        : {}),
     },
   }).catch(() => undefined);
   return freshness;
@@ -1968,7 +2226,8 @@ async function maybeRunAgentMaintenance(
   // critical section (extracted below so the try/finally doesn't force-reindent that whole block); a pass that
   // loses the race defers cleanly — the next webhook/sweep tick is the backstop. Lightweight stand-in for the
   // per-PR SubmissionLock Durable Object noted as a longer-term TODO in env.d.ts.
-  if (!(await claimPrActuationLock(env, repoFullName, pr.number))) return;
+  const actuationLock = await claimPrActuationLock(env, repoFullName, pr.number);
+  if (!actuationLock.acquired) return;
   try {
     await runAgentMaintenancePlanAndExecute(env, {
       installationId,
@@ -1982,7 +2241,7 @@ async function maybeRunAgentMaintenance(
       liveFacts: args.liveFacts,
     });
   } finally {
-    await releasePrActuationLock(env, repoFullName, pr.number);
+    await releasePrActuationLock(env, repoFullName, pr.number, actuationLock.ownerToken);
   }
 }
 
@@ -2019,10 +2278,10 @@ async function runAgentMaintenancePlanAndExecute(
   const token = ciToken ?? env.GITHUB_PUBLIC_TOKEN;
   const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
   const baseRef = pr.baseRef ?? args.repo?.defaultBranch;
+  const hardGuardrailGlobs = resolveHardGuardrailGlobs(settings);
   const [
     changedFiles,
-    hardGuardrailGlobs,
-    requiredContexts,
+    requiredContextsLookup,
     liveMergeState,
     liveReviewDecision,
   ] = await Promise.all([
@@ -2031,7 +2290,6 @@ async function runAgentMaintenancePlanAndExecute(
       repoFullName,
       pullNumber: pr.number,
     }),
-    loadHardGuardrailGlobs(env, repoFullName),
     // RC2: branch-protection REQUIRED status contexts, so only a required red check gates the PR (a red
     // codecov/* is surfaced but never blocks merge/approve or forces request_changes). null ⇒ fold all red.
     cachedRequiredStatusContexts(
@@ -2052,10 +2310,12 @@ async function runAgentMaintenancePlanAndExecute(
     // is not re-reviewed for the same state.
     fetchLivePullRequestReviewDecision(env, repoFullName, pr.number, token, admissionKey),
   ]);
+  const requiredContexts = requiredContextsLookup.requiredContexts;
   const ciAggregate = await refreshLiveCiAggregate(
     env,
     repoFullName,
     args.liveFacts,
+    pr.number,
     pr.headSha,
     baseRef,
     token,
@@ -2159,6 +2419,7 @@ async function runAgentMaintenancePlanAndExecute(
     body: pr.body,
     linkedIssues: pr.linkedIssues,
     ciToken,
+    prAuthorLogin: pr.authorLogin,
     installationId,
   });
 
@@ -2288,6 +2549,11 @@ async function runAgentMaintenancePlanAndExecute(
     }
   }
 
+  const autoMaintain =
+    settings.autoMaintain ?? DEFAULT_AUTO_MAINTAIN_POLICY;
+  const approvalsSatisfied =
+    autoMaintain.requireApprovals === 0 ||
+    (liveReviewDecision ?? pr.reviewDecision) === "APPROVED";
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
     blockerTitles: gate.blockers.map((blocker) => blocker.title),
@@ -2299,6 +2565,11 @@ async function runAgentMaintenancePlanAndExecute(
     slopGateMinScore: settings.slopGateMinScore,
     changedPaths,
     hardGuardrailGlobs,
+    manualReviewLabel: settings.manualReviewLabel,
+    readyToMergeLabel: settings.readyToMergeLabel,
+    changesRequestedLabel: settings.changesRequestedLabel,
+    migrationCollisionLabel: settings.migrationCollisionLabel,
+    pendingClosureLabel: settings.pendingClosureLabel,
     authorIsOwner,
     authorIsAdmin,
     authorIsAutomationBot,
@@ -2343,6 +2614,7 @@ async function runAgentMaintenancePlanAndExecute(
       headSha: pr.headSha,
       mergeBlockedSha: pr.mergeBlockedSha,
       approvedHeadSha: pr.approvedHeadSha,
+      authorLogin: pr.authorLogin,
     },
   });
   // Accuracy circuit-breakers (#self-improve / GAP-4): two INDEPENDENT, fail-open precision breakers, chained.
@@ -2356,8 +2628,93 @@ async function runAgentMaintenancePlanAndExecute(
     planned,
     await isHoldOnly(env, repoFullName),
     await isCloseHoldOnly(env, repoFullName),
+    {
+      manualReviewLabel: settings.manualReviewLabel,
+      readyToMergeLabel: settings.readyToMergeLabel,
+      changesRequestedLabel: settings.changesRequestedLabel,
+      migrationCollisionLabel: settings.migrationCollisionLabel,
+      pendingClosureLabel: settings.pendingClosureLabel,
+    },
   );
-  if (breakerOnPlan.length === 0) return;
+  // Observability (#terminal-outcome-audit): a bounded-cardinality counter (direction only — no repo/PR/reason
+  // text) so an operator can see, at a glance, how much of the plan a breaker is currently rewriting, without
+  // re-deriving it from individual PR audit rows. Fires only when the breaker actually changed something —
+  // the common (not-engaged) path increments nothing, matching every other breaker log in this codebase.
+  for (const direction of precisionBreakerDowngradeDirections(planned, breakerOnPlan)) {
+    incr("gittensory_precision_breaker_downgrades_total", { direction });
+  }
+  // Observability (#terminal-outcome-audit): the final per-pass disposition, ALWAYS recorded -- including the
+  // "hold" bucket below (guardrail, owner-exemption, migration-collision, breaker-downgraded, or any other
+  // reason that produces no merge/close action), which previously left NO aggregate signal at all. Placed
+  // BEFORE the early return so an empty breakerOnPlan (the most common hold shape: nothing was ever planned)
+  // still increments. autonomy_level reports the class most directly relevant to the recorded action_class --
+  // `close` for a hold, since "autonomy.close is auto but this PR still holds" is the exact symptom this
+  // metric exists to make visible without hand-querying review_audit. `gate.blockers` is always empty for a
+  // `neutral` conclusion (see evaluateGateCheckCore) -- neutralHoldReasonCode recovers the real, nameable hold
+  // reason from `gate.warnings` in that case, so a guardrail/size/manifest-blocked hold doesn't flatten to the
+  // same "none" bucket as a merge-ready PR waiting on nothing more than pending CI.
+  const disposition = agentDispositionLabels(breakerOnPlan, gate.blockers.map((blocker) => blocker.code), neutralHoldReasonCode(gate));
+  incr("gittensory_agent_disposition_total", {
+    repo: repoFullName,
+    action_class: disposition.actionClass,
+    blocker_class: disposition.blockerClass,
+    autonomy_level: resolveAutonomy(settings.autonomy, disposition.actionClass === "merge" ? "merge" : "close"),
+  });
+  // The native eval source is used by the self-tune precision breakers, so the stored prediction must reflect the
+  // downstream autonomous disposition (merge/close/hold), not only the gate check conclusion. In particular, a
+  // failing gate can still become a concrete auto-close after CI/conflict/duplicate/linked-issue planning; recording
+  // only the gate's hold-shaped conclusion would blind the close-precision breaker to those live closes.
+  await recordNativeGateDecision(env, {
+    project: repoFullName,
+    pullNumber: pr.number,
+    headSha: pr.headSha,
+    conclusion: gate.conclusion,
+    action: disposition.actionClass,
+    reasonCode: disposition.blockerClass === "none" ? gate.conclusion : disposition.blockerClass,
+  });
+  if (disposition.actionClass === "hold") {
+    const gateBlockerCodes = gate.blockers.map((blocker) => blocker.code);
+    const holdDetail = agentHoldAuditDetail({
+      planned,
+      breakerOnPlan,
+      gateConclusion: gate.conclusion,
+      gateBlockerCodes,
+      ciState: ciAggregate.ciState,
+      ciHasPending: ciAggregate.hasPending,
+      mergeableState: liveMergeState ?? pr.mergeableState,
+      approvalsSatisfied,
+      authorIsOwner,
+      authorIsAdmin,
+      authorIsAutomationBot,
+      closeOwnerAuthors: settings.closeOwnerAuthors,
+      mergeAutonomy: resolveAutonomy(settings.autonomy, "merge"),
+      closeAutonomy: resolveAutonomy(settings.autonomy, "close"),
+    });
+    await recordAuditEvent(env, {
+      eventType: "agent.action.hold",
+      actor: "gittensory",
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "completed",
+      detail: holdDetail,
+      metadata: {
+        deliveryId,
+        repoFullName,
+        pullNumber: pr.number,
+        gateConclusion: gate.conclusion,
+        gateBlockerCodes,
+        ciState: ciAggregate.ciState,
+        ciHasPending: ciAggregate.hasPending,
+        mergeableState: liveMergeState ?? pr.mergeableState ?? null,
+        reviewDecision: liveReviewDecision ?? pr.reviewDecision ?? null,
+        disposition,
+        plannedActionClasses: planned.map((action) => action.actionClass),
+        finalActionClasses: breakerOnPlan.map((action) => action.actionClass),
+      },
+    }).catch(() => undefined);
+  }
+  if (breakerOnPlan.length === 0) {
+    return;
+  }
 
   // #2552 (gate review finding, round 2): force a fresh rebase + CI recheck when the base has advanced within
   // the configured window, immediately before what would otherwise be an agent-driven merge — mergeable_state
@@ -2416,6 +2773,10 @@ async function runAgentMaintenancePlanAndExecute(
         moderationWarningLabel: settings.moderationWarningLabel,
         moderationBannedLabel: settings.moderationBannedLabel,
       },
+      // #selfhost-ci-verification: the executor's own final pre-mutation live-CI re-check (immediately before a
+      // merge or a CI-driven close) must honor the same configured expectedCiContexts this plan was evaluated
+      // against, or the two can disagree on ciState.
+      expectedCiContexts: settings.expectedCiContexts,
     },
     breakerOnPlan,
   );
@@ -2732,17 +3093,23 @@ async function prReadyForReview(
   }
   // 2) wait for CI to finish before running the Gittensory review. Required contexts still define which failures
   // block/close, but hasPending tracks any visible non-bot CI that is not settled yet.
-  const ci = await cachedLiveCiAggregate(env, repoFullName, liveFacts, pr.headSha, pr.baseRef, token, settings.expectedCiContexts, admissionKey).catch(() => undefined);
+  const ci = await cachedLiveCiAggregate(env, repoFullName, liveFacts, pr.number, pr.headSha, pr.baseRef, token, settings.expectedCiContexts, admissionKey).catch(() => undefined);
   if (ci?.hasPending) {
     // Staleness cap: inferred or unreadable pending CI can otherwise defer FOREVER (orphaned required context,
-    // transiently unreadable pages, fork check that never reports). Past STUCK_CI_DEFER_MS we stop deferring and
-    // let the gate FINALIZE so the PR surfaces. A trusted required/base-repo visibly queued/in_progress CI
-    // signal is active CI, though, so never cut in front of it. first-seen is tracked in the self-host Redis
-    // transient cache per PR+headSha (a new push = a fresh window); a cache miss degrades to the old defer.
-    // (#ci-stuck-finalize)
+    // transiently unreadable pages, fork check that never reports). Past the cap we stop deferring and let the
+    // gate FINALIZE so the PR surfaces. A trusted required/base-repo visibly queued/in_progress CI signal is
+    // active CI, though, so never cut in front of it. A required context that never appeared in any page this
+    // fetch read to completion (hasMissingRequiredContext) has NO webhook to ever wait for — nothing fires
+    // check_run/check_suite "completed" for a context name that structurally never runs (a path-filtered
+    // workflow, a mistyped branch-protection context) — so it gets a much shorter cap than genuinely active or
+    // merely unreadable/non-required pending CI (#selfhost-ci-deferral-staleness). first-seen is tracked in the
+    // self-host Redis transient cache per PR+headSha (a new push = a fresh window, and the SAME key anchors
+    // both cap classes so a pending reason that changes class mid-window doesn't reset the clock); a cache
+    // miss degrades to the old defer. (#ci-stuck-finalize)
+    const deferCapMs = ci.hasMissingRequiredContext ? MISSING_REQUIRED_CONTEXT_DEFER_MS : STUCK_CI_DEFER_MS;
     if (
       ci.hasVisiblePending ||
-      !(await ciPendingDeferStuck(env, repoFullName, pr.number, pr.headSha))
+      !(await ciPendingDeferStuck(env, repoFullName, pr.number, pr.headSha, deferCapMs))
     ) {
       await recordAuditEvent(env, {
         eventType: "github_app.review_deferred_ci_pending",
@@ -2772,6 +3139,14 @@ async function prReadyForReview(
 // that will never report). Past it, prReadyForReview stops deferring and finalizes the gate so the PR surfaces
 // (held / needs-human) instead of deferring forever. Generous so a genuinely-slow CI is never cut off early.
 const STUCK_CI_DEFER_MS = 30 * 60 * 1000;
+
+// A required branch-protection context that never appeared in any check-run/status page a fetch read to
+// completion (#selfhost-ci-deferral-staleness) has no webhook to ever wait for — unlike genuinely active or
+// merely unreadable/non-required pending CI, there is no forward signal this cap races against, so it can be
+// much shorter than STUCK_CI_DEFER_MS: long enough to absorb GitHub's own event-ordering lag (a check-run for a
+// DIFFERENT required context still arriving, or a just-pushed commit's check-runs not yet indexed) without
+// stalling review for up to half an hour on a context that will structurally never post.
+const MISSING_REQUIRED_CONTEXT_DEFER_MS = 2 * 60 * 1000;
 
 async function getTransientKey(env: Env, key: string): Promise<string | null> {
   if (!env.SELFHOST_TRANSIENT_CACHE) return null;
@@ -2814,14 +3189,10 @@ async function putTransientKey(
 // than a get-then-set pair that only *looks* atomic — see claimTransientLock's doc comment for why that fallback
 // was removed.
 //
-// KNOWN LIMITATION: the lock value is a constant, not a per-holder ownership token, so release does not verify
-// it still owns the key — if a holder ran past the TTL, a later claimer's live lock could be deleted by the
-// first holder's stale `finally` release, reopening the exact race this mutex exists to close. A per-holder
-// token + a conditional (check-then-delete) release would close this properly, but needs a new atomic
-// compare-and-delete primitive on the cache adapter — tracked alongside the Durable Object follow-up above. The
-// TTL is set generously long specifically so this window is practically unreachable: the guarded operations
-// (a handful of sequential GitHub API calls, or a maintenance pass's plan-and-execute) should never legitimately
-// run anywhere near this long.
+// Per-holder ownership tokens + releaseIfValue (atomic compare-and-delete) close the race a shared constant
+// lock value used to leave open: a holder that ran past the TTL can never have its stale `finally` release
+// delete a later claimer's live lock (#2129/#2135) — release only succeeds when the caller's own token still
+// matches what's stored.
 const PR_ACTUATION_LOCK_TTL_SECONDS = 600;
 function prActuationLockKey(repoFullName: string, prNumber: number): string {
   return `pr-actuation-lock:${repoFullName.toLowerCase()}#${prNumber}`;
@@ -2830,7 +3201,7 @@ export async function claimPrActuationLock(
   env: Env,
   repoFullName: string,
   prNumber: number,
-): Promise<boolean> {
+): Promise<TransientLockClaim> {
   return claimTransientLock(
     env,
     prActuationLockKey(repoFullName, prNumber),
@@ -2841,12 +3212,9 @@ export async function releasePrActuationLock(
   env: Env,
   repoFullName: string,
   prNumber: number,
+  ownerToken: string | null,
 ): Promise<void> {
-  try {
-    await env.SELFHOST_TRANSIENT_CACHE?.del?.(prActuationLockKey(repoFullName, prNumber));
-  } catch {
-    // best-effort
-  }
+  await releaseTransientLockIfOwner(env, prActuationLockKey(repoFullName, prNumber), ownerToken);
 }
 
 // A plain thrown Error still reaches the queue's retry path (this call site is deliberately uncaught, same as
@@ -2865,16 +3233,20 @@ class PrActuationLockContendedError extends RetryableJobError {
 }
 
 /**
- * True when CI for this PR+headSha has been pending past STUCK_CI_DEFER_MS. Stamps the first-seen time in a
- * transient cache keyed by repo#pr:headSha — a new push is a new SHA, so the window resets per commit. A missing
- * cache / cache hiccup degrades to `false` (never force-finalize → keeps the safe old defer rather than acting
- * early).
+ * True when CI for this PR+headSha has been pending past `capMs`. Stamps the first-seen time in a transient
+ * cache keyed by repo#pr:headSha — a new push is a new SHA, so the window resets per commit. The SAME key is
+ * reused regardless of which cap the caller passes: if a PR's pending reason changes class between polls (e.g.
+ * a non-required check pending at first look, then a missing-required-context on a later look), the first-seen
+ * timestamp still anchors to when pending was FIRST observed for that head SHA — only the comparison threshold
+ * varies by call (#selfhost-ci-deferral-staleness). A missing cache / cache hiccup degrades to `false` (never
+ * force-finalize → keeps the safe old defer rather than acting early).
  */
 async function ciPendingDeferStuck(
   env: Env,
   repoFullName: string,
   prNumber: number,
   headSha: string | null | undefined,
+  capMs: number,
 ): Promise<boolean> {
   if (!headSha) return false;
   const key = `ci-pending-first-seen:${repoFullName.toLowerCase()}#${prNumber}:${headSha}`;
@@ -2885,7 +3257,7 @@ async function ciPendingDeferStuck(
       return false;
     }
     const firstMs = Number(first);
-    return Number.isFinite(firstMs) && Date.now() - firstMs > STUCK_CI_DEFER_MS;
+    return Number.isFinite(firstMs) && Date.now() - firstMs > capMs;
   } catch {
     return false;
   }
@@ -3070,6 +3442,7 @@ async function scheduleTrailingIssueLinkedReReview(
   installationId: number,
   repoFullName: string,
   prNumber: number,
+  prCreatedAt?: string | null,
 ): Promise<void> {
   const key = `issue-link-trailing:${repoFullName.toLowerCase()}#${prNumber}`;
   // Check-then-claim, but the CLAIM only happens after the send actually succeeds (#2371 follow-up): claiming
@@ -3086,6 +3459,7 @@ async function scheduleTrailingIssueLinkedReReview(
         repoFullName,
         prNumber,
         installationId,
+        ...(prCreatedAt ? { prCreatedAt } : {}),
       },
       { delaySeconds: CI_COALESCE_WINDOW_SECONDS },
     );
@@ -3159,6 +3533,14 @@ async function ciHeadShaResolutionCoalesced(
   );
 }
 
+/** Result of a transient-lock claim attempt. `ownerToken` is the random value THIS call wrote when it actually
+ *  acquired the lock, or null on every fail-open path (no cache, no atomic claim() primitive, a thrown claim(),
+ *  or a lost race) — there is nothing for a null-token caller to release later. */
+export type TransientLockClaim = {
+  acquired: boolean;
+  ownerToken: string | null;
+};
+
 /**
  * Best-effort exclusive claim against the self-host transient cache, shared by every per-PR/per-review advisory
  * lock below. Requires the store's native atomic claim() (Redis SET NX) to provide any real exclusivity — it is
@@ -3171,19 +3553,45 @@ async function ciHeadShaResolutionCoalesced(
  * limitation rather than a false guarantee, and costs nothing in practice — self-host's Redis-backed cache (the
  * only cache adapter this codebase ships) always implements claim(), so this is a documented limitation for a
  * hypothetical future adapter, not a live gap. A missing cache or a thrown claim() also fails OPEN (returns
- * true) — every lock built on this helper is defense-in-depth, never the primary safety gate, and must never
- * itself block real work from running.
+ * acquired: true) — every lock built on this helper is defense-in-depth, never the primary safety gate, and
+ * must never itself block real work from running.
+ *
+ * The claimed value is a fresh random token per call, not a shared constant (#2129/#2135): release then
+ * verifies this exact token still owns the key (see releaseTransientLockIfOwner) before deleting it, so a
+ * holder that runs past its TTL can never have its stale `finally` release delete a DIFFERENT, live holder's
+ * claim on the same key — the race this mutex exists to close in the first place.
  */
 async function claimTransientLock(
   env: Env,
   key: string,
   ttlSeconds: number,
-): Promise<boolean> {
-  if (!env.SELFHOST_TRANSIENT_CACHE?.claim) return true; // no atomic primitive — nothing to serialize against.
+): Promise<TransientLockClaim> {
+  const cache = env.SELFHOST_TRANSIENT_CACHE;
+  if (!cache?.claim) return { acquired: true, ownerToken: null }; // no atomic primitive — nothing to serialize against.
+  // A claim()-only adapter without releaseIfValue would pin locks until TTL after normal work — reject that
+  // shape at self-host boot (assertSelfhostTransientCacheOwnershipRelease). At runtime, fail open without
+  // calling claim() so misconfigured test/custom adapters never acquire an unreleasable lock (#2129/#3153).
+  if (!cache.releaseIfValue) return { acquired: true, ownerToken: null };
+  const ownerToken = randomUUID();
   try {
-    return await env.SELFHOST_TRANSIENT_CACHE.claim(key, "1", ttlSeconds);
+    const acquired = await cache.claim(key, ownerToken, ttlSeconds);
+    return { acquired, ownerToken: acquired ? ownerToken : null };
   } catch {
-    return true; // fail open — see the doc comment above.
+    return { acquired: true, ownerToken: null }; // fail open — see the doc comment above.
+  }
+}
+
+/** Releases a transient lock ONLY when `ownerToken` still matches the stored value (atomic compare-and-delete),
+ *  so a stale holder can never delete a different, live holder's claim on the same key. `ownerToken` is null
+ *  on every fail-open claim path (nothing was actually claimed, so nothing to release). */
+async function releaseTransientLockIfOwner(env: Env, key: string, ownerToken: string | null): Promise<void> {
+  if (!ownerToken) return;
+  const cache = env.SELFHOST_TRANSIENT_CACHE;
+  if (!cache?.releaseIfValue) return;
+  try {
+    await cache.releaseIfValue(key, ownerToken);
+  } catch {
+    // best-effort; the TTL is the backstop if release fails
   }
 }
 
@@ -3230,7 +3638,7 @@ export async function claimAiReviewLock(
   prNumber: number,
   headSha: string,
   mode: string,
-): Promise<boolean> {
+): Promise<TransientLockClaim> {
   return claimTransientLock(
     env,
     aiReviewLockKey(repoFullName, prNumber, headSha, mode),
@@ -3245,12 +3653,9 @@ export async function releaseAiReviewLock(
   prNumber: number,
   headSha: string,
   mode: string,
+  ownerToken: string | null,
 ): Promise<void> {
-  try {
-    await env.SELFHOST_TRANSIENT_CACHE?.del?.(aiReviewLockKey(repoFullName, prNumber, headSha, mode));
-  } catch {
-    // best-effort; the TTL is the backstop if release fails
-  }
+  await releaseTransientLockIfOwner(env, aiReviewLockKey(repoFullName, prNumber, headSha, mode), ownerToken);
 }
 
 /** Read the CI head SHA off a `check_suite`/`check_run` `completed` payload (the event node carries `head_sha`;
@@ -3401,6 +3806,14 @@ async function maybeReReviewOnCiCompletion(
       }).catch(() => undefined);
     }
     for (const prNumber of prNumbers) {
+      // #selfhost-ci-verification: invalidate the durable CI-state cache for EVERY resolved PR, regardless of
+      // whether the re-review below actually fires -- some OTHER reader (a readiness check or disposition-
+      // planner pass already in flight) may consult the cache in the near future and must not see a stale
+      // pre-completion snapshot. Best-effort, matches every other cache-invalidation call site's fail-open
+      // contract; ordered BEFORE reReviewStoredPullRequest so that pass's own refreshLiveCiAggregate read (which
+      // now also consults this durable cache on a request-scoped memo miss) sees a genuine miss and re-fetches
+      // live, preserving refreshLiveCiAggregate's existing "always fresh" contract for this triggering PR.
+      await invalidateCiStateCache(env, repoFullName, prNumber).catch(() => undefined);
       // Coalesce the CI-completion storm: skip if this PR was re-reviewed within the window.
       if (await ciReReviewCoalesced(env, repoFullName, prNumber)) continue;
       await reReviewStoredPullRequest(
@@ -3410,6 +3823,58 @@ async function maybeReReviewOnCiCompletion(
         repoFullName,
         prNumber,
       );
+    }
+  }
+  await recordWebhookEvent(env, {
+    deliveryId,
+    eventName,
+    action: payload.action,
+    installationId,
+    repositoryFullName: repoFullName,
+    payloadHash: "processed",
+    status: "processed",
+  });
+  return true;
+}
+
+/**
+ * Invalidate the durable CI-state cache on a legacy `status`/`workflow_run` event (#selfhost-ci-verification gate
+ * review finding). These two event types are NOT wired to re-review triggering (see maybeReReviewOnCiCompletion's
+ * own doc comment) -- that stays out of scope here -- but leaving the cache itself untouched meant a real legacy
+ * status/workflow_run transition could leave prReadyForReview reading a stale, pre-transition CI aggregate for up
+ * to the full cache TTL. Deliberately narrower than maybeReReviewOnCiCompletion: only resolves PR numbers via the
+ * fast stored-DB head-SHA lookup (no live GitHub fork-fallback call) -- a cache entry only exists for a PR this
+ * process already tracks, so there is nothing to invalidate for an untracked/fork PR the DB lookup misses.
+ */
+async function maybeInvalidateCiCacheOnLegacyCiEvent(
+  env: Env,
+  deliveryId: string,
+  eventName: string,
+  payload: GitHubWebhookPayload,
+): Promise<boolean> {
+  if (eventName !== "status" && eventName !== "workflow_run") return false;
+  const repoFullName = payload.repository?.full_name;
+  const installationId = getInstallationId(payload);
+  if (!repoFullName || !installationId) return false;
+  // `status`'s state settles the same event this-transition-matters signal that `action: "completed"` gives
+  // check_run/check_suite/workflow_run -- "pending" is an in-flight update, not a settled result worth
+  // invalidating over. workflow_run DOES carry `action`, exactly like check_run/check_suite.
+  const settled =
+    eventName === "status"
+      ? (payload as unknown as { state?: string }).state !== "pending"
+      : (payload as unknown as { action?: string }).action === "completed";
+  if (settled && isConvergenceRepoAllowed(env, repoFullName)) {
+    const headSha = (
+      eventName === "status"
+        ? ((payload as unknown as { sha?: string }).sha ?? "")
+        : ((payload as unknown as { workflow_run?: { head_sha?: string } }).workflow_run?.head_sha ?? "")
+    ).trim();
+    if (headSha) {
+      const open = await listOpenPullRequests(env, repoFullName).catch(() => []);
+      for (const pr of open) {
+        if (pr.headSha !== headSha) continue;
+        await invalidateCiStateCache(env, repoFullName, pr.number).catch(() => undefined);
+      }
     }
   }
   await recordWebhookEvent(env, {
@@ -3458,12 +3923,14 @@ async function maybeReReviewOnLinkedIssueChange(
   if (isConvergenceRepoAllowed(env, repoFullName)) {
     const openPullRequests = await listOpenPullRequests(env, repoFullName);
     // Issue-side label/assignment changes can flip linked-issue hard-rule verdicts from mergeable to close.
-    // Queue every linked open PR (bounded only by listOpenPullRequests' repo-wide DB limit) so the tail cannot
-    // retain a stale passing gate until the scheduled sweep happens to reach it.
-    const linkingPrNumbers = openPullRequests
+    // Keep this webhook-triggered wake bounded like the scheduled sweep: each re-gate is REST-expensive, and
+    // queued tail work is picked up by the normal stale-first sweep instead of letting one issue fan out widely.
+    const linkingPrs = openPullRequests
       .filter((pr) => pr.linkedIssues.includes(issueNumber))
-      .map((pr) => pr.number);
-    for (const [index, prNumber] of linkingPrNumbers.entries()) {
+      .map((pr) => ({ number: pr.number, createdAt: pr.createdAt ?? null }))
+      .slice(0, SWEEP_MAX_PRS);
+    for (const [index, pr] of linkingPrs.entries()) {
+      const prNumber = pr.number;
       if (await issueLinkedPrReReviewCoalesced(env, repoFullName, prNumber)) {
         await scheduleTrailingIssueLinkedReReview(
           env,
@@ -3471,6 +3938,7 @@ async function maybeReReviewOnLinkedIssueChange(
           installationId,
           repoFullName,
           prNumber,
+          pr.createdAt,
         );
         continue;
       }
@@ -3480,6 +3948,7 @@ async function maybeReReviewOnLinkedIssueChange(
         repoFullName,
         prNumber,
         installationId,
+        ...(pr.createdAt ? { prCreatedAt: pr.createdAt } : {}),
       };
       const delaySeconds = Math.min(index * 10, 600);
       await (delaySeconds > 0
@@ -4373,12 +4842,14 @@ async function maybeCloseIssueOverContributorCap(
   const liveToken = token ?? env.GITHUB_PUBLIC_TOKEN;
   const admissionKey = githubAdmissionKeyForToken(env, installationId, liveToken);
   const confirmedOpen = new Set<number>();
-  await Promise.all(
-    otherAuthorIssueNumbers.map(async (number) => {
-      const liveState = await fetchLiveIssueState(env, repoFullName, number, liveToken, admissionKey).catch(() => undefined);
-      if (liveState === "open") confirmedOpen.add(number);
-    }),
-  );
+  // Bounded fan-out, mirroring the per-repo PR cap (#2766): an unbounded Promise.all scales with the author's
+  // own open-issue count, so a single delivery could fire dozens of concurrent live-state calls. Every sibling
+  // must still be verified (the over-cap numbers below depend on the complete confirmed-open set), so this
+  // bounds concurrency via the shared CONTRIBUTOR_CAP_LIVE_CHECK_CONCURRENCY rather than stopping early.
+  await mapWithConcurrency(otherAuthorIssueNumbers, CONTRIBUTOR_CAP_LIVE_CHECK_CONCURRENCY, async (number) => {
+    const liveState = await fetchLiveIssueState(env, repoFullName, number, liveToken, admissionKey).catch(() => undefined);
+    if (liveState === "open") confirmedOpen.add(number);
+  });
   const authorOpenIssueNumbers = otherAuthorIssueNumbers
     .filter((number) => confirmedOpen.has(number))
     .concat(issue.number)
@@ -4688,6 +5159,11 @@ async function processGitHubWebhook(
     // red). Without this a PR that goes green/red AFTER its open-time review is never re-evaluated.
     if (await maybeReReviewOnCiCompletion(env, deliveryId, eventName, payload))
       return;
+    // Legacy status/workflow_run CI signals aren't re-review triggers (see the function's own doc comment), but
+    // must still invalidate the durable CI-state cache so a tracked PR's next reader doesn't see a stale
+    // pre-transition aggregate for the rest of the cache TTL.
+    if (await maybeInvalidateCiCacheOnLegacyCiEvent(env, deliveryId, eventName, payload))
+      return;
     // deployment_status (preview deploy finished) → re-review so the visual before/after capture fills in.
     if (
       await maybeCaptureOnDeploymentStatus(env, deliveryId, eventName, payload)
@@ -4835,6 +5311,21 @@ async function processGitHubWebhook(
         linkedIssueAuthorLogins,
       });
       await persistAdvisory(env, advisory);
+      // Auto-project/milestone matching (#3183): independent of the gate/disposition entirely -- a missed or
+      // wrong match must never affect CI/merge, so this is a best-effort side comment, never a blocker. All the
+      // "should this run at all" gating + error logging lives in maybeSuggestMilestoneMatchForPr itself, so
+      // this call site stays a single unconditional call with no logic of its own.
+      await maybeSuggestMilestoneMatchForPr({
+        env,
+        installationId,
+        repoFullName,
+        pullNumber: pr.number,
+        prState: pr.state,
+        prTitle: pr.title,
+        prBody: pr.body,
+        mode: settings.autoProjectMilestoneMatch,
+        deliveryId,
+      });
       // Draft-dodge guard (#converted-to-draft): a contributor converting an OPEN PR to draft cannot use
       // draft state to keep a gate-rejected PR alive. When a prior gate failure exists for the PR's current
       // headSha (and the block has not been maintainer-overridden), close the PR immediately — the gate
@@ -5120,15 +5611,20 @@ async function processGitHubWebhook(
         },
       });
     }
-    // Batched (#selfhost-maintenance-self-pin): every event this ONE webhook delivery detected rides in a
-    // single notify-evaluate job instead of one job per event -- the audit trail above still records each
-    // event individually, so nothing about observability changes, only how many maintenance-lane rows a
-    // multi-watcher issue (or a review event landing alongside issue-watch matches) creates.
-    if (notificationEvents.length > 0) {
+    // Batched, but bounded (#selfhost-maintenance-self-pin): a popular issue can have thousands of watchers,
+    // so keep queue payloads comfortably below backend message limits while still avoiding one row per event.
+    // Sorted by dedupKey BEFORE chunking (#3218 review): jobCoalesceKey hashes each chunk's OWN sorted dedup-key
+    // set, so it's already order-independent WITHIN a chunk -- but chunk MEMBERSHIP itself was still built from
+    // notificationEvents' arrival order, so a redelivery whose events resolved in a different order could split
+    // across a different 100-event boundary and never coalesce with the earlier attempt. Sorting first makes
+    // chunk membership a pure function of the detected event SET, not its arrival order, restoring the "same
+    // full set in any order" coalescing guarantee across chunk boundaries too.
+    const notificationEventsForChunking = [...notificationEvents].sort((a, b) => a.dedupKey.localeCompare(b.dedupKey));
+    for (const events of chunkNotificationEvents(notificationEventsForChunking)) {
       await env.JOBS.send({
         type: "notify-evaluate",
         requestedBy: "webhook",
-        events: notificationEvents,
+        events,
       });
     }
 
@@ -5162,6 +5658,14 @@ type PublicSurfaceOutputFailure = {
   error: string;
 };
 
+// Intentionally writes to check_summaries only, not audit_events (#2908): this fires on every successful gate-
+// check publish, which is a very high-frequency event (every review pass, potentially several times per PR as
+// it iterates) -- check_summaries is the purpose-built, already-queryable canonical record for "when was this
+// check published and what did it conclude" (repo/PR/headSha/checkRunId/conclusion/detailsUrl), so a parallel
+// audit_events row would roughly double that table's volume for no new queryable information. The DOWNSTREAM
+// actions this verdict triggers (merge/close/hold) are already fully audited via recordNativeGateDecision and
+// agent-action-executor's audit() closure. Only the FAILURE/degraded sub-paths of the caller below are audited
+// (auditGateCheckPermissionMissing, auditPrVisibilitySkip) -- that asymmetry is deliberate, not a gap.
 async function recordPublishedGateCheckSummary(
   env: Env,
   args: {
@@ -5310,6 +5814,7 @@ export function gateCheckPolicy(
     changedFileCount: number;
     changedLineCount: number;
     guardrailHit: boolean;
+    guardrailMatches?: ReturnType<typeof guardrailPathMatches> | undefined;
   },
 ) {
   // `settings` is already the EFFECTIVE config (`.gittensory.yml` > DB > defaults), resolved upstream by
@@ -5347,6 +5852,7 @@ export function gateCheckPolicy(
     changedFileCount: sizeContext?.changedFileCount ?? null,
     changedLineCount: sizeContext?.changedLineCount ?? null,
     guardrailHit: sizeContext?.guardrailHit ?? false,
+    guardrailMatches: sizeContext?.guardrailMatches,
     // CLA / license-compatibility gate (#2564): the MODE comes from config; the `cla_consent_missing` finding
     // itself (or its absence) is pushed into the advisory upstream by evaluateClaCheck, so this only decides
     // whether isConfiguredGateBlocker escalates it to a hard blocker.
@@ -5680,15 +6186,14 @@ export async function runAiReviewForAdvisory(
   // return different verdicts. Claim before the expensive section below; a pass that loses the race returns the
   // same inconclusive-hold shape the "AI produced no usable verdict" path already returns, so the gate is held
   // (neutral) for a human rather than either pass's independently-decided verdict racing the other's cache write.
-  if (
-    !(await claimAiReviewLock(
-      env,
-      args.repoFullName,
-      args.pr.number,
-      args.advisory.headSha,
-      args.settings.aiReviewMode,
-    ))
-  ) {
+  const aiReviewLock = await claimAiReviewLock(
+    env,
+    args.repoFullName,
+    args.pr.number,
+    args.advisory.headSha,
+    args.settings.aiReviewMode,
+  );
+  if (!aiReviewLock.acquired) {
     const findings: AdvisoryFinding[] = [
       {
         code: "ai_review_inconclusive",
@@ -5806,6 +6311,13 @@ export async function runAiReviewForAdvisory(
                   args.repoFullName,
                 )
               : undefined,
+            // The AI-review path loads the focus manifest later (inside runGittensoryAiReview), not before this
+            // enrichment call, so there is no already-resolved manifest to pass here; loadRepoFocusManifest is
+            // cached per repo, so this is a cache hit rather than an extra fetch. resolveRepoEnrichmentToggles is
+            // exactly the load-and-swallow caller (a load error ⇒ no toggles ⇒ default analyzer set).
+            enrichmentAnalyzers: await resolveRepoEnrichmentToggles(() =>
+              loadRepoFocusManifest(env, args.repoFullName),
+            ),
             files,
             diff: enrichmentDiff,
           })
@@ -6015,6 +6527,7 @@ export async function runAiReviewForAdvisory(
       args.pr.number,
       args.advisory.headSha,
       args.settings.aiReviewMode,
+      aiReviewLock.ownerToken,
     );
   }
 }
@@ -6396,7 +6909,7 @@ async function maybePublishPrPublicSurface(
   // resolveRepositorySettings — so gate on/off and every blocker mode already reflect the repo's config
   // file. The gate verdict is the same for every author; confirmedContributor feeds only on-chain scoring.
   const gateEnabled =
-    settings.gateCheckMode === "enabled" && Boolean(advisory.headSha);
+    shouldPublishReviewCheck(settings.reviewCheckMode) && Boolean(advisory.headSha);
   // Cheap, network-free skip checks (also avoids the miner lookup when it would be wasted).
   const prelim = decidePublicSurface({
     settings,
@@ -6422,15 +6935,32 @@ async function maybePublishPrPublicSurface(
     settings.commentMode === "detected_contributors_only" &&
     (settings.publicSurface === "comment_and_label" ||
       settings.publicSurface === "comment_only");
+  // #2852: when the check-run is disabled AND there is nothing to publish, this function would otherwise bail
+  // to `undefined` -- but maybeRunAgentMaintenance (the caller's very next step) hard-requires a defined `gate`
+  // to act on (`if (!gate) return;`), so bailing here would silently break auto-merge/close for a repo that
+  // configured autonomy but has no check-run/public surface. Only skip the bail when autonomy is actually
+  // configured — an unconfigured repo keeps today's exact early-return (no wasted evaluation work).
+  const autonomyNeedsGateEvaluation = isAgentConfigured(settings.autonomy);
+  // #2852: the actual gate CONCLUSION must be computed whenever either the check-run will publish OR autonomous
+  // merge/close needs it to act on — the two are now independent axes (reviewCheckMode only ever controlled the
+  // former; gate evaluation itself has always been meant to run regardless of publish mode). Every site below
+  // that feeds evaluateGateCheck's result (review-thread blockers, evaluateGateCheck itself, the surface-lane
+  // override) is gated on this, NOT on gateEnabled alone — gateEnabled stays scoped to the check-run PUBLISH
+  // calls (createOrUpdate*GateCheckRun), which must still never fire when reviewCheckMode is disabled.
+  const shouldEvaluateGate = gateEnabled || autonomyNeedsGateEvaluation;
   if (
     !gateEnabled &&
+    !autonomyNeedsGateEvaluation &&
     (publicSurfaceSkipped ||
       (prelim.actions.length === 1 &&
         prelim.actions[0] === "none" &&
         !needsMinerCheckForDetectedComment))
   )
     return undefined;
-  if (!author && !gateEnabled) return undefined;
+  // A missing author already forces publicSurfaceSkipped=true above (decidePublicSurface's own
+  // "missing_author" skip), so the guard just above already returns undefined whenever `!author` combines with
+  // `!gateEnabled && !autonomyNeedsGateEvaluation` -- a separate `!author` check here can never fire and was
+  // dead code even before #2852 (removed rather than left as an uncoverable branch).
 
   if (gateEnabled && (pr.state !== "open" || webhook.action === "closed")) {
     // The PR is already closed/merged. Mark the gate check skipped, but DO NOT overwrite the unified review
@@ -6494,7 +7024,7 @@ async function maybePublishPrPublicSurface(
         "miner_detection_unavailable",
         webhook.deliveryId,
       );
-      if (!gateEnabled) return undefined;
+      if (!gateEnabled && !autonomyNeedsGateEvaluation) return undefined;
       publicSurfaceSkipped = true;
     } else if (requireOfficialMiner && official.status !== "confirmed") {
       await auditPrVisibilitySkip(
@@ -6505,7 +7035,7 @@ async function maybePublishPrPublicSurface(
         "not_official_gittensor_miner",
         webhook.deliveryId,
       );
-      if (!gateEnabled) return undefined;
+      if (!gateEnabled && !autonomyNeedsGateEvaluation) return undefined;
       publicSurfaceSkipped = true;
     }
     decision = decidePublicSurface({
@@ -6518,6 +7048,7 @@ async function maybePublishPrPublicSurface(
 
     if (
       !gateEnabled &&
+      !autonomyNeedsGateEvaluation &&
       decision.actions.length === 1 &&
       decision.actions[0] === "none"
     )
@@ -6715,6 +7246,9 @@ async function maybePublishPrPublicSurface(
         { checkRunId: pendingGateCheckRunId },
       ).catch(() => undefined);
     }
+    if (freshness.reason === "unavailable") {
+      throw new RetryablePullRequestFreshnessUnavailableError();
+    }
     return true;
   };
   // The PR's changed files are needed by the slop/manifest gates, the AI review + grounding + RAG, the secret
@@ -6780,6 +7314,7 @@ async function maybePublishPrPublicSurface(
             deliveryId: webhook.deliveryId,
             repoFullName,
             gateCheckMode: settings.gateCheckMode,
+            reviewCheckMode: settings.reviewCheckMode,
             publishedOutputs,
             failedOutputs,
           },
@@ -6807,6 +7342,7 @@ async function maybePublishPrPublicSurface(
           label: decision.willLabel ? settings.gittensorLabel : null,
           checkRunMode: settings.checkRunMode,
           gateCheckMode: settings.gateCheckMode,
+          reviewCheckMode: settings.reviewCheckMode,
           publicAudienceMode: settings.publicAudienceMode,
           publishedOutputs,
           failedOutputs,
@@ -6825,6 +7361,7 @@ async function maybePublishPrPublicSurface(
         label: decision.willLabel ? settings.gittensorLabel : null,
         checkRunMode: settings.checkRunMode,
         gateCheckMode: settings.gateCheckMode,
+        reviewCheckMode: settings.reviewCheckMode,
         publicAudienceMode: settings.publicAudienceMode,
         publishedOutputs,
         failedOutputs,
@@ -6841,6 +7378,7 @@ async function maybePublishPrPublicSurface(
         labelApplied: decision.willLabel,
         checkRunMode: settings.checkRunMode,
         gateCheckMode: settings.gateCheckMode,
+        reviewCheckMode: settings.reviewCheckMode,
         publicAudienceMode: settings.publicAudienceMode,
         publishedOutputs,
         failedOutputs,
@@ -6920,7 +7458,11 @@ async function maybePublishPrPublicSurface(
       scopedOverlapCount: relatedWork.scopedOverlapClusters.length,
     });
 
-    if (gateEnabled && author && !publicSurfaceSkipped && !official) {
+    // #2852: gated on shouldEvaluateGate, not gateEnabled alone -- confirmedContributor (sourced from
+    // `official` below) feeds runAiSlopForAdvisory's hard gate later in this pass, so a reviewCheckMode:
+    // disabled repo with autonomy configured must still resolve it, not silently treat a confirmed miner as
+    // unconfirmed.
+    if (shouldEvaluateGate && author && !publicSurfaceSkipped && !official) {
       official = await getCachedOfficialMinerDetection(env, author, {
         targetKey: `${repoFullName}#${pr.number}`,
         deliveryId: webhook.deliveryId,
@@ -7457,8 +7999,10 @@ async function maybePublishPrPublicSurface(
     // Unresolved GitHub review threads (for example external security scanner inline findings) are blocking
     // review facts. Fetch them before gate evaluation so the normal blocker path drives the check-run, comment,
     // and disposition consistently. Fail-open on GitHub/GraphQL errors: a transient thread-read failure should not
-    // invent a blocker, but any thread we can see must be resolved before approval/merge.
-    if (gateEnabled) {
+    // invent a blocker, but any thread we can see must be resolved before approval/merge. Gated on
+    // shouldEvaluateGate (#2852), not gateEnabled alone, so a disabled-check-run repo with autonomy configured
+    // still gets this blocker fed into the merge/close decision.
+    if (shouldEvaluateGate) {
       const reviewThreadToken =
         (await createInstallationToken(env, installationId).catch(
           () => undefined,
@@ -7488,16 +8032,16 @@ async function maybePublishPrPublicSurface(
     // guardrail-hit from the resolved files (getReviewFiles is memoized — no extra fetch) so the gate can HOLD an
     // oversized or guardrail-touching PR (neutral → "manual" verdict), visible even in advisory/dry-run.
     const sizeGateFiles = await getReviewFiles();
+    const hardGuardrailGlobs = resolveHardGuardrailGlobs(settings);
+    const guardrailChangedPaths = changedPathsForGuardrail(sizeGateFiles);
     const gateSizeContext = {
       changedFileCount: sizeGateFiles.length,
       changedLineCount: sizeGateFiles.reduce(
         (n, f) => n + f.additions + f.deletions,
         0,
       ),
-      guardrailHit: isGuardrailHit(
-        changedPathsForGuardrail(sizeGateFiles),
-        await loadHardGuardrailGlobs(env, repoFullName),
-      ),
+      guardrailHit: isGuardrailHit(guardrailChangedPaths, hardGuardrailGlobs),
+      guardrailMatches: guardrailPathMatches(guardrailChangedPaths, hardGuardrailGlobs),
     };
     const gatePolicy = gateCheckPolicy(
       settings,
@@ -7516,7 +8060,9 @@ async function maybePublishPrPublicSurface(
         operation: "gate_decision",
       },
       async () => {
-        let evaluation = gateEnabled
+        // #2852: computed whenever the check-run publishes OR autonomous merge/close needs a conclusion to act
+        // on — this is the actual gate CONCLUSION, independent of whether anything gets published to GitHub.
+        let evaluation = shouldEvaluateGate
           ? evaluateGateCheck(advisory, gatePolicy)
           : undefined;
         // Deterministic content/registry surface lane (#1255) — flag-gated + per-repo allowlist, byte-identical when
@@ -7526,7 +8072,7 @@ async function maybePublishPrPublicSurface(
         evaluation = await evaluateWithSurfaceLane(
           env,
           repoFullName,
-          gateEnabled,
+          shouldEvaluateGate,
           evaluation,
           {
             installationId,
@@ -7571,10 +8117,14 @@ async function maybePublishPrPublicSurface(
     // authoritative 'reviewbot' rows it is later compared against are written by reviewbot's deploy-time dual-
     // run, not here (see src/review/parity-wire.ts). Only a finalized gate evaluation (not skipped) is recorded.
     if (gateEvaluation) {
+      // #terminal-outcome-audit: a neutral conclusion is now ALSO recorded as a hold (nativeGateActionFromConclusion),
+      // so give it the same bounded-reason-class treatment "failure" already gets, instead of falling back to
+      // the bare "neutral" string -- an operator asking "why is this held" should see guardrail_hold /
+      // oversized_pr / ai_review_inconclusive / etc, not an undifferentiated bucket.
       const reasonCode =
         gateEvaluation.conclusion === "failure"
           ? (gateEvaluation.blockers[0]?.code ?? gateEvaluation.conclusion)
-          : gateEvaluation.conclusion;
+          : (neutralHoldReasonCode(gateEvaluation) ?? gateEvaluation.conclusion);
       await recordNativeGateDecision(env, {
         project: repoFullName,
         pullNumber: pr.number,
@@ -7609,16 +8159,59 @@ async function maybePublishPrPublicSurface(
           check.status === "completed",
       );
       if (currentGateCheck) {
-        incr("gittensory_public_surface_publish_skipped_current_total");
-        await recordAuditEvent(env, {
-          eventType: "github_app.public_surface_publish_skipped_current",
-          actor: author,
-          targetKey: `${repoFullName}#${pr.number}`,
-          outcome: "completed",
-          detail: "public surface already current for this head; skipped republish",
-          metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null },
-        }).catch(() => undefined);
-        return gateEvaluation;
+        let canSkipCurrentSurface = true;
+        if (pendingGateCheckRunId !== undefined) {
+          const refreshedGateCheckResult = await createOrUpdateGateCheckRun(
+            env,
+            installationId,
+            repoFullName,
+            advisory,
+            gatePolicy,
+            { checkRunId: pendingGateCheckRunId, gate: gateEvaluation },
+            mode,
+          );
+          /* v8 ignore next -- refreshedGateCheckResult is only ever null when advisory.headSha is falsy or the
+           * write is dry-run-suppressed; pendingGateCheckRunId !== undefined already proves headSha was truthy
+           * and mode was "live" for the earlier pending-check post in this SAME pass (mode/advisory are both
+           * immutable locals shared by both calls), so the nullish `?.` short-circuit here is unreachable. */
+          if (refreshedGateCheckResult?.kind === "published") {
+            await recordPublishedGateCheckSummary(env, {
+              repoFullName,
+              pullNumber: pr.number,
+              headSha: advisory.headSha,
+              checkRunId: refreshedGateCheckResult.id,
+              conclusion: gateEvaluation?.conclusion ?? null,
+              detailsUrl: refreshedGateCheckResult.html_url,
+              deliveryId: webhook.deliveryId,
+            }).catch((error) => {
+              console.error(
+                JSON.stringify({
+                  level: "warn",
+                  event: "gate_check_summary_upsert_failed",
+                  repoFullName,
+                  pullNumber: pr.number,
+                  error: errorMessage(error),
+                }),
+              );
+            });
+          } else {
+            canSkipCurrentSurface = false;
+          }
+        }
+        if (canSkipCurrentSurface) {
+          incr("gittensory_public_surface_publish_skipped_current_total");
+          await recordAuditEvent(env, {
+            eventType: "github_app.public_surface_publish_skipped_current",
+            actor: author,
+            targetKey: `${repoFullName}#${pr.number}`,
+            outcome: "completed",
+            detail: "public surface already current for this head; skipped republish",
+            metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null },
+          }).catch(() => undefined);
+          return gateEvaluation;
+        }
+        // The no-op proof is only safe if the pending check this pass created is terminal too.
+        // Fall through to the normal publish path on any doubt so branch protection cannot be left pending.
       }
     }
     const finalFreshness = await freshnessForReviewOutput("final_publish");
@@ -7958,7 +8551,7 @@ async function maybePublishPrPublicSurface(
       const baseRef = pr.baseRef ?? repo?.defaultBranch;
       // Required contexts still detect missing/pending required CI, but every visible completed red check/status is
       // adverse and blocks the PR.
-      const liveCi = await refreshLiveCiAggregate(env, repoFullName, webhook.liveFacts, pr.headSha, baseRef, token, settings.expectedCiContexts, admissionKey);
+      const liveCi = await refreshLiveCiAggregate(env, repoFullName, webhook.liveFacts, pr.number, pr.headSha, baseRef, token, settings.expectedCiContexts, admissionKey);
       // Live merge-state too — the SAME source the disposition uses (planAgentMaintenanceActions reads liveMergeState).
       // The stored pr.mergeableState lags GitHub's async recompute, and the gate's own check/review publication can
       // also advance mergeability after readiness ran, so refresh at this post-publish boundary.
@@ -7999,9 +8592,10 @@ async function maybePublishPrPublicSurface(
       // for owner review by the disposition (planAgentMaintenanceActions), never auto-merged — so the comment
       // must render "held for review", not "✅ safe to merge". Compute the SAME guardrail-hit the disposition uses
       // (shared isGuardrailHit) and thread it so the signal and the action agree (the #4220 class, clean variant).
+      const commentHardGuardrailGlobs = resolveHardGuardrailGlobs(settings);
       const heldForReview = isGuardrailHit(
         changedPathsForGuardrail(unifiedFiles),
-        await loadHardGuardrailGlobs(env, repoFullName),
+        commentHardGuardrailGlobs,
       );
       // Held-vs-closed parity (#8/#9): the disposition NEVER auto-closes an owner / automation-bot PR, so a gate
       // "close" verdict on one must headline "held", not "Closed". Compute the same author classification the
@@ -9164,7 +9758,8 @@ async function maybeCloseDraftDodgeAttempt(
   pr: PullRequestRecord,
   settings: RepositorySettings,
 ): Promise<void> {
-  if (!(await claimPrActuationLock(env, repoFullName, pr.number))) {
+  const actuationLock = await claimPrActuationLock(env, repoFullName, pr.number);
+  if (!actuationLock.acquired) {
     throw new PrActuationLockContendedError(repoFullName, pr.number, "draft-dodge");
   }
   try {
@@ -9177,7 +9772,7 @@ async function maybeCloseDraftDodgeAttempt(
       settings,
     );
   } finally {
-    await releasePrActuationLock(env, repoFullName, pr.number);
+    await releasePrActuationLock(env, repoFullName, pr.number, actuationLock.ownerToken);
   }
 }
 
@@ -9370,7 +9965,8 @@ async function maybeRecloseDisallowedReopen(
   pr: PullRequestRecord,
   payload: GitHubWebhookPayload,
 ): Promise<ReopenRecloseOutcome> {
-  if (!(await claimPrActuationLock(env, repoFullName, pr.number))) {
+  const actuationLock = await claimPrActuationLock(env, repoFullName, pr.number);
+  if (!actuationLock.acquired) {
     throw new PrActuationLockContendedError(repoFullName, pr.number, "reopen-reclose");
   }
   try {
@@ -9384,7 +9980,7 @@ async function maybeRecloseDisallowedReopen(
     );
     return reclosed ? "reclosed" : "allowed";
   } finally {
-    await releasePrActuationLock(env, repoFullName, pr.number);
+    await releasePrActuationLock(env, repoFullName, pr.number, actuationLock.ownerToken);
   }
 }
 
@@ -9516,14 +10112,17 @@ async function recloseDisallowedReopenIfNeeded(
     pr.number,
   );
   const latestReopenerLogin = latestReopener.login?.toLowerCase() ?? null;
-  // A bounded scan that ran to completion but did NOT cover every page is still ambiguous when it finds no
-  // reopened event: an unread older page may contain either the original contributor reopen or a later maintainer
-  // reopen hidden by padding. Only a visible matching reopener proves this webhook is still the live disallowed
-  // reopen; every other shape fails closed, because wrongly re-closing a maintainer-authorized PR is worse than
-  // leaving a disallowed reopen open for one more tick. (#2369)
+  // A bounded scan that did NOT cover every page and found no reopened event is attacker-controllable: the
+  // original contributor can pad newer issue events until their reopen falls outside the inspected window. Treat
+  // only a visible different reopener (or a fully covered no-match) as superseding; an incomplete unknown result
+  // keeps enforcing the one-shot close. A read error remains distinct because it proves no timeline facts. (#2369)
+  const latestReopenerUnknownInPartialWindow =
+    latestReopenerLogin === null &&
+    !latestReopener.coveredAllPages &&
+    !latestReopener.errored;
   const reopenerSuperseded =
     latestReopener.errored ||
-    latestReopenerLogin !== reopener;
+    (!latestReopenerUnknownInPartialWindow && latestReopenerLogin !== reopener);
   if (reopenerSuperseded) {
     await recordAuditEvent(env, {
       eventType: "github_app.reopen_reclosed",
@@ -9742,11 +10341,11 @@ const MONITORED_MENTION_PING_EVENT_TYPE = "github_app.monitored_mention_ping";
 
 /** Word-boundary, case-insensitive check for `@login` in a comment body — the SAME precision level as
  *  `parseGittensoryMentionCommand`'s own `@gittensory` detection (a literal match, not an intent classifier):
- *  conservative and testable, per the feature's design goal. `login` is only ever a value that already survived
- *  `normalizeAutoCloseExemptLogins`'s GitHub-login-format validation (alphanumeric + internal hyphens), so it
- *  is safe to embed directly in a RegExp without escaping. */
+ *  conservative and testable, per the feature's design goal. `login` already survived
+ *  `normalizeAutoCloseExemptLogins`'s GitHub-login-format validation, but bot-shaped logins contain `[bot]`;
+ *  escape before embedding so every configured login is matched literally. */
 function bodyMentionsLogin(body: string, login: string): boolean {
-  return new RegExp(`(?:^|\\s)@${login}(?:\\s|$|[^\\w-])`, "i").test(body);
+  return new RegExp(`(?:^|\\s)@${escapeRegExp(login)}(?:\\s|$|[^\\w-])`, "i").test(body);
 }
 
 /**

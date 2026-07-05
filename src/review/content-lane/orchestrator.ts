@@ -191,15 +191,15 @@ export async function runSurfaceReview(spec: RegistryLaneSpec, input: SurfaceRev
   // mixed-files, since there's nothing else in that diff worth preserving.
   const directFile = scope.directFile as string;
   const companionProviderFile = scope.providerCompanionFile;
-  // Anything besides the direct file must be a companion the classifier already approved: the recognized debut-
-  // provider companion (validated below) or a spec.artifactPattern match (a generated build artifact — allowed
-  // as-is, never validated). Anything else here is an unrecognized/ambiguous shape (classifyRegistryPrScope only
-  // reaches this scope when every file matched SOME allowed pattern, so this is the residual "which companion is
-  // it" case, e.g. more than one provider companion) — fall back to routing it to manual review.
+  // Anything besides the direct file must be the recognized debut-provider companion validated below. Generated
+  // artifact companions match an allowed path pattern, but the surface lane does not prove they match the source
+  // entry, so route them to manual review rather than treating arbitrary artifact content as merge-safe. Anything
+  // else here is an unrecognized/ambiguous shape (classifyRegistryPrScope only reaches this scope when every file
+  // matched SOME allowed pattern, so this is the residual "which companion is it" case, e.g. more than one provider
+  // companion) — fall back to routing it to manual review.
   for (const file of input.changedFiles) {
     const normalized = file.trim();
     if (normalized === "" || normalized === directFile || normalized === companionProviderFile) continue;
-    if (spec.artifactPattern?.test(normalized)) continue;
     return { verdict: "manual", summary: "Registry submission includes companion file changes — routing to review." };
   }
   if (scope.isProvider) {

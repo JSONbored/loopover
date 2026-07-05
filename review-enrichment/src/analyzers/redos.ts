@@ -39,7 +39,9 @@ function* patchLines(patch: string): Generator<string> {
 // never produce a false finding on its own.
 
 // `/` opens a regex literal (not division) when the char just before it is a statement/operator boundary.
-const REGEX_POSITION_PREFIX = "=(,:?&|!{[;";
+// `>` covers arrow-function bodies written without a space (`() =>/foo/`), which are valid JS and a
+// common minified form; without it the extractor mistakes the `/` for division and misses the literal.
+const REGEX_POSITION_PREFIX = "=(,:?&|!{[;>";
 
 function isWordChar(ch: string): boolean {
   return (
@@ -274,7 +276,9 @@ export function scanPatchForRedos(
         }
       }
       newLine++;
-    } else if (!line.startsWith("-")) {
+    } else if (!line.startsWith("-") && !line.startsWith("\\")) {
+      // A `\ No newline at end of file` marker is not a new-file line — do not advance the cursor
+      // (same class as the iac-misconfig / undocumented-export fix).
       newLine++;
     }
   }

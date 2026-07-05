@@ -281,7 +281,7 @@
       },
       "docs": {
         "summary": "Checks changed runtime and base-image pins against EOL calendars.",
-        "looksAt": "Dockerfile FROM lines, .nvmrc, and go.mod runtime pins.",
+        "looksAt": "Dockerfile FROM lines, version-manager pin files (.nvmrc, .python-version, …), Heroku runtime.txt, Gemfile ruby directives, and go.mod runtime pins.",
         "reports": "File, product, version, EOL date, and whether the release is already EOL or close to EOL.",
         "network": "Calls endoflife.date. No GitHub token required.",
         "notes": "Only changed pins are checked; existing old runtimes outside the PR are not reported."
@@ -740,6 +740,185 @@
         "reports": "File, line, and symbol name of each undocumented added export — never file contents.",
         "network": "One GitHub contents fetch per changed entrypoint (at headSha). Requires GitHub token forwarding for private repos.",
         "notes": "Conservative: re-export lists (`export { x }`) and `export *` are ignored; a preceding `//` line (except tool directives like `eslint-disable`) or a real JSDoc `/**` block counts as documented (a plain `/* … */` block does not)."
+      }
+    },
+    {
+      "name": "staleBranch",
+      "title": "Stale branch signal",
+      "category": "history",
+      "cost": "github-light",
+      "defaultEnabled": true,
+      "profiles": [
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "github-token",
+        "head-sha"
+      ],
+      "limits": {
+        "behindThreshold": 100
+      },
+      "docs": {
+        "summary": "Flags a PR whose head is significantly behind the repo's current default branch — a staleness risk a clean `mergeable` check alone would not surface.",
+        "looksAt": "The repo's current default branch and how many commits behind it the PR's head is (the GitHub compare API).",
+        "reports": "The default branch name and the commit count behind it — never commit content.",
+        "network": "Calls the GitHub repo API once and the compare API once.",
+        "notes": "Structured-fields-only: reads default_branch and behind_by, never diff or commit text. Fail-safe on missing token/head SHA/either fetch failing."
+      }
+    },
+    {
+      "name": "commitHygiene",
+      "title": "Commit-history hygiene",
+      "category": "history",
+      "cost": "github-light",
+      "defaultEnabled": true,
+      "profiles": [
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "github-token"
+      ],
+      "limits": {
+        "maxCommits": 100,
+        "maxFindings": 25
+      },
+      "docs": {
+        "summary": "Flags commit-history hygiene issues: a merge commit pulled into the PR's own history, a commit left with git's fixup!/squash! autosquash marker, and a commit carrying a Co-authored-by trailer.",
+        "looksAt": "The PR's commits (one bounded page) — each commit's message subject/trailers and parent count.",
+        "reports": "A short commit-SHA prefix, the finding kind, and (for fixup/co-author) the subject line or co-author — never full diff/file content.",
+        "network": "Calls the GitHub PR-commits API once, bounded to one page.",
+        "notes": "Structured-fields-only: reads commit.message and parents, matched one line at a time, never cross-line state. Fail-safe on missing token/fetch error."
+      }
+    },
+    {
+      "name": "pendingReviewRequests",
+      "title": "Pending review-request staleness",
+      "category": "history",
+      "cost": "github-light",
+      "defaultEnabled": true,
+      "profiles": [
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "github-token"
+      ],
+      "limits": {
+        "staleThresholdHours": 48,
+        "maxTimelinePages": 5
+      },
+      "docs": {
+        "summary": "Flags a reviewer or team whose review request has been outstanding 48+ hours with no response yet.",
+        "looksAt": "The PR's currently pending requested reviewers/teams, matched against the issue timeline's review_requested events (bounded, page-confirmed complete).",
+        "reports": "The reviewer login (or team:slug) and hours pending — never review content.",
+        "network": "Calls the GitHub requested-reviewers API once and the issue-timeline API, paginated and bounded to a fixed page cap.",
+        "notes": "Structured-fields-only: reads user.login/team.slug/event/created_at, never diff or comment text. Fail-safe on missing token/fetch error/an unconfirmed-complete timeline."
+      }
+    },
+    {
+      "name": "testRatio",
+      "title": "Test-to-code ratio",
+      "category": "quality",
+      "cost": "local",
+      "defaultEnabled": true,
+      "profiles": [
+        "fast",
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "files"
+      ],
+      "limits": {
+        "materialSourceLines": 20,
+        "ratioThreshold": 0.3
+      },
+      "docs": {
+        "summary": "Flags a PR whose source change is material but ships with disproportionately little (or zero) accompanying test change.",
+        "looksAt": "Each changed file's path (classified source vs test by naming convention) and added-line count.",
+        "reports": "Source/test added-line and file counts and the resulting ratio — never file content.",
+        "network": "Pure local analyzer. No external network call.",
+        "notes": "A cheap, always-available complement to the coverage-delta analyzer: works even when no CI coverage artifact exists."
+      }
+    },
+    {
+      "name": "migrationSafety",
+      "title": "SQL migration safety",
+      "category": "config",
+      "cost": "local",
+      "defaultEnabled": true,
+      "profiles": [
+        "fast",
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "files"
+      ],
+      "limits": {
+        "maxFindings": 20,
+        "maxLineChars": 2000
+      },
+      "docs": {
+        "summary": "Flags risky schema operations in added migration SQL: drops, renames, non-nullable columns without a default, and blocking table rewrites.",
+        "looksAt": "Added lines in migration paths (migrations/, db/migrate/, *.sql).",
+        "reports": "File, line, and public-safe rule kind — never SQL content.",
+        "network": "Pure local analyzer. No external network call.",
+        "notes": "Detection is line-anchored single-statement shapes only; statements split across lines are skipped rather than tracked with cross-line state."
+      }
+    },
+    {
+      "name": "looseRange",
+      "title": "Loose dependency version range",
+      "category": "supply-chain",
+      "cost": "local",
+      "defaultEnabled": true,
+      "profiles": [
+        "fast",
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "files"
+      ],
+      "limits": {
+        "maxFindings": 20,
+        "maxLineChars": 2000
+      },
+      "docs": {
+        "summary": "Flags newly-added npm dependency specifiers that use dangerously loose ranges instead of a pinned/caret/tilde range.",
+        "looksAt": "Added specifier lines in package.json patches.",
+        "reports": "Manifest file, line, package, raw specifier, and loose-range kind.",
+        "network": "Pure local analyzer. No external network call.",
+        "notes": "Judges only the version specifier, never the package; wildcard, latest, unbounded >=, and bare-major ranges let any future publish flow into the next install."
+      }
+    },
+    {
+      "name": "terminology",
+      "title": "Non-inclusive terminology",
+      "category": "quality",
+      "cost": "local",
+      "defaultEnabled": true,
+      "profiles": [
+        "fast",
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "files"
+      ],
+      "limits": {
+        "maxFindings": 25,
+        "maxLineChars": 2000
+      },
+      "docs": {
+        "summary": "Flags non-inclusive terms newly added in identifiers or comments (whitelist/blacklist, master/slave) and suggests the neutral replacement.",
+        "looksAt": "Added lines in any changed file, tokenized on camelCase/snake_case/word boundaries.",
+        "reports": "File, line, the matched term, and the suggested replacement.",
+        "network": "Pure local analyzer. No external network call.",
+        "notes": "Token-based matching avoids substring false positives (masterclass/postmaster are never flagged), and URLs are skipped. The term→suggestion table is a bounded in-file policy."
       }
     }
   ]

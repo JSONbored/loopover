@@ -149,7 +149,8 @@ gittensory-mcp preflight --login your-login --json`}
 @gittensory blockers
 @gittensory duplicate-check
 @gittensory miner-context
-@gittensory next-action`}
+@gittensory next-action
+@gittensory reviewability`}
           />
         </li>
       </ol>
@@ -160,7 +161,7 @@ gittensory-mcp preflight --login your-login --json`}
 
       <h2>Repo owner journey</h2>
       <p>
-        Repo owners care about registration readiness and sensible <code>.gittensor.yml</code>{" "}
+        Repo owners care about registration readiness and sensible <code>.gittensory.yml</code>{" "}
         configuration before promoting labels or maintainer-cut policy.
       </p>
       <ol>

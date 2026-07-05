@@ -1,7 +1,16 @@
 import { createInstallationToken } from "./app";
-import { fetchLivePullRequest } from "./backfill";
+import { fetchLivePullRequestResult } from "./backfill";
 import { githubRateLimitAdmissionKeyForToken } from "./client";
 import type { GitHubPullRequestPayload } from "../types";
+import { strippedErrorMessage } from "../utils/json";
+
+export type PullRequestUnavailableSource = "token" | "pull_request_fetch" | "live_payload";
+
+type PullRequestFreshnessOptions = {
+  requireDraft?: boolean;
+  unavailableSource?: PullRequestUnavailableSource;
+  unavailableDetail?: string;
+};
 
 export type PullRequestFreshness =
   | {
@@ -15,6 +24,8 @@ export type PullRequestFreshness =
       expectedHeadSha: string | null;
       liveHeadSha: string | null;
       liveState: string | null;
+      unavailableSource?: PullRequestUnavailableSource;
+      unavailableDetail?: string;
     };
 
 function normalizedHead(value: string | null | undefined): string | null {
@@ -32,16 +43,32 @@ export function reviewedPullRequestHeadSha(
 export function classifyPullRequestFreshness(
   live: Pick<GitHubPullRequestPayload, "state" | "head" | "draft"> | null | undefined,
   expectedHeadSha: string | null | undefined,
-  options?: { requireDraft?: boolean },
+  options?: PullRequestFreshnessOptions,
 ): PullRequestFreshness {
   const expected = normalizedHead(expectedHeadSha);
   if (!live) {
-    return { status: "stale", reason: "unavailable", expectedHeadSha: expected, liveHeadSha: null, liveState: null };
+    return {
+      status: "stale",
+      reason: "unavailable",
+      expectedHeadSha: expected,
+      liveHeadSha: null,
+      liveState: null,
+      ...(options?.unavailableSource ? { unavailableSource: options.unavailableSource } : {}),
+      ...(options?.unavailableDetail ? { unavailableDetail: options.unavailableDetail } : {}),
+    };
   }
   const liveState = typeof live.state === "string" ? live.state : null;
   const liveHeadSha = normalizedHead(live.head?.sha);
   if (!liveState) {
-    return { status: "stale", reason: "unavailable", expectedHeadSha: expected, liveHeadSha, liveState: null };
+    return {
+      status: "stale",
+      reason: "unavailable",
+      expectedHeadSha: expected,
+      liveHeadSha,
+      liveState: null,
+      unavailableSource: options?.unavailableSource ?? "live_payload",
+      ...(options?.unavailableDetail ? { unavailableDetail: options.unavailableDetail } : {}),
+    };
   }
   if (liveState !== "open") {
     return { status: "stale", reason: "closed", expectedHeadSha: expected, liveHeadSha, liveState };
@@ -73,14 +100,31 @@ export async function fetchPullRequestFreshness(
     requireDraft?: boolean;
   },
 ): Promise<PullRequestFreshness> {
-  const options = args.requireDraft !== undefined ? { requireDraft: args.requireDraft } : {};
+  const options: PullRequestFreshnessOptions =
+    args.requireDraft !== undefined ? { requireDraft: args.requireDraft } : {};
+  let tokenError: unknown;
   const token =
-    (await createInstallationToken(env, args.installationId).catch(() => undefined)) ??
-    env.GITHUB_PUBLIC_TOKEN;
-  if (!token) return classifyPullRequestFreshness(undefined, args.expectedHeadSha, options);
+    (await createInstallationToken(env, args.installationId).catch((error) => {
+      tokenError = error;
+      return undefined;
+    })) ?? env.GITHUB_PUBLIC_TOKEN;
+  if (!token) {
+    return classifyPullRequestFreshness(undefined, args.expectedHeadSha, {
+      ...options,
+      unavailableSource: "token",
+      unavailableDetail: strippedErrorMessage(tokenError, "no token available").slice(0, 240),
+    });
+  }
   const admissionKey = githubRateLimitAdmissionKeyForToken(env, token, args.installationId);
-  const live = await fetchLivePullRequest(env, args.repoFullName, args.pullNumber, token, admissionKey);
-  return classifyPullRequestFreshness(live, args.expectedHeadSha, options);
+  const live = await fetchLivePullRequestResult(env, args.repoFullName, args.pullNumber, token, admissionKey);
+  if (live.status === "error") {
+    return classifyPullRequestFreshness(undefined, args.expectedHeadSha, {
+      ...options,
+      unavailableSource: "pull_request_fetch",
+      unavailableDetail: live.error,
+    });
+  }
+  return classifyPullRequestFreshness(live.data, args.expectedHeadSha, options);
 }
 
 export function pullRequestFreshnessDetail(result: PullRequestFreshness): string {

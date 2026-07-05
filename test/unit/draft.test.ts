@@ -926,6 +926,13 @@ describe("slugify — truncation + empty branches", () => {
     expect(slug.startsWith("a")).toBe(true);
   });
 
+  it("does not leave a trailing hyphen when the 120-char cut lands on a separator", () => {
+    // 119 "a"s + "-" + "tail": the .slice(0, 120) boundary falls on the separator hyphen.
+    const slug = slugify(`${"a".repeat(119)} tail`);
+    expect(slug).toBe("a".repeat(119));
+    expect(slug.endsWith("-")).toBe(false);
+  });
+
   it("strips quotes and collapses non-alphanumerics", () => {
     expect(slugify(`It's a "Test" Value`)).toBe("its-a-test-value");
   });

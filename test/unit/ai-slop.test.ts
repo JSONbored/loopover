@@ -205,6 +205,17 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
     expect(result.estimatedNeurons).toBeGreaterThanOrEqual(6);
   });
 
+  it("degrades to no finding when env.AI is present but not a valid runner (no .run function)", async () => {
+    const env = createTestEnv({
+      AI: {} as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiSlopAdvisory(env, baseInput);
+    expect(result).toMatchObject({ status: "ok", finding: null, band: null });
+  });
+
   it("returns an advisory finding when the model flags an elevated band", async () => {
     const run = vi.fn(async () => ({ response: slopJson({ band: "elevated" }) }));
     const result = await runGittensoryAiSlopAdvisory(enabledEnv(run), baseInput);

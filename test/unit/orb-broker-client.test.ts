@@ -28,12 +28,20 @@ describe("isOrbBrokerMode", () => {
 
 describe("fetchBrokeredInstallationToken", () => {
   it("exchanges the secret for a token + parses the expiry (default broker URL + Bearer secret)", async () => {
-    const { fetchImpl, calls } = captureFetch(Response.json({ token: "ghs_x", installationId: 42, expiresAt: "2026-06-25T09:00:00Z" }));
+    const { fetchImpl, calls } = captureFetch(Response.json({ token: "ghs_x", installationId: 42, expiresAt: "2026-06-25T09:00:00Z", permissions: { contents: "write" } }));
     const out = await fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "orbsec_x" }, fetchImpl);
-    expect(out).toEqual({ token: "ghs_x", installationId: 42, expiresAtMs: Date.parse("2026-06-25T09:00:00Z") });
+    expect(out).toEqual({ token: "ghs_x", installationId: 42, expiresAtMs: Date.parse("2026-06-25T09:00:00Z"), permissions: { contents: "write" } });
     expect(calls[0]?.url).toBe("https://gittensory-api.aethereal.dev/v1/orb/token");
     expect((calls[0]?.init?.headers as Record<string, string>).authorization).toBe("Bearer orbsec_x");
     expect(calls[0]?.init?.method).toBe("POST");
+    expect(calls[0]?.init?.body).toBeUndefined();
+  });
+
+  it("asks the broker to force-refresh when retrying a stale permission scope", async () => {
+    const { fetchImpl, calls } = captureFetch(Response.json({ token: "ghs_x", installationId: 42, expiresAt: "2026-06-25T09:00:00Z" }));
+    await fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "orbsec_x" }, fetchImpl, { forceRefresh: true });
+    expect((calls[0]?.init?.headers as Record<string, string>)["content-type"]).toBe("application/json");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ forceRefresh: true });
   });
 
   it("defaults installationId + expiry when absent, and strips a trailing slash from a custom broker URL", async () => {
@@ -41,6 +49,7 @@ describe("fetchBrokeredInstallationToken", () => {
     const out = await fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s", ORB_BROKER_URL: "https://broker.example/" }, fetchImpl);
     expect(out.token).toBe("ghs_y");
     expect(out.installationId).toBe(0); // payload.installationId ?? 0
+    expect(out.permissions).toEqual({});
     expect(out.expiresAtMs).toBeGreaterThan(Date.now()); // payload.expiresAt absent → ~50min default
     expect(calls[0]?.url).toBe("https://broker.example/v1/orb/token");
   });
@@ -149,7 +158,11 @@ describe("registerOrbRelayTarget", () => {
     const errBody = (async () => Response.json({ error: "database unavailable" }, { status: 500 })) as typeof fetch;
     expect(await registerOrbRelayTarget(cfg, errBody)).toEqual({ status: "failed", reason: "http_500: database unavailable" });
 
-    const messageBody = (async () => Response.json({ message: "install not found" }, { status: 404 })) as typeof fetch;
+    const messageBody = (async () =>
+      new Response(JSON.stringify({ message: "install not found" }), {
+        status: 404,
+        headers: { "content-length": "31", "content-type": "application/json" },
+      })) as typeof fetch;
     expect(await registerOrbRelayTarget(cfg, messageBody)).toEqual({ status: "failed", reason: "http_404: install not found" });
   });
 
@@ -171,6 +184,79 @@ describe("registerOrbRelayTarget", () => {
     const longMessage = "x".repeat(500);
     const result = await registerOrbRelayTarget(cfg, (async () => Response.json({ error: longMessage }, { status: 500 })) as typeof fetch);
     expect(result.reason).toBe(`http_500: ${"x".repeat(200)}`);
+  });
+
+  it("does not read relay registration failure bodies whose Content-Length exceeds the diagnostic cap", async () => {
+    const cfg = { ORB_ENROLLMENT_SECRET: "s", PUBLIC_API_ORIGIN: "https://me.example" };
+    let canceled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new TextEncoder().encode('{"error":"must not be read"}'));
+        controller.close();
+      },
+      cancel() {
+        canceled = true;
+      },
+    });
+
+    const result = await registerOrbRelayTarget(
+      cfg,
+      (async () =>
+        new Response(body, {
+          status: 500,
+          headers: { "content-length": "2001" },
+        })) as typeof fetch,
+    );
+
+    expect(result).toEqual({ status: "failed", reason: "http_500" });
+    expect(canceled).toBe(true);
+  });
+
+
+  it("falls back to the bare status when the diagnostic response has no body", async () => {
+    const cfg = { ORB_ENROLLMENT_SECRET: "s", PUBLIC_API_ORIGIN: "https://me.example" };
+    const result = await registerOrbRelayTarget(cfg, (async () => new Response(null, { status: 500 })) as typeof fetch);
+    expect(result).toEqual({ status: "failed", reason: "http_500" });
+  });
+
+  it("truncates and cancels a single oversized diagnostic stream chunk", async () => {
+    const cfg = { ORB_ENROLLMENT_SECRET: "s", PUBLIC_API_ORIGIN: "https://me.example" };
+    let canceled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new TextEncoder().encode('{"error":"oversized_chunk"}'.padEnd(2_100, " ")));
+      },
+      cancel() {
+        canceled = true;
+      },
+    });
+
+    const result = await registerOrbRelayTarget(cfg, (async () => new Response(body, { status: 500 })) as typeof fetch);
+
+    expect(result).toEqual({ status: "failed", reason: "http_500: oversized_chunk" });
+    expect(canceled).toBe(true);
+  });
+
+  it("stream-reads at most the relay registration diagnostic cap and cancels the remainder", async () => {
+    const cfg = { ORB_ENROLLMENT_SECRET: "s", PUBLIC_API_ORIGIN: "https://me.example" };
+    let pulls = 0;
+    let canceled = false;
+    const boundedJson = '{"error":"bounded_broker_error"}';
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(new TextEncoder().encode(pulls === 1 ? boundedJson.padEnd(2_000, " ") : "x".repeat(10_000)));
+      },
+      cancel() {
+        canceled = true;
+      },
+    });
+
+    const result = await registerOrbRelayTarget(cfg, (async () => new Response(body, { status: 500 })) as typeof fetch);
+
+    expect(result).toEqual({ status: "failed", reason: "http_500: bounded_broker_error" });
+    expect(pulls).toBeLessThanOrEqual(2);
+    expect(canceled).toBe(true);
   });
 });
 

@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { gauge, incr, observe, registerMetricMeta, renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
+import { gauge, gaugeVector, incr, observe, registerMetricMeta, renderMetrics, resetMetrics, setSelfHostedMetricsMode } from "../../src/selfhost/metrics";
 
-afterEach(() => resetMetrics());
+afterEach(() => {
+  resetMetrics();
+  // setSelfHostedMetricsMode is a separate module-level flag from the counters/gauges resetMetrics() clears --
+  // reset it explicitly so a test that turns it on can never leak into an unrelated later test.
+  setSelfHostedMetricsMode(false);
+});
 
 describe("metrics registry (#982)", () => {
   it("renders unregistered counters exactly as bare samples", async () => {
@@ -109,6 +114,30 @@ describe("metrics registry (#982)", () => {
     expect(await renderMetrics()).toContain('debug_total{repo="public-owner/public-repo"} 1');
   });
 
+  // #terminal-outcome-audit: a self-hosted instance's /metrics is the operator's own private scrape target, not
+  // a publicly reachable one -- setSelfHostedMetricsMode(true) (called once at self-host boot) must stop
+  // redacting `repo` from these counters so an operator can actually slice their OWN dashboards by repo.
+  it("setSelfHostedMetricsMode(true) stops redacting the repo label on the cloud-private counters", async () => {
+    setSelfHostedMetricsMode(true);
+    incr("gittensory_gate_decisions_total", { repo: "owner/repo", conclusion: "success" });
+    incr("gittensory_reviews_published_total", { repo: "owner/repo" });
+    incr("gittensory_agent_disposition_total", { repo: "owner/repo", action_class: "hold", blocker_class: "none", autonomy_level: "auto" });
+
+    const out = await renderMetrics();
+    expect(out).toContain('gittensory_gate_decisions_total{conclusion="success",repo="owner/repo"} 1');
+    expect(out).toContain('gittensory_reviews_published_total{repo="owner/repo"} 1');
+    expect(out).toContain('repo="owner/repo"');
+  });
+
+  it("setSelfHostedMetricsMode(false) (the default) still redacts — byte-identical to the cloud worker", async () => {
+    setSelfHostedMetricsMode(false);
+    incr("gittensory_agent_disposition_total", { repo: "owner/repo", action_class: "hold", blocker_class: "none", autonomy_level: "auto" });
+
+    const out = await renderMetrics();
+    expect(out).not.toContain("owner/repo");
+    expect(out).toContain('gittensory_agent_disposition_total{action_class="hold",autonomy_level="auto",blocker_class="none"} 1');
+  });
+
   it("gauges sample at scrape time", async () => {
     let v = 5;
     gauge("g", () => v);
@@ -123,6 +152,100 @@ describe("metrics registry (#982)", () => {
     });
     incr("ok_total");
     expect((await renderMetrics())).toContain("ok_total 1");
+  });
+});
+
+describe("gaugeVector (#selfhost-lane-observability)", () => {
+  it("renders one series per labeled sample, sharing one HELP/TYPE block", async () => {
+    registerMetricMeta("v", { help: "Vector gauge.", type: "gauge" });
+    gaugeVector("v", () => [
+      { labels: { repo: "owner/a" }, value: 3 },
+      { labels: { repo: "owner/b" }, value: 5 },
+    ]);
+
+    const out = await renderMetrics();
+    expect(out.match(/^# HELP v /gm)).toHaveLength(1);
+    expect(out.match(/^# TYPE v gauge$/gm)).toHaveLength(1);
+    expect(out).toContain('v{repo="owner/a"} 3');
+    expect(out).toContain('v{repo="owner/b"} 5');
+  });
+
+  it("redacts repository labels from the public backlog-by-repo gauge vector", async () => {
+    gaugeVector("gittensory_queue_backlog_by_repo", () => [
+      { labels: { rank: "1", repo: "private-owner/secret-repo" }, value: 3 },
+      { labels: { rank: "2", repo: "other-org/confidential" }, value: 1 },
+    ]);
+
+    const out = await renderMetrics();
+    expect(out).toContain('gittensory_queue_backlog_by_repo{rank="1",repo="redacted-1"} 3');
+    expect(out).toContain('gittensory_queue_backlog_by_repo{rank="2",repo="redacted-2"} 1');
+    resetMetrics();
+    gaugeVector("gittensory_queue_backlog_by_repo", () => [
+      { labels: { repo: "private-owner/secret-repo" }, value: 4 },
+    ]);
+    expect(await renderMetrics()).toContain('gittensory_queue_backlog_by_repo{repo="redacted-1"} 4');
+    expect(out).not.toContain("private-owner/secret-repo");
+    expect(out).not.toContain("other-org/confidential");
+  });
+
+  it("keeps backlog-by-repo redacted even in self-hosted metrics mode", async () => {
+    setSelfHostedMetricsMode(true);
+    gaugeVector("gittensory_queue_backlog_by_repo", () => [
+      { labels: { rank: "1", repo: "owner/repo" }, value: 2 },
+    ]);
+
+    const out = await renderMetrics();
+    expect(out).toContain('gittensory_queue_backlog_by_repo{rank="1",repo="redacted-1"} 2');
+    expect(out).not.toContain("owner/repo");
+  });
+
+  it("reuses the same redacted label for a repo across repeated scrapes, without resetting", async () => {
+    gaugeVector("gittensory_queue_backlog_by_repo", () => [
+      { labels: { rank: "1", repo: "owner/repo" }, value: 2 },
+    ]);
+
+    const first = await renderMetrics();
+    const second = await renderMetrics();
+    expect(first).toContain('gittensory_queue_backlog_by_repo{rank="1",repo="redacted-1"} 2');
+    expect(second).toContain('gittensory_queue_backlog_by_repo{rank="1",repo="redacted-1"} 2');
+  });
+
+  it("supports an async sampler", async () => {
+    gaugeVector("async_v", async () => [{ labels: { key_scope: "public" }, value: 42 }]);
+    expect(await renderMetrics()).toContain('async_v{key_scope="public"} 42');
+  });
+
+  it("emits HELP/TYPE with zero series for an empty sample array (no data, not absent)", async () => {
+    registerMetricMeta("empty_v", { help: "Empty vector gauge.", type: "gauge" });
+    gaugeVector("empty_v", () => []);
+
+    const out = await renderMetrics();
+    expect(out).toContain("# HELP empty_v Empty vector gauge.\n# TYPE empty_v gauge\n");
+    expect(out).not.toMatch(/^empty_v\{/m);
+  });
+
+  it("a throwing sampler does not break the scrape", async () => {
+    gaugeVector("bad_v", () => {
+      throw new Error("x");
+    });
+    incr("ok_total");
+    expect(await renderMetrics()).toContain("ok_total 1");
+  });
+
+  it("re-registering the same name replaces the sampler", async () => {
+    gaugeVector("replaced_v", () => [{ labels: { x: "1" }, value: 1 }]);
+    gaugeVector("replaced_v", () => [{ labels: { x: "2" }, value: 2 }]);
+
+    const out = await renderMetrics();
+    expect(out).not.toContain('replaced_v{x="1"}');
+    expect(out).toContain('replaced_v{x="2"} 2');
+  });
+
+  it("resetMetrics clears gauge vectors", async () => {
+    gaugeVector("cleared_v", () => [{ labels: { x: "1" }, value: 1 }]);
+    resetMetrics();
+
+    expect(await renderMetrics()).toBe("\n");
   });
 });
 

@@ -1,7 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { DocsPage } from "@/components/site/docs-page";
-import { Callout, CodeBlock } from "@/components/site/primitives";
+import { Callout } from "@/components/site/primitives";
 
 export const Route = createFileRoute("/docs/ai-summaries")({
   head: () => ({
@@ -43,39 +43,42 @@ function AiSummariesDoc() {
       <h2>Where they appear</h2>
       <ul>
         <li>
-          In the <code>/app/playground</code> tool runs, behind an opt-in toggle, above the JSON.
+          In the <code>/app/playground</code> tool runs, behind an opt-in "Include AI summary"
+          toggle, above the JSON.
         </li>
         <li>
-          Optionally inside the MCP CLI with <code>--summary</code>, printed above the structured
-          output.
+          As an optional AI-clarified rewrite of the public PR intelligence comment, gated
+          server-side by <code>AI_PUBLIC_COMMENTS_ENABLED</code> and always falling back to the
+          deterministic comment body on any error, quota limit, or unsafe output.
         </li>
-        <li>
-          Never in public GitHub comments. Never in maintainer packets without explicit maintainer
-          opt-in.
-        </li>
+        <li>Never in maintainer packets without explicit maintainer opt-in.</li>
       </ul>
+      <Callout variant="note">
+        The playground's toggle currently renders a local, deterministic preview of the structured
+        response — it does not call the backend AI summary service described below yet. Treat it as
+        a stand-in for what a wired-up summary would look like.
+      </Callout>
 
       <h2>What is sent to the model</h2>
-      <CodeBlock
-        lang="json"
-        code={`{
-  "tool":   "plan-next-work",
-  "response": { /* deterministic JSON shown to user */ },
-  "context": {
-    "boundary": "private-mcp",
-    "ruleset_snapshot": "rs_2026_05_29_a1f3"
-  }
-}`}
-      />
       <p>
-        Only the response Gittensory already showed you, plus the boundary and ruleset snapshot, are
-        sent. No source code, no PAT, no GitHub identity, no per-user history.
+        A compacted signal bundle — the run's objective, actor login, surface, status, and data
+        quality, plus up to five ranked actions (kind, recommendation, why, blockers) and up to
+        eight freshness warnings. For a public rewrite, scoreability/risk fields are stripped before
+        the bundle is built, not filtered out of the model's response after the fact.
+      </p>
+      <p>
+        No source code, no PAT, no GitHub identity beyond the acting login, and no per-user history
+        beyond the current run are sent.
       </p>
 
       <h2>Model choice</h2>
       <p>
-        You pick the provider per-session: GPT, Claude, or a local model. Defaults to off. The
-        selection lives in your browser only and is cleared on sign-out.
+        There is no per-user or per-session model picker. The operator configures one AI provider
+        for the whole instance — see{" "}
+        <Link to="/docs/self-hosting-ai-providers">self-hosting AI providers</Link> for the
+        Codex/Claude Code/Ollama/OpenAI-compatible/Anthropic options. Summaries are off by default (
+        <code>AI_SUMMARIES_ENABLED</code>); public-comment rewriting is a separate,
+        also-off-by-default switch (<code>AI_PUBLIC_COMMENTS_ENABLED</code>).
       </p>
 
       <Callout variant="safety">

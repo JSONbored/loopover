@@ -15,7 +15,6 @@ describe("lintManifestText (#2079)", () => {
   it("reports every recognized focus field without echoing values", () => {
     const result = lintManifestText(`
 wantedPaths: [src/private-policy/]
-blockedPaths: [dist/]
 preferredLabels: [operator-only]
 linkedIssuePolicy: required
 testExpectations: [unit coverage]
@@ -37,10 +36,9 @@ contentLane:
 
     expect(result.ok).toBe(true);
     expect(result.warnings).toEqual([]);
-    expect(result.summary).toBe("Manifest parsed 13 recognized fields.");
+    expect(result.summary).toBe("Manifest parsed 12 recognized fields.");
     expect(result.recognizedFields).toEqual([
       "wantedPaths",
-      "blockedPaths",
       "preferredLabels",
       "linkedIssuePolicy",
       "testExpectations",
@@ -55,6 +53,23 @@ contentLane:
     ]);
     expect(JSON.stringify(result)).not.toContain("private maintainer note");
     expect(JSON.stringify(result)).not.toContain("operator-only");
+  });
+
+  it("flags legacy blockedPaths with a migration-specific warning, not the generic unknown-field message", () => {
+    const result = lintManifestText("wantedPaths: [src/]\nblockedPaths: [dist/]\n");
+
+    expect(result.ok).toBe(false);
+    expect(result.recognizedFields).toEqual(["wantedPaths"]);
+    expect(result.warnings).toEqual(["blockedPaths is retired; use settings.hardGuardrailGlobs for path holds."]);
+  });
+
+  it("flags legacy blockedPaths AND an unrelated unknown field with separate, distinct warnings", () => {
+    const result = lintManifestText("wantedPaths: [src/]\nblockedPaths: [dist/]\nunknownSecretKey: [x]\n");
+
+    expect(result.warnings).toEqual([
+      "blockedPaths is retired; use settings.hardGuardrailGlobs for path holds.",
+      "Manifest contains unknown top-level field: unknownSecretKey.",
+    ]);
   });
 
   it("flags empty or fieldless manifests as not ok", () => {

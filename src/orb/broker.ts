@@ -48,12 +48,14 @@ export async function issueOrbEnrollment(
   return { enrollId, secret };
 }
 
-export type BrokerResult = { token: string; installationId: number; expiresAt: string } | { error: "invalid_enrollment" | "installation_not_eligible" | "broker_misconfigured" };
+export type BrokerResult =
+  | { token: string; installationId: number; expiresAt: string; permissions: Record<string, string> }
+  | { error: "invalid_enrollment" | "installation_not_eligible" | "broker_misconfigured" };
 
 /** The container's token-exchange: a valid enrollment secret → a short-lived installation token for the BOUND
  *  install. installation_id is read from the enrollment row, never the caller; the install must still be
  *  registered=1 and neither suspended nor removed at mint time (the gate is re-checked, not trusted from issue). */
-export async function brokerOrbToken(env: Env, secret: string): Promise<BrokerResult> {
+export async function brokerOrbToken(env: Env, secret: string, options: { forceRefresh?: boolean } = {}): Promise<BrokerResult> {
   // Warn when TOKEN_ENCRYPTION_SECRET is absent — without it, the broker cache is bypassed and every exchange hits
   // GitHub's token endpoint, dramatically increasing exposure to throttle-induced failures.
   if (!env.TOKEN_ENCRYPTION_SECRET) {
@@ -73,10 +75,10 @@ export async function brokerOrbToken(env: Env, secret: string): Promise<BrokerRe
   // every broker call can throttle GitHub's token endpoint (slow responses -> engine timeouts -> unavailable orb).
   // The token is cached encrypted-at-rest (AES-256-GCM via TOKEN_ENCRYPTION_SECRET); with no key set the cache is
   // skipped and we mint every call exactly as before.
-  const cached = await readCachedOrbToken(env, row.cached_token_json);
+  const cached = options.forceRefresh ? null : await readCachedOrbToken(env, row.cached_token_json);
   if (cached) {
     await touchLastToken(env, row.enroll_id);
-    return { token: cached.token, installationId: row.installation_id, expiresAt: cached.expiresAt };
+    return { token: cached.token, installationId: row.installation_id, expiresAt: cached.expiresAt, permissions: cached.permissions };
   }
   // Validate Orb App credentials only now that the caller is proven to hold a valid, eligible enrollment — NOT
   // up front. Checking credentials before the enrollment lookup would let an unauthenticated caller (any bad
@@ -89,7 +91,7 @@ export async function brokerOrbToken(env: Env, secret: string): Promise<BrokerRe
   const minted = await createOrbInstallationToken(env, row.installation_id);
   await cacheOrbToken(env, row.enroll_id, minted);
   await touchLastToken(env, row.enroll_id);
-  return { token: minted.token, installationId: row.installation_id, expiresAt: minted.expiresAt };
+  return { token: minted.token, installationId: row.installation_id, expiresAt: minted.expiresAt, permissions: minted.permissions };
 }
 
 async function touchLastToken(env: Env, enrollId: string): Promise<void> {
@@ -102,13 +104,13 @@ async function touchLastToken(env: Env, enrollId: string): Promise<void> {
 
 /** Decrypt + return the cached installation token when present and still safely before expiry; null (→ re-mint) on
  *  no key, no cache, an expired/unparseable entry, or any decrypt failure (e.g. a rotated encryption key). */
-async function readCachedOrbToken(env: Env, cachedJson: string | null): Promise<{ token: string; expiresAt: string } | null> {
+async function readCachedOrbToken(env: Env, cachedJson: string | null): Promise<{ token: string; expiresAt: string; permissions: Record<string, string> } | null> {
   if (!env.TOKEN_ENCRYPTION_SECRET || !cachedJson) return null;
   try {
-    const entry = JSON.parse(cachedJson) as { ciphertext: string; iv: string; salt: string | null; expiresAt: string };
+    const entry = JSON.parse(cachedJson) as { ciphertext: string; iv: string; salt: string | null; expiresAt: string; permissions?: Record<string, string> };
     if (!(Date.parse(entry.expiresAt) - Date.now() >= ORB_TOKEN_CACHE_MIN_REMAINING_MS)) return null;
     const token = await decryptSecret(entry.ciphertext, entry.iv, env.TOKEN_ENCRYPTION_SECRET, entry.salt);
-    return { token, expiresAt: entry.expiresAt };
+    return { token, expiresAt: entry.expiresAt, permissions: entry.permissions ?? {} };
   } catch {
     return null;
   }
@@ -116,11 +118,11 @@ async function readCachedOrbToken(env: Env, cachedJson: string | null): Promise<
 
 /** Cache the freshly minted token (encrypted) on the enrollment row. Best-effort + fail-safe: a cache-write error
  *  must never fail a valid token exchange — the next call simply re-mints. No-op without an encryption key. */
-async function cacheOrbToken(env: Env, enrollId: string, minted: { token: string; expiresAt: string }): Promise<void> {
+async function cacheOrbToken(env: Env, enrollId: string, minted: { token: string; expiresAt: string; permissions: Record<string, string> }): Promise<void> {
   if (!env.TOKEN_ENCRYPTION_SECRET) return;
   try {
     const enc = await encryptSecret(minted.token, env.TOKEN_ENCRYPTION_SECRET);
-    const json = JSON.stringify({ ciphertext: enc.ciphertext, iv: enc.iv, salt: enc.salt, expiresAt: minted.expiresAt });
+    const json = JSON.stringify({ ciphertext: enc.ciphertext, iv: enc.iv, salt: enc.salt, expiresAt: minted.expiresAt, permissions: minted.permissions });
     await env.DB.prepare("UPDATE orb_enrollments SET cached_token_json = ? WHERE enroll_id = ?").bind(json, enrollId).run();
   } catch (error) {
     console.warn(JSON.stringify({ level: "warn", event: "orb_token_cache_write_failed", enrollId, message: String(error).slice(0, 120) }));

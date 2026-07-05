@@ -115,6 +115,26 @@ describe("product usage events", () => {
     expect(JSON.stringify(row)).not.toMatch(/\bbob\b|bobKey|forBob/i);
   });
 
+  it("does not over-redact an all-caps word that merely starts with the actor handle", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+
+    await recordProductUsageEvent(env, {
+      surface: "api",
+      eventName: "local_branch_analysis_completed",
+      actor: "bob",
+      repoFullName: "acme/tool",
+      targetKey: "acme:tool#1",
+      metadata: { note: "BOBCAT ran the job", viewer: "bob" },
+    });
+
+    const [row] = await listProductUsageEvents(env);
+    expect(row).toBeDefined();
+    if (!row) throw new Error("expected product usage event");
+    // "BOBCAT" is one all-caps word, not a `bob`+`Cat` camelCase hump, so it must stay readable while the
+    // standalone actor handle is still redacted.
+    expect(row.metadata).toMatchObject({ note: "BOBCAT ran the job", viewer: "<redacted-actor>" });
+  });
+
   it("bounds actor redaction patterns while still covering long valid handles", async () => {
     const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
     const actor = "a".repeat(200);
@@ -179,6 +199,33 @@ describe("product usage events", () => {
     expect(row.metadata).not.toHaveProperty("diff");
     expect(row.metadata).not.toHaveProperty("cwd");
     expect(JSON.stringify(row.metadata)).not.toMatch(/\/Users|\/root\/|\/var\/|github_pat|ghp_|source code|private patch|trustScore|wallet/i);
+  });
+
+  // Regression (#1825): the Orb broker's enrollment id/secret (createOpaqueToken("orbenr"/"orbsec"),
+  // src/orb/broker.ts) are bare opaque tokens with no "token"/"secret"-named field to trip the key-based
+  // redaction above when they appear as a plain VALUE (e.g. quoted inside an error-message string embedded
+  // in metadata) — PRODUCT_USAGE_TOKEN_VALUE must recognize the orbenr_/orbsec_ shape too, or it survives
+  // into persisted telemetry verbatim.
+  it("redacts bare Orb broker enrollment id/secret values from persisted telemetry", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+    const fakeEnrollId = `orbenr_${"a".repeat(64)}`;
+    const fakeSecret = `orbsec_${"b".repeat(64)}`;
+
+    await recordProductUsageEvent(env, {
+      surface: "internal",
+      eventName: "command_previewed",
+      actor: "oktofeesh1",
+      metadata: {
+        note: `broker exchange failed for enrollment ${fakeEnrollId} secret ${fakeSecret}`,
+      },
+    });
+
+    const [row] = await listProductUsageEvents(env);
+    expect(row).toBeDefined();
+    if (!row) throw new Error("expected product usage event");
+    expect(row.metadata).toMatchObject({ note: "broker exchange failed for enrollment <redacted-token> secret <redacted-token>" });
+    expect(JSON.stringify(row.metadata)).not.toContain(fakeEnrollId);
+    expect(JSON.stringify(row.metadata)).not.toContain(fakeSecret);
   });
 
   it("persists normalized role on the event row and strips private scoreability metadata", async () => {
@@ -709,6 +756,27 @@ describe("product usage events", () => {
       ]),
     );
     expect(JSON.stringify(result.rollups[0])).not.toMatch(/multi-role-actor|reviewer-actor|none-actor|invalid-role-actor|public-surface-actor|fixed-test-salt/i);
+  });
+
+  it("buckets the plural 'reviewers' role as maintainer, like every other role's plural", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+    const day = "2026-06-16";
+    // Every other role accepts its plural (miners/owners/operators/contributors/maintainers); "reviewers"
+    // is a maintainer synonym and must bucket the same, not fall through to "unknown".
+    await recordProductUsageEvent(env, {
+      surface: "control_panel",
+      eventName: "command_previewed",
+      actor: "reviewers-actor",
+      outcome: "success",
+      metadata: { roles: ["reviewers"] },
+      occurredAt: `${day}T01:00:00.000Z`,
+    });
+
+    const result = await rollupProductUsageDaily(env, { day, nowIso: `${day}T23:00:00.000Z` });
+
+    expect(result.rollups[0]?.byRole).toEqual(
+      expect.arrayContaining([{ role: "maintainer", count: 1, activeActors: 1, activeRepos: 0 }]),
+    );
   });
 
   it("builds role activation and coarse retention rollups without exposing actors", async () => {

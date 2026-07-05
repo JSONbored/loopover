@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GittensoryMcp } from "../../src/mcp/server";
 import { getRepositoryCollaboratorPermission } from "../../src/github/app";
 import { mergePullRequest } from "../../src/github/pr-actions";
@@ -41,7 +41,7 @@ vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
 // dedicated staleness-supersede test coverage lives in agent-approval-queue.test.ts, not this MCP-surface file.
 vi.mock("../../src/github/backfill", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/github/backfill")>()),
-  fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [] })),
+  fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null })),
   fetchLivePullRequestMergeState: vi.fn(async () => "clean"),
   fetchLivePullRequestReviewDecision: vi.fn(async () => undefined),
 }));
@@ -50,6 +50,10 @@ const mockedPermission = vi.mocked(getRepositoryCollaboratorPermission);
 beforeEach(() => {
   mockedPermission.mockReset();
   mockedPermission.mockResolvedValue("write");
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 async function connect(env: Env, identity?: AuthIdentity) {
@@ -77,7 +81,7 @@ describe("MCP gittensory_get_automation_state (#784)", () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
     await upsertInstallation(env, {
-      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
       repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
     });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto", label: "auto_with_approval" }, agentDryRun: true });
@@ -89,7 +93,7 @@ describe("MCP gittensory_get_automation_state (#784)", () => {
     const data = result.structuredContent as State;
     expect(data.configured).toBe(true);
     expect(data.mode).toBe("dry_run"); // agentDryRun → dry_run
-    expect(data.permissionReadiness).toBe("ready"); // pull_requests: write granted
+    expect(data.permissionReadiness).toBe("ready"); // contents: write granted for merge; pull_requests: write granted for PR writes
     expect(data.actingActionClasses).toEqual(expect.arrayContaining(["merge", "label"]));
     expect(data.pendingActionCount).toBe(1);
     // surfaces the COUNT, not the queue details — no reward/wallet leakage either
@@ -110,6 +114,27 @@ describe("MCP gittensory_get_automation_state (#784)", () => {
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as State;
     expect(data.pendingActionCount).toBe(201);
+  });
+
+  it("REGRESSION (#2912): honors a .gittensory.yml-only agentPaused: true override (DB row left at its false default)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto" } });
+    // No agentPaused in the DB row above (stays at its false default): only the yml manifest pauses the repo,
+    // so this only passes if the resolver (not the raw DB accessor) is consulted.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/.gittensory.yml")) return new Response("settings:\n  agentPaused: true\n", { status: 200 });
+      return new Response("Not Found", { status: 404 });
+    });
+
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_get_automation_state", arguments: { owner: "owner", repo: "repo" } });
+
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as State;
+    expect(data.agentPaused).toBe(true);
+    expect(data.mode).toBe("paused");
   });
 
   it("reports unconfigured + not_required readiness for an unknown / un-onboarded repo (no repo record)", async () => {
@@ -152,10 +177,10 @@ describe("MCP gittensory_propose_action (#784)", () => {
     const client = await connect(env);
     await client.callTool({
       name: "gittensory_propose_action",
-      arguments: { owner: "owner", repo: "repo", pullNumber: 9, actionClass: "close", label: "gittensory:blocked", reviewBody: "please fix", closeComment: "closing as noise" },
+      arguments: { owner: "owner", repo: "repo", pullNumber: 9, actionClass: "close", label: "custom-blocked", reviewBody: "please fix", closeComment: "closing as noise" },
     });
     const [staged] = await listPendingAgentActions(env, { repoFullName: "owner/repo", status: "pending" });
-    expect(staged?.params).toMatchObject({ label: "gittensory:blocked", reviewBody: "please fix", closeComment: "closing as noise" });
+    expect(staged?.params).toMatchObject({ label: "custom-blocked", reviewBody: "please fix", closeComment: "closing as noise" });
   });
 
   it("pins a proposed action to the PR's current head (expectedHeadSha) so the accept-time force-push guard can fire (#2255)", async () => {
@@ -171,7 +196,7 @@ describe("MCP gittensory_propose_action (#784)", () => {
   it("an MCP-staged merge is superseded on accept if the PR is force-pushed after proposal — the guard now actually fires (#2255)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertInstallation(env, {
-      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write" }, events: ["pull_request"] },
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write" }, events: ["pull_request"] },
       repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
     });
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
@@ -193,7 +218,7 @@ describe("MCP gittensory_propose_action (#784)", () => {
   it("allows a session that maintains the repo (owned installation)", async () => {
     const env = createTestEnv();
     await upsertInstallation(env, {
-      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
       repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
     });
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
@@ -267,7 +292,7 @@ describe("MCP gittensory_propose_action (#784)", () => {
   it("does not trust cached collaborator association without live write permission", async () => {
     const env = createTestEnv();
     await upsertInstallation(env, {
-      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write" }, events: ["pull_request"] },
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write" }, events: ["pull_request"] },
       repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
     });
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
@@ -397,7 +422,7 @@ describe("MCP gittensory_decide_pending_action (#784)", () => {
   it("accepts a staged action and honors dry-run mode (no live mutation)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertInstallation(env, {
-      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write" }, events: ["pull_request"] },
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write" }, events: ["pull_request"] },
       repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
     });
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
@@ -416,7 +441,7 @@ describe("MCP gittensory_decide_pending_action (#784)", () => {
   it("REGRESSION (#2423): reports status=errored (not accepted) and a distinct summary when the live mutation throws", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertInstallation(env, {
-      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write" }, events: ["pull_request"] },
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write" }, events: ["pull_request"] },
       repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
     });
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);

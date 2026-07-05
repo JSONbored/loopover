@@ -3630,6 +3630,22 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "reviewCheckMode": {
+                "type": "string",
+                "enum": [
+                  "required",
+                  "visible",
+                  "disabled"
+                ]
+              },
+              "autoProjectMilestoneMatch": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "suggest",
+                  "auto"
+                ]
               }
             },
             "required": [
@@ -3639,6 +3655,7 @@
               "publicAudienceMode",
               "checkRunMode",
               "gateCheckMode",
+              "reviewCheckMode",
               "quietByDefault",
               "behavior",
               "warnings"
@@ -6257,12 +6274,6 @@
                   "type": "string"
                 }
               },
-              "matchedBlockedPaths": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
               "preferredLabelHits": {
                 "type": "array",
                 "items": {
@@ -6325,7 +6336,6 @@
               "linkedIssuePolicy",
               "issueDiscoveryPolicy",
               "matchedWantedPaths",
-              "matchedBlockedPaths",
               "preferredLabelHits",
               "findings",
               "publicNextSteps",
@@ -8828,6 +8838,26 @@
                   "auto_with_approval",
                   "auto"
                 ]
+              },
+              "update_branch": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "suggest",
+                  "propose",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "assign": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "suggest",
+                  "propose",
+                  "auto_with_approval",
+                  "auto"
+                ]
               }
             }
           },
@@ -8997,22 +9027,9 @@
           },
           "typeLabels": {
             "type": "object",
-            "properties": {
-              "bug": {
-                "type": "string"
-              },
-              "feature": {
-                "type": "string"
-              },
-              "priority": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "bug",
-              "feature",
-              "priority"
-            ]
+            "additionalProperties": {
+              "type": "string"
+            }
           },
           "linkedIssueLabelPropagation": {
             "type": "object",
@@ -9064,6 +9081,116 @@
             "items": {
               "type": "string"
             }
+          },
+          "reviewCheckMode": {
+            "type": "string",
+            "enum": [
+              "required",
+              "visible",
+              "disabled"
+            ]
+          },
+          "hardGuardrailGlobs": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "manualReviewLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "readyToMergeLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "changesRequestedLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "migrationCollisionLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "pendingClosureLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "linkedIssueHardRules": {
+            "type": "object",
+            "properties": {
+              "ownerAssignedClose": {
+                "type": "string",
+                "enum": [
+                  "block",
+                  "off"
+                ]
+              },
+              "assignedIssueClose": {
+                "type": "string",
+                "enum": [
+                  "block",
+                  "off"
+                ]
+              },
+              "missingPointLabelClose": {
+                "type": "string",
+                "enum": [
+                  "block",
+                  "off"
+                ]
+              },
+              "maintainerOnlyLabelClose": {
+                "type": "string",
+                "enum": [
+                  "block",
+                  "off"
+                ]
+              },
+              "pointBearingLabels": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "maintainerOnlyLabels": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "defaultLabelRepo": {
+                "type": "boolean"
+              },
+              "verifyBeforeClose": {
+                "type": "boolean"
+              },
+              "closeDelaySeconds": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 300
+              }
+            },
+            "required": [
+              "ownerAssignedClose",
+              "assignedIssueClose",
+              "missingPointLabelClose",
+              "maintainerOnlyLabelClose",
+              "pointBearingLabels",
+              "maintainerOnlyLabels",
+              "defaultLabelRepo",
+              "verifyBeforeClose",
+              "closeDelaySeconds"
+            ]
+          },
+          "autoProjectMilestoneMatch": {
+            "type": "string",
+            "enum": [
+              "off",
+              "suggest",
+              "auto"
+            ]
           }
         },
         "required": [
@@ -9074,6 +9201,7 @@
           "checkRunMode",
           "checkRunDetailLevel",
           "gateCheckMode",
+          "reviewCheckMode",
           "gatePack",
           "linkedIssueGateMode",
           "duplicatePrGateMode",
@@ -9164,6 +9292,22 @@
                     },
                     "autoLabelEnabled": {
                       "type": "boolean"
+                    },
+                    "reviewCheckMode": {
+                      "type": "string",
+                      "enum": [
+                        "required",
+                        "visible",
+                        "disabled"
+                      ]
+                    },
+                    "autoProjectMilestoneMatch": {
+                      "type": "string",
+                      "enum": [
+                        "off",
+                        "suggest",
+                        "auto"
+                      ]
                     }
                   },
                   "required": [
@@ -9172,6 +9316,7 @@
                     "publicAudienceMode",
                     "checkRunMode",
                     "gateCheckMode",
+                    "reviewCheckMode",
                     "autoLabelEnabled"
                   ]
                 }
@@ -9734,6 +9879,22 @@
               },
               "typeLabelsEnabled": {
                 "type": "boolean"
+              },
+              "reviewCheckMode": {
+                "type": "string",
+                "enum": [
+                  "required",
+                  "visible",
+                  "disabled"
+                ]
+              },
+              "autoProjectMilestoneMatch": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "suggest",
+                  "auto"
+                ]
               }
             },
             "required": [
@@ -9744,6 +9905,7 @@
               "checkRunMode",
               "checkRunDetailLevel",
               "gateCheckMode",
+              "reviewCheckMode",
               "gatePack",
               "linkedIssueGateMode",
               "duplicatePrGateMode",
@@ -15131,6 +15293,9 @@
           },
           "401": {
             "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient role"
           }
         },
         "security": [
@@ -16056,6 +16221,209 @@
           },
           {
             "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/selfhost/queue/dead": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Paginated dead-letter jobs for the self-host queue backend",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient app role (operator only)"
+          },
+          "501": {
+            "description": "This deployment's queue backend does not expose dead-letter admin (e.g. Cloudflare)"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "25"
+            },
+            "required": false,
+            "description": "Maximum rows to return, clamped from 1 to 100.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "0"
+            },
+            "required": false,
+            "description": "Pagination offset, floored to 0.",
+            "name": "offset",
+            "in": "query"
+          }
+        ]
+      },
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "Dead-letter jobs purged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient app role (operator only)"
+          },
+          "501": {
+            "description": "This deployment's queue backend does not expose dead-letter admin"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/selfhost/queue/dead/{id}/replay": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Job replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid job id"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient app role (operator only)"
+          },
+          "404": {
+            "description": "Dead-letter job not found"
+          },
+          "501": {
+            "description": "This deployment's queue backend does not expose dead-letter admin"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "812"
+            },
+            "required": true,
+            "description": "Dead-letter job id.",
+            "name": "id",
+            "in": "path"
+          }
+        ]
+      }
+    },
+    "/v1/app/selfhost/queue/dead/{id}": {
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "Job deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid job id"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient app role (operator only)"
+          },
+          "404": {
+            "description": "Dead-letter job not found"
+          },
+          "501": {
+            "description": "This deployment's queue backend does not expose dead-letter admin"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "812"
+            },
+            "required": true,
+            "description": "Dead-letter job id.",
+            "name": "id",
+            "in": "path"
           }
         ]
       }

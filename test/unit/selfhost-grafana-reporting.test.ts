@@ -74,7 +74,13 @@ case "$args" in
   *"information_schema.tables"*"pull_requests"*|*"information_schema.tables"*"advisories"*|*"information_schema.tables"*"review_targets"*|*"information_schema.tables"*"ai_usage_events"*)
     printf '1\\n'
     ;;
-  *"information_schema.columns"*"ai_usage_events"*"estimated_neurons"*)
+  *"information_schema.columns"*"ai_usage_events"*"estimated_neurons"*|\
+  *"information_schema.columns"*"ai_usage_events"*"provider"*|\
+  *"information_schema.columns"*"ai_usage_events"*"effort"*|\
+  *"information_schema.columns"*"ai_usage_events"*"input_tokens"*|\
+  *"information_schema.columns"*"ai_usage_events"*"output_tokens"*|\
+  *"information_schema.columns"*"ai_usage_events"*"total_tokens"*|\
+  *"information_schema.columns"*"ai_usage_events"*"cost_usd"*)
     printf '1\\n'
     ;;
   *"FROM current_pull_requests"*)
@@ -85,7 +91,7 @@ case "$args" in
     printf '"JSONbored/gittensory",1049,bohdansolovie,closed,close,"historical PR",2026-06-22T17:28:56Z,2026-06-22T17:28:56Z\\n'
     ;;
   *"FROM ai_usage_events"*)
-    printf 'ai_review_pr,codex:gpt-5.5,ok,42,done,"{""repoFullName"" : ""JSONbored/gittensory"", ""pullNumber"" : 1678}",2026-06-28T00:00:00Z\\n'
+    printf 'ai_review_pr,codex:gpt-5.5,codex,medium,ok,42,120,15,135,0.25,done,"{""repoFullName"" : ""JSONbored/gittensory"", ""pullNumber"" : 1678}",2026-06-28T00:00:00Z\\n'
     ;;
 esac
 `,
@@ -247,7 +253,7 @@ esac
     expect(sqlite(outDb, "SELECT count(*) FROM review_targets;")).toBe("3");
     // Latest advisory conclusion for #1690 is 'neutral' -- counted as 'manual' (matches gateHeld's held-for-review
     // definition in src/signals/engine.ts, not 'commented'/'comment') so the dashboard's manual-review panel
-    // reflects the same held state the live app itself surfaces via gittensory:needs-human-review.
+    // reflects the same held state the live app itself surfaces via the configured manual-review label.
     expect(sqlite(outDb, "SELECT submitter || '|' || status || '|' || verdict || '|' || updated_at FROM review_targets WHERE repo='JSONbored/gittensory' AND number=1690;")).toBe(
       "JSONbored|manual|manual|2026-06-28T21:40:00Z",
     );
@@ -293,20 +299,27 @@ esac
       CREATE TABLE ai_usage_events (
         feature TEXT NOT NULL,
         model TEXT NOT NULL,
+        provider TEXT,
+        effort TEXT,
         status TEXT NOT NULL,
         estimated_neurons INTEGER NOT NULL DEFAULT 0,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        total_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_usd REAL NOT NULL DEFAULT 0,
         detail TEXT,
         metadata_json TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL
       );
-      INSERT INTO ai_usage_events (feature, model, status, estimated_neurons, detail, metadata_json, created_at)
-      VALUES ('ai_review_pr', 'codex:gpt-5.5', 'ok', 42, 'done', '{"repoFullName":"JSONbored/gittensory","pullNumber":1678,"private":"drop"}', '2026-06-28T00:00:00Z');
+      INSERT INTO ai_usage_events (feature, model, provider, effort, status, estimated_neurons, input_tokens, output_tokens, total_tokens, cost_usd, detail, metadata_json, created_at)
+      VALUES ('ai_review_pr', 'codex:gpt-5.5', 'codex', 'medium', 'ok', 42, 120, 15, 135, 0.25, 'done', '{"repoFullName":"JSONbored/gittensory","pullNumber":1678,"private":"drop"}', '2026-06-28T00:00:00Z');
     `);
 
     runExporter(root, appDb, outDb);
 
     expect(sqlite(outDb, "PRAGMA quick_check;")).toBe("ok");
     expect(sqlite(outDb, "SELECT estimated_neurons FROM ai_usage_events;")).toBe("42");
+    expect(sqlite(outDb, "SELECT provider || '|' || effort || '|' || input_tokens || '|' || output_tokens || '|' || total_tokens || '|' || cost_usd FROM ai_usage_events;")).toBe("codex|medium|120|15|135|0.25");
     expect(sqlite(outDb, "SELECT json_extract(metadata_json, '$.repoFullName') FROM ai_usage_events;")).toBe("JSONbored/gittensory");
     expect(sqlite(outDb, "SELECT json_extract(metadata_json, '$.private') IS NULL FROM ai_usage_events;")).toBe("1");
     expect(sqlite(outDb, "SELECT sum(estimated_neurons) FROM ai_usage_events WHERE feature = 'ai_review_pr' AND (('+' || model || '+') LIKE '%+codex+%' OR ('+' || model || '+') LIKE '%+codex:%');")).toBe("42");
@@ -333,6 +346,7 @@ esac
 
     expect(sqlite(outDb, "PRAGMA quick_check;")).toBe("ok");
     expect(sqlite(outDb, "SELECT estimated_neurons FROM ai_usage_events;")).toBe("0");
+    expect(sqlite(outDb, "SELECT provider IS NULL, effort IS NULL, input_tokens, output_tokens, total_tokens, cost_usd FROM ai_usage_events;")).toBe("1|1|0|0|0|0.0");
   });
 
   it("exports the same redacted dashboard snapshot from Postgres", () => {
@@ -355,6 +369,7 @@ esac
     );
     expect(sqlite(outDb, "SELECT title FROM review_targets WHERE repo='JSONbored/gittensory' AND number=1049;")).toBe("historical PR");
     expect(sqlite(outDb, "SELECT estimated_neurons FROM ai_usage_events;")).toBe("42");
+    expect(sqlite(outDb, "SELECT provider || '|' || effort || '|' || input_tokens || '|' || output_tokens || '|' || total_tokens || '|' || cost_usd FROM ai_usage_events;")).toBe("codex|medium|120|15|135|0.25");
     expect(sqlite(outDb, "SELECT json_extract(metadata_json, '$.repoFullName') FROM ai_usage_events;")).toBe("JSONbored/gittensory");
     expect(sqlite(outDb, "SELECT json_extract(metadata_json, '$.private') IS NULL FROM ai_usage_events;")).toBe("1");
     expect(readdirSync(csvTmp)).toEqual([]);

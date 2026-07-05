@@ -9,12 +9,15 @@ import {
   type LinkedIssueFacts,
   type LinkedIssueHardRulesConfig,
 } from "../../src/review/linked-issue-hard-rules";
+import { normalizeLinkedIssueHardRulesConfig } from "../../src/review/linked-issue-hard-rules-config";
 import { parseFocusManifest, resolveEffectiveSettings } from "../../src/signals/focus-manifest";
+import { setLocalManifestReader } from "../../src/signals/focus-manifest-loader";
 import type { RepositorySettings } from "../../src/types";
 
 function config(overrides: Partial<LinkedIssueHardRulesConfig> = {}): LinkedIssueHardRulesConfig {
   return {
     ownerAssignedClose: "off",
+    assignedIssueClose: "off",
     missingPointLabelClose: "off",
     maintainerOnlyLabelClose: "off",
     pointBearingLabels: ["gittensor:bug", "gittensor:feature", "gittensor:priority"],
@@ -31,6 +34,8 @@ function issue(overrides: Partial<LinkedIssueFacts> & { number: number }): Linke
 }
 
 const OWNER = "jsonbored";
+
+afterEach(() => setLocalManifestReader(null));
 
 describe("evaluateLinkedIssueHardRules", () => {
   it("returns no violation when every rule is off (even if every condition is met)", () => {
@@ -77,6 +82,50 @@ describe("evaluateLinkedIssueHardRules", () => {
         issues: [issue({ number: 7, assignees: ["contributor-x"] })],
         config: config({ ownerAssignedClose: "block" }),
         repoOwner: OWNER,
+      });
+      expect(result.violated).toBe(false);
+    });
+
+    it("allows an assignee-author to work an owner-assigned issue", () => {
+      const result = evaluateLinkedIssueHardRules({
+        issues: [issue({ number: 7, assignees: ["jsonbored", "contributor-x"] })],
+        config: config({ ownerAssignedClose: "block" }),
+        repoOwner: OWNER,
+        prAuthorLogin: "contributor-x",
+      });
+      expect(result.violated).toBe(false);
+    });
+  });
+
+  describe("rule 2: assigned issue", () => {
+    it("fires when the linked issue is already assigned to another contributor", () => {
+      const result = evaluateLinkedIssueHardRules({
+        issues: [issue({ number: 12, assignees: ["claimed-dev"] })],
+        config: config({ assignedIssueClose: "block" }),
+        repoOwner: OWNER,
+        prAuthorLogin: "drive-by",
+      });
+      expect(result.violated).toBe(true);
+      expect(result.reason).toContain("#12");
+      expect(result.reason).toContain("@claimed-dev");
+    });
+
+    it("does not fire when the PR author is the assignee", () => {
+      const result = evaluateLinkedIssueHardRules({
+        issues: [issue({ number: 12, assignees: ["Claimed-Dev"] })],
+        config: config({ assignedIssueClose: "block" }),
+        repoOwner: OWNER,
+        prAuthorLogin: "claimed-dev",
+      });
+      expect(result.violated).toBe(false);
+    });
+
+    it("is silent when the rule is off", () => {
+      const result = evaluateLinkedIssueHardRules({
+        issues: [issue({ number: 12, assignees: ["claimed-dev"] })],
+        config: config({ assignedIssueClose: "off" }),
+        repoOwner: OWNER,
+        prAuthorLogin: "drive-by",
       });
       expect(result.violated).toBe(false);
     });
@@ -160,6 +209,16 @@ describe("evaluateLinkedIssueHardRules", () => {
       });
       expect(result.violated).toBe(false);
     });
+
+    it("allows the assignee to work a maintainer-only issue", () => {
+      const result = evaluateLinkedIssueHardRules({
+        issues: [issue({ number: 3, labels: ["Maintainer-Only"], assignees: ["assigned-dev"] })],
+        config: config({ maintainerOnlyLabelClose: "block" }),
+        repoOwner: OWNER,
+        prAuthorLogin: "assigned-dev",
+      });
+      expect(result.violated).toBe(false);
+    });
   });
 
   describe("issue state + multiple issues", () => {
@@ -205,6 +264,7 @@ describe("loadLinkedIssueHardRules", () => {
         LEGACY_POLICY: {
           linkedIssueHardRules: {
             ownerAssignedClose: "block",
+            assignedIssueClose: "block",
             missingPointLabelClose: "block",
             maintainerOnlyLabelClose: "block",
             pointBearingLabels: ["gittensor:bug"],
@@ -224,6 +284,7 @@ describe("loadLinkedIssueHardRules", () => {
     const cfg = await loadLinkedIssueHardRules({} as Env, "soloname");
     expect(cfg).toEqual({
       ownerAssignedClose: "off",
+      assignedIssueClose: "off",
       missingPointLabelClose: "off",
       maintainerOnlyLabelClose: "off",
       pointBearingLabels: [],
@@ -233,12 +294,38 @@ describe("loadLinkedIssueHardRules", () => {
       closeDelaySeconds: 30,
     });
   });
+
+  it("loads linked-issue hard rules from the effective private repo config", async () => {
+    setLocalManifestReader(async (repoFullName) =>
+      repoFullName === "owner/configured"
+        ? [
+            "settings:",
+            "  linkedIssueHardRules:",
+            "    assignedIssueClose: block",
+            "    maintainerOnlyLabelClose: block",
+            "    maintainerOnlyLabels:",
+            "      - maintainer-only",
+            "    verifyBeforeClose: false",
+            "    closeDelaySeconds: 5",
+          ].join("\n")
+        : null,
+    );
+    const cfg = await loadLinkedIssueHardRules(createTestEnv(), "owner/configured");
+    expect(cfg).toMatchObject({
+      assignedIssueClose: "block",
+      maintainerOnlyLabelClose: "block",
+      maintainerOnlyLabels: ["maintainer-only"],
+      verifyBeforeClose: false,
+      closeDelaySeconds: 5,
+    });
+  });
 });
 
 describe("evaluateLinkedIssueHardRules with explicit config", () => {
   it("supports a fully enabled config for self-host config plumbing", () => {
     const cfg: LinkedIssueHardRulesConfig = {
       ownerAssignedClose: "block",
+      assignedIssueClose: "block",
       missingPointLabelClose: "block",
       maintainerOnlyLabelClose: "block",
       pointBearingLabels: ["gittensor:bug"],
@@ -249,8 +336,34 @@ describe("evaluateLinkedIssueHardRules with explicit config", () => {
     };
     expect(evaluateLinkedIssueHardRules({ issues: [issue({ number: 9, labels: ["reserved"] })], config: cfg, repoOwner: OWNER })).toEqual({
       violated: true,
-      reason: "Linked issue #9 is labeled `maintainer-only` — it is not open for community PRs.",
+      reason: "Linked issue #9 is labeled `reserved` — it is not open for community PRs unless assigned by a maintainer.",
     });
+  });
+
+  it("normalizes malformed linked-issue hard-rule config shapes without preserving invalid label entries", () => {
+    const warnings: string[] = [];
+    const cfg = normalizeLinkedIssueHardRulesConfig(
+      {
+        assignedIssueClose: "block",
+        pointBearingLabels: ["gittensor:bug", "", 1],
+        maintainerOnlyLabels: "maintainer-only",
+      },
+      warnings,
+    );
+
+    expect(cfg.assignedIssueClose).toBe("block");
+    expect(cfg.pointBearingLabels).toEqual(["gittensor:bug"]);
+    expect(cfg.maintainerOnlyLabels).toEqual([]);
+    expect(warnings.some((warning) => warning.includes("pointBearingLabels[1]"))).toBe(true);
+    expect(warnings.some((warning) => warning.includes("pointBearingLabels[2]"))).toBe(true);
+    expect(warnings.some((warning) => warning.includes("maintainerOnlyLabels must be an array"))).toBe(true);
+  });
+
+  it("normalizes a malformed linked-issue hard-rule top-level value back to the all-off default", () => {
+    const warnings: string[] = [];
+
+    expect(normalizeLinkedIssueHardRulesConfig([], warnings)).toEqual(DEFAULT_LINKED_ISSUE_HARD_RULES);
+    expect(warnings).toEqual(["settings.linkedIssueHardRules must be an object; using the default all-off policy."]);
   });
 });
 
@@ -331,6 +444,26 @@ describe("resolveLinkedIssueHardRule (#1144 — overflow + orchestration)", () =
     const r = await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: "tok", body: "closes #1", linkedIssues: [1] }));
     expect(r).toBeDefined();
     expect(typeof r?.violated).toBe("boolean");
+  });
+
+  it("REGRESSION: blocks a PR that links an issue assigned to someone else, but not the assignee", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) =>
+      input.toString().includes("/issues/")
+        ? Response.json({ number: 1, state: "open", labels: [], assignees: [{ login: "claimed-dev" }] })
+        : new Response("missing", { status: 404 }),
+    );
+    const blocked = await resolveLinkedIssueHardRule(
+      args({ config: config({ assignedIssueClose: "block" }), ciToken: "tok", body: "closes #1", linkedIssues: [1], prAuthorLogin: "drive-by" }),
+    );
+    expect(blocked).toEqual({
+      violated: true,
+      reason: "Linked issue #1 is already assigned to @claimed-dev — only the assignee or a maintainer can submit that work.",
+    });
+
+    const assignee = await resolveLinkedIssueHardRule(
+      args({ config: config({ assignedIssueClose: "block" }), ciToken: "tok", body: "closes #1", linkedIssues: [1], prAuthorLogin: "claimed-dev" }),
+    );
+    expect(assignee).toEqual({ violated: false, reason: null });
   });
 
   it("derives the installation admission key from the ci token + installation id so installation reads attribute to the installation bucket, not 'unknown' (#1951 blocker)", async () => {

@@ -20,6 +20,7 @@ function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettin
     checkRunMode: "enabled",
     checkRunDetailLevel: "standard",
     gateCheckMode: "off",
+    reviewCheckMode: "disabled",
     gatePack: "gittensor",
     linkedIssueGateMode: "advisory",
     duplicatePrGateMode: "advisory",
@@ -183,12 +184,11 @@ describe("buildRepoPolicyReadiness", () => {
     expect(report.publicWarnings.flatMap((warning) => [warning.title, warning.detail, warning.action]).every(isFocusManifestPublicSafe)).toBe(true);
   });
 
-  it("warns when contribution scope only defines blocked work", () => {
+  it("warns when contribution scope is unclear", () => {
     const report = buildRepoPolicyReadiness(
       input({
         settings: settings({ requireLinkedIssue: true }),
         focusManifest: parseFocusManifest({
-          blockedPaths: ["docs/"],
           linkedIssuePolicy: "optional",
           testExpectations: ["Run npm run test:ci."],
         }),
@@ -197,13 +197,11 @@ describe("buildRepoPolicyReadiness", () => {
 
     expect(report.ownerContext).toMatchObject({
       wantedPathCount: 0,
-      blockedPathCount: 1,
       issuePolicy: "direct_pr_requires_linked_issue",
     });
     expect(report.publicWarnings.map((warning) => warning.code)).toEqual(
       expect.arrayContaining([
         "contribution_scope_unclear",
-        "blocked_work_without_wanted_scope",
         "linked_issue_policy_mismatch",
       ]),
     );
@@ -411,7 +409,6 @@ describe("buildRepoPolicyReadiness", () => {
         privateNoteCount: 0,
         manifestWarningCount: 0,
         wantedPathCount: 0,
-        blockedPathCount: 0,
         validationExpectationCount: 0,
         issueDiscoveryPolicy: "neutral",
       },

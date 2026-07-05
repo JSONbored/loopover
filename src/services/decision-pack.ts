@@ -245,7 +245,6 @@ export type RepoDecisionManifestSummary = {
   linkedIssuePolicy: FocusManifestLinkedIssuePolicy;
   issueDiscoveryPolicy: FocusManifestIssueDiscoveryPolicy;
   wantedPathCount: number;
-  blockedPathCount: number;
   preferredLabels: string[];
   publicNotes: string[];
 };
@@ -1017,7 +1016,6 @@ function buildRepoDecisionManifestSummary(manifest: FocusManifest): RepoDecision
     linkedIssuePolicy: manifest.linkedIssuePolicy,
     issueDiscoveryPolicy: manifest.issueDiscoveryPolicy,
     wantedPathCount: manifest.wantedPaths.length,
-    blockedPathCount: manifest.blockedPaths.length,
     preferredLabels: manifest.preferredLabels.slice(0, 8),
     publicNotes: manifest.publicNotes.filter(isFocusManifestPublicSafe).slice(0, 4),
   };
@@ -1031,10 +1029,6 @@ function buildRepoDecisionManifestReasons(manifest: FocusManifest): { whyThisHel
   if (manifest.wantedPaths.length > 0) {
     whyThisHelps.push(`Maintainer focus manifest declares ${manifest.wantedPaths.length} wanted path(s) for this repo.`);
     publicNextActions.push("Target the maintainer-wanted areas for this repo when picking a change.");
-  }
-  if (manifest.blockedPaths.length > 0) {
-    riskReasons.push(`Maintainer focus manifest blocks ${manifest.blockedPaths.length} path pattern(s) for this repo.`);
-    publicNextActions.push("Avoid the maintainer-blocked areas for this repo.");
   }
   if (manifest.linkedIssuePolicy === "required") {
     nextActions.push("Link a tracked issue on every PR; the maintainer's manifest requires it.");

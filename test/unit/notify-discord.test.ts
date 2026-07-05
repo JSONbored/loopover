@@ -1,19 +1,24 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { notifyActionToDiscord, notifyActionToSlack } from "../../src/services/notify-discord";
+import { notifyActionToDiscord, notifyActionToSlack, resolveDiscordWebhook } from "../../src/services/notify-discord";
 import { createTestEnv } from "../helpers/d1";
 
 const HOOK = "https://discord.com/api/webhooks/123/abc";
 const FALLBACK = "https://discord.com/api/webhooks/999/zzz";
+const ORIG_DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 
-function stubFetch(): string[] {
+function stubFetch(status = 204): string[] {
   const calls: string[] = [];
   vi.stubGlobal("fetch", async (url: RequestInfo | URL) => {
     calls.push(String(url));
-    return new Response(null, { status: 204 });
+    return new Response(null, { status });
   });
   return calls;
 }
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  if (ORIG_DISCORD_WEBHOOK_URL === undefined) delete process.env.DISCORD_WEBHOOK_URL;
+  else process.env.DISCORD_WEBHOOK_URL = ORIG_DISCORD_WEBHOOK_URL;
+  vi.unstubAllGlobals();
+});
 
 // The built-in per-repo secrets (GITTENSORY_DISCORD_WEBHOOK, …) are read via cast and not declared on Env, so
 // set them with Object.assign; DISCORD_WEBHOOK_URL is declared, so either path works.
@@ -21,11 +26,50 @@ const withEnv = (over: Record<string, string>): Env => Object.assign(createTestE
 const notify = (env: Env, repo: string): Promise<void> =>
   notifyActionToDiscord(env, { repoFullName: repo, pullNumber: 1, outcome: "merged", summary: "ok" });
 
+async function externalNotificationAudit(env: Env, provider: "discord" | "slack"): Promise<Array<{ outcome: string; detail: string; metadata_json: string }>> {
+  const rows = await env.DB.prepare("select outcome, detail, metadata_json from audit_events where event_type = ? order by created_at").bind(`external_notification.${provider}`).all<{ outcome: string; detail: string; metadata_json: string }>();
+  return rows.results ?? [];
+}
+
 describe("notify-discord resolveWebhook (modular self-host fallback)", () => {
+  it("resolves a repo-specific DISCORD_REPO_WEBHOOKS entry case-insensitively", () => {
+    const env = withEnv({ DISCORD_REPO_WEBHOOKS: JSON.stringify({ "jsonbored/metagraphed": HOOK }), DISCORD_WEBHOOK_URL: FALLBACK });
+    expect(resolveDiscordWebhook(env, "JSONbored/Metagraphed")).toEqual({ status: "configured", url: HOOK, source: "repo_map" });
+  });
+
+  it("ignores malformed or non-object DISCORD_REPO_WEBHOOKS values and still resolves the global fallback", () => {
+    expect(resolveDiscordWebhook(withEnv({ DISCORD_REPO_WEBHOOKS: "{not json", DISCORD_WEBHOOK_URL: FALLBACK }), "acme/widgets")).toEqual({ status: "configured", url: FALLBACK, source: "global" });
+    expect(resolveDiscordWebhook(withEnv({ DISCORD_REPO_WEBHOOKS: "123", DISCORD_WEBHOOK_URL: FALLBACK }), "acme/widgets")).toEqual({ status: "configured", url: FALLBACK, source: "global" });
+    expect(resolveDiscordWebhook(withEnv({ DISCORD_REPO_WEBHOOKS: "[]", DISCORD_WEBHOOK_URL: FALLBACK }), "acme/widgets")).toEqual({ status: "configured", url: FALLBACK, source: "global" });
+  });
+
+  it("REGRESSION: explicit non-string and blank DISCORD_REPO_WEBHOOKS entries fail closed", async () => {
+    const env = withEnv({ DISCORD_REPO_WEBHOOKS: JSON.stringify({ "acme/widgets": 123, "acme/blank": "   " }), DISCORD_WEBHOOK_URL: FALLBACK });
+    expect(resolveDiscordWebhook(env, "acme/widgets")).toEqual({ status: "disabled", reason: "invalid_repo_webhook" });
+    expect(resolveDiscordWebhook(env, "acme/blank")).toEqual({ status: "disabled", reason: "invalid_repo_webhook" });
+    expect(resolveDiscordWebhook(env, "acme/other")).toEqual({ status: "configured", url: FALLBACK, source: "global" });
+
+    const calls = stubFetch();
+    await notify(env, "acme/widgets");
+    await notify(env, "acme/blank");
+    expect(calls).toEqual([]);
+    expect(await externalNotificationAudit(env, "discord")).toEqual([
+      expect.objectContaining({ outcome: "denied", detail: "invalid_repo_webhook" }),
+      expect.objectContaining({ outcome: "denied", detail: "invalid_repo_webhook" }),
+    ]);
+  });
+
   it("a mapped repo uses its own per-channel secret", async () => {
     const calls = stubFetch();
     await notify(withEnv({ GITTENSORY_DISCORD_WEBHOOK: HOOK }), "JSONbored/gittensory");
     expect(calls).toEqual([HOOK]);
+  });
+
+  it("uses process.env as a self-host fallback when the runtime Env object does not carry the webhook", async () => {
+    process.env.DISCORD_WEBHOOK_URL = FALLBACK;
+    expect(resolveDiscordWebhook(createTestEnv(), "acme/widgets")).toEqual({ status: "configured", url: FALLBACK, source: "global" });
+    process.env.DISCORD_WEBHOOK_URL = "   ";
+    expect(resolveDiscordWebhook(createTestEnv(), "acme/widgets")).toEqual({ status: "disabled", reason: "missing_global_webhook" });
   });
 
   it("any UNmapped repo (a self-hoster's) falls back to DISCORD_WEBHOOK_URL", async () => {
@@ -40,33 +84,111 @@ describe("notify-discord resolveWebhook (modular self-host fallback)", () => {
     expect(calls).toEqual([]);
   });
 
-  it("a mapped repo whose channel secret is unset falls back to DISCORD_WEBHOOK_URL", async () => {
+  it("REGRESSION: a mapped repo whose channel secret is unset does not fall back to the wrong global channel", async () => {
     const calls = stubFetch();
-    // JSONbored/metagraphed is in the map, but METAGRAPHED_DISCORD_WEBHOOK is unset → fall through.
-    await notify(withEnv({ DISCORD_WEBHOOK_URL: FALLBACK }), "JSONbored/metagraphed");
-    expect(calls).toEqual([FALLBACK]);
+    const env = withEnv({ DISCORD_WEBHOOK_URL: FALLBACK });
+    // JSONbored/metagraphed is in the legacy map. If its dedicated secret is missing, posting to the global
+    // fallback sends metagraphed events into the gittensory channel.
+    await notify(env, "JSONbored/metagraphed");
+    expect(calls).toEqual([]);
+    expect(await externalNotificationAudit(env, "discord")).toEqual([expect.objectContaining({ outcome: "denied", detail: "missing_repo_webhook" })]);
+  });
+
+  it("REGRESSION: an invalid repo-specific webhook suppresses instead of falling back to the global channel", async () => {
+    const calls = stubFetch();
+    const env = withEnv({ DISCORD_REPO_WEBHOOKS: JSON.stringify({ "jsonbored/metagraphed": "https://example.com/not-discord" }), DISCORD_WEBHOOK_URL: FALLBACK });
+    await notify(env, "JSONbored/metagraphed");
+    expect(calls).toEqual([]);
+    expect(await externalNotificationAudit(env, "discord")).toEqual([expect.objectContaining({ outcome: "denied", detail: "invalid_repo_webhook" })]);
+  });
+
+  it("an invalid legacy repo secret suppresses instead of falling back to the global channel", async () => {
+    const calls = stubFetch();
+    const env = withEnv({ GITTENSORY_DISCORD_WEBHOOK: "https://example.com/not-discord", DISCORD_WEBHOOK_URL: FALLBACK });
+    await notify(env, "JSONbored/gittensory");
+    expect(calls).toEqual([]);
+    expect(await externalNotificationAudit(env, "discord")).toEqual([expect.objectContaining({ outcome: "denied", detail: "invalid_repo_webhook" })]);
+  });
+
+  it("an invalid global webhook suppresses unmapped repos", async () => {
+    const calls = stubFetch();
+    const env = withEnv({ DISCORD_WEBHOOK_URL: "https://example.com/not-discord" });
+    await notify(env, "acme/widgets");
+    expect(calls).toEqual([]);
+    expect(resolveDiscordWebhook(env, "acme/widgets")).toEqual({ status: "disabled", reason: "invalid_global_webhook" });
+    expect(resolveDiscordWebhook(withEnv({ DISCORD_WEBHOOK_URL: "not-a-url" }), "acme/widgets")).toEqual({ status: "disabled", reason: "invalid_global_webhook" });
+    expect(await externalNotificationAudit(env, "discord")).toEqual([expect.objectContaining({ outcome: "denied", detail: "invalid_global_webhook" })]);
+  });
+
+  it("audit failures are best-effort and never break notification suppression", async () => {
+    const calls = stubFetch();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(notify({} as Env, "acme/widgets")).resolves.toBeUndefined();
+    expect(calls).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("discord_notify_audit_failed"));
+    warn.mockRestore();
+  });
+
+  it("audits successful Discord sends without storing the webhook URL", async () => {
+    const calls = stubFetch();
+    const env = withEnv({ DISCORD_REPO_WEBHOOKS: JSON.stringify({ "jsonbored/gittensory": HOOK }) });
+    await notify(env, "JSONbored/gittensory");
+    expect(calls).toEqual([HOOK]);
+    const rows = await externalNotificationAudit(env, "discord");
+    expect(rows).toEqual([expect.objectContaining({ outcome: "completed", detail: "sent" })]);
+    const metadata = JSON.parse(rows[0]?.metadata_json ?? "{}");
+    expect(metadata).toMatchObject({ repoFullName: "JSONbored/gittensory", pullNumber: 1, actionOutcome: "merged", source: "repo_map" });
+    expect(rows[0]?.metadata_json).not.toContain("webhooks/123");
+  });
+
+  it("renders Discord's summary fallback and optional submitter field", async () => {
+    const calls: Array<{ url: string; body: { embeds: Array<{ description: string; fields: Array<{ name: string; value: string; inline?: boolean }> }> } }> = [];
+    vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init?.body ?? "{}")) });
+      return new Response(null, { status: 204 });
+    });
+    await notifyActionToDiscord(withEnv({ DISCORD_REPO_WEBHOOKS: JSON.stringify({ "jsonbored/gittensory": HOOK }) }), {
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 2,
+      outcome: "closed",
+      summary: "",
+      submitter: "octocat",
+    });
+    expect(calls[0]?.url).toBe(HOOK);
+    expect(calls[0]?.body.embeds[0]?.description).toBe("closed");
+    expect(calls[0]?.body.embeds[0]?.fields).toContainEqual({ name: "Submitter", value: "@octocat", inline: true });
+  });
+
+  it("REGRESSION: audits rejected Discord webhook HTTP responses as errors", async () => {
+    const calls = stubFetch(429);
+    const env = withEnv({ DISCORD_REPO_WEBHOOKS: JSON.stringify({ "jsonbored/gittensory": HOOK }) });
+    await notify(env, "JSONbored/gittensory");
+    expect(calls).toEqual([HOOK]);
+    expect(await externalNotificationAudit(env, "discord")).toEqual([expect.objectContaining({ outcome: "error", detail: "discord_webhook_http_429" })]);
   });
 });
 
 describe("notifyActionToSlack (#11 — modular self-host Slack channel)", () => {
   const SLACK = "https://hooks.slack.com/services/T0/B0/xyz";
-  const slackStub = () => {
+  const slackStub = (status = 200) => {
     const calls: { url: string; body: { text: string; blocks: Array<{ text: { text: string } }> } }[] = [];
     vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
       calls.push({ url: String(url), body: JSON.parse(String(init?.body ?? "{}")) });
-      return new Response(null, { status: 200 });
+      return new Response(null, { status });
     });
     return calls;
   };
 
   it("posts a Block Kit message to SLACK_WEBHOOK_URL for any repo, including the submitter", async () => {
     const calls = slackStub();
-    await notifyActionToSlack(withEnv({ SLACK_WEBHOOK_URL: SLACK }), { repoFullName: "acme/widgets", pullNumber: 7, outcome: "merged", summary: "looks good", submitter: "octocat" });
+    const env = withEnv({ SLACK_WEBHOOK_URL: SLACK });
+    await notifyActionToSlack(env, { repoFullName: "acme/widgets", pullNumber: 7, outcome: "merged", summary: "looks good", submitter: "octocat" });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe(SLACK);
     expect(calls[0]?.body.text).toContain("acme/widgets#7");
     expect(calls[0]?.body.blocks[0]?.text.text).toContain("looks good");
     expect(calls[0]?.body.blocks[0]?.text.text).toContain("Submitter: @octocat");
+    expect(await externalNotificationAudit(env, "slack")).toEqual([expect.objectContaining({ outcome: "completed", detail: "sent" })]);
   });
 
   it("escapes untrusted Slack mrkdwn in the summary and submitter", async () => {
@@ -106,5 +228,13 @@ describe("notifyActionToSlack (#11 — modular self-host Slack channel)", () => 
   it("swallows a fetch failure (best-effort, never throws)", async () => {
     vi.stubGlobal("fetch", async () => { throw new Error("network down"); });
     await expect(notifyActionToSlack(withEnv({ SLACK_WEBHOOK_URL: SLACK }), { repoFullName: "acme/widgets", pullNumber: 7, outcome: "manual", summary: "x" })).resolves.toBeUndefined();
+  });
+
+  it("REGRESSION: audits rejected Slack webhook HTTP responses as errors", async () => {
+    const calls = slackStub(403);
+    const env = withEnv({ SLACK_WEBHOOK_URL: SLACK });
+    await notifyActionToSlack(env, { repoFullName: "acme/widgets", pullNumber: 7, outcome: "closed", summary: "x" });
+    expect(calls).toHaveLength(1);
+    expect(await externalNotificationAudit(env, "slack")).toEqual([expect.objectContaining({ outcome: "error", detail: "slack_webhook_http_403" })]);
   });
 });

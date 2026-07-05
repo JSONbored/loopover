@@ -149,6 +149,43 @@ describe("extractContentDuplicateSignals + strict match", () => {
   });
 });
 
+describe("normalizeUrl — RFC 3986 percent-encoding canonicalization for duplicate detection", () => {
+  const urlOf = (websiteUrl: string) =>
+    extractContentDuplicateSignals({ filePath: "content/skills/x.mdx", content: mdx({ title: "X", slug: "x", websiteUrl }) }).urls[0];
+
+  it("decodes percent-encoded unreserved characters (RFC 3986 §2.3)", () => {
+    expect(urlOf("https://acme.example/%7Euser")).toBe(urlOf("https://acme.example/~user"));
+    expect(urlOf("https://acme.example/%41BC")).toBe(urlOf("https://acme.example/ABC"));
+    expect(urlOf("https://acme.example/~user")).toBe("https://acme.example/~user");
+  });
+
+  it("uppercases the hex of a reserved percent-triplet without decoding it (RFC 3986 §2.1)", () => {
+    expect(urlOf("https://acme.example/a%2fb")).toBe(urlOf("https://acme.example/a%2Fb"));
+    // …but an encoded reserved char is NOT the literal char — a genuinely different path must not be conflated.
+    expect(urlOf("https://acme.example/a%2Fb")).not.toBe(urlOf("https://acme.example/a/b"));
+  });
+
+  it("leaves the query untouched and does not over-match a genuinely different URL", () => {
+    // Percent-encoding normalization must not disturb the query or conflate distinct paths.
+    expect(urlOf("https://acme.example/p?utm_source=z&a=1")).toBe(urlOf("https://acme.example/p?a=1")); // tracking strip unchanged
+    expect(urlOf("https://acme.example/p")).not.toBe(urlOf("https://acme.example/q"));
+    expect(urlOf("https://acme.example/p?b=2&a=1")).not.toBe(urlOf("https://acme.example/p?a=1&b=2")); // query order preserved
+  });
+
+  it("collapses two submissions that differ only by path percent-encoding into a STRICT duplicate", () => {
+    const a = extractContentDuplicateSignals({
+      filePath: "content/skills/a.mdx",
+      content: mdx({ title: "A", slug: "a", description: "Identical purpose text", websiteUrl: "https://acme.example/docs/%7Eguide" }),
+    });
+    const b = extractContentDuplicateSignals({
+      filePath: "content/skills/b.mdx",
+      content: mdx({ title: "B", slug: "b", description: "Identical purpose text", websiteUrl: "https://acme.example/docs/~guide" }),
+    });
+    const m = findStrictContentDuplicateMatch(a, [b]);
+    expect(m?.reasons.some((r) => r.includes("same canonical source URL"))).toBe(true);
+  });
+});
+
 describe("buildContentDuplicateReview", () => {
   it("returns legacy / strict / related buckets", () => {
     const sig = extractContentDuplicateSignals({

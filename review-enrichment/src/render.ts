@@ -281,6 +281,64 @@ export function renderBrief(
           return "enables debug mode in production configuration; this can expose internals or sensitive data";
         case "hardcoded-service-url":
           return "hardcodes a service URL in config; prefer environment-specific injection or secrets-managed config";
+        case "privileged-container":
+          return "runs the container in privileged mode, granting near-unrestricted host device and kernel access";
+        case "privilege-escalation":
+          return "sets `allowPrivilegeEscalation: true`; the process can gain more privileges than its parent";
+        case "host-pid-namespace":
+          return "shares the host PID namespace; the container can see and signal processes on the host";
+        case "host-ipc-namespace":
+          return "shares the host IPC namespace; the container can reach host shared-memory segments";
+        case "run-as-root":
+          return "sets `runAsNonRoot: false`, permitting the container to run as the root user";
+        case "run-as-root-uid":
+          return "runs the container as UID 0 (root); prefer a dedicated non-root user";
+        case "writable-root-filesystem":
+          return "sets `readOnlyRootFilesystem: false`; a writable root filesystem eases tampering and persistence";
+        case "unmasked-proc-mount":
+          return "sets `procMount: Unmasked`, exposing masked `/proc` paths to the container";
+        case "unencrypted-storage":
+          return "disables storage encryption at rest; verify the stored data does not require encryption";
+        case "publicly-accessible-database":
+          return "marks the database instance as publicly accessible from the internet";
+        case "imdsv1-allowed":
+          return "allows IMDSv1 (`http_tokens: optional`); prefer IMDSv2 to mitigate SSRF credential theft";
+        case "world-writable-permissions":
+          return "grants world-writable `0777` permissions; restrict to the least access the workload needs";
+        case "docker-add-remote-url":
+          return "uses `ADD` with a remote URL; prefer `COPY` or a verified download so the fetched content stays auditable";
+        case "docker-image-latest-tag":
+          return "pins a base image to the mutable `:latest` tag; pin a specific version or digest for reproducible, reviewable builds";
+        case "docker-root-user":
+          return "runs the image as `root` (`USER root`/`USER 0`); switch to a dedicated non-root user";
+        case "remote-shell-pipe":
+          return "pipes a remote download straight into a shell (`curl … | sh`); this runs unreviewed remote code at build time";
+        case "insecure-download-flag":
+          return "disables download or TLS certificate verification with an insecure build flag; this permits man-in-the-middle tampering";
+        case "ssh-port-exposed":
+          return "exposes SSH port 22 from the image; containers should not ship an SSH daemon";
+        case "npm-unsafe-perm":
+          return "runs npm with `--unsafe-perm`, executing package lifecycle scripts as root";
+        case "sudo-in-build":
+          return "invokes `sudo` in a build layer; run the build step as the needed user instead of elevating";
+        case "hardcoded-build-secret":
+          return "hardcodes a credential-shaped value into an image layer via `ENV`/`ARG`; build secrets persist in the image history";
+        case "insecure-pip-index":
+          return "points a package installer at a plaintext-HTTP index; dependency downloads can be intercepted";
+        case "db-ssl-disabled":
+          return "disables TLS on the database connection (`sslmode=disable`); traffic and credentials travel in plaintext";
+        case "git-ssl-no-verify":
+          return "sets `GIT_SSL_NO_VERIFY`, so Git skips TLS certificate verification for remote operations";
+        case "ssh-host-key-check-off":
+          return "sets `StrictHostKeyChecking no`, so SSH accepts an unknown host key and permits man-in-the-middle";
+        case "verify-ssl-off":
+          return "disables TLS certificate verification (`verify_ssl: false`); this permits man-in-the-middle interception";
+        case "validate-certs-off":
+          return "sets `validate_certs: no`, so the client accepts any TLS certificate (Ansible/HTTP module)";
+        case "tls-skip-verify":
+          return "sets `tls_skip_verify`/`insecure_skip_verify: true`, so TLS certificate verification is skipped";
+        case "trust-all-server-certs":
+          return "sets `TrustServerCertificate=true`, so the client trusts any database server certificate";
       }
     };
 
@@ -392,6 +450,13 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("approvalIntegrity", findings.approvalIntegrity));
   lines.push(...renderDescriptorSection("ciCheckSignals", findings.ciCheckSignals));
   lines.push(...renderDescriptorSection("undocumentedExport", findings.undocumentedExport));
+  lines.push(...renderDescriptorSection("staleBranch", findings.staleBranch));
+  lines.push(...renderDescriptorSection("commitHygiene", findings.commitHygiene));
+  lines.push(...renderDescriptorSection("pendingReviewRequests", findings.pendingReviewRequests));
+  lines.push(...renderDescriptorSection("testRatio", findings.testRatio));
+  lines.push(...renderDescriptorSection("migrationSafety", findings.migrationSafety));
+  lines.push(...renderDescriptorSection("looseRange", findings.looseRange));
+  lines.push(...renderDescriptorSection("terminology", findings.terminology));
 
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 

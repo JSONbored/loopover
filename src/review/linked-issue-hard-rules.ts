@@ -1,75 +1,37 @@
 import { fetchLinkedIssueFacts } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { extractLinkedIssueNumbersWithOverflow } from "../db/repositories";
+import { resolveRepositorySettings } from "../settings/repository-settings";
+import { DEFAULT_LINKED_ISSUE_HARD_RULES } from "./linked-issue-hard-rules-config";
+import type { LinkedIssueHardRulesConfig } from "../types";
+export { DEFAULT_LINKED_ISSUE_HARD_RULES } from "./linked-issue-hard-rules-config";
+export type { LinkedIssueHardRulesConfig, LinkedIssueHardRulesMode } from "../types";
 
 // Linked-issue HARD-RULE auto-close (#linked-issue-hard-rules). A DETERMINISTIC rule about the issue(s) a
 // contributor PR links — not an AI verdict. When a contributor links an issue that violates one of the
 // operator's hard rules, the PR is one-shot CLOSED with the SPECIFIC rule cited, so the contributor knows
 // exactly why (and which issue). The three rules (close when ANY linked OPEN issue trips one):
 //   1. owner-assigned    — the issue is assigned to the repo owner (reserved for the maintainer).
-//   2. missing-point     — a default-label repo AND the issue carries NONE of the point-bearing labels
+//   2. assigned-issue    — the issue is assigned to someone other than the PR author.
+//   3. missing-point     — a default-label repo AND the issue carries NONE of the point-bearing labels
 //                          (gittensor:bug / gittensor:feature / gittensor:priority) → not a scored contribution.
-//   3. maintainer-only   — the issue is labeled `maintainer-only` → not open for community PRs.
+//   4. maintainer-only   — the issue is labeled `maintainer-only` → not open for community PRs.
 //
 // Each rule is independently `"block"` (enforce) or `"off"` (ignore). Because this is deterministic (no
 // hallucination risk), the close fires REGARDLESS of a hard-guardrail path hit — but NEVER for the owner or
 // an automation bot (the planner's `isContributor` guard owns that exemption).
 
-export type LinkedIssueHardRulesMode = "block" | "off";
-
-export type LinkedIssueHardRulesConfig = {
-  ownerAssignedClose: LinkedIssueHardRulesMode;
-  missingPointLabelClose: LinkedIssueHardRulesMode;
-  maintainerOnlyLabelClose: LinkedIssueHardRulesMode;
-  // The point-bearing labels that make an issue eligible for a scored contribution.
-  pointBearingLabels: string[];
-  // The labels that mark an issue as maintainer-only (not open for community PRs).
-  maintainerOnlyLabels: string[];
-  // True when the repo uses the default gittensor labels, which is the precondition for the missing-point rule
-  // (a repo that does NOT use point labels must never auto-close for "missing point label").
-  defaultLabelRepo: boolean;
-  // Flag-then-close double-check (#linked-issue-verify-before-close). When TRUE (default), a hard-rule
-  // violation does NOT close on first detection: the planner FLAGS the PR (adds the pending-closure label + a
-  // warning comment) and only CLOSES on the NEXT gate evaluation if the violation STILL holds AND the label is
-  // already present (a label-based two-pass state machine — the second pass is the verification). When FALSE,
-  // the close fires immediately on first detection (the original GAP-5 behavior).
-  verifyBeforeClose: boolean;
-  // How long (seconds) until the verification pass — surfaced in the flag comment, and used to delay the
-  // optional re-review re-enqueue so Pass 2 doesn't wait for the slow sweep. Clamped to [0, 300].
-  closeDelaySeconds: number;
-};
-
-// Fail-SAFE default: every mode OFF, empty label lists, NOT a default-label repo. With hosted reviews retired,
-// this loader no longer reads external policy storage; deterministic linked-issue auto-closes stay off
-// unless/until they are wired through self-host repo config.
-
-// The namespaced label that marks a PR as flagged-for-closure by the linked-issue hard rule (Pass 1). Its
-// presence + a persisting violation on the next evaluation is the verification trigger (Pass 2 → close). Cleared
-// when the violation resolves. Namespaced so it never collides with project labels (mirrors AGENT_LABEL_*).
-export const AGENT_LABEL_PENDING_CLOSURE = "gittensory:pending-closure";
-
-// Default verification delay (seconds) — how long until the second-pass close. Clamped to this range on load.
-const DEFAULT_CLOSE_DELAY_SECONDS = 30;
-
-export const DEFAULT_LINKED_ISSUE_HARD_RULES: LinkedIssueHardRulesConfig = {
-  ownerAssignedClose: "off",
-  missingPointLabelClose: "off",
-  maintainerOnlyLabelClose: "off",
-  pointBearingLabels: [],
-  maintainerOnlyLabels: [],
-  defaultLabelRepo: false,
-  // Default ON: a hard-rule violation flags first, then closes on re-verification (the operator's double-check).
-  verifyBeforeClose: true,
-  closeDelaySeconds: DEFAULT_CLOSE_DELAY_SECONDS,
-};
+// Fallback label that marks a PR as flagged-for-closure by the linked-issue hard rule (Pass 1). Its presence + a
+// persisting violation on the next evaluation is the verification trigger (Pass 2 → close). Operators can rename
+// or disable it with `settings.pendingClosureLabel`; the fallback intentionally avoids project-specific labels.
+export const AGENT_LABEL_PENDING_CLOSURE = "pending-closure";
 
 /**
- * Resolve a repo's linked-issue hard-rule config. Kept async to avoid touching the processor call graph, but this
- * no longer reads external policy storage; the fail-safe all-off default ensures deterministic linked-issue closes
- * cannot fire from stale hosted-review configuration.
+ * Resolve a repo's linked-issue hard-rule config through the same private/global config-as-code resolver the
+ * rest of the action engine uses. Fail safe: if settings cannot be resolved, rules stay all-off.
  */
-export async function loadLinkedIssueHardRules(_env: Env, _repoFullName: string): Promise<LinkedIssueHardRulesConfig> {
-  return DEFAULT_LINKED_ISSUE_HARD_RULES;
+export async function loadLinkedIssueHardRules(env: Env, repoFullName: string): Promise<LinkedIssueHardRulesConfig> {
+  return (await resolveRepositorySettings(env, repoFullName).catch(() => undefined))?.linkedIssueHardRules ?? DEFAULT_LINKED_ISSUE_HARD_RULES;
 }
 
 export type LinkedIssueFacts = {
@@ -86,9 +48,18 @@ export type LinkedIssueHardRuleResult = {
 
 const NO_VIOLATION: LinkedIssueHardRuleResult = { violated: false, reason: null };
 
-function labelMatches(labels: string[], candidates: string[]): boolean {
+function findMatchingLabel(labels: string[], candidates: string[]): string | null {
   const wanted = new Set(candidates.map((c) => c.toLowerCase()));
-  return labels.some((label) => wanted.has(label.toLowerCase()));
+  return labels.find((label) => wanted.has(label.toLowerCase())) ?? null;
+}
+
+function labelMatches(labels: string[], candidates: string[]): boolean {
+  return findMatchingLabel(labels, candidates) !== null;
+}
+
+function issueIsAssignedToAuthor(issue: LinkedIssueFacts, prAuthorLogin: string | null | undefined): boolean {
+  const author = prAuthorLogin?.trim().toLowerCase();
+  return !!author && issue.assignees.some((assignee) => assignee.toLowerCase() === author);
 }
 
 /**
@@ -101,36 +72,56 @@ export function evaluateLinkedIssueHardRules(input: {
   issues: LinkedIssueFacts[];
   config: LinkedIssueHardRulesConfig;
   repoOwner: string;
+  prAuthorLogin?: string | null | undefined;
 }): LinkedIssueHardRuleResult {
   const { config, repoOwner } = input;
   const ownerLower = repoOwner.toLowerCase();
-  const anyRuleOn = config.ownerAssignedClose === "block" || config.missingPointLabelClose === "block" || config.maintainerOnlyLabelClose === "block";
+  const anyRuleOn =
+    config.ownerAssignedClose === "block" ||
+    config.assignedIssueClose === "block" ||
+    config.missingPointLabelClose === "block" ||
+    config.maintainerOnlyLabelClose === "block";
   if (!anyRuleOn) return NO_VIOLATION;
 
   for (const issue of input.issues) {
     if (issue.state !== "open") continue;
+    const assignedToPrAuthor = issueIsAssignedToAuthor(issue, input.prAuthorLogin);
 
     // Rule 1 — owner-assigned. The maintainer reserved this issue; a contributor PR for it can't be auto-accepted.
-    if (config.ownerAssignedClose === "block" && ownerLower.length > 0 && issue.assignees.some((assignee) => assignee.toLowerCase() === ownerLower)) {
+    if (
+      config.ownerAssignedClose === "block" &&
+      ownerLower.length > 0 &&
+      !assignedToPrAuthor &&
+      issue.assignees.some((assignee) => assignee.toLowerCase() === ownerLower)
+    ) {
       return {
         violated: true,
         reason: `Linked issue #${issue.number} is assigned to the maintainer (@${repoOwner}) — that work is reserved for the maintainer, so this PR cannot be auto-accepted.`,
       };
     }
 
-    // Rule 3 — maintainer-only label. Not open for community PRs.
-    if (config.maintainerOnlyLabelClose === "block" && labelMatches(issue.labels, config.maintainerOnlyLabels)) {
+    // Rule 2 — assigned to someone else. Prevents contributors from racing or taking already-claimed issues.
+    if (config.assignedIssueClose === "block" && issue.assignees.length > 0 && !assignedToPrAuthor) {
       return {
         violated: true,
-        reason: `Linked issue #${issue.number} is labeled \`maintainer-only\` — it is not open for community PRs.`,
+        reason: `Linked issue #${issue.number} is already assigned to @${issue.assignees[0]} — only the assignee or a maintainer can submit that work.`,
       };
     }
 
-    // Rule 2 — missing point-bearing label (default-label repos only). Not eligible for a scored contribution.
+    // Rule 3 — maintainer-only label. Not open for community PRs.
+    const maintainerOnlyLabel = findMatchingLabel(issue.labels, config.maintainerOnlyLabels);
+    if (config.maintainerOnlyLabelClose === "block" && maintainerOnlyLabel !== null && !assignedToPrAuthor) {
+      return {
+        violated: true,
+        reason: `Linked issue #${issue.number} is labeled \`${maintainerOnlyLabel}\` — it is not open for community PRs unless assigned by a maintainer.`,
+      };
+    }
+
+    // Rule 4 — missing point-bearing label (default-label repos only). Not eligible for a scored contribution.
     if (config.missingPointLabelClose === "block" && config.defaultLabelRepo && !labelMatches(issue.labels, config.pointBearingLabels)) {
       return {
         violated: true,
-        reason: `Linked issue #${issue.number} has no point-bearing label (needs one of gittensor:bug, gittensor:feature, gittensor:priority) — it is not eligible for a scored contribution.`,
+        reason: `Linked issue #${issue.number} has no point-bearing label (needs one of ${config.pointBearingLabels.join(", ") || "the configured point labels"}) — it is not eligible for a scored contribution.`,
       };
     }
   }
@@ -154,6 +145,7 @@ export async function resolveLinkedIssueHardRule(args: {
   body: string | null | undefined;
   linkedIssues: number[];
   ciToken: string | undefined;
+  prAuthorLogin?: string | null | undefined;
   // The installation id for `ciToken` (undefined for public-token reads). The admission key is DERIVED from the
   // token + this id via the one shared resolver, so an installation-token read attributes to its installation bucket
   // (not "unknown") and the key can never be passed out of sync with the token it belongs to.
@@ -161,6 +153,7 @@ export async function resolveLinkedIssueHardRule(args: {
 }): Promise<LinkedIssueHardRuleResult | undefined> {
   const anyRuleOn =
     args.config.ownerAssignedClose === "block" ||
+    args.config.assignedIssueClose === "block" ||
     args.config.missingPointLabelClose === "block" ||
     args.config.maintainerOnlyLabelClose === "block";
   if (!anyRuleOn) return undefined;
@@ -189,5 +182,5 @@ export async function resolveLinkedIssueHardRule(args: {
     }
     return undefined;
   }
-  return evaluateLinkedIssueHardRules({ issues: issueFacts, config: args.config, repoOwner: args.repoOwner });
+  return evaluateLinkedIssueHardRules({ issues: issueFacts, config: args.config, repoOwner: args.repoOwner, prAuthorLogin: args.prAuthorLogin });
 }

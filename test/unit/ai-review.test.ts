@@ -22,6 +22,8 @@ const {
   synthesizeDefect,
   toPublicSafe,
   runWorkersOpinion,
+  coerceAiUsage,
+  aggregateActualUsage,
 } = __aiReviewInternals;
 
 type InlineFinding = {
@@ -341,9 +343,12 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
   });
 
   it("repoInstructions (#review-instructions) is appended to the system prompt; absent leaves it byte-identical", async () => {
+    const optionsOf = (run: ReturnType<typeof vi.fn>): { messages?: Array<{ content?: string }>; systemAppend?: string } => {
+      const calls = run.mock.calls as unknown as Array<[unknown, { messages?: Array<{ content?: string }>; systemAppend?: string }]>;
+      return calls[0]?.[1] ?? {};
+    };
     const systemPromptOf = (run: ReturnType<typeof vi.fn>): string =>
-      (run.mock.calls[0]?.[1] as { messages?: Array<{ content?: string }> })
-        ?.messages?.[0]?.content ?? "";
+      optionsOf(run).messages?.[0]?.content ?? "";
     const runInstr = async (repoInstructions: string | undefined) => {
       const run = vi.fn(async () => ({ response: reviewJson() }));
       const env = createTestEnv({
@@ -353,18 +358,48 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
         AI_DAILY_NEURON_BUDGET: "100000",
       });
       await runGittensoryAiReview(env, { ...baseInput, repoInstructions });
-      return systemPromptOf(run);
+      return { system: systemPromptOf(run), options: optionsOf(run) };
     };
     const withInstr = await runInstr("Follow our async-error conventions.");
-    expect(withInstr).toContain("REPOSITORY REVIEW INSTRUCTIONS");
-    expect(withInstr).toContain("async-error conventions");
+    expect(withInstr.system).toContain("REPOSITORY REVIEW INSTRUCTIONS");
+    expect(withInstr.system).toContain("async-error conventions");
+    expect(withInstr.options.systemAppend).toBeUndefined();
     // Absent or whitespace-only → no append (byte-identical prompt).
-    expect(await runInstr(undefined)).not.toContain(
+    expect((await runInstr(undefined)).system).not.toContain(
       "REPOSITORY REVIEW INSTRUCTIONS",
     );
-    expect(await runInstr("   ")).not.toContain(
+    expect((await runInstr("   ")).system).not.toContain(
       "REPOSITORY REVIEW INSTRUCTIONS",
     );
+  });
+
+  it("repoInstructions are passed as systemAppend only for self-host CLI reviewers (#1471)", async () => {
+    const optionsFor = async (model: string, repoInstructions: string | undefined) => {
+      const run = vi.fn(async () => ({ response: reviewJson() }));
+      const env = createTestEnv({
+        AI: { run } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await runGittensoryAiReview(env, {
+        ...baseInput,
+        reviewers: [{ model }],
+        combine: "single",
+        repoInstructions,
+      });
+      const calls = run.mock.calls as unknown as Array<[unknown, { messages?: Array<{ content?: string }>; systemAppend?: string }]>;
+      return calls[0]?.[1] ?? {};
+    };
+
+    for (const model of ["claude-code", "codex"]) {
+      const options = await optionsFor(model, "Follow our async-error conventions.");
+      expect(options.systemAppend).toContain("REPOSITORY REVIEW INSTRUCTIONS");
+      expect(options.systemAppend).toContain("async-error conventions");
+      expect(options.messages?.[0]?.content).toContain(options.systemAppend);
+    }
+    expect((await optionsFor("claude-code", undefined)).systemAppend).toBeUndefined();
+    expect((await optionsFor("claude-code", "   ")).systemAppend).toBeUndefined();
   });
 
   it("the inline-findings instruction is appended to the system prompt ONLY when requested (#inline-comments)", async () => {
@@ -819,7 +854,7 @@ describe("Workers AI fallback + degraded output", () => {
 describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () => {
   const planEnv = (
     plan: {
-      reviewers: Array<{ model: string }>;
+      reviewers: Array<{ model: string; fallback?: string | null | undefined }>;
       combine: string;
       onMerge?: string;
     },
@@ -832,6 +867,161 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
       AI_DAILY_NEURON_BUDGET: "100000",
       AI_REVIEW_PLAN: plan as never,
     });
+
+  it("records actual self-host provider token usage on the durable per-PR audit row", async () => {
+    const env = planEnv(
+      { reviewers: [{ model: "codex" }], combine: "single" },
+      async () => ({
+        response: reviewJson({ present: false, nits: [], suggestions: [] }),
+        usage: {
+          provider: "codex",
+          model: "gpt-5.5",
+          effort: "medium",
+          inputTokens: 101.2,
+          outputTokens: 9.6,
+          costUsd: 0.03,
+        },
+      }),
+    );
+    const result = await runGittensoryAiReview(env, baseInput);
+    if (result.status !== "ok") throw new Error("expected ok");
+    expect(result.reviewDiagnostics).toEqual([
+      expect.objectContaining({
+        usage: expect.objectContaining({
+          provider: "codex",
+          model: "gpt-5.5",
+          effort: "medium",
+          inputTokens: 101,
+          outputTokens: 10,
+          totalTokens: undefined,
+          costUsd: 0.03,
+        }),
+      }),
+    ]);
+    const row = await env.DB.prepare(
+      `select provider, effort, input_tokens, output_tokens, total_tokens, cost_usd, metadata_json
+       from ai_usage_events
+       where feature = ?
+       order by rowid desc
+       limit 1`,
+    )
+      .bind("ai_review_pr")
+      .first<{
+        provider: string | null;
+        effort: string | null;
+        input_tokens: number;
+        output_tokens: number;
+        total_tokens: number;
+        cost_usd: number;
+        metadata_json: string;
+      }>();
+    expect(row).toMatchObject({
+      provider: "codex",
+      effort: "medium",
+      input_tokens: 101,
+      output_tokens: 10,
+      total_tokens: 111,
+      cost_usd: 0.03,
+    });
+    expect(JSON.parse(row?.metadata_json ?? "{}")).toMatchObject({
+      repoFullName: baseInput.repoFullName,
+      pullNumber: baseInput.prNumber,
+    });
+  });
+
+  it("normalizes usage envelopes and aggregates mixed provider totals without affecting verdicts", () => {
+    expect(coerceAiUsage(undefined)).toBeUndefined();
+    expect(coerceAiUsage({ usage: null })).toBeUndefined();
+    expect(coerceAiUsage({ usage: [] })).toBeUndefined();
+    expect(
+      coerceAiUsage({
+        usage: {
+          provider: "  claude-code ",
+          model: " claude-sonnet-4-6 ",
+          effort: " low ",
+          inputTokens: -1,
+          outputTokens: 2.4,
+          totalTokens: Number.NaN,
+          costUsd: "0.4",
+        },
+      }),
+    ).toEqual({
+      provider: "claude-code",
+      model: "claude-sonnet-4-6",
+      effort: "low",
+      inputTokens: undefined,
+      outputTokens: 2,
+      totalTokens: undefined,
+      costUsd: undefined,
+    });
+    expect(
+      coerceAiUsage({
+        usage: { provider: "   ", model: "\t", inputTokens: 3 },
+      }),
+    ).toEqual({
+      provider: undefined,
+      model: undefined,
+      effort: undefined,
+      inputTokens: 3,
+      outputTokens: undefined,
+      totalTokens: undefined,
+      costUsd: undefined,
+    });
+    expect(aggregateActualUsage([{ model: "codex", attempt: 0, status: "parsed" }])).toBeUndefined();
+    expect(
+      aggregateActualUsage([
+        {
+          model: "codex",
+          attempt: 0,
+          status: "parsed",
+          usage: { provider: "codex", model: "gpt-5.5", effort: "medium", totalTokens: 30, costUsd: 0.02 },
+        },
+        {
+          model: "claude-code",
+          attempt: 0,
+          status: "parsed",
+          usage: { provider: "claude-code", model: "claude-sonnet-4-6", effort: "medium", inputTokens: 5, outputTokens: 7, costUsd: 0.04 },
+        },
+      ]),
+    ).toEqual({
+      provider: "codex+claude-code",
+      model: "gpt-5.5+claude-sonnet-4-6",
+      effort: "medium",
+      inputTokens: 5,
+      outputTokens: 7,
+      totalTokens: 42,
+      costUsd: 0.06,
+    });
+    expect(
+      aggregateActualUsage([
+        { model: "unknown", attempt: 0, status: "parsed", usage: {} },
+      ]),
+    ).toEqual({
+      provider: undefined,
+      model: undefined,
+      effort: undefined,
+      inputTokens: undefined,
+      outputTokens: undefined,
+      totalTokens: undefined,
+      costUsd: undefined,
+    });
+    // Each diagnostic reports only ONE side of input/output (no totalTokens), so the per-usage
+    // total falls back to `(inputTokens ?? 0) + (outputTokens ?? 0)` from BOTH directions.
+    expect(
+      aggregateActualUsage([
+        { model: "a", attempt: 0, status: "parsed", usage: { inputTokens: 10 } },
+        { model: "b", attempt: 0, status: "parsed", usage: { outputTokens: 4 } },
+      ]),
+    ).toEqual({
+      provider: undefined,
+      model: undefined,
+      effort: undefined,
+      inputTokens: 10,
+      outputTokens: 4,
+      totalTokens: 14,
+      costUsd: undefined,
+    });
+  });
 
   it("single provider: runs ONE named reviewer and its blocker IS the decision", async () => {
     const seen: string[] = [];
@@ -855,6 +1045,33 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
       "Null deref",
     );
     expect(seen).toEqual(["claude-code"]); // exactly one reviewer, addressed by name
+  });
+
+  it("single provider fallback: tries Claude Code when Codex fails and records the fallback attempt", async () => {
+    const seen: string[] = [];
+    const env = planEnv(
+      { reviewers: [{ model: "codex", fallback: "claude-code" }], combine: "single" },
+      async (model) => {
+        seen.push(model);
+        if (model === "codex") throw new Error("codex quota exhausted");
+        return {
+          response: reviewJson({
+            present: true,
+            title: "Race condition in src/x.ts",
+          }),
+        };
+      },
+    );
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      mode: "block",
+    });
+    if (result.status !== "ok") throw new Error("expected ok");
+    expect(result.consensusDefect?.title).toContain("Race condition");
+    expect(seen).toEqual(["codex", "codex", "codex", "claude-code"]);
+    expect(await renderMetrics()).toContain(
+      'gittensory_ai_review_model_fallback_total{fallback="claude-code",primary="codex"} 1',
+    );
   });
 
   it("dual synthesis (either): runs claude-code AND codex; EITHER blocker decides, never a split", async () => {
@@ -1087,7 +1304,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
       expect(await renderMetrics()).not.toContain("gittensory_ai_review_onmerge_clamped_total");
     });
 
-    it("when the operator set no onMerge floor at all, any per-repo value is honored unclamped", async () => {
+    it("a synthesis operator plan with no onMerge still clamps repo both against the implicit either floor", async () => {
       const env = planEnv(
         { reviewers: [{ model: "claude-code" }, { model: "codex" }], combine: "synthesis" }, // no onMerge set
         async (model) =>
@@ -1099,11 +1316,11 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
         ...baseInput,
         mode: "block",
         combine: "synthesis",
-        onMerge: "both", // no floor to violate
+        onMerge: "both", // attempted loosening of synthesis' implicit "either" default
       });
       if (result.status !== "ok") throw new Error("expected ok");
-      expect(result.consensusDefect).toBeNull(); // "both" honored: lone blocker does not decide
-      expect(await renderMetrics()).not.toContain("gittensory_ai_review_onmerge_clamped_total");
+      expect(result.consensusDefect?.title).toContain("Lone blocker");
+      expect(await renderMetrics()).toContain('gittensory_ai_review_onmerge_clamped_total{mode="block"} 1');
     });
   });
 });
@@ -1144,6 +1361,14 @@ describe("resolveEffectiveAiReviewPlan (#2567 gate-review follow-up: combine/rev
 
     const noOperatorPlan = resolveEffectiveAiReviewPlan({ combine: "single", reviewers: [{ model: "claude-code" }] }, null);
     expect(noOperatorPlan).toEqual({ combine: "single", onMerge: undefined, reviewers: [{ model: "claude-code" }], clamped: false });
+  });
+
+  it("gate finding: synthesis with omitted operator onMerge protects its implicit either floor", () => {
+    const implicitFloor = resolveEffectiveAiReviewPlan(
+      { onMerge: "both" },
+      { combine: "synthesis", reviewers: TWO_REVIEWERS },
+    );
+    expect(implicitFloor).toEqual({ combine: "synthesis", onMerge: "either", reviewers: TWO_REVIEWERS, clamped: true });
   });
 
   it("gate finding: an either-floor operator plan cannot be neutered by a repo override reducing reviewer count", () => {

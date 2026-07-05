@@ -162,6 +162,16 @@ describe("gittensory-miner startup update check (#2331)", () => {
     expect(compareSemver("0.6.0", "0.7.0-rc.1")).toBe(-1);
   });
 
+  it("REGRESSION: compares numeric prerelease identifiers as decimal strings, not via Number() (precision loss past 2^53-1)", () => {
+    // 9007199254740992 is 2^53 (Number.MAX_SAFE_INTEGER + 1); 9007199254740993 (2^53+1) cannot be represented
+    // exactly as a float64 and rounds DOWN to the same value, so Number(leftId) !== Number(rightId) would
+    // wrongly report these two distinct numeric identifiers as equal. Comparing as strings (length, then
+    // lexicographic) gets it right: the second is genuinely one greater than the first.
+    expect(compareSemver("0.1.0-9007199254740993", "0.1.0-9007199254740992")).toBe(1);
+    expect(compareSemver("0.1.0-9007199254740992", "0.1.0-9007199254740993")).toBe(-1);
+    expect(compareSemver("0.1.0-9007199254740992", "0.1.0-9007199254740992")).toBe(0);
+  });
+
   it("prints a one-line upgrade nudge when npm latest is newer", async () => {
     const registryUrl = await startRegistryFixture({ latestVersion: "9.9.9" });
     const stderr = vi

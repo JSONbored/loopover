@@ -250,7 +250,26 @@ jobs:
           SENTRY_REQUIRE_COMMITS: "true"
           SENTRY_REQUIRE_DEPLOY: "false"
           SENTRY_REQUIRE_FINALIZED: "true"
-        run: node review-enrichment/scripts/validate-sentry-release.mjs
+        run: |
+          set -euo pipefail
+          # The CLI's `set-commits` was replaced with a direct PUT above after it silently no-op'd on
+          # orb-v0.1.0-beta.1, but Sentry's release-commits read path can still lag briefly behind a
+          # write. review-enrichment/src/upload-sourcemaps.ts's runReleaseValidation() already
+          # retry-polls this same script for REES's Railway deploy path -- mirror that here instead of
+          # failing the whole release build on a transient read-lag.
+          attempts=5
+          delay_secs=10
+          for attempt in $(seq 1 "$attempts"); do
+            if node review-enrichment/scripts/validate-sentry-release.mjs; then
+              exit 0
+            fi
+            if [ "$attempt" -lt "$attempts" ]; then
+              echo "::warning::Sentry release validation attempt ${attempt}/${attempts} failed; retrying in ${delay_secs}s"
+              sleep "$delay_secs"
+            fi
+          done
+          echo "::error::Sentry release validation failed after ${attempts} attempts"
+          exit 1
 
       - name: GitHub Release
         if: github.event_name == 'push'

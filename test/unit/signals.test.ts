@@ -423,6 +423,39 @@ describe("world-class backend signals", () => {
     expect(result.findings.map((finding) => finding.code)).toContain("missing_test_evidence");
   });
 
+  it("flags missing test evidence for native-source-only preflight input (#2722 class regression)", () => {
+    // buildPreflightResult's own isCodeFile mirror (kept in sync with local-branch.ts) omitted native/PHP
+    // extensions, so a native-source-only PR was never flagged "missing_test_evidence" here.
+    const result = buildPreflightResult(
+      {
+        repoFullName: repo.fullName,
+        title: "Add native comparator",
+        body: "Fixes #7",
+        changedFiles: ["src/native/add.c", "src/native/add.cpp", "include/native/add.h", "src/objc/View.m", "src/legacy/Bridge.php"],
+      },
+      repo,
+      issues,
+      pullRequests,
+    );
+    expect(result.findings.map((finding) => finding.code)).toContain("missing_test_evidence");
+  });
+
+  it("does not flag missing test evidence when native-source changes ship with a test file", () => {
+    const result = buildPreflightResult(
+      {
+        repoFullName: repo.fullName,
+        title: "Add native comparator with coverage",
+        body: "Fixes #7",
+        changedFiles: ["src/native/add.c", "src/native/add.cpp"],
+        tests: ["test/unit/native-add.test.ts"],
+      },
+      repo,
+      issues,
+      pullRequests,
+    );
+    expect(result.findings.map((finding) => finding.code)).not.toContain("missing_test_evidence");
+  });
+
   it("gates public comments to detected contributors and sanitizes comment text", () => {
     const currentPr = pullRequests[0]!;
     const priorPr: PullRequestRecord = {
@@ -440,6 +473,7 @@ describe("world-class backend signals", () => {
       checkRunMode: "off" as const,
       checkRunDetailLevel: "minimal" as const,
       gateCheckMode: "off" as const,
+      reviewCheckMode: "disabled" as const,
       gatePack: "gittensor" as const,
       linkedIssueGateMode: "advisory" as const,
       duplicatePrGateMode: "advisory" as const,
@@ -493,6 +527,7 @@ describe("world-class backend signals", () => {
       checkRunMode: "off" as const,
       checkRunDetailLevel: "minimal" as const,
       gateCheckMode: "off" as const,
+      reviewCheckMode: "disabled" as const,
       gatePack: "gittensor" as const,
       linkedIssueGateMode: "advisory" as const,
       duplicatePrGateMode: "advisory" as const,
@@ -566,6 +601,7 @@ describe("world-class backend signals", () => {
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
       gateCheckMode: "off",
+      reviewCheckMode: "disabled",
       gatePack: "gittensor",
       linkedIssueGateMode: "advisory",
       duplicatePrGateMode: "advisory",
@@ -693,6 +729,7 @@ describe("world-class backend signals", () => {
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
       gateCheckMode: "off",
+      reviewCheckMode: "disabled",
       gatePack: "gittensor",
       linkedIssueGateMode: "advisory",
       duplicatePrGateMode: "advisory",
@@ -762,6 +799,7 @@ describe("world-class backend signals", () => {
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
       gateCheckMode: "off",
+      reviewCheckMode: "disabled",
       gatePack: "gittensor",
       linkedIssueGateMode: "advisory",
       duplicatePrGateMode: "advisory",
@@ -875,6 +913,7 @@ describe("world-class backend signals", () => {
         checkRunMode: "off",
         checkRunDetailLevel: "minimal",
         gateCheckMode: "off",
+        reviewCheckMode: "disabled",
         gatePack: "gittensor",
         linkedIssueGateMode: "advisory",
         duplicatePrGateMode: "advisory",

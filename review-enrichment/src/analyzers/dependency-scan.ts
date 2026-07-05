@@ -151,6 +151,10 @@ function severityOf(vuln: OsvVuln): Cve["severity"] {
     label === "low"
   )
     return label;
+  // GHSA — the dominant OSV source for npm/PyPI — labels medium advisories with GitHub's word
+  // "moderate", which maps to "medium". Without this, MODERATE CVEs fall through to the CVSS branch,
+  // whose OSV `score` is a vector string (not a number) and so degrades every such advisory to "unknown".
+  if (label === "moderate") return "medium";
   const score = Number(
     vuln.severity?.find((s) => s.type?.startsWith("CVSS"))?.score,
   );

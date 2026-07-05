@@ -16,13 +16,16 @@ import { delimiter } from "node:path";
 interface AiRunOptions {
   messages?: Array<{ role: string; content: string }>;
   prompt?: string;
+  systemAppend?: string;
   text?: string[]; // embedding input — the core's embedTexts passes { text: string[] }
   max_tokens?: number;
   temperature?: number;
 }
 /** A chat completion (`response`) or an embedding result (`data`). Both optional: the core reads whichever it
- *  asked for (extractAiText → `response`, embedTexts → `data`), each defensive about the other being absent. */
-export type AiResult = { response?: string; data?: number[][] };
+ *  asked for (extractAiText → `response`, embedTexts → `data`), each defensive about the other being absent.
+ *  `usage` is best-effort local accounting for self-host operators; callers must never make review decisions
+ *  from it because provider envelopes are not uniform. */
+export type AiResult = { response?: string; data?: number[][]; usage?: AiUsage };
 export interface SelfHostAi {
   run(model: string, options: AiRunOptions): Promise<AiResult>;
 }
@@ -30,6 +33,33 @@ export interface SelfHostAi {
 function toMessages(options: AiRunOptions): Array<{ role: string; content: string }> {
   if (Array.isArray(options.messages)) return options.messages;
   return [{ role: "user", content: String(options.prompt ?? "") }];
+}
+
+function normalizedSystemAppend(options: AiRunOptions): string | undefined {
+  const trimmed = options.systemAppend?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function stripSystemAppend(content: string, systemAppend: string): string {
+  const index = content.indexOf(systemAppend);
+  if (index < 0) return content;
+  return `${content.slice(0, index)}${content.slice(index + systemAppend.length)}`.trimEnd();
+}
+
+function toCliPrompt(options: AiRunOptions, systemAppend: string | undefined): string {
+  return toMessages(options)
+    .map((message) =>
+      systemAppend && message.role === "system"
+        ? stripSystemAppend(message.content, systemAppend)
+        : message.content,
+    )
+    .join("\n\n");
+}
+
+function prependCodexSystemAppend(prompt: string, systemAppend: string | undefined): string {
+  return systemAppend
+    ? `ADDITIONAL SYSTEM INSTRUCTIONS:\n${systemAppend}\n\n${prompt}`
+    : prompt;
 }
 
 /** The core passes a Workers-AI model id (e.g. "@cf/meta/llama-3.1-8b-instruct-fp8-fast") that is meaningless
@@ -75,12 +105,12 @@ function defaultOpenAiCompatibleModel(name: string): string {
 
 const VALID_CLAUDE_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const VALID_CODEX_EFFORTS = new Set(["low", "medium", "high", "xhigh"]);
-/** Map `CLAUDE_AI_EFFORT` to a `claude --effort` level. Defaults to "high" — the engine wants a substantive
- *  review, not a fast shallow one — and falls back to "high" for any unset or unrecognized value so a typo can't
- *  silently downgrade reviews. The CLI clamps a level above the model's own ceiling (e.g. xhigh on Sonnet) down. */
+/** Map `CLAUDE_AI_EFFORT` to a `claude --effort` level. Defaults to "medium" so subscription fallback preserves
+ *  enough reasoning depth for reviews without burning high-effort tokens on every PR. A typo falls back to medium
+ *  instead of silently disabling the reviewer; operators can still raise important repos to high/xhigh/max. */
 export function resolveEffort(configured: string | undefined): string {
   const level = (configured ?? "").trim().toLowerCase();
-  return VALID_CLAUDE_EFFORTS.has(level) ? level : "high";
+  return VALID_CLAUDE_EFFORTS.has(level) ? level : "medium";
 }
 
 /** Map `CODEX_AI_EFFORT` to Codex reasoning effort. Codex currently supports xhigh as its top level, so a
@@ -89,7 +119,7 @@ export function resolveCodexEffort(configured: string | undefined): string {
   const level = (configured ?? "").trim().toLowerCase();
   if (VALID_CODEX_EFFORTS.has(level)) return level;
   if (level === "max") return "xhigh";
-  return "high";
+  return "medium";
 }
 
 // Per-effort subprocess timeout (ms) for the subscription CLIs. A higher effort legitimately runs longer, so the
@@ -137,11 +167,12 @@ export function createOpenAiCompatibleAi(opts: {
         const json = (await res.json()) as { data?: Array<{ embedding: number[] }> };
         return { data: (json.data ?? []).map((d) => d.embedding) };
       }
+      const resolvedModel = resolveModel(opts.model, model, opts.defaultModel ?? DEFAULT_OPENAI_COMPATIBLE_CHAT_MODEL);
       const res = await fetch(`${base}/chat/completions`, {
         method: "POST",
         headers: headers(),
         body: JSON.stringify({
-          model: resolveModel(opts.model, model, opts.defaultModel ?? DEFAULT_OPENAI_COMPATIBLE_CHAT_MODEL),
+          model: resolvedModel,
           messages: toMessages(options),
           max_tokens: options.max_tokens,
           temperature: options.temperature,
@@ -150,7 +181,8 @@ export function createOpenAiCompatibleAi(opts: {
       });
       if (!res.ok) throw new Error(`ai_http_${res.status}`);
       const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-      return { response: data.choices?.[0]?.message?.content ?? "" };
+      const usage = extractCliUsage(JSON.stringify(data));
+      return { response: data.choices?.[0]?.message?.content ?? "", usage: { ...usage, model: usage.model ?? resolvedModel } };
     },
   };
 }
@@ -168,19 +200,22 @@ export function createAnthropicAi(opts: { apiKey: string; model?: string | undef
           .map((m) => m.content)
           .join("\n\n") || undefined;
       const messages = msgs.filter((m) => m.role !== "system").map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content }));
+      const resolvedModel = resolveModel(opts.model, model, "claude-sonnet-4-6");
       const res = await fetch(`${base}/v1/messages`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-api-key": opts.apiKey, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model: resolveModel(opts.model, model, "claude-sonnet-4-6"), max_tokens: options.max_tokens ?? 1024, ...(system ? { system } : {}), messages }),
+        body: JSON.stringify({ model: resolvedModel, max_tokens: options.max_tokens ?? 1024, ...(system ? { system } : {}), messages }),
         signal: AbortSignal.timeout(120_000),
       });
       if (!res.ok) throw new Error(`anthropic_http_${res.status}`);
       const data = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
+      const usage = extractCliUsage(JSON.stringify(data));
       return {
         response: (data.content ?? [])
           .filter((c) => c.type === "text")
           .map((c) => c.text ?? "")
           .join(""),
+        usage: { ...usage, model: usage.model ?? resolvedModel },
       };
     },
   };
@@ -342,6 +377,11 @@ export type CliUsage = {
   model?: string;
 };
 
+export type AiUsage = CliUsage & {
+  provider?: string;
+  effort?: string;
+};
+
 const INPUT_TOKEN_KEYS = ["input_tokens", "inputTokens", "prompt_tokens", "promptTokens"] as const;
 const OUTPUT_TOKEN_KEYS = ["output_tokens", "outputTokens", "completion_tokens", "completionTokens"] as const;
 const TOTAL_TOKEN_KEYS = ["total_tokens", "totalTokens"] as const;
@@ -409,14 +449,20 @@ export function extractCliUsage(stdout: string): CliUsage {
   return usage;
 }
 
-function recordCliUsageMetrics(provider: string, model: string, effort: string, stdout: string): void {
+function cliUsageFromStdout(provider: string, model: string, effort: string, stdout: string): AiUsage & { model: string } {
   const usage = extractCliUsage(stdout);
-  const labels = { provider, model: usage.model ?? (model || "default"), effort };
+  return { ...usage, provider, model: usage.model ?? (model || "default"), effort };
+}
+
+function recordCliUsageMetrics(provider: string, model: string, effort: string, stdout: string): AiUsage & { model: string } {
+  const usage = cliUsageFromStdout(provider, model, effort, stdout);
+  const labels = { provider, model: usage.model, effort };
   incr("gittensory_ai_requests_total", labels);
   incr("gittensory_ai_cost_usd_total", { provider: labels.provider }, usage.costUsd ?? 0);
   if (usage.inputTokens !== undefined) incr("gittensory_ai_input_tokens_total", { ...labels, kind: "review" }, usage.inputTokens);
   if (usage.outputTokens !== undefined) incr("gittensory_ai_output_tokens_total", { ...labels, kind: "review" }, usage.outputTokens);
   if (usage.totalTokens !== undefined) incr("gittensory_ai_total_tokens_total", labels, usage.totalTokens);
+  return usage;
 }
 
 /** Claude Code's `--output-format json` exits 0 even on an API/auth error, returning {is_error:true,result:"<msg>"}.
@@ -449,7 +495,7 @@ export function codexErrorFromStdout(stdout: string): string | null {
         (typeof o.msg === "string" && o.msg) ||
         (errorObj && typeof errorObj.message === "string" ? errorObj.message : null) ||
         null;
-      if (detail) return detail.slice(0, 500);
+      if (detail) return redactSecrets(detail).slice(0, 500);
     } catch {
       /* not JSON — skip */
     }
@@ -565,12 +611,15 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
       try {
         if (!token) throw new Error("claude_code_no_oauth_token");
         const env = subscriptionCliEnv(parentEnv, { CLAUDE_CODE_OAUTH_TOKEN: token });
-        const prompt = toMessages(options).map((m) => m.content).join("\n\n");
+        const systemAppend = normalizedSystemAppend(options);
+        const prompt = toCliPrompt(options, systemAppend);
         const spawn = spawnImpl ?? (await defaultSpawn());
+        const args = ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "plan", "--effort", effort, "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"];
+        if (systemAppend) args.push("--append-system-prompt", systemAppend);
         attempted = true;
         const { stdout, code, stderr, timedOut } = await spawn(
           "claude",
-          ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "plan", "--effort", effort, "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"],
+          args,
           { env, input: prompt, timeoutMs, cwd: await isolatedCliCwd() },
         );
         stdoutForMetrics = stdout;
@@ -585,7 +634,7 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
         if (code !== 0) throw new Error(`claude_code_exit_${code ?? "null"}: ${redactSecrets(stderr ?? "", [token]).slice(0, 500)}`);
         const text = extractCliText(stdout);
         if (!text) throw new Error("claude_code_empty_output");
-        return { response: text };
+        return { response: text, usage: cliUsageFromStdout("claude-code", claudeModel, effort, stdoutForMetrics) };
       } catch (error) {
         logSelfHostAiProviderFailed({ provider: "claude-code", model: claudeModel, effort, timeoutMs, error, knownSecrets: token ? [token] : [] });
         throw error;
@@ -619,7 +668,8 @@ export function createCodexAi(
         assertCodexCredentialIsolation(parentEnv);
         await authCheckImpl(parentEnv);
         const env = codexCliEnv(parentEnv);
-        const prompt = toMessages(options).map((m) => m.content).join("\n\n");
+        const systemAppend = normalizedSystemAppend(options);
+        const prompt = prependCodexSystemAppend(toCliPrompt(options, systemAppend), systemAppend);
         const spawn = spawnImpl ?? (await defaultSpawn());
         const args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only"];
         if (codexModel) args.push("--model", codexModel);
@@ -656,7 +706,7 @@ export function createCodexAi(
         }
         const text = extractCliText(stdout);
         if (!text) throw new Error("codex_empty_output");
-        return { response: text };
+        return { response: text, usage: cliUsageFromStdout("codex", codexModel, effort, stdoutForMetrics) };
       } catch (error) {
         logSelfHostAiProviderFailed({ provider: "codex", model: codexModel, effort, timeoutMs, error });
         throw error;
@@ -684,6 +734,14 @@ export function isAiProviderHealthy(): boolean {
 /** Test-only reset so streak state from one test can't leak into the next (module-level counter). */
 export function resetAiProviderHealthForTest(): void {
   aiConsecutiveFailures = 0;
+}
+
+function recordAiProviderSuccess(): void {
+  aiConsecutiveFailures = 0;
+}
+
+function recordAiProvidersExhausted(): void {
+  aiConsecutiveFailures += 1;
 }
 
 // Per-provider circuit breaker (#2540): a provider that is failing hard (bad credential, sustained outage)
@@ -742,7 +800,7 @@ export function createChainAi(providers: Array<{ name: string; ai: SelfHostAi }>
       for (const p of providers) {
         try {
           const result = await runProviderWithOtel(p, model, options);
-          aiConsecutiveFailures = 0;
+          recordAiProviderSuccess();
           return result;
         } catch (error) {
           lastError = error;
@@ -750,7 +808,7 @@ export function createChainAi(providers: Array<{ name: string; ai: SelfHostAi }>
           console.error(JSON.stringify({ level: "warn", event: "selfhost_ai_provider_failed_in_chain", provider: p.name, error: errorMessage(error) }));
         }
       }
-      aiConsecutiveFailures += 1;
+      recordAiProvidersExhausted();
       console.error(
         JSON.stringify({
           level: "error",
@@ -794,6 +852,16 @@ async function runProviderWithOtel(
       () => provider.ai.run(model, options),
     );
     aiProviderCircuits.delete(provider.name);
+    if (result.usage) {
+      return {
+        ...result,
+        usage: {
+          ...result.usage,
+          provider: result.usage.provider ?? provider.name,
+          model: result.usage.model ?? (model || "default"),
+        },
+      };
+    }
     return result;
   } catch (error) {
     if (isExpectedEmbeddingRoutingError(options, error)) throw error;
@@ -861,9 +929,15 @@ export function routeProviders(providers: Array<{ name: string; ai: SelfHostAi }
       const colon = trimmed.indexOf(":");
       const name = (colon < 0 ? trimmed : trimmed.slice(0, colon)).toLowerCase();
       const direct = byName.get(name);
-      return direct
-        ? runProviderWithOtel({ name, ai: direct }, colon < 0 ? "" : trimmed.slice(colon + 1), options)
-        : chain.run(model, options);
+      if (!direct) return chain.run(model, options);
+      try {
+        const result = await runProviderWithOtel({ name, ai: direct }, colon < 0 ? "" : trimmed.slice(colon + 1), options);
+        recordAiProviderSuccess();
+        return result;
+      } catch (error) {
+        recordAiProvidersExhausted();
+        throw error;
+      }
     },
   };
 }
@@ -897,8 +971,8 @@ export function resolveRequiredCliProviders(env: Record<string, string | undefin
 }
 
 /** Select the self-host AI provider(s) from AI_PROVIDER and wrap them in the name-aware router. A comma-separated
- *  list of TWO+ providers is addressable by name for dual review (see `routeProviders`) and otherwise falls back
- *  through them in order; a SINGLE provider is wrapped the same way — NOT returned bare — so a reviewer-plan address
+ *  list is addressable by name for configured reviewers (see `routeProviders`) and otherwise falls back through
+ *  providers in order; a SINGLE provider is wrapped the same way — NOT returned bare — so a reviewer-plan address
  *  that names the provider (`{ model: "claude-code" }`, the single-provider plan from `resolveAiReviewerPlan`)
  *  resolves to that provider's own default model instead of reaching it verbatim as `claude --model claude-code`
  *  (a 404 that broke every review on a single-provider self-host, #1610). Returns undefined when unconfigured or no
@@ -911,17 +985,35 @@ export function createSelfHostAi(env: Record<string, string | undefined>): SelfH
 
 const COMBINE_STRATEGIES = new Set<CombineStrategy>(["single", "consensus", "synthesis"]);
 const ON_MERGE_RULES = new Set<OnMerge>(["either", "both"]);
+const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
 
-/** Resolve the self-host dual-review plan from env: the credentialed providers become the reviewer(s), `AI_COMBINE`
- *  the strategy (default `synthesis` for two — "both review, one synthesized decision"), `AI_ON_MERGE` the
- *  synthesis rule. Returns undefined when no provider is configured (cloud, or AI off) so ai-review keeps its
- *  byte-identical Workers-AI consensus default; one provider ⇒ `single`; two+ ⇒ the configured strategy over the
- *  first two. The result is attached to the self-host env at boot and passed to runGittensoryAiReview. */
+function enabledEnvFlag(value: string | undefined): boolean {
+  return TRUE_ENV_VALUES.has((value ?? "").trim().toLowerCase());
+}
+
+/** Resolve the self-host review plan from env. By default, `AI_PROVIDER=a,b` means one reviewer using `a` with
+ *  `b` as the per-review fallback, so a Codex quota/auth outage can fall through to Claude Code without paying
+ *  for two simultaneous reviewers. `AI_DUAL_REVIEW=1` opts back into the explicit two-reviewer mode where the
+ *  first two providers run independently and `AI_COMBINE` / `AI_ON_MERGE` decide how to merge them. */
 export function resolveAiReviewerPlan(
   env: Record<string, string | undefined>,
-): { reviewers: Array<{ model: string }>; combine: CombineStrategy; onMerge: OnMerge | undefined } | undefined {
+): { reviewers: Array<{ model: string; fallback?: string | null | undefined }>; combine: CombineStrategy; onMerge: OnMerge | undefined } | undefined {
   const names = resolveProviderNames(env);
   if (names.length === 0) return undefined;
+  if (!enabledEnvFlag(env.AI_DUAL_REVIEW)) {
+    const primary = names[0] as string;
+    const fallback = names.find((name) => name !== primary);
+    return {
+      reviewers: [
+        {
+          model: primary,
+          ...(fallback ? { fallback } : {}),
+        },
+      ],
+      combine: "single",
+      onMerge: undefined,
+    };
+  }
   if (names.length === 1) return { reviewers: [{ model: names[0] as string }], combine: "single", onMerge: undefined };
   // Fail loud when the two SLOTS the dual-review plan actually uses (the first two names) are the same
   // provider: routeProviders' `byName` map collapses duplicate provider names to one runtime instance, so

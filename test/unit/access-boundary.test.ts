@@ -73,6 +73,15 @@ describe("access boundary: per-repo maintainer data is repo-scoped", () => {
     expect(await other.json()).toMatchObject({ error: "forbidden_repo" });
   });
 
+  it("a maintainer can REACH agent pending-actions on their OWN repo (allowlist parity with audit-feed)", async () => {
+    const { app, env } = await setup();
+    const { token } = await createSessionForGitHubUser(env, { login: "alice", id: 101 });
+    const cookie = `gittensory_session=${token}`;
+    const own = await app.request("/v1/repos/alice/repo-a/agent/pending-actions", { headers: { cookie } }, env);
+    expect(own.status).toBe(200);
+    await expect(own.json()).resolves.toMatchObject({ repoFullName: "alice/repo-a", pendingActions: [] });
+  });
+
   it("a pure miner (no maintainer role on any repo) cannot read ANY repo's maintainer settings", async () => {
     const { app, env } = await setup();
     const { token } = await createSessionForGitHubUser(env, { login: "miner-only", id: 900 });

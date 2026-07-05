@@ -40,6 +40,8 @@ export type JobMessage =
       repoFullName: string;
       prNumber: number;
       installationId: number;
+      /** Original GitHub PR creation time. Durable self-host queues use this to drain contributor PR work oldest-first. */
+      prCreatedAt?: string | null | undefined;
       // #regate-churn (req 8): an explicit manual re-gate request — bypasses the AI review cache and the
       // bounded non-cacheable-reuse cooldown so it always pays for a fresh opinion. No current scheduled or
       // webhook-driven caller sets this; it exists so a manual trigger has a supported way to force a fresh
@@ -86,18 +88,6 @@ export type JobMessage =
     }
   | {
       type: "refresh-scoring-model";
-      requestedBy: "schedule" | "api" | "test";
-    }
-  | {
-      type: "refresh-upstream-sources";
-      requestedBy: "schedule" | "api" | "test";
-    }
-  | {
-      type: "build-upstream-ruleset";
-      requestedBy: "schedule" | "api" | "test";
-    }
-  | {
-      type: "detect-upstream-drift";
       requestedBy: "schedule" | "api" | "test";
     }
   | {
@@ -235,6 +225,16 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
       repoFullName?: string;
       installationId?: number;
+    }
+  | {
+      // Scheduled repo-doc refresh (#3003, part of #2993). No `repoFullName` = fan-out: enumerate every repo
+      // with `.gittensory.yml repoDocGeneration.enabled: true` whose refresh interval has elapsed and enqueue
+      // one per-repo job each, mirroring "agent-regate-sweep"/"backlog-convergence-sweep". With `repoFullName` =
+      // refresh that one repo via openRepoDocPullRequest (the SAME function the on-demand MCP trigger calls) --
+      // no separate eligibility/diffing logic lives in the queue processor itself.
+      type: "repo-doc-refresh-sweep";
+      requestedBy: "schedule" | "api" | "test";
+      repoFullName?: string;
     };
 
 export type GitHubWebhookPayload = {
@@ -534,6 +534,30 @@ export type BountyRecord = {
 
 export type GateRuleMode = "off" | "advisory" | "block";
 
+/** Review-check publish surface (#2852). Controls ONLY whether/how the "Gittensory Orb Review Agent" check-run
+ *  is created/updated -- never the underlying gate evaluation, disposition, comments, labels, audit, or
+ *  autonomous merge/close, all of which run identically in every mode (the autonomous decision engine already
+ *  excludes the bot's own check-runs from the live CI aggregate it merges/closes against, see
+ *  `BOT_OWNED_CHECK_NAMES` in `github/backfill.ts`, specifically to avoid a self-deadlock).
+ *   • `required` — legacy/current behavior: publish/update the check exactly as before. For operators who
+ *                  intentionally keep it as a required branch-protection status check.
+ *   • `visible`  — publish/update the SAME check-run for UI visibility only. Never intended to be added as a
+ *                  required branch-protection check; behaves identically to `required` on the publish side
+ *                  (same API calls), the distinction is purely about how the operator should configure GitHub.
+ *   • `disabled` — never create/update the check-run at all. Recommended for high-volume autonomous self-hosting
+ *                  to avoid GitHub showing "Expected — Waiting for status to be reported" under queue pressure;
+ *                  requires removing the check from branch-protection required-status-checks first (Gittensory
+ *                  cannot do this on the operator's behalf -- it is a GitHub branch-protection setting). */
+export type ReviewCheckMode = "required" | "visible" | "disabled";
+
+/** Auto-project/milestone matching (#3183): detects when a PR is likely part of an open GitHub Milestone even
+ *  with no closing-keyword issue link, and posts a bot-comment suggestion. `"off"` (default) runs no matching
+ *  at all; `"suggest"` matches and posts a single advisory comment, never mutating the PR; `"auto"` is accepted
+ *  by config today but behaves identically to `"suggest"` until #3185 wires real milestone attachment -- no
+ *  attach/auto-apply code exists yet, so treating it as inert-but-silent would be a worse failure mode than
+ *  degrading to the safe, visible suggest behavior. */
+export type ProjectMilestoneMatchMode = "off" | "suggest" | "auto";
+
 /** Which policy pack the gate runs under (#692). `gittensor` = the full Gittensor policy: registry/emissions-
  *  aware, and it threads the author's confirmed status for on-chain scoring (the gate verdict itself blocks
  *  every author the same — confirmed status no longer changes it, #gate-nonconfirmed). `oss-anti-slop` = a
@@ -567,6 +591,13 @@ export type RepositorySettings = {
   checkRunMode: "off" | "enabled";
   checkRunDetailLevel: "minimal" | "standard" | "deep";
   gateCheckMode: "off" | "enabled";
+  /** The actual runtime authority for whether the "Gittensory Orb Review Agent" check-run publishes (#2852).
+   *  See {@link ReviewCheckMode}. `gateCheckMode` above stays wired for API/back-compat display but no longer
+   *  drives the publish decision on its own. */
+  reviewCheckMode: ReviewCheckMode;
+  /** Auto-project/milestone matching (#3183). See {@link ProjectMilestoneMatchMode}. Always populated by the DB
+   *  layer (default `"off"`); optional so existing settings fixtures/callers need not be touched. */
+  autoProjectMilestoneMatch?: ProjectMilestoneMatchMode | undefined;
   /** Policy pack the gate evaluates under (#692). Default `gittensor` (registry-aware; threads confirmed
    *  status for scoring only). `oss-anti-slop` runs the deterministic rules against any author on any repo. */
   gatePack: GatePolicyPack;
@@ -629,8 +660,9 @@ export type RepositorySettings = {
   premergeContentRecheck?: boolean | undefined;
   /** Merge-readiness gate (#merge-readiness). `off`/`advisory`/`block`. No min-score. Default `off`. */
   mergeReadinessGateMode: GateRuleMode;
-  /** Focus-manifest policy gate (#555). When `block`, the focus manifest's declared policy (blocked paths,
-   *  required-linked-issue, test expectations) becomes an enforceable review-agent blocker. An
+  /** Focus-manifest policy gate (#555). When `block`, the focus manifest's declared policy (required-linked
+   *  issue and test expectations) becomes an enforceable review-agent blocker. Path-based manual-review holds
+   *  are configured separately through `settings.hardGuardrailGlobs`. An
    *  INDEPENDENT dimension, deliberately not folded into the merge-readiness composite. Default `off` — opt-in. */
   manifestPolicyGateMode: GateRuleMode;
   /** Self-authored linked-issue gate. When `block`, the gate closes a PR where the contributor also
@@ -645,7 +677,8 @@ export type RepositorySettings = {
   /** Slop-risk threshold (0-100) at/above which `slopGateMode: block` blocks. Default 60 (the `high` band). */
   slopGateMinScore?: number | null | undefined;
   /** AI-assisted slop advisory (the `slopAiAdvisory` capability). When true AND `slopGateMode != off`, a
-   *  free Workers-AI pass adds an ADVISORY-only `ai_slop_advisory` finding for semantic slop the
+   *  free/default-reviewer pass (the configured self-host provider, or the legacy Workers-AI pair when
+   *  none is configured) adds an ADVISORY-only `ai_slop_advisory` finding for semantic slop the
    *  deterministic detector cannot quantify. It NEVER feeds slopRisk or the gate (only the deterministic
    *  core blocks). Default false — opt-in via `.gittensory.yml gate.slop.aiAdvisory`. */
   slopAiAdvisory: boolean;
@@ -654,13 +687,14 @@ export type RepositorySettings = {
    *  like every other blocker). Default `off` — AI is opt-in. */
   aiReviewMode: GateRuleMode;
   /** Bring-your-own-key: when true and a provider key is configured for the repo, the advisory AI review
-   *  is generated by the maintainer's frontier model (Anthropic/OpenAI) instead of free Workers AI. The
-   *  consensus blocker always uses the free Workers-AI model pair regardless, so BYOK never changes who
+   *  is generated by the maintainer's frontier model (Anthropic/OpenAI) instead of the free/default
+   *  reviewer. The consensus blocker always uses the free/default reviewer pair regardless (the configured
+   *  self-host provider, or the legacy Workers-AI pair when none is configured), so BYOK never changes who
    *  can be blocked. Default false. */
   aiReviewByok: boolean;
   /** Config-as-code BYOK provider for the advisory write-up. `null` = use the configured key's own
-   *  provider. When set, it must match the stored key's provider or BYOK is skipped (Workers-AI fallback).
-   *  The secret key itself is never here — only via the encrypted key store. */
+   *  provider. When set, it must match the stored key's provider or BYOK is skipped (falls back to the
+   *  free/default reviewer). The secret key itself is never here — only via the encrypted key store. */
   aiReviewProvider?: "anthropic" | "openai" | null | undefined;
   /** Config-as-code model override for the BYOK advisory write-up (e.g. "claude-3-5-sonnet-latest").
    *  `null` = use the key record's model, else a conservative per-provider default. */
@@ -717,11 +751,12 @@ export type RepositorySettings = {
    *  were gated by `autoLabelEnabled` nested inside the public-surface check). Always populated by
    *  the DB layer; optional so existing settings fixtures/callers need not be touched. */
   typeLabelsEnabled?: boolean | undefined;
-  /** Per-repo override of the three TYPE/taxonomy label NAMES (#priority-linked-issue-gate). Defaults
-   *  to `DEFAULT_TYPE_LABELS` (`gittensor:bug`/`gittensor:feature`/`gittensor:priority`) in
-   *  `settings/pr-type-label.ts` — a repo can override just one name (e.g. only `priority`) and keep
-   *  the other two default. Always populated by the DB layer; optional so existing settings
-   *  fixtures/callers need not be touched. */
+  /** Per-repo override of the TYPE/taxonomy label NAMES, keyed by category (#priority-linked-issue-gate,
+   *  #label-modularity). Defaults to `DEFAULT_TYPE_LABELS` (`gittensor:bug`/`gittensor:feature`/
+   *  `gittensor:priority`) in `settings/pr-type-label.ts` — a repo can override just one name (e.g. only
+   *  `priority`) and keep the others default, AND/OR add arbitrary additional categories beyond the
+   *  built-in three (e.g. `security: "area:security"`) for its own taxonomy. Always populated by the DB
+   *  layer; optional so existing settings fixtures/callers need not be touched. */
   typeLabels?: PrTypeLabelSet | undefined;
   /** Linked-issue label propagation (#priority-linked-issue-gate): the ONLY mechanism that can ever
    *  select the configured priority label (or any other configured mapping's PR label) — never
@@ -729,6 +764,11 @@ export type RepositorySettings = {
    *  (`enabled: false`, no mappings) — a self-hoster opts in per repo. Always populated by the DB
    *  layer; optional so existing settings fixtures/callers need not be touched. */
   linkedIssueLabelPropagation?: LinkedIssueLabelPropagationConfig | undefined;
+  /** Deterministic linked-issue hard rules. Config-as-code only; set with
+   *  `.gittensory.yml settings.linkedIssueHardRules` in private/global or per-repo config. These rules close
+   *  contributor PRs that link ineligible issues before spending AI review budget: owner/other-assigned,
+   *  maintainer-only, or missing point-label issues. Defaults all-off so self-hosters opt into their own policy. */
+  linkedIssueHardRules?: LinkedIssueHardRulesConfig | undefined;
   publicSurface: "off" | "comment_and_label" | "comment_only" | "label_only";
   includeMaintainerAuthors: boolean;
   requireLinkedIssue: boolean;
@@ -807,6 +847,21 @@ export type RepositorySettings = {
    *  on top of the standing owner/admin/automation-bot exemption. Always populated by the DB layer (default
    *  `[]`); optional so existing settings fixtures/callers need not be touched. */
   autoCloseExemptLogins?: string[] | undefined;
+  /** Hard manual-review guardrail globs. Config-as-code only: set in private/global or per-repo
+   *  `.gittensory.yml` under `settings.hardGuardrailGlobs`. Absent means no path guardrails. Arrays are
+   *  replacement overlays, so a repo can clear a global default with `[]`. */
+  hardGuardrailGlobs?: string[] | null | undefined;
+  /** Label applied when an otherwise-ready PR is held for manual review by a guardrail. Config-as-code only;
+   *  `null` disables the label while keeping the hold. Distinct from `review_state_label`, so operators can
+   *  apply one manual-review label without enabling ready/changes-requested disposition labels. */
+  manualReviewLabel?: string | null | undefined;
+  /** Optional review-state label names. Config-as-code only; each `null` disables that specific label. These are
+   *  deliberately generic defaults rather than `gittensory:*` names so self-hosters can opt into their own
+   *  taxonomy without inheriting project-specific labels. */
+  readyToMergeLabel?: string | null | undefined;
+  changesRequestedLabel?: string | null | undefined;
+  migrationCollisionLabel?: string | null | undefined;
+  pendingClosureLabel?: string | null | undefined;
   /** Force-rebase-before-merge window in minutes (#2552, anti-race). When a base branch has advanced within
    *  this many minutes of the actual merge-decision moment, an agent-driven merge forces an `update_branch` +
    *  fresh CI recheck cycle first, rather than trusting a `mergeableState: clean` read that may already be
@@ -885,13 +940,16 @@ export type RepositoryCommandAuthorizationPolicy = {
   commands: Record<string, CommandAuthorizationRole[]>;
 };
 
-/** The three per-repo-configurable TYPE/taxonomy label names (#priority-linked-issue-gate). See
- *  `resolvePrTypeLabel` in `settings/pr-type-label.ts`. */
-export type PrTypeLabelSet = {
-  bug: string;
-  feature: string;
-  priority: string;
-};
+/** Per-repo-configurable TYPE/taxonomy label NAMES, keyed by an arbitrary category name
+ *  (#label-modularity). `bug`/`feature`/`priority` are the built-in categories `deriveKindFromTitle`
+ *  and the priority-linked-issue-gate know how to CLASSIFY, but the map itself is an open
+ *  `category -> label name` record -- a self-hoster can add any number of additional categories (e.g.
+ *  `security: "area:security"`) that never get chosen by title-classification, only ever by a
+ *  configured `linkedIssueLabelPropagation` mapping (any `prLabel`, not just a `typeLabels` value, can
+ *  be propagated -- registering a category here just makes it participate in the mutual-exclusivity
+ *  cleanup `resolvePrTypeLabel` computes, i.e. it becomes eligible for automatic removal when a PR's
+ *  classification moves away from it). See `resolvePrTypeLabel` in `settings/pr-type-label.ts`. */
+export type PrTypeLabelSet = Record<string, string>;
 
 /** One linked-issue → PR label mapping (#priority-linked-issue-gate). See
  *  `LinkedIssueLabelPropagationConfig` below and `review/linked-issue-label-propagation.ts`. */
@@ -912,6 +970,21 @@ export type LinkedIssueLabelPropagationConfig = {
   enabled: boolean;
   mode: LinkedIssueLabelPropagationMode;
   mappings: LinkedIssueLabelPropagationMapping[];
+};
+
+export type LinkedIssueHardRulesMode = "block" | "off";
+
+export type LinkedIssueHardRulesConfig = {
+  ownerAssignedClose: LinkedIssueHardRulesMode;
+  /** Close when an open linked issue is assigned to someone other than the PR author. */
+  assignedIssueClose: LinkedIssueHardRulesMode;
+  missingPointLabelClose: LinkedIssueHardRulesMode;
+  maintainerOnlyLabelClose: LinkedIssueHardRulesMode;
+  pointBearingLabels: string[];
+  maintainerOnlyLabels: string[];
+  defaultLabelRepo: boolean;
+  verifyBeforeClose: boolean;
+  closeDelaySeconds: number;
 };
 
 /** A blocked contributor (#1425, anti-abuse): a GitHub `login` plus optional maintainer metadata. The converged
@@ -936,11 +1009,13 @@ export type AutonomyLevel = "observe" | "suggest" | "propose" | "auto_with_appro
  *  anti-abuse enforcement labels tied 1:1 to a `close` in the same disposition (blacklist/contributor-cap/
  *  review-nag) -- those additionally require `close` to be acting, so `label` alone can't apply them without a
  *  close. `review_state_label` is a SEPARATE, independent gate for the planner's own disposition-communication
- *  labels (ready-to-merge / changes-requested / needs-human-review / migration-collision / the linked-issue
+ *  labels (ready-to-merge / changes-requested / manual-review / migration-collision / the linked-issue
  *  pending-closure flag / the account-age new-account label) -- these are advisory signals about the bot's own
  *  verdict, not enforcement actions, and default OFF (`observe`) like every other class so a one-shot-mode repo
- *  never sees them without an explicit opt-in. */
-export type AgentActionClass = "review" | "request_changes" | "approve" | "merge" | "close" | "label" | "review_state_label" | "update_branch";
+ *  never sees them without an explicit opt-in. `assign` (#3182) sets the PR's opening contributor as the GitHub
+ *  assignee -- an independent, always-safe triage action with no bearing on merge/close/approve, gated purely
+ *  on its own dial like `review_state_label`. */
+export type AgentActionClass = "review" | "request_changes" | "approve" | "merge" | "close" | "label" | "review_state_label" | "update_branch" | "assign";
 
 /** Per-action-class autonomy. An unset class resolves to `observe` (deny-by-default). */
 export type AutonomyPolicy = Partial<Record<AgentActionClass, AutonomyLevel>>;
@@ -959,6 +1034,10 @@ export type AutoMaintainPolicy = {
 /** The payload needed to execute a staged action when a maintainer accepts it (#779). Only the field for the
  *  action's class is set, mirroring PlannedAgentAction. */
 export type AgentPendingActionParams = {
+  // #label-scoping: a staged `label` action can be governed by a narrower purpose class (for example `close`
+  // for enforcement metadata, or `review_state_label` for disposition labels). Persist it so accept-time replay
+  // re-checks the same autonomy class that authorized staging, not the generic label dial.
+  autonomyClass?: AgentActionClass;
   label?: string;
   // Flag-then-close double-check: whether a `label` action ADDs (default/absent) or REMOVEs its label, plus an
   // optional comment posted alongside the label mutation. Persisted so a staged label action replays faithfully.
@@ -967,6 +1046,9 @@ export type AgentPendingActionParams = {
   reviewBody?: string;
   mergeMethod?: AutoMergeMethod;
   closeComment?: string;
+  // Individual close reasons, persisted for approval-queue replay so the eventual audit row keeps the structured
+  // reason list rather than only the flattened `reason` field.
+  closeReasons?: string[];
   // Which kind of close this is (see PlannedAgentAction.closeKind), persisted so it round-trips through staging:
   // the close-precision circuit-breaker still scopes itself correctly when a staged close is later accepted
   // (#2127), and the actuation-time live-CI re-check (#2364) — which only applies to a heuristic close — still
@@ -978,6 +1060,23 @@ export type AgentPendingActionParams = {
   // ALWAYS set (to "failed" or "not_required") for a freshly planned heuristic close (#2478) -- never omitted --
   // so `undefined` unambiguously means a LEGACY row staged before this field existed, not "not CI-driven".
   closeRequiresCiState?: "failed" | "not_required";
+  // True when a base conflict (mergeable_state: "dirty") was part of this heuristic close's justification --
+  // the ONLY non-CI close reason the approval queue's accept-time live recheck has a cheap, reliable live
+  // signal for. Other non-CI heuristic reasons (duplicate PR, slop score, a gate-verdict blocker) have no
+  // equivalently cheap live re-derivation, so decidePendingAgentAction only reruns its mergeable-state/
+  // review-decision staleness check when this is true -- gating it on closeRequiresCiState === "not_required"
+  // alone (any non-CI reason) instead would supersede EVERY duplicate/slop/blocker-only close whose
+  // mergeability simply happens to read "clean" (which most never-conflicted PRs already are), even though
+  // their actual justification never depended on mergeability and may still be live (gate review finding).
+  // ALWAYS set (never omitted) for a freshly planned heuristic close, mirroring closeRequiresCiState's own
+  // discipline -- so `undefined` unambiguously means a legacy row staged before this field existed.
+  closeRequiresMergeableState?: boolean;
+  // Persisted so the close-precision breaker's concrete-evidence exemption (see
+  // PlannedAgentAction.closeConcreteEvidence) still applies correctly when a staged heuristic close is later
+  // accepted -- without this, EVERY staged close would silently fall back to "not concrete" at accept-time and
+  // stay wrongly subject to the breaker even when it was planned from red CI, a conflict, a committed secret,
+  // or another concrete signal.
+  closeConcreteEvidence?: boolean;
   expectedHeadSha?: string;
   // For an `approve` action: retract the bot's own stale approval instead of posting a new one (see
   // PlannedAgentAction.dismissStaleApproval). Must round-trip through staging like every other action-specific
@@ -1109,6 +1208,21 @@ export type PullRequestDetailSyncStateRecord = {
   prMergeableState?: string | null | undefined;
   prState?: string | null | undefined;
   prStateFetchedAt?: string | null | undefined;
+  // #selfhost-ci-verification (CI-state snapshot cache sibling to the #2537 PR-state trio above): a durable
+  // mirror of the LiveCiAggregate the gate's own live-CI fetch already produces (src/github/backfill.ts),
+  // keyed fresh only when BOTH ciHeadSha matches the head_sha being queried AND ciRequiredContextsKey matches
+  // the current settings.expectedCiContexts. NEVER read by the act-boundary merge/close decision (see the
+  // schema.ts comment) -- those paths always force a live fetch.
+  ciHeadSha?: string | null | undefined;
+  ciState?: "passed" | "failed" | "pending" | "unverified" | null | undefined;
+  ciHasPending?: boolean | null | undefined;
+  ciHasVisiblePending?: boolean | null | undefined;
+  ciHasMissingRequiredContext?: boolean | null | undefined;
+  ciFailingDetailsJson?: string | null | undefined;
+  ciNonRequiredFailingDetailsJson?: string | null | undefined;
+  ciCompletenessWarning?: string | null | undefined;
+  ciRequiredContextsKey?: string | null | undefined;
+  ciStateFetchedAt?: string | null | undefined;
   updatedAt?: string | null | undefined;
 };
 
@@ -1478,9 +1592,9 @@ export type InstallationHealthRecord = {
   checkedAt: string;
   errorSummary?: string | null | undefined;
   // "broker" = a brokered self-host (ORB_ENROLLMENT_SECRET set, no local GitHub App private key by design).
-  // Permission/event introspection is not available through the token broker today, so missingPermissions /
-  // missingEvents are always [] in broker mode -- an EMPTY array there means "unchecked", not "all satisfied"
-  // the way it does for "local" mode. Consumers must branch on authMode, not infer it from empty arrays alone.
+  // Permission snapshots are available only after the broker returns token permissions; event subscriptions are
+  // not introspectable through the broker. Consumers must branch on authMode, not infer certainty from empty
+  // arrays alone.
   authMode: "local" | "broker";
 };
 

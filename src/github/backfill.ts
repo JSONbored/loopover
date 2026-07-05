@@ -1,5 +1,4 @@
 import {
-  getRepositorySettings,
   getRepository,
   getPullRequest,
   countOpenIssues,
@@ -38,10 +37,12 @@ import {
   upsertRepoSyncSegment,
   upsertRepoSyncState,
   upsertRepositoryFromGitHub,
+  updateInstallationPermissions,
   persistRepoSnapshot,
   extractLinkedIssueNumbers,
 } from "../db/repositories";
-import { agentRequiresPrWrite } from "../settings/agent-execution";
+import { agentRequiresContentsWrite, agentRequiresPrWrite } from "../settings/agent-execution";
+import { resolveRepositorySettings } from "../settings/repository-settings";
 import type {
   ContributorRepoStatRecord,
   GitHubRateLimitObservationRecord,
@@ -67,6 +68,7 @@ import {
   GITTENSORY_CONTEXT_CHECK_NAME,
   GITTENSORY_GATE_CHECK_NAME,
   GITTENSORY_LEGACY_GATE_CHECK_NAME,
+  shouldPublishReviewCheck,
 } from "../review/check-names";
 import { buildReviewThreadBlocker, type ReviewThreadBlocker } from "../review/review-thread-findings";
 import { delayUntil, HISTORICAL_BACKFILL_RESERVED_HEADROOM, shouldWaitForGitHubRateLimit } from "./rate-limit";
@@ -340,6 +342,14 @@ const PR_STATE_CACHE_METRIC = "gittensory_pr_state_cache_total";
 // Safety-net max age for a webhook-invalidated PR-state cache row (a dropped/missed webhook must not pin a stale
 // value forever). Short enough that a missed synchronize/closed/reopened event self-heals within one sweep tick.
 const PR_STATE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+// #selfhost-ci-verification: durable-cache counter for the CI-state snapshot cache, sibling to PR_STATE_CACHE_METRIC.
+// Exported: the cache-check/hit/miss orchestration lives in queue/processors.ts (see writeThroughCiStateCache's
+// own doc comment for why), which needs this same metric name.
+export const CI_STATE_CACHE_METRIC = "gittensory_ci_state_cache_total";
+// Shorter than PR_STATE_CACHE_MAX_AGE_MS (5min): CI state changes faster and more consequentially than bare PR
+// state, and check_run/check_suite `completed` webhooks already invalidate this cache explicitly (see
+// invalidateCiStateCache below) -- this is purely the backstop for a delayed/missed webhook delivery.
+export const CI_STATE_CACHE_MAX_AGE_MS = 60 * 1000;
 const CURRENT_OPEN_SCAN_MARKER = "gittensory-current-open-scan-v1";
 const FRESH_TOTALS_SNAPSHOT_MS = 10 * 60 * 1000;
 const TOTALS_SNAPSHOT_LOOKBACK = 8;
@@ -371,7 +381,7 @@ export async function backfillRegisteredRepositories(
   const mode = options.mode ?? "light";
   const limits = { ...DEFAULT_LIMITS, ...MODE_LIMITS[mode], ...(options.limits ?? {}) };
   const repoResults = await mapWithConcurrency(repositories, limits.repoConcurrency, async (repo): Promise<RepoBackfillResult> => {
-    const settings = await getRepositorySettings(env, repo.fullName);
+    const settings = await resolveRepositorySettings(env, repo.fullName);
     if (!settings.backfillEnabled) {
       const completedAt = nowIso();
       await upsertSkippedSegments(env, repo, mode, completedAt, ["Backfill is disabled for this repository."]);
@@ -445,7 +455,7 @@ export async function enqueueRepositoryOpenDataBackfill(
   const repo = await getRepository(env, options.repoFullName);
   if (!repo?.isRegistered) return { ok: true, repoFullName: options.repoFullName, status: "skipped", warnings: ["Repository is not registered for Gittensory backfill."] };
   const mode = options.mode ?? "light";
-  const settings = await getRepositorySettings(env, repo.fullName);
+  const settings = await resolveRepositorySettings(env, repo.fullName);
   if (!settings.backfillEnabled) return { ok: true, repoFullName: repo.fullName, status: "skipped", warnings: ["Backfill is disabled for this repository."] };
   const token = await tokenForRepo(env, repo);
   const sourceKind: RepoSyncSegmentRecord["sourceKind"] = repo.installationId && token !== env.GITHUB_PUBLIC_TOKEN ? "installation" : "github";
@@ -828,12 +838,15 @@ export const OPTIONAL_CHECK_RUN_PERMISSION: Record<string, string> = {
 export const OPTIONAL_PR_WRITE_PERMISSION: Record<string, string> = {
   pull_requests: "write",
 };
+export const OPTIONAL_CONTENTS_WRITE_PERMISSION: Record<string, string> = {
+  contents: "write",
+};
 
 export const REQUIRED_INSTALLATION_EVENTS = ["issues", "issue_comment", "pull_request", "repository"] as const;
 export const OPTIONAL_VISIBLE_INSTALLATION_EVENTS = ["installation_target", "installation_repositories"] as const;
 
 type InstallationModeImpact = {
-  mode: "comment" | "label" | "check_run" | "gate_check";
+  mode: "comment" | "label" | "check_run" | "gate_check" | "agent_pr_action" | "agent_merge";
   enabled: boolean;
   affectedRepoCount: number;
   requiredPermissions: Array<{ permission: string; requiredAccess: string; missing: boolean; optional: boolean }>;
@@ -849,30 +862,30 @@ type InstallationEventDiagnostic = {
   action: string;
 };
 
-// Broker mode (#selfhost-runtime-drift): a brokered self-host holds no local GitHub App private key by design,
-// and the token broker does not expose granted permissions/scopes today -- there is nothing to introspect. Report
-// that plainly instead of running the local-mode remediation math against permissions/events that were never
-// (and structurally cannot be) refreshed, which would otherwise read as either fabricated gaps or fabricated
-// confirmations depending on whatever stale/default data happens to be stored.
+// Broker mode (#selfhost-runtime-drift): a brokered self-host holds no local GitHub App private key by design.
+// Permissions can be refreshed from the broker token response when available; event subscriptions still cannot be
+// introspected through the broker, so the remediation text must keep that distinction explicit.
 function enrichBrokerInstallationHealth(health: InstallationHealthRecord) {
   const brokerHealthy = health.status === "healthy";
+  const missingPermissions = new Set(health.missingPermissions);
+  const requiredPermissions = {
+    ...REQUIRED_INSTALLATION_PERMISSIONS,
+    ...(missingPermissions.has("checks") ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
+    ...(missingPermissions.has("pull_requests") && permissionSatisfies(health.permissions.pull_requests, "read") ? OPTIONAL_PR_WRITE_PERMISSION : {}),
+    ...(missingPermissions.has("contents") ? OPTIONAL_CONTENTS_WRITE_PERMISSION : {}),
+  };
   return {
     ...health,
-    requiredPermissions: REQUIRED_INSTALLATION_PERMISSIONS,
+    requiredPermissions,
     optionalPermissions: OPTIONAL_CHECK_RUN_PERMISSION,
     requiredEvents: [...REQUIRED_INSTALLATION_EVENTS],
     optionalVisibleEvents: [...OPTIONAL_VISIBLE_INSTALLATION_EVENTS],
-    // ok is always false here, regardless of brokerHealthy -- a reachable broker only proves it can mint
-    // tokens, never that this specific permission/event is actually granted (the broker exposes no
-    // introspection API for that today). Reporting ok: true for a check that was never verified would recreate
-    // the exact fabricated-success problem broker mode exists to avoid; brokerHealthy still drives repairSteps
-    // and the overall status above, just not these per-check flags.
-    permissionRemediation: Object.entries(REQUIRED_INSTALLATION_PERMISSIONS).map(([permission, access]) => ({
+    permissionRemediation: Object.entries(requiredPermissions).map(([permission, access]) => ({
       permission,
       requiredAccess: access,
-      currentAccess: "unavailable_in_broker_mode",
-      ok: false,
-      action: "Permission introspection is unavailable in broker mode.",
+      currentAccess: health.permissions[permission] ?? "unavailable_in_broker_mode",
+      ok: !missingPermissions.has(permission) && Boolean(health.permissions[permission]),
+      action: missingPermissions.has(permission) ? `Set repository permission ${permission} to ${access}.` : "No change needed.",
     })),
     eventRemediation: REQUIRED_INSTALLATION_EVENTS.map((event) => ({
       event,
@@ -883,7 +896,7 @@ function enrichBrokerInstallationHealth(health: InstallationHealthRecord) {
       ? [
           "This is a brokered self-host (Orb token broker mode) -- it holds no local GitHub App private key by design.",
           "The token broker is reachable and minting installation tokens normally.",
-          "Permission/event introspection is not available through the token broker today.",
+          "Permission grants were refreshed from the broker token response when GitHub provided them; event-subscription introspection is unavailable in broker mode.",
         ]
       : [
           "This is a brokered self-host (Orb token broker mode) -- it holds no local GitHub App private key by design.",
@@ -909,6 +922,7 @@ export function enrichInstallationHealth(health: InstallationHealthRecord) {
     // Persisted health stores only the missing permission name. If pull_requests is already granted at read level,
     // a missing pull_requests entry can only mean an acting autonomy needs write; otherwise preserve baseline read.
     ...(missingPermissions.has("pull_requests") && permissionSatisfies(health.permissions.pull_requests, "read") ? OPTIONAL_PR_WRITE_PERMISSION : {}),
+    ...(missingPermissions.has("contents") ? OPTIONAL_CONTENTS_WRITE_PERMISSION : {}),
   };
   return {
     ...health,
@@ -944,19 +958,21 @@ export function enrichInstallationHealth(health: InstallationHealthRecord) {
 
 export async function buildInstallationRepairDiagnostics(env: Env, health: InstallationHealthRecord) {
   const installedRepos = (await listRepositories(env)).filter((repo) => repo.installationId === health.installationId && repo.isInstalled);
-  const installedSettings = await Promise.all(installedRepos.map((repo) => getRepositorySettings(env, repo.fullName)));
+  const installedSettings = await Promise.all(installedRepos.map((repo) => resolveRepositorySettings(env, repo.fullName)));
   const commentRepoCount = installedSettings.filter(usesCommentMode).length;
   const labelRepoCount = installedSettings.filter(usesLabelMode).length;
   const checkRunRepoCount = installedSettings.filter((settings) => settings.checkRunMode === "enabled").length;
-  const gateCheckRepoCount = installedSettings.filter((settings) => settings.gateCheckMode === "enabled").length;
-  const requiresPrWrite = installedSettings.some((settings) => agentRequiresPrWrite(settings.autonomy));
+  const gateCheckRepoCount = installedSettings.filter((settings) => shouldPublishReviewCheck(settings.reviewCheckMode)).length;
+  const prWriteRepoCount = installedSettings.filter((settings) => agentRequiresPrWrite(settings.autonomy)).length;
+  const mergeRepoCount = installedSettings.filter((settings) => agentRequiresContentsWrite(settings.autonomy)).length;
   const missingPermissions = new Set(health.missingPermissions);
   const requiredEventSet = new Set<string>(REQUIRED_INSTALLATION_EVENTS);
   const missingEvents = new Set(health.missingEvents.filter((event) => requiredEventSet.has(event)));
   const requiredPermissions = {
     ...REQUIRED_INSTALLATION_PERMISSIONS,
     ...(checkRunRepoCount > 0 || gateCheckRepoCount > 0 ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
-    ...(requiresPrWrite ? OPTIONAL_PR_WRITE_PERMISSION : {}), // acting autonomy → pull_requests:write (#audit-install-health)
+    ...(prWriteRepoCount > 0 ? OPTIONAL_PR_WRITE_PERMISSION : {}),
+    ...(mergeRepoCount > 0 ? OPTIONAL_CONTENTS_WRITE_PERMISSION : {}),
   };
   const optionalPermissions = checkRunRepoCount > 0 || gateCheckRepoCount > 0 ? {} : OPTIONAL_CHECK_RUN_PERMISSION;
   const modeImpacts: InstallationModeImpact[] = [
@@ -1003,6 +1019,32 @@ export async function buildInstallationRepairDiagnostics(env: Env, health: Insta
         gateCheckRepoCount > 0
           ? "Review-agent check mode is enabled for at least one installed repo, so Checks: write is required."
           : "Checks: write is optional unless review-agent check mode is enabled for an installed repo.",
+    }),
+    buildPermissionModeImpact({
+      mode: "agent_pr_action",
+      enabled: prWriteRepoCount > 0,
+      affectedRepoCount: prWriteRepoCount,
+      permission: "pull_requests",
+      requiredAccess: "write",
+      missing: prWriteRepoCount > 0 && missingPermissions.has("pull_requests"),
+      optional: prWriteRepoCount === 0,
+      summary:
+        prWriteRepoCount > 0
+          ? "Auto-maintain PR review, close, and update-branch actions are enabled for at least one installed repo, so Pull requests: write is required."
+          : "Pull requests: write is optional unless PR-state auto-maintain actions are enabled for an installed repo.",
+    }),
+    buildPermissionModeImpact({
+      mode: "agent_merge",
+      enabled: mergeRepoCount > 0,
+      affectedRepoCount: mergeRepoCount,
+      permission: "contents",
+      requiredAccess: "write",
+      missing: mergeRepoCount > 0 && missingPermissions.has("contents"),
+      optional: mergeRepoCount === 0,
+      summary:
+        mergeRepoCount > 0
+          ? "Auto-merge is enabled for at least one installed repo, so Contents: write is required by GitHub's merge endpoint."
+          : "Contents: write is optional unless auto-merge is enabled for an installed repo.",
     }),
   ];
   const eventDiagnostics: InstallationEventDiagnostic[] = [
@@ -1092,6 +1134,7 @@ function summarizeRepairSettings(settings: RepositorySettings) {
     publicAudienceMode: settings.publicAudienceMode,
     checkRunMode: settings.checkRunMode,
     gateCheckMode: settings.gateCheckMode,
+    reviewCheckMode: settings.reviewCheckMode,
     autoLabelEnabled: settings.autoLabelEnabled,
   };
 }
@@ -1114,12 +1157,22 @@ async function refreshInstallationHealthRecords(env: Env, installations: Install
     const { installation: currentInstallation, errorSummary, authMode } = await refreshStoredInstallation(env, installation);
     const installedRepos = repositories.filter((repo) => repo.installationId === currentInstallation.id && repo.isInstalled);
     const registeredInstalled = installedRepos.filter((repo) => repo.isRegistered);
+    const installedSettings = await Promise.all(installedRepos.map((repo) => resolveRepositorySettings(env, repo.fullName)));
+    const requiresChecks = installedSettings.some((settings) => settings.checkRunMode === "enabled");
+    const requiresPrWrite = installedSettings.some((settings) => agentRequiresPrWrite(settings.autonomy));
+    const requiresContentsWrite = installedSettings.some((settings) => agentRequiresContentsWrite(settings.autonomy));
+    const requiredPermissions = {
+      ...REQUIRED_INSTALLATION_PERMISSIONS,
+      ...(requiresChecks ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
+      // An acting autonomy upgrades the pull_requests requirement read -> write (spread last so it wins). (#audit-install-health)
+      ...(requiresPrWrite ? OPTIONAL_PR_WRITE_PERMISSION : {}),
+      ...(requiresContentsWrite ? OPTIONAL_CONTENTS_WRITE_PERMISSION : {}),
+    };
 
-    // Broker mode (#selfhost-runtime-drift): the token broker exposes no permission/event introspection today, so
-    // there is nothing to compare against REQUIRED_INSTALLATION_PERMISSIONS -- computing "missing" from whatever
-    // (never-refreshed) permissions/events happen to be stored would fabricate a gap. Health instead reflects
-    // whether the broker itself is reachable and minting tokens; see enrichInstallationHealth's broker branch for
-    // the honest "introspection unavailable" remediation surfaced to callers.
+    // Broker mode (#selfhost-runtime-drift): the token broker can now expose the permission snapshot attached to
+    // the minted installation token, but it still cannot expose webhook event subscriptions. Recompute permission
+    // gaps when a broker snapshot is present; keep event gaps from the previous verified record instead of
+    // fabricating a clean event bill of health.
     //
     // Persistence (#selfhost-runtime-drift follow-up): writing missingPermissions/missingEvents as [] here reads,
     // to any OTHER consumer of InstallationHealthRecord that predates broker mode and doesn't branch on authMode
@@ -1130,15 +1183,22 @@ async function refreshInstallationHealthRecords(env: Env, installations: Install
     // all has never been verified either way, so [] is the only honest starting point.
     if (authMode === "broker") {
       const previous = await getInstallationHealth(env, currentInstallation.id);
+      const hasBrokerPermissionSnapshot = Object.keys(currentInstallation.permissions).length > 0;
+      const missingPermissions = hasBrokerPermissionSnapshot
+        ? Object.entries(requiredPermissions)
+            .filter(([permission, expected]) => !permissionSatisfies(currentInstallation.permissions[permission], expected))
+            .map(([permission]) => permission)
+        : (previous?.missingPermissions ?? ([] as string[]));
+      const missingEvents = previous?.missingEvents ?? ([] as string[]);
       const record = {
         installationId: currentInstallation.id,
         accountLogin: currentInstallation.accountLogin,
         repositorySelection: currentInstallation.repositorySelection,
         installedReposCount: installedRepos.length,
         registeredInstalledCount: registeredInstalled.length,
-        status: errorSummary ? ("needs_attention" as const) : ("healthy" as const),
-        missingPermissions: previous?.missingPermissions ?? ([] as string[]),
-        missingEvents: previous?.missingEvents ?? ([] as string[]),
+        status: errorSummary || missingPermissions.length > 0 || missingEvents.length > 0 ? ("needs_attention" as const) : ("healthy" as const),
+        missingPermissions,
+        missingEvents,
         permissions: currentInstallation.permissions,
         events: currentInstallation.events,
         checkedAt: nowIso(),
@@ -1150,15 +1210,6 @@ async function refreshInstallationHealthRecords(env: Env, installations: Install
       continue;
     }
 
-    const installedSettings = await Promise.all(installedRepos.map((repo) => getRepositorySettings(env, repo.fullName)));
-    const requiresChecks = installedSettings.some((settings) => settings.checkRunMode === "enabled");
-    const requiresPrWrite = installedSettings.some((settings) => agentRequiresPrWrite(settings.autonomy));
-    const requiredPermissions = {
-      ...REQUIRED_INSTALLATION_PERMISSIONS,
-      ...(requiresChecks ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
-      // An acting autonomy upgrades the pull_requests requirement read -> write (spread last so it wins). (#audit-install-health)
-      ...(requiresPrWrite ? OPTIONAL_PR_WRITE_PERMISSION : {}),
-    };
     const missingPermissions = Object.entries(requiredPermissions)
       .filter(([permission, expected]) => !permissionSatisfies(currentInstallation.permissions[permission], expected))
       .map(([permission]) => permission);
@@ -1213,8 +1264,15 @@ async function refreshStoredInstallation(
           authMode: "broker",
         };
       }
+      const refreshedInstallation =
+        minted.permissions && Object.keys(minted.permissions).length > 0
+          ? { ...installation, permissions: minted.permissions, updatedAt: nowIso() }
+          : installation;
+      if (refreshedInstallation !== installation) {
+        await updateInstallationPermissions(env, installation.id, refreshedInstallation.permissions);
+      }
       incr("gittensory_installation_health_broker_probe_total", { result: "ok" });
-      return { installation, authMode: "broker" };
+      return { installation: refreshedInstallation, authMode: "broker" };
     } catch (error) {
       incr("gittensory_installation_health_broker_probe_total", { result: "failed" });
       return {
@@ -2445,6 +2503,15 @@ export type LiveCiAggregate = {
   // A currently visible check-run/status/suite is still queued, waiting, or in_progress. Unlike inferred missing
   // contexts or unreadable pages, this is active CI and must not be overridden by the stale-CI surfacing cap.
   hasVisiblePending: boolean;
+  // A required branch-protection/expectedCiContexts context that never appeared in any check-run or status page
+  // this fetch read to COMPLETION (#selfhost-ci-deferral-staleness). Distinct from hasVisiblePending: this is an
+  // INFERRED absence, not observed activity — nothing will ever fire a check_run/check_suite "completed" webhook
+  // for a context name that structurally never runs (a path-filtered workflow, a mistyped branch-protection
+  // context, a fork check GitHub never surfaces), so there is no event-driven way this ever resolves on its own.
+  // Only ever true when the read was COMPLETE (not checkRunsIncomplete/statusIncomplete) — a partial page can't
+  // tell "never appears" from "appears on a page we didn't fetch," so it must never be read as a confident
+  // absence. Lets prReadyForReview apply a much shorter surfacing cap than genuinely active CI.
+  hasMissingRequiredContext: boolean;
   // Checks that FAIL the gate. Any completed red check/status is adverse, required or not; required contexts are
   // still used for absent/pending detection so missing required CI cannot silently pass.
   failingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
@@ -2474,6 +2541,7 @@ export async function fetchRequiredStatusContexts(
   baseRef: string | null | undefined,
   token: string | undefined,
   admissionKey?: GitHubRateLimitAdmissionKey,
+  onFetchFailure: (error: unknown) => void = () => undefined,
 ): Promise<Set<string> | null> {
   if (!baseRef) return null;
   const result = await githubJsonWithHeaders<{ contexts?: Array<string | null> | null; checks?: Array<{ context?: string | null }> | null }>(
@@ -2484,6 +2552,7 @@ export async function fetchRequiredStatusContexts(
     githubRateLimitOptions(admissionKey),
   ).catch((error) => {
     recordBranchProtectionFetchFailure(error);
+    onFetchFailure(error);
     return undefined;
   });
   if (!result) return null; // 404 / 403 (no admin:read) / error → conservative fold-all.
@@ -2628,6 +2697,7 @@ async function reduceLiveCiAggregate(
   let anyPending = false;
   let anyVisiblePending = false;
   let anyRequiredVisiblePending = false;
+  let anyMissingRequiredContext = false;
   let sawFirstPartyCheckRun = false;
   const seenContextNames = new Set<string>();
 
@@ -2676,7 +2746,10 @@ async function reduceLiveCiAggregate(
   // A required context that never appeared in any result is not safe to treat as passed — count it as pending.
   if (enforceRequiredOnly) {
     for (const ctx of requiredContexts!) {
-      if (!seenContextNames.has(ctx)) anyPending = true;
+      if (!seenContextNames.has(ctx)) {
+        anyPending = true;
+        anyMissingRequiredContext = true;
+      }
     }
   }
 
@@ -2715,7 +2788,10 @@ async function reduceLiveCiAggregate(
     !enforceRequiredOnly && ciState === "passed"
       ? "CI resolved to passed with no branch-protection required checks configured — gittensory cannot verify every expected workflow ran on this commit (a path-filtered or misconfigured workflow that never triggers is indistinguishable from one that doesn't exist). Configure branch protection or an expected-checks list for full CI-completeness verification."
       : null;
-  return { ciState, hasPending, hasVisiblePending: anyRequiredVisiblePending, failingDetails, nonRequiredFailingDetails, ciCompletenessWarning };
+  // A partial/paginated read can't tell "never appears" from "appears on a page we didn't fetch" -- only a
+  // COMPLETE read's absence is a confident signal worth a short surfacing cap (#selfhost-ci-deferral-staleness).
+  const hasMissingRequiredContext = anyMissingRequiredContext && !checkRunsIncomplete && !statusIncomplete;
+  return { ciState, hasPending, hasVisiblePending: anyRequiredVisiblePending, hasMissingRequiredContext, failingDetails, nonRequiredFailingDetails, ciCompletenessWarning };
 }
 
 /**
@@ -2737,7 +2813,7 @@ export async function fetchLiveCiAggregate(
   requiredContexts?: ReadonlySet<string> | null,
   admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<LiveCiAggregate> {
-  if (!headSha) return { ciState: "unverified", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null };
+  if (!headSha) return { ciState: "unverified", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null };
   // Check-runs + classic statuses are accumulated across pages here; the single classification lives in
   // reduceLiveCiAggregate so the REST and GraphQL paths reach byte-identical verdicts (#1941).
   const checkRuns: LiveCiCheckRun[] = [];
@@ -3014,6 +3090,25 @@ export async function fetchLivePullRequestHeadSha(
   return result?.data.head?.sha ?? undefined;
 }
 
+export type LivePullRequestFetchResult =
+  | { status: "ok"; data: GitHubPullRequestPayload }
+  | { status: "error"; error: string };
+
+export async function fetchLivePullRequestResult(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<LivePullRequestFetchResult> {
+  try {
+    const result = await githubJsonWithHeaders<GitHubPullRequestPayload>(env, repoFullName, `/pulls/${prNumber}`, token, githubRateLimitOptions(admissionKey));
+    return { status: "ok", data: result.data };
+  } catch (error) {
+    return { status: "error", error: strippedErrorMessage(error, "GitHub live PR fetch failed").slice(0, 240) };
+  }
+}
+
 /** The PR's FULL live payload via REST `GET /pulls/{n}`, ready to feed `upsertPullRequestFromGitHub`. The scheduled
  *  re-gate sweep uses this to RESYNC a stored PR to its live head when a `synchronize` webhook was lost (e.g. the
  *  self-host relay was down), so the re-review runs on the current head + fresh files instead of a stale cached diff
@@ -3026,8 +3121,8 @@ export async function fetchLivePullRequest(
   token: string | undefined,
   admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<GitHubPullRequestPayload | undefined> {
-  const result = await githubJsonWithHeaders<GitHubPullRequestPayload>(env, repoFullName, `/pulls/${prNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
-  return result?.data ?? undefined;
+  const result = await fetchLivePullRequestResult(env, repoFullName, prNumber, token, admissionKey);
+  return result.status === "ok" ? result.data : undefined;
 }
 
 // #2537: durable, webhook-invalidated cache for the bare PR-state read (GET /pulls/{n}). Unlike the request-local
@@ -3210,6 +3305,115 @@ export async function invalidatePrStateCache(env: Env, repoFullName: string, pul
     prMergeableState: null,
     prState: null,
     prStateFetchedAt: null,
+  });
+}
+
+// #selfhost-ci-verification: durable, webhook-invalidated cache for the CI-state aggregate (fetchLiveCiAggregate/
+// fetchLiveCiAggregateViaGraphQl), sibling to the #2537 PR-state cache above. Unlike the request-local
+// LiveGithubFacts memo (queue/processors.ts), this survives ACROSS webhook deliveries / job re-checks, cutting
+// repeat check-runs/status/check-suites reads for an unchanged (repo, pr, head_sha, expectedCiContexts) tuple.
+// NEVER used by the act-boundary merge/close decision (services/agent-approval-queue.ts,
+// services/agent-action-executor.ts) -- those call fetchLiveCiAggregate/fetchLiveCiAggregatePreferGraphQl
+// directly, by design, and must keep doing so (this cache is a distinct, separately-exported function these two
+// call sites simply never import).
+export function isCiStateCacheFresh(
+  cached: Pick<PullRequestDetailSyncStateRecord, "ciHeadSha" | "ciRequiredContextsKey" | "ciStateFetchedAt"> | null | undefined,
+  headSha: string | null | undefined,
+  requiredContextsKey: string,
+): boolean {
+  if (!cached?.ciStateFetchedAt) return false;
+  const fetchedAtMs = Date.parse(cached.ciStateFetchedAt);
+  if (!Number.isFinite(fetchedAtMs)) return false;
+  if (Date.now() - fetchedAtMs >= CI_STATE_CACHE_MAX_AGE_MS) return false;
+  // A stale head_sha (a new commit since this row was cached) or a changed expectedCiContexts config is an
+  // automatic miss regardless of TTL -- mirrors the files-cache's own headSha-matching discipline.
+  if ((cached.ciHeadSha ?? null) !== (headSha ?? null)) return false;
+  if ((cached.ciRequiredContextsKey ?? "") !== requiredContextsKey) return false;
+  return true;
+}
+
+/** Reconstruct a LiveCiAggregate from a cached row, or null on any parse failure / missing ciState (fail-open:
+ *  the caller treats null as a cache miss and falls through to a live fetch, never throws). */
+export function deserializeCachedCiAggregate(
+  cached: Pick<
+    PullRequestDetailSyncStateRecord,
+    "ciState" | "ciHasPending" | "ciHasVisiblePending" | "ciHasMissingRequiredContext" | "ciFailingDetailsJson" | "ciNonRequiredFailingDetailsJson" | "ciCompletenessWarning"
+  >,
+): LiveCiAggregate | null {
+  if (!cached.ciState) return null;
+  try {
+    const failingDetails = JSON.parse(cached.ciFailingDetailsJson ?? "[]");
+    const nonRequiredFailingDetails = JSON.parse(cached.ciNonRequiredFailingDetailsJson ?? "[]");
+    // A corrupted/malformed row (e.g. hand-edited D1 row, or a future schema change that leaves an old JSON
+    // shape behind) must fail OPEN as a cache miss, not hand callers a wrong shape -- never trust the parse
+    // result's type just because JSON.parse didn't throw.
+    if (!Array.isArray(failingDetails) || !Array.isArray(nonRequiredFailingDetails)) return null;
+    return {
+      ciState: cached.ciState,
+      hasPending: cached.ciHasPending ?? false,
+      hasVisiblePending: cached.ciHasVisiblePending ?? false,
+      hasMissingRequiredContext: cached.ciHasMissingRequiredContext ?? false,
+      failingDetails,
+      nonRequiredFailingDetails,
+      ciCompletenessWarning: cached.ciCompletenessWarning ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort write-through for the CI-state cache fields (mirrors writeThroughPrStateCache's fail-open,
+ *  preserve-status contract). Always stamps ciStateFetchedAt = now on a successful live read.
+ *
+ *  Exported (not orchestrated in this module) because the actual cache-check-then-live-fetch-then-write-through
+ *  sequence lives in queue/processors.ts's cachedFetchLiveCiAggregate, alongside cachedLiveCiAggregate/
+ *  refreshLiveCiAggregate -- NOT here, even though this is the natural file for #2537's PR-state cache sibling.
+ *  A same-module call from THIS file to fetchLiveCiAggregatePreferGraphQl (below) would be invisible to
+ *  `vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl")`, which many existing tests already rely on to
+ *  intercept the cross-module call processors.ts has always made -- moving the orchestration there preserves
+ *  that exact call shape. */
+export async function writeThroughCiStateCache(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  previousState: Pick<PullRequestDetailSyncStateRecord, "status"> | null | undefined,
+  headSha: string | null | undefined,
+  requiredContextsKey: string,
+  aggregate: LiveCiAggregate,
+): Promise<void> {
+  incr(CI_STATE_CACHE_METRIC, { field: "write", result: "set" });
+  await upsertPullRequestDetailSyncState(env, {
+    repoFullName,
+    pullNumber: prNumber,
+    status: previousState?.status ?? "never_synced",
+    ciHeadSha: headSha ?? null,
+    ciState: aggregate.ciState,
+    ciHasPending: aggregate.hasPending,
+    ciHasVisiblePending: aggregate.hasVisiblePending,
+    ciHasMissingRequiredContext: aggregate.hasMissingRequiredContext,
+    ciFailingDetailsJson: JSON.stringify(aggregate.failingDetails),
+    ciNonRequiredFailingDetailsJson: JSON.stringify(aggregate.nonRequiredFailingDetails),
+    ciCompletenessWarning: aggregate.ciCompletenessWarning,
+    ciRequiredContextsKey: requiredContextsKey,
+    ciStateFetchedAt: nowIso(),
+  }).catch(() => undefined);
+}
+
+/** Invalidate the durable CI-state cache (mirrors invalidatePrStateCache) -- called from
+ *  maybeReReviewOnCiCompletion on every check_run/check_suite `completed` webhook, best-effort. Explicit null
+ *  (not omitted) so the PARTIAL-UPDATE CONTRACT actually clears the stale value rather than leaving it. */
+export async function invalidateCiStateCache(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+): Promise<void> {
+  const existing = await getPullRequestDetailSyncState(env, repoFullName, prNumber).catch(() => null);
+  await upsertPullRequestDetailSyncState(env, {
+    repoFullName,
+    pullNumber: prNumber,
+    status: existing?.status ?? "never_synced",
+    ciState: null,
+    ciStateFetchedAt: null,
   });
 }
 

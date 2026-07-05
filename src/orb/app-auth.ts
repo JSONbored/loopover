@@ -61,7 +61,7 @@ const ORB_TOKEN_MINT_TIMEOUT_MS = 25_000;
 
 /** Mints a short-lived GitHub installation access token for one installation — the broker primitive the
  *  self-hosted container ultimately receives (after enrollment). brokerOrbToken caches the result; this always mints. */
-export async function createOrbInstallationToken(env: Env, installationId: number): Promise<{ token: string; expiresAt: string }> {
+export async function createOrbInstallationToken(env: Env, installationId: number): Promise<{ token: string; expiresAt: string; permissions: Record<string, string> }> {
   const jwt = await createOrbAppJwt(env);
   const response = await timeoutFetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
     method: "POST",
@@ -72,8 +72,8 @@ export async function createOrbInstallationToken(env: Env, installationId: numbe
     const body = await response.text();
     throw new Error(`Failed to create Orb installation token (${response.status}): ${body.slice(0, 200)}`);
   }
-  const payload = (await response.json()) as { token?: string; expires_at?: string };
+  const payload = (await response.json()) as { token?: string; expires_at?: string; permissions?: Record<string, string> };
   if (!payload.token) throw new Error("Orb installation token response did not include a token.");
   // Surface GitHub's real expiry (~1h) so the broker never invents one; absent only on a malformed response.
-  return { token: payload.token, expiresAt: payload.expires_at ?? "" };
+  return { token: payload.token, expiresAt: payload.expires_at ?? "", permissions: payload.permissions ?? {} };
 }

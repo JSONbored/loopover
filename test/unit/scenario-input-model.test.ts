@@ -123,6 +123,18 @@ describe("agent scenario input model", () => {
     );
     expect(normalized.facts.map((entry) => entry.id)).toEqual(["a", "z"]);
   });
+
+  it("orders numeric-suffixed ids naturally, preserving caller note order past 9 (assumption_10 after assumption_2)", () => {
+    const notes = Array.from({ length: 12 }, (_, index) => `n${index + 1}`);
+    const input = scenarioInputFromLocalBranchMetadata({
+      scenarioType: "branch_preflight",
+      login: "miner",
+      repoFullName: "octo/demo",
+      scenarioNotes: notes,
+    });
+    expect(input.assumptions.map((entry) => entry.id)).toEqual(notes.map((_, index) => `assumption_${index + 1}`));
+    expect(input.assumptions.map((entry) => entry.detail)).toEqual(notes);
+  });
 });
 
 describe("public vs private serialization", () => {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { brokerOrbToken, isOrbBrokerEnabled, issueOrbEnrollment } from "../../src/orb/broker";
+import { MAX_ORB_RELAY_REGISTER_BODY_BYTES } from "../../src/orb/relay";
 import { createTestEnv, type TestD1Database } from "../helpers/d1";
 
 async function pkcs8Pem(): Promise<string> {
@@ -24,12 +25,13 @@ const brokerEnvMissingAppCreds = async (missing: "id" | "key" | "both", over: Pa
   if (missing !== "key") base.ORB_GITHUB_APP_PRIVATE_KEY = await pkcs8Pem();
   return createTestEnv(base);
 };
-const tokenFetch = (token = "ghs_broker", expires = "2026-06-25T08:00:00Z") => vi.stubGlobal("fetch", async () => Response.json({ token, expires_at: expires }));
-const countingTokenFetch = (expires = "2026-06-25T08:00:00Z") => {
+const tokenFetch = (token = "ghs_broker", expires = "2026-06-25T08:00:00Z", permissions: Record<string, string> = {}) =>
+  vi.stubGlobal("fetch", async () => Response.json({ token, expires_at: expires, permissions }));
+const countingTokenFetch = (expires = "2026-06-25T08:00:00Z", permissions: Record<string, string> = {}) => {
   let calls = 0;
   vi.stubGlobal("fetch", async () => {
     calls += 1;
-    return Response.json({ token: `ghs_minted_${calls}`, expires_at: expires });
+    return Response.json({ token: `ghs_minted_${calls}`, expires_at: expires, permissions });
   });
   return () => calls;
 };
@@ -66,8 +68,8 @@ describe("brokerOrbToken", () => {
     const e = await brokerEnv();
     await seedInstall(e, 300, { registered: 1 });
     const { secret } = (await issueOrbEnrollment(e, 300)) as { secret: string };
-    tokenFetch("ghs_minted", "2026-06-25T08:00:00Z");
-    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_minted", installationId: 300, expiresAt: "2026-06-25T08:00:00Z" });
+    tokenFetch("ghs_minted", "2026-06-25T08:00:00Z", { contents: "write" });
+    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_minted", installationId: 300, expiresAt: "2026-06-25T08:00:00Z", permissions: { contents: "write" } });
     expect((await db(e).prepare("SELECT last_token_at FROM orb_enrollments WHERE installation_id=300").first<{ last_token_at: string | null }>())?.last_token_at).not.toBeNull();
   });
 
@@ -77,14 +79,36 @@ describe("brokerOrbToken", () => {
     const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-cache-test-secret" });
     await seedInstall(e, 303, { registered: 1 });
     const { secret } = (await issueOrbEnrollment(e, 303)) as { secret: string };
-    const fetchCalls = countingTokenFetch("2026-06-25T08:00:00Z");
+    const fetchCalls = countingTokenFetch("2026-06-25T08:00:00Z", { contents: "write", pull_requests: "write" });
 
-    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_minted_1", installationId: 303, expiresAt: "2026-06-25T08:00:00Z" });
-    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_minted_1", installationId: 303, expiresAt: "2026-06-25T08:00:00Z" });
+    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_minted_1", installationId: 303, expiresAt: "2026-06-25T08:00:00Z", permissions: { contents: "write", pull_requests: "write" } });
+    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_minted_1", installationId: 303, expiresAt: "2026-06-25T08:00:00Z", permissions: { contents: "write", pull_requests: "write" } });
     expect(fetchCalls()).toBe(1);
     const row = await db(e).prepare("SELECT cached_token_json FROM orb_enrollments WHERE installation_id=303").first<{ cached_token_json: string }>();
     expect(row?.cached_token_json).toContain("ciphertext");
     expect(row?.cached_token_json).not.toContain("ghs_minted_1");
+  });
+
+  it("forceRefresh bypasses a still-fresh broker cache and replaces the returned permission snapshot", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T07:00:00Z"));
+    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-cache-test-secret" });
+    await seedInstall(e, 307, { registered: 1 });
+    const { secret } = (await issueOrbEnrollment(e, 307)) as { secret: string };
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      return Response.json({
+        token: `ghs_minted_${calls}`,
+        expires_at: "2026-06-25T08:00:00Z",
+        permissions: calls === 1 ? { contents: "read" } : { contents: "write" },
+      });
+    });
+
+    expect(await brokerOrbToken(e, secret)).toMatchObject({ token: "ghs_minted_1", permissions: { contents: "read" } });
+    expect(await brokerOrbToken(e, secret, { forceRefresh: true })).toMatchObject({ token: "ghs_minted_2", permissions: { contents: "write" } });
+    expect(await brokerOrbToken(e, secret)).toMatchObject({ token: "ghs_minted_2", permissions: { contents: "write" } });
+    expect(calls).toBe(2);
   });
 
   it("remints when the encrypted cache is absent, expired, or unreadable", async () => {
@@ -119,7 +143,7 @@ describe("brokerOrbToken", () => {
       return originalPrepare(sql);
     });
 
-    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_cache_write_failed", installationId: 305, expiresAt: "2026-06-25T08:00:00Z" });
+    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_cache_write_failed", installationId: 305, expiresAt: "2026-06-25T08:00:00Z", permissions: {} });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("orb_token_cache_write_failed"));
   });
 
@@ -141,7 +165,7 @@ describe("brokerOrbToken", () => {
       return originalPrepare(sql);
     });
 
-    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_minted_1", installationId: 306, expiresAt: "2026-06-25T08:00:00Z" });
+    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_minted_1", installationId: 306, expiresAt: "2026-06-25T08:00:00Z", permissions: {} });
     expect(fetchCalls()).toBe(1);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("orb_token_last_touch_failed"));
   });
@@ -198,11 +222,11 @@ describe("brokerOrbToken", () => {
     await seedInstall(e, 313, { registered: 1 });
     const { secret } = (await issueOrbEnrollment(e, 313)) as { secret: string };
     tokenFetch("ghs_minted", "2026-06-25T08:00:00Z");
-    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_minted", installationId: 313, expiresAt: "2026-06-25T08:00:00Z" });
+    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_minted", installationId: 313, expiresAt: "2026-06-25T08:00:00Z", permissions: {} });
 
     // Drop the App credentials AFTER the initial mint+cache — a still-fresh cache hit must not need them.
     const eNoCreds = await brokerEnvMissingAppCreds("both", { TOKEN_ENCRYPTION_SECRET: "orb-cache-test-secret", DB: e.DB });
-    expect(await brokerOrbToken(eNoCreds, secret)).toEqual({ token: "ghs_minted", installationId: 313, expiresAt: "2026-06-25T08:00:00Z" });
+    expect(await brokerOrbToken(eNoCreds, secret)).toEqual({ token: "ghs_minted", installationId: 313, expiresAt: "2026-06-25T08:00:00Z", permissions: {} });
   });
 });
 
@@ -236,6 +260,53 @@ describe("broker endpoints", () => {
     const { secret } = (await issueOrbEnrollment(e, 401)) as { secret: string };
     await db(e).prepare("UPDATE orb_github_installations SET registered=0 WHERE installation_id=401").run();
     expect((await app.request("/v1/orb/token", { method: "POST", headers: { authorization: `Bearer ${secret}` } }, e)).status).toBe(403);
+  });
+
+  it("/v1/orb/token rejects oversized force-refresh bodies before parsing or validating the bearer", async () => {
+    const e = await brokerEnv();
+    const parseSpy = vi.spyOn(JSON, "parse");
+    const res = await app.request(
+      "/v1/orb/token",
+      {
+        method: "POST",
+        headers: { authorization: "Bearer orbsec_bad", "content-length": String(MAX_ORB_RELAY_REGISTER_BODY_BYTES + 1) },
+        body: "{}",
+      },
+      e,
+    );
+
+    expect(res.status).toBe(413);
+    expect(parseSpy).not.toHaveBeenCalled();
+    parseSpy.mockRestore();
+    await expect(res.json()).resolves.toEqual({ error: "payload_too_large", maxBytes: MAX_ORB_RELAY_REGISTER_BODY_BYTES });
+  });
+
+  it("/v1/orb/token caps streamed bodies when no content-length is declared", async () => {
+    const e = await brokerEnv();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(MAX_ORB_RELAY_REGISTER_BODY_BYTES + 1));
+        controller.close();
+      },
+    });
+    const res = await app.request("/v1/orb/token", { method: "POST", headers: { authorization: "Bearer orbsec_bad" }, body: stream, duplex: "half" } as RequestInit, e);
+
+    expect(res.status).toBe(413);
+    await expect(res.json()).resolves.toMatchObject({ error: "payload_too_large" });
+  });
+
+  it("/v1/orb/token accepts small force-refresh JSON and ignores malformed JSON", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T07:00:00Z"));
+    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-route-cache-secret" });
+    await seedInstall(e, 405, { registered: 1 });
+    const { secret } = (await issueOrbEnrollment(e, 405)) as { secret: string };
+    const calls = countingTokenFetch("2026-06-25T08:00:00Z", { contents: "write" });
+
+    expect((await app.request("/v1/orb/token", { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: "{bad" }, e)).status).toBe(200);
+    expect(calls()).toBe(1);
+    expect((await app.request("/v1/orb/token", { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ forceRefresh: true }) }, e)).status).toBe(200);
+    expect(calls()).toBe(2);
   });
 
   it("/v1/internal/orb/enrollments: 400 missing id, 409 unregistered, 404 unknown", async () => {

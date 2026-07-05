@@ -23,7 +23,30 @@ export function createRedisCache(redis: Redis) {
       const result = await redis.set(key, value, "EX", ttlSeconds, "NX");
       return result === "OK";
     },
+    // Compare-and-delete: the read and the delete must be one atomic server-side step (a Lua eval), or a
+    // holder's own release could race a NEW claimant's write between a separate GET and DEL and delete the
+    // wrong holder's key -- the exact race per-holder ownership tokens exist to close.
+    async releaseIfValue(key: string, value: string): Promise<boolean> {
+      const result = await redis.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+        1,
+        key,
+        value,
+      );
+      return result === 1;
+    },
   };
+}
+
+/** Self-host boot guard: `claim()` without ownership-aware release pins actuation locks for minutes. */
+export function assertSelfhostTransientCacheOwnershipRelease(
+  cache: { claim?(key: string, value: string, ttlSeconds: number): Promise<boolean>; releaseIfValue?(key: string, value: string): Promise<boolean> },
+): void {
+  if (cache.claim && !cache.releaseIfValue) {
+    throw new Error(
+      "SELFHOST_TRANSIENT_CACHE.claim requires releaseIfValue for ownership-aware transient locks (#2129)",
+    );
+  }
 }
 
 export type RedisCache = ReturnType<typeof createRedisCache>;

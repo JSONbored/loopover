@@ -78,6 +78,11 @@ function Tuning() {
         <li>built-in safe defaults.</li>
       </ul>
       <p>
+        Path holds are explicit config-as-code only: omitted or empty{" "}
+        <code>settings.hardGuardrailGlobs</code> means no path guardrails, not a hidden engine
+        fallback.
+      </p>
+      <p>
         The friendly <code>gate:</code> block in <code>.gittensory.yml</code> is a typed alias for
         the gate-related fields and wins over the generic <code>settings:</code> block for those
         same fields. Gittensory looks for the manifest at the first match of{" "}
@@ -137,6 +142,23 @@ function Tuning() {
           <code>GITTENSORY_REVIEW_UNIFIED_COMMENT</code> — renders the public PR comment as one
           in-place unified comment instead of the legacy multi-panel comment. Per-PR. With the flag
           off, the legacy comment is byte-identical.
+        </li>
+        <li>
+          <code>GITTENSORY_REVIEW_ENRICHMENT</code> — runs the review-enrichment analyzer registry
+          (duplication, churn hotspots, blame links, approval integrity, undocumented exports, and
+          more) and folds their findings into the review context. Per-PR.
+        </li>
+        <li>
+          <code>GITTENSORY_REVIEW_INLINE_COMMENTS</code> — posts AI-review findings as inline
+          diff-anchored PR review comments instead of (or alongside) the summary comment. Per-PR.
+        </li>
+        <li>
+          <code>GITTENSORY_REVIEW_PLANNER</code> — enables <code>@gittensory plan</code>, an
+          on-demand structured implementation plan posted to the PR thread. Per-PR.
+        </li>
+        <li>
+          <code>GITTENSORY_REVIEW_SCREENSHOTS</code> — visual capture: renders and attaches
+          before/after screenshots for PRs that change UI. Per-PR.
         </li>
         <li>
           <code>GITTENSORY_REVIEW_OPS</code> — observability, read-only. On the cron tick an anomaly
@@ -200,9 +222,11 @@ function Tuning() {
         </li>
         <li>
           <code>block</code> — the finding can become a hard{" "}
-          <code>Gittensory Orb Review Agent</code> blocker. Blocking is always
-          confirmed-contributor-gated: the mode chooses <em>which</em> deterministic checks are
-          active, never <em>who</em> can be blocked.
+          <code>Gittensory Orb Review Agent</code> blocker. A block outcome fails the gate for any
+          author identically — confirmed-Gittensor-contributor status doesn&apos;t change{" "}
+          <em>who</em> can be blocked, only the mode chooses <em>which</em> deterministic checks are
+          active. Confirmed status is carried through for on-chain scoring, a separate concern from
+          the gate&apos;s own merge/close decision.
         </li>
       </ul>
       <p>
@@ -211,9 +235,10 @@ function Tuning() {
       </p>
       <ul>
         <li>
-          <code>gate.pack</code> — the policy pack: <code>gittensor</code> (default;
-          confirmed-contributor-gated, registry-aware) or <code>oss-anti-slop</code> (runs the
-          deterministic rules against any author on any repo).
+          <code>gate.pack</code> — the policy pack: <code>gittensor</code> (default; registry-aware,
+          tracks confirmed-Gittensor-contributor status for scoring) or <code>oss-anti-slop</code>{" "}
+          (runs the deterministic rules against any author on any repo, with no
+          confirmed-contributor tracking at all).
         </li>
         <li>
           <code>gate.duplicates</code> — duplicate / superseding-PR detection. Default{" "}
@@ -248,26 +273,46 @@ function Tuning() {
         </li>
         <li>
           <code>gate.manifestPolicy</code> — when <code>block</code>, the manifest's declared policy
-          (blocked paths, required linked issue, test expectations) becomes an enforceable blocker.
-          Default <code>off</code>.
+          (required linked issue and test expectations) becomes an enforceable blocker.
+          Manual-review path holds use <code>settings.hardGuardrailGlobs</code> instead. Default{" "}
+          <code>off</code>.
         </li>
         <li>
-          <code>gate.firstTimeContributorGrace</code> — when <code>true</code>, softens a would-be
-          block to advisory for a genuine newcomer (0 merged PRs, fewer than 3 closed-unmerged PRs).
-          Repeat offenders and authors with merge history are gated normally. Default{" "}
-          <code>false</code>.
+          <code>gate.size</code> — PR-size hold: flags an oversized diff. Default <code>off</code>.
+        </li>
+        <li>
+          <code>gate.lockfileIntegrity</code> — flags lockfile-tamper risk (a lockfile changed
+          without its matching manifest, or vice versa). Default <code>off</code>.
+        </li>
+        <li>
+          <code>gate.claMode</code> — CLA / license-acknowledgment gate. Default <code>off</code>.
+        </li>
+        <li>
+          <code>gate.selfAuthoredLinkedIssue</code> — whether a PR may link an issue opened by the
+          same author. Default <code>advisory</code>.
+        </li>
+        <li>
+          <code>settings.moderationGateMode</code> — whether the moderation-rules engine
+          (contributor cap, blacklist, review-nag feeding a shared cross-repo violation tally) runs
+          on this repo at all. <code>inherit</code> (default) defers to the instance-wide{" "}
+          <code>global_moderation_config.enabled</code>; <code>off</code>/<code>enabled</code> force
+          this repo regardless of the global default.
         </li>
         <li>
           <code>gate.aiReview.mode</code> — AI review. Default <code>off</code>.{" "}
           <code>advisory</code> posts AI review notes only; <code>block</code> lets a dual-model
-          high-confidence consensus defect become a blocker (confirmed contributors only).
+          high-confidence consensus defect become a blocker.
         </li>
       </ul>
 
       <h3>Bring your own model (AI review)</h3>
       <p>
-        The AI-review write-up can optionally use your own frontier model. The consensus blocker
-        always uses the free built-in model pair, so BYOK never changes who can be blocked.
+        The AI-review write-up can optionally use your own frontier model. By default the blocking
+        decision runs on a pair of free built-in models and requires agreement; an operator can
+        override this per repo with <code>aiReviewCombine</code> (<code>single</code> /{" "}
+        <code>consensus</code> / <code>synthesis</code>) — in <code>single</code> mode, one
+        reviewer's verdict is the decision. BYOK changes which model writes the advisory text, not
+        this combine behavior.
       </p>
       <ul>
         <li>
@@ -294,20 +339,15 @@ function Tuning() {
 
       <h2>Guardrails and scope</h2>
       <p>
-        Top-level keys in <code>.gittensory.yml</code> declare the repo's focus and guardrails.
-        These feed the deterministic findings (such as <code>manifest_blocked_path</code> and{" "}
-        <code>manifest_missing_tests</code>) and — when <code>gate.manifestPolicy: block</code> —
-        can become enforceable blockers.
+        Top-level keys in <code>.gittensory.yml</code> declare the repo's focus and validation
+        expectations. These feed deterministic findings such as <code>manifest_missing_tests</code>{" "}
+        and — when <code>gate.manifestPolicy: block</code> — can become enforceable blockers. Manual
+        path holds are configured only through <code>settings.hardGuardrailGlobs</code>.
       </p>
       <ul>
         <li>
           <code>wantedPaths</code> — globs for work areas you want; PRs touching these are
           preferred. Default <code>[]</code>.
-        </li>
-        <li>
-          <code>blockedPaths</code> — globs off-limits to contributors. Touching one yields a{" "}
-          <code>manifest_blocked_path</code> finding, enforceable when{" "}
-          <code>gate.manifestPolicy: block</code>. Default <code>[]</code>.
         </li>
         <li>
           <code>preferredLabels</code> — labels you prefer on incoming PRs; a missing one is
@@ -366,7 +406,18 @@ function Tuning() {
         <li>
           <code>autoLabelEnabled</code> (default <code>true</code>), <code>gittensorLabel</code>{" "}
           (default <code>gittensor</code>), and <code>createMissingLabel</code> (default{" "}
-          <code>true</code>) — labeling.
+          <code>true</code>) — the base per-PR context label, shown to the public surface.
+        </li>
+        <li>
+          <code>typeLabelsEnabled</code> (default <code>true</code>) and <code>typeLabels</code> — a
+          separate, independent taxonomy label family: internal triage metadata gated by its own
+          toggle, not by <code>autoLabelEnabled</code> above. <code>typeLabels</code> is an open{" "}
+          <code>category → label name</code> map, not fixed to any specific set — the built-in{" "}
+          <code>bug</code>/<code>feature</code>/<code>priority</code> categories default to{" "}
+          <code>gittensor:bug</code>/<code>gittensor:feature</code>/<code>gittensor:priority</code>{" "}
+          (examples, not required names), and you can add any number of your own categories (e.g.{" "}
+          <code>security: area:security</code>) for your own taxonomy. An explicit{" "}
+          <code>typeLabels: {"{}"}</code> means zero configured categories for the repo.
         </li>
         <li>
           <code>includeMaintainerAuthors</code> (default <code>false</code>),{" "}
@@ -388,18 +439,15 @@ function Tuning() {
 
       <h2>Example .gittensory.yml</h2>
       <p>
-        A worked manifest: focus and guardrails up top, a refined gate, BYOK AI review, and a few
+        A worked manifest: focus and validation up top, a refined gate, BYOK AI review, and a few
         dashboard-equivalent overrides.
       </p>
       <CodeBlock
         filename=".gittensory.yml"
         lang="yaml"
-        code={`# Focus / guardrails
+        code={`# Focus / validation
 wantedPaths:
   - "src/**"
-blockedPaths:
-  - "vendor/**"
-  - ".github/workflows/**"
 testExpectations:
   - "tests/**"
 linkedIssuePolicy: preferred
@@ -419,7 +467,6 @@ gate:
     aiAdvisory: true
   mergeReadiness: advisory
   manifestPolicy: block
-  firstTimeContributorGrace: true
   aiReview:
     mode: advisory
     byok: true
@@ -431,7 +478,10 @@ settings:
   commentMode: detected_contributors_only
   checkRunMode: enabled
   checkRunDetailLevel: standard
-  badgeEnabled: true`}
+  badgeEnabled: true
+  # Optional path holds. Omitted or [] means no path guardrails.
+  # hardGuardrailGlobs:
+  #   - "src/selfhost/**"`}
       />
 
       <Callout variant="warn" title="Roll forward one step at a time">

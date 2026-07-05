@@ -63,4 +63,13 @@ describe("miner AI policy map (#2305)", () => {
       source: "none",
     });
   });
+
+  it("treats an empty, whitespace-only, or undefined AI-USAGE.md as absent and falls back to CONTRIBUTING.md", () => {
+    const banned = { allowed: false, matchedPhrase: "ai-generated prs are rejected", source: "CONTRIBUTING.md" } as const;
+    const contributing = "AI-generated PRs are not accepted.";
+    // A stub AI-USAGE.md carries no policy and must not fail open over a real ban in CONTRIBUTING.md.
+    expect(resolveAiPolicyVerdict({ aiUsage: "", contributing })).toEqual(banned);
+    expect(resolveAiPolicyVerdict({ aiUsage: "   \n  ", contributing })).toEqual(banned);
+    expect(resolveAiPolicyVerdict({ aiUsage: undefined, contributing })).toEqual(banned);
+  });
 });

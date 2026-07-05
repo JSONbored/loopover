@@ -34,6 +34,29 @@ describe("scanForSecrets", () => {
     expect(scanForSecrets(fakeJwt).kinds).toContain("jwt");
   });
 
+  it("flags a GitLab and an npm token (parity with the PR-diff gate)", () => {
+    expect(scanForSecrets("glpat-" + "aBcDeFgHiJkLmNoPqRsT").kinds).toContain("gitlab_token");
+    expect(scanForSecrets("glpat-" + "aBcDeFgHiJkLmNoPqRs-").kinds).toContain("gitlab_token");
+    expect(scanForSecrets("npm_" + "a".repeat(36)).kinds).toContain("npm_token");
+  });
+
+  it("does not flag a GitLab-shaped run that continues past the expected 20-char token length", () => {
+    const overrun = "glpat-" + "aBcDeFgHiJkLmNoPqRsT" + "X"; // 21 token-alphabet chars after the prefix
+    expect(scanForSecrets(overrun).kinds).not.toContain("gitlab_token");
+  });
+
+  it("flags Stripe, SendGrid, and Hugging Face keys (parity with the PR-diff gate)", () => {
+    expect(scanForSecrets("sk_live_" + "a".repeat(24)).kinds).toContain("stripe_secret_key");
+    expect(scanForSecrets("SG." + "a".repeat(22) + "." + "b".repeat(43)).kinds).toContain("sendgrid_key");
+    expect(scanForSecrets("hf_" + "a".repeat(34)).kinds).toContain("huggingface_token");
+  });
+
+  it("flags a SendGrid key whose final secret character is a hyphen", () => {
+    // Regression: the terminator must not be `\b`, which would fail to match when the
+    // final char of the `[A-Za-z0-9_-]` run is `-` (no word boundary before a quote/space).
+    expect(scanForSecrets(`sg = "SG.${"a".repeat(22)}.${"b".repeat(42)}-"`).kinds).toContain("sendgrid_key");
+  });
+
   it("flags a generic secret/password/token assignment with a high-entropy value", () => {
     expect(scanForSecrets(`secret = "${GENERIC_VALUE}"`).kinds).toContain("generic_secret_assignment");
     expect(scanForSecrets(`api_key: '${GENERIC_VALUE}'`).kinds).toContain("generic_secret_assignment");
@@ -186,6 +209,9 @@ describe("secret-scan parity with the PR-diff gate (secrets-scan.ts)", () => {
     ["aws_access_key", "AKIA" + "ABCDEFGHIJKLMNOP"],
     ["private_key_block", "-----BEGIN OPENSSH " + "PRIVATE KEY-----"],
     ["google_api_key", "AIza" + "SyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456"],
+    ["stripe_secret_key", "sk_live_" + "a".repeat(24)],
+    ["sendgrid_key", "SG." + "a".repeat(22) + "." + "b".repeat(43)],
+    ["huggingface_token", "hf_" + "a".repeat(34)],
     ["jwt", jwt],
     ["generic_secret_assignment", `secret = "${GENERIC_VALUE}"`],
     ["benign prose", "just normal documentation prose"],

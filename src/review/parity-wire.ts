@@ -28,9 +28,35 @@
 // cutover step, out of scope for this PR.
 
 import { computeGateParity, isParityCutoverReady, type GateAction, type GateParityRow } from "./parity";
-import type { GateCheckConclusion } from "../rules/advisory";
+import type { GateCheckConclusion, GateCheckEvaluation } from "../rules/advisory";
 import { isSelfHostedReviewRuntime } from "../selfhost/review-runtime";
 import { errorMessage, nowIso } from "../utils/json";
+
+// Bounded reason-class codes evaluateGateCheckCore (rules/advisory.ts) attaches to a NEUTRAL evaluation's
+// `warnings`, in the same priority order as its own return branches. Kept here (not re-exported from
+// advisory.ts) because "which of these codes counts as the neutral hold's reason" is a recording/observability
+// concern, not a gate-evaluation one. #terminal-outcome-audit: a neutral conclusion is a real "hold this PR for
+// a human" decision -- these are the finding codes that explain WHY, bounded so a raw finding title/detail
+// (which can embed contributor-controlled or per-repo text) never leaks into a metric or audit reason.
+const NEUTRAL_HOLD_REASON_CODES = [
+  "ai_review_inconclusive",
+  "oversized_pr",
+  "guardrail_hold",
+  "repo_not_registered",
+  "repo_not_seen",
+  "pr_not_cached",
+  "pre_merge_check_unresolved",
+  "cla_check_unresolved",
+];
+
+/** PURE: the bounded reason-class code for a NEUTRAL gate evaluation, derived from its `warnings` (never from
+ *  a finding's free-text `title`/`detail`). Returns `null` for a non-neutral evaluation, or a neutral one whose
+ *  warnings don't (yet) carry a recognized code -- callers fall back to the bare conclusion string in that case,
+ *  exactly as they already do for `success`/`skipped`. */
+export function neutralHoldReasonCode(gateEvaluation: Pick<GateCheckEvaluation, "conclusion" | "warnings">): string | null {
+  if (gateEvaluation.conclusion !== "neutral") return null;
+  return NEUTRAL_HOLD_REASON_CODES.find((code) => gateEvaluation.warnings.some((finding) => finding.code === code)) ?? null;
+}
 
 /** True when the shadow-parity audit is enabled. Flag-OFF (default) → recordNativeGateDecision is a no-op and
  *  the parity endpoint 404s. Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as
@@ -60,8 +86,16 @@ const PARITY_WINDOW_DAYS = 90;
  *                                                  keeps the parity SAFETY metric honest: a shadow 'hold' is
  *                                                  never the dangerous "shadow merges where authoritative
  *                                                  wouldn't" direction.
- *   • 'neutral' | 'skipped'            → null    — no decision was made (not gated / pre-empted); not recorded,
- *                                                  so it is never paired.
+ *   • 'neutral'                        → 'hold'  — a REAL, deliberate decision (a guardrail/size hold, or an
+ *                                                  AI-inconclusive fail-closed hold): the gate chose
+ *                                                  to hold this PR for a human rather than pass it automatically.
+ *                                                  This is exactly as terminal, from an observability standpoint,
+ *                                                  as a 'failure' hold (#terminal-outcome-audit) -- recording it
+ *                                                  is what lets an operator see "N PRs held for reason X" without
+ *                                                  hand-querying, instead of the hold vanishing silently.
+ *   • 'skipped'                        → null    — genuinely NOT gated yet (not gated / pre-empted, e.g. the repo
+ *                                                  hasn't finished syncing); no decision was made at all, so
+ *                                                  there is nothing meaningful to record or pair.
  *
  * (computeGateParity only pairs 'merge' | 'close' | 'hold'; a null here means the row is simply not written.)
  */
@@ -71,9 +105,10 @@ export function nativeGateActionFromConclusion(conclusion: GateCheckConclusion):
       return "merge";
     case "failure":
     case "action_required":
+    case "neutral":
       return "hold";
     default:
-      return null; // neutral / skipped → no comparable decision
+      return null; // skipped → genuinely not gated yet, no comparable decision
   }
 }
 
@@ -102,12 +137,12 @@ type ParityRecorderEnv = {
  */
 export async function recordNativeGateDecision(
   env: ParityRecorderEnv,
-  input: { project: string; pullNumber: number; headSha: string | null | undefined; conclusion: GateCheckConclusion; reasonCode?: string | null | undefined },
+  input: { project: string; pullNumber: number; headSha: string | null | undefined; conclusion: GateCheckConclusion; reasonCode?: string | null | undefined; action?: GateAction | undefined },
 ): Promise<void> {
   // Self-hosted instances always record (their own local DB; exportOrbBatch needs this data). The cloud
   // worker keeps the exact flag-gated, byte-identical-when-off contract.
   if (!isSelfHostedReviewRuntime(env) && !isParityAuditEnabled(env)) return;
-  const action = nativeGateActionFromConclusion(input.conclusion);
+  const action = input.action ?? nativeGateActionFromConclusion(input.conclusion);
   if (action === null) return; // not a comparable decision (neutral/skipped) → nothing to record
   if (!input.headSha) return; // parity REQUIRES head_sha to pair a decision to a commit; no sha → not comparable
   const project = input.project.slice(0, 200);

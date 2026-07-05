@@ -17,12 +17,12 @@ from pathlib import Path
 # dir, and ".test.mjs" matched non-tests like `dist/widget.test.mjs.map` where the extension is not end-of-path.
 _TEST_PATH_RES = (
     re.compile(r"(?:^|/)(?:tests?|spec|__tests__|__snapshots__|src/test)/", re.IGNORECASE),  # dir conventions
-    re.compile(r"(?:^|/)[^/]+_test\.(?:go|py|rb)$", re.IGNORECASE),  # go/py/rb *_test suffix
+    re.compile(r"(?:^|/)[^/]+_test\.(?:go|py|rb|dart)$", re.IGNORECASE),  # go/py/rb/dart *_test suffix
     re.compile(r"(?:^|/)test_[^/]*\.py$", re.IGNORECASE),  # pytest test_*.py prefix
     re.compile(r"(?:^|/)[^/]+_spec\.rb$", re.IGNORECASE),  # RSpec *_spec.rb suffix
     re.compile(r"\.(?:test|spec)\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs)$", re.IGNORECASE),  # .test/.spec.<ext>
     re.compile(r"(?:^|/)[^/]+\.(?:cy|e2e)\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$", re.IGNORECASE),  # Cypress/Playwright
-    re.compile(r"(?:^|/)\w*(?:Tests?|Spec)\.(?:java|kt|kts|scala|cs|swift|groovy)$"),  # JVM/.NET/Swift (case-sensitive)
+    re.compile(r"(?:^|/)\w*(?:Tests?|Spec)\.(?:java|kt|kts|scala|cs|swift|groovy|php)$"),  # JVM/.NET/Swift/PHP (case-sensitive)
 )
 
 
@@ -136,10 +136,13 @@ def metadata_fallback(metadata: dict) -> dict:
     non_code = 0
     for entry in metadata.get("changedFiles") or []:
         path = str(entry.get("path") or "")
+        # Match the server/JS classifiers' case-insensitive extension check (e.g. `/i` regex flag) so an
+        # upper-case native source path like `Foo.C` or `Foo.H` is not silently miscounted as non-code here.
+        lower_path = path.lower()
         lines = max(int(entry.get("additions") or 0) + int(entry.get("deletions") or 0), 0)
         if is_test_file(path):
             tests += lines
-        elif path.endswith((".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rb", ".rs", ".go", ".java", ".kt", ".scala", ".sql", ".cs", ".swift", ".groovy")):
+        elif lower_path.endswith((".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rb", ".rs", ".go", ".java", ".kt", ".scala", ".sql", ".cs", ".swift", ".groovy", ".php", ".cpp", ".c", ".h", ".m")):
             source += lines
         else:
             non_code += lines

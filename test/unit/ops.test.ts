@@ -8,20 +8,22 @@ import {
   handleInternalStatus,
   type OpsAgentConfig,
 } from "../../src/review/ops";
-import { setGlobalAgentFrozen } from "../../src/db/repositories";
+import { clearProcessLocalGlobalAgentFrozenCacheForTest, setGlobalAgentFrozen } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 describe("defaultOpsHealthDeps.isFrozen — DB-backed global freeze (#audit-§5.2)", () => {
   it("reports the live DB freeze state and fails open on a read error", async () => {
+    clearProcessLocalGlobalAgentFrozenCacheForTest();
     const env = createTestEnv();
     expect(await defaultOpsHealthDeps.isFrozen(env, "owner/repo")).toBe(false); // default singleton frozen=0
     await setGlobalAgentFrozen(env, true);
     expect(await defaultOpsHealthDeps.isFrozen(env, "owner/repo")).toBe(true);
     const broken = { ...env, DB: null } as unknown as Env;
-    expect(await defaultOpsHealthDeps.isFrozen(broken, "owner/repo")).toBe(false); // fail-open on a read error
+    expect(await defaultOpsHealthDeps.isFrozen(broken, "owner/repo")).toBe(true); // sticky fail-closed after freeze
   });
 
   it("warns (but still fails open) on a read error and on an absent singleton row (#2125)", async () => {
+    clearProcessLocalGlobalAgentFrozenCacheForTest();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const env = createTestEnv();
     const broken = { ...env, DB: null } as unknown as Env;
@@ -36,6 +38,7 @@ describe("defaultOpsHealthDeps.isFrozen — DB-backed global freeze (#audit-§5.
   });
 
   it("formats a non-Error throw (e.g. a driver rejecting with a plain string) without crashing", async () => {
+    clearProcessLocalGlobalAgentFrozenCacheForTest();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const thrown: Env = {
       DB: {

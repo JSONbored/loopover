@@ -147,7 +147,11 @@ async function fetchRepoDoc(target, path, githubToken, options, summary, warning
 
 async function resolveRepoAiPolicy(target, githubToken, options, summary, warnings) {
   const aiUsage = await fetchRepoDoc(target, "AI-USAGE.md", githubToken, options, summary, warnings);
-  if (aiUsage !== null) {
+  // Short-circuit only on AI-USAGE.md that has real content. A present-but-blank AI-USAGE.md must still fall
+  // through to CONTRIBUTING.md — otherwise a stub AI-USAGE.md silently fails open and swallows a ban declared in
+  // CONTRIBUTING.md (the exact case resolveAiPolicyVerdict was fixed to handle in #2900, which can only fire if
+  // both docs reach it).
+  if (aiUsage !== null && aiUsage.trim().length > 0) {
     return resolveAiPolicyVerdict({ aiUsage, contributing: null });
   }
   const contributing = await fetchRepoDoc(

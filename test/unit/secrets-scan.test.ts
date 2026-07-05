@@ -55,6 +55,48 @@ describe("scanForSecrets — deterministic secret-pattern scanner", () => {
     expect(scanForSecrets(fakeKey).kinds).toContain("google_api_key");
   });
 
+  it("flags a GitLab access token", () => {
+    const fakeToken = "glpat-" + "aBcDeFgHiJkLmNoPqRsT";
+    expect(scanForSecrets(fakeToken).kinds).toContain("gitlab_token");
+  });
+
+  it("flags a GitLab access token whose final token character is a hyphen", () => {
+    const fakeToken = "glpat-" + "aBcDeFgHiJkLmNoPqRs-";
+    expect(scanForSecrets(`gitlab = "${fakeToken}"`).kinds).toContain("gitlab_token");
+  });
+
+  it("does not flag a GitLab-shaped run that continues past the expected 20-char token length", () => {
+    const overrun = "glpat-" + "aBcDeFgHiJkLmNoPqRsT" + "X"; // 21 token-alphabet chars after the prefix
+    expect(scanForSecrets(overrun).kinds).not.toContain("gitlab_token");
+  });
+
+  it("flags an npm token", () => {
+    const fakeToken = "npm_" + "a".repeat(36);
+    expect(scanForSecrets(fakeToken).kinds).toContain("npm_token");
+  });
+
+  it("flags a Stripe live secret key", () => {
+    const fakeToken = "sk_live_" + "a".repeat(24);
+    expect(scanForSecrets(fakeToken).kinds).toContain("stripe_secret_key");
+  });
+
+  it("flags a SendGrid API key", () => {
+    const fakeToken = "SG." + "a".repeat(22) + "." + "b".repeat(43);
+    expect(scanForSecrets(fakeToken).kinds).toContain("sendgrid_key");
+  });
+
+  it("flags a SendGrid API key whose final secret character is a hyphen", () => {
+    // Regression: a `\b` terminator would miss a key ending in `-` (a `-` before a
+    // quote/space is not a word boundary), so the rule uses a negative lookahead.
+    const fakeToken = "SG." + "a".repeat(22) + "." + "b".repeat(42) + "-";
+    expect(scanForSecrets(`sg = "${fakeToken}"`).kinds).toContain("sendgrid_key");
+  });
+
+  it("flags a Hugging Face access token", () => {
+    const fakeToken = "hf_" + "a".repeat(34);
+    expect(scanForSecrets(fakeToken).kinds).toContain("huggingface_token");
+  });
+
   it("flags a JWT", () => {
     const fakeJwt = "eyJhbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
     expect(scanForSecrets(fakeJwt).kinds).toContain("jwt");
@@ -95,5 +137,32 @@ describe("scanForSecrets — deterministic secret-pattern scanner", () => {
 
   it("does NOT flag a short value under the 16-character floor", () => {
     expect(scanForSecrets('token = "short12345"').kinds).not.toContain("generic_secret_assignment");
+  });
+
+  // #3041: PR #3036 was wrongly hard-blocked by the test-fixture literal "installation-token" (used 351+
+  // times across this repo's own test suite as a mock fetch-response token) — a lowercase-hyphenated word
+  // compound reads as a fixture/mock name, not a generated credential.
+  it.each([
+    ["installation-token", 'token: "installation-token"'],
+    ["access-token", 'token = "access-token"'],
+    ["some-mock-secret-value", 'secret: "some-mock-secret-value"'],
+  ])("does NOT flag a lowercase-hyphenated word compound: %s (#3041)", (_name, snippet) => {
+    expect(scanForSecrets(snippet).kinds).not.toContain("generic_secret_assignment");
+  });
+
+  it("still flags a real-looking generic secret with digits and mixed case (regression guard for #3041)", () => {
+    // Same fixture as the "high-entropy value" test above — proves the new lowercase-hyphenated exclusion
+    // doesn't broaden past its intended narrow shape: this value has digits + mixed case, not a pure
+    // lowercase-hyphenated phrase, so it must still be flagged.
+    const fakeSecret = "sk_live_" + "aK9xQ2mZw7Ln4Rv8Pt3Bh6";
+    expect(scanForSecrets(`fakeSecret = "${fakeSecret}"`).kinds).toContain("generic_secret_assignment");
+  });
+
+  it("a single lowercase word with no hyphen is unaffected by the new hyphenated-compound exclusion (#3041)", () => {
+    // 20 lowercase letters, no repeats and no sequential run, so it isn't already caught by the entropy/
+    // placeholder checks either -- proves LOWERCASE_HYPHENATED_COMPOUND_PATTERN specifically requires a
+    // hyphen (2+ segments) and does not accidentally match a single unhyphenated word.
+    const singleWord = "qwzxvbnmalskdjfhgpoiu";
+    expect(scanForSecrets(`token = "${singleWord}"`).kinds).toContain("generic_secret_assignment");
   });
 });

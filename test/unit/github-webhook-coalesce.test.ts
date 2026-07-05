@@ -129,7 +129,7 @@ describe("githubWebhookCoalesceKey", () => {
     ).toBeNull();
   });
 
-  it("coalesces review-surface bursts (pull_request_review) into one job per PR+head (#selfhost-backlog-convergence)", () => {
+  it("does not coalesce pull_request_review events because their payloads drive invalidation and notifications", () => {
     for (const action of ["submitted", "edited", "dismissed"]) {
       expect(
         githubWebhookCoalesceKey("pull_request_review", {
@@ -137,7 +137,7 @@ describe("githubWebhookCoalesceKey", () => {
           repository: { full_name: "JSONbored/Gittensory" },
           pull_request: { number: 12, head: { sha: "CAFE123" } },
         } as GitHubWebhookPayload),
-      ).toBe("github-webhook:pr-review:jsonbored/gittensory#12@cafe123");
+      ).toBeNull();
     }
   });
 
@@ -149,7 +149,7 @@ describe("githubWebhookCoalesceKey", () => {
           repository: { full_name: "JSONbored/Gittensory" },
           pull_request: { number: 12, head: { sha: "CAFE123" } },
         } as GitHubWebhookPayload),
-      ).toBe("github-webhook:pr-review:jsonbored/gittensory#12@cafe123");
+      ).toBe("github-webhook:pull_request_review_comment:jsonbored/gittensory#12@cafe123");
     }
   });
 
@@ -161,39 +161,45 @@ describe("githubWebhookCoalesceKey", () => {
           repository: { full_name: "JSONbored/Gittensory" },
           pull_request: { number: 12, head: { sha: "CAFE123" } },
         } as GitHubWebhookPayload),
-      ).toBe("github-webhook:pr-review:jsonbored/gittensory#12@cafe123");
+      ).toBe("github-webhook:pull_request_review_thread:jsonbored/gittensory#12@cafe123");
     }
   });
 
-  it("coalesces a mixed burst of review/comment/thread events for the same PR+head into ONE key", () => {
-    const burstKeys = [
-      ["pull_request_review", "submitted"],
-      ["pull_request_review_comment", "created"],
-      ["pull_request_review_thread", "resolved"],
-    ].map(([eventName, action]) =>
-      githubWebhookCoalesceKey(eventName as string, {
-        action,
-        repository: { full_name: "JSONbored/Gittensory" },
-        pull_request: { number: 12, head: { sha: "CAFE123" } },
-      } as GitHubWebhookPayload),
-    );
-    expect(new Set(burstKeys).size).toBe(1);
+  it("keeps distinct review-surface event families separate so coalescing cannot drop review-only side effects", () => {
+    const reviewKey = githubWebhookCoalesceKey("pull_request_review", {
+      action: "submitted",
+      repository: { full_name: "JSONbored/Gittensory" },
+      pull_request: { number: 12, head: { sha: "CAFE123" } },
+    } as GitHubWebhookPayload);
+    const commentKey = githubWebhookCoalesceKey("pull_request_review_comment", {
+      action: "created",
+      repository: { full_name: "JSONbored/Gittensory" },
+      pull_request: { number: 12, head: { sha: "CAFE123" } },
+    } as GitHubWebhookPayload);
+    const threadKey = githubWebhookCoalesceKey("pull_request_review_thread", {
+      action: "resolved",
+      repository: { full_name: "JSONbored/Gittensory" },
+      pull_request: { number: 12, head: { sha: "CAFE123" } },
+    } as GitHubWebhookPayload);
+
+    expect(reviewKey).toBeNull();
+    expect(commentKey).not.toBe(threadKey);
   });
 
   it("omits the head sha suffix for a review-surface event with no resolvable head", () => {
     expect(
-      githubWebhookCoalesceKey("pull_request_review", {
-        action: "submitted",
+      githubWebhookCoalesceKey("pull_request_review_comment", {
+        action: "created",
         repository: { full_name: "JSONbored/Gittensory" },
         pull_request: { number: 12 },
       } as GitHubWebhookPayload),
-    ).toBe("github-webhook:pr-review:jsonbored/gittensory#12");
+    ).toBe("github-webhook:pull_request_review_comment:jsonbored/gittensory#12");
   });
 
   it("returns null for a review-surface event with no resolvable PR number", () => {
     expect(
-      githubWebhookCoalesceKey("pull_request_review", {
-        action: "submitted",
+      githubWebhookCoalesceKey("pull_request_review_comment", {
+        action: "created",
         repository: { full_name: "JSONbored/Gittensory" },
       } as GitHubWebhookPayload),
     ).toBeNull();

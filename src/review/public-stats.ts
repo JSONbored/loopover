@@ -87,7 +87,11 @@ function accuracyPct(
 ): number | null {
   const decided = merged + closed;
   if (decided <= 0) return null;
-  return Math.round((1 - reversed / decided) * 1000) / 10;
+  // `reversed` counts engine auto-actions regardless of a PR's CURRENT disposition, so a reopened
+  // auto-close (now open, dropped from merged+closed) can push reversed above decided. Clamp the reversal
+  // rate to 1 so the public accuracy percentage can never go negative / out of the [0,100] range.
+  const reversalRate = Math.min(1, reversed / decided);
+  return Math.round((1 - reversalRate) * 1000) / 10;
 }
 
 /** The own-ledger side of public stats is intentionally constrained to an explicit allowlist (privacy: publish

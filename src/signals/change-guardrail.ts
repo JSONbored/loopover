@@ -1,6 +1,6 @@
 // Convergence safety: the hard-guardrail path check for the auto-maintain layer (#778). Changed paths that
-// match a repo's hardGuardrailGlobs force MANUAL review — gittensory must never auto-merge OR auto-close a PR
-// that touches a guarded path (scoring / auth / CI workflows / policy scripts, etc.). Ported verbatim from
+// match a repo's configured hardGuardrailGlobs force MANUAL review — gittensory must never auto-merge OR
+// auto-close a PR that touches a guarded path. Ported verbatim from
 // reviewbot core/change-classifier.ts — the mechanism that prevents the awesome-claude #4196 incident class
 // (a weakened policy script auto-merging because its path wasn't guarded). Pure + dependency-free.
 
@@ -27,12 +27,10 @@ export function canonicalize(value: string): string {
 //   3 wildcard groups: OVER 2 SECONDS at just ~4,000 chars for one chained-`*` shape, over 100ms at ~1,600
 //                       chars for a chained-`**` shape — already dangerous well within a plausible path length.
 //   4+ wildcard groups: confirmed catastrophic — 35 SECONDS at just 1,614 chars for 4 chained `**` groups.
-// hardGuardrailGlobs today are 100% hardcoded engine constants (see review/guardrail-config.ts) — no
-// maintainer/contributor input reaches globToRegExp via that path today, and none of those real globs exceed 1
-// wildcard group — but it is also exported for reuse by other maintainer-config-driven consumers
-// (content-lane/spec-resolver.ts, whose real globs like "public/**/*.json" are exactly 2 groups: this cap must
-// stay inclusive of that legitimate shape, not just "safer than before"), so the cap lives INSIDE globToRegExp
-// itself (not just in a wrapper like matchesAny below) — every caller, present or future, direct or indirect, is
+// hardGuardrailGlobs are maintainer-configured, and this compiler is also exported for reuse by other
+// maintainer-config-driven consumers (content-lane/spec-resolver.ts, whose real globs like "public/**/*.json" are
+// exactly 2 groups: this cap must stay inclusive of that legitimate shape, not just "safer than before"), so the
+// cap lives INSIDE globToRegExp itself (not just in a wrapper like matchesAny below) — every caller is
 // protected automatically rather than needing to separately remember the risk. The boundary is set at the
 // highest GROUP count proven safe by the benchmark above (2) — a boundary that itself sits inside the
 // empirically dangerous range would defeat the point of a cap.
@@ -125,6 +123,32 @@ export function matchesAny(path: string, globs: string[]): boolean {
 export function changedPathsHittingGuardrail(changedPaths: string[], hardGuardrailGlobs: string[]): string[] {
   if (hardGuardrailGlobs.length === 0) return [];
   return changedPaths.filter((path) => path.length > 0 && matchesAny(path, hardGuardrailGlobs));
+}
+
+export type GuardrailPathMatch = {
+  path: string;
+  glob: string;
+};
+
+/**
+ * Structured guardrail match details for public review output + audit logs. Over-complex globs preserve the
+ * same fail-safe direction as {@link matchesAny}: they match every non-empty path rather than silently disabling
+ * a maintainer's guardrail. Unknown changed paths are represented by {@link isGuardrailHit}'s boolean path only,
+ * so callers can say "paths unavailable" without inventing a fake path.
+ */
+export function guardrailPathMatches(changedPaths: string[], hardGuardrailGlobs: string[]): GuardrailPathMatch[] {
+  if (hardGuardrailGlobs.length === 0 || changedPaths.length === 0) return [];
+  const matches: GuardrailPathMatch[] = [];
+  for (const path of changedPaths) {
+    if (path.length === 0) continue;
+    const canonicalPath = canonicalize(path);
+    for (const glob of hardGuardrailGlobs) {
+      if (hasUnsafeWildcardCount(glob) || globToRegExp(glob).test(canonicalPath)) {
+        matches.push({ path, glob });
+      }
+    }
+  }
+  return matches;
 }
 
 /**

@@ -48,6 +48,37 @@ export interface SelfHostQueueIntrospection {
   snapshot(): SelfHostQueueSnapshot | Promise<SelfHostQueueSnapshot>;
 }
 
+// Dead-letter-queue admin surface (#2214/#2215): a self-host-only slice of DurableQueue's rich introspection,
+// mirrored onto the `.binding` object (same trick as `snapshot` above) so the Hono routes -- which only ever see
+// `env.JOBS`, a plain Cloudflare `Queue` -- can reach it via an optional-cast feature check instead of a new
+// `Env` field. Cloudflare's real Queue binding never has these methods, so the feature check below is also the
+// production-safe "self-host only" gate.
+export type DeadLetterJob = {
+  id: number;
+  /** The job's `payload.type` discriminant (e.g. "agent-regate-pr"), or "unknown" if unparseable. */
+  jobType: string;
+  attempts: number;
+  lastError: string | null;
+  createdAtMs: number;
+  /** Epoch ms the job was marked dead. Null for rows that died before this column existed (#2214). */
+  deadAtMs: number | null;
+};
+
+export interface SelfHostQueueDeadLetterAdmin {
+  deadCount(): number | Promise<number>;
+  listDeadLetterJobs(limit: number, offset: number): DeadLetterJob[] | Promise<DeadLetterJob[]>;
+  /** Manually requeues ONE dead job by id with a FRESH retry budget (attempts reset to 0) -- distinct from the
+   *  automatic reviveDeadLetterJobs() sweep, which deliberately preserves attempts under a ceiling to avoid an
+   *  unsupervised infinite-retry loop for a permanently-broken job. An operator clicking replay is a conscious,
+   *  one-off decision, so it gets a full budget. Returns false if no row with that id is currently dead (already
+   *  handled, already deleted, or never existed) -- the route maps that to 404, not a false-success 200. */
+  replayDeadLetterJob(id: number): boolean | Promise<boolean>;
+  /** Permanently deletes ONE dead job by id. Returns false if no row with that id is currently dead. */
+  deleteDeadLetterJob(id: number): boolean | Promise<boolean>;
+  /** Permanently deletes EVERY dead job. Returns the number of rows deleted. */
+  purgeDeadLetterJobs(): number | Promise<number>;
+}
+
 // Webhook-driven work (a fresh PR -> its review) jumps ahead of heavy background jobs. Per-PR review refreshes
 // sit just below real webhooks, and sweep fan-out sits below those so stale surfaces are repaired during bursts.
 // Bot-generated comment edits are background noise; keeping them with real webhooks lets panel edits starve repair.
@@ -57,9 +88,6 @@ const GITHUB_BUDGET_BACKGROUND_TYPES = new Set<string>([
   "backfill-registered-repos",
   "backfill-repo-segment",
   "backfill-pr-details",
-  "refresh-upstream-sources",
-  "build-upstream-ruleset",
-  "detect-upstream-drift",
   "refresh-upstream-drift",
   "file-upstream-drift-issues",
   "build-contributor-evidence",
@@ -179,6 +207,65 @@ export async function queueSnapshotFromBinding(binding: Queue): Promise<SelfHost
   const snapshot = (binding as Queue & Partial<SelfHostQueueIntrospection>).snapshot;
   if (typeof snapshot !== "function") return null;
   return snapshot.call(binding);
+}
+
+export type DeadLetterQueuePage = { items: DeadLetterJob[]; total: number };
+
+function isDeadLetterJob(value: unknown): value is DeadLetterJob {
+  if (!value || typeof value !== "object") return false;
+  const job = value as Partial<DeadLetterJob>;
+  return (
+    typeof job.id === "number" &&
+    typeof job.jobType === "string" &&
+    typeof job.attempts === "number" &&
+    (job.lastError === null || typeof job.lastError === "string") &&
+    typeof job.createdAtMs === "number" &&
+    (job.deadAtMs === null || typeof job.deadAtMs === "number")
+  );
+}
+
+/** Null on Cloudflare (the real Queue binding has neither method), any binding that hasn't wired the
+ *  dead-letter admin surface, or a binding that returned a malformed row -- callers 501 in every case rather
+ *  than pretending the DLQ is simply empty or serving an unvalidated shape as if it were trustworthy. */
+export async function queueDeadLetterPageFromBinding(
+  binding: Queue,
+  limit: number,
+  offset: number,
+): Promise<DeadLetterQueuePage | null> {
+  const admin = binding as Queue & Partial<SelfHostQueueDeadLetterAdmin>;
+  if (typeof admin.listDeadLetterJobs !== "function" || typeof admin.deadCount !== "function") return null;
+  const [items, total] = await Promise.all([
+    Promise.resolve(admin.listDeadLetterJobs(limit, offset)),
+    Promise.resolve(admin.deadCount()),
+  ]);
+  if (!items.every(isDeadLetterJob) || typeof total !== "number") return null;
+  return { items, total };
+}
+
+/** Null when the binding doesn't expose the admin surface at all (Cloudflare, or not wired) -- same 501
+ *  contract as queueDeadLetterPageFromBinding. A boolean false (id not found / not dead) is a real, valid
+ *  result distinct from null, so callers can tell "admin unavailable" apart from "nothing to replay". */
+export async function queueReplayDeadLetterJobViaBinding(binding: Queue, id: number): Promise<boolean | null> {
+  const admin = binding as Queue & Partial<SelfHostQueueDeadLetterAdmin>;
+  if (typeof admin.replayDeadLetterJob !== "function") return null;
+  const result = await Promise.resolve(admin.replayDeadLetterJob(id));
+  return typeof result === "boolean" ? result : null;
+}
+
+/** Same null/boolean contract as queueReplayDeadLetterJobViaBinding, for permanently deleting one dead job. */
+export async function queueDeleteDeadLetterJobViaBinding(binding: Queue, id: number): Promise<boolean | null> {
+  const admin = binding as Queue & Partial<SelfHostQueueDeadLetterAdmin>;
+  if (typeof admin.deleteDeadLetterJob !== "function") return null;
+  const result = await Promise.resolve(admin.deleteDeadLetterJob(id));
+  return typeof result === "boolean" ? result : null;
+}
+
+/** Null when the binding doesn't expose the admin surface; otherwise the count of dead jobs purged. */
+export async function queuePurgeDeadLetterJobsViaBinding(binding: Queue): Promise<number | null> {
+  const admin = binding as Queue & Partial<SelfHostQueueDeadLetterAdmin>;
+  if (typeof admin.purgeDeadLetterJobs !== "function") return null;
+  const result = await Promise.resolve(admin.purgeDeadLetterJobs());
+  return typeof result === "number" ? result : null;
 }
 
 function queueStatus(value: unknown): SelfHostQueueJobStatus | null {
@@ -313,6 +400,23 @@ export function githubRateLimitAdmissionKeyForJob(message: JobMessage): GitHubRa
   return typeof installationId === "number" && Number.isFinite(installationId)
     ? githubRateLimitAdmissionKeyForInstallation(installationId)
     : null;
+}
+
+// #selfhost-installation-concurrency: the admission key a per-installation concurrency limiter should track
+// THIS job under, or null when the job either makes no GitHub calls isGitHubBudgetBackgroundJob cares about, or
+// carries no resolvable installationId. Reusing githubRateLimitAdmissionKeyForJob (rather than inventing a
+// second key function) keeps the rate-limit-admission key and the concurrency-admission key for the same job
+// always identical by construction. isGitHubBudgetBackgroundJob is true for a live (non-sweep, non-manual)
+// agent-regate-pr job too, since that job DOES draw GitHub rate-limit budget under this key -- but that job is
+// still FOREGROUND priority (AGENT_REGATE_PRIORITY, 9) and must never be deferred by this policy, so it is
+// excluded here BY TYPE. This is deliberately NOT a priority-based exclusion (e.g. `!isForegroundJobPriority`):
+// agent-regate-sweep's own row priority (8, PRIORITY_BY_TYPE) collides with FOREGROUND_QUEUE_PRIORITY_FLOOR
+// (also 8), so a priority-floor guard would silently exempt sweep fan-out too -- exactly the background job this
+// policy exists to bound (#selfhost-installation-concurrency-sweep-gap). Filtering by type instead of priority
+// keeps this key resolver correct regardless of how any job type's priority is tuned in the future.
+export function installationConcurrencyKeyForJob(message: JobMessage): GitHubRateLimitAdmissionKey | null {
+  if (message.type === "agent-regate-pr") return null;
+  return isGitHubBudgetBackgroundJob(message) ? githubRateLimitAdmissionKeyForJob(message) : null;
 }
 
 export type GitHubRateLimitAdmissionKind = "background" | "webhook";
@@ -663,6 +767,7 @@ type CoalesceMessage = {
   requestedBy?: unknown;
   repoFullName?: unknown;
   prNumber?: unknown;
+  prCreatedAt?: unknown;
   attempt?: unknown;
   force?: unknown;
   mode?: unknown;
@@ -696,6 +801,30 @@ function ragIndexFullKey(repo: string): string {
 
 function ragIndexRepoKeyPrefix(repo: string): string {
   return keyOf("rag-index-repo", repo, "");
+}
+
+const LEGACY_AGENT_REGATE_SORT_BASE_MS = Date.parse("2000-01-01T00:00:00.000Z");
+
+export function jobClaimSortKey(payload: string, fallbackMs: number): number {
+  const message = parseCoalesceMessage(payload);
+  if (message?.type === "agent-regate-pr") {
+    const createdAtMs = normalizedTimeMs(message.prCreatedAt);
+    if (createdAtMs !== null) return createdAtMs;
+    const pr = normalizedNumber(message.prNumber);
+    if (pr !== null) return LEGACY_AGENT_REGATE_SORT_BASE_MS + pr;
+  }
+  return normalizedSortNumber(fallbackMs);
+}
+
+function normalizedTimeMs(value: unknown): number | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizedSortNumber(value: unknown): number {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
 }
 
 export function jobCoalesceSupersededKeyPrefix(payload: string): string | null {
@@ -780,9 +909,6 @@ export function jobCoalesceKey(payload: string): string | null {
       case "refresh-registry":
       case "refresh-installation-health":
       case "refresh-scoring-model":
-      case "refresh-upstream-sources":
-      case "build-upstream-ruleset":
-      case "detect-upstream-drift":
       case "refresh-upstream-drift":
       case "file-upstream-drift-issues":
       case "repair-data-fidelity":
@@ -870,15 +996,15 @@ export function jobCoalesceKey(payload: string): string | null {
       }
       case "notify-evaluate": {
         // A batched job carries every event from one webhook delivery (#selfhost-maintenance-self-pin) --
-        // coalescing keys off the FULL sorted set of dedup keys, so a redelivery of the identical batch still
-        // coalesces (same events -> same key) while any batch with even one different event gets its own key.
+        // coalescing keys off a digest of the FULL sorted set of dedup keys, so a redelivery of the identical
+        // batch still coalesces without placing an attacker-sized concatenation into the indexed job_key column.
         // If ANY event is missing its dedup key (a malformed payload), the whole batch is left uncoalesced
         // (null) rather than keying off a partial set that could collide with an unrelated batch and silently
         // drop the malformed event's work -- same rule as the other event-id-keyed types above.
         if (!Array.isArray(message.events) || message.events.length === 0) return null;
         const dedupKeys = message.events.map((event) => normalizedId(event?.dedupKey));
         if (dedupKeys.some((dedupKey) => dedupKey === null)) return null;
-        return keyOf(type, [...(dedupKeys as string[])].sort().join(","));
+        return keyOf(type, stableStringDigest([...(dedupKeys as string[])].sort()));
       }
       case "submit-draft": {
         const draftId = normalizedId(message.draftId);
@@ -990,6 +1116,10 @@ function normalizedPathScope(value: unknown): string | null {
   ].sort();
   if (paths.length === 0) return null;
   return `sha256:${createHash("sha256").update(JSON.stringify(paths)).digest("hex")}`;
+}
+
+function stableStringDigest(values: string[]): string {
+  return `sha256:${createHash("sha256").update(JSON.stringify(values)).digest("hex")}`;
 }
 
 function boolFlag(value: unknown): string {

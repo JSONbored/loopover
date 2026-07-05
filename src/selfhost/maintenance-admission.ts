@@ -42,9 +42,6 @@ export const MAINTENANCE_JOB_TYPES: ReadonlySet<string> = new Set([
   "refresh-registry",
   "refresh-installation-health",
   "refresh-scoring-model",
-  "refresh-upstream-sources",
-  "build-upstream-ruleset",
-  "detect-upstream-drift",
   "refresh-upstream-drift",
   "file-upstream-drift-issues",
   "build-contributor-evidence",
@@ -86,6 +83,18 @@ export interface MaintenancePressureSignals {
   oldestMaintenancePendingAgeMs: number | null;
   /** Null when unavailable (see host-pressure.ts) -- a caller must treat null as "skip this check". */
   hostLoadAvg1PerCore: number | null;
+  /** #selfhost-backlog-convergence: pending+processing count of `agent-regate-pr` jobs tagged
+   *  `foreground_lane='backlog'` (queue-fairness.ts) -- the backlog-convergence sweeper's own output, DISTINCT
+   *  from `livePendingCount` (which is priority-gated, not lane-gated, and includes fresh webhook/foreground
+   *  work too). A high count here means a real, currently-unresolved PR-review backlog exists; generic
+   *  maintenance should yield to draining it, same as it already yields to live webhook pressure. */
+  backlogConvergencePendingCount: number;
+  /** #selfhost-lane-observability: pending+processing count of `github-webhook` PR open/reopen/synchronize/
+   *  ready-for-review jobs tagged `foreground_lane='fresh'` (queue-fairness.ts) -- the COMPLEMENT of
+   *  backlogConvergencePendingCount within the fairness mechanism's classified lanes, exposed purely for the
+   *  dashboard breakdown (unlike backlogConvergencePendingCount, evaluateMaintenanceAdmission never consults
+   *  this field -- fresh-intake pressure has no maintenance-admission gate of its own). */
+  freshIntakePendingCount: number;
 }
 
 export interface MaintenanceAdmissionConfig {
@@ -94,6 +103,7 @@ export interface MaintenanceAdmissionConfig {
   maxLiveJobAgeMs: number;
   maxMaintenancePendingCount: number;
   maxHostLoadAvg1PerCore: number;
+  maxBacklogConvergencePendingCount: number;
   deferMs: number;
   maxDeferAgeMs: number;
   maintenanceDrainAgeMs: number;
@@ -103,6 +113,11 @@ const DEFAULT_MAX_LIVE_PENDING_COUNT = 5;
 const DEFAULT_MAX_LIVE_JOB_AGE_MS = 2 * 60_000;
 const DEFAULT_MAX_MAINTENANCE_PENDING_COUNT = 15;
 const DEFAULT_MAX_HOST_LOAD_AVG1_PER_CORE = 1.5;
+// Deliberately more permissive than maxLivePendingCount (5): a real incident's backlog-convergence sweep can
+// legitimately queue several PRs across several repos at once (BACKLOG_CONVERGENCE_SWEEP_MAX_PRS=5 per repo per
+// sweep, selfhost/backlog-convergence.ts) without that alone meaning maintenance must fully yield -- only a
+// SUSTAINED backlog (this threshold exceeded) should compete with maintenance for admission.
+const DEFAULT_MAX_BACKLOG_CONVERGENCE_PENDING_COUNT = 10;
 const DEFAULT_DEFER_MS = 3 * 60_000;
 const DEFAULT_MAX_DEFER_AGE_MS = 4 * 60 * 60_000;
 const DEFAULT_MAINTENANCE_DRAIN_AGE_MS = 10 * 60_000;
@@ -149,6 +164,10 @@ export function resolveMaintenanceAdmissionConfig(): MaintenanceAdmissionConfig 
       "MAINTENANCE_ADMISSION_MAX_HOST_LOAD",
       DEFAULT_MAX_HOST_LOAD_AVG1_PER_CORE,
     ),
+    maxBacklogConvergencePendingCount: parsePositiveIntEnv("MAINTENANCE_ADMISSION_MAX_BACKLOG_CONVERGENCE_PENDING", {
+      min: 0,
+      fallback: DEFAULT_MAX_BACKLOG_CONVERGENCE_PENDING_COUNT,
+    }),
     deferMs: parsePositiveIntEnv("MAINTENANCE_ADMISSION_DEFER_MS", { min: 1_000, fallback: DEFAULT_DEFER_MS }),
     maxDeferAgeMs,
     // Never longer than the trickle backstop itself -- a misconfigured drain age above maxDeferAgeMs would be a
@@ -162,6 +181,7 @@ export type MaintenanceAdmissionReason =
   | "trickle_max_defer_age"
   | "live_pending_high"
   | "live_job_age_high"
+  | "backlog_convergence_high"
   | "maintenance_pending_high"
   | "maintenance_pending_high_drain"
   | "host_load_high"
@@ -196,6 +216,9 @@ export function evaluateMaintenanceAdmission(
   if (signals.livePendingCount > config.maxLivePendingCount) return { admit: false, reason: "live_pending_high" };
   if (signals.oldestLivePendingAgeMs !== null && signals.oldestLivePendingAgeMs > config.maxLiveJobAgeMs) {
     return { admit: false, reason: "live_job_age_high" };
+  }
+  if (signals.backlogConvergencePendingCount > config.maxBacklogConvergencePendingCount) {
+    return { admit: false, reason: "backlog_convergence_high" };
   }
   const hostLoadHigh =
     signals.hostLoadAvg1PerCore !== null && signals.hostLoadAvg1PerCore > config.maxHostLoadAvg1PerCore;

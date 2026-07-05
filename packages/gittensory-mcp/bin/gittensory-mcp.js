@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer } from "../lib/local-branch.js";
+import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer, isTestFile } from "../lib/local-branch.js";
 
 const defaultApiUrl = "https://gittensory-api.aethereal.dev";
 const legacyDefaultApiUrls = new Set(["https://gittensory-api.zeronode.workers.dev"]);
@@ -20,6 +20,7 @@ const currentApiVersion = "0.1.0";
 const decisionPackCacheSchemaVersion = 1;
 const decisionPackCacheMaxEntries = 25;
 const decisionPackCacheMaxBytes = 512 * 1024;
+const cliTextFileMaxBytes = 1024 * 1024;
 const changelogPath = new URL("../CHANGELOG.md", import.meta.url);
 const cliArgs = process.argv.slice(2);
 const defaultProfileName = "default";
@@ -1484,6 +1485,42 @@ async function runCli(args) {
   writeBranchAnalysisCli(result, command);
 }
 
+// Opens, type-checks, and reads the file through ONE file descriptor rather than a separate
+// stat-then-read pair: a check-then-read on a path string leaves a race window where a symlink or
+// special file (FIFO, device) can be swapped in between the two calls, letting the earlier
+// isFile()/size validation apply to a different, unvalidated file than the one actually read.
+// O_NOFOLLOW makes a symlinked path fail to open outright instead of silently following it.
+function readCliTextFile(path, label) {
+  let fd;
+  try {
+    fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  } catch (error) {
+    if (error && error.code === "ENOENT") throw new Error(`${label} file not found: ${path}`);
+    if (error && (error.code === "ELOOP" || error.code === "EMLINK")) throw new Error(`${label} file must be a regular file: ${path}`);
+    throw error;
+  }
+  try {
+    const stats = fstatSync(fd);
+    if (!stats.isFile()) throw new Error(`${label} file must be a regular file: ${path}`);
+    if (stats.size > cliTextFileMaxBytes) throw new Error(`${label} file is too large: ${path} (max ${cliTextFileMaxBytes} bytes)`);
+    // Bound the READ itself rather than trusting stats.size alone: a regular file can grow between fstatSync
+    // and the read below (the fd is the same, but nothing stops another process from appending to the file
+    // in between), so read at most cliTextFileMaxBytes + 1 bytes directly from the descriptor and fail if that
+    // cap is exceeded, instead of handing the now-possibly-stale size to an unbounded readFileSync.
+    const buffer = Buffer.alloc(cliTextFileMaxBytes + 1);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const n = readSync(fd, buffer, bytesRead, buffer.length - bytesRead, null);
+      if (n === 0) break;
+      bytesRead += n;
+    }
+    if (bytesRead > cliTextFileMaxBytes) throw new Error(`${label} file is too large: ${path} (max ${cliTextFileMaxBytes} bytes)`);
+    return buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
 function printLintPrTextHelp() {
   process.stdout.write(
     [
@@ -1503,8 +1540,7 @@ async function lintPrTextCli(args) {
   const commitMessages = Array.isArray(options.commit) ? options.commit : options.commit ? [options.commit] : undefined;
   let prBody = options.body;
   if (options.bodyFile) {
-    if (!existsSync(options.bodyFile)) throw new Error(`Body file not found: ${options.bodyFile}`);
-    prBody = readFileSync(options.bodyFile, "utf8");
+    prBody = readCliTextFile(options.bodyFile, "Body");
   }
   const linkedIssue = parsePositiveIntegerOption(options.linkedIssue, "--linked-issue");
   const payload = await apiPost("/v1/lint/pr-text", {
@@ -1562,8 +1598,7 @@ async function slopRiskCli(args) {
   let description = options.description ?? options.body;
   const descriptionFile = options.descriptionFile ?? options.bodyFile;
   if (descriptionFile) {
-    if (!existsSync(descriptionFile)) throw new Error(`Description file not found: ${descriptionFile}`);
-    description = readFileSync(descriptionFile, "utf8");
+    description = readCliTextFile(descriptionFile, "Description");
   }
   const changedFiles = stringArrayOption(options.changedFile).map(parseChangedFileSpec);
   const tests = stringArrayOption(options.test);
@@ -1600,8 +1635,7 @@ async function issueSlopCli(args) {
   const options = parseOptions(args);
   let body = normalizeOptionalStringOption(options.body);
   if (options.bodyFile) {
-    if (!existsSync(options.bodyFile)) throw new Error(`Body file not found: ${options.bodyFile}`);
-    body = readFileSync(options.bodyFile, "utf8");
+    body = readCliTextFile(options.bodyFile, "Body");
   }
   const title = normalizeOptionalStringOption(options.title);
   const payload = await apiPost("/v1/lint/issue-slop", {
@@ -3433,6 +3467,13 @@ function parseSemver(version) {
 // Compares two dot-separated semver prerelease strings per the semver spec:
 // numeric identifiers compare numerically, others lexically, numeric < non-numeric,
 // and a shorter set of identifiers has lower precedence when all earlier ones match.
+//
+// Numeric identifiers are compared as decimal strings, not via Number(), which loses precision beyond
+// Number.MAX_SAFE_INTEGER (2^53-1): two distinct digit strings past that width can round to the SAME float,
+// making Number(leftId) !== Number(rightId) wrongly report them as equal (mirrors the same fix already applied
+// to compareMcpSemver's comparePrerelease in src/services/mcp-compatibility.ts, #3049). With no leading zeros
+// (semver's own numeric-identifier rule), a longer digit string is the larger number, and equal-length strings
+// compare lexicographically.
 function comparePrerelease(a, b) {
   const left = a.split(".");
   const right = b.split(".");
@@ -3444,7 +3485,8 @@ function comparePrerelease(a, b) {
     const leftNumeric = /^\d+$/.test(leftId);
     const rightNumeric = /^\d+$/.test(rightId);
     if (leftNumeric && rightNumeric) {
-      if (Number(leftId) !== Number(rightId)) return Number(leftId) < Number(rightId) ? -1 : 1;
+      if (leftId.length !== rightId.length) return leftId.length < rightId.length ? -1 : 1;
+      if (leftId !== rightId) return leftId < rightId ? -1 : 1;
     } else if (leftNumeric !== rightNumeric) {
       return leftNumeric ? -1 : 1;
     } else if (leftId !== rightId) {
@@ -3585,7 +3627,7 @@ async function analyzeCurrentBranch(input) {
       mergeBaseSha: body.mergeBaseSha,
       remoteTrackingSha: body.remoteTrackingSha,
       changedFileCount: body.changedFiles?.length ?? 0,
-      testFileCount: body.changedFiles?.filter((file) => /(^|\/)(test|tests|spec|__tests__)\/|(^|\/)src\/test\/|(^|\/)[^/]+_test\.(go|py|rb)$|(^|\/)[^/]+_spec\.rb$|\.(test|spec)\.(ts|tsx|js|jsx|py|rb|rs)$/i.test(file.path)).length ?? 0,
+      testFileCount: body.changedFiles?.filter((file) => isTestFile(file.path)).length ?? 0,
       passedValidationCount: body.validation?.filter((entry) => entry.status === "passed").length ?? 0,
       localScorerStatus: sanitizeLocalScorerStatus(localScorerStatus),
       setupGuidance: setupGuidanceForLocalScorer(localScorerStatus),

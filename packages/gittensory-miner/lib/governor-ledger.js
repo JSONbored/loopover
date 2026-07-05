@@ -43,6 +43,15 @@ function normalizeOptionalRepoFullName(repoFullName) {
 }
 
 function rowToEntry(row) {
+  let payload;
+  try {
+    payload = JSON.parse(row.payload_json);
+    if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("corrupted_governor_row");
+    }
+  } catch {
+    throw new Error("corrupted_governor_row");
+  }
   return {
     id: row.id,
     ts: row.ts,
@@ -51,7 +60,7 @@ function rowToEntry(row) {
     actionClass: row.action_class,
     decision: row.decision,
     reason: row.reason,
-    payload: JSON.parse(row.payload_json),
+    payload,
   };
 }
 

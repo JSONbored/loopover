@@ -17,6 +17,7 @@ import {
   resolveReviewPreMergeChecks,
   composeRepoReviewContext,
   resolveReviewPromptOverrides,
+  repoDocGenerationConfigToJson,
   reviewConfigToJson,
   settingsOverrideToJson,
   type FocusManifest,
@@ -43,7 +44,6 @@ describe("parseFocusManifest", () => {
       present: true,
       source: "repo_file",
       wantedPaths: ["src/", "packages/*/lib"],
-      blockedPaths: ["migrations/", "infra/secrets.tf"],
       preferredLabels: ["bug", "good first issue"],
       linkedIssuePolicy: "required",
       issueDiscoveryPolicy: "discouraged",
@@ -77,7 +77,6 @@ describe("parseFocusManifest", () => {
       issueDiscoveryPolicy: 7,
     });
     expect(manifest.wantedPaths).toEqual([]);
-    expect(manifest.blockedPaths).toEqual(["ok"]);
     expect(manifest.preferredLabels[0]).toHaveLength(300);
     expect(manifest.linkedIssuePolicy).toBe("optional");
     expect(manifest.issueDiscoveryPolicy).toBe("neutral");
@@ -140,7 +139,6 @@ describe("parseFocusManifestContent", () => {
     const manifest = parseFocusManifestContent(JSON.stringify(FULL_MANIFEST));
     expect(manifest.present).toBe(true);
     expect(manifest.source).toBe("repo_file");
-    expect(manifest.blockedPaths).toContain("migrations/");
   });
 
   it("warns instead of throwing on malformed JSON", () => {
@@ -161,7 +159,6 @@ describe("parseFocusManifestContent", () => {
     const manifest = parseFocusManifestContent("wantedPaths:\n  - src/\nblockedPaths:\n  - dist/\n", "repo_file");
     expect(manifest.present).toBe(true);
     expect(manifest.wantedPaths).toEqual(["src/"]);
-    expect(manifest.blockedPaths).toEqual(["dist/"]);
   });
 
   it("warns instead of throwing on malformed YAML", () => {
@@ -297,13 +294,14 @@ describe("buildFocusManifestGuidance", () => {
     expect(guidance.publicNextSteps).toEqual([]);
   });
 
-  it("flags a critical blocked-path finding and public next step", () => {
+  it("ignores legacy blockedPaths for review guidance and manual holds", () => {
     const guidance = buildFocusManifestGuidance({ manifest: wanted, changedPaths: ["migrations/0099_x.sql"] });
-    const blocked = guidance.findings.find((finding) => finding.code === "manifest_blocked_path");
-    expect(blocked?.severity).toBe("critical");
-    expect(guidance.matchedBlockedPaths).toEqual(["migrations/"]);
-    expect(guidance.publicNextSteps.join(" ")).toMatch(/maintainer-blocked/i);
-    expect(guidance.summary).toMatch(/blocked area/i);
+    // FULL_MANIFEST.blockedPaths includes "migrations/", which would have matched this changed path and
+    // produced a manifest_blocked_path finding before blockedPaths was retired -- proving that code is gone
+    // is the whole point of this test, not the unrelated manifest_malformed code from the test above.
+    expect(guidance.findings.map((finding) => finding.code)).not.toContain("manifest_blocked_path");
+    expect(guidance.publicNextSteps.join(" ")).not.toMatch(/blocked|guarded/i);
+    expect(guidance.summary).toMatch(/outside the wanted areas/i);
   });
 
   it("recommends preferred paths when the change is in a wanted area", () => {
@@ -461,10 +459,19 @@ describe("compileFocusManifestPolicy", () => {
     expect(policy.publicSafe.issueDiscoveryPolicy).toBe("encouraged");
   });
 
-  it("handles a manifest with only blockedPaths set", () => {
+  it("keeps the focus-areas guidance for the public-safe wanted paths when one wanted path is a reserved word", () => {
+    const policy = compileFocusManifestPolicy(REPO, parseFocusManifest({ wantedPaths: ["src/api/", "src/ranking/"] }), opts);
+    const guidance = policy.publicSafe.entryGuidance.join(" ");
+    // The safe path still surfaces; only the reserved-word path is dropped — the entire guidance line is no
+    // longer discarded just because one wanted path is public-unsafe (consistent with contributionLanes).
+    expect(guidance).toContain("Focus changes on maintainer-wanted areas: src/api/.");
+    expect(guidance).not.toMatch(/ranking/i);
+  });
+
+  it("treats legacy blockedPaths-only manifests as absent", () => {
     const policy = compileFocusManifestPolicy(REPO, parseFocusManifest({ blockedPaths: ["infra/"] }), opts);
-    expect(policy.present).toBe(true);
-    expect(policy.publicSafe.readinessWarnings.join(" ")).toMatch(/blocked area|pair blocked/i);
+    expect(policy.present).toBe(false);
+    expect(policy.publicSafe.readinessWarnings).toEqual([]);
   });
 
   it("emits a readiness warning when no wanted paths or preferred labels are declared", () => {
@@ -472,7 +479,7 @@ describe("compileFocusManifestPolicy", () => {
     expect(policy.publicSafe.readinessWarnings.join(" ")).toMatch(/does not define wanted paths|contribution scope may be unclear/i);
   });
 
-  it("emits a readiness warning when blocked paths exist but no wanted paths are declared", () => {
+  it("emits a readiness warning when linked issue policy exists but no wanted paths are declared", () => {
     const policy = compileFocusManifestPolicy(REPO, parseFocusManifest({ linkedIssuePolicy: "required" }), opts);
     expect(policy.publicSafe.readinessWarnings.join(" ")).toMatch(/does not define wanted paths|contribution scope/i);
   });
@@ -509,18 +516,18 @@ describe("compileFocusManifestPolicy", () => {
       present: true,
       source: "api_record",
       wantedPaths: ["src/"],
-      blockedPaths: [],
       preferredLabels: [],
       linkedIssuePolicy: "optional",
       testExpectations: [],
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null },
+      gate: { present: false, enabled: null, checkMode: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null },
       settings: {},
-      review: { present: false, footerText: null, note: null, fields: {}, profile: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
+      review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
       contentLane: { present: false, entryFileGlob: null, providerFileGlob: null, artifactGlob: null, collectionField: null, maxAppendedEntries: null, duplicateKeyFields: [], validatorId: null },
+      repoDocGeneration: { present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 },
       warnings: [],
     });
     expect(policy.publicSafe.entryGuidance).toContain("Keep PRs focused.");
@@ -652,10 +659,10 @@ describe("deriveContributionLanes", () => {
     expect(lanes.issueEntryGuidance).toContain("Issues must be linked to a PR before it is opened.");
   });
 
-  it("includes blocked paths in discouragedEntryPaths and PR entry guidance", () => {
+  it("ignores legacy blocked paths in discouragedEntryPaths and PR entry guidance", () => {
     const lanes = deriveContributionLanes(parseFocusManifest({ wantedPaths: ["src/"], blockedPaths: ["migrations/", "infra/secrets.tf"] }));
-    expect(lanes.discouragedEntryPaths).toEqual(["migrations/", "infra/secrets.tf"]);
-    expect(lanes.prEntryGuidance.join(" ")).toMatch(/migrations\/.*infra\/secrets\.tf|infra\/secrets\.tf.*migrations\//);
+    expect(lanes.discouragedEntryPaths).toEqual([]);
+    expect(lanes.prEntryGuidance.join(" ")).not.toMatch(/migrations\/|infra\/secrets\.tf/);
   });
 
   it("includes preferred labels in PR entry guidance", () => {
@@ -717,7 +724,7 @@ describe("deriveContributionLanes", () => {
     expect(lanes.directPrLane).toBe("preferred");
     expect(lanes.issueDiscoveryLane).toBe("discouraged");
     expect(lanes.preferredEntryPaths).toContain("src/");
-    expect(lanes.discouragedEntryPaths).toContain("migrations/");
+    expect(lanes.discouragedEntryPaths).toEqual([]);
     expect(lanes.validationExpectations).toContain("Link a tracked issue before opening a PR.");
     expect(lanes.validationExpectations).toContain("unit tests for new branches");
     expect(lanes.issueEntryGuidance.join(" ")).toMatch(/discourages/i);
@@ -824,7 +831,7 @@ describe("parseFocusManifest gate config", () => {
     // the block→advisory deprecation-downgrade behavior itself is covered separately below.
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "advisory", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, checkMode: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null });
   });
 
   it("parses gate.mergeReadiness + gate.firstTimeContributorGrace, round-trips them, and warns on bad values (#822)", () => {
@@ -919,6 +926,24 @@ describe("parseFocusManifest gate config", () => {
     const bad = parseFocusManifest({ gate: { enabled: "yes" } });
     expect(bad.gate.enabled).toBeNull();
     expect(bad.warnings.some((w) => /gate\.enabled/.test(w))).toBe(true);
+  });
+
+  it("parses gate.checkMode (required/visible/disabled) and ignores an unknown value with a warning (#2852)", () => {
+    expect(parseFocusManifest({ gate: { checkMode: "required" } }).gate.checkMode).toBe("required");
+    expect(parseFocusManifest({ gate: { checkMode: "visible" } }).gate.checkMode).toBe("visible");
+    expect(parseFocusManifest({ gate: { checkMode: "disabled" } }).gate.checkMode).toBe("disabled");
+    expect(parseFocusManifest({ gate: { checkMode: "required" } }).gate.present).toBe(true);
+    const bad = parseFocusManifest({ gate: { checkMode: "sometimes" } });
+    expect(bad.gate.checkMode).toBeNull();
+    expect(bad.warnings.some((w) => /gate\.checkMode/.test(w))).toBe(true);
+    expect(bad.gate.present).toBe(false);
+  });
+
+  it("round-trips gate.checkMode through gateConfigToJson", () => {
+    const m = parseFocusManifest({ gate: { checkMode: "visible" } });
+    expect(gateConfigToJson(m.gate)).toMatchObject({ checkMode: "visible" });
+    const unset = parseFocusManifest({ gate: { duplicates: "block" } });
+    expect(gateConfigToJson(unset.gate)).not.toHaveProperty("checkMode");
   });
 
   it("treats a manifest with ONLY a gate section as present", () => {
@@ -1241,6 +1266,92 @@ describe("parseFocusManifest gate config", () => {
     expect(contentLaneConfigToJson(m.contentLane)).toEqual({ entryFileGlob: "registry/*.json", collectionField: "items" });
   });
 
+  describe("repoDocGeneration: (#3002, repo-doc generation config-as-code surface)", () => {
+    it("defaults to fully disabled and absent when the key is omitted, and does not make the manifest present on its own", () => {
+      const m = parseFocusManifest({});
+      expect(m.repoDocGeneration).toEqual({ present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 });
+      expect(m.present).toBe(false);
+    });
+
+    it("treats an explicit null the same as an omitted key", () => {
+      expect(parseFocusManifest({ repoDocGeneration: null }).repoDocGeneration).toEqual({ present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 });
+    });
+
+    it("warns and falls back to the default when the value is a non-mapping type (string or array)", () => {
+      const asString = parseFocusManifest({ repoDocGeneration: "nope" as never });
+      expect(asString.repoDocGeneration.present).toBe(false);
+      expect(asString.warnings.some((w) => /"repoDocGeneration" must be a mapping/.test(w))).toBe(true);
+      const asArray = parseFocusManifest({ repoDocGeneration: ["nope"] as never });
+      expect(asArray.repoDocGeneration.present).toBe(false);
+      expect(asArray.warnings.some((w) => /"repoDocGeneration" must be a mapping/.test(w))).toBe(true);
+    });
+
+    it("parses enabled: true and defaults scope/allowOverwriteExisting/refreshIntervalDays, making the manifest present", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: true } });
+      expect(m.repoDocGeneration).toEqual({ present: true, enabled: true, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 });
+      expect(m.present).toBe(true);
+    });
+
+    it("warns and defaults to false when enabled is a non-boolean value", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: "yes" as unknown as boolean } });
+      expect(m.repoDocGeneration.enabled).toBe(false);
+      expect(m.warnings.some((w) => /repoDocGeneration\.enabled/.test(w))).toBe(true);
+    });
+
+    it("parses allowOverwriteExisting independently of enabled", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: false, allowOverwriteExisting: true } });
+      expect(m.repoDocGeneration).toEqual({ present: true, enabled: false, scope: ["agents"], allowOverwriteExisting: true, refreshIntervalDays: 7 });
+    });
+
+    it("parses a valid refreshIntervalDays and defaults to 7 (weekly) when omitted", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: true, refreshIntervalDays: 3 } });
+      expect(m.repoDocGeneration.refreshIntervalDays).toBe(3);
+      const defaulted = parseFocusManifest({ repoDocGeneration: { enabled: true } });
+      expect(defaulted.repoDocGeneration.refreshIntervalDays).toBe(7);
+    });
+
+    it("warns and defaults refreshIntervalDays to 7 when the value is not a positive whole number", () => {
+      const zero = parseFocusManifest({ repoDocGeneration: { enabled: true, refreshIntervalDays: 0 } });
+      expect(zero.repoDocGeneration.refreshIntervalDays).toBe(7);
+      expect(zero.warnings.some((w) => /repoDocGeneration\.refreshIntervalDays/.test(w))).toBe(true);
+      const fractional = parseFocusManifest({ repoDocGeneration: { enabled: true, refreshIntervalDays: 2.5 } });
+      expect(fractional.repoDocGeneration.refreshIntervalDays).toBe(7);
+      const negative = parseFocusManifest({ repoDocGeneration: { enabled: true, refreshIntervalDays: -1 } });
+      expect(negative.repoDocGeneration.refreshIntervalDays).toBe(7);
+    });
+
+    it("accepts an explicit multi-entry scope list", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: true, scope: ["agents", "skills"] } });
+      expect(m.repoDocGeneration.scope).toEqual(["agents", "skills"]);
+    });
+
+    it("respects an explicitly empty scope list as 'nothing in scope', rather than defaulting it back to [\"agents\"]", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: true, scope: [] } });
+      expect(m.repoDocGeneration.scope).toEqual([]);
+    });
+
+    it("filters out unrecognized scope entries with a warning, keeping the valid ones", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { scope: ["agents", "bogus"] } });
+      expect(m.repoDocGeneration.scope).toEqual(["agents"]);
+      expect(m.warnings.some((w) => /repoDocGeneration\.scope.*unrecognized entry "bogus"/.test(w))).toBe(true);
+    });
+
+    it("falls back to the default scope (not an empty one) when scope is a non-list type", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: true, scope: "agents" as unknown as string[] } });
+      expect(m.repoDocGeneration.scope).toEqual(["agents"]);
+      expect(m.warnings.some((w) => /repoDocGeneration\.scope.*must be a list/.test(w))).toBe(true);
+    });
+
+    it("round-trips through repoDocGenerationConfigToJson → parseFocusManifest unchanged", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: true, scope: ["agents", "skills"], allowOverwriteExisting: true } });
+      expect(parseFocusManifest({ repoDocGeneration: repoDocGenerationConfigToJson(m.repoDocGeneration) }).repoDocGeneration).toEqual(m.repoDocGeneration);
+    });
+
+    it("repoDocGenerationConfigToJson returns null for an absent config", () => {
+      expect(repoDocGenerationConfigToJson(parseFocusManifest(null).repoDocGeneration)).toBeNull();
+    });
+  });
+
   it("parses aiReviewAllAuthors from the settings: block (generic override)", () => {
     const parsed = parseFocusManifest({ settings: { aiReviewAllAuthors: true , closeOwnerAuthors: false} });
     expect(parsed.settings.aiReviewAllAuthors).toBe(true);
@@ -1472,22 +1583,92 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(tooLarge.warnings.some((w) => /settings\.reviewNagCooldownDays/.test(w) && /365/.test(w))).toBe(true);
   });
 
-  it("#label-scoping: an explicit yml null clears blacklistLabel/contributorCapLabel/reviewNagLabel back to 'no label' (load-bearing null)", () => {
-    const cleared = parseFocusManifest({ settings: { blacklistLabel: null, contributorCapLabel: null, reviewNagLabel: null } });
+  it("#label-scoping: an explicit yml null clears configurable action labels back to 'no label' (load-bearing null)", () => {
+    const cleared = parseFocusManifest({
+      settings: {
+        blacklistLabel: null,
+        contributorCapLabel: null,
+        reviewNagLabel: null,
+        manualReviewLabel: null,
+        readyToMergeLabel: null,
+        changesRequestedLabel: null,
+        migrationCollisionLabel: null,
+        pendingClosureLabel: null,
+      },
+    });
     expect(cleared.settings.blacklistLabel).toBeNull();
     expect(cleared.settings.contributorCapLabel).toBeNull();
     expect(cleared.settings.reviewNagLabel).toBeNull();
+    expect(cleared.settings.manualReviewLabel).toBeNull();
+    expect(cleared.settings.readyToMergeLabel).toBeNull();
+    expect(cleared.settings.changesRequestedLabel).toBeNull();
+    expect(cleared.settings.migrationCollisionLabel).toBeNull();
+    expect(cleared.settings.pendingClosureLabel).toBeNull();
     // Overlays (clears) a DB-configured label name.
-    const eff = resolveEffectiveSettings({ blacklistLabel: "slop", contributorCapLabel: "over-contributor-limit", reviewNagLabel: "review-nag-cooldown" } as unknown as RepositorySettings, cleared);
+    const eff = resolveEffectiveSettings(
+      {
+        blacklistLabel: "slop",
+        contributorCapLabel: "over-contributor-limit",
+        reviewNagLabel: "review-nag-cooldown",
+        manualReviewLabel: "human-review",
+        readyToMergeLabel: "ship-it",
+        changesRequestedLabel: "needs-work",
+        migrationCollisionLabel: "rebase-migration",
+        pendingClosureLabel: "pending-close",
+      } as unknown as RepositorySettings,
+      cleared,
+    );
     expect(eff.blacklistLabel).toBeNull();
     expect(eff.contributorCapLabel).toBeNull();
     expect(eff.reviewNagLabel).toBeNull();
+    expect(eff.manualReviewLabel).toBeNull();
+    expect(eff.readyToMergeLabel).toBeNull();
+    expect(eff.changesRequestedLabel).toBeNull();
+    expect(eff.migrationCollisionLabel).toBeNull();
+    expect(eff.pendingClosureLabel).toBeNull();
     // Omitted in yml ⇒ the DB-configured label survives untouched (distinct from explicit null).
-    const noOverride = resolveEffectiveSettings({ blacklistLabel: "slop" } as unknown as RepositorySettings, parseFocusManifest({}));
+    const noOverride = resolveEffectiveSettings({ blacklistLabel: "slop", manualReviewLabel: "human-review" } as unknown as RepositorySettings, parseFocusManifest({}));
     expect(noOverride.blacklistLabel).toBe("slop");
+    expect(noOverride.manualReviewLabel).toBe("human-review");
     // A configured (non-null) string still overrides the DB normally.
-    const customized = parseFocusManifest({ settings: { blacklistLabel: "abuse" } });
+    const customized = parseFocusManifest({ settings: { blacklistLabel: "abuse", readyToMergeLabel: "ship-it", changesRequestedLabel: "needs-work", migrationCollisionLabel: "migration-review", pendingClosureLabel: "pending-close" } });
     expect(customized.settings.blacklistLabel).toBe("abuse");
+    expect(customized.settings.readyToMergeLabel).toBe("ship-it");
+    expect(customized.settings.changesRequestedLabel).toBe("needs-work");
+    expect(customized.settings.migrationCollisionLabel).toBe("migration-review");
+    expect(customized.settings.pendingClosureLabel).toBe("pending-close");
+    const blank = parseFocusManifest({ settings: { manualReviewLabel: "   ", readyToMergeLabel: 42 as never } });
+    expect(blank.settings.manualReviewLabel).toBeUndefined();
+    expect(blank.settings.readyToMergeLabel).toBeUndefined();
+    expect(blank.warnings.some((w) => /settings\.manualReviewLabel/.test(w))).toBe(true);
+    expect(blank.warnings.some((w) => /settings\.readyToMergeLabel/.test(w))).toBe(true);
+  });
+
+  it("parses + resolves hardGuardrailGlobs as a replace-list, including explicit empty clear", () => {
+    const manifest = parseFocusManifest({ settings: { hardGuardrailGlobs: ["src/settings/**", "migrations/*.sql"] } });
+    expect(manifest.settings.hardGuardrailGlobs).toEqual(["src/settings/**", "migrations/*.sql"]);
+    const eff = resolveEffectiveSettings({ hardGuardrailGlobs: ["db-default/**"] } as unknown as RepositorySettings, manifest);
+    expect(eff.hardGuardrailGlobs).toEqual(["src/settings/**", "migrations/*.sql"]);
+
+    const cleared = resolveEffectiveSettings({ hardGuardrailGlobs: ["db-default/**"] } as unknown as RepositorySettings, parseFocusManifest({ settings: { hardGuardrailGlobs: [] } }));
+    expect(cleared.hardGuardrailGlobs).toEqual([]);
+
+    const nullManifest = parseFocusManifest({ settings: { hardGuardrailGlobs: null } });
+    const nullIgnored = resolveEffectiveSettings({ hardGuardrailGlobs: ["db-default/**"] } as unknown as RepositorySettings, nullManifest);
+    expect(nullIgnored.hardGuardrailGlobs).toEqual(["db-default/**"]);
+    expect(nullManifest.warnings.some((w) => /settings\.hardGuardrailGlobs/.test(w))).toBe(true);
+
+    const omitted = resolveEffectiveSettings({ hardGuardrailGlobs: ["db-default/**"] } as unknown as RepositorySettings, parseFocusManifest({}));
+    expect(omitted.hardGuardrailGlobs).toEqual(["db-default/**"]);
+
+    const malformed = parseFocusManifest({ settings: { hardGuardrailGlobs: "src/**" as never } });
+    expect(malformed.settings.hardGuardrailGlobs).toBeUndefined();
+    expect(malformed.warnings.some((w) => /settings\.hardGuardrailGlobs/.test(w))).toBe(true);
+
+    const invalidArray = parseFocusManifest({ settings: { hardGuardrailGlobs: [123, ""] as never } });
+    const invalidIgnored = resolveEffectiveSettings({ hardGuardrailGlobs: ["db-default/**"] } as unknown as RepositorySettings, invalidArray);
+    expect(invalidIgnored.hardGuardrailGlobs).toEqual(["db-default/**"]);
+    expect(invalidArray.warnings.some((w) => /did not contain any valid path globs/.test(w))).toBe(true);
   });
 
   it("#label-scoping: parses + resolves reviewNagMonitoredMentions from the settings: block, overlaying the DB", () => {
@@ -1612,6 +1793,66 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(invalid.settings.moderationGateMode).toBeUndefined();
     expect(invalid.settings.moderationWarningLabel).toBeUndefined();
     expect(invalid.warnings.some((w) => /settings\.moderationGateMode/.test(w))).toBe(true);
+  });
+
+  describe("reviewCheckMode precedence (#2852)", () => {
+    it("parses settings.reviewCheckMode and drops an invalid value with a warning", () => {
+      const m = parseFocusManifest({ settings: { reviewCheckMode: "visible" } });
+      expect(m.settings.reviewCheckMode).toBe("visible");
+      const invalid = parseFocusManifest({ settings: { reviewCheckMode: "sometimes" as never } });
+      expect(invalid.settings.reviewCheckMode).toBeUndefined();
+      expect(invalid.warnings.some((w) => /settings\.reviewCheckMode/.test(w))).toBe(true);
+    });
+
+    it("settings.reviewCheckMode overlays (replaces) the DB value when set, and is preserved when omitted", () => {
+      const overridden = resolveEffectiveSettings(
+        { reviewCheckMode: "required" } as unknown as RepositorySettings,
+        parseFocusManifest({ settings: { reviewCheckMode: "disabled" } }),
+      );
+      expect(overridden.reviewCheckMode).toBe("disabled");
+      const noOverride = resolveEffectiveSettings({ reviewCheckMode: "required" } as unknown as RepositorySettings, parseFocusManifest({}));
+      expect(noOverride.reviewCheckMode).toBe("required");
+    });
+
+    it("gate.checkMode takes precedence over the legacy gate.enabled boolean when both are set", () => {
+      const eff = resolveEffectiveSettings(
+        { reviewCheckMode: "disabled" } as unknown as RepositorySettings,
+        parseFocusManifest({ gate: { enabled: false, checkMode: "visible" } }),
+      );
+      expect(eff.reviewCheckMode).toBe("visible");
+    });
+
+    it("gate.enabled maps symmetrically to reviewCheckMode when gate.checkMode is unset (legacy compatibility)", () => {
+      const enabledTrue = resolveEffectiveSettings({ reviewCheckMode: "disabled" } as unknown as RepositorySettings, parseFocusManifest({ gate: { enabled: true } }));
+      expect(enabledTrue.reviewCheckMode).toBe("required");
+      const enabledFalse = resolveEffectiveSettings({ reviewCheckMode: "required" } as unknown as RepositorySettings, parseFocusManifest({ gate: { enabled: false } }));
+      expect(enabledFalse.reviewCheckMode).toBe("disabled");
+    });
+
+    it("falls through to the DB/settings-block value when neither gate.checkMode nor gate.enabled is set", () => {
+      const eff = resolveEffectiveSettings({ reviewCheckMode: "visible" } as unknown as RepositorySettings, parseFocusManifest({ gate: { duplicates: "block" } }));
+      expect(eff.reviewCheckMode).toBe("visible");
+    });
+  });
+
+  describe("autoProjectMilestoneMatch precedence (#3183)", () => {
+    it("parses settings.autoProjectMilestoneMatch and drops an invalid value with a warning", () => {
+      const m = parseFocusManifest({ settings: { autoProjectMilestoneMatch: "suggest" } });
+      expect(m.settings.autoProjectMilestoneMatch).toBe("suggest");
+      const invalid = parseFocusManifest({ settings: { autoProjectMilestoneMatch: "sometimes" as never } });
+      expect(invalid.settings.autoProjectMilestoneMatch).toBeUndefined();
+      expect(invalid.warnings.some((w) => /settings\.autoProjectMilestoneMatch/.test(w))).toBe(true);
+    });
+
+    it("settings.autoProjectMilestoneMatch overlays (replaces) the DB value when set, and is preserved when omitted", () => {
+      const overridden = resolveEffectiveSettings(
+        { autoProjectMilestoneMatch: "off" } as unknown as RepositorySettings,
+        parseFocusManifest({ settings: { autoProjectMilestoneMatch: "auto" } }),
+      );
+      expect(overridden.autoProjectMilestoneMatch).toBe("auto");
+      const noOverride = resolveEffectiveSettings({ autoProjectMilestoneMatch: "suggest" } as unknown as RepositorySettings, parseFocusManifest({}));
+      expect(noOverride.autoProjectMilestoneMatch).toBe("suggest");
+    });
   });
 
   it("an EXPLICIT yml null force-clears a DB-configured cap, distinct from an omitted key (regression, gate finding on #2467)", () => {
@@ -1741,6 +1982,50 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(eff.typeLabels).toEqual(db.typeLabels); // malformed manifest value never blanks the DB-persisted override
   });
 
+  describe("arbitrary custom typeLabels categories (#label-modularity)", () => {
+    it("wires an arbitrary custom category through the sparse override, additively alongside the DB-persisted built-ins", () => {
+      const parsed = parseFocusManifest({ settings: { typeLabels: { security: "area:security" } } });
+      expect(parsed.settings.typeLabels).toEqual({ security: "area:security" });
+      expect(parsed.warnings).toEqual([]);
+
+      const db = { typeLabels: { bug: "kind:bug", feature: "kind:feature", priority: "kind:priority" } } as unknown as RepositorySettings;
+      const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { typeLabels: { security: "area:security" } } }));
+      expect(eff.typeLabels).toEqual({ bug: "kind:bug", feature: "kind:feature", priority: "kind:priority", security: "area:security" });
+    });
+
+    it("does not unexpectedly reset unrelated categories when a sparse override only adds a new one (invariant: sparse overrides layer correctly)", () => {
+      const db = { typeLabels: { bug: "kind:bug", feature: "kind:feature", priority: "kind:priority", docs: "area:docs" } } as unknown as RepositorySettings;
+      const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { typeLabels: { security: "area:security" } } }));
+      // `docs` was never named by the override, so it survives untouched alongside the newly-added `security`.
+      expect(eff.typeLabels).toEqual({ bug: "kind:bug", feature: "kind:feature", priority: "kind:priority", docs: "area:docs", security: "area:security" });
+    });
+  });
+
+  describe("explicit typeLabels: {} (#label-modularity)", () => {
+    it("parses a literal empty settings.typeLabels object to null, distinct from a sparse override with zero surviving keys", () => {
+      const parsed = parseFocusManifest({ settings: { typeLabels: {} } });
+      expect(parsed.settings.typeLabels).toBeNull();
+      expect(parsed.warnings).toEqual([]);
+    });
+
+    it("resolveEffectiveSettings replaces the DB-persisted set wholesale with an empty set for an explicit typeLabels: {}", () => {
+      const db = { typeLabels: { bug: "kind:bug", feature: "kind:feature", priority: "kind:priority" } } as unknown as RepositorySettings;
+      const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { typeLabels: {} } }));
+      expect(eff.typeLabels).toEqual({});
+    });
+
+    it("still leaves the DB value untouched when a sparse override's only named key fails validation (contrast with explicit {})", () => {
+      // Same net {} shape as the explicit-empty case above at the parse step, but arising from a NAMED,
+      // invalid key rather than a literal `{}` -- must NOT replace the DB value (see the malformed-value
+      // test above), unlike the deliberate `typeLabels: {}` case immediately above.
+      const db = { typeLabels: { bug: "kind:bug", feature: "kind:feature", priority: "kind:priority" } } as unknown as RepositorySettings;
+      const parsed = parseFocusManifest({ settings: { typeLabels: { security: 42 } } });
+      expect(parsed.settings.typeLabels).toEqual({});
+      const eff = resolveEffectiveSettings(db, parsed);
+      expect(eff.typeLabels).toEqual(db.typeLabels);
+    });
+  });
+
   it("wires settings.linkedIssueLabelPropagation into the manifest parser and lets a per-repo override win over the DB value (#priority-linked-issue-gate)", () => {
     const config = {
       enabled: true,
@@ -1836,6 +2121,72 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     const db = { linkedIssueLabelPropagation: { enabled: true, mode: "exclusive_type_label", mappings: [] } } as unknown as RepositorySettings;
     const eff = resolveEffectiveSettings(db, parsed);
     expect(eff.linkedIssueLabelPropagation).toEqual(db.linkedIssueLabelPropagation);
+  });
+
+  it("wires settings.linkedIssueHardRules into the manifest parser as a sparse override", () => {
+    const parsed = parseFocusManifest({
+      settings: {
+        linkedIssueHardRules: {
+          assignedIssueClose: "block",
+          maintainerOnlyLabels: ["maintainer-only"],
+          verifyBeforeClose: false,
+          closeDelaySeconds: 3.8,
+        },
+      },
+    });
+    expect(parsed.settings.linkedIssueHardRules).toEqual({
+      assignedIssueClose: "block",
+      maintainerOnlyLabels: ["maintainer-only"],
+      verifyBeforeClose: false,
+      closeDelaySeconds: 3,
+    });
+    expect(parsed.warnings).toEqual([]);
+  });
+
+  it("resolveEffectiveSettings merges partial linkedIssueHardRules overrides without clearing lower-layer labels", () => {
+    const db = {
+      linkedIssueHardRules: {
+        ownerAssignedClose: "off",
+        assignedIssueClose: "off",
+        missingPointLabelClose: "off",
+        maintainerOnlyLabelClose: "block",
+        pointBearingLabels: ["gittensor:bug", "gittensor:feature", "gittensor:priority"],
+        maintainerOnlyLabels: ["maintainer-only"],
+        defaultLabelRepo: true,
+        verifyBeforeClose: true,
+        closeDelaySeconds: 30,
+      },
+    } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { linkedIssueHardRules: { assignedIssueClose: "block" } } }));
+    expect(eff.linkedIssueHardRules).toEqual({
+      ownerAssignedClose: "off",
+      assignedIssueClose: "block",
+      missingPointLabelClose: "off",
+      maintainerOnlyLabelClose: "block",
+      pointBearingLabels: ["gittensor:bug", "gittensor:feature", "gittensor:priority"],
+      maintainerOnlyLabels: ["maintainer-only"],
+      defaultLabelRepo: true,
+      verifyBeforeClose: true,
+      closeDelaySeconds: 30,
+    });
+  });
+
+  it("drops malformed linkedIssueHardRules fields instead of replacing existing policy with defaults", () => {
+    const parsed = parseFocusManifest({
+      settings: {
+        linkedIssueHardRules: {
+          assignedIssueClose: "close",
+          maintainerOnlyLabels: "maintainer-only",
+          defaultLabelRepo: "true",
+          closeDelaySeconds: -1,
+        },
+      },
+    });
+    expect(parsed.settings.linkedIssueHardRules).toEqual({});
+    expect(parsed.warnings.some((w) => w.includes("settings.linkedIssueHardRules.assignedIssueClose"))).toBe(true);
+    expect(parsed.warnings.some((w) => w.includes("settings.linkedIssueHardRules.maintainerOnlyLabels"))).toBe(true);
+    expect(parsed.warnings.some((w) => w.includes("settings.linkedIssueHardRules.defaultLabelRepo"))).toBe(true);
+    expect(parsed.warnings.some((w) => w.includes("settings.linkedIssueHardRules.closeDelaySeconds"))).toBe(true);
   });
 
   it("parses aiReview from settings: and lets gate.aiReview win in resolveEffectiveSettings", () => {

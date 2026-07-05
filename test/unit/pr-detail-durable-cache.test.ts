@@ -7,12 +7,70 @@ import {
   cachedFetchLivePullRequestHeadSha,
   cachedFetchLivePullRequestMergeState,
   cachedFetchLivePullRequestState,
+  deserializeCachedCiAggregate,
+  invalidateCiStateCache,
   invalidatePrStateCache,
+  isCiStateCacheFresh,
   primeDurablePrStateCache,
+  writeThroughCiStateCache,
 } from "../../src/github/backfill";
 import { clearGitHubResponseCacheForTest } from "../../src/github/client";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { createTestEnv } from "../helpers/d1";
+import type { LiveCiAggregate } from "../../src/github/backfill";
+import type { PullRequestDetailSyncStateRecord } from "../../src/types";
+
+function stubFetchTracking(handler: (url: string, init?: RequestInit) => Response | Promise<Response>): string[] {
+  const urls: string[] = [];
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+    urls.push(url);
+    return handler(url, init);
+  });
+  return urls;
+}
+
+// Simulates a D1 write hiccup ONLY for pull_request_detail_sync_state upserts, so the cache's fail-open
+// write-through can be exercised without a full DB outage. Module-scope (not describe-scoped) so both the
+// PR-state and CI-state cache describe blocks below can share it.
+function withPrStateWriteFailure(env: Env): Env {
+  const db = env.DB as unknown as { prepare(sql: string): unknown; batch(statements: unknown[]): Promise<unknown> };
+  return {
+    ...env,
+    DB: {
+      prepare(sql: string) {
+        if (sql.includes("pull_request_detail_sync_state") && sql.trim().toUpperCase().startsWith("INSERT")) {
+          throw new Error("pull_request_detail_sync_state write failed");
+        }
+        return db.prepare.call(db, sql);
+      },
+      batch(statements: unknown[]) {
+        return db.batch.call(db, statements);
+      },
+    } as unknown as D1Database,
+  };
+}
+
+// Mirrors withPrStateWriteFailure but for the READ side -- exercises invalidateCiStateCache's own
+// getPullRequestDetailSyncState(...).catch(() => null) fail-open arm (it must still write the invalidation
+// even when it cannot read the prior row to preserve `status`).
+function withPrStateReadFailure(env: Env): Env {
+  const db = env.DB as unknown as { prepare(sql: string): unknown; batch(statements: unknown[]): Promise<unknown> };
+  return {
+    ...env,
+    DB: {
+      prepare(sql: string) {
+        if (sql.includes("pull_request_detail_sync_state") && sql.trim().toUpperCase().startsWith("SELECT")) {
+          throw new Error("pull_request_detail_sync_state read failed");
+        }
+        return db.prepare.call(db, sql);
+      },
+      batch(statements: unknown[]) {
+        return db.batch.call(db, statements);
+      },
+    } as unknown as D1Database,
+  };
+}
 
 // Durable, webhook-invalidated cache for the bare PR-state read (#2537). Mirrors
 // backfill-file-hydration-scoping.test.ts's helpers/structure for the sibling files cache.
@@ -22,36 +80,6 @@ describe("durable PR-state cache (#2537)", () => {
     resetMetrics();
     vi.unstubAllGlobals();
   });
-
-  function stubFetchTracking(handler: (url: string, init?: RequestInit) => Response | Promise<Response>): string[] {
-    const urls: string[] = [];
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = input.toString();
-      urls.push(url);
-      return handler(url, init);
-    });
-    return urls;
-  }
-
-  // Simulates a D1 write hiccup ONLY for pull_request_detail_sync_state upserts, so the cache's fail-open
-  // write-through can be exercised without a full DB outage.
-  function withPrStateWriteFailure(env: Env): Env {
-    const db = env.DB as unknown as { prepare(sql: string): unknown; batch(statements: unknown[]): Promise<unknown> };
-    return {
-      ...env,
-      DB: {
-        prepare(sql: string) {
-          if (sql.includes("pull_request_detail_sync_state") && sql.trim().toUpperCase().startsWith("INSERT")) {
-            throw new Error("pull_request_detail_sync_state write failed");
-          }
-          return db.prepare.call(db, sql);
-        },
-        batch(statements: unknown[]) {
-          return db.batch.call(db, statements);
-        },
-      } as unknown as D1Database,
-    };
-  }
 
   // REGRESSION (#2595 review defect): the three cached readers below share ONE prStateFetchedAt column as their
   // freshness stamp. Before this fix, each reader wrote through ONLY the one field it cared about, so a write
@@ -505,6 +533,284 @@ describe("durable PR-state cache (#2537)", () => {
       expect(metrics).toContain('gittensory_pr_state_cache_total{field="mergeable_state",result="miss"} 1');
       expect(metrics).toContain('gittensory_pr_state_cache_total{field="mergeable_state",result="hit"} 1');
       expect(metrics).toContain('gittensory_pr_state_cache_total{field="write",result="set"} 1');
+    });
+  });
+});
+
+// Durable, webhook-invalidated cache for the CI-state aggregate (#selfhost-ci-verification), sibling to the
+// #2537 PR-state cache above. The read-cache-then-live-fetch-then-write-through ORCHESTRATION
+// (cachedFetchLiveCiAggregate) is private to queue/processors.ts (see its own doc comment for why: a same-module
+// call to fetchLiveCiAggregatePreferGraphQl would be invisible to many existing tests' `vi.spyOn` on this
+// module's export) — its behavior is exercised indirectly via processJob() in queue.test.ts. This file covers
+// the pure/DB-level building blocks that DO live here and ARE exported.
+describe("durable CI-state cache (#selfhost-ci-verification)", () => {
+  afterEach(() => {
+    resetMetrics();
+  });
+
+  const sampleAggregate: LiveCiAggregate = {
+    ciState: "failed",
+    hasPending: false,
+    hasVisiblePending: false,
+    hasMissingRequiredContext: false,
+    failingDetails: [{ name: "ci/build", summary: "failed", detailsUrl: "https://ci.example.test/1" }],
+    nonRequiredFailingDetails: [],
+    ciCompletenessWarning: null,
+  };
+
+  describe("isCiStateCacheFresh", () => {
+    it("is fresh: fetched within the TTL, head_sha matches, required-contexts key matches", () => {
+      const cached: Pick<PullRequestDetailSyncStateRecord, "ciHeadSha" | "ciRequiredContextsKey" | "ciStateFetchedAt"> = {
+        ciHeadSha: "sha1",
+        ciRequiredContextsKey: "build test",
+        ciStateFetchedAt: new Date().toISOString(),
+      };
+      expect(isCiStateCacheFresh(cached, "sha1", "build test")).toBe(true);
+    });
+
+    it("is stale once the TTL has expired", () => {
+      const cached = { ciHeadSha: "sha1", ciRequiredContextsKey: "", ciStateFetchedAt: "2020-01-01T00:00:00.000Z" };
+      expect(isCiStateCacheFresh(cached, "sha1", "")).toBe(false);
+    });
+
+    it("is a miss when ciStateFetchedAt is null/missing (never cached)", () => {
+      expect(isCiStateCacheFresh({ ciHeadSha: "sha1", ciRequiredContextsKey: "", ciStateFetchedAt: null }, "sha1", "")).toBe(false);
+      expect(isCiStateCacheFresh(null, "sha1", "")).toBe(false);
+      expect(isCiStateCacheFresh(undefined, "sha1", "")).toBe(false);
+    });
+
+    it("is a miss on a malformed fetchedAt timestamp", () => {
+      expect(isCiStateCacheFresh({ ciHeadSha: "sha1", ciRequiredContextsKey: "", ciStateFetchedAt: "not-a-date" }, "sha1", "")).toBe(false);
+    });
+
+    it("is a miss when the cached head_sha no longer matches (a new commit since this row was cached), even within the TTL", () => {
+      const cached = { ciHeadSha: "sha-old", ciRequiredContextsKey: "", ciStateFetchedAt: new Date().toISOString() };
+      expect(isCiStateCacheFresh(cached, "sha-new", "")).toBe(false);
+    });
+
+    it("is a miss when the required-contexts key no longer matches (a settings change), even within the TTL", () => {
+      const cached = { ciHeadSha: "sha1", ciRequiredContextsKey: "old-key", ciStateFetchedAt: new Date().toISOString() };
+      expect(isCiStateCacheFresh(cached, "sha1", "new-key")).toBe(false);
+    });
+
+    it("treats a null cached head_sha and an undefined queried head_sha as equal (both mean 'no head sha')", () => {
+      const cached = { ciHeadSha: null, ciRequiredContextsKey: "", ciStateFetchedAt: new Date().toISOString() };
+      expect(isCiStateCacheFresh(cached, undefined, "")).toBe(true);
+    });
+
+    it("treats a null cached required-contexts key and an empty-string queried key as equal (both mean 'unconfigured')", () => {
+      const cached = { ciHeadSha: "sha1", ciRequiredContextsKey: null, ciStateFetchedAt: new Date().toISOString() };
+      expect(isCiStateCacheFresh(cached, "sha1", "")).toBe(true);
+    });
+  });
+
+  describe("deserializeCachedCiAggregate", () => {
+    it("round-trips a valid cached row back into the exact LiveCiAggregate shape", () => {
+      const cached = {
+        ciState: "failed" as const,
+        ciHasPending: false,
+        ciHasVisiblePending: false,
+        ciHasMissingRequiredContext: false,
+        ciFailingDetailsJson: JSON.stringify(sampleAggregate.failingDetails),
+        ciNonRequiredFailingDetailsJson: JSON.stringify(sampleAggregate.nonRequiredFailingDetails),
+        ciCompletenessWarning: null,
+      };
+      expect(deserializeCachedCiAggregate(cached)).toEqual(sampleAggregate);
+    });
+
+    it("returns null when ciState is missing/null (never cached)", () => {
+      expect(
+        deserializeCachedCiAggregate({
+          ciState: null,
+          ciHasPending: null,
+          ciHasVisiblePending: null,
+          ciHasMissingRequiredContext: null,
+          ciFailingDetailsJson: null,
+          ciNonRequiredFailingDetailsJson: null,
+          ciCompletenessWarning: null,
+        }),
+      ).toBeNull();
+    });
+
+    it("fails open to null on malformed JSON in ciFailingDetailsJson (never throws)", () => {
+      expect(
+        deserializeCachedCiAggregate({
+          ciState: "passed",
+          ciHasPending: false,
+          ciHasVisiblePending: false,
+          ciHasMissingRequiredContext: false,
+          ciFailingDetailsJson: "{not valid json",
+          ciNonRequiredFailingDetailsJson: "[]",
+          ciCompletenessWarning: null,
+        }),
+      ).toBeNull();
+    });
+
+    it("fails open to null when ciFailingDetailsJson parses to valid JSON that is NOT an array (corrupted row shape)", () => {
+      // JSON.parse succeeds here (it's valid JSON), so this exercises the Array.isArray guard specifically,
+      // not the catch block above -- a corrupted/malformed row must never hand callers a wrong shape.
+      expect(
+        deserializeCachedCiAggregate({
+          ciState: "passed",
+          ciHasPending: false,
+          ciHasVisiblePending: false,
+          ciHasMissingRequiredContext: false,
+          ciFailingDetailsJson: '{"not":"an array"}',
+          ciNonRequiredFailingDetailsJson: "[]",
+          ciCompletenessWarning: null,
+        }),
+      ).toBeNull();
+    });
+
+    it("fails open to null when ciNonRequiredFailingDetailsJson parses to valid JSON that is NOT an array (corrupted row shape)", () => {
+      expect(
+        deserializeCachedCiAggregate({
+          ciState: "passed",
+          ciHasPending: false,
+          ciHasVisiblePending: false,
+          ciHasMissingRequiredContext: false,
+          ciFailingDetailsJson: "[]",
+          ciNonRequiredFailingDetailsJson: '"just a string"',
+          ciCompletenessWarning: null,
+        }),
+      ).toBeNull();
+    });
+
+    it("defaults hasPending/hasVisiblePending/hasMissingRequiredContext to false and the JSON arrays to [] when null", () => {
+      expect(
+        deserializeCachedCiAggregate({
+          ciState: "passed",
+          ciHasPending: null,
+          ciHasVisiblePending: null,
+          ciHasMissingRequiredContext: null,
+          ciFailingDetailsJson: null,
+          ciNonRequiredFailingDetailsJson: null,
+          ciCompletenessWarning: null,
+        }),
+      ).toEqual({
+        ciState: "passed",
+        hasPending: false,
+        hasVisiblePending: false,
+        hasMissingRequiredContext: false,
+        failingDetails: [],
+        nonRequiredFailingDetails: [],
+        ciCompletenessWarning: null,
+      });
+    });
+  });
+
+  describe("writeThroughCiStateCache", () => {
+    it("writes every CI field, preserving the row's existing status rather than forcing one", async () => {
+      const env = createTestEnv();
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "owner/repo", pullNumber: 80, status: "partial" });
+
+      await writeThroughCiStateCache(env, "owner/repo", 80, { status: "partial" }, "sha1", "build test", sampleAggregate);
+
+      const row = await getPullRequestDetailSyncState(env, "owner/repo", 80);
+      expect(row).toMatchObject({
+        status: "partial",
+        ciHeadSha: "sha1",
+        ciState: "failed",
+        ciHasPending: false,
+        ciHasVisiblePending: false,
+        ciHasMissingRequiredContext: false,
+        ciRequiredContextsKey: "build test",
+      });
+      expect(JSON.parse(row?.ciFailingDetailsJson ?? "[]")).toEqual(sampleAggregate.failingDetails);
+      expect(typeof row?.ciStateFetchedAt).toBe("string");
+    });
+
+    it("defaults status to never_synced when no prior row exists", async () => {
+      const env = createTestEnv();
+      await writeThroughCiStateCache(env, "owner/repo", 81, null, "sha1", "", sampleAggregate);
+      expect(await getPullRequestDetailSyncState(env, "owner/repo", 81)).toMatchObject({ status: "never_synced" });
+    });
+
+    it("preserves unrelated existing columns (prMergeableState, the files-cache headSha) on write", async () => {
+      const env = createTestEnv();
+      await upsertPullRequestDetailSyncState(env, {
+        repoFullName: "owner/repo",
+        pullNumber: 82,
+        status: "complete",
+        headSha: "files-cache-sha",
+        prMergeableState: "clean",
+      });
+
+      await writeThroughCiStateCache(env, "owner/repo", 82, { status: "complete" }, "sha1", "", sampleAggregate);
+
+      expect(await getPullRequestDetailSyncState(env, "owner/repo", 82)).toMatchObject({
+        headSha: "files-cache-sha",
+        prMergeableState: "clean",
+        ciState: "failed",
+      });
+    });
+
+    it("fail-open: a write hiccup is swallowed, never throws", async () => {
+      const env = withPrStateWriteFailure(createTestEnv());
+      await expect(writeThroughCiStateCache(env, "owner/repo", 83, null, "sha1", "", sampleAggregate)).resolves.toBeUndefined();
+    });
+
+    it("stores a null ciHeadSha when the live read had no resolvable head SHA (nullish fallback, not just a truthy sha)", async () => {
+      const env = createTestEnv();
+      await writeThroughCiStateCache(env, "owner/repo", 85, null, null, "", sampleAggregate);
+      expect(await getPullRequestDetailSyncState(env, "owner/repo", 85)).toMatchObject({ ciHeadSha: null, ciState: "failed" });
+    });
+
+    it("records the write metric", async () => {
+      resetMetrics();
+      const env = createTestEnv();
+      await writeThroughCiStateCache(env, "owner/repo", 84, null, "sha1", "", sampleAggregate);
+      expect(await renderMetrics()).toContain('gittensory_ci_state_cache_total{field="write",result="set"} 1');
+    });
+  });
+
+  describe("invalidateCiStateCache", () => {
+    it("clears ciState/ciStateFetchedAt, preserving unrelated columns", async () => {
+      const env = createTestEnv();
+      await upsertPullRequestDetailSyncState(env, {
+        repoFullName: "owner/repo",
+        pullNumber: 90,
+        status: "complete",
+        prMergeableState: "clean",
+        ciHeadSha: "sha1",
+        ciState: "failed",
+        ciStateFetchedAt: new Date().toISOString(),
+      });
+
+      await invalidateCiStateCache(env, "owner/repo", 90);
+
+      expect(await getPullRequestDetailSyncState(env, "owner/repo", 90)).toMatchObject({
+        ciState: null,
+        ciStateFetchedAt: null,
+        prMergeableState: "clean",
+        status: "complete",
+      });
+    });
+
+    it("clears regardless of prior value (even a fresh, just-written cache entry)", async () => {
+      const env = createTestEnv();
+      await writeThroughCiStateCache(env, "owner/repo", 91, null, "sha1", "", sampleAggregate);
+      expect(await getPullRequestDetailSyncState(env, "owner/repo", 91)).toMatchObject({ ciState: "failed" });
+
+      await invalidateCiStateCache(env, "owner/repo", 91);
+
+      expect(await getPullRequestDetailSyncState(env, "owner/repo", 91)).toMatchObject({ ciState: null, ciStateFetchedAt: null });
+    });
+
+    it("is a no-op (does not throw) when no row exists yet, defaulting status to never_synced", async () => {
+      const env = createTestEnv();
+      await expect(invalidateCiStateCache(env, "owner/repo", 92)).resolves.toBeUndefined();
+      expect(await getPullRequestDetailSyncState(env, "owner/repo", 92)).toMatchObject({ status: "never_synced", ciState: null });
+    });
+
+    it("fail-open: a read hiccup on the prior-row lookup still lets the invalidation write proceed, defaulting status to never_synced", async () => {
+      // readFailEnv wraps the SAME underlying D1 instance as baseEnv, breaking only SELECTs -- invalidateCiStateCache's
+      // OWN getPullRequestDetailSyncState(...).catch(() => null) must swallow that and still issue the INSERT
+      // (which is unaffected), so a read via the unwrapped baseEnv afterward proves the write actually landed.
+      const baseEnv = createTestEnv();
+      const readFailEnv = withPrStateReadFailure(baseEnv);
+      await expect(invalidateCiStateCache(readFailEnv, "owner/repo", 93)).resolves.toBeUndefined();
+      expect(await getPullRequestDetailSyncState(baseEnv, "owner/repo", 93)).toMatchObject({ status: "never_synced", ciState: null });
     });
   });
 });

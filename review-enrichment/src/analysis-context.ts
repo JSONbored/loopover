@@ -328,7 +328,9 @@ export function collectAddedLines(
         }
         addedLines.push({ file: file.path, line: newLine, text: line.slice(1) });
         newLine += 1;
-      } else if (!line.startsWith("-")) {
+      } else if (!line.startsWith("-") && !line.startsWith("\\")) {
+        // A `\ No newline at end of file` marker is not a new-file line — do not advance the cursor
+        // (same class as the iac-misconfig / redos / secret-scan fix).
         newLine += 1;
       }
     }
@@ -442,7 +444,7 @@ function categorizeFile(path: string): FileCategory {
     return { path, extension, category: "docs" };
   }
   if (
-    [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf", ".zip", ".gz"].includes(
+    [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf", ".zip", ".gz", ".zst"].includes(
       extension,
     )
   ) {

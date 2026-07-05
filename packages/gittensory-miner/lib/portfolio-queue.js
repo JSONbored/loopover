@@ -52,10 +52,12 @@ function normalizeIdentifier(identifier) {
   return trimmed;
 }
 
-/** Priority is a placeholder numeric input; an omitted priority defaults to 0, a non-finite one is rejected. */
+/** Priority is a placeholder numeric input; an omitted priority defaults to 0, a non-finite or negative one is rejected. */
 function normalizePriority(priority) {
-  if (priority === undefined) return 0;
-  if (typeof priority !== "number" || !Number.isFinite(priority)) throw new Error("invalid_priority");
+  if (priority === undefined || priority === null) return 0;
+  if (typeof priority !== "number" || !Number.isFinite(priority) || priority < 0) {
+    throw new Error("invalid_priority");
+  }
   return priority;
 }
 
@@ -109,6 +111,7 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
     ON CONFLICT(repo_full_name, identifier) DO UPDATE SET
       priority = excluded.priority,
       status = 'queued'
+    WHERE miner_portfolio_queue.status <> 'in_progress'
   `);
   const getStatement = db.prepare(
     "SELECT * FROM miner_portfolio_queue WHERE repo_full_name = ? AND identifier = ?",
@@ -123,8 +126,8 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
     )
     RETURNING *
   `);
-  const setStatusStatement = db.prepare(
-    "UPDATE miner_portfolio_queue SET status = ? WHERE repo_full_name = ? AND identifier = ?",
+  const markDoneStatement = db.prepare(
+    "UPDATE miner_portfolio_queue SET status = 'done' WHERE repo_full_name = ? AND identifier = ? AND status <> 'done'",
   );
   const listAllStatement = db.prepare(`SELECT * FROM miner_portfolio_queue ${ORDER}`);
   const listRepoStatement = db.prepare(
@@ -146,7 +149,7 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
       return row ? rowToEntry(row) : null;
     },
     listQueue(repoFullName) {
-      const rows = repoFullName === undefined
+      const rows = repoFullName === undefined || repoFullName === null
         ? listAllStatement.all()
         : listRepoStatement.all(normalizeRepoFullName(repoFullName));
       return rows.map(rowToEntry);
@@ -154,7 +157,8 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
     markDone(repoFullName, identifier) {
       const normalizedRepo = normalizeRepoFullName(repoFullName);
       const normalizedIdentifier = normalizeIdentifier(identifier);
-      setStatusStatement.run("done", normalizedRepo, normalizedIdentifier);
+      const result = markDoneStatement.run(normalizedRepo, normalizedIdentifier);
+      if (result.changes === 0) return null;
       const row = getStatement.get(normalizedRepo, normalizedIdentifier);
       return row ? rowToEntry(row) : null;
     },

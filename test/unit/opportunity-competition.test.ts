@@ -8,9 +8,10 @@ describe("computeOpportunityCompetition", () => {
     expect(computeOpportunityCompetition(9, 3)).toBe(1);
   });
 
-  it("treats a broken cluster count as zero contention", () => {
-    expect(computeOpportunityCompetition(Number.NaN, 3)).toBe(0);
-    expect(computeOpportunityCompetition(Number.NEGATIVE_INFINITY, 3)).toBe(0);
+  it("fails closed when cluster pressure is broken", () => {
+    expect(computeOpportunityCompetition(Number.NaN, 3)).toBe(1);
+    expect(computeOpportunityCompetition(Number.POSITIVE_INFINITY, 3)).toBe(1);
+    expect(computeOpportunityCompetition(Number.NEGATIVE_INFINITY, 3)).toBe(1);
   });
 
   it("never divides by zero when open PR volume is missing", () => {

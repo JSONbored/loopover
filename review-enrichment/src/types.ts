@@ -221,7 +221,36 @@ export interface IacMisconfigFinding {
     | "insecure-cookie"
     | "tls-verification-disabled"
     | "prod-debug"
-    | "hardcoded-service-url";
+    | "hardcoded-service-url"
+    | "privileged-container"
+    | "privilege-escalation"
+    | "host-pid-namespace"
+    | "host-ipc-namespace"
+    | "run-as-root"
+    | "run-as-root-uid"
+    | "writable-root-filesystem"
+    | "unmasked-proc-mount"
+    | "unencrypted-storage"
+    | "publicly-accessible-database"
+    | "imdsv1-allowed"
+    | "world-writable-permissions"
+    | "docker-add-remote-url"
+    | "docker-image-latest-tag"
+    | "docker-root-user"
+    | "remote-shell-pipe"
+    | "insecure-download-flag"
+    | "ssh-port-exposed"
+    | "npm-unsafe-perm"
+    | "sudo-in-build"
+    | "hardcoded-build-secret"
+    | "insecure-pip-index"
+    | "db-ssl-disabled"
+    | "git-ssl-no-verify"
+    | "ssh-host-key-check-off"
+    | "verify-ssl-off"
+    | "validate-certs-off"
+    | "tls-skip-verify"
+    | "trust-all-server-certs";
 }
 
 /** A newly-added dependency whose install compiles native code (npm node-gyp addon) or has no prebuilt wheel
@@ -333,6 +362,73 @@ export type CiCheckSignalFinding =
   | { checkName: string; kind: "retried-after-failure"; failedAttempts: number }
   | { checkName: string; kind: "long-running-check"; durationMinutes: number };
 
+/** A PR whose head is significantly behind the repo's CURRENT default branch, read from structured GitHub repo
+ *  (`default_branch`) and compare (`behind_by`) API fields only — never diff/file content. A branch far behind
+ *  is more likely to hide a subtle semantic conflict a clean `mergeable` check alone would miss. */
+export interface StaleBranchFinding {
+  defaultBranch: string;
+  behindBy: number;
+}
+
+/** A commit-history hygiene signal, read from structured GitHub PR-commits API fields only (`commit.message`,
+ *  `parents`) — never diff/file content beyond the already-public commit list. `merge-commit-in-history`: a
+ *  commit in the PR has more than one parent (usually the base branch merged into a feature branch instead of a
+ *  rebase). `fixup-commit-present`: a commit subject starts with git's own `fixup!`/`squash!` autosquash marker,
+ *  meant to be squashed before merge. `unattributed-co-author`: a commit message carries a `Co-authored-by:`
+ *  trailer, surfacing multi-author attribution. */
+export type CommitHygieneFinding =
+  | { shaPrefix: string; kind: "merge-commit-in-history" }
+  | { shaPrefix: string; kind: "fixup-commit-present"; subject: string }
+  | { shaPrefix: string; kind: "unattributed-co-author"; coAuthor: string };
+
+/** A reviewer or team (`team:slug`) whose most recent `review_requested` event is still pending (no review
+ *  submitted) 48+ hours later, read from structured GitHub fields only (the requested-reviewers list and the
+ *  issue-timeline's `review_requested` events) — never diff/file content. */
+export interface PendingReviewRequestFinding {
+  reviewer: string;
+  hoursPending: number;
+}
+
+/** How much test change accompanies a PR's source change, computed from `req.files` alone (path + additions) —
+ *  no network, no diff/patch parsing. Emitted only when the source change is material (>= a minimum added-line
+ *  floor) and the test-to-source line ratio is under a configurable threshold (#2024, part of #1499). */
+export interface TestRatioFinding {
+  sourceAdded: number;
+  testAdded: number;
+  sourceFiles: number;
+  testFiles: number;
+  ratio: number;
+  belowThreshold: boolean;
+}
+
+/** A risky schema operation on an added migration-SQL line — a change that can break running deployments
+ *  mid-rollout (#2022, part of #1499). Reports the location + rule kind only, never SQL content. */
+export interface MigrationSafetyFinding {
+  file: string;
+  line: number;
+  kind: "drop" | "rename" | "not-null-no-default" | "blocking-rewrite";
+}
+
+/** A newly-added/changed npm dependency whose version specifier is dangerously loose — a wildcard, the
+ *  `latest` dist-tag, an unbounded `>=` range, or a bare major — letting any future publish flow into the
+ *  next install (#2036, part of #1499). Reports the manifest location, package, raw specifier, and kind. */
+export interface LooseRangeFinding {
+  file: string;
+  line: number;
+  package: string;
+  range: string;
+  kind: "wildcard" | "latest" | "unbounded-gte" | "bare";
+}
+
+/** A non-inclusive term a PR added in an identifier or comment, with the suggested neutral replacement
+ *  (#2031, part of #1499). Reports the location, the matched term, and the suggestion only. */
+export interface TerminologyFinding {
+  file: string;
+  line: number;
+  term: string;
+  suggestion: string;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -360,6 +456,13 @@ export interface BriefFindings {
   approvalIntegrity?: ApprovalIntegrityFinding[];
   ciCheckSignals?: CiCheckSignalFinding[];
   undocumentedExport?: UndocumentedExportFinding[];
+  staleBranch?: StaleBranchFinding[];
+  commitHygiene?: CommitHygieneFinding[];
+  pendingReviewRequests?: PendingReviewRequestFinding[];
+  testRatio?: TestRatioFinding[];
+  migrationSafety?: MigrationSafetyFinding[];
+  looseRange?: LooseRangeFinding[];
+  terminology?: TerminologyFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

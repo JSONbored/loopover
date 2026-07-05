@@ -157,6 +157,19 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(excludeBindArg).toBe("");
   });
 
+  it("clamps review accuracy to 0 when reopened auto-closes push reversals above the decided count", async () => {
+    // JSONbored/gittensory: 1 auto-merge that held, plus 2 auto-closes that were reopened (now open, so out
+    // of merged+closed but still counted as reversals). decided=1, reversed=2 → an unclamped 1 - 2/1 = -100%.
+    const handler = (sql: string): Row[] => {
+      if (isDispositions(sql)) return [{ project: "JSONbored/gittensory", reviewed: 3, merged: 1, closed: 0, inReview: 2 }];
+      if (isReversal(sql)) return [{ project: "JSONbored/gittensory", reversed: 2 }];
+      return [];
+    };
+    const out = await getPublicStats(stubEnv(handler), NOW);
+    expect(out.byProject[0]!.accuracyPct).toBe(0);
+    expect(out.totals.accuracyPct).toBe(0);
+  });
+
   it("publishes only projects from the reviewed-repo allowlist", async () => {
     const out = await getPublicStats(
       stubEnv((sql, args) => {

@@ -3,6 +3,7 @@ import {
   fetchBrokeredInstallationToken,
   isOrbBrokerMode,
 } from "../orb/broker-client";
+import { updateInstallationPermissions } from "../db/repositories";
 import {
   clearGitHubResponseCacheForTest,
   githubRateLimitAdmissionKeyForInstallation,
@@ -131,10 +132,12 @@ const inFlightMints = new Map<number, Promise<string>>();
 export async function createInstallationToken(
   env: Env,
   installationId: number,
+  options: { forceRefresh?: boolean } = {},
 ): Promise<string> {
   const cached = await readCachedToken(installationId);
-  if (cached && cached.expiresAtMs - TOKEN_SAFETY_MARGIN_MS > Date.now())
+  if (!options.forceRefresh && cached && cached.expiresAtMs - TOKEN_SAFETY_MARGIN_MS > Date.now())
     return cached.token;
+  if (options.forceRefresh) return mintInstallationToken(env, installationId, cached, true);
   const existing = inFlightMints.get(installationId);
   if (existing) return existing; // a concurrent caller is already minting for this install — join it
   const mint = mintInstallationToken(env, installationId, cached).finally(() => {
@@ -157,6 +160,10 @@ export function isGitHubBadCredentialsError(error: unknown): boolean {
   return status === 401 || /bad credentials/i.test(errorMessage(error));
 }
 
+function isGitHubInstallationPermissionError(error: unknown): boolean {
+  return githubErrorStatus(error) === 403 && /resource not accessible by integration|not have permission/i.test(errorMessage(error));
+}
+
 async function expireCachedInstallationToken(
   installationId: number,
   rejectedToken: string,
@@ -175,7 +182,8 @@ export async function withInstallationTokenRetry<T>(
   try {
     return await operation(token);
   } catch (error) {
-    if (!isGitHubBadCredentialsError(error)) throw error;
+    const refreshForPermission = isGitHubInstallationPermissionError(error);
+    if (!isGitHubBadCredentialsError(error) && !refreshForPermission) throw error;
     await expireCachedInstallationToken(installationId, token).catch(
       () => undefined,
     );
@@ -185,10 +193,11 @@ export async function withInstallationTokenRetry<T>(
         event: "github_installation_token_rejected",
         installationId,
         status: githubErrorStatus(error),
+        reason: refreshForPermission ? "permission_scope" : "bad_credentials",
         message: errorMessage(error).slice(0, 200),
       }),
     );
-    const freshToken = await createInstallationToken(env, installationId);
+    const freshToken = await createInstallationToken(env, installationId, { forceRefresh: refreshForPermission });
     return await operation(freshToken);
   }
 }
@@ -215,6 +224,7 @@ async function mintInstallationToken(
   env: Env,
   installationId: number,
   cached: { token: string; expiresAtMs: number } | null,
+  forceRefresh = false,
 ): Promise<string> {
   // Self-host broker mode: a brokered self-host holds no App private key, so source the installation token from
   // the central Orb (enrollment secret → short-lived token) instead of minting locally. Cloud sets no enrollment
@@ -222,11 +232,23 @@ async function mintInstallationToken(
   // self-host's single bound install). See src/orb/broker-client.
   if (isOrbBrokerMode(env)) {
     try {
-      const brokered = await fetchBrokeredInstallationToken(env);
+      const brokered = await fetchBrokeredInstallationToken(env, fetch, { forceRefresh });
       await writeCachedToken(installationId, {
         token: brokered.token,
         expiresAtMs: brokered.expiresAtMs,
       });
+      if (brokered.installationId === installationId && Object.keys(brokered.permissions).length > 0) {
+        await updateInstallationPermissions(env, installationId, brokered.permissions).catch((error) => {
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              event: "github_installation_permissions_update_failed",
+              installationId,
+              message: errorMessage(error).slice(0, 200),
+            }),
+          );
+        });
+      }
       return brokered.token;
     } catch (error) {
       // Stale-token grace (#2): a brokered self-host holds no App key, so without this a single Orb mint failure
@@ -234,7 +256,7 @@ async function mintInstallationToken(
       // token is STILL within its real expiry, serve it — a valid token beats a stalled review (NO dangerous reuse:
       // an actually-expired token is never served). Otherwise emit an alertable structured log and rethrow so the
       // queue's retry/DLQ handles a genuine outage.
-      if (cached && cached.expiresAtMs > Date.now()) {
+      if (!forceRefresh && cached && cached.expiresAtMs > Date.now()) {
         console.warn(
           JSON.stringify({
             level: "warn",
@@ -484,9 +506,20 @@ function hasNextWorkflowRunPage(link: string | null): boolean {
 // per-branch coverage tracking attributes hits correctly across repeated loop iterations with early returns
 // -- an inline loop body with early `return`s inside a `for` inside an `async function` can under-report the
 // "condition false" side of a branch even when it demonstrably executes (confirmed via a live debug trace).
+type WorkflowRunListItem = {
+  id: number;
+  event?: string | null;
+  pull_requests?: Array<{ number?: number | null } | null> | null;
+};
+
+function workflowRunBelongsToPull(run: WorkflowRunListItem, pullNumber: number): boolean {
+  return (run.event === "pull_request" || run.event === "pull_request_target") && (run.pull_requests ?? []).some((pull) => pull?.number === pullNumber);
+}
+
 async function listWorkflowRunIdsForStatus(
   repoPath: string,
   headSha: string,
+  pullNumber: number,
   status: "in_progress" | "queued",
   fetchOptions: ActionsRunFetchOptions,
 ): Promise<{ kind: "ids"; ids: number[] } | { kind: "permission_missing"; warning: string } | { kind: "error"; warning: string }> {
@@ -503,8 +536,8 @@ async function listWorkflowRunIdsForStatus(
       }
       return { kind: "error", warning: `Failed to list workflow runs (${response.status}): ${message || "unknown error"}` };
     }
-    const payload = (await response.json()) as { workflow_runs?: Array<{ id: number }> };
-    ids.push(...(payload.workflow_runs ?? []).map((run) => run.id));
+    const payload = (await response.json()) as { workflow_runs?: WorkflowRunListItem[] };
+    ids.push(...(payload.workflow_runs ?? []).filter((run) => workflowRunBelongsToPull(run, pullNumber)).map((run) => run.id));
     if (!hasNextWorkflowRunPage(response.headers.get("link"))) break;
   }
   return { kind: "ids", ids };
@@ -542,6 +575,7 @@ export async function cancelInFlightWorkflowRunsForHeadSha(
   installationId: number,
   repoFullName: string,
   headSha: string,
+  pullNumber: number,
 ): Promise<CancelWorkflowRunsOutcome> {
   const [owner, repo] = repoFullName.split("/");
   if (!owner || !repo) return { kind: "error", warning: `Invalid repository full name: ${repoFullName}` };
@@ -555,7 +589,7 @@ export async function cancelInFlightWorkflowRunsForHeadSha(
     };
     const runIds = new Set<number>();
     for (const status of ["in_progress", "queued"] as const) {
-      const listed = await listWorkflowRunIdsForStatus(repoPath, headSha, status, fetchOptions);
+      const listed = await listWorkflowRunIdsForStatus(repoPath, headSha, pullNumber, status, fetchOptions);
       if (listed.kind !== "ids") return listed;
       for (const id of listed.ids) runIds.add(id);
     }

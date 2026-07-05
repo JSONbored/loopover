@@ -12,64 +12,13 @@ import type {
 } from "../types.js";
 import type { AnalysisContext } from "../analysis-context.js";
 import { boundedFetchJson } from "../external-fetch.js";
+import { isBinaryFileExtension } from "./binary-extensions.js";
 
 const MAX_FINDINGS = 50; // keep the brief bounded after evaluating every changed binary candidate
 const MAX_PATH_SIZE_LOOKUPS = 50; // fallback Contents API calls when a recursive tree is truncated
 const THRESHOLD_BYTES = 100 * 1024; // flag a newly-added blob >= 100 KB, or growth >= 100 KB
 const GITHUB_API = "https://api.github.com";
 const GITHUB_API_VERSION = "2022-11-28";
-
-// Extensions that are genuinely binary (text formats like .svg/.json are excluded — their bytes are in the diff).
-const BINARY_EXTS = new Set([
-  "png",
-  "jpg",
-  "jpeg",
-  "gif",
-  "bmp",
-  "tiff",
-  "tif",
-  "ico",
-  "webp",
-  "avif",
-  "woff",
-  "woff2",
-  "ttf",
-  "otf",
-  "eot",
-  "mp4",
-  "mov",
-  "avi",
-  "webm",
-  "mkv",
-  "mp3",
-  "wav",
-  "flac",
-  "ogg",
-  "zip",
-  "tar",
-  "gz",
-  "tgz",
-  "bz2",
-  "7z",
-  "rar",
-  "xz",
-  "pdf",
-  "psd",
-  "ai",
-  "sketch",
-  "fig",
-  "xcf",
-  "exe",
-  "dll",
-  "so",
-  "dylib",
-  "bin",
-  "dat",
-  "wasm",
-  "node",
-  "jar",
-  "class",
-]);
 
 interface ScanOptions {
   signal?: AbortSignal;
@@ -82,14 +31,18 @@ interface ScanOptions {
 const REPO_SEGMENT = /^[A-Za-z0-9._-]+$/;
 const SHA_RE = /^[0-9a-fA-F]{7,64}$/;
 
-function isBinaryAsset(path: string): boolean {
+/** True when a path's extension is a genuinely binary asset (image/font/media/archive/binary). Text formats
+ *  like .svg/.json are deliberately excluded — their bytes are already in the textual diff. Pure. */
+export function isBinaryAsset(path: string): boolean {
   const dot = path.lastIndexOf(".");
-  return dot >= 0 && BINARY_EXTS.has(path.slice(dot + 1).toLowerCase());
+  return dot >= 0 && isBinaryFileExtension(path.slice(dot + 1));
 }
 
 type EnrichFile = NonNullable<EnrichRequest["files"]>[number];
 
-function basePathForGrowth(file: EnrichFile): string | null {
+/** The base-side path to measure growth against: the same path for a modified/changed file, the pre-rename
+ *  path for a rename, and null for anything else (added/removed have no comparable base size). Pure. */
+export function basePathForGrowth(file: EnrichFile): string | null {
   if (file.status === "modified" || file.status === "changed") return file.path;
   if (file.status === "renamed") return file.previousPath || null;
   return null;
@@ -104,7 +57,9 @@ function githubHeaders(token: string): Record<string, string> {
   };
 }
 
-function encodeRepoPath(path: string): string | null {
+/** Percent-encode each segment of a repo path for a Contents API URL, rejecting (null) an empty path or any
+ *  empty / `.` / `..` segment so a crafted path can never traverse out of the tree. Pure. */
+export function encodeRepoPath(path: string): string | null {
   const segments = path.split("/");
   if (!path || segments.some((seg) => !seg || seg === "." || seg === "..")) {
     return null;
@@ -128,8 +83,10 @@ async function fetchGithubJson<T>(
     diagnostics: options.diagnostics,
     phase: "asset-weight",
     subcall: endpointCategory,
-    maxBytes: endpointCategory === "github-trees" ? 4 * 1024 * 1024 : 256 * 1024,
-    maxCallsPerCategory: endpointCategory === "github-contents" ? MAX_PATH_SIZE_LOOKUPS : 2,
+    maxBytes:
+      endpointCategory === "github-trees" ? 4 * 1024 * 1024 : 256 * 1024,
+    maxCallsPerCategory:
+      endpointCategory === "github-contents" ? MAX_PATH_SIZE_LOOKUPS : 2,
   };
   const response = options.analysis
     ? await options.analysis.fetchJson<T>(url, fetchOptions)
@@ -198,14 +155,9 @@ async function fetchPathSizes(
     const encodedPath = encodeRepoPath(path);
     if (!encodedPath) continue;
     const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodedPath}?ref=${encodeURIComponent(sha)}`;
-    const json = await fetchGithubJson<{ type?: string; size?: number } | unknown[]>(
-      url,
-      token,
-      fetchImpl,
-      signal,
-      options,
-      "github-contents",
-    );
+    const json = await fetchGithubJson<
+      { type?: string; size?: number } | unknown[]
+    >(url, token, fetchImpl, signal, options, "github-contents");
     if (!json) continue;
     if (!Array.isArray(json) && typeof json.size === "number") {
       sizes.set(path, json.size);
@@ -224,9 +176,26 @@ async function fetchRelevantSizes(
   signal: AbortSignal | undefined,
   options: ScanOptions,
 ): Promise<Map<string, number>> {
-  const tree = await fetchTreeSizes(owner, repo, sha, token, fetchImpl, signal, options);
+  const tree = await fetchTreeSizes(
+    owner,
+    repo,
+    sha,
+    token,
+    fetchImpl,
+    signal,
+    options,
+  );
   if (!tree.truncated) return tree.sizes;
-  return fetchPathSizes(owner, repo, sha, token, paths, fetchImpl, signal, options);
+  return fetchPathSizes(
+    owner,
+    repo,
+    sha,
+    token,
+    paths,
+    fetchImpl,
+    signal,
+    options,
+  );
 }
 
 /** Analyzer entrypoint: flag heavy binary assets the PR adds or grows past the threshold. Pure size arithmetic over
@@ -265,11 +234,11 @@ export async function scanAssetWeight(
           repo.repo,
           req.baseSha,
           token,
-      basePaths,
-      fetchImpl,
-      options.signal,
-      options,
-    )
+          basePaths,
+          fetchImpl,
+          options.signal,
+          options,
+        )
       : new Map<string, number>();
 
   const findings: AssetWeightFinding[] = [];

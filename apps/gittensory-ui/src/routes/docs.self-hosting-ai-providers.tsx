@@ -81,12 +81,26 @@ OPENAI_COMPATIBLE_AI_MODEL=llama3.1`}
 
       <h2>Fallback and dual review</h2>
       <p>
-        A comma-list can be a fallback chain or a two-reviewer plan. With two available providers,
-        <code>AI_COMBINE</code> controls how decisions are combined.
+        A comma-list is a fallback chain by default. Use this for subscription CLIs when you want
+        Codex first and Claude Code only when Codex is unavailable or out of tokens.
       </p>
       <CodeBlock
-        filename=".env"
+        filename=".env — fallback chain"
+        code={`AI_PROVIDER=codex,claude-code
+CODEX_AI_EFFORT=medium
+CLAUDE_AI_EFFORT=medium
+CLAUDE_CODE_OAUTH_TOKEN=
+GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1`}
+      />
+      <p>
+        Set <code>AI_DUAL_REVIEW=1</code> only when you want the first two providers to run as
+        independent reviewers on every PR. In dual-review mode, <code>AI_COMBINE</code> controls how
+        decisions are combined.
+      </p>
+      <CodeBlock
+        filename=".env — dual review"
         code={`AI_PROVIDER=anthropic,ollama
+AI_DUAL_REVIEW=1
 AI_COMBINE=synthesis
 AI_ON_MERGE=either`}
       />
@@ -95,7 +109,7 @@ AI_ON_MERGE=either`}
           {
             title: "single",
             description:
-              "One reviewer verdict. This is the automatic mode when one provider is configured.",
+              "One reviewer verdict. This is the automatic mode for one provider or a fallback chain.",
           },
           {
             title: "consensus",

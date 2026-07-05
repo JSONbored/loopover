@@ -53,12 +53,15 @@ function extractRepoEntries(payload: unknown): Array<[string, RawRepoConfig]> {
 }
 
 function normalizeRepo(repo: string, config: RawRepoConfig): RegistryRepoConfig {
+  // Same finiteness bar as numberValue() below (typeof "number" alone lets NaN/Infinity through) -- a label
+  // multiplier reaches scoring.preview's selectLabelMultiplier as a raw map value, never through numberValue,
+  // so this is the only place a non-finite entry could otherwise slip past this repo's own boundary.
   const rawLabelMultipliers = config.label_multipliers;
   const labelMultipliers =
     rawLabelMultipliers && typeof rawLabelMultipliers === "object" && !Array.isArray(rawLabelMultipliers)
       ? Object.fromEntries(
           Object.entries(rawLabelMultipliers).flatMap(([key, value]) =>
-            typeof value === "number" ? [[key, value] as [string, number]] : [],
+            typeof value === "number" && Number.isFinite(value) ? [[key, value] as [string, number]] : [],
           ),
         )
       : {};

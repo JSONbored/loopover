@@ -186,3 +186,10 @@ test("scanUndocumentedExport: no token or no headSha → skipped (no finding, no
   assert.deepEqual(await scanUndocumentedExport(req(files, { githubToken: undefined }), headFetch(HEAD)), []);
   assert.deepEqual(await scanUndocumentedExport(req(files, { headSha: undefined }), headFetch(HEAD)), []);
 });
+
+test("parseAddedExports: an added content line rendered as '+++...' is not mistaken for a diff header", () => {
+  // git renders an added source line "++x;" as "+" + "++x;" = "+++x;". The old startsWith("+++") guard skipped
+  // it as if it were a "+++ b/path" file header, failing to advance the new-file cursor and mis-numbering foo.
+  const patch = ["@@ -1,1 +1,2 @@", "+++x;", "+export function foo() {}"].join("\n");
+  assert.deepEqual(parseAddedExports(patch), [{ symbol: "foo", newLine: 2 }]);
+});

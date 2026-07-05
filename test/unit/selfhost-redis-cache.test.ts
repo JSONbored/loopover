@@ -1,6 +1,6 @@
 import type { Redis } from "ioredis";
 import { describe, expect, it } from "vitest";
-import { createRedisCache } from "../../src/selfhost/redis-cache";
+import { assertSelfhostTransientCacheOwnershipRelease, createRedisCache } from "../../src/selfhost/redis-cache";
 
 /** Minimal in-memory stand-in for the ioredis methods the cache uses. Emulates real Redis SET NX
  *  semantics (refuse + return null when NX is requested and the key already exists) so a test
@@ -18,6 +18,12 @@ function fakeRedis(): Redis & { _store: Map<string, string> } {
       return "OK";
     },
     async del(k: string) {
+      _store.delete(k);
+      return 1;
+    },
+    // Emulates the Lua eval releaseIfValue runs: delete k only when its stored value equals the expected arg.
+    async eval(_script: string, _numkeys: number, k: string, expected: string) {
+      if (_store.get(k) !== expected) return 0;
       _store.delete(k);
       return 1;
     },
@@ -62,5 +68,32 @@ describe("createRedisCache (#1216 webhook dedup cache)", () => {
     const brokenRedis = { async set() { throw new Error("connection refused"); } } as unknown as Redis;
     const cache = createRedisCache(brokenRedis);
     await expect(cache.claim("lock", "1", 60)).rejects.toThrow("connection refused");
+  });
+
+  it("releaseIfValue deletes the key only when the stored value matches the caller's own token (#2129)", async () => {
+    const r = fakeRedis();
+    const cache = createRedisCache(r);
+    await cache.set("lock", "holder-a", 60);
+    // A stale/different holder's token does not match — the live key is left untouched.
+    expect(await cache.releaseIfValue("lock", "holder-b")).toBe(false);
+    expect(await cache.get("lock")).toBe("holder-a");
+    // The genuine owner's token matches — the key is removed.
+    expect(await cache.releaseIfValue("lock", "holder-a")).toBe(true);
+    expect(await cache.get("lock")).toBeNull();
+  });
+
+  it("releaseIfValue propagates a Redis error to the caller (releaseTransientLockIfOwner treats this as best-effort)", async () => {
+    const brokenRedis = { async eval() { throw new Error("connection refused"); } } as unknown as Redis;
+    const cache = createRedisCache(brokenRedis);
+    await expect(cache.releaseIfValue("lock", "1")).rejects.toThrow("connection refused");
+  });
+
+  it("assertSelfhostTransientCacheOwnershipRelease rejects claim() without releaseIfValue at boot (#3153)", () => {
+    expect(() =>
+      assertSelfhostTransientCacheOwnershipRelease({
+        claim: async () => true,
+      }),
+    ).toThrow(/releaseIfValue/);
+    expect(() => assertSelfhostTransientCacheOwnershipRelease(createRedisCache(fakeRedis()))).not.toThrow();
   });
 });

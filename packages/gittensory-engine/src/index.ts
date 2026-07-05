@@ -93,6 +93,23 @@ export {
   type FindingSeverityTierSignal,
 } from "./finding-severity-calibration.js";
 export {
+  computeReviewerConsensusCompositeCalibrationScore,
+  ingestReviewerConsensusCalibrationSignals,
+  renderReviewerConsensusCalibrationAuditMarkdown,
+  resolveReviewerConsensusCalibrationConfig,
+  type ReviewerConsensusCalibrationConfig,
+  type ReviewerConsensusCalibrationIngestion,
+  type ReviewerConsensusCalibrationManifest,
+  type ReviewerConsensusCalibrationSignal,
+  type ReviewerConsensusCalibrationSignalInput,
+  type ReviewerConsensusCalibrationWeights,
+  type ReviewerConsensusCompositeCalibrationScore,
+  type ReviewerConsensusDimension,
+  type ReviewerConsensusDimensionInput,
+  type ReviewerConsensusDimensionSignal,
+  type ReviewerConsensusVote,
+} from "./reviewer-consensus-calibration.js";
+export {
   computeTrackRecordSummary,
   renderTrackRecordSummaryMarkdown,
   resolveTrackRecordSummaryConfig,

@@ -442,6 +442,75 @@ repo was not opted in, had invalid ids, or exposed no recognized non-empty tiers
 with component scores, effective weights, contributing repos, per-tier tables, rejected rows, and a contributing-repo
 summary. All caller-supplied ids and repo names are Markdown-escaped and newline-collapsed before rendering.
 
+## Structured reviewer-consensus calibration
+
+`resolveReviewerConsensusCalibrationConfig()`, `ingestReviewerConsensusCalibrationSignals()`, and
+`computeReviewerConsensusCompositeCalibrationScore()` provide the pure engine contract for the opt-in
+reviewer-consensus calibration signal. When a review runs more than one independent reviewer (multiple models, or the
+same model sampled multiple times), each reviewer casts a per-dimension verdict; this signal measures how much they
+**agree**. It is a companion to the pairwise judge (which measures order-stability of a single judge) at the level of
+independent reviewers, and — like the rest of the family — the engine contract is deliberately default-off and safe to
+call at ingestion time.
+
+The preferred config-as-code surface is:
+
+```yaml
+miner:
+  calibration:
+    shareStructuredReviewerConsensus: true
+    structuredReviewerConsensusWeight: 0.2
+```
+
+Only `shareStructuredReviewerConsensus: true` enables ingestion. Missing, malformed, or falsey values all fail closed to
+no sharing. `calibration.shareStructuredReviewerConsensus` is accepted as a narrow top-level alias. The optional weight
+is non-negative and finite; malformed values fall back to the default.
+
+The accepted signal is intentionally narrow: repo/run ids plus, per dimension (`correctness`, `tests`, `security`,
+`maintainability`, `scope`, `freshness`, `ci`, `policy`), the set of independent reviewer votes (`pass`/`warn`/`fail`).
+It has no fields for raw review text, secrets, trust scores, reward values, private rankings, or maintainer evidence.
+
+```ts
+import {
+  computeReviewerConsensusCompositeCalibrationScore,
+  ingestReviewerConsensusCalibrationSignals,
+} from "@jsonbored/gittensory-engine";
+
+const reviewerConsensus = ingestReviewerConsensusCalibrationSignals([
+  {
+    repoFullName: "jsonbored/gittensory",
+    replayRunId: "replay-2026-07-05",
+    reviewRunId: "review-123",
+    optedIn: true,
+    dimensions: [
+      { dimension: "correctness", votes: ["pass", "pass", "pass"] },
+      { dimension: "security", votes: ["fail", "warn", "fail"] },
+    ],
+  },
+]);
+
+const score = computeReviewerConsensusCompositeCalibrationScore({
+  objectiveAnchor: 0.65,
+  pairwise: 0.8,
+  reviewerConsensus,
+});
+```
+
+Per dimension, unrecognized and abstention votes are dropped, the remaining votes are tallied, the plurality outcome is
+chosen (ties broken toward the more severe outcome so a genuine split never rounds a real `fail`/`warn` down to `pass`),
+and the **agreement** fraction is the plurality's share of the definite votes. The per-PR score is the
+**vote-count-weighted** mean of the per-dimension agreements, so a dimension reviewed by more reviewers carries more
+weight than one seen by a single reviewer.
+
+The composite scorer renormalizes weights when a signal is absent: if a repo opts out or no dimension carries a definite
+vote, the structured reviewer-consensus weight drops to zero and the objective/pairwise signals are renormalized. The
+returned audit trail records which opted-in repos contributed and which rows were rejected because the repo was not
+opted in, had invalid ids, or exposed no definite per-dimension votes.
+
+`renderReviewerConsensusCalibrationAuditMarkdown(result)` turns the composite result into a deterministic local artifact
+with component scores, effective weights, contributing repos, per-dimension agreement tables, rejected rows, and a
+contributing-repo summary. All caller-supplied ids and repo names are Markdown-escaped and newline-collapsed before
+rendering.
+
 ## Plan templates
 
 `plan-templates.ts` exports one builder per miner lifecycle stage (`analyze`, `plan`, `prepare`, `create`, `manage`).

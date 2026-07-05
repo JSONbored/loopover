@@ -201,6 +201,8 @@ Run the matching command(s) and **commit the regenerated file(s)** — CI fails 
 | A Cloudflare binding/var in `wrangler.jsonc` | `npm run cf-typegen` | `worker-configuration.d.ts` |
 | Drizzle schema (`src/db/schema.ts`) | `npm run drizzle:generate` | the new `migrations/NNNN_*.sql` |
 | Added a raw-SQL migration | (none — just author it) | next **contiguous** `migrations/NNNN_snake.sql` |
+| `src/selfhost/**` (or a few other scanned files — see `scripts/gen-selfhost-env-reference.mjs`'s `DEFAULT_SOURCE_ROOTS`) touching an `env.SOMETHING` read | `npm run selfhost:env-reference` | `apps/gittensory-ui/src/lib/selfhost-env-reference.ts` — the doc embeds `file:line` citations, so even an edit that only shifts line numbers (no var added/removed) goes stale |
+| CLI command surface | `npm run command-reference` | the generated command-reference doc |
 | UI files (`apps/gittensory-ui/**`) | `npm --workspace @jsonbored/gittensory-ui run format` | formatted files |
 
 Migrations must use the **next free number** (contiguous, no gaps, no reuse) and match
@@ -216,10 +218,14 @@ npm run test:ci                           # the entire CI gate, in one command (
 npm audit --audit-level=moderate          # the dependency-review job's local equivalent
 ```
 
-`npm run test:ci` runs, and must pass, **all of**: `actionlint`, `db:migrations:check`, `typecheck`,
-`test:coverage`, `test:workers`, `build:mcp`, `test:mcp-pack`, `ui:openapi:check`, `ui:version-audit`,
-`ui:lint`, `ui:typecheck`, `ui:test`, `ui:build`. If any step fails, fix it and re-run — do not push a
-red tree. (Full per-check table in `reference.md`.)
+`npm run test:ci` runs, and must pass, **all of**: `actionlint`, `db:migrations:check`,
+`db:schema-drift:check`, `selfhost:env-reference:check`, `selfhost:validate-observability`,
+`cf-typegen:check`, `typecheck`, `test:coverage`, `test:workers`, `build:mcp`, `test:mcp-pack`,
+`build:miner`, `test:miner-pack`, `rees:test`, `ui:openapi:check`, `ui:openapi:settings-parity`,
+`ui:version-audit`, `docs:drift-check`, `command-reference:check`, `ui:lint`, `ui:typecheck`,
+`ui:test`, `ui:build`. If any step fails, fix it and re-run — do not push a red tree. (Full
+per-check table in `reference.md`; check `package.json`'s own `test:ci` script if this list and
+that script ever disagree — the script is the source of truth.)
 
 If `ui:lint` fails on formatting, run `npm --workspace @jsonbored/gittensory-ui run format`. If
 `ui:openapi:check` fails, you forgot Phase 4's `ui:openapi`.

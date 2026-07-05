@@ -27,14 +27,22 @@ path filter matched; on push to `main`, everything runs.
 | lint → actionlint | workflow lint | `npm run actionlint` | any `.github/workflows/*.yml` violation |
 | lint → migrations | migration guard | `npm run db:migrations:check` | duplicate/gap/misnamed migration number |
 | lint → cf-typegen | worker types drift | `npm run cf-typegen:check` | committed `worker-configuration.d.ts` is stale (run `npm run cf-typegen`) |
+| lint → schema-drift | `src/db/schema.ts` vs `migrations/` | `npm run db:schema-drift:check` | a Drizzle table's schema doesn't match the migration history |
+| lint → selfhost-env-reference | self-host env-var doc drift | `npm run selfhost:env-reference:check` | committed `apps/gittensory-ui/src/lib/selfhost-env-reference.ts` is stale (run `npm run selfhost:env-reference`) — triggers on ANY edit to `src/selfhost/**` (+ a few other scanned files) that adds/removes an env var read OR just shifts line numbers of an existing one, since the doc embeds `file:line` citations |
+| lint → observability | Grafana/Prometheus/alert config validation | `npm run selfhost:validate-observability` | a self-host observability config (dashboard/rule/datasource) is malformed |
 | lint → typecheck | `tsc --noEmit` | `npm run typecheck` | any backend type error |
 | test (1/2) | sharded vitest + coverage | `npm run test:coverage` (unsharded) | any failing `test/**/*.test.ts` (excl. `test/workers/**`) |
 | workers | workers-pool vitest | `npm run test:workers` | any failing `test/workers/**` |
 | mcp → build | MCP pkg build | `npm run build:mcp` | MCP package build error |
 | mcp → pack | tarball hygiene | `npm run test:mcp-pack` | unexpected/forbidden file or stale README in the npm tarball |
+| miner → build | miner engine/pkg build | `npm run build:miner` | `@jsonbored/gittensory-{engine,miner}` build error |
+| miner → pack | tarball hygiene | `npm run test:miner-pack` | unexpected/forbidden file in the miner npm tarball |
+| rees → test | review-enrichment-service's own suite | `npm run rees:test` | any failing test under `review-enrichment/` |
 | ui → openapi drift | spec check | `npm run ui:openapi:check` | committed `openapi.json` is stale (run `npm run ui:openapi`) |
 | ui → openapi settings-parity | schema/type structural diff | `npm run ui:openapi:settings-parity` | `RepositorySettingsSchema` (src/openapi/schemas.ts) is missing a field the `RepositorySettings` type has |
 | ui → version audit | MCP version copy | `npm run ui:version-audit` | stale MCP version strings / non-`@latest` install copy (hits npm registry) |
+| docs → drift | doc/code claim checker | `npm run docs:drift-check` | a doc makes a claim the mechanical lint can verify is now false |
+| docs → command-reference | generated CLI reference drift | `npm run command-reference:check` | committed command-reference doc is stale (run `npm run command-reference`) |
 | ui → lint | `eslint .` (UI) | `npm run ui:lint` | ESLint **incl. Prettier formatting** + design-token rules |
 | ui → typecheck | `tsc --noEmit` (UI) | `npm run ui:typecheck` | UI type error |
 | ui → tests | vitest jsdom (UI) | `npm run ui:test` | failing UI component test |

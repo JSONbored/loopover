@@ -25,8 +25,10 @@ process evolves — edits to those files improve both Claude Code and Codex.
    Measure coverage **unsharded** with `npm run test:coverage` (CI shards + merges, so a single shard
    under-reports).
 4. **Regenerate and commit generated artifacts:** `npm run ui:openapi` (API/schema changes),
-   `npm run cf-typegen` (wrangler binding/var changes), and a contiguous `migrations/NNNN_*.sql`
-   (DB changes). Stale generated files fail CI.
+   `npm run cf-typegen` (wrangler binding/var changes), `npm run selfhost:env-reference` (any
+   `env.SOMETHING` read added/removed/line-shifted under `src/selfhost/**`), and a contiguous
+   `migrations/NNNN_*.sql` (DB changes). Stale generated files fail CI (see `reference.md`'s full
+   check table for the complete list — `test:ci` runs more drift checks than these three).
 5. **House rules:** Conventional Commits, **no AI/Claude/agent attribution** in commits or PR text;
    no secrets / wallets / hotkeys / trust scores / reward values anywhere; stay inside `wantedPaths`
    and out of `site/`, `CNAME`, `**/lovable/**`; never edit `CHANGELOG.md` in a normal PR.

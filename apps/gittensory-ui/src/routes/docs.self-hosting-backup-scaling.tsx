@@ -183,15 +183,13 @@ docker compose --profile backup run --rm backup sh /verify-backup.sh /backups/po
 
       <h2>Restore drill: what "restore-tested" actually verifies</h2>
       <p>
-        This exact flow was run against a real production backup on a live instance on 2026-07-04
-        (backup <code>gittensory-20260704T090939Z.dump</code>): the dump was restored into a
-        throwaway, network-isolated scratch database (a separate container, never the live one),
-        which the script's own identity check confirmed was distinct from the backup source before
-        touching anything. The restore completed cleanly and, at the time of this drill, repopulated
-        all 84 application tables, including the largest operational tables with their full row
-        counts intact (hundreds of thousands of rows in the biggest tables) — not just an empty
-        schema. Table and row counts will grow over time; treat them as a point-in-time result, not
-        an invariant.
+        This exact flow has been run against a real production backup on a live instance: the dump
+        was restored into a throwaway, network-isolated scratch database (a separate container,
+        never the live one), which the script's own identity check confirmed was distinct from the
+        backup source before touching anything. The restore completed cleanly and repopulated the
+        application tables with representative production-scale data — not just an empty schema.
+        Table and row counts will grow over time; treat restore-drill observations as point-in-time
+        results, not invariants.
       </p>
       <p>
         This proves the backup content and the restore path both work end-to-end against real data.

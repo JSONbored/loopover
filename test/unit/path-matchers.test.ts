@@ -41,7 +41,7 @@ describe("isGeneratedFile", () => {
   it("matches source maps for every first-class JS/TS bundle extension", () => {
     // `.mjs`/`.cjs` are recognized code extensions (isCodeFile), so their bundlers' source
     // maps are generated output too — the same as `.js.map` / `.tsx.map`.
-    for (const path of ["dist/bundle.mjs.map", "dist/bundle.cjs.map", "lib/index.jsx.map"]) {
+    for (const path of ["dist/bundle.mjs.map", "dist/bundle.cjs.map", "lib/index.jsx.map", "dist/loader.mts.map", "dist/setup.cts.map"]) {
       expect(isGeneratedFile(path)).toBe(true);
     }
   });

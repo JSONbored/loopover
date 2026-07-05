@@ -15,7 +15,7 @@ const JS_TS_PATH_RE = /\.(?:tsx?|jsx?|mts|cts|cjs|mjs)$/i;
 const HANDLED_PREFIX =
   /^\s*(?:await\b|return\b|void\b|throw\b|if\b|for\b|while\b|switch\b|case\b|else\b|try\b|catch\b|finally\b|import\b|export\b|const\b|let\b|var\b|type\b|interface\b|class\b|function\b|async\s+function\b)/;
 
-const PROMISE_CHAIN_RE = /\.(?:then|catch|finally)\s*\(/;
+const PROMISE_CHAIN_RE = /\.(?:then|catch)\s*\(/;
 
 function isJsTsPath(path: string): boolean {
   return JS_TS_PATH_RE.test(path) && !isTestPath(path);

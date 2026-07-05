@@ -3326,6 +3326,26 @@ describe("createSqliteQueue (durable #980)", () => {
       );
     });
 
+    it("logs a deferred maintenance admission at info level, not warn (#selfhost-backpressure-noise)", async () => {
+      const driver = makeDriver();
+      const logged = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const q = createSqliteQueue(driver, async () => undefined);
+      seedLiveRows(driver, 6); // default threshold is 5
+      await q.binding.send(msg("build-contributor-evidence"));
+      await q.drain();
+
+      expect(warned).not.toHaveBeenCalled();
+      expect(logged).toHaveBeenCalledWith(
+        expect.stringContaining('"event":"selfhost_queue_maintenance_admission_deferred"'),
+      );
+      expect(JSON.parse(logged.mock.calls.at(-1)?.[0] as string)).toMatchObject({
+        level: "info",
+        event: "selfhost_queue_maintenance_admission_deferred",
+        reason: "live_pending_high",
+      });
+    });
+
     it("admits a maintenance job immediately when pressure is clear", async () => {
       const driver = makeDriver();
       const started: string[] = [];

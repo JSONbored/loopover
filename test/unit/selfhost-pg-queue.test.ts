@@ -3209,6 +3209,27 @@ describe("createPgQueue (durable #977)", () => {
       );
     });
 
+    it("logs a deferred maintenance admission at info level, not warn (#selfhost-backpressure-noise)", async () => {
+      const m = makePool();
+      m.setPressureSignals({ live: { cnt: 6, oldest: now } }); // default threshold is 5
+      m.enqueueResult({ rows: [], rowCount: 0 }); // empty foreground claim
+      m.enqueueResult({ rows: [maintenanceRow], rowCount: 1 }); // background claim
+      const logged = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const q = createPgQueue(m.pool, async () => undefined);
+      await q.drain();
+
+      expect(warned).not.toHaveBeenCalled();
+      expect(logged).toHaveBeenCalledWith(
+        expect.stringContaining('"event":"selfhost_queue_maintenance_admission_deferred"'),
+      );
+      expect(JSON.parse(logged.mock.calls.at(-1)?.[0] as string)).toMatchObject({
+        level: "info",
+        event: "selfhost_queue_maintenance_admission_deferred",
+        reason: "live_pending_high",
+      });
+    });
+
     it("admits a maintenance job immediately when pressure is clear", async () => {
       const m = makePool();
       m.enqueueResult({ rows: [], rowCount: 0 }); // empty foreground claim

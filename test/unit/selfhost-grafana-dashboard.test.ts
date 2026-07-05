@@ -151,6 +151,22 @@ describe("Gittensory Self-Host Grafana dashboard", () => {
     expect(alerts).toContain('time() - gittensory_backup_latest_timestamp_seconds{target=~"postgres|sqlite"} > 93600');
   });
 
+  it("surfaces a Maintenance Admission Deferrals (total) panel alongside the by-reason breakdown", () => {
+    const dashboard = readDashboard(selfhostDashboardPath);
+    const targets = dashboard.panels.flatMap((panel) => panel.targets ?? []);
+    const titles = dashboard.panels.map((panel) => panel.title);
+
+    expect(titles).toEqual(
+      expect.arrayContaining([
+        "Runtime Pressure & Maintenance",
+        "Maintenance Admission Deferrals by Reason",
+        "Maintenance Admission Deferrals (total)",
+      ]),
+    );
+    expect(targets.some((target) => target.expr === "sum by (reason, job_type) (rate(gittensory_jobs_maintenance_admission_deferred_by_reason_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum(rate(gittensory_jobs_maintenance_admission_deferred_total[5m])) or vector(0)")).toBe(true);
+  });
+
   it("surfaces self-host runtime-drift signal panels, every counter query fleet-aggregated", () => {
     const dashboard = readDashboard(selfhostDashboardPath);
     const targets = dashboard.panels.flatMap((panel) => panel.targets ?? []);

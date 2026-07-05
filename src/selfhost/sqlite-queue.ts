@@ -924,9 +924,9 @@ export function createSqliteQueue(
                   reason: decision.reason,
                   job_type: message.type,
                 });
-                console.warn(
+                console.log(
                   JSON.stringify({
-                    level: "warn",
+                    level: "info",
                     event: "selfhost_queue_maintenance_admission_deferred",
                     jobType: message.type,
                     reason: decision.reason,

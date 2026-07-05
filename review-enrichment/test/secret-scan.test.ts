@@ -679,6 +679,46 @@ test("scanPatch does not flag truncated Browserbase/Modal tokens or identifier c
   );
 });
 
+test("scanPatch flags fal.ai and Weights & Biases API keys with high confidence", () => {
+  const fakeFalKey = "fal_sk_" + "a".repeat(20);
+  const falFindings = scanPatch("src/config.ts", hunk([`const fal = "${fakeFalKey}";`]));
+  assert.equal(falFindings.length, 1);
+  assert.equal(falFindings[0].kind, "fal_api_key");
+  assert.equal(falFindings[0].confidence, "high");
+
+  const fakeWandbKey = "wandb_v1_" + "a".repeat(77);
+  const wandbFindings = scanPatch("src/config.ts", hunk([`const wandb = "${fakeWandbKey}";`]));
+  assert.equal(wandbFindings.length, 1);
+  assert.equal(wandbFindings[0].kind, "wandb_api_key");
+  assert.equal(wandbFindings[0].confidence, "high");
+});
+
+test("scanPatch does not flag truncated fal/W&B keys or identifier continuation", () => {
+  assert.equal(scanPatch("src/config.ts", hunk([`const fal = "fal_sk_${"a".repeat(19)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const fal = "fal_sk_${"a".repeat(20)}_suffix";`])).some((f) => f.kind === "fal_api_key"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const fal = "fal_sk_${"a".repeat(20)}-suffix";`])).some((f) => f.kind === "fal_api_key"),
+    false,
+  );
+
+  assert.equal(scanPatch("src/config.ts", hunk([`const wandb = "wandb_v1_${"a".repeat(76)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const wandb = "wandb_v1_${"a".repeat(77)}X";`])).some((f) => f.kind === "wandb_api_key"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const wandb = "wandb_v1_${"a".repeat(77)}_suffix";`])).some((f) => f.kind === "wandb_api_key"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const wandb = "wandb_v1_${"a".repeat(77)}-suffix";`])).some((f) => f.kind === "wandb_api_key"),
+    false,
+  );
+});
+
 test("scanPatch flags additional high-confidence SaaS/cloud/CI credential formats", () => {
   const cases = [
     ["google_oauth_client_secret", "GOCSPX-" + b62(28)],

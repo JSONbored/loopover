@@ -260,6 +260,18 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // fal.ai API key: `fal_sk_` + base62 body (reject hyphen-continued identifiers).
+    kind: "fal_api_key",
+    re: /\bfal_sk_[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Weights & Biases API key: `wandb_v1_` + 77 base62/underscore chars.
+    kind: "wandb_api_key",
+    re: /\bwandb_v1_[A-Za-z0-9_]{77}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
     // Google OAuth 2.0 client secret: `GOCSPX-` + 28 base64url chars.
     kind: "google_oauth_client_secret",
     re: /\bGOCSPX-[A-Za-z0-9_-]{28}\b/,

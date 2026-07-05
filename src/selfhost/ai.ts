@@ -156,15 +156,17 @@ export function resolveCodexCliTimeoutMs(env: Record<string, string | undefined>
 // on stdout before the FULL timeoutMs (up to 600_000ms at max effort) elapses and the process is SIGKILLed. That
 // full timeout is sized for a legitimately long-running review, so waiting it out to detect a completely dead
 // subprocess stalls the codex → claude-code fallback chain for up to 10 minutes per attempt. This is a SEPARATE,
-// much shorter deadline: if not one single byte has arrived on EITHER stdout or stderr by this point, the process
-// is almost certainly hung at the stdin-read step, not merely thinking — a working call, even a slow one under
-// load, emits at least the startup banner well within this window. 30s default: long enough that a busy host
-// (cold container start, contended CPU) doesn't false-positive on a merely-slow-to-start real call, short enough
-// that the codex→claude-code fallback (or a caller retry) kicks in almost immediately instead of after a 10-minute
-// stall. Independent of CODEX_AI_EFFORT/CODEX_AI_TIMEOUT_MS on purpose: a higher effort makes a COMPLETION take
-// longer, it does not make the CLI slower to print its FIRST byte, so this must not scale with effort the way the
-// full timeout does. Bounds mirror resolveCliTimeoutFrom's floor but cap well under the shortest full timeout
-// (120_000ms) so this can never itself become the effective timeout.
+// much shorter deadline: if not one single byte has arrived on STDOUT by this point, the process is almost
+// certainly hung at the stdin-read step, not merely thinking. Deliberately STDOUT-ONLY, not "either stream" —
+// the startup banner itself is unconditional stderr output on every invocation, so treating it as "alive" would
+// let it satisfy this deadline forever and never catch the exact hang it exists to detect; real JSONL progress
+// from `codex --json` always lands on stdout, so stdout is the only reliable liveness signal. 30s default: long
+// enough that a busy host (cold container start, contended CPU) doesn't false-positive on a merely-slow-to-start
+// real call, short enough that the codex→claude-code fallback (or a caller retry) kicks in almost immediately
+// instead of after a 10-minute stall. Independent of CODEX_AI_EFFORT/CODEX_AI_TIMEOUT_MS on purpose: a higher
+// effort makes a COMPLETION take longer, it does not make the CLI slower to print its FIRST stdout byte, so this
+// must not scale with effort the way the full timeout does. Bounds mirror resolveCliTimeoutFrom's floor but cap
+// well under the shortest full timeout (120_000ms) so this can never itself become the effective timeout.
 export function resolveCodexFirstOutputTimeoutMs(env: Record<string, string | undefined>): number {
   const raw = Number(firstConfigured(env.CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS));
   if (Number.isFinite(raw) && raw > 0) return Math.min(120_000, Math.max(1_000, raw));
@@ -540,10 +542,11 @@ type SpawnFn = (
     input?: string;
     timeoutMs: number;
     cwd?: string;
-    // Optional, generic on SpawnFn (not codex-specific) so any CLI with the same "prints a startup banner then
-    // hangs" shape could opt in later — but ONLY codex wires it up today (see resolveCodexFirstOutputTimeoutMs):
-    // Claude Code has no comparable prod-observed dead-air hang, so leaving this undefined for that caller keeps
-    // its spawn path byte-identical to before this option existed.
+    // Optional, generic on SpawnFn (not codex-specific) so any CLI whose real progress lands on STDOUT (not
+    // stderr banners/logs) could opt in later — but ONLY codex wires it up today (see
+    // resolveCodexFirstOutputTimeoutMs): Claude Code has no comparable prod-observed dead-air hang, so leaving
+    // this undefined for that caller keeps its spawn path byte-identical to before this option existed. See the
+    // stdout-only rationale on the timer construction below — this deadline is cleared by stdout data ONLY.
     firstOutputTimeoutMs?: number;
   },
 ) => Promise<{ stdout: string; code: number | null; stderr?: string; timedOut?: boolean; stalledNoOutput?: boolean }>;
@@ -558,7 +561,7 @@ async function defaultSpawn(): Promise<SpawnFn> {
       // Capture stderr too — the CLI's actual error (auth, rate limit, model-not-supported, OOM) lands here, and
       // it's what makes a `claude_code_exit_1` / `codex_exit_1` diagnosable instead of an opaque exit code (#26).
       let stderr = "";
-      let sawAnyOutput = false;
+      let sawStdout = false;
       /* v8 ignore start */ // a 120s subprocess timeout is not unit-testable without a 2-minute wait
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
@@ -567,12 +570,17 @@ async function defaultSpawn(): Promise<SpawnFn> {
         resolve({ stdout, code: null, stderr, timedOut: true });
       }, o.timeoutMs);
       /* v8 ignore stop */
-      // Fast-fail deadline (GITTENSORY-K/GITTENSORY-M): a SEPARATE, shorter timer that only fires if NEITHER
-      // stdout nor stderr has produced a single byte by firstOutputTimeoutMs — cleared the instant any data
-      // arrives on either stream, same as the full timer is cleared on `close`/`error`. This catches codex's
-      // "printed only the startup banner, then total silence" hang far sooner than the full timeoutMs, without
-      // touching the full timer at all: if output DOES start flowing but then stalls later, only the full
-      // timeoutMs above still governs — this timer has already been cleared by the first byte and never fires.
+      // Fast-fail deadline (GITTENSORY-K/GITTENSORY-M): a SEPARATE, shorter timer that only fires if STDOUT has
+      // not produced a single byte by firstOutputTimeoutMs — cleared the instant any data arrives on stdout, same
+      // as the full timer is cleared on `close`/`error`. Deliberately STDOUT-ONLY, not "either stream": codex's
+      // own "Reading prompt from stdin..." startup banner is written to STDERR unconditionally, on every
+      // invocation, whether or not it goes on to actually process anything — clearing on stderr too would let
+      // that banner alone satisfy the deadline forever, which is exactly the real hang this exists to catch
+      // (confirmed as a defect during review: the first version of this fix cleared on either stream and would
+      // never have fired for the actual "banner then silence" failure mode). Real JSONL progress from codex
+      // (`--json`) always lands on stdout, so stdout is the only reliable "codex is genuinely alive" signal. If
+      // output DOES start flowing on stdout but then stalls later, only the full timeoutMs above still governs —
+      // this timer has already been cleared by the first stdout byte and never fires.
       const firstOutputTimer =
         o.firstOutputTimeoutMs != null
           ? /* v8 ignore start */ // real-timer path; tests inject a fake spawnImpl instead of racing setTimeout
@@ -582,17 +590,14 @@ async function defaultSpawn(): Promise<SpawnFn> {
             }, o.firstOutputTimeoutMs)
           : /* v8 ignore stop */
             undefined;
-      const onFirstOutput = (): void => {
-        if (sawAnyOutput) return;
-        sawAnyOutput = true;
-        if (firstOutputTimer) clearTimeout(firstOutputTimer);
-      };
       child.stdout?.on("data", (d: Buffer) => {
-        onFirstOutput();
+        if (!sawStdout) {
+          sawStdout = true;
+          if (firstOutputTimer) clearTimeout(firstOutputTimer);
+        }
         stdout += d.toString("utf8");
       });
       child.stderr?.on("data", (d: Buffer) => {
-        onFirstOutput();
         stderr += d.toString("utf8");
       });
       child.on("error", (e) => {
@@ -780,12 +785,14 @@ export function createCodexAi(
         stdoutForMetrics = stdout;
         if (timedOut && stalledNoOutput) {
           // Fast-fail path (GITTENSORY-K/GITTENSORY-M): killed at firstOutputTimeoutMs, well before the full
-          // timeoutMs, because NEITHER stdout nor stderr produced a single byte — the "Reading prompt from
-          // stdin..." hang where codex prints its own startup banner and then never emits any JSONL. A DISTINCT
-          // error (never reusing `codex_timeout`) so this fast-fail is separately countable in Sentry/logs from a
-          // genuine full-timeout case where the process was at least doing something before it was killed —
-          // that distinction is what lets an operator tell "codex never started" apart from "codex hung mid-review".
-          throw new Error("codex_stalled_no_output: no stdout/stderr within firstOutputTimeoutMs — codex likely hung reading stdin");
+          // timeoutMs, because STDOUT produced no bytes at all — the "Reading prompt from stdin..." hang where
+          // codex prints its own startup banner to STDERR and then never emits any JSONL. Stdout-only is
+          // deliberate: that banner would otherwise satisfy an "either stream" deadline on every single
+          // invocation, defeating the point. A DISTINCT error (never reusing `codex_timeout`) so this fast-fail
+          // is separately countable in Sentry/logs from a genuine full-timeout case where the process was at
+          // least emitting JSONL before it was killed — that distinction is what lets an operator tell "codex
+          // never started" apart from "codex hung mid-review".
+          throw new Error("codex_stalled_no_output: no stdout within firstOutputTimeoutMs — codex likely hung reading stdin");
         }
         if (timedOut) {
           // Include whatever the JSONL stream captured before the kill — codex writes errors there, not to stderr.

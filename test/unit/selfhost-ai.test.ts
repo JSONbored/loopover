@@ -1104,19 +1104,63 @@ describe("subscription CLI helpers + fail-safe", () => {
     }
   });
 
-  // (c) output arrives within the fast-fail window but full completion takes longer than that window — must NOT
-  // be prematurely killed by the fast-fail path; only the (much larger) full timeoutMs still governs it.
-  it("REAL subprocess: output within the fast-fail window but a slow completion is governed only by the full timeoutMs, not fast-failed", async () => {
+  // REGRESSION (caught in review of the first version of this fix): a fake codex that writes ONLY the real
+  // "Reading prompt from stdin..." banner to STDERR — exactly what prod codex does on every invocation — and
+  // then produces NOTHING on stdout and never exits. The first version of this fix cleared the fast-fail timer
+  // on EITHER stream, so a stderr-only banner would have satisfied it forever and this exact hang (the one
+  // GITTENSORY-K/M is actually about) would never have been caught until the full timeout. Must still fast-fail.
+  it("REAL subprocess: a fake codex that writes ONLY the stderr startup banner and nothing on stdout is still killed at the fast-fail deadline", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fakecli-"));
     const fake = join(dir, "codex");
-    // Writes stderr immediately (clearing the fast-fail timer), then waits LONGER than the fast-fail deadline
-    // (but well inside the full timeout) before completing — proving the first timer's clearance is permanent
-    // and the process is not killed once data has already flowed.
     writeFileSync(
       fake,
       [
         "#!/usr/bin/env node",
         "process.stderr.write('Reading prompt from stdin...');",
+        "process.stdin.on('data',()=>{});",
+        "setInterval(()=>{},1000);",
+      ].join("\n"),
+    );
+    chmodSync(fake, 0o755);
+    const origPath = process.env.PATH;
+    try {
+      const start = Date.now();
+      await expect(
+        createCodexAi(
+          {
+            PATH: `${dir}:${origPath ?? ""}`,
+            HOME: dir,
+            GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1",
+            CODEX_AI_TIMEOUT_MS: "60000",
+            CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS: "200",
+          },
+          undefined,
+          noAuthCheck,
+        ).run("", { prompt: "hello" }),
+      ).rejects.toThrow(/codex_stalled_no_output/);
+      expect(Date.now() - start).toBeLessThan(5_000);
+    } finally {
+      process.env.PATH = origPath;
+    }
+  }, 10_000);
+
+  // (c) output arrives on STDOUT within the fast-fail window but full completion takes longer than that window
+  // — must NOT be prematurely killed by the fast-fail path; only the (much larger) full timeoutMs still governs
+  // it. Also writes the real stderr banner first (matching a genuinely-working codex invocation) to prove stderr
+  // output alone is correctly ignored and it's the STDOUT byte that clears the deadline.
+  it("REAL subprocess: stdout output within the fast-fail window but a slow completion is governed only by the full timeoutMs, not fast-failed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fakecli-"));
+    const fake = join(dir, "codex");
+    // Writes the stderr banner immediately (must NOT clear the fast-fail timer), then a stdout byte shortly after
+    // (which DOES clear it), then waits LONGER than the fast-fail deadline (but well inside the full timeout)
+    // before completing — proving the stdout timer's clearance is permanent and the process is not killed once
+    // real output has already flowed.
+    writeFileSync(
+      fake,
+      [
+        "#!/usr/bin/env node",
+        "process.stderr.write('Reading prompt from stdin...');",
+        "setTimeout(()=>process.stdout.write(' '), 50);",
         "let i='';process.stdin.on('data',d=>i+=d);",
         "process.stdin.on('end',()=>{ setTimeout(()=>process.stdout.write(JSON.stringify({type:'result',result:'OK:'+i.trim()})), 400); });",
       ].join("\n"),
@@ -1130,13 +1174,16 @@ describe("subscription CLI helpers + fail-safe", () => {
           HOME: dir,
           GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1",
           CODEX_AI_TIMEOUT_MS: "30000",
-          // Shorter than the 400ms completion delay above, but the process must survive because output already
-          // arrived before this deadline — proving the fast-fail timer is truly cleared, not merely deferred.
+          // Shorter than the 400ms completion delay above, but the process must survive because a stdout byte
+          // already arrived (at ~50ms) before this deadline — proving the fast-fail timer is truly cleared by
+          // stdout, not merely deferred, and that the earlier stderr banner did not itself clear anything.
           CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS: "150",
         },
         undefined,
         noAuthCheck,
       ).run("", { prompt: "hello" });
+      // extractCliText trims the whole stdout string first, so the leading space byte (written purely to clear
+      // the fast-fail timer at ~50ms) disappears before JSON parsing — the parsed result is exactly "OK:hello".
       expect(out.response).toBe("OK:hello");
     } finally {
       process.env.PATH = origPath;

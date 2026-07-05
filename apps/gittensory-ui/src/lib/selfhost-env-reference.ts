@@ -7,11 +7,11 @@ export type SelfHostEnvReferenceRow = {
 export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   {
     name: "AI_COMBINE",
-    firstReference: "src/selfhost/ai.ts:1080",
+    firstReference: "src/selfhost/ai.ts:1160",
   },
   {
     name: "AI_DUAL_REVIEW",
-    firstReference: "src/selfhost/ai.ts:1055",
+    firstReference: "src/selfhost/ai.ts:1135",
   },
   {
     name: "AI_EMBED_API_KEY",
@@ -23,11 +23,11 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "AI_EMBED_MODEL",
-    firstReference: "src/selfhost/ai.ts:952",
+    firstReference: "src/selfhost/ai.ts:1032",
   },
   {
     name: "AI_ON_MERGE",
-    firstReference: "src/selfhost/ai.ts:1082",
+    firstReference: "src/selfhost/ai.ts:1162",
   },
   {
     name: "AI_PROVIDER",
@@ -35,7 +35,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "ANTHROPIC_AI_BASE_URL",
-    firstReference: "src/selfhost/ai.ts:956",
+    firstReference: "src/selfhost/ai.ts:1036",
   },
   {
     name: "ANTHROPIC_AI_MODEL",
@@ -43,7 +43,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "ANTHROPIC_API_KEY",
-    firstReference: "src/selfhost/ai.ts:955",
+    firstReference: "src/selfhost/ai.ts:1035",
   },
   {
     name: "BACKUP_ACKNOWLEDGED",
@@ -70,6 +70,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/ai.ts:151",
   },
   {
+    name: "CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS",
+    firstReference: "src/selfhost/ai.ts:171",
+  },
+  {
     name: "CODEX_AI_MODEL",
     firstReference: "src/selfhost/ai.ts:92",
   },
@@ -79,7 +83,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "CODEX_HOME",
-    firstReference: "src/selfhost/ai.ts:318",
+    firstReference: "src/selfhost/ai.ts:340",
   },
   {
     name: "CRON_INTERVAL_MS",
@@ -151,7 +155,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "HOME",
-    firstReference: "src/selfhost/ai.ts:318",
+    firstReference: "src/selfhost/ai.ts:340",
   },
   {
     name: "MAINTENANCE_ADMISSION_DEFER_MS",
@@ -199,11 +203,11 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "OLLAMA_AI_API_KEY",
-    firstReference: "src/selfhost/ai.ts:949",
+    firstReference: "src/selfhost/ai.ts:1029",
   },
   {
     name: "OLLAMA_AI_BASE_URL",
-    firstReference: "src/selfhost/ai.ts:945",
+    firstReference: "src/selfhost/ai.ts:1025",
   },
   {
     name: "OLLAMA_AI_MODEL",
@@ -211,7 +215,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "OPENAI_AI_BASE_URL",
-    firstReference: "src/selfhost/ai.ts:947",
+    firstReference: "src/selfhost/ai.ts:1027",
   },
   {
     name: "OPENAI_AI_MODEL",
@@ -219,15 +223,15 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "OPENAI_API_KEY",
-    firstReference: "src/selfhost/ai.ts:949",
+    firstReference: "src/selfhost/ai.ts:1029",
   },
   {
     name: "OPENAI_COMPATIBLE_AI_API_KEY",
-    firstReference: "src/selfhost/ai.ts:949",
+    firstReference: "src/selfhost/ai.ts:1029",
   },
   {
     name: "OPENAI_COMPATIBLE_AI_BASE_URL",
-    firstReference: "src/selfhost/ai.ts:948",
+    firstReference: "src/selfhost/ai.ts:1028",
   },
   {
     name: "OPENAI_COMPATIBLE_AI_MODEL",
@@ -390,25 +394,26 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
 export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| Name | First reference |",
   "| --- | --- |",
-  "| `AI_COMBINE` | `src/selfhost/ai.ts:1080` |",
-  "| `AI_DUAL_REVIEW` | `src/selfhost/ai.ts:1055` |",
+  "| `AI_COMBINE` | `src/selfhost/ai.ts:1160` |",
+  "| `AI_DUAL_REVIEW` | `src/selfhost/ai.ts:1135` |",
   "| `AI_EMBED_API_KEY` | `src/server.ts:441` |",
   "| `AI_EMBED_BASE_URL` | `src/server.ts:438` |",
-  "| `AI_EMBED_MODEL` | `src/selfhost/ai.ts:952` |",
-  "| `AI_ON_MERGE` | `src/selfhost/ai.ts:1082` |",
+  "| `AI_EMBED_MODEL` | `src/selfhost/ai.ts:1032` |",
+  "| `AI_ON_MERGE` | `src/selfhost/ai.ts:1162` |",
   "| `AI_PROVIDER` | `src/selfhost/ai-config.ts:43` |",
-  "| `ANTHROPIC_AI_BASE_URL` | `src/selfhost/ai.ts:956` |",
+  "| `ANTHROPIC_AI_BASE_URL` | `src/selfhost/ai.ts:1036` |",
   "| `ANTHROPIC_AI_MODEL` | `src/selfhost/ai.ts:96` |",
-  "| `ANTHROPIC_API_KEY` | `src/selfhost/ai.ts:955` |",
+  "| `ANTHROPIC_API_KEY` | `src/selfhost/ai.ts:1035` |",
   "| `BACKUP_ACKNOWLEDGED` | `src/server.ts:380` |",
   "| `BROWSER_WS_ENDPOINT` | `src/selfhost/stubs/puppeteer.ts:11` |",
   "| `CLAUDE_AI_EFFORT` | `src/selfhost/ai.ts:147` |",
   "| `CLAUDE_AI_MODEL` | `src/selfhost/ai.ts:88` |",
   "| `CLAUDE_AI_TIMEOUT_MS` | `src/selfhost/ai.ts:147` |",
   "| `CODEX_AI_EFFORT` | `src/selfhost/ai.ts:151` |",
+  "| `CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS` | `src/selfhost/ai.ts:171` |",
   "| `CODEX_AI_MODEL` | `src/selfhost/ai.ts:92` |",
   "| `CODEX_AI_TIMEOUT_MS` | `src/selfhost/ai.ts:151` |",
-  "| `CODEX_HOME` | `src/selfhost/ai.ts:318` |",
+  "| `CODEX_HOME` | `src/selfhost/ai.ts:340` |",
   "| `CRON_INTERVAL_MS` | `src/server.ts:919` |",
   "| `DATABASE_PATH` | `src/server.ts:250` |",
   "| `DATABASE_URL` | `src/selfhost/preflight.ts:201` |",
@@ -426,7 +431,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `GITHUB_INSTALLATION_CONCURRENCY_LIMIT` | `src/selfhost/installation-concurrency-admission.ts:43` |",
   "| `GITTENSORY_REPO_CONFIG_DIR` | `src/server.ts:289` |",
   "| `GITTENSORY_VERSION` | `src/selfhost/otel.ts:62` |",
-  "| `HOME` | `src/selfhost/ai.ts:318` |",
+  "| `HOME` | `src/selfhost/ai.ts:340` |",
   "| `MAINTENANCE_ADMISSION_DEFER_MS` | `src/selfhost/maintenance-admission.ts:171` |",
   "| `MAINTENANCE_ADMISSION_DRAIN_AGE_MS` | `src/selfhost/maintenance-admission.ts:145` |",
   "| `MAINTENANCE_ADMISSION_ENABLED` | `src/selfhost/maintenance-admission.ts:126` |",
@@ -438,14 +443,14 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `MIGRATIONS_DIR` | `src/server.ts:393` |",
   "| `OBSERVABILITY_SMOKE_POLL_MS` | `scripts/smoke-observability-traces.mjs:8` |",
   "| `OBSERVABILITY_SMOKE_TIMEOUT_MS` | `scripts/smoke-observability-traces.mjs:6` |",
-  "| `OLLAMA_AI_API_KEY` | `src/selfhost/ai.ts:949` |",
-  "| `OLLAMA_AI_BASE_URL` | `src/selfhost/ai.ts:945` |",
+  "| `OLLAMA_AI_API_KEY` | `src/selfhost/ai.ts:1029` |",
+  "| `OLLAMA_AI_BASE_URL` | `src/selfhost/ai.ts:1025` |",
   "| `OLLAMA_AI_MODEL` | `src/selfhost/ai.ts:100` |",
-  "| `OPENAI_AI_BASE_URL` | `src/selfhost/ai.ts:947` |",
+  "| `OPENAI_AI_BASE_URL` | `src/selfhost/ai.ts:1027` |",
   "| `OPENAI_AI_MODEL` | `src/selfhost/ai.ts:101` |",
-  "| `OPENAI_API_KEY` | `src/selfhost/ai.ts:949` |",
-  "| `OPENAI_COMPATIBLE_AI_API_KEY` | `src/selfhost/ai.ts:949` |",
-  "| `OPENAI_COMPATIBLE_AI_BASE_URL` | `src/selfhost/ai.ts:948` |",
+  "| `OPENAI_API_KEY` | `src/selfhost/ai.ts:1029` |",
+  "| `OPENAI_COMPATIBLE_AI_API_KEY` | `src/selfhost/ai.ts:1029` |",
+  "| `OPENAI_COMPATIBLE_AI_BASE_URL` | `src/selfhost/ai.ts:1028` |",
   "| `OPENAI_COMPATIBLE_AI_MODEL` | `src/selfhost/ai.ts:102` |",
   "| `ORB_AIR_GAP` | `src/selfhost/orb-collector.ts:161` |",
   "| `ORB_ANONYMIZE` | `src/selfhost/orb-collector.ts:174` |",

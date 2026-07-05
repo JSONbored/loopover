@@ -97,6 +97,17 @@ describe("isGeneratedFile", () => {
     expect(classifyChangedFile("proto/service.grpc.swift")).toBe("generated");
   });
 
+  it("matches Erlang gpb protobuf output alongside the other protoc plugins", () => {
+    for (const path of ["proto/messages.pb.erl", "proto/messages.pb.hrl"]) {
+      expect(isGeneratedFile(path)).toBe(true);
+    }
+    for (const path of ["src/server.erl", "include/records.hrl"]) {
+      expect(isGeneratedFile(path)).toBe(false);
+    }
+    expect(classifyChangedFile("proto/messages.pb.erl")).toBe("generated");
+    expect(classifyChangedFile("proto/messages.pb.hrl")).toBe("generated");
+  });
+
   it("matches Swift protobuf, Dart freezed/retrofit, C# designer/XAML, and Objective-C protoc output", () => {
     for (const path of [
       "proto/messages.pb.swift",
@@ -419,6 +430,8 @@ describe("classifyChangedFile", () => {
       ["gen/service_grpc_pb.php", "generated"],
       ["lib/my_proto.pb.ex", "generated"],
       ["proto/service.grpc.swift", "generated"],
+      ["proto/messages.pb.erl", "generated"],
+      ["proto/messages.pb.hrl", "generated"],
       ["vendor/lib.go", "vendored"],
       ["package-lock.json", "lockfile"],
       ["bun.lock", "lockfile"],

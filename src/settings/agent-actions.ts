@@ -792,7 +792,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     actions.push({
       actionClass: "label",
       autonomyClass: "merge",
-      requiresApproval: false,
+      requiresApproval: approval("merge"),
       reason: `verdict=${conclusion}; ${guardrailReason}`,
       label: labels.manualReview,
       labelOp: "add",
@@ -811,7 +811,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     actions.push({
       actionClass: "label",
       autonomyClass: "merge",
-      requiresApproval: false,
+      requiresApproval: approval("merge"),
       reason: `verdict=${conclusion}; ${input.migrationCollisionHold.reason}`,
       label: labels.manualReview,
       labelOp: "add",
@@ -827,7 +827,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     actions.push({
       actionClass: "label",
       autonomyClass: "merge",
-      requiresApproval: false,
+      requiresApproval: approval("merge"),
       reason: `verdict=${conclusion}; ${input.unlinkedIssueMatchHold.reason}`,
       label: labels.manualReview,
       labelOp: "add",
@@ -843,7 +843,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     actions.push({
       actionClass: "label",
       autonomyClass: "merge",
-      requiresApproval: false,
+      requiresApproval: approval("merge"),
       reason: `verdict=${conclusion}; ${input.unlinkedIssueMatchClose.reason}`,
       label: labels.manualReview,
       labelOp: "add",
@@ -1124,6 +1124,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // at a non-acting level". For the owner/admin/automation-bot branch (`!closeEligible`) this is unchanged: those
   // authors are never close-eligible regardless of the `close` autonomy dial, so the hold must still surface.
   // (manualHoldReason itself is now computed earlier, above section 1 — see its doc comment there.)
+  const manualHoldAutonomyClass: AgentActionClass = reviewGood ? "merge" : "close";
   if (
     manualHoldReason !== null &&
     labels.manualReview !== null &&
@@ -1132,8 +1133,8 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   ) {
     actions.push({
       actionClass: "label",
-      autonomyClass: reviewGood ? "merge" : "close",
-      requiresApproval: false,
+      autonomyClass: manualHoldAutonomyClass,
+      requiresApproval: approval(manualHoldAutonomyClass),
       reason: manualHoldReason,
       label: labels.manualReview,
       labelOp: "add",

@@ -785,6 +785,41 @@ describe("planAgentMaintenanceActions (#778)", () => {
       }));
       expect(plan).toEqual([]);
     });
+
+    it("requires approval for merge-governed manual-review labels when merge is auto_with_approval", () => {
+      const guarded = planAgentMaintenanceActions(input({
+        conclusion: "success",
+        autonomy: { merge: "auto_with_approval" },
+        changedPaths: ["src/settings/agent-actions.ts"],
+        hardGuardrailGlobs: ["src/settings/**"],
+        pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" },
+      }));
+      expect(guarded).toEqual([
+        expect.objectContaining({ actionClass: "label", autonomyClass: "merge", requiresApproval: true, label: AGENT_LABEL_NEEDS_REVIEW }),
+      ]);
+
+      const collision = planAgentMaintenanceActions(input({
+        conclusion: "success",
+        autonomy: { merge: "auto_with_approval" },
+        migrationCollisionHold: { reason: "live migrations/** collision on main", comment: "Please rebase." },
+        pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" },
+      }));
+      expect(collision).toEqual([
+        expect.objectContaining({ actionClass: "label", autonomyClass: "merge", requiresApproval: true, label: AGENT_LABEL_NEEDS_REVIEW, comment: "Please rebase." }),
+      ]);
+    });
+
+    it("requires approval for close-governed manual-review labels when close is auto_with_approval", () => {
+      const actionRequired = planAgentMaintenanceActions(input({ conclusion: "action_required", autonomy: { close: "auto_with_approval" }, pr: { labels: [] } }));
+      expect(actionRequired).toEqual([
+        expect.objectContaining({ actionClass: "label", autonomyClass: "close", requiresApproval: true, label: AGENT_LABEL_NEEDS_REVIEW }),
+      ]);
+
+      const auto = planAgentMaintenanceActions(input({ conclusion: "action_required", autonomy: { close: "auto" }, pr: { labels: [] } }));
+      expect(auto).toEqual([
+        expect.objectContaining({ actionClass: "label", autonomyClass: "close", requiresApproval: false, label: AGENT_LABEL_NEEDS_REVIEW }),
+      ]);
+    });
   });
 
   describe("AI/review blockers remain blocking even when CI is green", () => {

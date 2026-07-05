@@ -1643,6 +1643,7 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
         changesRequestedLabel: null,
         migrationCollisionLabel: null,
         pendingClosureLabel: null,
+        reviewEvasionLabel: null,
       },
     });
     expect(cleared.settings.blacklistLabel).toBeNull();
@@ -1651,6 +1652,7 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(cleared.settings.manualReviewLabel).toBeNull();
     expect(cleared.settings.readyToMergeLabel).toBeNull();
     expect(cleared.settings.changesRequestedLabel).toBeNull();
+    expect(cleared.settings.reviewEvasionLabel).toBeNull();
     expect(cleared.settings.migrationCollisionLabel).toBeNull();
     expect(cleared.settings.pendingClosureLabel).toBeNull();
     // Overlays (clears) a DB-configured label name.
@@ -1842,6 +1844,38 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(invalid.settings.moderationGateMode).toBeUndefined();
     expect(invalid.settings.moderationWarningLabel).toBeUndefined();
     expect(invalid.warnings.some((w) => /settings\.moderationGateMode/.test(w))).toBe(true);
+  });
+
+  it("moderationRules accepts review_evasion alongside the original three rule types (#review-evasion-protection)", () => {
+    const manifest = parseFocusManifest({ settings: { moderationRules: ["review_evasion", "not-a-rule" as never] } });
+    expect(manifest.settings.moderationRules).toEqual(["review_evasion"]);
+  });
+
+  it("parses + resolves review-evasion protection settings from the settings: block, overlaying the DB (#review-evasion-protection)", () => {
+    const manifest = parseFocusManifest({ settings: { reviewEvasionProtection: "close", reviewEvasionLabel: "repo:evasion", reviewEvasionComment: false } });
+    expect(manifest.settings.reviewEvasionProtection).toBe("close");
+    expect(manifest.settings.reviewEvasionLabel).toBe("repo:evasion");
+    expect(manifest.settings.reviewEvasionComment).toBe(false);
+    // yml overlays (replaces) the DB-configured values.
+    const eff = resolveEffectiveSettings(
+      { reviewEvasionProtection: "off", reviewEvasionLabel: "db:evasion", reviewEvasionComment: true } as unknown as RepositorySettings,
+      manifest,
+    );
+    expect(eff.reviewEvasionProtection).toBe("close");
+    expect(eff.reviewEvasionLabel).toBe("repo:evasion");
+    expect(eff.reviewEvasionComment).toBe(false);
+    // Omitted in yml ⇒ the DB-configured values survive untouched.
+    const noOverride = resolveEffectiveSettings(
+      { reviewEvasionProtection: "close", reviewEvasionComment: false } as unknown as RepositorySettings,
+      parseFocusManifest({}),
+    );
+    expect(noOverride.reviewEvasionProtection).toBe("close");
+    expect(noOverride.reviewEvasionComment).toBe(false);
+    // An invalid enum / blank label is dropped with a warning rather than silently coerced.
+    const invalid = parseFocusManifest({ settings: { reviewEvasionProtection: "sometimes" as never, reviewEvasionLabel: "   " } });
+    expect(invalid.settings.reviewEvasionProtection).toBeUndefined();
+    expect(invalid.settings.reviewEvasionLabel).toBeUndefined();
+    expect(invalid.warnings.some((w) => /settings\.reviewEvasionProtection/.test(w))).toBe(true);
   });
 
   describe("reviewCheckMode precedence (#2852)", () => {

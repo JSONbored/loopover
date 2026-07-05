@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gte, inArray, not, or, sql, type SQL } from "drizzle-orm";
 import { getDb } from "./client";
 import {
+  activeReviewTracking,
   advisories,
   aiUsageEvents,
   agentActions,
@@ -58,7 +59,7 @@ import {
   upstreamSourceSnapshots,
   webhookEvents,
 } from "./schema";
-import { MAX_REVIEW_NAG_COOLDOWN_DAYS } from "../settings/agent-actions";
+import { DEFAULT_REVIEW_EVASION_LABEL, MAX_REVIEW_NAG_COOLDOWN_DAYS } from "../settings/agent-actions";
 import type {
   Advisory,
   AdvisoryFinding,
@@ -542,6 +543,9 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       moderationRules: undefined,
       moderationWarningLabel: undefined,
       moderationBannedLabel: undefined,
+      reviewEvasionProtection: "off",
+      reviewEvasionLabel: DEFAULT_REVIEW_EVASION_LABEL,
+      reviewEvasionComment: true,
     };
   }
   return {
@@ -614,6 +618,9 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     moderationRules: parseModerationRulesColumn(row.moderationRulesJson),
     moderationWarningLabel: normalizeModerationLabel(row.moderationWarningLabel),
     moderationBannedLabel: normalizeModerationLabel(row.moderationBannedLabel),
+    reviewEvasionProtection: normalizeReviewEvasionProtection(row.reviewEvasionProtection),
+    reviewEvasionLabel: row.reviewEvasionLabel,
+    reviewEvasionComment: row.reviewEvasionComment,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -728,6 +735,9 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     moderationRules: settings.moderationRules,
     moderationWarningLabel: normalizeModerationLabel(settings.moderationWarningLabel),
     moderationBannedLabel: normalizeModerationLabel(settings.moderationBannedLabel),
+    reviewEvasionProtection: normalizeReviewEvasionProtection(settings.reviewEvasionProtection),
+    reviewEvasionLabel: settings.reviewEvasionLabel ?? DEFAULT_REVIEW_EVASION_LABEL,
+    reviewEvasionComment: settings.reviewEvasionComment ?? true,
   } satisfies RepositorySettings;
   const db = getDb(env.DB);
   await db
@@ -801,6 +811,9 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       moderationRulesJson: resolved.moderationRules === undefined ? null : jsonString(resolved.moderationRules),
       moderationWarningLabel: resolved.moderationWarningLabel ?? null,
       moderationBannedLabel: resolved.moderationBannedLabel ?? null,
+      reviewEvasionProtection: resolved.reviewEvasionProtection,
+      reviewEvasionLabel: resolved.reviewEvasionLabel,
+      reviewEvasionComment: resolved.reviewEvasionComment,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
@@ -875,6 +888,9 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         moderationRulesJson: resolved.moderationRules === undefined ? null : jsonString(resolved.moderationRules),
         moderationWarningLabel: resolved.moderationWarningLabel ?? null,
         moderationBannedLabel: resolved.moderationBannedLabel ?? null,
+        reviewEvasionProtection: resolved.reviewEvasionProtection,
+        reviewEvasionLabel: resolved.reviewEvasionLabel,
+        reviewEvasionComment: resolved.reviewEvasionComment,
         updatedAt: nowIso(),
       },
     });
@@ -4546,6 +4562,79 @@ export async function getGateBlockOutcome(
   return { headSha: row.headSha, blockerCodes: parseJson<string[]>(row.blockerCodesJson, []), overridden: row.overridden };
 }
 
+// Review-evasion protection (#review-evasion-protection): idempotently mark that gittensory started a fresh
+// review pass for repoFullName#pullNumber at headSha, BEFORE any cost-bearing AI-review work begins. A
+// redelivery/retry for the SAME headSha while the row is still active is a true no-op (startedAt/deliveryId
+// are preserved); a NEW headSha (a fresh commit) or a previously-terminalized row is overwritten with fresh
+// values, since a new review pass genuinely restarts the active window.
+export async function startActiveReviewTracking(
+  env: Env,
+  input: { repoFullName: string; pullNumber: number; headSha: string; authorLogin?: string | null | undefined; deliveryId: string },
+): Promise<void> {
+  const repoFullName = boundedString(input.repoFullName, 200);
+  const values = {
+    id: `active-review:${repoFullName}#${input.pullNumber}`,
+    repoFullName,
+    pullNumber: input.pullNumber,
+    headSha: input.headSha,
+    authorLogin: input.authorLogin ?? null,
+    deliveryId: input.deliveryId,
+    status: "active",
+  };
+  const sameActiveHead = sql`${activeReviewTracking.headSha} = ${values.headSha} AND ${activeReviewTracking.status} = 'active'`;
+  await getDb(env.DB)
+    .insert(activeReviewTracking)
+    .values(values)
+    .onConflictDoUpdate({
+      target: [activeReviewTracking.repoFullName, activeReviewTracking.pullNumber],
+      set: {
+        headSha: values.headSha,
+        authorLogin: values.authorLogin,
+        deliveryId: sql`CASE WHEN ${sameActiveHead} THEN ${activeReviewTracking.deliveryId} ELSE ${values.deliveryId} END`,
+        status: "active",
+        startedAt: sql`CASE WHEN ${sameActiveHead} THEN ${activeReviewTracking.startedAt} ELSE ${nowIso()} END`,
+        updatedAt: nowIso(),
+      },
+    });
+}
+
+// Review-evasion protection: whether gittensory has an ACTIVE review pass recorded for this EXACT
+// repo/PR/headSha -- the read side the closed/converted_to_draft evasion guards check before treating a
+// contributor's action as evasion. A row for a DIFFERENT headSha (or a terminalized row) does not count --
+// the active window is scoped to the specific commit under review.
+export async function hasActiveReviewForHeadSha(env: Env, repoFullName: string, pullNumber: number, headSha: string): Promise<boolean> {
+  const row = await getDb(env.DB)
+    .select({ headSha: activeReviewTracking.headSha, status: activeReviewTracking.status })
+    .from(activeReviewTracking)
+    .where(and(eq(activeReviewTracking.repoFullName, boundedString(repoFullName, 200)), eq(activeReviewTracking.pullNumber, pullNumber)))
+    .get();
+  return row !== undefined && row.status === "active" && row.headSha === headSha;
+}
+
+// Review-evasion protection: guarded status transition -- terminalize the active-review row for
+// repoFullName#pullNumber ONLY if it is still 'active' (and, when given, still pinned to headSha), the same
+// CAS shape as claimPendingAgentActionDecision, so a stale/already-terminalized row is never double-processed.
+// Called when the review pass concludes (published), the PR closes/merges, the head moves, or evasion
+// enforcement completes. Returns whether this call's write actually changed a row.
+export async function terminalizeActiveReviewTracking(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+  opts?: { onlyIfHeadSha?: string | undefined },
+): Promise<boolean> {
+  const conditions = [
+    eq(activeReviewTracking.repoFullName, boundedString(repoFullName, 200)),
+    eq(activeReviewTracking.pullNumber, pullNumber),
+    eq(activeReviewTracking.status, "active"),
+  ];
+  if (opts?.onlyIfHeadSha !== undefined) conditions.push(eq(activeReviewTracking.headSha, opts.onlyIfHeadSha));
+  const result = await getDb(env.DB)
+    .update(activeReviewTracking)
+    .set({ status: "terminal", updatedAt: nowIso() })
+    .where(and(...conditions));
+  return Number(result.meta.changes ?? 0) > 0;
+}
+
 export async function listGateOutcomes(
   env: Env,
   options: { repoFullName?: string; windowDays?: number; now?: string; limit?: number } = {},
@@ -6462,6 +6551,13 @@ function parseAutoCloseExemptLogins(value: string): string[] {
 
 function normalizeReviewNagPolicy(value: string | null | undefined): "off" | "hold" | "close" {
   return value === "hold" || value === "close" ? value : "off";
+}
+
+// Review-evasion protection (#review-evasion-protection): binary off|close, mirroring reviewNagPolicy's
+// shape minus the "hold" tier (an evasion attempt is always re-closed as the App when enabled, never merely
+// held -- there is no partial-enforcement mode).
+function normalizeReviewEvasionProtection(value: string | null | undefined): "off" | "close" {
+  return value === "close" ? "close" : "off";
 }
 
 function normalizeCommandRateLimitPolicy(value: string | null | undefined): "off" | "hold" {

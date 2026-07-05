@@ -147,6 +147,12 @@ export const repositorySettings = sqliteTable("repository_settings", {
   moderationRulesJson: text("moderation_rules_json"),
   moderationWarningLabel: text("moderation_warning_label"),
   moderationBannedLabel: text("moderation_banned_label"),
+  // Review-evasion protection (#review-evasion-protection): off by default. reviewEvasionLabel mirrors
+  // blacklistLabel/reviewNagLabel's shape -- NOT NULL with a string default; "no label" is a
+  // `.gittensory.yml`-only override, never persisted here.
+  reviewEvasionProtection: text("review_evasion_protection").notNull().default("off"),
+  reviewEvasionLabel: text("review_evasion_label").notNull().default("review-evasion"),
+  reviewEvasionComment: integer("review_evasion_comment", { mode: "boolean" }).notNull().default(true),
   createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });
@@ -731,6 +737,30 @@ export const gateOutcomes = sqliteTable(
   (table) => ({
     pr: uniqueIndex("gate_outcomes_pr_unique").on(table.repoFullName, table.pullNumber),
     repoUpdated: index("gate_outcomes_repo_updated_idx").on(table.repoFullName, table.updatedAt),
+  }),
+);
+
+// Review-evasion active-review tracking (#review-evasion-protection): one row per (repo, PR), recording that
+// gittensory started a fresh review pass against a specific headSha before any cost-bearing AI-review work
+// begins. Read by the closed/converted_to_draft webhook handlers to tell a contributor evading the one-shot
+// review mid-pass apart from an ordinary close/draft conversion after the review already concluded. `status`
+// flips 'active' -> 'terminal' once the pass concludes (published, PR closed/merged, head moved, or evasion
+// enforcement completed) so a later, unrelated close is never mistaken for evasion.
+export const activeReviewTracking = sqliteTable(
+  "active_review_tracking",
+  {
+    id: text("id").primaryKey(),
+    repoFullName: text("repo_full_name").notNull(),
+    pullNumber: integer("pull_number").notNull(),
+    headSha: text("head_sha").notNull(),
+    authorLogin: text("author_login"),
+    deliveryId: text("delivery_id").notNull(),
+    status: text("status").notNull().default("active"),
+    startedAt: text("started_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    pr: uniqueIndex("active_review_tracking_pr_unique").on(table.repoFullName, table.pullNumber),
   }),
 );
 

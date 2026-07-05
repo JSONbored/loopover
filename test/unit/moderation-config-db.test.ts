@@ -12,9 +12,13 @@ import { createTestEnv } from "../helpers/d1";
 import { DEFAULT_GLOBAL_MODERATION_CONFIG, MAX_MODERATION_VIOLATION_DECAY_DAYS, MODERATION_VIOLATION_EVENT_TYPE } from "../../src/settings/moderation-rules";
 
 describe("global moderation config DB round-trip (#selfhost-mod-engine)", () => {
-  it("defaults to DEFAULT_GLOBAL_MODERATION_CONFIG (off) for a fresh install", async () => {
+  it("defaults to the migrated singleton row's values (off, the original three rules) for a fresh install", async () => {
     const env = createTestEnv();
-    expect(await getGlobalModerationConfig(env)).toEqual(DEFAULT_GLOBAL_MODERATION_CONFIG);
+    // The migrated singleton row's rules_json literal predates review_evasion (#review-evasion-protection)
+    // and is intentionally NOT auto-upgraded -- opting a NEW rule type into every existing install's shared
+    // tally is an explicit config change, not a silent default. DEFAULT_GLOBAL_MODERATION_CONFIG.rules (the
+    // MISSING-ROW fallback, asserted separately below) legitimately differs from this migrated default.
+    expect(await getGlobalModerationConfig(env)).toEqual({ ...DEFAULT_GLOBAL_MODERATION_CONFIG, rules: ["contributor_cap", "blacklist", "review_nag"] });
   });
 
   it("returns the default when the singleton row is missing", async () => {
@@ -222,5 +226,59 @@ describe("per-repo moderation settings DB round-trip (#selfhost-mod-engine)", ()
     const settings = await getRepositorySettings(env, "owner/repo");
     expect(settings.moderationGateMode).toBe("enabled");
     expect(settings.moderationWarningLabel).toBe("updated:warn");
+  });
+
+  it("moderationRules accepts review_evasion alongside the original three (#review-evasion-protection)", async () => {
+    const env = createTestEnv();
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", moderationRules: ["review_evasion", "blacklist"] });
+    const settings = await getRepositorySettings(env, "owner/repo");
+    expect(settings.moderationRules).toEqual(["review_evasion", "blacklist"]);
+  });
+});
+
+describe("per-repo review-evasion protection settings DB round-trip (#review-evasion-protection)", () => {
+  it("defaults to off/review-evasion/true for an unconfigured repo", async () => {
+    const settings = await getRepositorySettings(createTestEnv(), "owner/none");
+    expect(settings.reviewEvasionProtection).toBe("off");
+    expect(settings.reviewEvasionLabel).toBe("review-evasion");
+    expect(settings.reviewEvasionComment).toBe(true);
+  });
+
+  it("persists an explicit protection mode + custom label + comment toggle", async () => {
+    const env = createTestEnv();
+    await upsertRepositorySettings(env, {
+      repoFullName: "owner/repo",
+      reviewEvasionProtection: "close",
+      reviewEvasionLabel: "repo:evasion",
+      reviewEvasionComment: false,
+    });
+    const settings = await getRepositorySettings(env, "owner/repo");
+    expect(settings.reviewEvasionProtection).toBe("close");
+    expect(settings.reviewEvasionLabel).toBe("repo:evasion");
+    expect(settings.reviewEvasionComment).toBe(false);
+  });
+
+  it("an explicit null label falls back to the default (#label-scoping: the DB column has no true-null state, mirroring blacklistLabel)", async () => {
+    const env = createTestEnv();
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", reviewEvasionLabel: null });
+    const settings = await getRepositorySettings(env, "owner/repo");
+    expect(settings.reviewEvasionLabel).toBe("review-evasion");
+  });
+
+  it("round-trips through an UPDATE (not just the initial INSERT)", async () => {
+    const env = createTestEnv();
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", reviewEvasionProtection: "off" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", reviewEvasionProtection: "close", reviewEvasionComment: false });
+    const settings = await getRepositorySettings(env, "owner/repo");
+    expect(settings.reviewEvasionProtection).toBe("close");
+    expect(settings.reviewEvasionComment).toBe(false);
+  });
+
+  it("a malformed raw DB value for review_evasion_protection normalizes to 'off' on read (defensive against a direct SQL write bypassing app-level validation)", async () => {
+    const env = createTestEnv();
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo" });
+    await env.DB.prepare("UPDATE repository_settings SET review_evasion_protection = 'bogus' WHERE repo_full_name = ?").bind("owner/repo").run();
+    const settings = await getRepositorySettings(env, "owner/repo");
+    expect(settings.reviewEvasionProtection).toBe("off");
   });
 });

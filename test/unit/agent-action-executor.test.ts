@@ -47,6 +47,7 @@ import { createInstallationToken } from "../../src/github/app";
 import { fetchLiveCiAggregate, refreshInstallationHealthForInstallation } from "../../src/github/backfill";
 import {
   actionParams,
+  applyModerationEscalationForRule,
   clearInstallationHealthRefreshCooldownForTest,
   clearWritePermissionDenialCooldownForTest,
   writePermissionDenialCooldownSizeForTest,
@@ -1289,6 +1290,78 @@ describe("moderation-rules engine escalation (#selfhost-mod-engine)", () => {
     await upsertGlobalModerationConfig(env, { enabled: true, violationDecayDays: Number.MAX_SAFE_INTEGER });
     await expect(executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel])).resolves.not.toThrow();
     expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
+  });
+});
+
+describe("applyModerationEscalationForRule (#review-evasion-protection)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const call = (env: Env, over: Partial<Parameters<typeof applyModerationEscalationForRule>[1]> = {}) =>
+    applyModerationEscalationForRule(env, {
+      installationId: 123,
+      repoFullName: "owner/repo",
+      number: 7,
+      authorLogin: "farmer99",
+      rule: "review_evasion",
+      moderationSettings: undefined,
+      ...over,
+    });
+
+  const GLOBAL_RULES_WITH_EVASION = ["contributor_cap", "blacklist", "review_nag", "review_evasion"] as const;
+
+  it("review_evasion is NOT in the global config's default rule set -- it must be explicitly opted into (global or per-repo)", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true }); // rules left at the DB default (the original three).
+    await call(env);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+  });
+
+  it("is the SAME escalation the planner-driven path uses -- a direct call for review_evasion applies the warning label once the global config explicitly includes it", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, rules: [...GLOBAL_RULES_WITH_EVASION] });
+    await call(env);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
+  });
+
+  it("OFF by default: no label/ban when the global moderation config is disabled, even though reviewEvasionProtection has its own separate config", async () => {
+    const env = createTestEnv({});
+    await call(env);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+  });
+
+  it("escalates to mod:banned + auto-blacklists at the configured threshold", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, rules: [...GLOBAL_RULES_WITH_EVASION], banThreshold: 1 });
+    await call(env);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", { createMissingLabel: true });
+    const blacklist = await getGlobalContributorBlacklist(env);
+    expect(blacklist?.map((entry) => entry.login)).toContain("farmer99");
+  });
+
+  it("per-repo moderationRules EXCLUDING review_evasion means a review_evasion call on THIS repo does not count as a violation", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, rules: [...GLOBAL_RULES_WITH_EVASION] });
+    await call(env, { moderationSettings: { moderationRules: ["blacklist"] } });
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+  });
+
+  it("per-repo moderationRules INCLUDING review_evasion applies the escalation even when the global default excludes it", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true }); // global rules default (no review_evasion).
+    await call(env, { moderationSettings: { moderationRules: ["review_evasion"] } });
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
+  });
+
+  it("REGRESSION: a webhook redelivery / retry that calls again for the SAME repo+number+actor does not double-count the violation (idempotent per targetKey)", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, rules: [...GLOBAL_RULES_WITH_EVASION], banThreshold: 2 });
+    await call(env);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
+    vi.clearAllMocks();
+    await call(env); // same repoFullName#number -- a redelivered enforcement, not a second real violation.
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", expect.anything());
   });
 });
 

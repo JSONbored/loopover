@@ -928,16 +928,29 @@ export type RepositorySettings = {
    *  regardless of the global default. Always populated by the DB layer; optional so existing settings
    *  fixtures/callers need not be touched. */
   moderationGateMode?: "inherit" | "off" | "enabled" | undefined;
-  /** Moderation-rules engine: a per-repo override of WHICH of the three existing anti-abuse mechanisms
-   *  (contributor cap, blacklist, review-nag) feed a contributor's shared, cross-repo violation tally.
+  /** Moderation-rules engine: a per-repo override of WHICH of the anti-abuse mechanisms (contributor cap,
+   *  blacklist, review-nag, review-evasion) feed a contributor's shared, cross-repo violation tally.
    *  `undefined`/absent ⇒ inherit the global rule set (`resolveEffectiveModerationRules`'s default shape). */
-  moderationRules?: ("contributor_cap" | "blacklist" | "review_nag")[] | undefined;
+  moderationRules?: ("contributor_cap" | "blacklist" | "review_nag" | "review_evasion")[] | undefined;
   /** Moderation-rules engine: per-repo override of the label applied at >=1 lifetime violation. `undefined` ⇒
    *  the global config's `warningLabel` (itself defaulting to `"mod:warning"`). */
   moderationWarningLabel?: string | undefined;
   /** Moderation-rules engine: per-repo override of the label applied at >= the ban threshold. `undefined` ⇒
    *  the global config's `bannedLabel` (itself defaulting to `"mod:banned"`). */
   moderationBannedLabel?: string | undefined;
+  /** Review-evasion protection (#review-evasion-protection): a contributor closing or converting their OWN
+   *  PR to draft while gittensory has an ACTIVE review pass running against it is dodging the one-shot
+   *  review process. `"off"` (the default) disables detection entirely; `"close"` reopens (if needed) and
+   *  re-closes as the App -- a close the contributor cannot themselves reopen (#one-shot-reopen) -- applies
+   *  the configured label/comment, and records a `review_evasion` moderation strike. */
+  reviewEvasionProtection?: "off" | "close" | undefined;
+  /** Review-evasion protection: label applied alongside the enforcement close, gated on `close` autonomy
+   *  like every other anti-abuse label (#label-scoping), mirroring {@link blacklistLabel}'s shape. `undefined`
+   *  ⇒ the `"review-evasion"` default; explicit `null` ⇒ close without any label. */
+  reviewEvasionLabel?: string | null | undefined;
+  /** Review-evasion protection: whether to post the public explanation comment before the enforcement close.
+   *  Default true. */
+  reviewEvasionComment?: boolean | undefined;
   createdAt?: string | null | undefined;
   updatedAt?: string | null | undefined;
 };

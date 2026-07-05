@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
-import { closeIssue, closePullRequest, createIssueComment, createPullRequestReview, createPullRequestReviewComments, dismissLatestBotApproval, getLastCloserLogin, getLastReopenerLogin, mergePullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
+import { closeIssue, closePullRequest, createIssueComment, createPullRequestReview, createPullRequestReviewComments, dismissLatestBotApproval, getLastCloserLogin, getLastReopenerLogin, mergePullRequest, reopenPullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import { createTestEnv } from "../helpers/d1";
 
@@ -144,6 +144,24 @@ describe("GitHub PR action primitives (#778)", () => {
     expect(result).toEqual({ state: "closed" });
     expect(calls[0]).toMatchObject({ method: "PATCH", body: { state: "closed" } });
     expect(calls[0]?.url).toMatch(/\/repos\/owner\/repo\/pulls\/7$/);
+  });
+
+  it("reopens a PR via PATCH state=open (#review-evasion-protection)", async () => {
+    const calls: Array<{ method: string; url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      calls.push({ method: init?.method ?? "GET", url, body: init?.body ? JSON.parse(String(init.body)) : {} });
+      return Response.json({ state: "open" });
+    });
+    const result = await reopenPullRequest(envWithKey(), 123, "owner/repo", 7);
+    expect(result).toEqual({ state: "open" });
+    expect(calls[0]).toMatchObject({ method: "PATCH", body: { state: "open" } });
+    expect(calls[0]?.url).toMatch(/\/repos\/owner\/repo\/pulls\/7$/);
+  });
+
+  it("reopenPullRequest validates the repo name before any GitHub call", async () => {
+    await expect(reopenPullRequest(createTestEnv(), 1, "invalid", 4)).rejects.toThrow(/Invalid repository full name/);
   });
 
   it("closes an ISSUE via the issues endpoint, not the pulls endpoint (#2270)", async () => {

@@ -59,8 +59,11 @@ import {
   hasAuditEventForDelivery,
   recordGateBlockOutcome,
   getGateBlockOutcome,
+  hasActiveReviewForHeadSha,
   isGlobalAgentFrozen,
   markGateOutcomeOverridden,
+  startActiveReviewTracking,
+  terminalizeActiveReviewTracking,
   recordProductUsageEvent,
   persistSignalSnapshot,
   recordWebhookEvent,
@@ -233,6 +236,7 @@ import {
 import {
   DEFAULT_AUTO_MAINTAIN_POLICY,
   autonomyRequiresApproval,
+  isActingAutonomyLevel,
   isAgentConfigured,
   resolveAutonomy,
 } from "../settings/autonomy";
@@ -262,6 +266,7 @@ import {
 import { aiReviewCacheInputFingerprint } from "../review/ai-review-cache-input";
 import {
   AGENT_LABEL_NEEDS_REVIEW,
+  DEFAULT_REVIEW_EVASION_LABEL,
   downgradeCloseToHold,
   downgradeMergeToHold,
   MAX_REVIEW_NAG_COOLDOWN_DAYS,
@@ -275,6 +280,7 @@ import { resolveGlobalContributorOpenItemCap } from "../settings/global-contribu
 import { detectMigrationCollisions, extractMigrationNumber, KNOWN_MIGRATION_DUPLICATES } from "../db/migration-collisions";
 import { listMigrationFilenamesAtRef } from "../github/migration-tree";
 import {
+  applyModerationEscalationForRule,
   executeAgentMaintenanceActions,
   executeIssueMaintenanceActions,
   pendingClosureLabelApplied,
@@ -440,6 +446,7 @@ import {
   createIssueComment,
   getLastCloserLogin,
   getLastReopenerLogin,
+  reopenPullRequest,
 } from "../github/pr-actions";
 import {
   loadLinkedIssueHardRules,
@@ -5316,6 +5323,15 @@ async function processGitHubWebhook(
       if (eventName === "pull_request" && (payload.action === "synchronize" || payload.action === "closed" || payload.action === "reopened")) {
         await invalidatePrStateCache(env, repoFullName, pr.number).catch(() => undefined);
       }
+      // Review-evasion protection (#review-evasion-protection): a head change (synchronize) invalidates any
+      // active-review tracking for the OLD head immediately -- a fresh pass starts its own tracking later in
+      // this same handler. Best-effort; the guarded CAS update is a safe no-op when nothing is active. The
+      // "closed" case is handled AFTER the self-close/converted_to_draft evasion checks below, not here --
+      // those checks must read the row before this general cleanup would otherwise clear it out from under
+      // them.
+      if (eventName === "pull_request" && payload.action === "synchronize") {
+        await terminalizeActiveReviewTracking(env, repoFullName, pr.number).catch(() => undefined);
+      }
       // Reopen-prevention (#one-shot-reopen): a CONTRIBUTOR may not reopen a PR that gittensory or a maintainer
       // closed — closes are one-shot (resubmit, don't reopen). If a non-maintainer reopened a PR whose last close
       // was by the bot / repo owner / admin, re-close it and skip the re-review. Self-closes (the contributor
@@ -5401,6 +5417,21 @@ async function processGitHubWebhook(
         eventName,
         action: payload.action,
       });
+      // Review-evasion protection (#review-evasion-protection): a contributor closing their OWN PR while
+      // gittensory has an ACTIVE review pass running is dodging the one-shot review, not making an ordinary
+      // close. Runs regardless of the general draft-dodge/reopen-reclose gates above -- it is its own
+      // independent enforcement, config-gated on settings.reviewEvasionProtection (off by default).
+      if (payload.action === "closed" && installationId) {
+        await maybeCloseReviewEvasionSelfClose(
+          env,
+          deliveryId,
+          installationId,
+          repoFullName,
+          pr,
+          payload,
+          settings,
+        );
+      }
       // Draft-dodge guard (#converted-to-draft): a contributor converting an OPEN PR to draft cannot use
       // draft state to keep a gate-rejected PR alive. When a prior gate failure exists for the PR's current
       // headSha (and the block has not been maintainer-overridden), close the PR immediately — the gate
@@ -5427,6 +5458,31 @@ async function processGitHubWebhook(
           pr,
           settings,
         );
+      }
+      // Review-evasion protection: the active-review sibling of the draft-dodge guard above -- fires
+      // regardless of whether a PRIOR gate failure exists (draft-dodge's own trigger), as long as a review
+      // pass is CURRENTLY active for this head. Naturally near-mutually-exclusive with draft-dodge in
+      // practice: the same pass that records a gate-block-outcome also terminalizes the active-review row it
+      // was tracking, so by the time draft-dodge's prior-gate-failure condition is true, this guard's
+      // active-review condition is normally already false.
+      if (payload.action === "converted_to_draft" && installationId) {
+        await maybeCloseReviewEvasionDraftConversion(
+          env,
+          deliveryId,
+          installationId,
+          repoFullName,
+          pr,
+          settings,
+        );
+      }
+      // Review-evasion protection: the "closed" half of the active-review-tracking cleanup (the
+      // "synchronize" half runs earlier, alongside invalidatePrStateCache). Deliberately placed AFTER the
+      // self-close-evasion check above so that check reads the tracking row before this general cleanup
+      // would otherwise clear it out from under it -- a normal close and this repo's own evasion-enforcement
+      // close (which already terminalizes internally, scoped to its own head) both land here too; the
+      // guarded CAS update is a safe no-op in both of those already-terminal cases.
+      if (eventName === "pull_request" && payload.action === "closed") {
+        await terminalizeActiveReviewTracking(env, repoFullName, pr.number).catch(() => undefined);
       }
       if (
         installationId &&
@@ -7831,6 +7887,28 @@ async function maybePublishPrPublicSurface(
         }).catch(() => undefined);
       }
     }
+    // Review-evasion protection (#review-evasion-protection): durably record that a review pass is starting
+    // for this EXACT head BEFORE any cost-bearing AI-review work begins (including the reviewing placeholder
+    // below), so a contributor who closes/converts-to-draft their PR from this point until the pass concludes
+    // is dodging an ACTIVE review, not making an ordinary close. Gated on aiReviewWillRun (not the narrower
+    // shouldPostPlaceholder below, which also requires willComment -- a check-run-only repo still runs a real
+    // review and must still be protected); aiReviewWillRun already folds in !isFrozenForManualReview, so a PR
+    // held for manual review (reusing a frozen prior verdict, not doing fresh work) never starts tracking here
+    // -- there is no active pass for a contributor to evade in that case. Best-effort: a failed write only
+    // means this ONE pass is not evasion-protected, never a mutation failure. Terminalized once the gate
+    // decision concludes (below).
+    if (aiReviewWillRun && pr.headSha) {
+      await startActiveReviewTracking(env, {
+        repoFullName,
+        pullNumber: pr.number,
+        headSha: pr.headSha,
+        authorLogin: author,
+        deliveryId: webhook.deliveryId,
+      }).catch(
+        /* v8 ignore next -- fail-safe: a failed tracking write only means this ONE pass is not evasion-protected. */
+        () => undefined,
+      );
+    }
     // Post a transient "🟪 reviewing…" placeholder BEFORE the review refresh runs so contributors never see a
     // stale green/yellow/red verdict while the current head is being recomputed. In-place upsert: once the final
     // verdict is ready it overwrites this comment. GitHub rate-limits still abort so the queue can retry instead
@@ -8341,6 +8419,14 @@ async function maybePublishPrPublicSurface(
         conclusion: gateEvaluation.conclusion,
         reasonCode,
       });
+    }
+    // Review-evasion protection (#review-evasion-protection): the cost-bearing review pass for this head has
+    // now concluded (the gate decision is made) -- terminalize the active-review row so a close/draft-convert
+    // AFTER this point is treated as an ordinary action, not evasion of a still-running review. Scoped to this
+    // head so a slower, superseded pass can never clear a NEWER pass's still-active tracking. Symmetric with
+    // the startActiveReviewTracking call above (same aiReviewWillRun gate).
+    if (aiReviewWillRun && pr.headSha) {
+      await terminalizeActiveReviewTracking(env, repoFullName, pr.number, { onlyIfHeadSha: pr.headSha }).catch(() => undefined);
     }
     // #regate-churn (req 6/7): a public-surface no-op guard, deliberately narrow. markPullRequestSurfacePublished's
     // own doc comment warns lastPublishedSurfaceSha is "reporting/diagnostic state, not a hard scheduled-sweep
@@ -10373,6 +10459,429 @@ async function recloseDisallowedReopenIfNeeded(
     metadata: closeError === null ? { deliveryId, repoFullName } : { deliveryId, repoFullName, error: errorMessage(closeError) },
   }).catch(() => undefined);
   return true;
+}
+
+// Audit eventType for every review-evasion enforcement outcome (#review-evasion-protection). Shared by both
+// the self-close and converted_to_draft evasion handlers below so a cross-repo query can scope to exactly
+// this family, mirroring github_app.draft_dodge_closed / github_app.reopen_reclosed.
+const REVIEW_EVASION_CLOSED_EVENT_TYPE = "github_app.review_evasion_closed";
+
+// Whether `login` holds a maintainer-equivalent permission on repoFullName -- the owner, an ADMIN_GITHUB_LOGINS
+// entry, or a collaborator with admin/maintain/write access. Shared by both review-evasion guards below;
+// mirrors recloseDisallowedReopenIfNeeded's identical `hasMaintainerPermission` closure (kept as a standalone
+// function here since the two guards below do not share an enclosing scope to close over).
+async function hasMaintainerOrOwnerPermission(env: Env, installationId: number, repoFullName: string, login: string): Promise<boolean> {
+  const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")).toLowerCase() : "";
+  if (login === repoOwner || parseGitHubLoginList(env.ADMIN_GITHUB_LOGINS).has(login)) return true;
+  const permission = await getRepositoryCollaboratorPermission(env, installationId, repoFullName, login).catch(() => null);
+  return permission === "admin" || permission === "maintain" || permission === "write";
+}
+
+/** Review-evasion protection (#review-evasion-protection): a CONTRIBUTOR closing their OWN PR while
+ *  gittensory has an ACTIVE review pass running against its current headSha is dodging the one-shot review,
+ *  not making an ordinary close. GitHub lets a contributor reopen a PR they closed themselves but NOT one
+ *  closed by a maintainer or the App (#one-shot-reopen) -- so this reopens the PR (as the App) and
+ *  immediately re-closes it (as the App), converting the contributor's own close into an App-authored,
+ *  terminal one they cannot reopen; any later reopen attempt is caught by the EXISTING
+ *  maybeRecloseDisallowedReopen guard above. Per-PR actuation-locked like its draft-dodge/reopen-reclose
+ *  siblings. The strike only counts once the enforcement close actually succeeds. */
+async function maybeCloseReviewEvasionSelfClose(
+  env: Env,
+  deliveryId: string,
+  installationId: number,
+  repoFullName: string,
+  pr: PullRequestRecord,
+  payload: GitHubWebhookPayload,
+  settings: RepositorySettings,
+): Promise<void> {
+  const actuationLock = await claimPrActuationLock(env, repoFullName, pr.number);
+  if (!actuationLock.acquired) {
+    throw new PrActuationLockContendedError(repoFullName, pr.number, "review-evasion-self-close");
+  }
+  try {
+    await closeReviewEvasionSelfCloseIfActive(env, deliveryId, installationId, repoFullName, pr, payload, settings);
+  } finally {
+    await releasePrActuationLock(env, repoFullName, pr.number, actuationLock.ownerToken);
+  }
+}
+
+async function closeReviewEvasionSelfCloseIfActive(
+  env: Env,
+  deliveryId: string,
+  installationId: number,
+  repoFullName: string,
+  pr: PullRequestRecord,
+  payload: GitHubWebhookPayload,
+  settings: RepositorySettings,
+): Promise<void> {
+  if ((settings.reviewEvasionProtection ?? "off") !== "close") return;
+  const closer = (payload.sender?.login ?? "").toLowerCase();
+  const authorLogin = (pr.authorLogin ?? "").toLowerCase();
+  // Only the PR's OWN author closing their OWN PR is a self-close-evasion candidate -- a third party (e.g. a
+  // maintainer) closing someone else's PR is an ordinary maintainer action, not evasion.
+  if (!closer || !authorLogin || closer !== authorLogin) return;
+  if (isProtectedAutomationAuthor(pr.authorLogin)) return;
+  if (!pr.headSha) return;
+  if (await hasMaintainerOrOwnerPermission(env, installationId, repoFullName, authorLogin)) return;
+  if (!(await hasActiveReviewForHeadSha(env, repoFullName, pr.number, pr.headSha))) return;
+
+  const targetKey = `${repoFullName}#${pr.number}`;
+  const evasionMode = resolveAgentActionMode({
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    agentPaused: settings.agentPaused,
+    agentDryRun: settings.agentDryRun,
+  });
+  if (!isActingAutonomyLevel(resolveAutonomy(settings.autonomy, "close"))) {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "denied",
+      detail: `autonomy for close is not acting -- review-evasion self-close not enforced for ${pr.authorLogin ?? "unknown"}`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return;
+  }
+  if (evasionMode === "dry_run") {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "completed",
+      detail: `dry-run: would reopen + re-close review-evasion self-close by ${pr.authorLogin ?? "unknown"} -- active review on headSha ${pr.headSha}`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha, mode: "dry_run" },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return;
+  }
+  if (evasionMode !== "live") {
+    // paused/frozen -- a complete stop, matching the draft-dodge/reopen-reclose siblings' identical gate.
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "denied",
+      detail: `agent actions paused -- review-evasion self-close not enforced for ${pr.authorLogin ?? "unknown"}`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return;
+  }
+  // Write-permission readiness (#2134-style): this enforcement bypasses executeAgentMaintenanceActions
+  // entirely (like its draft-dodge/reopen-reclose siblings), so it never got the standard pipeline's
+  // PR_WRITE_CLASSES guard.
+  const installation = await getInstallation(env, installationId);
+  const installationPermissions = installation?.permissions ?? null;
+  if (resolveAgentPermissionReadiness({ autonomy: settings.autonomy, installationPermissions, actionClass: "close" }) !== "ready") {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "denied",
+      detail: `denied review-evasion enforcement for ${pr.authorLogin ?? "unknown"} -- pull_requests: write not granted`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return;
+  }
+  // Live re-check (#2130-style): the PR's live head/state may have moved since the webhook was ingested.
+  const freshness = await fetchPullRequestFreshness(env, { installationId, repoFullName, pullNumber: pr.number, expectedHeadSha: pr.headSha });
+  if (freshness.status !== "current") {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "denied",
+      detail: `${pullRequestFreshnessDetail(freshness)} -- review-evasion enforcement not executed`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return;
+  }
+
+  const reopenError = await reopenPullRequest(env, installationId, repoFullName, pr.number)
+    .then(() => null)
+    .catch((error: unknown) => error);
+  if (reopenError !== null) {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "error",
+      detail: `FAILED to reopen ${pr.authorLogin ?? "unknown"}'s self-close for review-evasion enforcement -- the reopen API call did not succeed`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha, error: errorMessage(reopenError) },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return; // the strike only counts once the enforcement close actually succeeds.
+  }
+  const closeError = await closePullRequest(env, installationId, repoFullName, pr.number)
+    .then(() => null)
+    .catch((error: unknown) => error);
+  if (closeError !== null) {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "error",
+      detail: `FAILED to re-close review-evasion self-close by ${pr.authorLogin ?? "unknown"} -- the close API call did not succeed; the PR may still be open`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha, error: errorMessage(closeError) },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return; // the strike only counts once the enforcement close actually succeeds.
+  }
+
+  // The close succeeded: post the public explanation, apply the configured label, record the strike -- in
+  // that order, after the enforcement close is confirmed (never before).
+  if (settings.reviewEvasionComment ?? true) {
+    await createIssueComment(
+      env,
+      installationId,
+      repoFullName,
+      pr.number,
+      "Gittensory had already started reviewing this pull request — closing it to dodge the one-shot review process is not allowed. Please open a new pull request with the issues addressed.",
+    ).catch(
+      /* v8 ignore next -- fail-safe: a courtesy-comment failure never blocks the handler. */
+      () => undefined,
+    );
+  }
+  const label = settings.reviewEvasionLabel === null ? null : (settings.reviewEvasionLabel ?? DEFAULT_REVIEW_EVASION_LABEL);
+  if (label !== null) {
+    await ensurePullRequestLabel(env, installationId, repoFullName, pr.number, label, { createMissingLabel: true }).catch(() => undefined);
+  }
+  await recordAuditEvent(env, {
+    eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+    actor: "gittensory",
+    targetKey,
+    outcome: "completed",
+    detail: `re-closed a review-evasion self-close by ${pr.authorLogin ?? "unknown"} -- active review on headSha ${pr.headSha} was in progress`,
+    metadata: { deliveryId, repoFullName, headSha: pr.headSha },
+  }).catch(
+    /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+    () => undefined,
+  );
+  await terminalizeActiveReviewTracking(env, repoFullName, pr.number, { onlyIfHeadSha: pr.headSha }).catch(() => undefined);
+  if (pr.authorLogin) {
+    await applyModerationEscalationForRule(env, {
+      installationId,
+      repoFullName,
+      number: pr.number,
+      authorLogin: pr.authorLogin,
+      rule: "review_evasion",
+      moderationSettings: {
+        moderationGateMode: settings.moderationGateMode,
+        moderationRules: settings.moderationRules,
+        moderationWarningLabel: settings.moderationWarningLabel,
+        moderationBannedLabel: settings.moderationBannedLabel,
+      },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an escalation failure never blocks the (already-completed) close. */
+      () => undefined,
+    );
+  }
+}
+
+/** Review-evasion protection (#review-evasion-protection): a contributor converting their OWN OPEN PR to
+ *  draft while gittensory has an ACTIVE review pass running against its current headSha is dodging the
+ *  one-shot review, distinct from the EXISTING draft-dodge guard above (which only fires after a PRIOR gate
+ *  FAILURE on this head). Unlike the self-close sibling, converting to draft never closes the PR on GitHub,
+ *  so no reopen step is needed -- a direct close, exactly like the draft-dodge guard's own close step,
+ *  suffices. Per-PR actuation-locked like its draft-dodge/reopen-reclose/self-close siblings. */
+async function maybeCloseReviewEvasionDraftConversion(
+  env: Env,
+  deliveryId: string,
+  installationId: number,
+  repoFullName: string,
+  pr: PullRequestRecord,
+  settings: RepositorySettings,
+): Promise<void> {
+  const actuationLock = await claimPrActuationLock(env, repoFullName, pr.number);
+  if (!actuationLock.acquired) {
+    throw new PrActuationLockContendedError(repoFullName, pr.number, "review-evasion-draft");
+  }
+  try {
+    await closeReviewEvasionDraftConversionIfActive(env, deliveryId, installationId, repoFullName, pr, settings);
+  } finally {
+    await releasePrActuationLock(env, repoFullName, pr.number, actuationLock.ownerToken);
+  }
+}
+
+async function closeReviewEvasionDraftConversionIfActive(
+  env: Env,
+  deliveryId: string,
+  installationId: number,
+  repoFullName: string,
+  pr: PullRequestRecord,
+  settings: RepositorySettings,
+): Promise<void> {
+  if ((settings.reviewEvasionProtection ?? "off") !== "close") return;
+  const authorLogin = (pr.authorLogin ?? "").toLowerCase();
+  if (!authorLogin) return;
+  if (isProtectedAutomationAuthor(pr.authorLogin)) return;
+  if (!pr.headSha) return;
+  if (await hasMaintainerOrOwnerPermission(env, installationId, repoFullName, authorLogin)) return;
+  if (!(await hasActiveReviewForHeadSha(env, repoFullName, pr.number, pr.headSha))) return;
+
+  const targetKey = `${repoFullName}#${pr.number}`;
+  const evasionMode = resolveAgentActionMode({
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    agentPaused: settings.agentPaused,
+    agentDryRun: settings.agentDryRun,
+  });
+  if (!isActingAutonomyLevel(resolveAutonomy(settings.autonomy, "close"))) {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "denied",
+      detail: `autonomy for close is not acting -- review-evasion draft-conversion not enforced for ${pr.authorLogin ?? "unknown"}`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return;
+  }
+  if (evasionMode === "dry_run") {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "completed",
+      detail: `dry-run: would close review-evasion draft-conversion by ${pr.authorLogin ?? "unknown"} -- active review on headSha ${pr.headSha}`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha, mode: "dry_run" },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return;
+  }
+  if (evasionMode !== "live") {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "denied",
+      detail: `agent actions paused -- review-evasion draft-conversion not enforced for ${pr.authorLogin ?? "unknown"}`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return;
+  }
+  const installation = await getInstallation(env, installationId);
+  const installationPermissions = installation?.permissions ?? null;
+  if (resolveAgentPermissionReadiness({ autonomy: settings.autonomy, installationPermissions, actionClass: "close" }) !== "ready") {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "denied",
+      detail: `denied review-evasion enforcement for ${pr.authorLogin ?? "unknown"} -- pull_requests: write not granted`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return;
+  }
+  // requireDraft: the justification evaporates if the author converted the PR BACK to ready_for_review in
+  // the window between ingestion and this check, mirroring the draft-dodge guard's identical fix (#2130).
+  const freshness = await fetchPullRequestFreshness(env, { installationId, repoFullName, pullNumber: pr.number, expectedHeadSha: pr.headSha, requireDraft: true });
+  if (freshness.status !== "current") {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "denied",
+      detail: `${pullRequestFreshnessDetail(freshness)} -- review-evasion enforcement not executed`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return;
+  }
+
+  const closeError = await closePullRequest(env, installationId, repoFullName, pr.number)
+    .then(() => null)
+    .catch((error: unknown) => error);
+  if (closeError !== null) {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "error",
+      detail: `FAILED to close review-evasion draft-conversion by ${pr.authorLogin ?? "unknown"} -- the close API call did not succeed; the PR may still be open`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha, error: errorMessage(closeError) },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return; // the strike only counts once the enforcement close actually succeeds.
+  }
+
+  if (settings.reviewEvasionComment ?? true) {
+    await createIssueComment(
+      env,
+      installationId,
+      repoFullName,
+      pr.number,
+      "Gittensory had already started reviewing this pull request — converting it to draft to dodge the one-shot review process is not allowed. Please open a new pull request with the issues addressed.",
+    ).catch(
+      /* v8 ignore next -- fail-safe: a courtesy-comment failure never blocks the handler. */
+      () => undefined,
+    );
+  }
+  const label = settings.reviewEvasionLabel === null ? null : (settings.reviewEvasionLabel ?? DEFAULT_REVIEW_EVASION_LABEL);
+  if (label !== null) {
+    await ensurePullRequestLabel(env, installationId, repoFullName, pr.number, label, { createMissingLabel: true }).catch(() => undefined);
+  }
+  await recordAuditEvent(env, {
+    eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+    actor: "gittensory",
+    targetKey,
+    outcome: "completed",
+    detail: `closed a review-evasion draft-conversion by ${pr.authorLogin ?? "unknown"} -- active review on headSha ${pr.headSha} was in progress`,
+    metadata: { deliveryId, repoFullName, headSha: pr.headSha },
+  }).catch(
+    /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+    () => undefined,
+  );
+  await terminalizeActiveReviewTracking(env, repoFullName, pr.number, { onlyIfHeadSha: pr.headSha }).catch(() => undefined);
+  if (pr.authorLogin) {
+    await applyModerationEscalationForRule(env, {
+      installationId,
+      repoFullName,
+      number: pr.number,
+      authorLogin: pr.authorLogin,
+      rule: "review_evasion",
+      moderationSettings: {
+        moderationGateMode: settings.moderationGateMode,
+        moderationRules: settings.moderationRules,
+        moderationWarningLabel: settings.moderationWarningLabel,
+        moderationBannedLabel: settings.moderationBannedLabel,
+      },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an escalation failure never blocks the (already-completed) close. */
+      () => undefined,
+    );
+  }
 }
 
 // Audit eventType for one recorded @gittensory ping (#2463). Shared between the recorder below and the

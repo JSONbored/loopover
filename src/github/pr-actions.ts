@@ -203,6 +203,25 @@ export async function closePullRequest(env: Env, installationId: number, repoFul
   });
 }
 
+/** Reopen a pull request (sets state=open). Review-evasion protection (#review-evasion-protection): a
+ *  contributor may reopen a PR they closed THEMSELVES, but not one closed by a maintainer or the App
+ *  (#one-shot-reopen) -- so the enforcement handler reopens the PR as the App (this call) and immediately
+ *  re-closes it (closePullRequest), converting the contributor's own close into an App-authored, terminal
+ *  close the contributor cannot reopen. */
+export async function reopenPullRequest(env: Env, installationId: number, repoFullName: string, pullNumber: number): Promise<{ state: string }> {
+  const { owner, repo } = splitRepo(repoFullName);
+  return withInstallationTokenRetry(env, installationId, async (token) => {
+    const octokit = makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));
+    const response = await octokit.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {
+      owner,
+      repo,
+      pull_number: pullNumber,
+      state: "open",
+    });
+    return { state: (response.data as { state: string }).state };
+  });
+}
+
 /** Close a plain issue (sets state=closed). #2270's first issue-side actuation: unlike closePullRequest, this
  *  hits the generic Issues API (`PATCH /issues/{issue_number}`), not the Pulls API — a plain issue number is not
  *  a valid `pull_number`, so closePullRequest cannot be reused here. */

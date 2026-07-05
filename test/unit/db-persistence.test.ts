@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   getContributorScoringProfile,
   getOpenUpstreamDriftReportByFingerprint,
+  hasActiveReviewForHeadSha,
   listContributorRepoStats,
   listLatestRepoGithubTotalsSnapshots,
   listRepoPullRequestFilePaths,
   persistBountyLifecycleEvent,
   persistRegistryDriftEvents,
   persistRepoGithubTotalsSnapshot,
+  startActiveReviewTracking,
+  terminalizeActiveReviewTracking,
   updateUpstreamDriftReportIssue,
   upsertContributorRepoStat,
   upsertContributorScoringProfile,
@@ -313,3 +316,85 @@ function contributorStat(login: string, repoFullName: string, pullRequests: numb
     lastActivityAt,
   };
 }
+
+describe("active-review tracking (#review-evasion-protection)", () => {
+  async function rawRow(env: Env, repoFullName: string, pullNumber: number) {
+    return env.DB.prepare("select head_sha, author_login, delivery_id, status, started_at from active_review_tracking where repo_full_name = ? and pull_number = ?")
+      .bind(repoFullName, pullNumber)
+      .first<{ head_sha: string; author_login: string | null; delivery_id: string; status: string; started_at: string }>();
+  }
+
+  it("hasActiveReviewForHeadSha is false when no row exists at all", async () => {
+    const env = createTestEnv();
+    expect(await hasActiveReviewForHeadSha(env, "owner/repo", 1, "sha1")).toBe(false);
+  });
+
+  it("starts tracking and reads it back for the exact head, but not a different head or PR", async () => {
+    const env = createTestEnv();
+    await startActiveReviewTracking(env, { repoFullName: "owner/repo", pullNumber: 1, headSha: "sha1", authorLogin: "farmer99", deliveryId: "delivery-1" });
+    expect(await hasActiveReviewForHeadSha(env, "owner/repo", 1, "sha1")).toBe(true);
+    expect(await hasActiveReviewForHeadSha(env, "owner/repo", 1, "sha-different")).toBe(false);
+    expect(await hasActiveReviewForHeadSha(env, "owner/repo", 2, "sha1")).toBe(false);
+    const row = await rawRow(env, "owner/repo", 1);
+    expect(row).toMatchObject({ head_sha: "sha1", author_login: "farmer99", delivery_id: "delivery-1", status: "active" });
+  });
+
+  it("is idempotent for a redelivery/retry of the SAME head while still active -- startedAt/deliveryId are preserved, not clobbered", async () => {
+    const env = createTestEnv();
+    await startActiveReviewTracking(env, { repoFullName: "owner/repo", pullNumber: 1, headSha: "sha1", authorLogin: "farmer99", deliveryId: "delivery-1" });
+    const firstRow = await rawRow(env, "owner/repo", 1);
+    await startActiveReviewTracking(env, { repoFullName: "owner/repo", pullNumber: 1, headSha: "sha1", authorLogin: "farmer99", deliveryId: "delivery-RETRY" });
+    const secondRow = await rawRow(env, "owner/repo", 1);
+    expect(secondRow?.delivery_id).toBe("delivery-1"); // NOT "delivery-RETRY" -- the original start wins.
+    expect(secondRow?.started_at).toBe(firstRow?.started_at);
+  });
+
+  it("a NEW head restarts the active window -- overwrites the row and clears the old head's match", async () => {
+    const env = createTestEnv();
+    await startActiveReviewTracking(env, { repoFullName: "owner/repo", pullNumber: 1, headSha: "sha1", deliveryId: "delivery-1" });
+    await startActiveReviewTracking(env, { repoFullName: "owner/repo", pullNumber: 1, headSha: "sha2", deliveryId: "delivery-2" });
+    expect(await hasActiveReviewForHeadSha(env, "owner/repo", 1, "sha1")).toBe(false);
+    expect(await hasActiveReviewForHeadSha(env, "owner/repo", 1, "sha2")).toBe(true);
+    const row = await rawRow(env, "owner/repo", 1);
+    expect(row).toMatchObject({ head_sha: "sha2", delivery_id: "delivery-2", status: "active" });
+  });
+
+  it("restarting on a PREVIOUSLY TERMINALIZED row for the SAME head still refreshes startedAt/deliveryId -- a terminal row is not treated as still-active", async () => {
+    const env = createTestEnv();
+    await startActiveReviewTracking(env, { repoFullName: "owner/repo", pullNumber: 1, headSha: "sha1", deliveryId: "delivery-1" });
+    await terminalizeActiveReviewTracking(env, "owner/repo", 1);
+    await startActiveReviewTracking(env, { repoFullName: "owner/repo", pullNumber: 1, headSha: "sha1", deliveryId: "delivery-2" });
+    const row = await rawRow(env, "owner/repo", 1);
+    expect(row).toMatchObject({ head_sha: "sha1", delivery_id: "delivery-2", status: "active" });
+    expect(await hasActiveReviewForHeadSha(env, "owner/repo", 1, "sha1")).toBe(true);
+  });
+
+  it("terminalizeActiveReviewTracking clears an active row and reports true; a second call is a no-op reporting false", async () => {
+    const env = createTestEnv();
+    await startActiveReviewTracking(env, { repoFullName: "owner/repo", pullNumber: 1, headSha: "sha1", deliveryId: "delivery-1" });
+    expect(await terminalizeActiveReviewTracking(env, "owner/repo", 1)).toBe(true);
+    expect(await hasActiveReviewForHeadSha(env, "owner/repo", 1, "sha1")).toBe(false);
+    expect(await terminalizeActiveReviewTracking(env, "owner/repo", 1)).toBe(false);
+  });
+
+  it("terminalizeActiveReviewTracking on a nonexistent row is a no-op reporting false", async () => {
+    const env = createTestEnv();
+    expect(await terminalizeActiveReviewTracking(env, "owner/repo", 999)).toBe(false);
+  });
+
+  it("onlyIfHeadSha guards the terminalize: a mismatched head does not clear the row; a matching head does", async () => {
+    const env = createTestEnv();
+    await startActiveReviewTracking(env, { repoFullName: "owner/repo", pullNumber: 1, headSha: "sha1", deliveryId: "delivery-1" });
+    expect(await terminalizeActiveReviewTracking(env, "owner/repo", 1, { onlyIfHeadSha: "sha-wrong" })).toBe(false);
+    expect(await hasActiveReviewForHeadSha(env, "owner/repo", 1, "sha1")).toBe(true); // still active -- guarded, not cleared.
+    expect(await terminalizeActiveReviewTracking(env, "owner/repo", 1, { onlyIfHeadSha: "sha1" })).toBe(true);
+    expect(await hasActiveReviewForHeadSha(env, "owner/repo", 1, "sha1")).toBe(false);
+  });
+
+  it("startActiveReviewTracking without an authorLogin persists a null author (defensive -- a deleted-account PR yields a null login)", async () => {
+    const env = createTestEnv();
+    await startActiveReviewTracking(env, { repoFullName: "owner/repo", pullNumber: 1, headSha: "sha1", deliveryId: "delivery-1" });
+    const row = await rawRow(env, "owner/repo", 1);
+    expect(row?.author_login).toBeNull();
+  });
+});

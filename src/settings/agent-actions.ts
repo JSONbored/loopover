@@ -32,6 +32,13 @@ export const DEFAULT_CONTRIBUTOR_CAP_LABEL = "over-contributor-limit";
 // configurable per-repo via `.gittensory.yml` (`settings.reviewNagLabel`); the planner uses the resolved label
 // and falls back to this default, mirroring DEFAULT_BLACKLIST_LABEL's shape.
 export const DEFAULT_REVIEW_NAG_LABEL = "review-nag-cooldown";
+// Default label applied to a PR re-closed for review-evasion (#review-evasion-protection): a contributor
+// closing/converting-to-draft their own PR while an active review pass is running. NOT hardcoded -- a repo
+// can override it via `.gittensory.yml` (`settings.reviewEvasionLabel`); this is only the fallback when unset.
+// Applied by the direct webhook-driven enforcement handlers in queue/processors.ts, which bypass the planner
+// (mirroring the existing draft-dodge/reopen-reclose guards' shape), so it is not consumed by
+// planAgentMaintenanceActions -- it lives alongside its siblings here purely for discoverability.
+export const DEFAULT_REVIEW_EVASION_LABEL = "review-evasion";
 // Keep the review-nag lookback operationally bounded so repo-controlled config cannot overflow Date arithmetic.
 export const MAX_REVIEW_NAG_COOLDOWN_DAYS = 365;
 // Default label for a PR that PASSES the gate but is intentionally held for manual review. This is only the

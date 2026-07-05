@@ -27,6 +27,12 @@ describe("normalizeModerationRules (#selfhost-mod-engine)", () => {
     expect(warnings).toEqual([]);
   });
 
+  it("accepts review_evasion (#review-evasion-protection)", () => {
+    const { rules, warnings } = normalizeModerationRules(["review_evasion"]);
+    expect(rules).toEqual(["review_evasion"]);
+    expect(warnings).toEqual([]);
+  });
+
   it("drops unrecognized entries with a warning, keeping the valid ones", () => {
     const { rules, warnings } = normalizeModerationRules(["contributor_cap", "not-a-rule", 42, null]);
     expect(rules).toEqual(["contributor_cap"]);
@@ -132,5 +138,9 @@ describe("constants + event-type map (#selfhost-mod-engine)", () => {
     const values = Object.values(MODERATION_VIOLATION_EVENT_TYPE);
     expect(new Set(values).size).toBe(values.length);
     for (const eventType of values) expect(eventType).toMatch(/^moderation\.violation\./);
+  });
+
+  it("review_evasion has its own namespaced event type (#review-evasion-protection)", () => {
+    expect(MODERATION_VIOLATION_EVENT_TYPE.review_evasion).toBe("moderation.violation.review_evasion");
   });
 });

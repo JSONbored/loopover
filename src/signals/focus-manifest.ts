@@ -249,6 +249,9 @@ export type FocusManifestSettings = Partial<
     | "moderationRules"
     | "moderationWarningLabel"
     | "moderationBannedLabel"
+    | "reviewEvasionProtection"
+    | "reviewEvasionLabel"
+    | "reviewEvasionComment"
   >
 > & {
   // `typeLabels`/`linkedIssueLabelPropagation`/`linkedIssueHardRules` are declared PARTIAL here (not via the `Pick<RepositorySettings,
@@ -1383,6 +1386,19 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   if (moderationWarningLabel !== undefined) out.moderationWarningLabel = moderationWarningLabel;
   const moderationBannedLabel = normalizeModerationLabel(r.moderationBannedLabel);
   if (moderationBannedLabel !== undefined) out.moderationBannedLabel = moderationBannedLabel;
+  // Review-evasion protection (#review-evasion-protection): a contributor closing/converting-to-draft their
+  // own PR while gittensory has an active review pass running is dodging the one-shot review.
+  const reviewEvasionProtection = normalizeOptionalEnum(r.reviewEvasionProtection, "settings.reviewEvasionProtection", ["off", "close"] as const, warnings);
+  if (reviewEvasionProtection !== null) out.reviewEvasionProtection = reviewEvasionProtection;
+  // #label-scoping: same load-bearing-null idiom as blacklistLabel above.
+  if (r.reviewEvasionLabel === null) {
+    out.reviewEvasionLabel = null;
+  } else {
+    const reviewEvasionLabel = normalizeOptionalString(r.reviewEvasionLabel, "settings.reviewEvasionLabel", warnings);
+    if (reviewEvasionLabel !== null) out.reviewEvasionLabel = reviewEvasionLabel;
+  }
+  const reviewEvasionComment = normalizeOptionalBoolean(r.reviewEvasionComment, "settings.reviewEvasionComment", warnings);
+  if (reviewEvasionComment !== null) out.reviewEvasionComment = reviewEvasionComment;
   return out;
 }
 

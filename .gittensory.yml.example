@@ -540,6 +540,28 @@ settings:
   # commandRateLimitAiMaxPerWindow: 5       # Positive integer. Tighter limit for an AI-cost-bearing command (ask/blockers/preflight/reviewability/packet/duplicate-check/next-action/repo-fit). Default: 5.
   # commandRateLimitWindowHours: 24         # Positive integer. Rolling window (hours) both limits above count against. Default: 24.
 
+  # Moderation-rules engine (#selfhost-mod-engine): a single shared, cross-repo violation tally across the
+  # anti-abuse mechanisms below that already short-circuit a PR/issue's disposition (contributor cap,
+  # blacklist, review-nag, review-evasion). Off by default; the global config (dashboard/API, not this file)
+  # holds the master switch, threshold, and label text. This per-repo override only opts THIS repo in/out and
+  # narrows which mechanisms feed the tally for it.
+  # moderationGateMode: inherit   # inherit | off | enabled. Default: inherit (defer to the global master switch).
+  # moderationRules: [contributor_cap, blacklist, review_nag, review_evasion]  # Replaces (not unions with) the global rule set for this repo. Default: inherit the global list.
+  # moderationWarningLabel: mod:warning  # Label applied at >=1 lifetime violation. Default: the global config's warningLabel.
+  # moderationBannedLabel: mod:banned    # Label applied at >= the ban threshold. Default: the global config's bannedLabel.
+
+  # Review-evasion protection (#review-evasion-protection, anti-abuse): a contributor closing or converting
+  # their own PR to draft while gittensory has an ACTIVE review pass running against it is dodging the
+  # one-shot review process, not making an ordinary close. When enabled, gittensory reopens (if needed) and
+  # re-closes the PR as the App -- a close the contributor cannot themselves reopen (#one-shot-reopen) --
+  # posts an explanation comment, applies the configured label, and records a `review_evasion` moderation
+  # strike (subject to moderationRules above including it). Off by default.
+  # reviewEvasionProtection: off       # off | close. Default: off.
+  # reviewEvasionLabel: review-evasion # Label applied alongside the enforcement close. Gated on autonomy.close
+  #                                     # (#label-scoping); set to explicit `null` to close without any label.
+  #                                     # Default: review-evasion.
+  # reviewEvasionComment: true         # Post the public explanation comment before the enforcement close. Default: true.
+
 # Per-repo activation overrides for the converged review features that ship behind a deployment-wide
 # GITTENSORY_REVIEW_* env kill-switch (rag/reputation/unifiedComment/safety). Each key is `true` (force on
 # for this repo, subject to the env flag still being enabled), `false` (force off), or omitted (falls back

@@ -9022,7 +9022,8 @@
               "enum": [
                 "contributor_cap",
                 "blacklist",
-                "review_nag"
+                "review_nag",
+                "review_evasion"
               ]
             }
           },
@@ -9205,6 +9206,20 @@
               "github",
               "linear"
             ]
+          },
+          "reviewEvasionProtection": {
+            "type": "string",
+            "enum": [
+              "off",
+              "close"
+            ]
+          },
+          "reviewEvasionLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "reviewEvasionComment": {
+            "type": "boolean"
           }
         },
         "required": [

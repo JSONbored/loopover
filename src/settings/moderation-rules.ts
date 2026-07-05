@@ -11,11 +11,13 @@
 // that can turn the layer off/on for just that repo and override which rules feed IT specifically. NEVER
 // hard-coded for any one repo -- a self-hoster's own `.gittensory.yml`/dashboard settings choose everything.
 
-/** The three EXISTING anti-abuse mechanisms this engine can count violations from. Kept as a closed union
- *  (not an open string) so an unrecognized value is always a normalization error, never silently accepted. */
-export type ModerationRuleType = "contributor_cap" | "blacklist" | "review_nag";
+/** The anti-abuse mechanisms this engine can count violations from -- the three ORIGINAL mechanisms
+ *  (contributor cap, blacklist, review-nag) plus review-evasion (#review-evasion-protection: a contributor
+ *  closing/converting-to-draft their own PR to dodge an active review). Kept as a closed union (not an open
+ *  string) so an unrecognized value is always a normalization error, never silently accepted. */
+export type ModerationRuleType = "contributor_cap" | "blacklist" | "review_nag" | "review_evasion";
 
-const ALL_MODERATION_RULE_TYPES: readonly ModerationRuleType[] = ["contributor_cap", "blacklist", "review_nag"];
+const ALL_MODERATION_RULE_TYPES: readonly ModerationRuleType[] = ["contributor_cap", "blacklist", "review_nag", "review_evasion"];
 
 /** The `audit_events.event_type` recorded for each rule's violation -- namespaced under `moderation.violation.*`
  *  so a cross-eventType, cross-repo count query (see `db/repositories.ts`) can scope to exactly this family. */
@@ -23,6 +25,7 @@ export const MODERATION_VIOLATION_EVENT_TYPE: Record<ModerationRuleType, string>
   contributor_cap: "moderation.violation.contributor_cap",
   blacklist: "moderation.violation.blacklist",
   review_nag: "moderation.violation.review_nag",
+  review_evasion: "moderation.violation.review_evasion",
 };
 
 export const DEFAULT_MODERATION_WARNING_LABEL = "mod:warning";

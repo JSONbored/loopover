@@ -429,31 +429,26 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
 const MODERATION_RULE_TYPES = new Set<string>(Object.keys(MODERATION_VIOLATION_EVENT_TYPE));
 
 /**
- * Moderation-rules engine (#selfhost-mod-engine): a SINGLE convergence point for all three anti-abuse
- * mechanisms (blacklist, contributor cap, review-nag) that already tag their `close` action with a matching
- * `closeKind` -- rather than duplicating this wiring at every one of their several call sites in
- * `queue/processors.ts`, this scans the JUST-EXECUTED plan for a moderation-tracked close that actually
- * COMPLETED (not denied/queued/dry-run -- an action that didn't really happen must not count as a violation)
- * and, if so, records one violation + escalates. Never throws: every write here is best-effort, matching how
- * the rest of this file treats CI-cancellation/notification side effects as non-critical to the close itself.
- * A no-op in `dry_run`/`paused` mode (no label/ban side effects for a mutation that didn't really happen).
+ * Moderation-rules engine (#selfhost-mod-engine / #review-evasion-protection): given that a moderation-
+ * tracked enforcement action for `rule` ALREADY COMPLETED against `authorLogin` on `repoFullName#number`,
+ * record the violation (idempotent), count the actor's currently-effective-rule violations, and apply the
+ * warning/banned label + auto-blacklist -- the SAME escalation every anti-abuse mechanism in this codebase
+ * shares. Extracted so the planner-driven path below (`maybeEscalateModeration`) and the direct webhook-
+ * driven review-evasion enforcement handlers in `queue/processors.ts` -- which bypass the planner/executor
+ * pipeline entirely, mirroring the existing draft-dodge/reopen-reclose direct-handler shape -- both reach the
+ * SAME escalation behavior once their own enforcement close succeeds. Never throws: every write here is
+ * best-effort, matching how the rest of this file treats CI-cancellation/notification side effects as
+ * non-critical to the close itself. A no-op when the moderation layer (global or per-repo) does not
+ * currently count `rule`.
  */
-async function maybeEscalateModeration(
+export async function applyModerationEscalationForRule(
   env: Env,
-  args: { installationId: number; repoFullName: string; number: number; authorLogin?: string | null | undefined; mode: AgentActionMode; moderationSettings: ModerationContextSettings | undefined },
-  planned: PlannedAgentAction[],
-  outcomes: AgentActionOutcome[],
+  args: { installationId: number; repoFullName: string; number: number; authorLogin: string; rule: ModerationRuleType; moderationSettings: ModerationContextSettings | undefined },
 ): Promise<void> {
-  if (!args.authorLogin || args.mode !== "live") return;
-  const index = planned.findIndex((action, i) => action.actionClass === "close" && action.closeKind !== undefined && MODERATION_RULE_TYPES.has(action.closeKind) && outcomes[i]?.outcome === "completed");
-  const closeKind = index === -1 ? undefined : planned[index]?.closeKind;
-  if (closeKind === undefined) return;
-  const rule = closeKind as ModerationRuleType;
-
   const globalConfig = await getGlobalModerationConfig(env);
   if (!resolveModerationGateEnabled(globalConfig.enabled, args.moderationSettings?.moderationGateMode ?? "inherit")) return;
   const effectiveRules = resolveEffectiveModerationRules(globalConfig.rules, args.moderationSettings?.moderationRules);
-  if (!effectiveRules.includes(rule)) return;
+  if (!effectiveRules.includes(args.rule)) return;
 
   const targetKey = `${args.repoFullName}#${args.number}`;
   // #gate-flagged: idempotent per (actor, eventType, targetKey) -- a webhook redelivery or queue retry that
@@ -461,7 +456,7 @@ async function maybeEscalateModeration(
   // (re-labeling/re-checking the ban threshold off a stale "nothing new happened" pass is redundant, not just
   // harmless). A write failure fails OPEN (treated as "new"), matching this function's existing best-effort
   // philosophy elsewhere -- a lost write should not also silently suppress the escalation it was recording for.
-  const isNewViolation = await recordModerationViolation(env, { eventType: MODERATION_VIOLATION_EVENT_TYPE[rule], actor: args.authorLogin, targetKey, repoFullName: args.repoFullName, ruleReason: `${rule} violation` }).catch(() => true);
+  const isNewViolation = await recordModerationViolation(env, { eventType: MODERATION_VIOLATION_EVENT_TYPE[args.rule], actor: args.authorLogin, targetKey, repoFullName: args.repoFullName, ruleReason: `${args.rule} violation` }).catch(() => true);
   if (!isNewViolation) return;
 
   // #gate-flagged: count only the CURRENTLY-effective rule types, not every rule type ever recorded. A rule
@@ -491,6 +486,35 @@ async function maybeEscalateModeration(
       await upsertGlobalContributorBlacklist(env, { contributorBlacklist: nextBlacklist }).catch(() => undefined);
     }
   }
+}
+
+/**
+ * Moderation-rules engine (#selfhost-mod-engine): a SINGLE convergence point for the three planner-staged
+ * anti-abuse mechanisms (blacklist, contributor cap, review-nag) that already tag their `close` action with a
+ * matching `closeKind` -- rather than duplicating this wiring at every one of their several call sites in
+ * `queue/processors.ts`, this scans the JUST-EXECUTED plan for a moderation-tracked close that actually
+ * COMPLETED (not denied/queued/dry-run -- an action that didn't really happen must not count as a violation)
+ * and, if so, delegates to {@link applyModerationEscalationForRule}. A no-op in `dry_run`/`paused` mode (no
+ * label/ban side effects for a mutation that didn't really happen).
+ */
+async function maybeEscalateModeration(
+  env: Env,
+  args: { installationId: number; repoFullName: string; number: number; authorLogin?: string | null | undefined; mode: AgentActionMode; moderationSettings: ModerationContextSettings | undefined },
+  planned: PlannedAgentAction[],
+  outcomes: AgentActionOutcome[],
+): Promise<void> {
+  if (!args.authorLogin || args.mode !== "live") return;
+  const index = planned.findIndex((action, i) => action.actionClass === "close" && action.closeKind !== undefined && MODERATION_RULE_TYPES.has(action.closeKind) && outcomes[i]?.outcome === "completed");
+  const closeKind = index === -1 ? undefined : planned[index]?.closeKind;
+  if (closeKind === undefined) return;
+  await applyModerationEscalationForRule(env, {
+    installationId: args.installationId,
+    repoFullName: args.repoFullName,
+    number: args.number,
+    authorLogin: args.authorLogin,
+    rule: closeKind as ModerationRuleType,
+    moderationSettings: args.moderationSettings,
+  });
 }
 
 /** CI-run cancellation on a contributor_cap close (#2462): runs cancelInFlightWorkflowRunsForHeadSha and

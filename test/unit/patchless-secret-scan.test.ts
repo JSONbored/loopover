@@ -821,6 +821,7 @@ describe("patchlessSecretScanInternals", () => {
     expect(shouldAttemptPatchLessSecretScan({}, "modified", "   ")).toBe(false);
     expect(shouldAttemptPatchLessSecretScan({}, "removed", "base-sha")).toBe(false);
     expect(shouldAttemptPatchLessSecretScan({}, "copied", "base-sha")).toBe(false);
+    expect(shouldAttemptPatchLessSecretScan({}, "added", "base-sha")).toBe(true);
     expect(
       shouldAttemptPatchLessSecretScan({ previousFilename: "old.env" }, "renamed", "base-sha"),
     ).toBe(true);
@@ -894,6 +895,15 @@ describe("patchlessSecretScanInternals", () => {
         changes: 1,
         payload: {},
       },
+      {
+        repoFullName: "acme/widgets",
+        pullNumber: 7,
+        path: "default-status.env",
+        additions: 1,
+        deletions: 0,
+        changes: 1,
+        payload: {},
+      },
     ] as Parameters<typeof markEligiblePatchLessFilesIncomplete>[0];
     const marked = markEligiblePatchLessFilesIncomplete(files, null);
     expect(marked[0]?.payload.patch).toBe("@@\n+const ok = 1;");
@@ -902,6 +912,8 @@ describe("patchlessSecretScanInternals", () => {
     expect(marked[2]?.payload.secretScanIncomplete).toBeUndefined();
     expect(marked[3]?.payload.secretScanIncomplete).toBe(true);
     expect(incompletePatchLessSecretScanFinding(marked)?.detail).toContain("added.env");
+    const markedWithBase = markEligiblePatchLessFilesIncomplete([files[4]!], "base-sha");
+    expect(markedWithBase[0]?.payload.secretScanIncomplete).toBe(true);
   });
 });
 

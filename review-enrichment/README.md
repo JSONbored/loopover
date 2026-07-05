@@ -38,6 +38,7 @@ inside the operator's trust boundary. The engine prefers a short-lived installat
 | `license`       | Copyleft or unknown dependency licenses.                                     | Calls deps.dev.                                              |
 | `installScript` | npm packages that run install lifecycle hooks.                               | Calls the npm registry.                                      |
 | `actionPin`     | Third-party GitHub Actions pinned to mutable refs.                           | Pure local.                                                  |
+| `workflowInjection` | GitHub Actions pwn-request/workflow-injection risk: an elevated-trust trigger checking out untrusted refs, unsafe `run:` interpolation, or missing `permissions:`. | Pure local. |
 | `eol`           | Runtime/base-image pins that are EOL or close to EOL.                        | Calls endoflife.date.                                        |
 | `redos`         | Regex literals with catastrophic-backtracking structure.                     | Pure local.                                                  |
 | `provenance`    | Missing package attestations plus binary/vendored/minified additions.        | Calls npm/PyPI for attestations; path checks are local.      |

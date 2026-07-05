@@ -356,6 +356,7 @@ function inputSkipReason(
         ? null
         : "no_lockfile";
     case "actionPin":
+    case "workflowInjection":
       return analysis.fileCategories.some((file) => file.category === "workflow")
         ? null
         : "no_workflow";

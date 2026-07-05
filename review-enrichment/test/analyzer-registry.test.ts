@@ -17,6 +17,7 @@ const EXPECTED_ANALYZERS = [
   "installScript",
   "heavyDependency",
   "actionPin",
+  "workflowInjection",
   "eol",
   "redos",
   "provenance",

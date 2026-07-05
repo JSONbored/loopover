@@ -32,6 +32,7 @@ import { scanTerminology } from "./terminology.js";
 import { scanTodoMarker } from "./todo-marker.js";
 import { scanTyposquat } from "./typosquat.js";
 import { scanUndocumentedExport } from "./undocumented-export.js";
+import { scanWorkflowInjection } from "./workflow-injection.js";
 import type {
   AnalyzerDescriptor,
   AnalyzerFn,
@@ -148,6 +149,25 @@ export const ANALYZER_DESCRIPTORS = [
       notes: "Official actions/* and github/* actions are excluded to keep the signal focused.",
     },
     run: (req) => scanActionPins(req),
+  }),
+  descriptor({
+    name: "workflowInjection",
+    title: "Workflow-injection / pwn-request risk",
+    category: "security",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    docs: {
+      summary:
+        "Detects GitHub Actions pwn-request risk: a pull_request_target/workflow_run workflow that runs elevated CI against attacker-controlled input.",
+      looksAt:
+        "Added/context lines in .github/workflows YAML patches: the trigger, an untrusted-ref checkout, run: steps that interpolate event fields, and the top-level permissions block.",
+      reports: "Workflow file, line, and rule kind (untrusted checkout, unsafe interpolation, or missing permissions).",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Diff-only and file-scoped: an environment/permissions gate already present outside the diff's visible context is not seen, and job/step correlation is not performed. Never flags a plain pull_request trigger.",
+    },
+    run: (req) => scanWorkflowInjection(req),
   }),
   descriptor({
     name: "eol",

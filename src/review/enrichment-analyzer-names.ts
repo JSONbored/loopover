@@ -38,6 +38,7 @@ export const REES_ANALYZER_NAMES = [
   "terminology",
   "todoMarker",
   "magicNumber",
+  "workflowInjection",
 ] as const;
 
 export type ReesAnalyzerName = (typeof REES_ANALYZER_NAMES)[number];

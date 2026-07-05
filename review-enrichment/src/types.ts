@@ -119,6 +119,18 @@ export interface ActionPinFinding {
   ref: string;
 }
 
+/** A GitHub Actions "pwn request" / workflow-injection trust-boundary risk: a workflow that runs with elevated
+ *  privilege against attacker-controlled input. `untrusted-checkout`: a `pull_request_target`/`workflow_run`
+ *  workflow checks out the untrusted PR head with no environment gate. `unsafe-interpolation`: a `run:` step
+ *  interpolates an untrusted event field directly instead of routing it through `env:` first. `missing-permissions`:
+ *  a `pull_request_target` workflow declares no top-level `permissions:` block, so it keeps the default broad
+ *  token permissions. */
+export interface WorkflowInjectionFinding {
+  file: string;
+  line: number;
+  kind: "untrusted-checkout" | "unsafe-interpolation" | "missing-permissions";
+}
+
 /** A runtime/base-image/engine pinned to a release that is past end-of-support (or EOL within 90 days). */
 export interface EolFinding {
   file: string;
@@ -454,6 +466,7 @@ export interface BriefFindings {
   secret?: SecretFinding[];
   license?: LicenseFinding[];
   actionPin?: ActionPinFinding[];
+  workflowInjection?: WorkflowInjectionFinding[];
   installScript?: InstallScriptFinding[];
   heavyDependency?: HeavyDependencyFinding[];
   eol?: EolFinding[];

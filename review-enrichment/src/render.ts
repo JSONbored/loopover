@@ -111,6 +111,30 @@ export function renderBrief(
     }
   }
 
+  const workflowInjections = findings.workflowInjection ?? [];
+  if (workflowInjections.length) {
+    const explainInjection = (
+      kind: (typeof workflowInjections)[number]["kind"],
+    ): string => {
+      switch (kind) {
+        case "untrusted-checkout":
+          return "checks out the untrusted PR head under an elevated-trust trigger with no environment approval gate";
+        case "unsafe-interpolation":
+          return "interpolates an untrusted event field directly into a shell step; route it through `env:` first";
+        case "missing-permissions":
+          return "has no top-level `permissions:` block, so the workflow keeps the default broad token permissions";
+      }
+    };
+    lines.push(
+      "### GitHub Actions workflow-injection / pwn-request risk (review before merging)",
+    );
+    for (const item of workflowInjections) {
+      lines.push(
+        `- ${safeCodeSpan(`${item.file}:${item.line}`)} — ${explainInjection(item.kind)}`,
+      );
+    }
+  }
+
   const eol = findings.eol ?? [];
   if (eol.length) {
     lines.push("### End-of-life runtimes (upgrade before merging)");

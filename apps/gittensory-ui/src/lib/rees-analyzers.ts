@@ -237,6 +237,27 @@ export const REES_ANALYZERS = [
     },
   },
   {
+    name: "workflowInjection",
+    title: "Workflow-injection / pwn-request risk",
+    category: "security",
+    cost: "local",
+    defaultEnabled: true,
+    profiles: ["fast", "balanced", "deep"],
+    requires: ["files"],
+    limits: {},
+    docs: {
+      summary:
+        "Detects GitHub Actions pwn-request risk: a pull_request_target/workflow_run workflow that runs elevated CI against attacker-controlled input.",
+      looksAt:
+        "Added/context lines in .github/workflows YAML patches: the trigger, an untrusted-ref checkout, run: steps that interpolate event fields, and the top-level permissions block.",
+      reports:
+        "Workflow file, line, and rule kind (untrusted checkout, unsafe interpolation, or missing permissions).",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Diff-only and file-scoped: an environment/permissions gate already present outside the diff's visible context is not seen, and job/step correlation is not performed. Never flags a plain pull_request trigger.",
+    },
+  },
+  {
     name: "eol",
     title: "End-of-life runtimes",
     category: "supply-chain",

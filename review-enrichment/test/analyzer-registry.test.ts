@@ -47,6 +47,7 @@ const EXPECTED_ANALYZERS = [
   "magicNumber",
   "conflictMarker",
   "debugLeftover",
+  "unsafeAny",
   "commitLint",
 ];
 

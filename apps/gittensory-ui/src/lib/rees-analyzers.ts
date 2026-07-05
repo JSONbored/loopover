@@ -934,6 +934,28 @@ export const REES_ANALYZERS = [
     },
   },
   {
+    name: "unsafeAny",
+    title: "Unsafe `any` usage",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    profiles: ["fast", "balanced", "deep"],
+    requires: ["files"],
+    limits: {
+      maxFindings: 25,
+      maxLineChars: 2000,
+    },
+    docs: {
+      summary:
+        "Counts explicit `any` type annotations, `as any` casts, and `<any>` assertions newly added in TypeScript files.",
+      looksAt: "Added lines in changed non-test .ts/.tsx/.mts/.cts source files.",
+      reports: "File, line, and kind: annotation, cast, or assertion.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Structural regex only — no type-checker. String literals and full-line comments are ignored; inline comments after code are stripped before matching.",
+    },
+  },
+  {
     name: "commitLint",
     title: "Conventional-commit subjects",
     category: "quality",

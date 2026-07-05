@@ -473,6 +473,14 @@ export interface DebugLeftoverFinding {
   kind: "debugger" | "console" | "print";
 }
 
+/** Explicit `any` type erosion newly introduced in TypeScript source (#2017, part of #1499).
+ *  Reports location and kind only — never the surrounding code. */
+export interface UnsafeAnyFinding {
+  file: string;
+  line: number;
+  kind: "annotation" | "cast" | "assertion";
+}
+
 /** An absolute HTTP(S) URL or raw IP:port endpoint hardcoded in non-test, non-config source (#2027, part of #1499).
  *  Reports location, kind, and a redacted/truncated host — never full paths or query strings. */
 export interface HardcodedUrlFinding {
@@ -528,6 +536,7 @@ export interface BriefFindings {
   magicNumber?: MagicNumberFinding[];
   conflictMarker?: ConflictMarkerFinding[];
   debugLeftover?: DebugLeftoverFinding[];
+  unsafeAny?: UnsafeAnyFinding[];
   hardcodedUrl?: HardcodedUrlFinding[];
   commitLint?: CommitLintFinding[];
 }

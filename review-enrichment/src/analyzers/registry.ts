@@ -36,6 +36,7 @@ import { scanTerminology } from "./terminology.js";
 import { scanTodoMarker } from "./todo-marker.js";
 import { scanTyposquat } from "./typosquat.js";
 import { scanUndocumentedExport } from "./undocumented-export.js";
+import { scanUnsafeAny } from "./unsafe-any.js";
 import type {
   AnalyzerDescriptor,
   AnalyzerFn,
@@ -976,6 +977,35 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanDebugLeftover(req, signal),
+  }),
+  descriptor({
+    name: "unsafeAny",
+    title: "Unsafe `any` usage",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Counts explicit `any` type annotations, `as any` casts, and `<any>` assertions newly added in TypeScript files.",
+      looksAt: "Added lines in changed non-test .ts/.tsx/.mts/.cts source files.",
+      reports: "File, line, and kind: annotation, cast, or assertion.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Structural regex only — no type-checker. String literals and full-line comments are ignored; inline comments after code are stripped before matching.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Unsafe `any` usage (type-safety erosion introduced by this PR)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${helpers.safeCodeSpan(item.kind)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanUnsafeAny(req, signal),
   }),
   descriptor({
     name: "commitLint",

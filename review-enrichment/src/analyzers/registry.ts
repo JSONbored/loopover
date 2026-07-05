@@ -34,6 +34,7 @@ import { scanConflictMarkers } from "./conflict-marker.js";
 import { scanDebugLeftover } from "./debug-leftover.js";
 import { scanDeepNesting } from "./deep-nesting.js";
 import { scanI18nRegression } from "./i18n-regression.js";
+import { scanUnsafeAny } from "./unsafe-any.js";
 import { scanErrorSwallow } from "./error-swallow.js";
 import { scanFloatingPromise } from "./floating-promise.js";
 import { scanSizeSmell } from "./size-smell.js";
@@ -1163,6 +1164,35 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanI18nRegression(req, signal),
+  }),
+  descriptor({
+    name: "unsafeAny",
+    title: "Unsafe `any` usage",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Counts explicit `: any` annotations, `as any` casts, and `<any>` assertions newly added in TypeScript diffs.",
+      looksAt: "Added lines in changed non-test .ts/.tsx/.mts/.cts files.",
+      reports: "File, line, and kind: annotation, cast, or assertion.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Structural regex only — string literals and block comments are stripped; multi-line block comments opened on context lines are tracked across the hunk.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Unsafe `any` (annotation / cast / assertion added by this PR)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${helpers.safeCodeSpan(item.kind)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanUnsafeAny(req, signal),
   }),
   descriptor({
     name: "commitLint",

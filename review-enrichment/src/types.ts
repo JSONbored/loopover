@@ -496,6 +496,14 @@ export interface SizeSmellFinding {
   name?: string;
 }
 
+/** An explicit `any` annotation, cast, or assertion newly added in a TS diff (#2017, part of #1499).
+ *  Reports file, line, and kind only — never source content. */
+export interface UnsafeAnyFinding {
+  file: string;
+  line: number;
+  kind: "annotation" | "cast" | "assertion";
+}
+
 /** A user-facing string literal added without the repo's i18n convention (#2029, part of #1499).
  *  Reports file and line only — never string content. */
 export interface I18nFinding {
@@ -589,6 +597,7 @@ export interface BriefFindings {
   deepNesting?: DeepNestingFinding[];
   errorSwallow?: ErrorSwallowFinding[];
   i18n?: I18nFinding[];
+  unsafeAny?: UnsafeAnyFinding[];
   hardcodedUrl?: HardcodedUrlFinding[];
   commitLint?: CommitLintFinding[];
 }

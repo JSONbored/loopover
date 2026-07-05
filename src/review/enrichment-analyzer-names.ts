@@ -47,6 +47,7 @@ export const REES_ANALYZER_NAMES = [
   "deepNesting",
   "errorSwallow",
   "i18n",
+  "unsafeAny",
   "commitLint",
 ] as const;
 

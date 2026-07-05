@@ -465,6 +465,14 @@ export interface ConflictMarkerFinding {
   marker: "<<<<<<<" | "|||||||" | "=======" | ">>>>>>>";
 }
 
+/** A debugging leftover a PR added in non-test source — `debugger;`, a bare console sink, or a `print()` call
+ *  (#2015, part of #1499). Distinct from secret-log (sensitive payloads); reports location + kind only. */
+export interface DebugLeftoverFinding {
+  file: string;
+  line: number;
+  kind: "debugger" | "console" | "print";
+}
+
 /** A PR commit subject that does not conform to the Conventional Commits spec (#2021, part of #1499). Reports a
  *  short SHA prefix, the subject, and the failing reason — never author/email. */
 export interface CommitLintFinding {
@@ -510,6 +518,7 @@ export interface BriefFindings {
   todoMarker?: TodoMarkerFinding[];
   magicNumber?: MagicNumberFinding[];
   conflictMarker?: ConflictMarkerFinding[];
+  debugLeftover?: DebugLeftoverFinding[];
   commitLint?: CommitLintFinding[];
 }
 

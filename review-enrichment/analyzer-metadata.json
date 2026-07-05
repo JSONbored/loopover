@@ -1000,6 +1000,32 @@
       }
     },
     {
+      "name": "debugLeftover",
+      "title": "Debug leftovers",
+      "category": "quality",
+      "cost": "local",
+      "defaultEnabled": true,
+      "profiles": [
+        "fast",
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "files"
+      ],
+      "limits": {
+        "maxFindings": 25,
+        "maxLineChars": 2000
+      },
+      "docs": {
+        "summary": "Flags debugging leftovers a PR adds in non-test source — `debugger;`, bare console sinks, or `print()` calls.",
+        "looksAt": "Added lines in changed non-test source files.",
+        "reports": "File, line, and kind: debugger, console, or print.",
+        "network": "Pure local analyzer. No external network call.",
+        "notes": "Distinct from the secrets-in-logs analyzer: this catches plain debug noise regardless of payload. String literals are stripped before matching."
+      }
+    },
+    {
       "name": "commitLint",
       "title": "Conventional-commit subjects",
       "category": "quality",

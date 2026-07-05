@@ -29,6 +29,7 @@ import { scanMigrationSafety } from "./migration-safety.js";
 import { scanLooseRanges } from "./loose-range.js";
 import { scanMagicNumbers } from "./magic-number.js";
 import { scanConflictMarkers } from "./conflict-marker.js";
+import { scanDebugLeftover } from "./debug-leftover.js";
 import { scanCommitLint } from "./commit-lint.js";
 import { scanTerminology } from "./terminology.js";
 import { scanTodoMarker } from "./todo-marker.js";
@@ -916,6 +917,35 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req) => scanConflictMarkers(req),
+  }),
+  descriptor({
+    name: "debugLeftover",
+    title: "Debug leftovers",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags debugging leftovers a PR adds in non-test source — `debugger;`, bare console sinks, or `print()` calls.",
+      looksAt: "Added lines in changed non-test source files.",
+      reports: "File, line, and kind: debugger, console, or print.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Distinct from the secrets-in-logs analyzer: this catches plain debug noise regardless of payload. String literals are stripped before matching.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Debug leftovers (debugger / console / print added by this PR)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${helpers.safeCodeSpan(item.kind)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanDebugLeftover(req, signal),
   }),
   descriptor({
     name: "commitLint",

@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
-import { GitHubMilestonesAdapter, MILESTONE_SUGGEST_COMMENT_MARKER, maybeSuggestMilestoneMatch, maybeSuggestMilestoneMatchForPr, matchOpenMilestones, type ProjectTrackerRef } from "../../src/integrations/project-tracker-adapter";
+import {
+  GitHubMilestonesAdapter,
+  GitHubProjectsAdapter,
+  PROJECT_TRACKER_SUGGEST_COMMENT_MARKER,
+  maybeSuggestMilestoneMatchForPr,
+  maybeSuggestProjectOrMilestoneMatch,
+  matchOpenTrackerItems,
+  resolveProjectV2Fields,
+  type ProjectTrackerRef,
+} from "../../src/integrations/project-tracker-adapter";
 import { createTestEnv } from "../helpers/d1";
 
 function generateRsaPrivateKeyPem(): string {
@@ -8,35 +17,41 @@ function generateRsaPrivateKeyPem(): string {
   return privateKey.export({ type: "pkcs1", format: "pem" }).toString();
 }
 
-describe("matchOpenMilestones (#3183)", () => {
+/** A GraphQL response reporting zero open projects (a User-owned repo, or an Organization with none) --
+ *  the shape most milestone-focused tests below need so the parallel Projects v2 lookup never interferes. */
+function noOpenProjectsGraphQlBody(): unknown {
+  return { data: { repositoryOwner: { __typename: "User" } } };
+}
+
+describe("matchOpenTrackerItems (#3183/#3184)", () => {
   const milestones: ProjectTrackerRef[] = [{ id: "14", title: "Self-host reliability roadmap" }, { id: "9", title: "Bounty Wave 2" }];
 
-  it("returns null when there are no open milestones", () => {
-    expect(matchOpenMilestones("Fix self-host reliability roadmap flakiness", null, [])).toBeNull();
+  it("returns null when there are no open items", () => {
+    expect(matchOpenTrackerItems("Fix self-host reliability roadmap flakiness", null, [])).toBeNull();
   });
 
-  it("returns null when no milestone clears the match threshold", () => {
-    expect(matchOpenMilestones("Fix a typo in the readme", "no relation to any tracked work", milestones)).toBeNull();
+  it("returns null when no item clears the match threshold", () => {
+    expect(matchOpenTrackerItems("Fix a typo in the readme", "no relation to any tracked work", milestones)).toBeNull();
   });
 
-  it("matches a PR whose title/body clearly overlaps one open milestone's title", () => {
-    const match = matchOpenMilestones("Improve self-host reliability roadmap convergence", "Follow-up on the self-host reliability roadmap work", milestones);
-    expect(match?.milestone.id).toBe("14");
+  it("matches a PR whose title/body clearly overlaps one open item's title", () => {
+    const match = matchOpenTrackerItems("Improve self-host reliability roadmap convergence", "Follow-up on the self-host reliability roadmap work", milestones);
+    expect(match?.item.id).toBe("14");
     expect(match?.score).toBeGreaterThanOrEqual(0.65);
     expect(match?.shared).toBeGreaterThanOrEqual(3);
   });
 
-  it("returns null on an ambiguous multi-match (more than one milestone clears the threshold) rather than guessing", () => {
+  it("returns null on an ambiguous multi-match (more than one item clears the threshold) rather than guessing", () => {
     const tied: ProjectTrackerRef[] = [
       { id: "1", title: "self host reliability roadmap convergence work" },
       { id: "2", title: "self host reliability roadmap convergence effort" },
     ];
-    expect(matchOpenMilestones("self host reliability roadmap convergence", null, tied)).toBeNull();
+    expect(matchOpenTrackerItems("self host reliability roadmap convergence", null, tied)).toBeNull();
   });
 
   it("treats a missing PR body as empty text without throwing", () => {
-    expect(() => matchOpenMilestones("just a title", undefined, milestones)).not.toThrow();
-    expect(() => matchOpenMilestones("just a title", null, milestones)).not.toThrow();
+    expect(() => matchOpenTrackerItems("just a title", undefined, milestones)).not.toThrow();
+    expect(() => matchOpenTrackerItems("just a title", null, milestones)).not.toThrow();
   });
 });
 
@@ -45,7 +60,7 @@ describe("GitHubMilestonesAdapter (#3183)", () => {
     vi.unstubAllGlobals();
   });
 
-  it("listOpenProjects and attachToProject are inert placeholders until #3184", async () => {
+  it("listOpenProjects and attachToProject are inert placeholders (Projects v2 lives in GitHubProjectsAdapter)", async () => {
     const adapter = new GitHubMilestonesAdapter();
     await expect(adapter.listOpenProjects()).resolves.toEqual([]);
     await expect(adapter.attachToProject()).resolves.toEqual({ attached: false });
@@ -154,7 +169,175 @@ describe("GitHubMilestonesAdapter (#3183)", () => {
   });
 });
 
-describe("maybeSuggestMilestoneMatch (#3183)", () => {
+describe("GitHubProjectsAdapter (#3184)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("listOpenMilestones and attachToMilestone are inert placeholders (Milestones live in GitHubMilestonesAdapter)", async () => {
+    const adapter = new GitHubProjectsAdapter();
+    await expect(adapter.listOpenMilestones()).resolves.toEqual([]);
+    await expect(adapter.attachToMilestone()).resolves.toEqual({ attached: false });
+  });
+
+  it("listOpenProjects returns projectsV2 for an organization-owned repo", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/graphql")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { variables?: { login?: string } };
+        expect(body.variables?.login).toBe("some-org");
+        return Response.json({
+          data: {
+            repositoryOwner: {
+              __typename: "Organization",
+              projectsV2: { nodes: [{ id: "PVT_1", title: "Self-host reliability roadmap" }], pageInfo: { hasNextPage: false, endCursor: null } },
+            },
+          },
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const adapter = new GitHubProjectsAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    const result = await adapter.listOpenProjects({ env, installationId: 123, repoFullName: "some-org/gittensory" });
+    expect(result).toEqual([{ id: "PVT_1", title: "Self-host reliability roadmap" }]);
+  });
+
+  it("listOpenProjects returns an empty list for a USER-owned repo (confirmed GitHub App platform limitation, #3184) without erroring", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
+      return new Response("unexpected", { status: 500 });
+    });
+    const adapter = new GitHubProjectsAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    await expect(adapter.listOpenProjects({ env, installationId: 123, repoFullName: "JSONbored/gittensory" })).resolves.toEqual([]);
+  });
+
+  it("listOpenProjects follows GraphQL cursor pagination across multiple pages", async () => {
+    let requestCount = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/graphql")) {
+        requestCount += 1;
+        const body = JSON.parse(String(init?.body ?? "{}")) as { variables?: { after?: string | null } };
+        if (!body.variables?.after) {
+          return Response.json({
+            data: { repositoryOwner: { __typename: "Organization", projectsV2: { nodes: [{ id: "PVT_1", title: "Page one project" }], pageInfo: { hasNextPage: true, endCursor: "cursor-2" } } } },
+          });
+        }
+        return Response.json({
+          data: { repositoryOwner: { __typename: "Organization", projectsV2: { nodes: [{ id: "PVT_2", title: "Page two project" }], pageInfo: { hasNextPage: false, endCursor: null } } } },
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const adapter = new GitHubProjectsAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    const result = await adapter.listOpenProjects({ env, installationId: 123, repoFullName: "some-org/gittensory" });
+    expect(requestCount).toBe(2);
+    expect(result).toEqual([
+      { id: "PVT_1", title: "Page one project" },
+      { id: "PVT_2", title: "Page two project" },
+    ]);
+  });
+
+  it("attachToProject resolves the PR's node_id then adds it as a project item via GraphQL", async () => {
+    let mutationVariables: unknown;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/4") && method === "GET") return Response.json({ number: 4, node_id: "PR_kwABC" });
+      if (url.endsWith("/graphql")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { variables?: unknown };
+        mutationVariables = body.variables;
+        return Response.json({ data: { addProjectV2ItemById: { item: { id: "PVTI_xyz" } } } });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const adapter = new GitHubProjectsAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    const result = await adapter.attachToProject({ env, installationId: 123, repoFullName: "some-org/gittensory" }, 4, "PVT_1");
+    expect(result).toEqual({ attached: true });
+    expect(mutationVariables).toEqual({ projectId: "PVT_1", contentId: "PR_kwABC" });
+  });
+
+  it("attachToProject reports not-attached when GitHub returns no item (e.g. a permission/visibility gap)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/4") && method === "GET") return Response.json({ number: 4, node_id: "PR_kwABC" });
+      if (url.endsWith("/graphql")) return Response.json({ data: { addProjectV2ItemById: { item: null } } });
+      return new Response("unexpected", { status: 500 });
+    });
+    const adapter = new GitHubProjectsAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    const result = await adapter.attachToProject({ env, installationId: 123, repoFullName: "some-org/gittensory" }, 4, "PVT_1");
+    expect(result).toEqual({ attached: false });
+  });
+
+  it("rejects an invalid repository full name before making any GitHub call", async () => {
+    const adapter = new GitHubProjectsAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    await expect(adapter.listOpenProjects({ env, installationId: 123, repoFullName: "invalid" })).rejects.toThrow(/Invalid repository full name/);
+    await expect(adapter.attachToProject({ env, installationId: 123, repoFullName: "owner/repo/extra" }, 4, "PVT_1")).rejects.toThrow(/Invalid repository full name/);
+  });
+});
+
+describe("resolveProjectV2Fields (#3184)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("resolves a project's fields and single-select options via GraphQL", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/graphql")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { variables?: { projectId?: string } };
+        expect(body.variables?.projectId).toBe("PVT_1");
+        return Response.json({
+          data: {
+            node: {
+              fields: {
+                nodes: [
+                  { id: "F_1", name: "Title" },
+                  { id: "F_2", name: "Status", options: [{ id: "O_1", name: "Todo" }, { id: "O_2", name: "Done" }] },
+                ],
+              },
+            },
+          },
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    const fields = await resolveProjectV2Fields({ env, installationId: 123, repoFullName: "some-org/gittensory" }, "PVT_1");
+    expect(fields).toEqual([
+      { id: "F_1", name: "Title" },
+      { id: "F_2", name: "Status", options: [{ id: "O_1", name: "Todo" }, { id: "O_2", name: "Done" }] },
+    ]);
+  });
+
+  it("returns an empty list when the project node has no fields (e.g. not found / inaccessible)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/graphql")) return Response.json({ data: { node: null } });
+      return new Response("unexpected", { status: 500 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    const fields = await resolveProjectV2Fields({ env, installationId: 123, repoFullName: "some-org/gittensory" }, "PVT_missing");
+    expect(fields).toEqual([]);
+  });
+});
+
+describe("maybeSuggestProjectOrMilestoneMatch (#3183/#3184)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -166,6 +349,7 @@ describe("maybeSuggestMilestoneMatch (#3183)", () => {
       const method = init?.method ?? "GET";
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/milestones")) return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
+      if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
       if (url.includes("/issues/4/comments") && method === "GET") return Response.json([]);
       if (url.includes("/issues/4/comments") && method === "POST") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { body?: string };
@@ -175,7 +359,7 @@ describe("maybeSuggestMilestoneMatch (#3183)", () => {
       return new Response("unexpected", { status: 500 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    const result = await maybeSuggestMilestoneMatch(
+    const result = await maybeSuggestProjectOrMilestoneMatch(
       { env, installationId: 123, repoFullName: "JSONbored/gittensory" },
       4,
       "Improve self-host reliability roadmap convergence",
@@ -183,8 +367,75 @@ describe("maybeSuggestMilestoneMatch (#3183)", () => {
     );
     expect(result).toEqual({ suggested: true });
     expect(posted).toHaveLength(1);
-    expect(posted[0]).toContain(MILESTONE_SUGGEST_COMMENT_MARKER);
+    expect(posted[0]).toContain(PROJECT_TRACKER_SUGGEST_COMMENT_MARKER);
     expect(posted[0]).toContain("Self-host reliability roadmap");
+    expect(posted[0]).toContain("milestone");
+    expect(posted[0]).not.toContain("project (");
+  });
+
+  it("posts a suggestion comment when a PROJECT matches (no milestone match) and mentions it as a project", async () => {
+    const posted: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones")) return Response.json([]);
+      if (url.endsWith("/graphql")) {
+        return Response.json({
+          data: { repositoryOwner: { __typename: "Organization", projectsV2: { nodes: [{ id: "PVT_1", title: "Self-host reliability roadmap" }], pageInfo: { hasNextPage: false, endCursor: null } } } },
+        });
+      }
+      if (url.includes("/issues/4/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/4/comments") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { body?: string };
+        posted.push(body.body ?? "");
+        return Response.json({ id: 1 });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const result = await maybeSuggestProjectOrMilestoneMatch(
+      { env, installationId: 123, repoFullName: "some-org/gittensory" },
+      4,
+      "Improve self-host reliability roadmap convergence",
+      "Follow-up on the self-host reliability roadmap work",
+    );
+    expect(result).toEqual({ suggested: true });
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toContain("project (");
+    expect(posted[0]).not.toContain("milestone (");
+  });
+
+  it("mentions BOTH when a milestone AND a project independently match", async () => {
+    const posted: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones")) return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
+      if (url.endsWith("/graphql")) {
+        return Response.json({
+          data: { repositoryOwner: { __typename: "Organization", projectsV2: { nodes: [{ id: "PVT_1", title: "Self-host reliability roadmap" }], pageInfo: { hasNextPage: false, endCursor: null } } } },
+        });
+      }
+      if (url.includes("/issues/4/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/4/comments") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { body?: string };
+        posted.push(body.body ?? "");
+        return Response.json({ id: 1 });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const result = await maybeSuggestProjectOrMilestoneMatch(
+      { env, installationId: 123, repoFullName: "some-org/gittensory" },
+      4,
+      "Improve self-host reliability roadmap convergence",
+      "Follow-up on the self-host reliability roadmap work",
+    );
+    expect(result).toEqual({ suggested: true });
+    expect(posted[0]).toContain("milestone (");
+    expect(posted[0]).toContain("project (");
   });
 
   it("code-formats the milestone title and strips literal backticks, neutralizing markdown/mention injection", async () => {
@@ -194,6 +445,7 @@ describe("maybeSuggestMilestoneMatch (#3183)", () => {
       const method = init?.method ?? "GET";
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/milestones")) return Response.json([{ number: 14, title: "self host reliability roadmap `@everyone` **pwned**" }]);
+      if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
       if (url.includes("/issues/4/comments") && method === "GET") return Response.json([]);
       if (url.includes("/issues/4/comments") && method === "POST") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { body?: string };
@@ -203,7 +455,7 @@ describe("maybeSuggestMilestoneMatch (#3183)", () => {
       return new Response("unexpected", { status: 500 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await maybeSuggestMilestoneMatch(
+    await maybeSuggestProjectOrMilestoneMatch(
       { env, installationId: 123, repoFullName: "JSONbored/gittensory" },
       4,
       "self host reliability roadmap convergence",
@@ -225,11 +477,12 @@ describe("maybeSuggestMilestoneMatch (#3183)", () => {
       const method = init?.method ?? "GET";
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/milestones")) return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
+      if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
       if (url.includes("/issues/4/comments") && method === "GET") {
         const page = Number(new URL(url).searchParams.get("page") ?? "1");
         requestedPages.push(page);
         if (page === 1) return Response.json(pageOneComments);
-        if (page === 2) return Response.json([{ body: MILESTONE_SUGGEST_COMMENT_MARKER, user: { type: "Bot", login: "gittensory[bot]" } }]);
+        if (page === 2) return Response.json([{ body: PROJECT_TRACKER_SUGGEST_COMMENT_MARKER, user: { type: "Bot", login: "gittensory[bot]" } }]);
         return Response.json([]);
       }
       if (url.includes("/issues/4/comments") && method === "POST") {
@@ -239,7 +492,7 @@ describe("maybeSuggestMilestoneMatch (#3183)", () => {
       return new Response("unexpected", { status: 500 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    const result = await maybeSuggestMilestoneMatch(
+    const result = await maybeSuggestProjectOrMilestoneMatch(
       { env, installationId: 123, repoFullName: "JSONbored/gittensory" },
       4,
       "Improve self-host reliability roadmap convergence",
@@ -250,13 +503,14 @@ describe("maybeSuggestMilestoneMatch (#3183)", () => {
     expect(posted).toBe(false);
   });
 
-  it("does nothing when no milestone matches (never calls the comment POST endpoint)", async () => {
+  it("does nothing when neither a milestone nor a project matches (never calls the comment POST endpoint)", async () => {
     let posted = false;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const method = init?.method ?? "GET";
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/milestones")) return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
+      if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
       if (url.includes("/comments") && method === "POST") {
         posted = true;
         return Response.json({ id: 1 });
@@ -264,7 +518,7 @@ describe("maybeSuggestMilestoneMatch (#3183)", () => {
       return new Response("unexpected", { status: 500 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    const result = await maybeSuggestMilestoneMatch({ env, installationId: 123, repoFullName: "JSONbored/gittensory" }, 4, "unrelated typo fix", null);
+    const result = await maybeSuggestProjectOrMilestoneMatch({ env, installationId: 123, repoFullName: "JSONbored/gittensory" }, 4, "unrelated typo fix", null);
     expect(result).toEqual({ suggested: false });
     expect(posted).toBe(false);
   });
@@ -276,8 +530,9 @@ describe("maybeSuggestMilestoneMatch (#3183)", () => {
       const method = init?.method ?? "GET";
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/milestones")) return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
+      if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
       if (url.includes("/issues/4/comments") && method === "GET") {
-        return Response.json([{ body: MILESTONE_SUGGEST_COMMENT_MARKER, user: { type: "Bot", login: "gittensory[bot]" } }]);
+        return Response.json([{ body: PROJECT_TRACKER_SUGGEST_COMMENT_MARKER, user: { type: "Bot", login: "gittensory[bot]" } }]);
       }
       if (url.includes("/comments") && method === "POST") {
         posted = true;
@@ -286,7 +541,7 @@ describe("maybeSuggestMilestoneMatch (#3183)", () => {
       return new Response("unexpected", { status: 500 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    const result = await maybeSuggestMilestoneMatch(
+    const result = await maybeSuggestProjectOrMilestoneMatch(
       { env, installationId: 123, repoFullName: "JSONbored/gittensory" },
       4,
       "Improve self-host reliability roadmap convergence",
@@ -303,8 +558,9 @@ describe("maybeSuggestMilestoneMatch (#3183)", () => {
       const method = init?.method ?? "GET";
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/milestones")) return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
+      if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
       if (url.includes("/issues/4/comments") && method === "GET") {
-        return Response.json([{ body: MILESTONE_SUGGEST_COMMENT_MARKER, user: { type: "User", login: "alice" } }]);
+        return Response.json([{ body: PROJECT_TRACKER_SUGGEST_COMMENT_MARKER, user: { type: "User", login: "alice" } }]);
       }
       if (url.includes("/issues/4/comments") && method === "POST") {
         posted = true;
@@ -313,7 +569,7 @@ describe("maybeSuggestMilestoneMatch (#3183)", () => {
       return new Response("unexpected", { status: 500 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    const result = await maybeSuggestMilestoneMatch(
+    const result = await maybeSuggestProjectOrMilestoneMatch(
       { env, installationId: 123, repoFullName: "JSONbored/gittensory" },
       4,
       "Improve self-host reliability roadmap convergence",
@@ -397,6 +653,7 @@ describe("maybeSuggestMilestoneMatchForPr (#3183 webhook-level gating)", () => {
         milestonesFetched = true;
         return Response.json([]);
       }
+      if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
       if (url.includes("/comments") && method === "GET") return Response.json([]);
       return new Response("unexpected", { status: 500 });
     });
@@ -413,6 +670,7 @@ describe("maybeSuggestMilestoneMatchForPr (#3183 webhook-level gating)", () => {
         milestonesFetched = true;
         return Response.json([]);
       }
+      if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
       return new Response("unexpected", { status: 500 });
     });
     await maybeSuggestMilestoneMatchForPr(baseArgs({ mode: "auto" }));

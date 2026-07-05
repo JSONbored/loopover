@@ -223,12 +223,17 @@ current_pull_requests AS (
       WHEN a.conclusion IS NOT NULL THEN 'commented'
       ELSE 'manual'
     END AS status,
-    CASE a.conclusion
-      WHEN 'success' THEN 'merge'
-      WHEN 'failure' THEN 'close'
-      WHEN 'action_required' THEN 'manual'
-      WHEN 'neutral' THEN 'manual'
-      WHEN 'skipped' THEN 'ignore'
+    -- The terminal PR outcome (state/merged_at) is the source of truth and takes precedence, exactly like
+    -- status above -- otherwise a merged/closed PR whose advisories.conclusion happens to read
+    -- neutral/action_required (the only two values GitHub Checks reports for the gate's own check run today)
+    -- reports verdict='manual' forever, even though the PR is long since merged/closed (#3511 dashboard bug).
+    CASE
+      WHEN lower(p.state) = 'closed' AND p.merged_at IS NOT NULL THEN 'merge'
+      WHEN lower(p.state) = 'closed' THEN 'close'
+      WHEN a.conclusion = 'success' THEN 'merge'
+      WHEN a.conclusion = 'failure' THEN 'close'
+      WHEN a.conclusion IN ('action_required', 'neutral') THEN 'manual'
+      WHEN a.conclusion = 'skipped' THEN 'ignore'
       ELSE NULL
     END AS verdict,
     p.title AS title,
@@ -378,12 +383,16 @@ current_pull_requests AS (
       WHEN a.conclusion IS NOT NULL THEN 'commented'
       ELSE 'manual'
     END AS status,
-    CASE a.conclusion
-      WHEN 'success' THEN 'merge'
-      WHEN 'failure' THEN 'close'
-      WHEN 'action_required' THEN 'manual'
-      WHEN 'neutral' THEN 'manual'
-      WHEN 'skipped' THEN 'ignore'
+    -- Mirrors status's precedence above (see the matching comment in the Postgres-source block): the terminal
+    -- PR outcome wins over advisories.conclusion, or a merged/closed PR reports verdict='manual' forever
+    -- (#3511).
+    CASE
+      WHEN lower(p.state) = 'closed' AND p.merged_at IS NOT NULL THEN 'merge'
+      WHEN lower(p.state) = 'closed' THEN 'close'
+      WHEN a.conclusion = 'success' THEN 'merge'
+      WHEN a.conclusion = 'failure' THEN 'close'
+      WHEN a.conclusion IN ('action_required', 'neutral') THEN 'manual'
+      WHEN a.conclusion = 'skipped' THEN 'ignore'
       ELSE NULL
     END AS verdict,
     p.title AS title,

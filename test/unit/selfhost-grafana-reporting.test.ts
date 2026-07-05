@@ -263,6 +263,54 @@ esac
     expect(sqlite(outDb, "SELECT title FROM review_targets WHERE repo='JSONbored/gittensory' AND number=1049;")).toBe("historical PR");
   });
 
+  it("REGRESSION (#3511 dashboard bug): a merged/closed PR reports its OWN verdict, not 'manual', even though advisories.conclusion is stuck at neutral/action_required", () => {
+    const root = tmpRoot();
+    const appDb = join(root, "app.sqlite");
+    const outDb = join(root, "reporting.sqlite");
+    sqlite(appDb, `
+      CREATE TABLE pull_requests (
+        repo_full_name TEXT NOT NULL,
+        number INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        state TEXT NOT NULL,
+        author_login TEXT,
+        merged_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO pull_requests (repo_full_name, number, title, state, author_login, merged_at, created_at, updated_at)
+      VALUES
+        ('JSONbored/gittensory', 2001, 'merged despite a stuck neutral advisory', 'closed', 'JSONbored', '2026-07-05T09:43:12Z', '2026-07-05T09:30:00Z', '2026-07-05T09:43:12Z'),
+        ('JSONbored/gittensory', 2002, 'closed (not merged) despite a stuck action_required advisory', 'closed', 'JSONbored', NULL, '2026-07-05T09:30:00Z', '2026-07-05T09:43:12Z'),
+        ('JSONbored/gittensory', 2003, 'still open, genuinely held for manual review', 'open', 'JSONbored', NULL, '2026-07-05T09:30:00Z', '2026-07-05T09:43:12Z');
+
+      CREATE TABLE advisories (
+        repo_full_name TEXT NOT NULL,
+        pull_number INTEGER,
+        conclusion TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO advisories (repo_full_name, pull_number, conclusion, updated_at)
+      VALUES
+        -- Reproduces the live production data: the gate's own advisories.conclusion is stuck at
+        -- neutral/action_required for every PR (a separate, unrelated pipeline gap) -- a merged/closed PR must
+        -- not be forced through those branches into verdict='manual' just because this column never resolved.
+        ('JSONbored/gittensory', 2001, 'neutral', '2026-07-05T09:31:00Z'),
+        ('JSONbored/gittensory', 2002, 'action_required', '2026-07-05T09:31:00Z'),
+        ('JSONbored/gittensory', 2003, 'neutral', '2026-07-05T09:31:00Z');
+    `);
+
+    runExporter(root, appDb, outDb);
+
+    expect(sqlite(outDb, "PRAGMA quick_check;")).toBe("ok");
+    expect(sqlite(outDb, "SELECT status || '|' || verdict FROM review_targets WHERE repo='JSONbored/gittensory' AND number=2001;")).toBe("merged|merge");
+    expect(sqlite(outDb, "SELECT status || '|' || verdict FROM review_targets WHERE repo='JSONbored/gittensory' AND number=2002;")).toBe("closed|close");
+    // A genuinely still-open PR is unaffected by the fix -- it has no terminal state/merged_at to take
+    // precedence, so it still falls through to the (separately broken, out of scope here) advisories.conclusion
+    // mapping, exactly as before.
+    expect(sqlite(outDb, "SELECT status || '|' || verdict FROM review_targets WHERE repo='JSONbored/gittensory' AND number=2003;")).toBe("manual|manual");
+  });
+
   it("falls back to legacy review_targets when the current PR cache is absent", () => {
     const root = tmpRoot();
     const appDb = join(root, "app.sqlite");

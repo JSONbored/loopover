@@ -1742,6 +1742,63 @@ export function excludeReviewPaths<T extends { path: string }>(files: T[], exclu
 }
 
 /**
+ * Apply the typed `gate:` alias's overrides onto already-spread effective settings, mutating `effective` in
+ * place. Split out of resolveEffectiveSettings purely for readability — this stays the ONLY place a `gate.*`
+ * field maps onto its `RepositorySettings` counterpart. `gate:` still WINS over an overlapping `settings:`
+ * value (the caller runs this AFTER the `{ ...dbSettings, ...manifest.settings }` spread), matching the
+ * documented precedence (self-hosting-configuration docs: "the typed gate: block ... wins over the generic
+ * settings: block for those same fields"). Every field here is independently null-gated — a `gate:` field
+ * absent from the parsed manifest is `null` (see parseGateConfig below) and leaves `effective` untouched, so a
+ * repo with no `gate:` block resolves byte-identically to before this was split out.
+ */
+function applyGateConfigOverrides(effective: RepositorySettings, gate: FocusManifestGateConfig): void {
+  if (gate.enabled !== null) effective.gateCheckMode = gate.enabled ? "enabled" : "off";
+  // reviewCheckMode (#2852) resolution: explicit `gate.checkMode` is the most-specific signal and always wins
+  // when set. Otherwise fall back to the legacy `gate.enabled` boolean alias, mapped symmetrically so it keeps
+  // its historical effect (true -> the check publishes and may be required; false -> it never publishes) even
+  // though it no longer drives `gateCheckMode` alone. When NEITHER is set, `effective.reviewCheckMode` already
+  // holds `settings.reviewCheckMode` (yml `settings:` override, else the DB value) from the caller's spread.
+  if (gate.checkMode !== null) effective.reviewCheckMode = gate.checkMode;
+  else if (gate.enabled !== null) effective.reviewCheckMode = gate.enabled ? "required" : "disabled";
+  if (gate.pack !== null) effective.gatePack = gate.pack;
+  if (gate.linkedIssue !== null) effective.linkedIssueGateMode = gate.linkedIssue;
+  if (gate.duplicates !== null) effective.duplicatePrGateMode = gate.duplicates;
+  if (gate.readinessMode !== null) effective.qualityGateMode = gate.readinessMode;
+  if (gate.readinessMinScore !== null) effective.qualityGateMinScore = gate.readinessMinScore;
+  if (gate.sizeMode !== null) effective.sizeGateMode = gate.sizeMode;
+  if (gate.lockfileIntegrityMode !== null) effective.lockfileIntegrityGateMode = gate.lockfileIntegrityMode;
+  if (gate.slopMode !== null) effective.slopGateMode = gate.slopMode;
+  if (gate.slopMinScore !== null) effective.slopGateMinScore = gate.slopMinScore;
+  if (gate.slopAiAdvisory !== null) effective.slopAiAdvisory = gate.slopAiAdvisory;
+  if (gate.aiReviewMode !== null) effective.aiReviewMode = gate.aiReviewMode;
+  if (gate.aiReviewByok !== null) effective.aiReviewByok = gate.aiReviewByok;
+  if (gate.aiReviewProvider !== null) effective.aiReviewProvider = gate.aiReviewProvider;
+  if (gate.aiReviewModel !== null) effective.aiReviewModel = gate.aiReviewModel;
+  if (gate.aiReviewAllAuthors !== null) effective.aiReviewAllAuthors = gate.aiReviewAllAuthors;
+  if (gate.aiReviewCloseConfidence !== null) effective.aiReviewCloseConfidence = gate.aiReviewCloseConfidence;
+  // Dual-AI combine/onMerge/reviewers overrides (#2567) are projected onto `effective` unclamped here — they are
+  // a REFINEMENT of the operator's AI_REVIEW_PLAN, not a replacement for it, so the actual operator-floor clamp
+  // (onMerge can only TIGHTEN, never loosen) happens where both the per-repo value AND the operator's plan are
+  // visible: `resolveEffectiveAiReviewOnMerge` in services/ai-review.ts, called from the review call site. This
+  // resolver has no access to `env.AI_REVIEW_PLAN`, so it cannot itself enforce the floor.
+  if (gate.aiReviewCombine !== null) effective.aiReviewCombine = gate.aiReviewCombine;
+  if (gate.aiReviewOnMerge !== null) effective.aiReviewOnMerge = gate.aiReviewOnMerge;
+  if (gate.aiReviewReviewers !== null) effective.aiReviewReviewers = gate.aiReviewReviewers;
+  if (gate.mergeReadiness !== null) effective.mergeReadinessGateMode = gate.mergeReadiness;
+  if (gate.manifestPolicy !== null) effective.manifestPolicyGateMode = gate.manifestPolicy;
+  if (gate.selfAuthoredLinkedIssue !== null) effective.selfAuthoredLinkedIssueGateMode = gate.selfAuthoredLinkedIssue;
+  if (gate.dryRun !== null) effective.gateDryRun = gate.dryRun;
+  if (gate.firstTimeContributorGrace !== null) effective.firstTimeContributorGrace = gate.firstTimeContributorGrace;
+  if (gate.premergeContentRecheck !== null) effective.premergeContentRecheck = gate.premergeContentRecheck;
+  if (gate.requireFreshRebaseWindowMinutes !== null) effective.requireFreshRebaseWindowMinutes = gate.requireFreshRebaseWindowMinutes;
+  if (gate.claMode !== null) effective.claGateMode = gate.claMode;
+  if (gate.claConsentPhrase !== null) effective.claConsentPhrase = gate.claConsentPhrase;
+  if (gate.claCheckRunName !== null) effective.claCheckRunName = gate.claCheckRunName;
+  if (gate.claCheckRunAppSlug !== null) effective.claCheckRunAppSlug = gate.claCheckRunAppSlug;
+  if (gate.expectedCiContexts !== null) effective.expectedCiContexts = gate.expectedCiContexts;
+}
+
+/**
  * Resolve the EFFECTIVE repository settings a webhook should act on: `.gittensory.yml` > DB settings >
  * safe defaults. The generic `settings:` override applies first; the friendly `gate:` alias then wins
  * for its fields. This single resolver makes the whole gittensory configuration — gate on/off, blocker
@@ -1803,51 +1860,7 @@ export function resolveEffectiveSettings(
       closeDelaySeconds: linkedIssueHardRulesOverride.closeDelaySeconds ?? base.closeDelaySeconds,
     };
   }
-  const gate = manifest.gate;
-  if (gate.enabled !== null) effective.gateCheckMode = gate.enabled ? "enabled" : "off";
-  // reviewCheckMode (#2852) resolution: explicit `gate.checkMode` is the most-specific signal and always wins
-  // when set. Otherwise fall back to the legacy `gate.enabled` boolean alias, mapped symmetrically so it keeps
-  // its historical effect (true -> the check publishes and may be required; false -> it never publishes) even
-  // though it no longer drives `gateCheckMode` alone. When NEITHER is set, `effective.reviewCheckMode` already
-  // holds `settings.reviewCheckMode` (yml `settings:` override, else the DB value) from the spread above.
-  if (gate.checkMode !== null) effective.reviewCheckMode = gate.checkMode;
-  else if (gate.enabled !== null) effective.reviewCheckMode = gate.enabled ? "required" : "disabled";
-  if (gate.pack !== null) effective.gatePack = gate.pack;
-  if (gate.linkedIssue !== null) effective.linkedIssueGateMode = gate.linkedIssue;
-  if (gate.duplicates !== null) effective.duplicatePrGateMode = gate.duplicates;
-  if (gate.readinessMode !== null) effective.qualityGateMode = gate.readinessMode;
-  if (gate.readinessMinScore !== null) effective.qualityGateMinScore = gate.readinessMinScore;
-  if (gate.sizeMode !== null) effective.sizeGateMode = gate.sizeMode;
-  if (gate.lockfileIntegrityMode !== null) effective.lockfileIntegrityGateMode = gate.lockfileIntegrityMode;
-  if (gate.slopMode !== null) effective.slopGateMode = gate.slopMode;
-  if (gate.slopMinScore !== null) effective.slopGateMinScore = gate.slopMinScore;
-  if (gate.slopAiAdvisory !== null) effective.slopAiAdvisory = gate.slopAiAdvisory;
-  if (gate.aiReviewMode !== null) effective.aiReviewMode = gate.aiReviewMode;
-  if (gate.aiReviewByok !== null) effective.aiReviewByok = gate.aiReviewByok;
-  if (gate.aiReviewProvider !== null) effective.aiReviewProvider = gate.aiReviewProvider;
-  if (gate.aiReviewModel !== null) effective.aiReviewModel = gate.aiReviewModel;
-  if (gate.aiReviewAllAuthors !== null) effective.aiReviewAllAuthors = gate.aiReviewAllAuthors;
-  if (gate.aiReviewCloseConfidence !== null) effective.aiReviewCloseConfidence = gate.aiReviewCloseConfidence;
-  // Dual-AI combine/onMerge/reviewers overrides (#2567) are projected onto `effective` unclamped here — they are
-  // a REFINEMENT of the operator's AI_REVIEW_PLAN, not a replacement for it, so the actual operator-floor clamp
-  // (onMerge can only TIGHTEN, never loosen) happens where both the per-repo value AND the operator's plan are
-  // visible: `resolveEffectiveAiReviewOnMerge` in services/ai-review.ts, called from the review call site. This
-  // resolver has no access to `env.AI_REVIEW_PLAN`, so it cannot itself enforce the floor.
-  if (gate.aiReviewCombine !== null) effective.aiReviewCombine = gate.aiReviewCombine;
-  if (gate.aiReviewOnMerge !== null) effective.aiReviewOnMerge = gate.aiReviewOnMerge;
-  if (gate.aiReviewReviewers !== null) effective.aiReviewReviewers = gate.aiReviewReviewers;
-  if (gate.mergeReadiness !== null) effective.mergeReadinessGateMode = gate.mergeReadiness;
-  if (gate.manifestPolicy !== null) effective.manifestPolicyGateMode = gate.manifestPolicy;
-  if (gate.selfAuthoredLinkedIssue !== null) effective.selfAuthoredLinkedIssueGateMode = gate.selfAuthoredLinkedIssue;
-  if (gate.dryRun !== null) effective.gateDryRun = gate.dryRun;
-  if (gate.firstTimeContributorGrace !== null) effective.firstTimeContributorGrace = gate.firstTimeContributorGrace;
-  if (gate.premergeContentRecheck !== null) effective.premergeContentRecheck = gate.premergeContentRecheck;
-  if (gate.requireFreshRebaseWindowMinutes !== null) effective.requireFreshRebaseWindowMinutes = gate.requireFreshRebaseWindowMinutes;
-  if (gate.claMode !== null) effective.claGateMode = gate.claMode;
-  if (gate.claConsentPhrase !== null) effective.claConsentPhrase = gate.claConsentPhrase;
-  if (gate.claCheckRunName !== null) effective.claCheckRunName = gate.claCheckRunName;
-  if (gate.claCheckRunAppSlug !== null) effective.claCheckRunAppSlug = gate.claCheckRunAppSlug;
-  if (gate.expectedCiContexts !== null) effective.expectedCiContexts = gate.expectedCiContexts;
+  applyGateConfigOverrides(effective, manifest.gate);
   // The dashboard "Require linked issue" toggle must not silently diverge from gate blocking: when the
   // boolean is on but linkedIssueGateMode is still off, treat it as a block requirement (#797).
   if (effective.requireLinkedIssue && effective.linkedIssueGateMode === "off") {

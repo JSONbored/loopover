@@ -5,7 +5,7 @@ import { maybeSuggestProjectOrMilestoneMatch } from "../../src/integrations/proj
 import { upsertRepositoryLinearKey } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
-const SECRET = "unit-test-encryption-secret-at-least-32-bytes-long";
+const SECRET = "example-unit-test-encryption-secret-32-bytes-long";
 const PR_URL = "https://github.com/JSONbored/gittensory/pull/4";
 
 function generateRsaPrivateKeyPem(): string {

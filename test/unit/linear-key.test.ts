@@ -25,7 +25,7 @@ vi.mock("../../src/github/app", async (importOriginal) => ({
 }));
 const mockedPermission = vi.mocked(getRepositoryCollaboratorPermission);
 
-const SECRET = "unit-test-encryption-secret-at-least-32-bytes-long";
+const SECRET = "example-unit-test-encryption-secret-32-bytes-long";
 
 async function seedRepo(env: Env, owner: string, name: string, installationId: number): Promise<void> {
   await upsertInstallation(env, {
@@ -104,7 +104,7 @@ describe("repository Linear key storage (#3186)", () => {
     await upsertRepositoryLinearKey(withSecret, { repoFullName: "acme/widgets", key: "lin_api_abc1234567" });
     const sameDbNoSecret = { ...withSecret, TOKEN_ENCRYPTION_SECRET: undefined } as unknown as Env;
     await expect(getDecryptedRepositoryLinearKey(sameDbNoSecret, "acme/widgets")).resolves.toBeNull();
-    const wrongSecret = { ...withSecret, TOKEN_ENCRYPTION_SECRET: "totally-different-secret-32-bytes-min" } as unknown as Env;
+    const wrongSecret = { ...withSecret, TOKEN_ENCRYPTION_SECRET: "totally-different-example-secret-32-bytes-min" } as unknown as Env;
     await expect(getDecryptedRepositoryLinearKey(wrongSecret, "acme/widgets")).resolves.toBeNull();
   });
 });

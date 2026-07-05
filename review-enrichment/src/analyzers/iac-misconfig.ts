@@ -105,6 +105,17 @@ const NO_NEW_PRIVILEGES_OFF_RE = /\bno-new-privileges[=:]\s*["']?false\b/i;
 const DOCKER_SOCKET_MOUNT_RE =
   /\/var\/run\/docker\.sock:|\bsource\s*:\s*["']?\/var\/run\/docker\.sock\b/;
 
+// HTTP security-header misconfigurations (nginx/Apache/Caddy conf, Helm ingress annotations, netlify.toml
+// headers, …). Each keys on a value that is the weakening itself, so there is no safe-value form of the same
+// line. `unsafe-inline`/`unsafe-eval` are Content-Security-Policy-only keywords. The HSTS and Referrer-Policy
+// rules require their own header token on the line, so `Cache-Control: max-age=0` (a normal caching directive)
+// is NOT matched by the HSTS rule.
+const CSP_UNSAFE_INLINE_RE = /\bunsafe-inline\b/i;
+const CSP_UNSAFE_EVAL_RE = /\bunsafe-eval\b/i;
+const HSTS_DISABLED_RE = /\bStrict-Transport-Security\b[^\n]*\bmax-age\s*=\s*0\b/i;
+const REFERRER_UNSAFE_URL_RE = /\bReferrer-Policy\b[^\n]*\bunsafe-url\b/i;
+const COOKIE_NOT_HTTPONLY_RE = /\bhttp[_-]?only\b[\s"'=:,-]*false\b/i;
+
 function* patchLines(patch: string): Generator<string> {
   let start = 0;
   for (let i = 0; i <= patch.length; i++) {
@@ -512,6 +523,36 @@ export function scanPatchForIacMisconfig(
     if (
       DOCKER_SOCKET_MOUNT_RE.test(body) &&
       pushFinding(findings, seen, path, newLine, "docker-socket-mount", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      CSP_UNSAFE_INLINE_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "csp-unsafe-inline", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      CSP_UNSAFE_EVAL_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "csp-unsafe-eval", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      HSTS_DISABLED_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "hsts-disabled", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      REFERRER_UNSAFE_URL_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "referrer-policy-leak", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      COOKIE_NOT_HTTPONLY_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "cookie-not-httponly", maxFindings)
     ) {
       return findings;
     }

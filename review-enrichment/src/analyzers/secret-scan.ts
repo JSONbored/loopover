@@ -368,6 +368,18 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Axiom API token: `xaat-` + UUID-shaped body (edge ingest/query operations).
+    kind: "axiom_api_token",
+    re: /\bxaat-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Axiom personal access token: `xapt-` + UUID-shaped body.
+    kind: "axiom_personal_token",
+    re: /\bxapt-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
     // Google OAuth 2.0 client secret: `GOCSPX-` + 28 base64url chars.
     kind: "google_oauth_client_secret",
     re: /\bGOCSPX-[A-Za-z0-9_-]{28}\b/,

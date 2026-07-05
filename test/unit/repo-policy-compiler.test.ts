@@ -132,7 +132,14 @@ describe("compileRepoPolicyCompilerOutput", () => {
         "Use direct API calls sparingly.",
       ]),
     );
-    expect(issueLane.publicNotes).toEqual(["Keep PRs narrow."]);
+    expect(issueLane.publicNotes).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/maintainer-wanted areas/i),
+        expect.stringMatching(/tracked issue before opening/i),
+        "Keep PRs narrow.",
+      ]),
+    );
+    expect(issueLane.publicNotes!.join(" ")).not.toMatch(/\bdirect\b/i);
   });
 
   it("defaults generatedAt when omitted and is deterministic for identical inputs", () => {

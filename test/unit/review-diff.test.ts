@@ -18,6 +18,13 @@ describe("diffFilePriority — source survives, noise drops first", () => {
     }
   });
 
+  it("ranks every path-matchers lockfile as noise(4), not source(0)", () => {
+    for (const path of ["bun.lock", "uv.lock", "deno.lock", "flake.lock", "mix.lock", "chart.lock"]) {
+      expect(diffFilePriority(path)).toBe(4);
+      expect(diffFilePriority(path)).toBeGreaterThan(diffFilePriority("src/a.ts"));
+    }
+  });
+
   it("ranks every canonical test convention as tests(1), not source(0)", () => {
     // These are all tests; before delegating to isTestPath the inline regex missed them and ranked
     // them SOURCE(0), so on a tight budget they could displace real source (the opposite of the goal).

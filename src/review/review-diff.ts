@@ -20,7 +20,7 @@ export const DEFAULT_DIFF_BUDGET = 80_000;
  *  Cypress/Playwright `.cy`/`.e2e`, a bare `spec/` dir), so those tests were ranked as SOURCE(0) and
  *  could displace real source under a tight budget — the exact opposite of this function's job. */
 export function diffFilePriority(path: string): number {
-  if (/(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb|cargo\.lock|poetry\.lock|composer\.lock|go\.sum)$|\.(min\.(js|css)|map|snap)$/i.test(path)) return 4;
+  if (/(^|\/)(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lock|bun\.lockb|cargo\.lock|poetry\.lock|pipfile\.lock|composer\.lock|gemfile\.lock|go\.sum|go\.work\.sum|uv\.lock|packages\.lock\.json|flake\.lock|deno\.lock|pubspec\.lock|podfile\.lock|mix\.lock|package\.resolved|gradle\.lockfile|pdm\.lock|conan\.lock|pixi\.lock|cartfile\.resolved|gopkg\.lock|shard\.lock|rebar\.lock|renv\.lock|chart\.lock)$|\.(min\.(js|css)|map|snap)$/i.test(path)) return 4;
   if (/(^|\/)(dist|build|out|coverage|vendor|node_modules)\//i.test(path)) return 4;
   if (/\.(md|mdx|markdown|rst|adoc|asciidoc|txt)$/i.test(path)) return 2;
   if (isTestPath(path)) return 1;

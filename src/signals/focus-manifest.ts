@@ -304,6 +304,9 @@ export type FocusManifestReviewConfig = {
   /** `review.tone`: a bounded public-safe voice brief complementing `review.profile` (e.g. "concise, cite line numbers").
    *  Folded into the review-instructions slot at runtime. null (default, absent) ⇒ byte-identical prompt. (#2044) */
   tone: string | null;
+  /** `review.effort_score`: when true, include a compact deterministic review-effort line in the unified comment.
+   *  null/false (default, absent) = byte-identical public comment. (#2069) */
+  effortScore: boolean | null;
   /** `review.security_focus`: when true, the AI reviewer is told to prioritize a security-defect category
    *  (injection, authn/authz bypass, secret handling, unsafe deserialization, SSRF, path traversal) with
    *  elevated scrutiny, ON TOP OF whatever `profile` volume is set — an orthogonal "what to prioritize" axis,
@@ -524,7 +527,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   publicNotes: [],
   gate: { ...EMPTY_GATE_CONFIG },
   settings: {},
-  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG } },
+  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, effortScore: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG } },
   features: { ...EMPTY_FEATURES_CONFIG },
   contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
   repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -554,7 +557,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     warnings,
     gate: { ...EMPTY_GATE_CONFIG },
     settings: {},
-    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG } },
+    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, effortScore: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG } },
     features: { ...EMPTY_FEATURES_CONFIG },
     contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
     repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -1469,7 +1472,7 @@ function parsePublicSafeText(value: JsonValue | undefined, field: string, warnin
  * throws; invalid/unsafe values are dropped with warnings.
  */
 function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewConfig {
-  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG } };
+  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, effortScore: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG } };
   if (value === undefined || value === null) return empty;
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "review" must be a mapping; ignoring it.`);
@@ -1504,6 +1507,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
   const note = parsePublicSafeText(r.note, "review.note", warnings);
   const profile = parseReviewProfile(r.profile, warnings);
   const tone = parsePublicSafeText(r.tone, "review.tone", warnings);
+  const effortScore = normalizeOptionalBoolean(r.effort_score, "review.effort_score", warnings);
   const securityFocus = normalizeOptionalBoolean(r.security_focus, "review.security_focus", warnings);
   const inlineComments = normalizeOptionalBoolean(r.inline_comments, "review.inline_comments", warnings);
   const pathInstructions = parseReviewPathInstructions(r.path_instructions, warnings);
@@ -1518,6 +1522,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
       note !== null ||
       profile !== null ||
       tone !== null ||
+      effortScore !== null ||
       securityFocus !== null ||
       inlineComments !== null ||
       pathInstructions.length > 0 ||
@@ -1535,6 +1540,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
     enrichmentAnalyzers,
     profile,
     tone,
+    effortScore,
     securityFocus,
     inlineComments,
     pathInstructions,
@@ -1775,6 +1781,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   if (review.note !== null) out.note = review.note;
   if (review.profile !== null) out.profile = review.profile;
   if (review.tone !== null) out.tone = review.tone;
+  if (review.effortScore !== null) out.effort_score = review.effortScore;
   if (review.securityFocus !== null) out.security_focus = review.securityFocus;
   if (review.inlineComments !== null) out.inline_comments = review.inlineComments;
   if (review.instructions !== null) out.instructions = review.instructions;

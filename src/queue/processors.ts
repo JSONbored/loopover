@@ -335,6 +335,7 @@ import {
 } from "../signals/engine";
 import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
 import { buildUnifiedReviewDiff } from "../review/review-diff";
+import { estimateReviewEffort } from "../review/review-effort";
 import { buildUnifiedCommentBody } from "../review/unified-comment-bridge";
 import { randomUUID } from "node:crypto";
 import { isRetryableJobError, RetryableJobError } from "./retryable";
@@ -9195,6 +9196,16 @@ async function maybePublishPrPublicSurface(
           : {}),
         readinessTotal,
         changedFiles: unifiedFiles.length,
+        ...(reviewConfig?.effortScore === true
+          ? {
+              reviewEffort: estimateReviewEffort(
+                unifiedFiles.map((file) => ({
+                  path: file.path,
+                  patch: typeof file.payload?.patch === "string" ? file.payload.patch : undefined,
+                })),
+              ),
+            }
+          : {}),
         ...(aiReview?.reviewerCount !== undefined
           ? { reviewerCount: aiReview.reviewerCount }
           : {}),

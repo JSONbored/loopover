@@ -597,6 +597,8 @@ settings:
 #     - "!src/generated/**"
 #   # Public-safe voice brief complementing review.profile (e.g. concise, cite line numbers). null/unset ⇒ byte-identical prompt.
 #   tone: "Be concise and cite line numbers."
+#   # Show a deterministic "review effort: N/5 (~M min)" line in the unified review comment. Default: false/unset.
+#   effort_score: true
 #   # Deterministic AI review eligibility filters — skipped PRs never fail the gate. (#1954)
 #   auto_review:
 #     skip_drafts: true

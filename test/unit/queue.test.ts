@@ -15070,6 +15070,7 @@ describe("queue processors", () => {
       privateTrustEnabled: true,
       autonomy: { update_branch: "auto" },
     });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { review: { effort_score: true } });
     let postedBody = "";
     const calls = { comments: 0, gateChecks: 0 };
     let gateFinalized = false;
@@ -15139,7 +15140,17 @@ describe("queue processors", () => {
         return Response.json({ token: "installation-token", expires_at: "2026-05-28T00:04:00.000Z" });
       }
       // PR files — the unified branch (re)fetches them to count changed files for the readiness chip.
-      if (url.includes("/pulls/3/files")) return Response.json([{ filename: "src/cache.ts", additions: 5, deletions: 1, status: "modified" }]);
+      if (url.includes("/pulls/3/files")) {
+        return Response.json([
+          {
+            filename: "src/cache.ts",
+            additions: 5,
+            deletions: 1,
+            status: "modified",
+            patch: "@@ -1 +1,5 @@\n+one\n+two\n+three\n+four\n+five",
+          },
+        ]);
+      }
       // #review-audit: the LIVE merge-state the comment now reads — the base just advanced with a conflict, so the
       // live state is `dirty` even though the stored mergeableState (unset on this payload) would not say so.
       if (/\/pulls\/3(?:\?|$)/.test(url)) return Response.json({ number: 3, mergeable_state: "dirty" });
@@ -15209,6 +15220,7 @@ describe("queue processors", () => {
       expect(postedBody).toMatch(/> \[!(TIP|NOTE|WARNING|CAUTION)\]/);
       // …and the renderer's synthesized "Code review" signal row (bold first table label).
       expect(postedBody).toContain("**Code review**");
+      expect(postedBody).toContain("**review effort:** 1/5 (~4 min)");
       // Public-safe by construction — no internal trust/economics fields leak through the unified renderer.
       expect(postedBody).not.toMatch(/wallet|hotkey|reward|trust score/i);
       // #review-audit (#4220): the comment reads the LIVE `dirty` merge-state (not the stale stored one), so it must

@@ -161,6 +161,25 @@ describe("renderUnifiedReviewComment", () => {
     expect(md).not.toContain("1 reviewers, synthesized");
   });
 
+  it("renders the optional review effort line only when the host supplies an estimate (#2069)", () => {
+    const withEffort = renderUnifiedReviewComment({ ...base, reviewEffort: { band: 3, minutes: 18 } }, ctx);
+    expect(withEffort).toContain("**review effort:** 3/5 (~18 min)");
+    expect(withEffort.indexOf("review effort")).toBeLessThan(withEffort.indexOf("**Review summary**"));
+
+    const withoutEffort = renderUnifiedReviewComment(base, ctx);
+    expect(withoutEffort).not.toContain("review effort:");
+  });
+
+  it("buildUnifiedReviewInput carries the optional effort estimate without changing absent input (#2069)", () => {
+    const withEffort = buildUnifiedReviewInput({
+      changedFiles: ["a.ts"],
+      reviews: [reviewNote("merge")],
+      reviewEffort: { band: 2, minutes: 7 },
+    });
+    expect(withEffort.reviewEffort).toEqual({ band: 2, minutes: 7 });
+    expect(buildUnifiedReviewInput({ changedFiles: ["a.ts"], reviews: [reviewNote("merge")] }).reviewEffort).toBeUndefined();
+  });
+
   it("wraps the review body in the colored blockquote but renders the re-run checkbox OUTSIDE it (interactive)", () => {
     const md = renderUnifiedReviewComment({ ...base, decision: "merge" }, ctx);
     const lines = md.split("\n");

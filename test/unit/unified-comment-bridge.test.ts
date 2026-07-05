@@ -275,6 +275,19 @@ describe("buildUnifiedCommentBody", () => {
     expect(body).toContain("> [!TIP]"); // success → ready → TIP alert
   });
 
+  it("forwards an enabled review-effort estimate into the unified comment (#2069)", () => {
+    const body = buildUnifiedCommentBody({
+      gate: gate(),
+      aiReview: { notes: "Clean change." },
+      panelRows,
+      readinessTotal: 88,
+      changedFiles: 3,
+      reviewEffort: { band: 4, minutes: 42 },
+      footerMarkdown: footer,
+    });
+    expect(body).toContain("**review effort:** 4/5 (~42 min)");
+  });
+
   it("passes a public review update timestamp into the unified comment", () => {
     const body = buildUnifiedCommentBody({
       gate: gate(),

@@ -139,6 +139,7 @@ export function extractReviewSummary(reviews: DualReviewNote[]): ExtractedReview
 
 /** The four visual states the comment recolors between (bar + GitHub alert sidebar together). */
 export type UnifiedCommentStatus = "ready" | "advisory" | "held" | "blocked";
+export type UnifiedReviewEffort = { band: 1 | 2 | 3 | 4 | 5; minutes: number };
 
 /** reviewbot's review side of the comment (mapped by the host/runtime from the gate decision + notes). */
 export interface UnifiedReviewInput {
@@ -162,6 +163,8 @@ export interface UnifiedReviewInput {
   merged?: boolean;
   /** Optional short reason appended to the verdict line. */
   verdictReason?: string;
+  /** Deterministic review-effort estimate shown only when the repo manifest enables it. */
+  reviewEffort?: UnifiedReviewEffort;
   /** Whether blocker(s) are a consensus (≥2 reviewers / sole reviewer) — drives blocked vs held. */
   consensusBlocker?: boolean;
   /** Reviewers that produced no parseable verdict (a partial review → held, not ready). */
@@ -493,6 +496,10 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
     verdictLine(status, input, ctx),
   ];
 
+  if (input.reviewEffort) {
+    blocks.push(`**review effort:** ${input.reviewEffort.band}/5 (~${input.reviewEffort.minutes} min)`);
+  }
+
   if (input.summary.trim()) blocks.push(`**Review summary**\n${escapePublicHtmlAngles(input.summary.trim())}`);
 
   const nits = dedupeLines(input.nits ?? []);
@@ -544,6 +551,7 @@ export function buildUnifiedReviewInput(opts: {
   decision?: Verdict;
   merged?: boolean;
   verdictReason?: string;
+  reviewEffort?: UnifiedReviewEffort;
 }): UnifiedReviewInput {
   const ex = extractReviewSummary(opts.reviews);
   const changedFiles = typeof opts.changedFiles === "number" ? opts.changedFiles : opts.changedFiles.length;
@@ -560,6 +568,7 @@ export function buildUnifiedReviewInput(opts: {
     ...(opts.decision !== undefined ? { decision: opts.decision } : {}),
     ...(opts.merged !== undefined ? { merged: opts.merged } : {}),
     ...(opts.verdictReason !== undefined ? { verdictReason: opts.verdictReason } : {}),
+    ...(opts.reviewEffort !== undefined ? { reviewEffort: opts.reviewEffort } : {}),
   };
 }
 

@@ -548,7 +548,7 @@ describe("compileFocusManifestPolicy", () => {
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
       gate: { present: false, enabled: null, checkMode: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null },
       settings: {},
-      review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG } },
+      review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, effortScore: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG } },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
       contentLane: { present: false, entryFileGlob: null, providerFileGlob: null, artifactGlob: null, collectionField: null, maxAppendedEntries: null, duplicateKeyFields: [], validatorId: null },
       repoDocGeneration: { present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 },
@@ -2438,6 +2438,26 @@ describe("parseFocusManifest review config", () => {
     expect(unsafe.warnings.some((w) => /review\.tone.*not public-safe/.test(w))).toBe(true);
     const long = parseFocusManifest({ review: { tone: "x".repeat(400) } });
     expect(long.review.tone).toHaveLength(300);
+  });
+
+  it("parses review.effort_score, marks present, round-trips, and rejects invalid values (#2069)", () => {
+    const on = parseFocusManifest({ review: { effort_score: true } });
+    expect(on.review.effortScore).toBe(true);
+    expect(on.review.present).toBe(true);
+    expect(reviewConfigToJson(on.review)).toEqual({ effort_score: true });
+    expect(parseFocusManifest({ review: reviewConfigToJson(on.review) }).review).toEqual(on.review);
+
+    const off = parseFocusManifest({ review: { effort_score: false } });
+    expect(off.review.effortScore).toBe(false);
+    expect(off.review.present).toBe(true);
+    expect(reviewConfigToJson(off.review)).toEqual({ effort_score: false });
+
+    const absent = parseFocusManifest({ review: { footer: { text: "Custom." } } });
+    expect(absent.review.effortScore).toBeNull();
+
+    const invalid = parseFocusManifest({ review: { effort_score: "yes" } });
+    expect(invalid.review.effortScore).toBeNull();
+    expect(invalid.warnings.some((w) => /review\.effort_score/.test(w))).toBe(true);
   });
 
   it("composeManifestReviewInstructions: null tone is byte-identical; tone folds ahead of instructions (#2044)", () => {

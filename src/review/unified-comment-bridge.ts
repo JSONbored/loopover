@@ -35,6 +35,7 @@ import {
   type ReviewNotes,
   type ReviewRecommendation,
   type UnifiedCollapsible,
+  type UnifiedReviewEffort,
   type UnifiedSignalRow,
   type Verdict,
 } from "./unified-comment";
@@ -287,6 +288,8 @@ export type UnifiedCommentBridgeArgs = {
   readinessTotal: number;
   /** Number of changed files reviewed. */
   changedFiles: number;
+  /** Optional deterministic review-effort estimate, present only when `.gittensory.yml review.effort_score` is true. */
+  reviewEffort?: UnifiedReviewEffort | undefined;
   /** Number of independent AI reviewers synthesized (0 hides the reviewer chip/row evidence count). */
   reviewerCount?: number | undefined;
   /** CI + merge-state readiness, when the caller resolved it (gittensory's panel omits it today). */
@@ -394,6 +397,7 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
     changedFiles: args.changedFiles,
     reviews,
     decision: verdict,
+    ...(args.reviewEffort !== undefined ? { reviewEffort: args.reviewEffort } : {}),
     ...(verdictReason !== undefined ? { verdictReason } : {}),
     ...(args.mergeReadiness !== undefined ? { readiness: args.mergeReadiness } : {}),
     ...(args.merged !== undefined ? { merged: args.merged } : {}),

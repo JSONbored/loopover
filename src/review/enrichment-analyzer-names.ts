@@ -54,6 +54,7 @@ export const REES_ANALYZER_NAMES = [
   "flakyTest",
   "commitLint",
   "apiBreak",
+  "deprecatedDep",
 ] as const;
 
 export type ReesAnalyzerName = (typeof REES_ANALYZER_NAMES)[number];

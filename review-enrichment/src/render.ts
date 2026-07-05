@@ -499,6 +499,7 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("hardcodedUrl", findings.hardcodedUrl));
   lines.push(...renderDescriptorSection("commitLint", findings.commitLint));
   lines.push(...renderDescriptorSection("apiBreak", findings.apiBreak));
+  lines.push(...renderDescriptorSection("deprecatedDep", findings.deprecatedDep));
 
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 

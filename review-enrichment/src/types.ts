@@ -591,6 +591,18 @@ export interface CommitLintFinding {
   reason: "bad-type" | "missing-colon" | "too-long" | "empty";
 }
 
+/** A newly-added or upgraded direct dependency the curated list marks deprecated/unmaintained, with a maintained
+ *  successor where one exists — adoption risk + future supply-chain liability (#1511, part of #1499). Reports the
+ *  ecosystem, package, added version, direction, reason, and replacement only — never manifest contents. */
+export interface DeprecatedDependencyFinding {
+  ecosystem: string;
+  package: string;
+  version: string;
+  direction: "add" | "change";
+  replacement: string | null;
+  reason: string;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 /** An exported symbol a PR removes or renames in a package public entrypoint — a semver-major break for
  *  downstream consumers shipped without a major version bump (#1510, part of #1499). Reports file, old-file line,
@@ -652,6 +664,7 @@ export interface BriefFindings {
   hardcodedUrl?: HardcodedUrlFinding[];
   commitLint?: CommitLintFinding[];
   apiBreak?: ApiBreakFinding[];
+  deprecatedDep?: DeprecatedDependencyFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

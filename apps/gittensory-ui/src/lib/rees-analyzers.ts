@@ -1243,6 +1243,31 @@ export const REES_ANALYZERS = [
         "Conservative: only a top-level export whose exact name disappears from the file's public surface is reported; a same-name edit (signature or value change) or a non-entrypoint file is never flagged. Bounded by entrypoint and finding caps; fail-safe on absent or malformed patches.",
     },
   },
+  {
+    name: "deprecatedDep",
+    title: "Deprecated / unmaintained dependency",
+    category: "supply-chain",
+    cost: "local",
+    defaultEnabled: true,
+    profiles: ["fast", "balanced", "deep"],
+    requires: ["files"],
+    limits: {
+      maxManifestFiles: 20,
+      maxPatchLinesPerFile: 500,
+      maxFindings: 25,
+    },
+    docs: {
+      summary:
+        "Flags a direct dependency a PR newly adds or upgrades that is an officially deprecated or unmaintained package with a maintained successor — an adoption risk the review brief should surface.",
+      looksAt:
+        "Added/changed dependency names in package.json and requirements.txt patches, matched against a bundled curated list of well-known deprecated packages.",
+      reports:
+        "Ecosystem, package, added version, direction (add/change), the documented deprecation reason, and the recommended replacement — never manifest contents.",
+      network: "Pure local analyzer. No external network call; the curated list is bundled.",
+      notes:
+        "Conservative: only an exact match against the bundled list is flagged, so a package it does not name is never reported. Bounded by manifest, patch-line, and finding caps; fail-safe on absent patches or an aborted signal.",
+    },
+  },
 ] as const satisfies readonly ReesAnalyzerDoc[];
 
 export const REES_ANALYZER_NAMES = REES_ANALYZERS.map((analyzer) => analyzer.name);

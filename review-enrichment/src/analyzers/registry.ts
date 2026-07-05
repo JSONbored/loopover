@@ -48,6 +48,7 @@ import { scanUnusedExport } from "./unused-export.js";
 import { scanExhaustivenessDrift } from "./exhaustiveness-drift.js";
 import { scanFlakyTest } from "./flaky-test.js";
 import { scanApiBreak } from "./api-break.js";
+import { scanDeprecatedDependencies } from "./deprecated-dep.js";
 import type {
   AnalyzerDescriptor,
   AnalyzerFn,
@@ -1408,6 +1409,42 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanApiBreak(req, signal),
+  }),
+  descriptor({
+    name: "deprecatedDep",
+    title: "Deprecated / unmaintained dependency",
+    category: "supply-chain",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxManifestFiles: 20, maxPatchLinesPerFile: 500, maxFindings: 25 },
+    docs: {
+      summary:
+        "Flags a direct dependency a PR newly adds or upgrades that is an officially deprecated or unmaintained package with a maintained successor — an adoption risk the review brief should surface.",
+      looksAt:
+        "Added/changed dependency names in package.json and requirements.txt patches, matched against a bundled curated list of well-known deprecated packages.",
+      reports:
+        "Ecosystem, package, added version, direction (add/change), the documented deprecation reason, and the recommended replacement — never manifest contents.",
+      network: "Pure local analyzer. No external network call; the curated list is bundled.",
+      notes:
+        "Conservative: only an exact match against the bundled list is flagged, so a package it does not name is never reported. Bounded by manifest, patch-line, and finding caps; fail-safe on absent patches or an aborted signal.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = [
+        "### Deprecated or unmaintained dependencies (newly added or upgraded)",
+      ];
+      for (const item of findings) {
+        const replacement = item.replacement
+          ? `; consider ${helpers.safeCodeSpan(item.replacement)}`
+          : "";
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.package}@${item.version}`)} (${helpers.safeCodeSpan(item.ecosystem)}) — ${helpers.promptText(item.reason)}${replacement}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanDeprecatedDependencies(req, signal),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

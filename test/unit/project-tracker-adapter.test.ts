@@ -204,6 +204,34 @@ describe("GitHubProjectsAdapter (#3184)", () => {
     expect(result).toEqual([{ id: "PVT_1", title: "Self-host reliability roadmap" }]);
   });
 
+  it("listOpenProjects excludes closed Projects v2 boards (regression: gate-flagged closed-board leak, #3184)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/graphql")) {
+        return Response.json({
+          data: {
+            repositoryOwner: {
+              __typename: "Organization",
+              projectsV2: {
+                nodes: [
+                  { id: "PVT_open", title: "Open roadmap", closed: false },
+                  { id: "PVT_closed", title: "Closed roadmap", closed: true },
+                ],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          },
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const adapter = new GitHubProjectsAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    const result = await adapter.listOpenProjects({ env, installationId: 123, repoFullName: "some-org/gittensory" });
+    expect(result).toEqual([{ id: "PVT_open", title: "Open roadmap" }]);
+  });
+
   it("listOpenProjects returns an empty list for a USER-owned repo (confirmed GitHub App platform limitation, #3184) without erroring", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
@@ -436,6 +464,70 @@ describe("maybeSuggestProjectOrMilestoneMatch (#3183/#3184)", () => {
     expect(result).toEqual({ suggested: true });
     expect(posted[0]).toContain("milestone (");
     expect(posted[0]).toContain("project (");
+  });
+
+  it("still suggests the milestone match when the Projects v2 GraphQL lookup fails transiently (fail-open, independent-failure-isolation fix)", async () => {
+    const posted: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones")) return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
+      // Projects v2 GraphQL call throws a transient error -- must not suppress the valid milestone match below.
+      if (url.endsWith("/graphql")) return new Response("boom", { status: 500 });
+      if (url.includes("/issues/4/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/4/comments") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { body?: string };
+        posted.push(body.body ?? "");
+        return Response.json({ id: 1 });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const result = await maybeSuggestProjectOrMilestoneMatch(
+      { env, installationId: 123, repoFullName: "some-org/gittensory" },
+      4,
+      "Improve self-host reliability roadmap convergence",
+      "Follow-up on the self-host reliability roadmap work",
+    );
+    expect(result).toEqual({ suggested: true });
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toContain("milestone (");
+    expect(posted[0]).not.toContain("project (");
+  });
+
+  it("still suggests the project match when the milestones REST lookup fails transiently (fail-open, independent-failure-isolation fix)", async () => {
+    const posted: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      // Milestones REST call throws a transient error -- must not suppress the valid Projects v2 match below.
+      if (url.includes("/milestones")) return new Response("boom", { status: 500 });
+      if (url.endsWith("/graphql")) {
+        return Response.json({
+          data: { repositoryOwner: { __typename: "Organization", projectsV2: { nodes: [{ id: "PVT_1", title: "Self-host reliability roadmap" }], pageInfo: { hasNextPage: false, endCursor: null } } } },
+        });
+      }
+      if (url.includes("/issues/4/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/4/comments") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { body?: string };
+        posted.push(body.body ?? "");
+        return Response.json({ id: 1 });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const result = await maybeSuggestProjectOrMilestoneMatch(
+      { env, installationId: 123, repoFullName: "some-org/gittensory" },
+      4,
+      "Improve self-host reliability roadmap convergence",
+      "Follow-up on the self-host reliability roadmap work",
+    );
+    expect(result).toEqual({ suggested: true });
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toContain("project (");
+    expect(posted[0]).not.toContain("milestone (");
   });
 
   it("code-formats the milestone title and strips literal backticks, neutralizing markdown/mention injection", async () => {
@@ -678,10 +770,15 @@ describe("maybeSuggestMilestoneMatchForPr (#3183 webhook-level gating)", () => {
   });
 
   it("logs a failure instead of throwing", async () => {
+    // The milestone/project lookups themselves are fail-open (#3183/#3184 fail-open fix) and can no longer
+    // reach this outer catch -- so this test drives a real match (milestone lookup succeeds) and fails the
+    // still-unprotected comment-marker search instead, to prove the outer best-effort catch is still live.
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
-      if (url.includes("/milestones")) return new Response("boom", { status: 500 });
+      if (url.includes("/milestones")) return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
+      if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
+      if (url.includes("/issues/4/comments")) return new Response("boom", { status: 500 });
       return new Response("unexpected", { status: 500 });
     });
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);

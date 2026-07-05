@@ -133,12 +133,12 @@ export class GitHubMilestonesAdapter implements ProjectTrackerAdapter {
 // Both gaps degrade the SAME way -- an empty projects list, never a crash or a wrong match -- so no special
 // handling is needed to stay safe; only visibility (this comment + the PR notes) documents the gap.
 
-type ProjectV2Node = { id: string; title: string };
+type ProjectV2Node = { id: string; title: string; closed: boolean };
 
 type ListOpenProjectsGraphQlResponse = {
   repositoryOwner: {
     __typename: string;
-    projectsV2?: { nodes: ProjectV2Node[] };
+    projectsV2?: { nodes: ProjectV2Node[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
   } | null;
 };
 
@@ -196,15 +196,13 @@ export class GitHubProjectsAdapter implements ProjectTrackerAdapter {
     const projects: ProjectV2Node[] = [];
     let after: string | null = null;
     for (let page = 1; page <= GITHUB_LIST_PAGE_LIMIT; page += 1) {
-      const response: {
-        repositoryOwner: { __typename: string; projectsV2?: { nodes: ProjectV2Node[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } } } | null;
-      } = await octokit.graphql(
+      const response: ListOpenProjectsGraphQlResponse = await octokit.graphql(
         `query($login: String!, $after: String) {
           repositoryOwner(login: $login) {
             __typename
             ... on Organization {
               projectsV2(first: 100, after: $after, orderBy: {field: TITLE, direction: ASC}) {
-                nodes { id title }
+                nodes { id title closed }
                 pageInfo { hasNextPage endCursor }
               }
             }
@@ -214,7 +212,7 @@ export class GitHubProjectsAdapter implements ProjectTrackerAdapter {
       );
       const projectsV2 = response.repositoryOwner?.projectsV2;
       if (!projectsV2) break; // owner is a User (or has zero projects) -- see the module-level comment above.
-      projects.push(...projectsV2.nodes);
+      projects.push(...projectsV2.nodes.filter((project) => !project.closed));
       if (!projectsV2.pageInfo.hasNextPage) break;
       after = projectsV2.pageInfo.endCursor;
     }
@@ -324,7 +322,10 @@ type IssueComment = {
 export async function maybeSuggestProjectOrMilestoneMatch(ctx: ProjectTrackerContext, pullNumber: number, prTitle: string, prBody: string | null | undefined): Promise<{ suggested: boolean }> {
   const milestonesAdapter = new GitHubMilestonesAdapter();
   const projectsAdapter = new GitHubProjectsAdapter();
-  const [milestones, projects] = await Promise.all([milestonesAdapter.listOpenMilestones(ctx), projectsAdapter.listOpenProjects(ctx)]);
+  // Fail-open, independently, for each tracker type (mirrors this repo's established best-effort pattern):
+  // a transient milestone REST error must never suppress a valid Projects v2 match, and vice versa -- either
+  // lookup degrading to an empty list is a missed suggestion, not a broken one, matching the doc comment above.
+  const [milestones, projects] = await Promise.all([milestonesAdapter.listOpenMilestones(ctx).catch(() => []), projectsAdapter.listOpenProjects(ctx).catch(() => [])]);
   const matches: ProjectTrackerMatches = {
     milestone: matchOpenTrackerItems(prTitle, prBody, milestones),
     project: matchOpenTrackerItems(prTitle, prBody, projects),

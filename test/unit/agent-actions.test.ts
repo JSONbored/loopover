@@ -512,6 +512,71 @@ describe("planAgentMaintenanceActions (#778)", () => {
     });
   });
 
+  describe("manual-review coverage for every real hold (#manual-review-coverage)", () => {
+    it("labels a NEUTRAL contributor PR manual-review when it isn't adverse enough to close and review_state_label is OFF", () => {
+      // Deliberately close-only autonomy — review_state_label is left unset (default OFF). Before the fix this
+      // fell through with NO action and NO label at all: not review-good (neutral != success) but also not
+      // adverse enough to trip willClose (no red CI, no conflict, conclusion isn't "failure") — a silently stuck
+      // PR, contradicting the neutral-verdict "never left silently undecided" invariant (#harm-stop
+      // neutral-silent-stuck) for exactly the repos that configure manualReviewLabel without review_state_label.
+      const plan = planAgentMaintenanceActions(input({ conclusion: "neutral", autonomy: { close: "auto" }, ciState: "passed", pr: { labels: [] } }));
+      expect(plan).toEqual([expect.objectContaining({ actionClass: "label", autonomyClass: "close", label: AGENT_LABEL_NEEDS_REVIEW, labelOp: "add" })]);
+    });
+
+    it("still plans nothing for the same NEUTRAL contributor PR when close is not acting (deny-by-default floor)", () => {
+      // Mirrors "plans nothing when every class is at a non-acting level" -- a repo that hasn't opted `close`
+      // into acting must stay fully quiescent; the manual-review fallback must not fire on its own.
+      expect(planAgentMaintenanceActions(input({ conclusion: "neutral", autonomy: {}, ciState: "passed", pr: { labels: [] } }))).toEqual([]);
+    });
+
+    it("does NOT label a CI-pending hold manual-review — pending CI is not a manual-review disposition", () => {
+      expect(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", review_state_label: "auto", merge: "auto" }, ciState: "pending", pr: { labels: [], mergeableState: "clean" } }))).toEqual([]);
+    });
+
+    it("does NOT relabel a protected owner/admin/bot PR that's already covered by willClose's own guard (unaffected by the neutral-hold change)", () => {
+      // A conclusion of "failure" for a closeEligible contributor already trips willClose (and hence a real
+      // close action), so the manual-review fallback must not ALSO fire on top of it.
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], pr: { labels: [] } })));
+      expect(plan).toEqual(["close"]);
+    });
+
+    it("migration-collision hold: falls back to manual-review (+ the rebase comment) when review_state_label is OFF", () => {
+      // Before the fix, a migration-collision hold with review_state_label off produced NO action and NO label
+      // at all -- a would-merge PR silently stuck with no visible signal and no explanation posted.
+      const plan = planAgentMaintenanceActions(input({
+        conclusion: "success",
+        autonomy: { merge: "auto" },
+        migrationCollisionHold: { reason: "live migrations/** collision on main", comment: "Please rebase." },
+        pr: { labels: [], mergeableState: "clean" },
+      }));
+      expect(plan).toEqual([
+        expect.objectContaining({ actionClass: "label", autonomyClass: "merge", label: AGENT_LABEL_NEEDS_REVIEW, labelOp: "add", comment: "Please rebase." }),
+      ]);
+    });
+
+    it("migration-collision hold: does NOT duplicate manual-review alongside the dedicated label when review_state_label IS acting", () => {
+      const plan = planAgentMaintenanceActions(input({
+        conclusion: "success",
+        autonomy: { merge: "auto", review_state_label: "auto" },
+        migrationCollisionHold: { reason: "live migrations/** collision on main", comment: "Please rebase." },
+        pr: { labels: [], mergeableState: "clean" },
+      }));
+      expect(plan.filter((a) => a.actionClass === "label")).toHaveLength(1);
+      expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_MIGRATION_COLLISION);
+    });
+
+    it("migration-collision hold: an explicit null manualReviewLabel disables the fallback (respects the operator's own opt-out)", () => {
+      const plan = planAgentMaintenanceActions(input({
+        conclusion: "success",
+        autonomy: { merge: "auto" },
+        manualReviewLabel: null,
+        migrationCollisionHold: { reason: "live migrations/** collision on main", comment: "Please rebase." },
+        pr: { labels: [], mergeableState: "clean" },
+      }));
+      expect(plan).toEqual([]);
+    });
+  });
+
   describe("AI/review blockers remain blocking even when CI is green", () => {
     const merging = { aiCiRefutationEnabled: true, autonomy: { merge: "auto" as const, approve: "auto" as const, close: "auto" as const, review_state_label: "auto" as const }, ciState: "passed" as const, pr: { labels: [], mergeableState: "clean" as const, reviewDecision: "APPROVED" as const } };
 
@@ -950,6 +1015,20 @@ describe("assign — auto-assign PR opener (#3182)", () => {
   it("is independent of merge/close outcome — still plans assign on a failing verdict", () => {
     const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { assign: "auto" }, blockerTitles: ["x"], pr: { labels: [], authorLogin: "alice" } }));
     expect(classes(plan)).toContain("assign");
+  });
+
+  it("#assign-before-ci-pending: still plans assign while CI is pending — a reviewed PR must not sit unassigned behind an unrelated stuck check", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { assign: "auto", approve: "auto", merge: "auto", close: "auto" }, ciState: "pending", pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED", authorLogin: "alice" } }));
+    // Settle-before-decide still defers every success-path action...
+    expect(classes(plan)).not.toContain("approve");
+    expect(classes(plan)).not.toContain("merge");
+    // ...but assign, having no bearing on mergeability, fires anyway.
+    expect(plan).toEqual([expect.objectContaining({ actionClass: "assign", assignee: "alice" })]);
+  });
+
+  it("plans nothing while CI is pending for a SKIPPED gate — a genuinely-not-evaluated PR is not yet reviewed", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "skipped", autonomy: { assign: "auto" }, ciState: "pending", pr: { labels: [], authorLogin: "alice" } }));
+    expect(plan).toEqual([]);
   });
 
   it("is unaffected by the blacklist/cap/review-nag short-circuits not reaching this far — plans nothing for a blacklisted contributor even with assign acting", () => {

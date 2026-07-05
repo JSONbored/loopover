@@ -481,6 +481,24 @@ function reviewNagCloseMessage(authorLogin: string, pingCount: number, maxPings:
 }
 
 /**
+ * Plan best-effort assignment of the PR's opening contributor (#3182), independent of merge/close/CI outcome.
+ * MUST run before the CI-pending settle-before-decide return below (#assign-before-ci-pending) — a PR that has
+ * already been reviewed/evaluated (conclusion isn't "skipped") should get an assignee for triage even while an
+ * unrelated check is still pending; assign has no bearing on mergeability so it never needs CI to settle first.
+ * Gated purely on its own `assign` autonomy class, same as every other independent action here.
+ */
+function maybePlanAssign(actions: PlannedAgentAction[], input: AgentActionPlanInput): void {
+  const level = resolveAutonomy(input.autonomy, "assign");
+  if (!isActingAutonomyLevel(level) || !input.pr.authorLogin) return;
+  actions.push({
+    actionClass: "assign",
+    requiresApproval: autonomyRequiresApproval(level),
+    reason: "auto-assign PR opener",
+    assignee: input.pr.authorLogin,
+  });
+}
+
+/**
  * Plan the maintainer auto-maintain actions for one PR. Returns a COHERENT set (never both approve and
  * request-changes; never both merge and close), each entry already filtered to an acting autonomy class.
  * Ordered least → most irreversible: label, then the review, then the disposition.
@@ -584,6 +602,12 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // grace, or eval-not-ready while state is still syncing) is gate-NON-BLOCKING: it flows to the disposition so
   // the PR is merged (clean+green) or HELD with a label — never left silently undecided. (#harm-stop neutral-silent-stuck)
   if (input.conclusion === "skipped") return actions;
+
+  // #assign-before-ci-pending: plan the (best-effort, CI-independent) assignee BEFORE the pending-CI
+  // settle-before-decide return just below — a reviewed/evaluated PR must not sit unassigned while an unrelated
+  // check is still pending. Every deterministic no-review short-circuit above (blacklist/cap/review-nag) already
+  // returned before reaching this line, so none of them are affected.
+  maybePlanAssign(actions, input);
 
   // CI state over ALL of the PR's checks (required OR not — codecov/patch included) — reviewbot's ci_red
   // parity. A red CI is NEVER approved/merged and is itself a close-worthy signal (non-owner). While CI is
@@ -719,6 +743,26 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     });
   }
 
+  // 1c) migration-collision manual-review fallback (#manual-review-coverage) — the migration-collision LABEL
+  // itself stays gated on review_state_label below (section 2, unchanged) so an operator's dedicated filter on
+  // that specific label is undisturbed. But when review_state_label is OFF (a one-shot repo that only configures
+  // manualReviewLabel), a live migration-collision hold previously suppressed the merge with NO visible label and
+  // NO comment at all — a would-merge PR silently stuck forever, with no signal that a human needs to look or why.
+  // Authorized by `merge` (the class actually suppressing the merge here), mirroring the guardrail-hold label
+  // immediately above. Fires ONLY as a fallback (review_state_label not acting), so it can never duplicate
+  // section 2's own migration-collision label + rebase comment.
+  if (reviewGood && input.migrationCollisionHold !== undefined && !acting("review_state_label") && labels.manualReview !== null && acting("merge") && !hasLabelOrPlanned(input.pr.labels, actions, labels.manualReview)) {
+    actions.push({
+      actionClass: "label",
+      autonomyClass: "merge",
+      requiresApproval: false,
+      reason: `verdict=${conclusion}; ${input.migrationCollisionHold.reason}`,
+      label: labels.manualReview,
+      labelOp: "add",
+      comment: sanitizePublicComment(input.migrationCollisionHold.comment),
+    });
+  }
+
   // 2) review_state_label (#label-scoping) — ready-to-merge (review-good, unguarded) / manual-review
   // (review-good but guarded) / changes-requested (not review-good → will be closed for a contributor, held for
   // the owner). A pending linked-issue hard-rule close (flag OR close pass) forces the changes-requested label
@@ -782,19 +826,6 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
         comment: "✓ The linked-issue hard-rule violation is resolved — this PR is no longer pending closure.",
       });
     }
-  }
-
-  // 2b) assign (#3182) — best-effort: set the PR's own opening contributor as its GitHub assignee, purely for
-  // triage (who is this PR's author, at a glance). Independent of merge/close/CI outcome, exactly like
-  // review_state_label above: gated on its own `assign` class (default OFF), not tied to any other disposition.
-  // Idempotent at the executor (a live GET before the POST), so replanning this every sweep is harmless.
-  if (acting("assign") && input.pr.authorLogin) {
-    actions.push({
-      actionClass: "assign",
-      requiresApproval: approval("assign"),
-      reason: "auto-assign PR opener",
-      assignee: input.pr.authorLogin,
-    });
   }
 
   // 3) review — APPROVE a review-good PR only when it is NOT on a guarded path; a guarded PR falls through to the
@@ -921,7 +952,17 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     });
   }
   // else: guarded → manual; not-good OWNER/automation → manual; action-required/unverified → manual;
-  // review-good-but-not-yet-mergeable → held briefly (rebase/approve resolves it next pass).
+  // not-good CONTRIBUTOR whose verdict isn't adverse enough to close (e.g. a NEUTRAL gate with green CI and no
+  // conflict) → manual; review-good-but-not-yet-mergeable → held briefly (rebase/approve resolves it next pass).
+  // The CONTRIBUTOR branch (`!willClose`) closes a real reliability gap: previously this checked `!closeEligible`
+  // alone, so a not-review-good CONTRIBUTOR whose conclusion wasn't adverse enough to trip `willClose` (chiefly
+  // `neutral`) fell through with NO action and NO label at all whenever review_state_label was off — silently
+  // contradicting the neutral-verdict "never left silently undecided" invariant above (#harm-stop
+  // neutral-silent-stuck) for exactly the one-shot repos that configure manualReviewLabel without also enabling
+  // review_state_label. Requires `close` actually ACTING (mirroring the label's own `autonomyClass: "close"`
+  // below) so a repo with every relevant class off stays fully quiescent — see "plans nothing when every class is
+  // at a non-acting level". For the owner/admin/automation-bot branch (`!closeEligible`) this is unchanged: those
+  // authors are never close-eligible regardless of the `close` autonomy dial, so the hold must still surface.
   const manualHoldReason =
     guardrailHit
       ? `verdict=${conclusion}; ${guardrailReason}`
@@ -929,7 +970,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
         ? "CI could not be verified"
         : conclusion === "action_required"
           ? "review requires maintainer action"
-          : !reviewGood && !closeEligible
+          : !reviewGood && !willClose && (!closeEligible || acting("close"))
             ? `verdict=${conclusion}${ciReason ? `; ${ciReason}` : ""}`
             : null;
   if (

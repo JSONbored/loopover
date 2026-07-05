@@ -14,7 +14,7 @@ describe("PR freshness guards", () => {
 
   it("classifies a matching open head as current", () => {
     const result = classifyPullRequestFreshness({ state: "open", head: { sha: "sha1" } }, "sha1");
-    expect(result).toEqual({ status: "current", liveHeadSha: "sha1", liveState: "open" });
+    expect(result).toEqual({ status: "current", liveHeadSha: "sha1", liveState: "open", liveLabels: [] });
     expect(pullRequestFreshnessDetail(result)).toBe("PR is current");
   });
 
@@ -23,7 +23,24 @@ describe("PR freshness guards", () => {
       status: "current",
       liveHeadSha: null,
       liveState: "open",
+      liveLabels: [],
     });
+  });
+
+  it("carries live label names alongside a current status (#3472 split-brain)", () => {
+    const result = classifyPullRequestFreshness(
+      { state: "open", head: { sha: "sha1" }, labels: [{ name: "manual-review" }, { name: "size/L" }] },
+      "sha1",
+    );
+    expect(result).toEqual({ status: "current", liveHeadSha: "sha1", liveState: "open", liveLabels: ["manual-review", "size/L"] });
+  });
+
+  it("drops nameless label entries when carrying live labels", () => {
+    const result = classifyPullRequestFreshness(
+      { state: "open", head: { sha: "sha1" }, labels: [{ name: "manual-review" }, {}] },
+      "sha1",
+    );
+    expect(result).toEqual({ status: "current", liveHeadSha: "sha1", liveState: "open", liveLabels: ["manual-review"] });
   });
 
   it("treats unavailable live state as stale for callers that require proof", () => {
@@ -115,7 +132,7 @@ describe("PR freshness guards", () => {
 
   it("does not require draft state by default, even when the PR is no longer a draft", () => {
     const result = classifyPullRequestFreshness({ state: "open", head: { sha: "sha1" }, draft: false }, "sha1");
-    expect(result).toEqual({ status: "current", liveHeadSha: "sha1", liveState: "open" });
+    expect(result).toEqual({ status: "current", liveHeadSha: "sha1", liveState: "open", liveLabels: [] });
   });
 
   it("REGRESSION (#2130 follow-up): treats a same-head PR converted back to ready_for_review as stale when the caller requires draft", () => {
@@ -126,7 +143,7 @@ describe("PR freshness guards", () => {
 
   it("treats a still-draft PR as current when the caller requires draft", () => {
     const result = classifyPullRequestFreshness({ state: "open", head: { sha: "sha1" }, draft: true }, "sha1", { requireDraft: true });
-    expect(result).toEqual({ status: "current", liveHeadSha: "sha1", liveState: "open" });
+    expect(result).toEqual({ status: "current", liveHeadSha: "sha1", liveState: "open", liveLabels: [] });
   });
 
   it("treats a missing draft field as stale when the caller requires draft (fail-safe: only an explicit true counts)", () => {
@@ -158,10 +175,10 @@ describe("PR freshness guards", () => {
     expect(reviewedPullRequestHeadSha(" AbC123 ", "fallback")).toBe("abc123");
     expect(
       classifyPullRequestFreshness({ state: "open", head: { sha: "AbC123" } }, "abc123"),
-    ).toEqual({ status: "current", liveHeadSha: "abc123", liveState: "open" });
+    ).toEqual({ status: "current", liveHeadSha: "abc123", liveState: "open", liveLabels: [] });
     expect(
       classifyPullRequestFreshness({ state: "open", head: { sha: "abc123" } }, " ABC123 "),
-    ).toEqual({ status: "current", liveHeadSha: "abc123", liveState: "open" });
+    ).toEqual({ status: "current", liveHeadSha: "abc123", liveState: "open", liveLabels: [] });
     expect(
       classifyPullRequestFreshness({ state: "open", head: { sha: "NewSha" } }, "oldsha"),
     ).toMatchObject({ status: "stale", reason: "head_changed", expectedHeadSha: "oldsha", liveHeadSha: "newsha" });

@@ -24,6 +24,7 @@ vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
       status: "current" as const,
       liveHeadSha: args.expectedHeadSha ?? null,
       liveState: "open",
+      liveLabels: [] as string[],
     })),
   };
 });
@@ -100,6 +101,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
       status: "current",
       liveHeadSha: args.expectedHeadSha ?? null,
       liveState: "open",
+      liveLabels: [],
     }));
     clearInstallationHealthRefreshCooldownForTest();
     clearWritePermissionDenialCooldownForTest();
@@ -363,6 +365,60 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     const pinnedApprove: PlannedAgentAction = { actionClass: "approve", requiresApproval: false, reason: "gate passed", expectedHeadSha: "reviewed-sha" };
     await executeAgentMaintenanceActions(env, ctx({ headSha: "live-sha" }), [pinnedApprove]);
     expect(createPullRequestReview).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "APPROVE", "", "reviewed-sha");
+  });
+
+  it("REGRESSION (#3472 split-brain): LIVE merge is denied when the default manual-review label is present on the live PR, even though the plan itself computed a clean merge", async () => {
+    const env = createTestEnv({});
+    // Simulates a sibling pass (e.g. a webhook re-review) publishing a manual-review hold WHILE this pass's own
+    // gate evaluation was still in flight -- the plan below was computed before that hold existed, so only the
+    // executor's live re-check (not the plan) can catch it.
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "current", liveHeadSha: "sha7", liveState: "open", liveLabels: ["manual-review"] });
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [merge]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(outcomes[0]?.detail).toContain('manual-review label "manual-review" is present on the live PR — merge not executed');
+    expect(mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION (#3472 split-brain): LIVE approve is denied when the default manual-review label is present on the live PR", async () => {
+    const env = createTestEnv({});
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "current", liveHeadSha: "sha7", liveState: "open", liveLabels: ["manual-review"] });
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [approve]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(outcomes[0]?.detail).toContain('manual-review label "manual-review" is present on the live PR — approve not executed');
+    expect(createPullRequestReview).not.toHaveBeenCalled();
+  });
+
+  it("LIVE merge proceeds when the live PR carries other labels but not the manual-review hold", async () => {
+    const env = createTestEnv({});
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "current", liveHeadSha: "sha7", liveState: "open", liveLabels: ["size/L", "gittensor:bug"] });
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [merge]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(mergePullRequest).toHaveBeenCalled();
+  });
+
+  it("honors a CUSTOM configured manualReviewLabel name (case-insensitive) instead of only the literal default", async () => {
+    const env = createTestEnv({});
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "current", liveHeadSha: "sha7", liveState: "open", liveLabels: ["Needs-Human"] });
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ manualReviewLabel: "needs-human" }), [merge]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(outcomes[0]?.detail).toContain('manual-review label "needs-human" is present on the live PR — merge not executed');
+  });
+
+  it("skips the manual-review hold guard entirely when manualReviewLabel is explicitly disabled (null)", async () => {
+    const env = createTestEnv({});
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "current", liveHeadSha: "sha7", liveState: "open", liveLabels: ["manual-review"] });
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ manualReviewLabel: null }), [merge]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(mergePullRequest).toHaveBeenCalled();
+  });
+
+  it("the manual-review hold guard is scoped to approve/merge only -- a label/close/assign action is unaffected by the live manual-review label", async () => {
+    const env = createTestEnv({});
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValue({ status: "current", liveHeadSha: "sha7", liveState: "open", liveLabels: ["manual-review"] });
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [label, close]);
+    expect(outcomes.map((o) => o.outcome)).toEqual(["completed", "completed"]);
+    expect(ensurePullRequestLabel).toHaveBeenCalled();
+    expect(closePullRequest).toHaveBeenCalled();
   });
 
   it("LIVE heuristic close is denied when live CI has since turned green (#2128)", async () => {
@@ -855,7 +911,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
       // regression tripwire -- it must NEVER be consumed, because the label reuses the close's already-proven
       // outcome instead of re-checking freshness against the now-closed PR (which would read "stale"/closed and
       // wrongly deny the label). The toHaveBeenCalledTimes(1) assertion below is what actually proves this.
-      .mockResolvedValueOnce({ status: "current", liveHeadSha: "sha7", liveState: "open" })
+      .mockResolvedValueOnce({ status: "current", liveHeadSha: "sha7", liveState: "open", liveLabels: [] })
       .mockResolvedValueOnce({ status: "stale", reason: "closed", expectedHeadSha: "sha7", liveHeadSha: "sha7", liveState: "closed" });
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [coupledClose, coupledLabel]);
     expect(outcomes.map((o) => o.outcome)).toEqual(["completed", "completed"]);
@@ -969,6 +1025,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
         status: "current",
         liveHeadSha: "sha7",
         liveState: "open",
+        liveLabels: [],
       })
       .mockResolvedValueOnce({
         status: "stale",
@@ -1113,6 +1170,7 @@ describe("moderation-rules engine escalation (#selfhost-mod-engine)", () => {
       status: "current",
       liveHeadSha: args.expectedHeadSha ?? null,
       liveState: "open",
+      liveLabels: [],
     }));
     // clearAllMocks() resets call history but does NOT drain a queued mockRejectedValueOnce/mockResolvedValueOnce
     // left over from an earlier test elsewhere in this file (e.g. the installation-health-refresh tests above

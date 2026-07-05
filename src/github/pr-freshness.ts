@@ -17,6 +17,10 @@ export type PullRequestFreshness =
       status: "current";
       liveHeadSha: string | null;
       liveState: string | null;
+      // Live label names off the SAME fetch that proved this head is current — lets a caller re-check a
+      // disposition label (e.g. a manual-review hold) against ground truth immediately before a mutation,
+      // without a second GitHub call (#3472 split-brain).
+      liveLabels: string[];
     }
   | {
       status: "stale";
@@ -41,7 +45,7 @@ export function reviewedPullRequestHeadSha(
 }
 
 export function classifyPullRequestFreshness(
-  live: Pick<GitHubPullRequestPayload, "state" | "head" | "draft"> | null | undefined,
+  live: Pick<GitHubPullRequestPayload, "state" | "head" | "draft" | "labels"> | null | undefined,
   expectedHeadSha: string | null | undefined,
   options?: PullRequestFreshnessOptions,
 ): PullRequestFreshness {
@@ -85,7 +89,8 @@ export function classifyPullRequestFreshness(
   if (options?.requireDraft && live.draft !== true) {
     return { status: "stale", reason: "no_longer_draft", expectedHeadSha: expected, liveHeadSha, liveState };
   }
-  return { status: "current", liveHeadSha, liveState };
+  const liveLabels = (live.labels ?? []).map((label) => label.name).filter((name): name is string => Boolean(name));
+  return { status: "current", liveHeadSha, liveState, liveLabels };
 }
 
 export async function fetchPullRequestFreshness(

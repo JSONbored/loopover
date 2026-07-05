@@ -72,6 +72,7 @@ vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
       status: "current" as const,
       liveHeadSha: args.expectedHeadSha ?? null,
       liveState: "open",
+      liveLabels: [] as string[],
     })),
   };
 });
@@ -102,6 +103,7 @@ describe("queue processors", () => {
       status: "current",
       liveHeadSha: args.expectedHeadSha ?? null,
       liveState: "open",
+      liveLabels: [],
     }));
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-05-28T00:00:00.000Z"));

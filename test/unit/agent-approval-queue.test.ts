@@ -18,6 +18,7 @@ vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
       status: "current" as const,
       liveHeadSha: args.expectedHeadSha ?? null,
       liveState: "open",
+      liveLabels: [] as string[],
     })),
   };
 });

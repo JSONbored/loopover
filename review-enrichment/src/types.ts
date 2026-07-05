@@ -473,6 +473,15 @@ export interface DebugLeftoverFinding {
   kind: "debugger" | "console" | "print";
 }
 
+/** Deep brace nesting newly introduced in a contiguous added block (#2030, part of #1499).
+ *  Reports location, observed depth, and the configured threshold only. */
+export interface DeepNestingFinding {
+  file: string;
+  line: number;
+  depth: number;
+  threshold: number;
+}
+
 /** An absolute HTTP(S) URL or raw IP:port endpoint hardcoded in non-test, non-config source (#2027, part of #1499).
  *  Reports location, kind, and a redacted/truncated host — never full paths or query strings. */
 export interface HardcodedUrlFinding {
@@ -528,6 +537,7 @@ export interface BriefFindings {
   magicNumber?: MagicNumberFinding[];
   conflictMarker?: ConflictMarkerFinding[];
   debugLeftover?: DebugLeftoverFinding[];
+  deepNesting?: DeepNestingFinding[];
   hardcodedUrl?: HardcodedUrlFinding[];
   commitLint?: CommitLintFinding[];
 }

@@ -1053,6 +1053,33 @@
       }
     },
     {
+      "name": "deepNesting",
+      "title": "Deep nesting",
+      "category": "quality",
+      "cost": "local",
+      "defaultEnabled": true,
+      "profiles": [
+        "fast",
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "files"
+      ],
+      "limits": {
+        "maxFindings": 25,
+        "maxDepth": 4,
+        "maxLineChars": 2000
+      },
+      "docs": {
+        "summary": "Flags newly-added control flow whose open-brace depth exceeds a threshold inside a contiguous run of added lines.",
+        "looksAt": "Added lines in changed non-test source files, tracking depth across contiguous added hunks.",
+        "reports": "File, line, observed depth, and the configured threshold.",
+        "network": "Pure local analyzer. No external network call.",
+        "notes": "Structural brace-depth only (string literals stripped). A context or removed line resets the contiguous run. Distinct from cyclomatic-complexity tooling."
+      }
+    },
+    {
       "name": "commitLint",
       "title": "Conventional-commit subjects",
       "category": "quality",

@@ -31,6 +31,7 @@ import { scanLooseRanges } from "./loose-range.js";
 import { scanMagicNumbers } from "./magic-number.js";
 import { scanConflictMarkers } from "./conflict-marker.js";
 import { scanDebugLeftover } from "./debug-leftover.js";
+import { scanDeepNesting } from "./deep-nesting.js";
 import { scanCommitLint } from "./commit-lint.js";
 import { scanTerminology } from "./terminology.js";
 import { scanTodoMarker } from "./todo-marker.js";
@@ -976,6 +977,35 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanDebugLeftover(req, signal),
+  }),
+  descriptor({
+    name: "deepNesting",
+    title: "Deep nesting",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxDepth: 4, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags newly-added control flow whose open-brace depth exceeds a threshold inside a contiguous run of added lines.",
+      looksAt: "Added lines in changed non-test source files, tracking depth across contiguous added hunks.",
+      reports: "File, line, observed depth, and the configured threshold.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Structural brace-depth only (string literals stripped). A context or removed line resets the contiguous run. Distinct from cyclomatic-complexity tooling.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Deep nesting (added control-flow depth exceeds threshold)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — depth ${item.depth} (threshold ${item.threshold})`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanDeepNesting(req, signal),
   }),
   descriptor({
     name: "commitLint",

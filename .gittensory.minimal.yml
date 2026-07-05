@@ -1,0 +1,26 @@
+# ============================================================================
+# .gittensory.minimal.yml — smallest safe starter config for a new repo
+# ============================================================================
+#
+# Copy this file to your repo root as `.gittensory.yml` and customize from here.
+# For every supported field, defaults, and examples see `.gittensory.yml.example`.
+#
+# Safe by default:
+#   - Gate off (enable explicitly when you are ready)
+#   - Autonomy observe-only (deny-by-default — no auto-merge, auto-close, or auto-label)
+#   - No auto-maintain / write behavior unless you add it later
+# ============================================================================
+
+# Optional: declare work areas you want contributors to focus on.
+# wantedPaths:
+#   - "src/**"
+
+gate:
+  enabled: false
+
+settings:
+  autonomy:
+    merge: observe
+    close: observe
+    label: observe
+    review_state_label: observe

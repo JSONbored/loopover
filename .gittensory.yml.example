@@ -6,6 +6,10 @@
 # review engine scores, gates, and comments on its pull requests — as
 # config-as-code, versioned alongside the project it governs.
 #
+# STARTER TEMPLATES:
+#   .gittensory.minimal.yml  — smallest safe copy-paste starter (gate off, observe-only autonomy)
+#   .gittensory.yml.example  — exhaustive, field-by-field reference (this file's expanded form)
+#
 # WHERE IT LIVES (first match wins):
 #   .gittensory.yml  →  .github/gittensory.yml  →  .gittensory.json  →  .github/gittensory.json
 #

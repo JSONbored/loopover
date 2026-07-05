@@ -10,6 +10,7 @@ import { scanCommitSignature } from "./commit-signature.js";
 import { dependencyAnalyzer } from "./dependency/descriptor.js";
 import { scanDocCommentDrift } from "./doc-comment-drift.js";
 import { scanDuplication } from "./duplication-scan.js";
+import { scanErrorSwallow } from "./error-swallow.js";
 import { scanEol } from "./eol-check.js";
 import { scanHardcodedUrl } from "./hardcoded-url.js";
 import { scanHeavyDependencies } from "./heavy-dependency.js";
@@ -465,6 +466,35 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanDuplication(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "errorSwallow",
+    title: "Swallowed errors",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags newly-added catch/except blocks that swallow errors without logging or rethrowing.",
+      looksAt: "Added lines in changed JS/TS/Python source files, excluding tests.",
+      reports: "File, line, and kind: empty-catch, unused-binding, or return-null.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Precision-first: catches that log, rethrow, or reference the binding are not flagged. Python `except: pass` is included.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Swallowed errors (empty catch / unused binding / return null)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${helpers.safeCodeSpan(item.kind)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanErrorSwallow(req, signal),
   }),
   descriptor({
     name: "churnHotspot",

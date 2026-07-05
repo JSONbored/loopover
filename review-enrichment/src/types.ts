@@ -482,6 +482,14 @@ export interface HardcodedUrlFinding {
   host: string;
 }
 
+/** A newly-added catch/except block that swallows an error without logging or rethrowing (#2014, part of #1499).
+ *  Reports location and kind only — never catch bodies or stack traces. */
+export interface ErrorSwallowFinding {
+  file: string;
+  line: number;
+  kind: "empty-catch" | "unused-binding" | "return-null";
+}
+
 /** A PR commit subject that does not conform to the Conventional Commits spec (#2021, part of #1499). Reports a
  *  short SHA prefix, the subject, and the failing reason — never author/email. */
 export interface CommitLintFinding {
@@ -529,6 +537,7 @@ export interface BriefFindings {
   conflictMarker?: ConflictMarkerFinding[];
   debugLeftover?: DebugLeftoverFinding[];
   hardcodedUrl?: HardcodedUrlFinding[];
+  errorSwallow?: ErrorSwallowFinding[];
   commitLint?: CommitLintFinding[];
 }
 

@@ -4108,6 +4108,7 @@ export async function countPublishedAiReviewHeads(env: Env, repoFullName: string
   )
     .bind(repoFullName, pullNumber)
     .first<{ cnt: number }>();
+  /* v8 ignore next -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
   return row?.cnt ?? 0;
 }
 

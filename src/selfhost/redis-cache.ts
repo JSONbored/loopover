@@ -4,6 +4,38 @@
 // ID after a successful processing attempt, the server can return 204 immediately on retries
 // without re-queuing the job. The self-host review runtime requires REDIS_URL.
 import type { Redis } from "ioredis";
+import { incr } from "./metrics";
+
+const WEBHOOK_DELIVERY_CACHE_PREFIX = "delivery:";
+
+export function webhookDeliveryCacheKey(deliveryId: string): string {
+  return `${WEBHOOK_DELIVERY_CACHE_PREFIX}${deliveryId}`;
+}
+
+/** Returns true when this GitHub webhook delivery ID was already processed (Redis dedup hit).
+ *  Increments `gittensory_webhook_dedup_total{backend="redis"}` on a hit. Does NOT mark the
+ *  delivery — the caller marks only after a successful response (#2506 / #2572). */
+export async function isWebhookDeliveryDuplicate(cache: RedisCache, deliveryId: string): Promise<boolean> {
+  try {
+    const seen = await cache.get(webhookDeliveryCacheKey(deliveryId));
+    if (seen) {
+      incr("gittensory_webhook_dedup_total", { backend: "redis" });
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** Best-effort: record a successfully processed webhook delivery for Redis dedup. */
+export async function rememberWebhookDelivery(cache: RedisCache, deliveryId: string, ttlSeconds = 300): Promise<void> {
+  try {
+    await cache.set(webhookDeliveryCacheKey(deliveryId), "1", ttlSeconds);
+  } catch {
+    // best-effort — never block the response on a cache write failure
+  }
+}
 
 export function createRedisCache(redis: Redis) {
   return {

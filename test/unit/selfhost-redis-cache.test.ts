@@ -1,6 +1,13 @@
 import type { Redis } from "ioredis";
-import { describe, expect, it } from "vitest";
-import { assertSelfhostTransientCacheOwnershipRelease, createRedisCache } from "../../src/selfhost/redis-cache";
+import { describe, expect, it, afterEach } from "vitest";
+import {
+  assertSelfhostTransientCacheOwnershipRelease,
+  createRedisCache,
+  isWebhookDeliveryDuplicate,
+  rememberWebhookDelivery,
+  webhookDeliveryCacheKey,
+} from "../../src/selfhost/redis-cache";
+import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 
 /** Minimal in-memory stand-in for the ioredis methods the cache uses. Emulates real Redis SET NX
  *  semantics (refuse + return null when NX is requested and the key already exists) so a test
@@ -95,5 +102,35 @@ describe("createRedisCache (#1216 webhook dedup cache)", () => {
       }),
     ).toThrow(/releaseIfValue/);
     expect(() => assertSelfhostTransientCacheOwnershipRelease(createRedisCache(fakeRedis()))).not.toThrow();
+  });
+});
+
+describe("isWebhookDeliveryDuplicate (#2075)", () => {
+  afterEach(() => resetMetrics());
+
+  it("returns false and does not increment on a first-time delivery", async () => {
+    const cache = createRedisCache(fakeRedis());
+    await expect(isWebhookDeliveryDuplicate(cache, "delivery-1")).resolves.toBe(false);
+    expect(await renderMetrics()).not.toContain('gittensory_webhook_dedup_total{backend="redis"}');
+  });
+
+  it("returns true and increments gittensory_webhook_dedup_total{backend=\"redis\"} when already seen", async () => {
+    const cache = createRedisCache(fakeRedis());
+    await cache.set(webhookDeliveryCacheKey("delivery-2"), "1", 300);
+    await expect(isWebhookDeliveryDuplicate(cache, "delivery-2")).resolves.toBe(true);
+    expect(await renderMetrics()).toContain('gittensory_webhook_dedup_total{backend="redis"} 1');
+  });
+
+  it("returns false without incrementing when Redis get throws", async () => {
+    const brokenRedis = { async get() { throw new Error("connection refused"); } } as unknown as Redis;
+    const cache = createRedisCache(brokenRedis);
+    await expect(isWebhookDeliveryDuplicate(cache, "delivery-3")).resolves.toBe(false);
+    expect(await renderMetrics()).not.toContain('gittensory_webhook_dedup_total{backend="redis"}');
+  });
+
+  it("rememberWebhookDelivery stores the delivery key for later dedup", async () => {
+    const cache = createRedisCache(fakeRedis());
+    await rememberWebhookDelivery(cache, "delivery-4");
+    expect(await cache.get(webhookDeliveryCacheKey("delivery-4"))).toBe("1");
   });
 });

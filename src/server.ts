@@ -481,7 +481,7 @@ async function main(): Promise<void> {
   const { Redis } = await import("ioredis");
   const redisClient = new Redis(redisUrl);
   const { createRedisRateLimiter } = await import("./selfhost/redis-ratelimit");
-  const { createRedisCache, assertSelfhostTransientCacheOwnershipRelease } = await import("./selfhost/redis-cache");
+  const { createRedisCache, assertSelfhostTransientCacheOwnershipRelease, isWebhookDeliveryDuplicate, rememberWebhookDelivery } = await import("./selfhost/redis-cache");
   const rateLimiter = createRedisRateLimiter(redisClient);
   const webhookCache = createRedisCache(redisClient);
   assertSelfhostTransientCacheOwnershipRelease(webhookCache);
@@ -700,13 +700,13 @@ async function main(): Promise<void> {
     "gittensory_jobs_dead_total",
     "gittensory_jobs_rate_limit_deferred_total",
     "gittensory_jobs_recovered_total",
-    "gittensory_webhook_dedup_total",
     "gittensory_qdrant_queries_total",
     "gittensory_qdrant_upserts_total",
     "gittensory_orb_events_exported_total",
     "gittensory_orb_export_errors_total",
   ])
     incr(c, undefined, 0);
+  incr("gittensory_webhook_dedup_total", { backend: "redis" }, 0);
   // Seed gittensory_http_requests_total per status class so the breakdown panel has every series from the
   // first scrape (keeping the metric consistently labeled — never mix labeled and unlabeled samples).
   for (const status of ["2xx", "3xx", "4xx", "5xx"])
@@ -886,18 +886,13 @@ async function main(): Promise<void> {
                 ? request.headers.get("x-github-delivery")
                 : null;
               if (deliveryId) {
-                const seen = await webhookCache!.get(`delivery:${deliveryId}`);
-                if (seen) {
-                  incr("gittensory_webhook_dedup_total");
+                if (await isWebhookDeliveryDuplicate(webhookCache!, deliveryId)) {
                   return finish(new Response(null, { status: 204 }));
                 }
               }
               const response = await worker.fetch(request, env, ctx);
               if (deliveryId && response.ok) {
-                // Best-effort — never block the response on a cache write failure
-                void webhookCache!
-                  .set(`delivery:${deliveryId}`, "1", 300)
-                  .catch(() => undefined);
+                void rememberWebhookDelivery(webhookCache!, deliveryId);
               }
               return finish(response);
             } finally {

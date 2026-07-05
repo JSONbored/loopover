@@ -1269,7 +1269,8 @@ export function dualAiTieBreakVerdictsOrderStable(
   if (normalOrder.verdict === "consensus" && swappedOrder.verdict === "consensus") {
     const a = (normalOrder.consensusTitle ?? "").trim().toLowerCase();
     const b = (swappedOrder.consensusTitle ?? "").trim().toLowerCase();
-    return a.length > 0 && a === b;
+    if (!a || !b) return false;
+    return a === b;
   }
   if (normalOrder.verdict === "consensus" || swappedOrder.verdict === "consensus") return false;
   // Same physical reviewer: normal slot 0 ↔ swapped slot 1 (and vice versa).

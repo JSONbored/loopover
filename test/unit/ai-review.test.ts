@@ -2539,6 +2539,21 @@ describe("pure helpers", () => {
       ).toBe(true);
     });
 
+    it("dualAiTieBreakVerdictsOrderStable handles omitted consensusTitle on consensus verdicts", () => {
+      expect(
+        dualAiTieBreakVerdictsOrderStable(
+          { verdict: "consensus" },
+          { verdict: "consensus" },
+        ),
+      ).toBe(false);
+      expect(
+        dualAiTieBreakVerdictsOrderStable(
+          { verdict: "consensus" },
+          { verdict: "consensus", consensusTitle: "Null deref in src/a.ts" },
+        ),
+      ).toBe(false);
+    });
+
     it("runDualAiTieBreakJudgeCall records provider_error diagnostics after retries exhaust", async () => {
       const run = vi.fn(async () => {
         throw new Error("judge provider down");

@@ -457,6 +457,7 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("migrationSafety", findings.migrationSafety));
   lines.push(...renderDescriptorSection("looseRange", findings.looseRange));
   lines.push(...renderDescriptorSection("terminology", findings.terminology));
+  lines.push(...renderDescriptorSection("todoMarker", findings.todoMarker));
 
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 

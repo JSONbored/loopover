@@ -920,6 +920,33 @@
         "network": "Pure local analyzer. No external network call.",
         "notes": "Token-based matching avoids substring false positives (masterclass/postmaster are never flagged), and URLs are skipped. The term→suggestion table is a bounded in-file policy."
       }
+    },
+    {
+      "name": "todoMarker",
+      "title": "Incomplete-work markers",
+      "category": "quality",
+      "cost": "local",
+      "defaultEnabled": true,
+      "profiles": [
+        "fast",
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "files"
+      ],
+      "limits": {
+        "maxFindings": 25,
+        "maxLineChars": 2000,
+        "maxNoteChars": 120
+      },
+      "docs": {
+        "summary": "Surfaces TODO/FIXME/HACK/XXX markers a PR adds in comments, so a reviewer sees the change is shipping known-incomplete work.",
+        "looksAt": "Added lines with an uppercase, comment-anchored marker across any changed file.",
+        "reports": "File, line, tag, and a truncated note.",
+        "network": "Pure local analyzer. No external network call.",
+        "notes": "Precision-first: only UPPERCASE, comment-anchored markers are reported (a lowercase `todo` identifier or a marker inside a string literal is never flagged); a bare marker inside a multi-line block comment is intentionally not matched."
+      }
     }
   ]
 }

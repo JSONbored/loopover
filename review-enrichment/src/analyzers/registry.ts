@@ -28,6 +28,7 @@ import { scanTestRatio } from "./test-ratio.js";
 import { scanMigrationSafety } from "./migration-safety.js";
 import { scanLooseRanges } from "./loose-range.js";
 import { scanTerminology } from "./terminology.js";
+import { scanTodoMarker } from "./todo-marker.js";
 import { scanTyposquat } from "./typosquat.js";
 import { scanUndocumentedExport } from "./undocumented-export.js";
 import type {
@@ -823,6 +824,36 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanTerminology(req, signal),
+  }),
+  descriptor({
+    name: "todoMarker",
+    title: "Incomplete-work markers",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxLineChars: 2000, maxNoteChars: 120 },
+    docs: {
+      summary:
+        "Surfaces TODO/FIXME/HACK/XXX markers a PR adds in comments, so a reviewer sees the change is shipping known-incomplete work.",
+      looksAt: "Added lines with an uppercase, comment-anchored marker across any changed file.",
+      reports: "File, line, tag, and a truncated note.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Precision-first: only UPPERCASE, comment-anchored markers are reported (a lowercase `todo` identifier or a marker inside a string literal is never flagged); a bare marker inside a multi-line block comment is intentionally not matched.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Incomplete-work markers (TODO/FIXME/HACK/XXX added by this PR)"];
+      for (const item of findings) {
+        const note = item.note ? `: ${item.note}` : "";
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${helpers.safeCodeSpan(item.tag)}${helpers.promptText(note)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanTodoMarker(req, signal),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

@@ -429,6 +429,15 @@ export interface TerminologyFinding {
   suggestion: string;
 }
 
+/** A TODO/FIXME/HACK/XXX marker a PR added in a comment — known-incomplete work shipping in the change
+ *  (#2016, part of #1499). Reports the location, the tag, and an optional truncated note. */
+export interface TodoMarkerFinding {
+  file: string;
+  line: number;
+  tag: "TODO" | "FIXME" | "HACK" | "XXX";
+  note?: string;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -463,6 +472,7 @@ export interface BriefFindings {
   migrationSafety?: MigrationSafetyFinding[];
   looseRange?: LooseRangeFinding[];
   terminology?: TerminologyFinding[];
+  todoMarker?: TodoMarkerFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

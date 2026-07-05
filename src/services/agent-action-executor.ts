@@ -377,8 +377,8 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     }
     // 9) live — perform the real mutation, recording success or the error.
     try {
-      await performAction(env, ctx, action);
-      await audit("completed", action.reason);
+      const detailOverride = await performAction(env, ctx, action);
+      await audit("completed", detailOverride ?? action.reason);
       // CI-run cancellation on a contributor_cap close (#2462, anti-abuse): stop burning CI minutes on a PR
       // that was just closed for exceeding the contributor cap. Best-effort, AFTER the close already
       // succeeded -- cancelInFlightWorkflowRunsForHeadSha never throws, so a missing actions:write grant (or
@@ -665,7 +665,12 @@ async function handleMergeFailure(env: Env, ctx: AgentActionExecutionContext, er
   }).catch(() => undefined);
 }
 
-async function performAction(env: Env, ctx: AgentActionExecutionContext, action: PlannedAgentAction): Promise<void> {
+/** Performs the action's real GitHub mutation. Returns an optional audit-detail override — used only by the
+ *  "assign" case (below) to distinguish a real assignee from the by:<login> fallback, since GitHub silently
+ *  drops an ineligible assignee rather than erroring, so the caller's generic `audit("completed", action.reason)`
+ *  would otherwise look identical for both outcomes. Every other case implicitly returns undefined, keeping the
+ *  caller's original `action.reason` detail. */
+async function performAction(env: Env, ctx: AgentActionExecutionContext, action: PlannedAgentAction): Promise<string | undefined> {
   switch (action.actionClass) {
     case "label":
       // Flag-then-close double-check: a `label` action may ADD (default) or REMOVE its label, and may carry an
@@ -729,7 +734,7 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
     }
     case "assign": {
       const login = action.assignee ?? "";
-      if (!login) return;
+      if (!login) return undefined;
       const result = await ensurePullRequestAssignee(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, login);
       if (!result.applied) {
         // GitHub silently drops an assignee lacking push/triage access to the repo -- the common case for an
@@ -739,8 +744,11 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
         // at 50, so a longer prefix can push a valid max-length login past the limit and fail this fallback for
         // exactly the contributors it exists to cover.
         await ensurePullRequestLabel(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, `by:${login}`, { createMissingLabel: true });
+        // Audit-visibility gap fix: without this override, "completed" always carries the planner's generic
+        // "auto-assign PR opener" reason, so audit_events can't distinguish a real assignee from this fallback.
+        return `assignee refused by GitHub — fell back to a by:${login} label`;
       }
-      return;
+      return undefined;
     }
   }
 }

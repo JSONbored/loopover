@@ -527,6 +527,10 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(ensurePullRequestAssignee).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "alice");
     expect(ensurePullRequestLabel).not.toHaveBeenCalled();
     expect(outcomes[0]?.outcome).toBe("completed");
+    // REGRESSION (#audit-assign-fallback-visibility): a real, sticking assignee keeps the planner's generic
+    // reason as the audit detail -- only the fallback path below overrides it.
+    const audit = await env.DB.prepare("select detail from audit_events where event_type = 'agent.action.assign' order by created_at desc limit 1").first<{ detail: string }>();
+    expect(audit?.detail).toBe("auto-assign PR opener");
   });
 
   it("LIVE assign (#3182): falls back to a per-login label when GitHub silently drops an ineligible assignee", async () => {
@@ -536,6 +540,11 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     const outcomes = await executeAgentMaintenanceActions(env, ctx({ autonomy: { assign: "auto" } }), [assign]);
     expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "by:external-contributor", { createMissingLabel: true });
     expect(outcomes[0]?.outcome).toBe("completed");
+    // REGRESSION (#audit-assign-fallback-visibility): the audit detail must distinguish this fallback from a
+    // real applied assignee -- previously both cases recorded the identical generic planner reason, so
+    // audit_events had no way to tell a silently-refused assignee from a successful one.
+    const audit = await env.DB.prepare("select detail from audit_events where event_type = 'agent.action.assign' order by created_at desc limit 1").first<{ detail: string }>();
+    expect(audit?.detail).toBe("assignee refused by GitHub — fell back to a by:external-contributor label");
   });
 
   it("assign with no login is a no-op (defensive — the planner always sets it, but the executor must not call GitHub with an empty login)", async () => {

@@ -368,6 +368,18 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Knock management API service token: `knock_st_` + base62 body.
+    kind: "knock_service_token",
+    re: /\bknock_st_[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Sourcegraph access token: `sgp_` + 16 hex + `_` + 40 hex (distinct from generic hex blobs).
+    kind: "sourcegraph_access_token",
+    re: /\bsgp_[a-fA-F0-9]{16}_[a-fA-F0-9]{40}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
     // Google OAuth 2.0 client secret: `GOCSPX-` + 28 base64url chars.
     kind: "google_oauth_client_secret",
     re: /\bGOCSPX-[A-Za-z0-9_-]{28}\b/,

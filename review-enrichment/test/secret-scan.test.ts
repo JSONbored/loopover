@@ -1035,6 +1035,53 @@ test("scanPatch does not flag truncated MiniMax keys or identifier continuation"
   );
 });
 
+test("scanPatch flags Knock service and Sourcegraph access tokens with high confidence", () => {
+  const fakeKnockToken = "knock_st_" + "a".repeat(20);
+  const knockFindings = scanPatch("src/config.ts", hunk([`const knock = "${fakeKnockToken}";`]));
+  assert.equal(knockFindings.length, 1);
+  assert.equal(knockFindings[0].kind, "knock_service_token");
+  assert.equal(knockFindings[0].confidence, "high");
+
+  const fakeSourcegraphToken = "sgp_" + hex(16) + "_" + hex(40);
+  const sourcegraphFindings = scanPatch("src/config.ts", hunk([`const sg = "${fakeSourcegraphToken}";`]));
+  assert.equal(sourcegraphFindings.length, 1);
+  assert.equal(sourcegraphFindings[0].kind, "sourcegraph_access_token");
+  assert.equal(sourcegraphFindings[0].confidence, "high");
+});
+
+test("scanPatch does not flag truncated Knock/Sourcegraph tokens or identifier continuation", () => {
+  assert.equal(scanPatch("src/config.ts", hunk([`const knock = "knock_st_${"a".repeat(19)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const knock = "knock_st_${"a".repeat(20)}_suffix";`])).some((f) => f.kind === "knock_service_token"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const knock = "knock_st_${"a".repeat(20)}-suffix";`])).some((f) => f.kind === "knock_service_token"),
+    false,
+  );
+
+  const shortSourcegraphToken = "sgp_" + hex(16) + "_" + hex(39);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const sg = "${shortSourcegraphToken}";`])).some((f) => f.kind === "sourcegraph_access_token"),
+    false,
+  );
+  const sourcegraphSuffixToken = "sgp_" + hex(16) + "_" + hex(40) + "-suffix";
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const sg = "${sourcegraphSuffixToken}";`])).some((f) => f.kind === "sourcegraph_access_token"),
+    false,
+  );
+  const sourcegraphUnderscoreToken = "sgp_" + hex(16) + "_" + hex(40) + "_suffix";
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const sg = "${sourcegraphUnderscoreToken}";`])).some((f) => f.kind === "sourcegraph_access_token"),
+    false,
+  );
+  const sourcegraphAlphaSuffixToken = "sgp_" + hex(16) + "_" + hex(40) + "z";
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const sg = "${sourcegraphAlphaSuffixToken}";`])).some((f) => f.kind === "sourcegraph_access_token"),
+    false,
+  );
+});
+
 test("scanPatch flags additional high-confidence SaaS/cloud/CI credential formats", () => {
   const cases = [
     ["google_oauth_client_secret", "GOCSPX-" + b62(28)],

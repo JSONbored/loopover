@@ -7,11 +7,11 @@ export type SelfHostEnvReferenceRow = {
 export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   {
     name: "AI_COMBINE",
-    firstReference: "src/selfhost/ai.ts:1173",
+    firstReference: "src/selfhost/ai.ts:1149",
   },
   {
     name: "AI_DUAL_REVIEW",
-    firstReference: "src/selfhost/ai.ts:1148",
+    firstReference: "src/selfhost/ai.ts:1151",
   },
   {
     name: "AI_EMBED_API_KEY",
@@ -27,7 +27,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "AI_ON_MERGE",
-    firstReference: "src/selfhost/ai.ts:1175",
+    firstReference: "src/selfhost/ai.ts:1149",
   },
   {
     name: "AI_PROVIDER",
@@ -394,12 +394,12 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
 export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| Name | First reference |",
   "| --- | --- |",
-  "| `AI_COMBINE` | `src/selfhost/ai.ts:1173` |",
-  "| `AI_DUAL_REVIEW` | `src/selfhost/ai.ts:1148` |",
+  "| `AI_COMBINE` | `src/selfhost/ai.ts:1149` |",
+  "| `AI_DUAL_REVIEW` | `src/selfhost/ai.ts:1151` |",
   "| `AI_EMBED_API_KEY` | `src/server.ts:443` |",
   "| `AI_EMBED_BASE_URL` | `src/server.ts:440` |",
   "| `AI_EMBED_MODEL` | `src/selfhost/ai.ts:1045` |",
-  "| `AI_ON_MERGE` | `src/selfhost/ai.ts:1175` |",
+  "| `AI_ON_MERGE` | `src/selfhost/ai.ts:1149` |",
   "| `AI_PROVIDER` | `src/selfhost/ai-config.ts:43` |",
   "| `ANTHROPIC_AI_BASE_URL` | `src/selfhost/ai.ts:1049` |",
   "| `ANTHROPIC_AI_MODEL` | `src/selfhost/ai.ts:109` |",

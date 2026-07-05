@@ -1138,14 +1138,17 @@ function enabledEnvFlag(value: string | undefined): boolean {
 
 /** Resolve the self-host review plan from env. By default, `AI_PROVIDER=a,b` means one reviewer using `a` with
  *  `b` as the per-review fallback, so a Codex quota/auth outage can fall through to Claude Code without paying
- *  for two simultaneous reviewers. `AI_DUAL_REVIEW=1` opts back into the explicit two-reviewer mode where the
- *  first two providers run independently and `AI_COMBINE` / `AI_ON_MERGE` decide how to merge them. */
+ *  for two simultaneous reviewers. Existing multi-provider configs that explicitly set `AI_COMBINE` or
+ *  `AI_ON_MERGE` keep their two-reviewer behavior; `AI_DUAL_REVIEW=1` is the explicit opt-in for new dual
+ *  review configs. */
 export function resolveAiReviewerPlan(
   env: Record<string, string | undefined>,
 ): { reviewers: Array<{ model: string; fallback?: string | null | undefined }>; combine: CombineStrategy; onMerge: OnMerge | undefined } | undefined {
   const names = resolveProviderNames(env);
   if (names.length === 0) return undefined;
-  if (!enabledEnvFlag(env.AI_DUAL_REVIEW)) {
+  const hasLegacyDualReviewConfig = (env.AI_COMBINE ?? "").trim() !== "" || (env.AI_ON_MERGE ?? "").trim() !== "";
+  if (names.length === 1) return { reviewers: [{ model: names[0] as string }], combine: "single", onMerge: undefined };
+  if (!enabledEnvFlag(env.AI_DUAL_REVIEW) && !hasLegacyDualReviewConfig) {
     const primary = names[0] as string;
     const fallback = names.find((name) => name !== primary);
     return {
@@ -1159,7 +1162,6 @@ export function resolveAiReviewerPlan(
       onMerge: undefined,
     };
   }
-  if (names.length === 1) return { reviewers: [{ model: names[0] as string }], combine: "single", onMerge: undefined };
   // Fail loud when the two SLOTS the dual-review plan actually uses (the first two names) are the same
   // provider: routeProviders' `byName` map collapses duplicate provider names to one runtime instance, so
   // "dual review" would silently become "one provider called twice" -- no independent second opinion, and

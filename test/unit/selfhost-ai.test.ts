@@ -675,10 +675,23 @@ describe("resolveProviderNames + resolveAiReviewerPlan (#dual-ai-combiner)", () 
       combine: "single",
       onMerge: undefined,
     });
-    expect(resolveAiReviewerPlan({ AI_PROVIDER: "codex,claude-code,ollama", AI_COMBINE: "consensus", AI_ON_MERGE: "both" })).toEqual({
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "codex,claude-code,ollama" })).toEqual({
       reviewers: [{ model: "codex", fallback: "claude-code" }],
       combine: "single",
       onMerge: undefined,
+    });
+  });
+
+  it("resolveAiReviewerPlan: legacy multi-provider combine/on-merge configs remain dual-review", () => {
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "codex,claude-code,ollama", AI_COMBINE: "consensus", AI_ON_MERGE: "both" })).toEqual({
+      reviewers: [{ model: "codex" }, { model: "claude-code" }],
+      combine: "consensus",
+      onMerge: "both",
+    });
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "codex,claude-code", AI_ON_MERGE: "either" })).toMatchObject({
+      reviewers: [{ model: "codex" }, { model: "claude-code" }],
+      combine: "synthesis",
+      onMerge: "either",
     });
   });
 

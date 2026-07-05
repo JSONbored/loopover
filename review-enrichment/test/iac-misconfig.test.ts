@@ -444,3 +444,40 @@ test("scanPatchForIacMisconfig does not flag the secure counterpart of each cont
     );
   }
 });
+
+test("scanPatchForIacMisconfig flags insecure HTTP security-header settings", () => {
+  // Each matched value is the weakening itself, so there is no safe-value form of the same line.
+  const cases = [
+    ["+    add_header Strict-Transport-Security \"max-age=0\";", "hsts-disabled"],
+    ["+    add_header Referrer-Policy \"unsafe-url\";", "referrer-policy-leak"],
+    ["+    httpOnly: false", "cookie-not-httponly"],
+  ];
+  for (const [added, kind] of cases) {
+    const findings = scanPatchForIacMisconfig(
+      "nginx.conf",
+      ["@@ -1,0 +1,1 @@", added].join("\n"),
+    );
+    assert.deepEqual(
+      findings,
+      [{ file: "nginx.conf", line: 1, kind }],
+      `${kind}: expected exactly one finding of that kind, got ${JSON.stringify(findings)}`,
+    );
+  }
+});
+
+test("scanPatchForIacMisconfig does not flag secure HTTP header values (incl. Cache-Control max-age=0)", () => {
+  const safe = [
+    "+    add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\";",
+    // Cache-Control max-age=0 is a NORMAL caching directive and must NOT fire the HSTS rule.
+    "+    add_header Cache-Control \"max-age=0\";",
+    "+    add_header Referrer-Policy \"strict-origin-when-cross-origin\";",
+    "+    httpOnly: true",
+  ];
+  for (const added of safe) {
+    assert.deepEqual(
+      scanPatchForIacMisconfig("nginx.conf", ["@@ -1,0 +1,1 @@", added].join("\n")),
+      [],
+      `should not flag: ${added.trim()}`,
+    );
+  }
+});

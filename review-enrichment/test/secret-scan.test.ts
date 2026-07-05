@@ -894,6 +894,43 @@ test("scanPatch does not flag truncated Exa/Mem0 keys or identifier continuation
   );
 });
 
+test("scanPatch flags Braintrust and ScrapeGraphAI API keys with high confidence", () => {
+  const fakeBraintrustToken = "bt-st-" + "a".repeat(20);
+  const braintrustFindings = scanPatch("src/config.ts", hunk([`const bt = "${fakeBraintrustToken}";`]));
+  assert.equal(braintrustFindings.length, 1);
+  assert.equal(braintrustFindings[0].kind, "braintrust_service_token");
+  assert.equal(braintrustFindings[0].confidence, "high");
+
+  const fakeScrapeGraphKey = ["sgai-", "01234567", "-", "0123", "-", "4567", "-", "8901", "-", "012345678901"].join("");
+  const scrapeGraphFindings = scanPatch("src/config.ts", hunk([`const sgai = "${fakeScrapeGraphKey}";`]));
+  assert.equal(scrapeGraphFindings.length, 1);
+  assert.equal(scrapeGraphFindings[0].kind, "scrapegraphai_api_key");
+  assert.equal(scrapeGraphFindings[0].confidence, "high");
+});
+
+test("scanPatch does not flag truncated Braintrust/ScrapeGraphAI keys or identifier continuation", () => {
+  assert.equal(scanPatch("src/config.ts", hunk([`const bt = "bt-st-${"a".repeat(19)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const bt = "bt-st-${"a".repeat(20)}-suffix";`])).some((f) => f.kind === "braintrust_service_token"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const bt = "bt-st-${"a".repeat(20)}_suffix";`])).some((f) => f.kind === "braintrust_service_token"),
+    false,
+  );
+
+  const shortScrapeGraphKey = ["sgai-", "01234567", "-", "0123", "-", "4567", "-", "8901", "-", "01234567890"].join("");
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const sgai = "${shortScrapeGraphKey}";`])).some((f) => f.kind === "scrapegraphai_api_key"),
+    false,
+  );
+  const scrapeGraphSuffixKey = ["sgai-", "01234567", "-", "0123", "-", "4567", "-", "8901", "-", "012345678901", "-suffix"].join("");
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const sgai = "${scrapeGraphSuffixKey}";`])).some((f) => f.kind === "scrapegraphai_api_key"),
+    false,
+  );
+});
+
 test("scanPatch flags additional high-confidence SaaS/cloud/CI credential formats", () => {
   const cases = [
     ["google_oauth_client_secret", "GOCSPX-" + b62(28)],

@@ -320,6 +320,18 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Braintrust service token: `bt-st-` + base62 body.
+    kind: "braintrust_service_token",
+    re: /\bbt-st-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // ScrapeGraphAI API key: `sgai-` + UUID-shaped body.
+    kind: "scrapegraphai_api_key",
+    re: /\bsgai-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9a-fA-F-])/,
+    confidence: "high",
+  },
+  {
     // Google OAuth 2.0 client secret: `GOCSPX-` + 28 base64url chars.
     kind: "google_oauth_client_secret",
     re: /\bGOCSPX-[A-Za-z0-9_-]{28}\b/,

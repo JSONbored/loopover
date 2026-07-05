@@ -60,6 +60,36 @@ describe("isDuplicateClusterWinnerByClaim (#dup-winner claim election)", () => {
     expect(isDuplicateClusterWinnerByClaim(claim(12, "not-a-date"), [claim(13, "2026-06-29T10:00:00.000Z")])).toBe(false);
     expect(isDuplicateClusterWinnerByClaim(claim(13, "2026-06-29T10:00:00.000Z"), [claim(12, "not-a-date")])).toBe(false);
   });
+
+  it("an empty sibling list ⇒ winner (alone in the cluster)", () => {
+    expect(isDuplicateClusterWinnerByClaim(claim(12, "2026-06-29T10:00:00.000Z"), [])).toBe(true);
+  });
+
+  it("fails closed when the PR itself has a missing claim timestamp", () => {
+    expect(isDuplicateClusterWinnerByClaim({ number: 12, linkedIssueClaimedAt: undefined }, [claim(13, "2026-06-29T10:00:00.000Z")])).toBe(false);
+  });
+
+  it("wins when every open sibling claimed later", () => {
+    expect(
+      isDuplicateClusterWinnerByClaim(claim(12, "2026-06-29T10:00:00.000Z"), [
+        claim(13, "2026-06-29T10:05:00.000Z"),
+        claim(14, "2026-06-29T10:10:00.000Z"),
+      ]),
+    ).toBe(true);
+  });
+
+  it("wins an equal-claim tie when siblings have higher PR numbers", () => {
+    expect(
+      isDuplicateClusterWinnerByClaim(claim(12, "2026-06-29T10:00:00.000Z"), [
+        claim(13, "2026-06-29T10:00:00.000Z"),
+        claim(14, "2026-06-29T10:00:00.000Z"),
+      ]),
+    ).toBe(true);
+  });
+
+  it("loses an equal-claim tie when any sibling has a lower PR number", () => {
+    expect(isDuplicateClusterWinnerByClaim(claim(14, "2026-06-29T10:00:00.000Z"), [claim(12, "2026-06-29T10:00:00.000Z")])).toBe(false);
+  });
 });
 
 describe("dupWinnerLinkedDuplicateCount (#dup-winner close-reason seam)", () => {

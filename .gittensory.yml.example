@@ -310,7 +310,7 @@ gate:
     # only -- not floor-clamped like onMerge below, since the three strategies aren't
     # ordered by strictness.
     combine: null
-    # Per-repo override of the synthesis merge rule (#2567): "either" is STRICTER (any
+    # Per-repo override of the synthesis merge mode (#2567): "either" is STRICTER (any
     # one reviewer's blocker blocks/holds); "both" is more permissive (every reviewer
     # must agree). either | both, or null. Default: null (the operator's own plan). A
     # repo may only TIGHTEN the operator's floor -- it can never loosen "either" down
@@ -746,6 +746,11 @@ settings:
 #   # deterministic "Changed files" summary: one row per file category, with counts and +/- totals. Bool
 #   # or null. Default: null/false.
 #   changed_files_summary: false
+#   # When true, an inline finding is ALSO tagged with a category (security/correctness/performance/
+#   # maintainability/tests/style) -- the AI reviewer self-categorizes, with a deterministic path/keyword
+#   # fallback for whatever it omits. Only takes effect when inline_comments is already on. Bool or null.
+#   # Default: null/false.
+#   finding_categories: false
 #   # Maintainer-declared DETERMINISTIC content assertions (title/description must contain a phrase, a
 #   # label must be present), optionally gated to a path glob. A failed check is advisory by default;
 #   # `enforce: true` makes it a hard gate blocker. Empty/default ⇒ no finding (no AI judgment involved).

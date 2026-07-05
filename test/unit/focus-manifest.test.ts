@@ -349,6 +349,7 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     inlineComments: "inline_comments:",
     suggestions: "suggestions:",
     changedFilesSummary: "changed_files_summary:",
+    findingCategories: "finding_categories:",
     pathInstructions: "path_instructions:",
     instructions: "instructions:",
     excludePaths: "exclude_paths:",

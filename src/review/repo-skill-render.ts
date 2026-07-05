@@ -84,9 +84,9 @@ function renderFrontmatterDescription(repoFullName: string): string {
  * Render the markdown body of a generated skill file from a repo profile, or `null` when either the profile has
  * no data (`present: false`) or {@link shouldGenerateRepoSkill} says this repo's workflow doesn't warrant one.
  * Callers must treat `null` as "do not generate", not as an empty-but-valid file. The ENTIRE return value is the
- * machine-generated section: it both starts and ends with {@link REPO_SKILL_MARKERS}, mirroring
- * renderRepoDocContent's convention so refreshGeneratedDoc (src/review/generated-doc-refresh.ts) can recompute
- * just this span on a later refresh, unchanged.
+ * generated skill file: YAML frontmatter must be the first bytes of SKILL.md, so the generated-content
+ * marker starts immediately after that frontmatter. refreshGeneratedDoc (src/review/generated-doc-refresh.ts)
+ * can still recompute the marked body on a later refresh while preserving the required top-of-file metadata.
  */
 export function renderRepoSkillContent(profile: RepoProfile): string | null {
   if (!profile.present) return null;
@@ -95,13 +95,13 @@ export function renderRepoSkillContent(profile: RepoProfile): string | null {
   const repoName = repoOnlyName(profile.repoFullName);
   const skillName = repoSkillName(profile.repoFullName);
   const runner = commands.packageManager ?? "npm";
-  return `${REPO_SKILL_MARKER_START}
----
+  return `---
 name: ${skillName}
 description: >-
   ${renderFrontmatterDescription(profile.repoFullName)}
 ---
 
+${REPO_SKILL_MARKER_START}
 # Contributing to ${repoName} — the contribution playbook
 
 This repo's contribution flow has enough structure that it is worth writing down rather than folding into

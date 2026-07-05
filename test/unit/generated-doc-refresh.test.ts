@@ -42,6 +42,19 @@ describe("refreshGeneratedDoc (#3004)", () => {
     expect(result).toEqual({ action: "replace", content: SECTION_V2 });
   });
 
+  it("replaces generated frontmatter together with a later marker block", () => {
+    const withFrontmatter = `---\nname: widgets\n---\n\n${SECTION}`;
+    const withUpdatedFrontmatter = `---\nname: updated-widgets\n---\n\n${SECTION_V2}`;
+    expect(refreshGeneratedDoc(withFrontmatter, withFrontmatter, MARKERS)).toEqual({ action: "no-change" });
+    expect(refreshGeneratedDoc(withFrontmatter, withUpdatedFrontmatter, MARKERS)).toEqual({ action: "replace", content: withUpdatedFrontmatter });
+  });
+
+  it("fails closed when the generated section is missing its start marker", () => {
+    const current = `# Preamble\n\n${SECTION}Appendix.\n`;
+    const result = refreshGeneratedDoc(current, `generated body v2\n${MARKERS.end}\n`, MARKERS);
+    expect(result).toEqual({ action: "manual-review-required", reason: "generated section is missing the start marker" });
+  });
+
   it("fails closed with a reason when the current file has no marker block at all", () => {
     const current = "# Hand-written CLAUDE.md\n\nNo markers here.\n";
     const result = refreshGeneratedDoc(current, SECTION, MARKERS);

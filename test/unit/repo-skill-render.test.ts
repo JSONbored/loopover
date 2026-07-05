@@ -87,7 +87,8 @@ describe("renderRepoSkillContent (#3001)", () => {
     });
     const content = renderRepoSkillContent(profile);
     expect(content).not.toBeNull();
-    expect(content!.startsWith(REPO_SKILL_MARKER_START)).toBe(true);
+    expect(content!.startsWith("---\nname: contributing-to-widgets")).toBe(true);
+    expect(content!.indexOf(REPO_SKILL_MARKER_START)).toBeGreaterThan(content!.indexOf("---\n\n") + "---\n\n".length - 1);
     expect(content!.trimEnd().endsWith(REPO_SKILL_MARKER_END)).toBe(true);
     expect(content).toContain("name: contributing-to-widgets");
     expect(content).toContain("# Contributing to widgets");

@@ -49,14 +49,14 @@ function findMarkerBlock(content: string, markers: GeneratedDocMarkers): MarkerB
 
 /**
  * Recompute the machine-generated section of a file. `generatedSection` MUST already carry the `markers.start`/
- * `markers.end` pair as its own first/last content (e.g. `renderRepoDocContent`'s output) -- this function only
- * finds and replaces that span inside a LARGER file, it does not add the markers itself.
+ * `markers.end` pair. Most renderers put the start marker at byte 0; skill files may put required YAML
+ * frontmatter before the marker, and that generated prefix is replaced together with the marked span.
  *
  * - `currentContent === null` (no file exists yet): `generate` -- content is exactly `generatedSection`.
  * - A valid, single marker block is found and its current text already equals `generatedSection`: `no-change`
  *   -- callers (including the future scheduled-refresh check, #3003) use this to skip opening a no-op PR.
- * - A valid, single marker block is found and differs: `replace` -- `content` preserves everything before the
- *   start marker and after the end marker byte-for-byte, substituting only the marked span.
+ * - A valid, single marker block is found and differs: `replace` -- `content` preserves everything outside
+ *   the generated section byte-for-byte, substituting the generated prefix (if any) plus the marked span.
  * - No marker block, or a malformed one (missing start/end, duplicated, or end-before-start): `manual-review-
  *   required` -- an existing file that doesn't unambiguously look machine-generated is never touched.
  */
@@ -64,9 +64,12 @@ export function refreshGeneratedDoc(currentContent: string | null, generatedSect
   if (currentContent === null) return { action: "generate", content: generatedSection };
   const block = findMarkerBlock(currentContent, markers);
   if ("error" in block) return { action: "manual-review-required", reason: block.error };
-  const currentSection = currentContent.slice(block.startIndex, block.endIndex);
+  const generatedStartIndex = generatedSection.indexOf(markers.start);
+  if (generatedStartIndex === -1) return { action: "manual-review-required", reason: "generated section is missing the start marker" };
+  const replacementStart = Math.max(0, block.startIndex - generatedStartIndex);
+  const currentSection = currentContent.slice(replacementStart, block.endIndex);
   if (currentSection === generatedSection) return { action: "no-change" };
-  const before = currentContent.slice(0, block.startIndex);
+  const before = currentContent.slice(0, replacementStart);
   const after = currentContent.slice(block.endIndex);
   return { action: "replace", content: `${before}${generatedSection}${after}` };
 }

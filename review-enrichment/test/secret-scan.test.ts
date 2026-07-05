@@ -563,6 +563,42 @@ test("scanPatch does not flag truncated Together/Fireworks keys or identifier co
   assert.equal(scanPatch("src/config.ts", hunk([`const firepass = "fpk_${"b".repeat(19)}";`])).length, 0);
 });
 
+test("scanPatch flags Pinecone and Tavily API keys with high confidence", () => {
+  const fakePineconeKey = ["pcsk_", "T5Afk6", "_", "a".repeat(63)].join("");
+  const pineconeFindings = scanPatch("src/config.ts", hunk([`const pinecone = "${fakePineconeKey}";`]));
+  assert.equal(pineconeFindings.length, 1);
+  assert.equal(pineconeFindings[0].kind, "pinecone_api_key");
+  assert.equal(pineconeFindings[0].confidence, "high");
+
+  const fakeTavilyKey = "tvly-" + "a".repeat(16);
+  const tavilyFindings = scanPatch("src/config.ts", hunk([`const tavily = "${fakeTavilyKey}";`]));
+  assert.equal(tavilyFindings.length, 1);
+  assert.equal(tavilyFindings[0].kind, "tavily_api_key");
+  assert.equal(tavilyFindings[0].confidence, "high");
+});
+
+test("scanPatch does not flag malformed Pinecone/Tavily keys or identifier continuation", () => {
+  const shortLabel = ["pcsk_", "abcd", "_", "a".repeat(63)].join("");
+  assert.equal(scanPatch("src/config.ts", hunk([`const pinecone = "${shortLabel}";`])).length, 0);
+  const shortSecret = ["pcsk_", "T5Afk6", "_", "a".repeat(62)].join("");
+  assert.equal(scanPatch("src/config.ts", hunk([`const pinecone = "${shortSecret}";`])).length, 0);
+  const pineconeEmbedded = ["pcsk_", "T5Afk6", "_", "a".repeat(63), "X"].join("");
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const pinecone = "${pineconeEmbedded}";`])).some((f) => f.kind === "pinecone_api_key"),
+    false,
+  );
+
+  assert.equal(scanPatch("src/config.ts", hunk([`const tavily = "tvly-${"a".repeat(15)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const tavily = "tvly-${"a".repeat(16)}_suffix";`])).some((f) => f.kind === "tavily_api_key"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const tavily = "tvly-${"a".repeat(16)}-suffix";`])).some((f) => f.kind === "tavily_api_key"),
+    false,
+  );
+});
+
 test("scanPatch flags additional high-confidence SaaS/cloud/CI credential formats", () => {
   const cases = [
     ["google_oauth_client_secret", "GOCSPX-" + b62(28)],

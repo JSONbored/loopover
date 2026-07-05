@@ -779,6 +779,10 @@ export type RepositorySettings = {
    *  contributor PRs that link ineligible issues before spending AI review budget: owner/other-assigned,
    *  maintainer-only, or missing point-label issues. Defaults all-off so self-hosters opt into their own policy. */
   linkedIssueHardRules?: LinkedIssueHardRulesConfig | undefined;
+  /** Same-account issue-avoidance guardrail (#unlinked-issue-guardrail). Config-as-code only; set with
+   *  `.gittensory.yml settings.unlinkedIssueGuardrail` in private/global or per-repo config. Defaults
+   *  all-off so a self-hoster opts into their own credibility-gate-farming defense. */
+  unlinkedIssueGuardrail?: UnlinkedIssueGuardrailConfig | undefined;
   publicSurface: "off" | "comment_and_label" | "comment_only" | "label_only";
   includeMaintainerAuthors: boolean;
   requireLinkedIssue: boolean;
@@ -1007,6 +1011,20 @@ export type LinkedIssueHardRulesConfig = {
   defaultLabelRepo: boolean;
   verifyBeforeClose: boolean;
   closeDelaySeconds: number;
+};
+
+/** "hold" evaluates a linkless PR against the repo's open issues and HOLDS it for manual review on a
+ *  verified direct match (never auto-closes); "off" (default) never runs the check. */
+export type UnlinkedIssueGuardrailMode = "hold" | "off";
+
+/** Same-account issue-avoidance guardrail (#unlinked-issue-guardrail, credibility-gate-farming defense):
+ *  when a PR links NO issue, check whether it directly, unambiguously solves an EXISTING open issue that
+ *  was never linked. Config-as-code only, `.gittensory.yml settings.unlinkedIssueGuardrail`; defaults
+ *  all-off so a self-hoster opts in per repo. `minConfidence` bounds false positives — the AI verifier
+ *  must clear this bar (0-1) before a match holds anything. */
+export type UnlinkedIssueGuardrailConfig = {
+  mode: UnlinkedIssueGuardrailMode;
+  minConfidence: number;
 };
 
 /** A blocked contributor (#1425, anti-abuse): a GitHub `login` plus optional maintainer metadata. The converged

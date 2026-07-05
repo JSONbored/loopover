@@ -653,6 +653,12 @@ export const RepositorySettingsSchema = z
         closeDelaySeconds: z.number().int().min(0).max(300),
       })
       .optional(),
+    unlinkedIssueGuardrail: z
+      .object({
+        mode: z.enum(["hold", "off"]),
+        minConfidence: z.number().min(0).max(1),
+      })
+      .optional(),
     gittensorLabel: z.string(),
     blacklistLabel: z.string().nullable(),
     createMissingLabel: z.boolean(),

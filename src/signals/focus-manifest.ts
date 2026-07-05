@@ -1,5 +1,5 @@
 import { parse as parseYaml } from "yaml";
-import type { GatePolicyPack, GateRuleMode, JsonValue, LinkedIssueHardRulesConfig, LinkedIssueLabelPropagationConfig, PrTypeLabelSet, RepositorySettings, ReviewCheckMode } from "../types";
+import type { GatePolicyPack, GateRuleMode, JsonValue, LinkedIssueHardRulesConfig, LinkedIssueLabelPropagationConfig, PrTypeLabelSet, RepositorySettings, ReviewCheckMode, UnlinkedIssueGuardrailConfig } from "../types";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy } from "../settings/autonomy";
 import { normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import { mergeContributorBlacklists, normalizeContributorBlacklist } from "../settings/contributor-blacklist";
@@ -7,6 +7,7 @@ import { normalizeAutoCloseExemptLogins } from "../settings/auto-close-exempt";
 import { DEFAULT_TYPE_LABELS, normalizeTypeLabelSet } from "../settings/pr-type-label";
 import { DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION, normalizeLinkedIssueLabelPropagationConfig, VALID_LINKED_ISSUE_LABEL_PROPAGATION_MODES } from "../review/linked-issue-label-propagation";
 import { DEFAULT_LINKED_ISSUE_HARD_RULES, isLinkedIssueHardRuleMode, normalizeLinkedIssueHardRulesConfig } from "../review/linked-issue-hard-rules-config";
+import { DEFAULT_UNLINKED_ISSUE_GUARDRAIL, isUnlinkedIssueGuardrailMode, normalizeUnlinkedIssueGuardrailConfig } from "../review/unlinked-issue-guardrail-config";
 import { normalizeModerationLabel, normalizeModerationRules } from "../settings/moderation-rules";
 import { REES_ANALYZER_NAME_SET, type ReesAnalyzerName } from "../review/enrichment-analyzer-names";
 import { hasUnsafeWildcardCount } from "./change-guardrail";
@@ -270,6 +271,7 @@ export type FocusManifestSettings = Partial<
   typeLabels?: Partial<PrTypeLabelSet> | null | undefined;
   linkedIssueLabelPropagation?: Partial<LinkedIssueLabelPropagationConfig> | undefined;
   linkedIssueHardRules?: Partial<LinkedIssueHardRulesConfig> | undefined;
+  unlinkedIssueGuardrail?: Partial<UnlinkedIssueGuardrailConfig> | undefined;
 };
 
 /** Field keys for the public review-panel rows a maintainer can show/hide via `review.fields`. */
@@ -1281,6 +1283,21 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   } else if (r.linkedIssueHardRules !== undefined) {
     warnings.push(`Manifest "settings.linkedIssueHardRules" must be an object; ignoring it and keeping any existing policy.`);
   }
+  // Unlinked-issue guardrail (#unlinked-issue-guardrail): same sparse-partial overlay contract as
+  // linkedIssueHardRules above -- a repo naming only `mode` must not silently reset `minConfidence` back to
+  // the built-in default.
+  if (typeof r.unlinkedIssueGuardrail === "object" && r.unlinkedIssueGuardrail !== null && !Array.isArray(r.unlinkedIssueGuardrail)) {
+    const rawGuardrail = r.unlinkedIssueGuardrail as Record<string, unknown>;
+    const validated = normalizeUnlinkedIssueGuardrailConfig(rawGuardrail, warnings);
+    const sparseGuardrail: Partial<UnlinkedIssueGuardrailConfig> = {};
+    if (isUnlinkedIssueGuardrailMode(rawGuardrail.mode)) sparseGuardrail.mode = validated.mode;
+    if (typeof rawGuardrail.minConfidence === "number" && Number.isFinite(rawGuardrail.minConfidence) && rawGuardrail.minConfidence >= 0 && rawGuardrail.minConfidence <= 1) {
+      sparseGuardrail.minConfidence = validated.minConfidence;
+    }
+    out.unlinkedIssueGuardrail = sparseGuardrail;
+  } else if (r.unlinkedIssueGuardrail !== undefined) {
+    warnings.push(`Manifest "settings.unlinkedIssueGuardrail" must be an object; ignoring it and keeping any existing policy.`);
+  }
   // Contributor blacklist (#1425): `settings.contributorBlacklist` is a list of banned-login entries. Only set it
   // when at least one VALID entry survives normalization, so a malformed block never blanks the DB-configured
   // list via the resolver's `{...dbSettings, ...manifest.settings}` overlay. Normalization warnings are folded in.
@@ -2173,6 +2190,7 @@ export function resolveEffectiveSettings(
     typeLabels: typeLabelsOverride,
     linkedIssueLabelPropagation: linkedIssueLabelPropagationOverride,
     linkedIssueHardRules: linkedIssueHardRulesOverride,
+    unlinkedIssueGuardrail: unlinkedIssueGuardrailOverride,
     ...restManifestSettings
   } = manifest.settings;
   const effective: RepositorySettings = { ...dbSettings, ...restManifestSettings };
@@ -2210,6 +2228,13 @@ export function resolveEffectiveSettings(
       defaultLabelRepo: linkedIssueHardRulesOverride.defaultLabelRepo ?? base.defaultLabelRepo,
       verifyBeforeClose: linkedIssueHardRulesOverride.verifyBeforeClose ?? base.verifyBeforeClose,
       closeDelaySeconds: linkedIssueHardRulesOverride.closeDelaySeconds ?? base.closeDelaySeconds,
+    };
+  }
+  if (unlinkedIssueGuardrailOverride !== undefined) {
+    const base = dbSettings.unlinkedIssueGuardrail ?? DEFAULT_UNLINKED_ISSUE_GUARDRAIL;
+    effective.unlinkedIssueGuardrail = {
+      mode: unlinkedIssueGuardrailOverride.mode ?? base.mode,
+      minConfidence: unlinkedIssueGuardrailOverride.minConfidence ?? base.minConfidence,
     };
   }
   applyGateConfigOverrides(effective, manifest.gate);

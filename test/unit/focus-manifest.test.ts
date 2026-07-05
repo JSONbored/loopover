@@ -2299,6 +2299,30 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(parsed.warnings.some((w) => w.includes("settings.linkedIssueHardRules.closeDelaySeconds"))).toBe(true);
   });
 
+  it("wires settings.unlinkedIssueGuardrail into the manifest parser as a sparse override", () => {
+    const parsed = parseFocusManifest({ settings: { unlinkedIssueGuardrail: { mode: "hold", minConfidence: 0.7 } } });
+    expect(parsed.settings.unlinkedIssueGuardrail).toEqual({ mode: "hold", minConfidence: 0.7 });
+    expect(parsed.warnings).toEqual([]);
+  });
+
+  it("resolveEffectiveSettings merges a partial unlinkedIssueGuardrail override without clearing the lower-layer minConfidence", () => {
+    const db = { unlinkedIssueGuardrail: { mode: "off", minConfidence: 0.95 } } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { unlinkedIssueGuardrail: { mode: "hold" } } }));
+    expect(eff.unlinkedIssueGuardrail).toEqual({ mode: "hold", minConfidence: 0.95 });
+  });
+
+  it("drops a malformed unlinkedIssueGuardrail.minConfidence field instead of replacing existing policy with defaults", () => {
+    const parsed = parseFocusManifest({ settings: { unlinkedIssueGuardrail: { mode: "hold", minConfidence: 5 } } });
+    expect(parsed.settings.unlinkedIssueGuardrail).toEqual({ mode: "hold" });
+    expect(parsed.warnings.some((w) => w.includes("settings.unlinkedIssueGuardrail.minConfidence"))).toBe(true);
+  });
+
+  it("warns and ignores a malformed top-level unlinkedIssueGuardrail value", () => {
+    const parsed = parseFocusManifest({ settings: { unlinkedIssueGuardrail: "oops" } });
+    expect(parsed.settings.unlinkedIssueGuardrail).toBeUndefined();
+    expect(parsed.warnings).toContain(`Manifest "settings.unlinkedIssueGuardrail" must be an object; ignoring it and keeping any existing policy.`);
+  });
+
   it("parses aiReview from settings: and lets gate.aiReview win in resolveEffectiveSettings", () => {
     const parsed = parseFocusManifest({ settings: { aiReviewMode: "advisory", aiReviewByok: true } });
     expect(parsed.settings.aiReviewMode).toBe("advisory");

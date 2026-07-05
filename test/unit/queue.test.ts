@@ -9643,6 +9643,107 @@ describe("queue processors", () => {
     });
   });
 
+  describe("unlinked-issue guardrail (#unlinked-issue-guardrail, credibility-gate-farming defense)", () => {
+    // Mirrors the #2550 migration-recheck fixture immediately above: full merge-eligible stub set
+    // (clean + green + approved) so a positive test proves the hold actually suppresses what would
+    // otherwise merge, and a negative test proves the guardrail correctly stays out of the way / off by
+    // default. `run` (the env.AI.run spy) is asserted directly rather than inferred from side effects.
+    function stubUnlinkedIssueGuardrailFetch(prNumber: number, seen: { closed: boolean; merged: boolean; labels: string[]; comments: string[] }) {
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url === "https://api.gittensor.io/miners") return Response.json([]);
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/check-runs/") && method === "PATCH") return Response.json({ id: 901 });
+        if (/\/pulls\/\d+(?:\?|$)/.test(url) && method === "GET" && !url.includes(`/pulls/${prNumber}/`)) {
+          return Response.json({ number: prNumber, state: "open", user: { login: "contributor" }, head: { sha: "sha1" }, base: { ref: "main", sha: "base" }, mergeable_state: "clean", labels: [] });
+        }
+        if (url.includes(`/pulls/${prNumber}/files`)) return Response.json([{ filename: "src/queue/webhook-retry.ts", status: "modified", additions: 5, deletions: 0, changes: 5, patch: "@@\n+dedupe retries" }]);
+        if (url.includes(`/commits/sha1/check-runs`)) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes(`/commits/sha1/status`)) return Response.json({ state: "success", statuses: [{ context: "ci/build", state: "success", description: "ok" }] });
+        if (url.includes(`/commits/sha1/check-suites`)) return Response.json({ check_suites: [] });
+        if (url.includes("/branches/")) return Response.json({ contexts: [] });
+        if (url === "https://api.github.com/graphql") return Response.json({ data: { repository: { pullRequest: { reviewDecision: "APPROVED" } } } });
+        if (url.includes(`/pulls/${prNumber}/merge`) && method === "PUT") {
+          seen.merged = true;
+          return Response.json({ merged: true, sha: "merged-sha1" });
+        }
+        if (url.includes(`/pulls/${prNumber}`) && method === "PATCH") {
+          seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed";
+          return Response.json({ number: prNumber, state: "closed" });
+        }
+        if (url.includes(`/issues/${prNumber}/labels`) && method === "GET") return Response.json([]);
+        if (url.includes(`/issues/${prNumber}/labels`) && method === "POST") {
+          seen.labels.push(...((JSON.parse(String(init?.body ?? "{}")).labels ?? []) as string[]));
+          return Response.json([]);
+        }
+        if (url.endsWith("/labels") && method === "POST") return Response.json({ name: "x" }, { status: 201 });
+        if (url.includes(`/issues/${prNumber}/comments`) && method === "POST") {
+          seen.comments.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? ""));
+          return Response.json({ id: 1 }, { status: 201 });
+        }
+        if (url.includes(`/issues/${prNumber}/comments`)) return Response.json([]);
+        if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 901 }, { status: 201 });
+        return Response.json({});
+      });
+    }
+
+    async function seedGuardrailRepo(env: Env, prNumber: number, opts: { guardrailMode?: "hold" | "off"; prBody?: string } = {}) {
+      await upsertInstallation(env, {
+        installation: { id: 123, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { contents: "write", pull_requests: "write", issues: "write" }, events: [] },
+      });
+      await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 123);
+      await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto", review_state_label: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+      if (opts.guardrailMode !== undefined) {
+        await upsertRepoFocusManifest(env, "owner/repo", { settings: { unlinkedIssueGuardrail: { mode: opts.guardrailMode } } });
+      }
+      await upsertIssueFromGitHub(env, "owner/repo", { number: 5, title: "webhook retry duplicate bug report", state: "open", user: { login: "someone" }, labels: [], body: "retries duplicate events under heavy load, needs a dedup key" });
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: prNumber, title: "fix webhook retry duplicate bug", state: "open", user: { login: "contributor" }, head: { sha: "sha1" }, base: { ref: "main" }, labels: [], body: opts.prBody ?? "" });
+    }
+
+    it("holds a would-otherwise-merge PR when its diff appears to directly solve an existing open issue it never linked", async () => {
+      const run = vi.fn(async () => ({ response: JSON.stringify({ matched: true, confidence: 0.9, evidence: "adds the missing dedup key" }) }));
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai });
+      await seedGuardrailRepo(env, 80, { guardrailMode: "hold" });
+      const seen = { closed: false, merged: false, labels: [] as string[], comments: [] as string[] };
+      stubUnlinkedIssueGuardrailFetch(80, seen);
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "unlinked-issue-hold", repoFullName: "owner/repo", prNumber: 80, installationId: 123 });
+
+      expect(seen.merged).toBe(false);
+      expect(seen.closed).toBe(false); // held, never closed — this is a hold, not a close
+      expect(seen.labels).toContain("manual-review");
+      expect(seen.comments.some((c) => c.includes("#5"))).toBe(true);
+      expect(run).toHaveBeenCalled();
+    });
+
+    it("is off by default — never calls the AI even for a PR whose diff clearly overlaps an open issue", async () => {
+      const run = vi.fn(async () => ({ response: JSON.stringify({ matched: true, confidence: 0.9, evidence: "x" }) }));
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai });
+      await seedGuardrailRepo(env, 81); // guardrailMode left unset — defaults off
+      const seen = { closed: false, merged: false, labels: [] as string[], comments: [] as string[] };
+      stubUnlinkedIssueGuardrailFetch(81, seen);
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "unlinked-issue-off", repoFullName: "owner/repo", prNumber: 81, installationId: 123 });
+
+      expect(run).not.toHaveBeenCalled();
+      expect(seen.merged).toBe(true);
+    });
+
+    it("does not call the AI when the PR already links an issue, even with the guardrail on", async () => {
+      const run = vi.fn(async () => ({ response: JSON.stringify({ matched: true, confidence: 0.9, evidence: "x" }) }));
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai });
+      await seedGuardrailRepo(env, 82, { guardrailMode: "hold", prBody: "Closes #5" });
+      const seen = { closed: false, merged: false, labels: [] as string[], comments: [] as string[] };
+      stubUnlinkedIssueGuardrailFetch(82, seen);
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "unlinked-issue-already-linked", repoFullName: "owner/repo", prNumber: 82, installationId: 123 });
+
+      expect(run).not.toHaveBeenCalled();
+      expect(seen.merged).toBe(true);
+    });
+  });
+
   describe("force-fresh-rebase-before-merge gate (#2552)", () => {
     // Full merge-eligible stub set (clean + green + approved), reused across scenarios — mirrors the #2550
     // migration-recheck fixture above. `baseAdvancedAt` stubs the NEW /commits/{baseRef} freshness read;

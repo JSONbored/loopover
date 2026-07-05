@@ -465,6 +465,8 @@ import {
   loadLinkedIssueHardRules,
   resolveLinkedIssueHardRule,
 } from "../review/linked-issue-hard-rules";
+import { DEFAULT_UNLINKED_ISSUE_GUARDRAIL } from "../review/unlinked-issue-guardrail-config";
+import { resolveUnlinkedIssueMatchHold } from "../review/unlinked-issue-guardrail";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
 import {
@@ -2483,6 +2485,29 @@ async function runAgentMaintenancePlanAndExecute(
     installationId,
   });
 
+  // Unlinked-issue guardrail (#unlinked-issue-guardrail, credibility-gate-farming defense): when this PR
+  // links NO issue and the repo opted in (settings.unlinkedIssueGuardrail.mode === "hold"), check whether the
+  // diff appears to directly, unambiguously solve an EXISTING open issue that was never linked -- a possible
+  // sign of a contributor slicing an issue into unlinked PRs to dodge scope scrutiny while still farming
+  // merge-ratio credibility. Config-gated AND linked-issue-count-gated at the CALL SITE (not just inside the
+  // resolver) so the diff-building work below is skipped entirely for the default-off / already-linked cases
+  // -- byte-identical extra cost, mirroring migrationCollisionHold's own gating above. A confirmed match only
+  // ever HOLDS the PR for manual review (folded into heldForManualReview) -- never auto-closes, never
+  // auto-merges past it.
+  const unlinkedIssueGuardrailConfig = settings.unlinkedIssueGuardrail ?? DEFAULT_UNLINKED_ISSUE_GUARDRAIL;
+  const unlinkedIssueMatchHold =
+    unlinkedIssueGuardrailConfig.mode === "hold" && pr.linkedIssues.length === 0
+      ? await resolveUnlinkedIssueMatchHold(env, {
+          repoFullName,
+          config: unlinkedIssueGuardrailConfig,
+          linkedIssueCount: pr.linkedIssues.length,
+          prTitle: pr.title,
+          prBody: pr.body,
+          changedPaths,
+          diff: buildAiReviewDiff(changedFiles),
+        })
+      : undefined;
+
   // Contributor blacklist (#1425): resolve whether the PR author is on the repo's blacklist (the shared/global
   // list unions in once its table lands). A match short-circuits the planner to a deterministic label + close
   // ahead of merit/CI/AI; only the configured label (default "slop") reaches public actions.
@@ -2655,6 +2680,7 @@ async function runAgentMaintenancePlanAndExecute(
       closeDelaySeconds: linkedIssueRulesConfig.closeDelaySeconds,
     },
     ...(migrationCollisionHold !== undefined ? { migrationCollisionHold } : {}),
+    ...(unlinkedIssueMatchHold !== undefined ? { unlinkedIssueMatchHold } : {}),
     pr: {
       mergeableState: liveMergeState ?? pr.mergeableState,
       reviewDecision: liveReviewDecision ?? pr.reviewDecision,

@@ -10596,6 +10596,113 @@ describe("queue processors", () => {
     expect(accountAgeUsersFetched).toBe(false);
   });
 
+  it("account-age throttle (#2561 issue path): established account uses the full issue cap (no tightening)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", issues: "write" }, events: ["issues"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertIssueFromGitHub(env, "JSONbored/gittensory", { number: 60, title: "Oldbie issue one", state: "open", user: { login: "oldbie" }, labels: [], body: "x" });
+    await upsertIssueFromGitHub(env, "JSONbored/gittensory", { number: 61, title: "Oldbie issue two", state: "open", user: { login: "oldbie" }, labels: [], body: "y" });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autonomy: { close: "auto", review_state_label: "auto" },
+      contributorOpenIssueCap: 4,
+      accountAgeThresholdDays: 30,
+    });
+    const seen = { labels: [] as string[], closed: false };
+    vi.stubGlobal("fetch", stubIssueAccountAgeFetch(62, new Date(Date.now() - 730 * 24 * 60 * 60 * 1000).toISOString(), seen));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "account-age-issue-established",
+      eventName: "issues",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 62, title: "Oldbie's 3rd issue", state: "open", user: { login: "oldbie" }, labels: [], body: "x" },
+      },
+    });
+
+    expect(seen.labels).not.toContain("new-account");
+    expect(seen.closed).toBe(false);
+  });
+
+  it("account-age throttle (#2561 issue path): does not label when review_state_label is not auto", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", issues: "write" }, events: ["issues"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertIssueFromGitHub(env, "JSONbored/gittensory", { number: 60, title: "Newbie issue one", state: "open", user: { login: "newbie" }, labels: [], body: "x" });
+    await upsertIssueFromGitHub(env, "JSONbored/gittensory", { number: 61, title: "Newbie issue two", state: "open", user: { login: "newbie" }, labels: [], body: "y" });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autonomy: { close: "auto" },
+      contributorOpenIssueCap: 4,
+      accountAgeThresholdDays: 30,
+    });
+    const seen = { labels: [] as string[], closed: false };
+    vi.stubGlobal("fetch", stubIssueAccountAgeFetch(62, new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), seen));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "account-age-issue-label-not-autonomous",
+      eventName: "issues",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 62, title: "Newbie's 3rd issue", state: "open", user: { login: "newbie" }, labels: [], body: "x" },
+      },
+    });
+
+    expect(seen.labels).not.toContain("new-account");
+    expect(seen.closed).toBe(true);
+  });
+
+  it("account-age throttle (#2561 issue path): user lookup failure fail-opens to the full configured cap", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", issues: "write" }, events: ["issues"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertIssueFromGitHub(env, "JSONbored/gittensory", { number: 60, title: "Newbie issue one", state: "open", user: { login: "newbie" }, labels: [], body: "x" });
+    await upsertIssueFromGitHub(env, "JSONbored/gittensory", { number: 61, title: "Newbie issue two", state: "open", user: { login: "newbie" }, labels: [], body: "y" });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autonomy: { close: "auto", review_state_label: "auto" },
+      contributorOpenIssueCap: 4,
+      accountAgeThresholdDays: 30,
+    });
+    const seen = { closed: false };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/users/")) return new Response("not found", { status: 404 });
+      if ((url.endsWith("/issues/60") || url.endsWith("/issues/61")) && method === "GET") return Response.json({ state: "open" });
+      if (url.endsWith("/issues/62") && method === "PATCH") { seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed"; return Response.json({ state: "closed" }); }
+      if (url.includes("/issues/62/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "account-age-issue-lookup-fail-open",
+      eventName: "issues",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 62, title: "Newbie's 3rd issue", state: "open", user: { login: "newbie" }, labels: [], body: "x" },
+      },
+    });
+
+    expect(seen.closed).toBe(false);
+  });
+
   it("contributor open-PR cap (#2270): out-of-order webhook delivery wakes and self-corrects the missed sibling (regression, gate finding on #2479)", async () => {
     // PR56 (the NEWER PR) is delivered BEFORE PR55 exists in the DB — a real possibility under concurrent/
     // retried webhook delivery. At that moment PR56 only sees {54, 56} (2 total, AT the cap of 2, not over),

@@ -77,19 +77,24 @@ describe("isGeneratedFile", () => {
     }
   });
 
-  it("matches Ruby, PHP, and Rust protobuf stubs alongside the other protoc plugins", () => {
+  it("matches Ruby, PHP, Rust, Elixir, and Swift gRPC protobuf stubs alongside the other protoc plugins", () => {
     for (const path of [
       "gen/service_pb.rb",
       "gen/service_services_pb.rb",
       "gen/service_pb.php",
       "gen/service_grpc_pb.php",
       "proto/messages.pb.rs",
+      "lib/my_proto.pb.ex",
+      "proto/service.grpc.swift",
     ]) {
       expect(isGeneratedFile(path)).toBe(true);
     }
-    for (const path of ["lib/service.rb", "src/api.php", "src/main.rs"]) {
+    for (const path of ["lib/service.rb", "src/api.php", "src/main.rs", "lib/my_app.ex"]) {
       expect(isGeneratedFile(path)).toBe(false);
     }
+    expect(classifyChangedFile("gen/service_grpc_pb.php")).toBe("generated");
+    expect(classifyChangedFile("lib/my_proto.pb.ex")).toBe("generated");
+    expect(classifyChangedFile("proto/service.grpc.swift")).toBe("generated");
   });
 
   it("matches Swift protobuf, Dart freezed/retrofit, C# designer/XAML, and Objective-C protoc output", () => {
@@ -411,6 +416,9 @@ describe("classifyChangedFile", () => {
     const cases: Array<[string, ReturnType<typeof classifyChangedFile>]> = [
       ["dist/app.min.js", "minified"],
       ["src/api.generated.ts", "generated"],
+      ["gen/service_grpc_pb.php", "generated"],
+      ["lib/my_proto.pb.ex", "generated"],
+      ["proto/service.grpc.swift", "generated"],
       ["vendor/lib.go", "vendored"],
       ["package-lock.json", "lockfile"],
       ["bun.lock", "lockfile"],

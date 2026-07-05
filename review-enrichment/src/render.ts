@@ -382,6 +382,8 @@ export function renderBrief(
     }
   }
 
+  lines.push(...renderDescriptorSection("packageHealth", findings.packageHealth));
+
   const history = findings.history ?? [];
   for (const item of history) {
     const entries: string[] = [];

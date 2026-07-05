@@ -27,6 +27,7 @@ const EXPECTED_ANALYZERS = [
   "commitSignature",
   "iacMisconfig",
   "nativeBuild",
+  "packageHealth",
   "history",
   "docCommentDrift",
   "duplication",

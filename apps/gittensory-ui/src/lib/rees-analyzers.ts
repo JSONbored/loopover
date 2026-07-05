@@ -456,6 +456,31 @@ export const REES_ANALYZERS = [
     },
   },
   {
+    name: "packageHealth",
+    title: "Package maintenance health",
+    category: "supply-chain",
+    cost: "registry",
+    defaultEnabled: true,
+    profiles: ["fast", "balanced", "deep"],
+    requires: ["files", "public-network"],
+    limits: {
+      maxQueries: 25,
+      maxFindings: 25,
+      staleDays: 730,
+    },
+    docs: {
+      summary:
+        "Flags newly-added or upgraded npm/PyPI dependencies with maintenance-health risk signals.",
+      looksAt:
+        "Direct dependency changes in package.json and requirements.txt, then package registry metadata.",
+      reports:
+        "Package, version, ecosystem, direction, and public-safe maintenance signal details.",
+      network: "Calls npm, PyPI, and ecosyste.ms package APIs. No GitHub token required.",
+      notes:
+        "Fail-safe and bounded: unsupported ecosystems, invalid names, failed calls, and oversized responses stay silent.",
+    },
+  },
+  {
     name: "history",
     title: "Author and change-area history",
     category: "history",

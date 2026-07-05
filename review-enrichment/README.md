@@ -48,6 +48,7 @@ inside the operator's trust boundary. The engine prefers a short-lived installat
 | `commitSignature` | Head commit signature/author provenance worth checking.                    | Calls GitHub API; needs headSha and token for private repos. |
 | `iacMisconfig`  | Risky IaC/config changes like public buckets, open ingress, or insecure CORS. | Pure local.                                                 |
 | `nativeBuild`   | Newly-added dependencies that compile native code or ship sdist-only builds. | Calls npm/PyPI registries.                                  |
+| `packageHealth` | Maintenance-health signals for newly-added or upgraded npm/PyPI packages.   | Calls npm, PyPI, and ecosyste.ms package APIs.              |
 | `history`       | Author track record, same-file PR history, and linked-issue alignment.       | Calls GitHub API with bounded fanout; needs author/token for private repos. |
 | `magicNumber`   | Non-trivial numeric literals newly added in non-test source.                 | Pure local.                                                  |
 
@@ -76,6 +77,25 @@ classes, per-analyzer limits, and self-host configuration. When adding or migrat
   config values.
 - Make external-call analyzers fail open and respect the orchestrator abort signal when the scanner supports it.
 - Prefer a focused analyzer test file instead of expanding the shared `enrichment.test.ts` mega-test.
+
+### Package-health analyzer
+
+`packageHealth` checks direct npm and PyPI dependency additions/upgrades for factual package-maintenance signals:
+deprecated npm versions, yanked PyPI releases, packages whose latest release is older than the analyzer threshold,
+archived upstream repositories, and packages with a single listed maintainer.
+
+The analyzer reuses the shared dependency-diff parser, so it only inspects dependencies newly present after the PR.
+Unsupported ecosystems, invalid package names, failed registry calls, oversized responses, and missing metadata stay
+silent. Findings report only package metadata: ecosystem, package, version, direction, signal kind, and a short
+public-safe detail. They never include manifest lines, registry response bodies, install scripts, or repository
+content.
+
+The scanner is intentionally additive with sibling supply-chain analyzers:
+
+- `dependency` reports known vulnerabilities.
+- `license` reports compatibility-sensitive licenses.
+- `nativeBuild` reports install-time build cost.
+- `packageHealth` reports maintainability and stewardship signals.
 
 ### Magic-number analyzer
 

@@ -278,6 +278,20 @@ export interface NativeBuildFinding {
   reason: string;
 }
 
+/** A newly-added/upgraded npm/PyPI dependency with maintenance-health signals: deprecated/yanked release,
+ *  stale release activity, archived upstream project, or a single maintainer. Reports package metadata only. */
+export interface PackageHealthFinding {
+  ecosystem: "npm" | "PyPI";
+  package: string;
+  version: string;
+  from: string | null;
+  direction: "add" | "change";
+  kind: "deprecated" | "yanked" | "stale-release" | "archived" | "sole-maintainer";
+  details: string;
+  lastReleaseAt?: string;
+  maintainerCount?: number;
+}
+
 /** Public-safe historical context the no-checkout reviewer is blind to and the engine deliberately does NOT compute:
  *  the author's track record IN THIS repo, past PRs that already changed the same files (with their outcome), and
  *  whether the diff covers the linked issue's stated requirement. Surfaced as a single block (0-or-1 element array).
@@ -492,6 +506,7 @@ export interface BriefFindings {
   commitSignature?: CommitSignatureFinding[];
   iacMisconfig?: IacMisconfigFinding[];
   nativeBuild?: NativeBuildFinding[];
+  packageHealth?: PackageHealthFinding[];
   history?: HistoryFinding[];
   docCommentDrift?: DocCommentDriftFinding[];
   duplication?: DuplicationFinding[];

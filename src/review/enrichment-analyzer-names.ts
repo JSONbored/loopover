@@ -21,6 +21,7 @@ export const REES_ANALYZER_NAMES = [
   "commitSignature",
   "iacMisconfig",
   "nativeBuild",
+  "packageHealth",
   "history",
   "docCommentDrift",
   "duplication",

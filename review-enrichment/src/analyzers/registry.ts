@@ -18,6 +18,7 @@ import { scanInstallScripts } from "./install-scripts.js";
 import { scanLicenses } from "./license-check.js";
 import { scanLockfileDrift } from "./lockfile-drift.js";
 import { scanNativeBuild } from "./native-build.js";
+import { scanPackageHealth } from "./package-health.js";
 import { scanPendingReviewRequests } from "./pending-review-requests.js";
 import { scanProvenance } from "./provenance.js";
 import { scanRedos } from "./redos.js";
@@ -352,6 +353,54 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanNativeBuild(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "packageHealth",
+    title: "Package maintenance health",
+    category: "supply-chain",
+    cost: "registry",
+    defaultEnabled: true,
+    requires: ["files", "public-network"],
+    limits: { maxQueries: 25, maxFindings: 25, staleDays: 730 },
+    docs: {
+      summary:
+        "Flags newly-added or upgraded npm/PyPI dependencies with maintenance-health risk signals.",
+      looksAt:
+        "Direct dependency changes in package.json and requirements.txt, then package registry metadata.",
+      reports:
+        "Package, version, ecosystem, direction, and public-safe maintenance signal details.",
+      network:
+        "Calls npm, PyPI, and ecosyste.ms package APIs. No GitHub token required.",
+      notes:
+        "Fail-safe and bounded: unsupported ecosystems, invalid names, failed calls, and oversized responses stay silent.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const explain = (kind: (typeof findings)[number]["kind"]): string => {
+        switch (kind) {
+          case "deprecated":
+            return "deprecated release";
+          case "yanked":
+            return "yanked release";
+          case "stale-release":
+            return "no recent release activity";
+          case "archived":
+            return "archived upstream project";
+          case "sole-maintainer":
+            return "single-maintainer package";
+        }
+      };
+      const lines = ["### Package maintenance-health signals"];
+      for (const item of findings) {
+        const from = item.direction === "change" && item.from ? ` from ${item.from}` : "";
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.package}@${item.version}`)} (${item.ecosystem}${from}): ${explain(item.kind)} — ${helpers.promptText(item.details)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal, analysis, diagnostics }) =>
+      scanPackageHealth(req, fetch, { signal, analysis, diagnostics }),
   }),
   descriptor({
     name: "history",

@@ -19,6 +19,7 @@ import {
 } from "./external-fetch.js";
 import { isWorkflowPath } from "./workflow-path.js";
 import { isSupportedLockfile } from "./lockfile-path.js";
+import { isBinaryFileExtension } from "./analyzers/binary-extensions.js";
 
 type ChangedFile = NonNullable<EnrichRequest["files"]>[number];
 
@@ -451,7 +452,8 @@ function categorizeFile(path: string): FileCategory {
   if (
     [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf", ".zip", ".gz", ".zst"].includes(
       extension,
-    )
+    ) ||
+    isBinaryFileExtension(extension.slice(1))
   ) {
     return { path, extension, category: "asset" };
   }

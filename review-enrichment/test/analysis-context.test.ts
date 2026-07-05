@@ -545,6 +545,53 @@ test("createAnalysisContext classifies Zstandard archives as assets for schedule
   assert.deepEqual(plan.skipped.map((item) => [item.name, item.skipReason]), []);
 });
 
+test("createAnalysisContext classifies ML model weights as assets for scheduler gating", () => {
+  const context = createAnalysisContext({
+    repoFullName: "JSONbored/gittensory",
+    prNumber: 3301,
+    headSha: "abcdef1234567890",
+    githubToken: "github_pat_test",
+    analyzers: ["assetWeight"],
+    files: [
+      { path: "models/llama.safetensors", patch: null, status: "added" },
+      { path: "models/llama.gguf", patch: null, status: "added" },
+      { path: "models/resnet.onnx", patch: null, status: "added" },
+      { path: "weights/adapter.PT", patch: null, status: "added" },
+      { path: "checkpoints/state.pth", patch: null, status: "added" },
+      { path: "checkpoints/final.ckpt", patch: null, status: "added" },
+    ],
+  });
+
+  assert.deepEqual(
+    context.fileCategories.map((file) => [file.path, file.extension, file.category]),
+    [
+      ["models/llama.safetensors", ".safetensors", "asset"],
+      ["models/llama.gguf", ".gguf", "asset"],
+      ["models/resnet.onnx", ".onnx", "asset"],
+      ["weights/adapter.PT", ".pt", "asset"],
+      ["checkpoints/state.pth", ".pth", "asset"],
+      ["checkpoints/final.ckpt", ".ckpt", "asset"],
+    ],
+  );
+
+  const plan = planAnalyzers(
+    {
+      repoFullName: "JSONbored/gittensory",
+      prNumber: 3301,
+      headSha: "abcdef1234567890",
+      githubToken: "github_pat_test",
+      analyzers: ["assetWeight"],
+      files: context.changedFiles,
+    },
+    { assetWeight: async () => [] },
+    context,
+    { budgetMs: 5_000, startedAtMs: 0 },
+  );
+
+  assert.deepEqual(plan.runnable.map((item) => item.name), ["assetWeight"]);
+  assert.deepEqual(plan.skipped.map((item) => [item.name, item.skipReason]), []);
+});
+
 test("createAnalysisContext classifies long-form doc extensions as docs", () => {
   const context = createAnalysisContext({
     repoFullName: "JSONbored/gittensory",

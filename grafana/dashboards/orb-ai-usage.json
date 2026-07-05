@@ -4,7 +4,7 @@
   "tags": ["gittensory", "ai", "orb"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "refresh": "30s",
   "time": { "from": "now-7d", "to": "now" },
   "description": "Durable, provider-neutral AI usage from ai_usage_events (migration 0109) — every configured provider (Codex, Claude Code, OpenAI-compatible, Ollama, Anthropic BYOK), not just Codex. Every AI feature (ai_review_pr, agent_private_summary, agent_public_summary, pr_intelligence_comment, ai_slop_pr, issue_plan) threads real usage through recordAiUsageEvent on a completed call; a row still lands as estimated_neurons-only when the call never happened (quota_exceeded/disabled/unavailable), is a BYOK call (not yet usage-tracked), or the provider omitted a parseable usage field — see the 'Events missing real usage' panel. See 'Gittensory - Codex usage (self-host)' for a Codex-focused view and 'Gittensory — Claude usage (OTEL)' for Claude Code's own CLI/session telemetry (a separate, non-durable data source).",
@@ -71,7 +71,7 @@
       "id": 5,
       "type": "stat",
       "title": "Events missing real usage",
-      "description": "Completed AI calls (status='ok', a response was actually returned) with no provider attribution. Excludes quota_exceeded/disabled/unavailable rows (no call was attempted, so no usage was ever possible) and ai_key_change audit rows (not an AI call at all) — those never carry provider/usage data by design, not by gap. A nonzero count here means either a BYOK call (callAiProvider does not yet capture usage) or a provider response that omitted a parseable usage field.",
+      "description": "Completed AI calls (status='ok', a response was actually returned) with no provider attribution. Excludes quota_exceeded/disabled/unavailable rows (no call was attempted, so no usage was ever possible) and ai_key_change audit rows (not an AI call at all — recordAiKeyChange's status is always \"set\"/\"replace\"/\"delete\", never \"ok\", but the feature is excluded explicitly here too so this panel doesn't rely on that invariant holding in another file) — those never carry provider/usage data by design, not by gap. A nonzero count here means either a BYOK call (callAiProvider does not yet capture usage) or a provider response that omitted a parseable usage field.",
       "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
       "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
       "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "orange" } } },
@@ -80,8 +80,8 @@
         {
           "refId": "A",
           "queryType": "table",
-          "queryText": "SELECT count(*) AS unattributed FROM ai_usage_events WHERE provider IS NULL AND status = 'ok'",
-          "rawQueryText": "SELECT count(*) AS unattributed FROM ai_usage_events WHERE provider IS NULL AND status = 'ok'"
+          "queryText": "SELECT count(*) AS unattributed FROM ai_usage_events WHERE provider IS NULL AND status = 'ok' AND feature <> 'ai_key_change'",
+          "rawQueryText": "SELECT count(*) AS unattributed FROM ai_usage_events WHERE provider IS NULL AND status = 'ok' AND feature <> 'ai_key_change'"
         }
       ]
     },

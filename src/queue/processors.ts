@@ -10652,6 +10652,10 @@ async function closeReviewEvasionSelfCloseIfActive(
     // this enforcement. Propagate so the queue's own retry/backoff re-processes this job; on retry, the live
     // freshness check earlier in this function will see the PR as open (current, since we just reopened it)
     // and this handler will attempt the re-close again, converging once closePullRequest actually succeeds.
+    // The `: new Error(...)` fallback is unreachable in practice -- closePullRequest's only failure path is
+    // Octokit's `request()` call, which always rejects with a RequestError (an Error subclass), never a raw
+    // thrown value -- but `closeError` is typed `unknown`, so the branch stays as a type-safe normalization.
+    /* v8 ignore next */
     throw closeError instanceof Error ? closeError : new Error(errorMessage(closeError));
   }
 

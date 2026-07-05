@@ -272,6 +272,18 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // xAI API key: `xai-` + base62 body (reject hyphen-continued identifiers).
+    kind: "xai_api_key",
+    re: /\bxai-[A-Za-z0-9]{16,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Deepgram API key: `dg.` + base62 body (reject dot/hyphen-continued identifiers).
+    kind: "deepgram_api_key",
+    re: /\bdg\.[A-Za-z0-9]{20,}(?![A-Za-z0-9_.-])/,
+    confidence: "high",
+  },
+  {
     // Google OAuth 2.0 client secret: `GOCSPX-` + 28 base64url chars.
     kind: "google_oauth_client_secret",
     re: /\bGOCSPX-[A-Za-z0-9_-]{28}\b/,

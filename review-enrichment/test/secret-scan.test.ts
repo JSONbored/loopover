@@ -719,6 +719,46 @@ test("scanPatch does not flag truncated fal/W&B keys or identifier continuation"
   );
 });
 
+test("scanPatch flags xAI and Deepgram API keys with high confidence", () => {
+  const fakeXaiKey = "xai-" + "a".repeat(16);
+  const xaiFindings = scanPatch("src/config.ts", hunk([`const xai = "${fakeXaiKey}";`]));
+  assert.equal(xaiFindings.length, 1);
+  assert.equal(xaiFindings[0].kind, "xai_api_key");
+  assert.equal(xaiFindings[0].confidence, "high");
+
+  const fakeDeepgramKey = ["dg.", "b".repeat(20)].join("");
+  const deepgramFindings = scanPatch("src/config.ts", hunk([`const deepgram = "${fakeDeepgramKey}";`]));
+  assert.equal(deepgramFindings.length, 1);
+  assert.equal(deepgramFindings[0].kind, "deepgram_api_key");
+  assert.equal(deepgramFindings[0].confidence, "high");
+});
+
+test("scanPatch does not flag truncated xAI/Deepgram keys or identifier continuation", () => {
+  assert.equal(scanPatch("src/config.ts", hunk([`const xai = "xai-${"a".repeat(15)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const xai = "xai-${"a".repeat(16)}_suffix";`])).some((f) => f.kind === "xai_api_key"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const xai = "xai-${"a".repeat(16)}-suffix";`])).some((f) => f.kind === "xai_api_key"),
+    false,
+  );
+
+  assert.equal(scanPatch("src/config.ts", hunk([`const deepgram = "dg.${"b".repeat(19)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const deepgram = "dg.${"b".repeat(20)}_suffix";`])).some((f) => f.kind === "deepgram_api_key"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const deepgram = "dg.${"b".repeat(20)}-suffix";`])).some((f) => f.kind === "deepgram_api_key"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const deepgram = "dg.${"b".repeat(20)}.suffix";`])).some((f) => f.kind === "deepgram_api_key"),
+    false,
+  );
+});
+
 test("scanPatch flags additional high-confidence SaaS/cloud/CI credential formats", () => {
   const cases = [
     ["google_oauth_client_secret", "GOCSPX-" + b62(28)],

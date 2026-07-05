@@ -32,6 +32,7 @@ import { scanLooseRanges } from "./loose-range.js";
 import { scanMagicNumbers } from "./magic-number.js";
 import { scanConflictMarkers } from "./conflict-marker.js";
 import { scanDebugLeftover } from "./debug-leftover.js";
+import { scanDeepNesting } from "./deep-nesting.js";
 import { scanFloatingPromise } from "./floating-promise.js";
 import { scanSizeSmell } from "./size-smell.js";
 import { scanCommitLint } from "./commit-lint.js";
@@ -1075,6 +1076,35 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanFloatingPromise(req, signal),
+  }),
+  descriptor({
+    name: "deepNesting",
+    title: "Deep control-flow nesting",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxDepth: 4, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags newly-added control-flow blocks whose nesting depth exceeds a threshold inside a contiguous run of added lines.",
+      looksAt: "Added lines in changed non-test source files within each hunk.",
+      reports: "File, line, measured control-flow depth, and configured threshold.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Counts braces opened by if/for/while/switch/try/catch/else/do/with, arrow bodies, and function bodies — not object-literal braces. Resets across context lines.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Deep nesting (control-flow depth added by this PR)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — depth ${item.depth} (threshold ${item.threshold})`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanDeepNesting(req, signal),
   }),
   descriptor({
     name: "commitLint",

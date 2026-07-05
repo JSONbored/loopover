@@ -1005,6 +1005,29 @@ export const REES_ANALYZERS = [
     },
   },
   {
+    name: "deepNesting",
+    title: "Deep control-flow nesting",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    profiles: ["fast", "balanced", "deep"],
+    requires: ["files"],
+    limits: {
+      maxFindings: 25,
+      maxDepth: 4,
+      maxLineChars: 2000,
+    },
+    docs: {
+      summary:
+        "Flags newly-added control-flow blocks whose nesting depth exceeds a threshold inside a contiguous run of added lines.",
+      looksAt: "Added lines in changed non-test source files within each hunk.",
+      reports: "File, line, measured control-flow depth, and configured threshold.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Counts braces opened by if/for/while/switch/try/catch/else/do/with, arrow bodies, and function bodies — not object-literal braces. Resets across context lines.",
+    },
+  },
+  {
     name: "commitLint",
     title: "Conventional-commit subjects",
     category: "quality",

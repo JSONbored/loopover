@@ -494,6 +494,15 @@ export interface SizeSmellFinding {
   name?: string;
 }
 
+/** Deep control-flow nesting newly added in the diff (#2030, part of #1499).
+ *  Reports file, line, measured depth, and threshold — never source content. */
+export interface DeepNestingFinding {
+  file: string;
+  line: number;
+  depth: number;
+  threshold: number;
+}
+
 /** A promise-shaped call added without await/return/void or a same-line .then/.catch chain (#2023, part of #1499).
  *  Reports location and a truncated callee name — never full expressions. */
 export interface FloatingPromiseFinding {
@@ -560,6 +569,7 @@ export interface BriefFindings {
   debugLeftover?: DebugLeftoverFinding[];
   sizeSmell?: SizeSmellFinding[];
   floatingPromise?: FloatingPromiseFinding[];
+  deepNesting?: DeepNestingFinding[];
   hardcodedUrl?: HardcodedUrlFinding[];
   commitLint?: CommitLintFinding[];
 }

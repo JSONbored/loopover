@@ -15,11 +15,15 @@ const CONSOLE_RE = /\bconsole\s*\.\s*(?:log|debug|info|warn|error|trace|dir|tabl
 const PRINT_RE = /\bprint\s*\(/;
 
 /** Classify one added line for a debug leftover, or null. Pure. */
-export function detectDebugLeftover(line: string): DebugLeftoverFinding["kind"] | null {
+export function detectDebugLeftover(
+  line: string,
+  path?: string,
+): DebugLeftoverFinding["kind"] | null {
   const code = codeOnly(line);
   if (DEBUGGER_RE.test(code)) return "debugger";
   if (CONSOLE_RE.test(code)) return "console";
-  if (PRINT_RE.test(code)) return "print";
+  // Python-only: `\bprint` after a dot would false-positive on `document.print()` / `obj.print()`.
+  if (path && /\.pyi?$/i.test(path) && PRINT_RE.test(code)) return "print";
   return null;
 }
 
@@ -51,7 +55,7 @@ export function scanPatchForDebugLeftover(
     if (line.startsWith("+")) {
       const body = line.slice(1);
       if (body.length <= MAX_LINE_CHARS) {
-        const kind = detectDebugLeftover(body);
+        const kind = detectDebugLeftover(body, path);
         if (kind) {
           findings.push({ file: path, line: newLine, kind });
           if (findings.length >= maxFindings) return findings;

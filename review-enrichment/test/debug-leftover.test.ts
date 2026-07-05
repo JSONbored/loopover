@@ -16,7 +16,13 @@ test("detectDebugLeftover: recognizes debugger, console sinks, and print()", () 
   assert.equal(detectDebugLeftover("  debugger;"), "debugger");
   assert.equal(detectDebugLeftover("console.log('hi')"), "console");
   assert.equal(detectDebugLeftover("  console.debug(state)"), "console");
-  assert.equal(detectDebugLeftover("print('debug')"), "print");
+  assert.equal(detectDebugLeftover("print('debug')", "lib/b.py"), "print");
+});
+
+test("detectDebugLeftover: print() is Python-only and does not match method calls like document.print()", () => {
+  assert.equal(detectDebugLeftover("document.print()"), null);
+  assert.equal(detectDebugLeftover("printer.print('x')"), null);
+  assert.equal(detectDebugLeftover("print('debug')", "src/widget.ts"), null);
 });
 
 test("detectDebugLeftover: a console call inside a string literal is not flagged", () => {

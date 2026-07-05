@@ -1005,6 +1005,28 @@ export const REES_ANALYZERS = [
     },
   },
   {
+    name: "errorSwallow",
+    title: "Swallowed errors",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    profiles: ["fast", "balanced", "deep"],
+    requires: ["files"],
+    limits: {
+      maxFindings: 25,
+      maxLineChars: 2000,
+    },
+    docs: {
+      summary:
+        "Flags newly-added catch/except blocks that swallow the error — empty body, unused binding, or a bare `return null`.",
+      looksAt: "Added lines in changed non-test JS/TS/Python source files.",
+      reports: "File, line, and kind: empty-catch, unused-binding, or return-null.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Multiline catch bodies are collected with brace balance. Catches that log, rethrow, or reference the binding are not flagged.",
+    },
+  },
+  {
     name: "commitLint",
     title: "Conventional-commit subjects",
     category: "quality",

@@ -494,6 +494,14 @@ export interface SizeSmellFinding {
   name?: string;
 }
 
+/** A swallowed-error catch/except block newly added in the diff (#2014, part of #1499).
+ *  Reports file, line, and kind only — never catch body content. */
+export interface ErrorSwallowFinding {
+  file: string;
+  line: number;
+  kind: "empty-catch" | "unused-binding" | "return-null";
+}
+
 /** A promise-shaped call added without await/return/void or a same-line .then/.catch chain (#2023, part of #1499).
  *  Reports location and a truncated callee name — never full expressions. */
 export interface FloatingPromiseFinding {
@@ -560,6 +568,7 @@ export interface BriefFindings {
   debugLeftover?: DebugLeftoverFinding[];
   sizeSmell?: SizeSmellFinding[];
   floatingPromise?: FloatingPromiseFinding[];
+  errorSwallow?: ErrorSwallowFinding[];
   hardcodedUrl?: HardcodedUrlFinding[];
   commitLint?: CommitLintFinding[];
 }

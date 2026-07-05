@@ -484,6 +484,7 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("debugLeftover", findings.debugLeftover));
   lines.push(...renderDescriptorSection("sizeSmell", findings.sizeSmell));
   lines.push(...renderDescriptorSection("floatingPromise", findings.floatingPromise));
+  lines.push(...renderDescriptorSection("errorSwallow", findings.errorSwallow));
   lines.push(...renderDescriptorSection("hardcodedUrl", findings.hardcodedUrl));
   lines.push(...renderDescriptorSection("commitLint", findings.commitLint));
 

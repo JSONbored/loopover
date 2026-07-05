@@ -50,6 +50,7 @@ const EXPECTED_ANALYZERS = [
   "debugLeftover",
   "sizeSmell",
   "floatingPromise",
+  "errorSwallow",
   "commitLint",
 ];
 

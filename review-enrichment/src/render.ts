@@ -480,6 +480,7 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("todoMarker", findings.todoMarker));
   lines.push(...renderDescriptorSection("magicNumber", findings.magicNumber));
   lines.push(...renderDescriptorSection("conflictMarker", findings.conflictMarker));
+  lines.push(...renderDescriptorSection("debugLeftover", findings.debugLeftover));
   lines.push(...renderDescriptorSection("commitLint", findings.commitLint));
 
   if (!lines.length) return { promptSection: "", systemSuffix: "" };

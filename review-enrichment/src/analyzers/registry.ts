@@ -32,6 +32,7 @@ import { scanLooseRanges } from "./loose-range.js";
 import { scanMagicNumbers } from "./magic-number.js";
 import { scanConflictMarkers } from "./conflict-marker.js";
 import { scanDebugLeftover } from "./debug-leftover.js";
+import { scanFloatingPromise } from "./floating-promise.js";
 import { scanSizeSmell } from "./size-smell.js";
 import { scanCommitLint } from "./commit-lint.js";
 import { scanTerminology } from "./terminology.js";
@@ -1045,6 +1046,35 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanSizeSmell(req, signal),
+  }),
+  descriptor({
+    name: "floatingPromise",
+    title: "Floating promises",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxLineChars: 2000, maxCallChars: 40 },
+    docs: {
+      summary:
+        "Flags newly-added promise-shaped calls whose returned promise is neither awaited, returned, voided, nor same-line .then/.catch-chained.",
+      looksAt: "Added lines in changed non-test TS/JS source files.",
+      reports: "File, line, and a truncated callee name (fetch, Promise.*, or *Async suffix).",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Precision-first: bare expression statements only — assignments and non-promise callees are skipped. Structural heuristic, not a type checker.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Floating promises (async call not awaited/returned/chained)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${helpers.safeCodeSpan(item.call)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanFloatingPromise(req, signal),
   }),
   descriptor({
     name: "commitLint",

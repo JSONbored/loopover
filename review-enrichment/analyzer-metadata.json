@@ -1108,6 +1108,33 @@
       }
     },
     {
+      "name": "floatingPromise",
+      "title": "Floating promises",
+      "category": "quality",
+      "cost": "local",
+      "defaultEnabled": true,
+      "profiles": [
+        "fast",
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "files"
+      ],
+      "limits": {
+        "maxFindings": 25,
+        "maxLineChars": 2000,
+        "maxCallChars": 40
+      },
+      "docs": {
+        "summary": "Flags newly-added promise-shaped calls whose returned promise is neither awaited, returned, voided, nor same-line .then/.catch-chained.",
+        "looksAt": "Added lines in changed non-test TS/JS source files.",
+        "reports": "File, line, and a truncated callee name (fetch, Promise.*, or *Async suffix).",
+        "network": "Pure local analyzer. No external network call.",
+        "notes": "Precision-first: bare expression statements only — assignments and non-promise callees are skipped. Structural heuristic, not a type checker."
+      }
+    },
+    {
       "name": "commitLint",
       "title": "Conventional-commit subjects",
       "category": "quality",

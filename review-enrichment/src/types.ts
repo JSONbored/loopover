@@ -494,6 +494,14 @@ export interface SizeSmellFinding {
   name?: string;
 }
 
+/** A promise-shaped call added without await/return/void or a same-line .then/.catch chain (#2023, part of #1499).
+ *  Reports location and a truncated callee name — never full expressions. */
+export interface FloatingPromiseFinding {
+  file: string;
+  line: number;
+  call: string;
+}
+
 /** An absolute HTTP(S) URL or raw IP:port endpoint hardcoded in non-test, non-config source (#2027, part of #1499).
  *  Reports location, kind, and a redacted/truncated host — never full paths or query strings. */
 export interface HardcodedUrlFinding {
@@ -551,6 +559,7 @@ export interface BriefFindings {
   conflictMarker?: ConflictMarkerFinding[];
   debugLeftover?: DebugLeftoverFinding[];
   sizeSmell?: SizeSmellFinding[];
+  floatingPromise?: FloatingPromiseFinding[];
   hardcodedUrl?: HardcodedUrlFinding[];
   commitLint?: CommitLintFinding[];
 }

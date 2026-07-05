@@ -11,6 +11,11 @@ The logic is extracted from the app's `src/` in follow-up issues; this skeleton 
 the meantime. The root `package.json` already globs `packages/*` in its `workspaces` field, so `npm ci`
 discovers this package with no additional wiring.
 
+## Version pin
+
+`ENGINE_VERSION` mirrors `package.json`'s `version` field and is exported from the package barrel so consumers can
+log or assert which engine build produced a deterministic result.
+
 ## Build
 
 ```

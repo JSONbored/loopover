@@ -4,6 +4,7 @@
 // backend and the gittensory-miner (scoring preview/model, predicted-gate types, reward-risk, slop signals,
 // focus-manifest parse/compile core, duplicate-winner adjudication, and their engine-parity fixtures).
 // More modules land in follow-up issues.
+export { ENGINE_VERSION } from "./version.js";
 export {
   pickTopRankedOpportunities,
   rankOpportunityScore,

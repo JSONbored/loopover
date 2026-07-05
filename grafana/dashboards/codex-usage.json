@@ -4,10 +4,10 @@
   "tags": ["gittensory", "codex", "ai"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 3,
+  "version": 4,
   "refresh": "30s",
   "time": { "from": "now-7d", "to": "now" },
-  "description": "Codex review observability for the self-hosted stack. Prometheus panels are subscription-CLI attempt counters for the selected range; durable review records come from ai_usage_events, filtered by provider='codex' (migration 0109), and must be read with their status. Token/cost columns are populated whenever the Codex CLI reports real usage; estimated_neurons is a heuristic budget proxy, not billing-grade accounting.",
+  "description": "Codex review observability for the self-hosted stack. Prometheus panels are subscription-CLI attempt counters for the selected range. Durable review records come from ai_usage_events (migration 0109) and must be read with their status. Two different filters are used deliberately: the token/cost panels (real usage sums) filter strictly on provider='codex', since an unattributed row always contributes 0 to a sum either way. The record-count/status/recent-events panels instead match 'codex' as a reviewer-name token in either provider OR the model label (\"+\"-joined reviewer names, e.g. 'codex', 'codex:o4-mini', 'codex+claude-code') — a quota-blocked call never gets provider attribution (no call ever ran) but IS attributable via its configured model label, so filtering by provider alone silently drops every quota_exceeded row for a codex-configured repo. estimated_neurons is a heuristic budget proxy, not billing-grade accounting.",
   "panels": [
     {
       "id": 1,
@@ -52,7 +52,7 @@
       "id": 5,
       "type": "stat",
       "title": "Successful review records",
-      "description": "Durable Codex-attributed ai_review_pr records with status=ok.",
+      "description": "Durable ai_review_pr records with status=ok where codex was the reviewer — matched by provider attribution OR the configured model label (see dashboard description), so this stays consistent with the status-breakdown panel below rather than under-counting successes where the CLI's response reported no usage envelope at all.",
       "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
       "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
       "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "green" } } },
@@ -61,8 +61,8 @@
         {
           "refId": "A",
           "queryType": "table",
-          "queryText": "SELECT count(*) AS reviews FROM ai_usage_events WHERE feature = 'ai_review_pr' AND status = 'ok' AND provider = 'codex'",
-          "rawQueryText": "SELECT count(*) AS reviews FROM ai_usage_events WHERE feature = 'ai_review_pr' AND status = 'ok' AND provider = 'codex'"
+          "queryText": "SELECT count(*) AS reviews FROM ai_usage_events WHERE feature = 'ai_review_pr' AND status = 'ok' AND (provider = 'codex' OR (('+' || model || '+') LIKE '%+codex+%' OR ('+' || model || '+') LIKE '%+codex:%'))",
+          "rawQueryText": "SELECT count(*) AS reviews FROM ai_usage_events WHERE feature = 'ai_review_pr' AND status = 'ok' AND (provider = 'codex' OR (('+' || model || '+') LIKE '%+codex+%' OR ('+' || model || '+') LIKE '%+codex:%'))"
         }
       ]
     },
@@ -119,7 +119,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "Durable token usage by day",
-      "description": "Real input/output tokens from ai_usage_events (migration 0109), populated when the Codex CLI reports usage. Replaces the old estimated-neuron-only proxy for this panel.",
+      "description": "Real input/output tokens from ai_usage_events (migration 0109), populated when the Codex CLI reports usage. Replaces the old estimated-neuron-only proxy for this panel. Filters strictly on provider='codex' (not the broader model-label match used by the status/recent-events panels below): a quota-blocked or otherwise unattributed row contributes 0 tokens regardless of which filter is used, so the stricter filter is equivalent here and simpler.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
       "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
       "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 70, "lineWidth": 1, "stacking": { "mode": "normal" } } } },
@@ -138,6 +138,7 @@
       "id": 11,
       "type": "piechart",
       "title": "Review record status",
+      "description": "Includes quota_exceeded rows for a codex-configured repo: those rows never get provider attribution (the call never ran), but the model label already reflects the configured reviewer at write time (record() computes it via reviewerModelLabel() regardless of status), so matching 'codex' as a reviewer-name token there recovers them. A plain provider='codex' filter would silently make every quota-blocked codex review invisible here.",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
       "fieldConfig": { "defaults": { "unit": "short" } },
@@ -146,8 +147,8 @@
         {
           "refId": "A",
           "queryType": "table",
-          "queryText": "SELECT status, count(*) AS count FROM ai_usage_events WHERE feature = 'ai_review_pr' AND provider = 'codex' GROUP BY status ORDER BY count DESC",
-          "rawQueryText": "SELECT status, count(*) AS count FROM ai_usage_events WHERE feature = 'ai_review_pr' AND provider = 'codex' GROUP BY status ORDER BY count DESC"
+          "queryText": "SELECT status, count(*) AS count FROM ai_usage_events WHERE feature = 'ai_review_pr' AND (provider = 'codex' OR (('+' || model || '+') LIKE '%+codex+%' OR ('+' || model || '+') LIKE '%+codex:%')) GROUP BY status ORDER BY count DESC",
+          "rawQueryText": "SELECT status, count(*) AS count FROM ai_usage_events WHERE feature = 'ai_review_pr' AND (provider = 'codex' OR (('+' || model || '+') LIKE '%+codex+%' OR ('+' || model || '+') LIKE '%+codex:%')) GROUP BY status ORDER BY count DESC"
         }
       ]
     },
@@ -155,7 +156,7 @@
       "id": 13,
       "type": "timeseries",
       "title": "Durable cost by day",
-      "description": "Real USD cost from ai_usage_events (migration 0109), populated when the Codex CLI reports a cost field.",
+      "description": "Real USD cost from ai_usage_events (migration 0109), populated when the Codex CLI reports a cost field. Filters strictly on provider='codex' for the same reason as the token-usage panel above — an unattributed row contributes $0 regardless of filter.",
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
       "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
       "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 4, "custom": { "drawStyle": "bars", "fillOpacity": 70, "lineWidth": 1 } } },
@@ -174,6 +175,7 @@
       "id": 12,
       "type": "table",
       "title": "Recent Codex-attributed review events",
+      "description": "Includes quota-blocked codex-configured rows (matched via the model label, not just provider attribution — see the status-breakdown panel's description) so an operator can see recent failures/blocks, not only rows with a completed usage response. The provider column itself is not displayed here; the model column already reflects the configured reviewer for every row, including blocked ones.",
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 32 },
       "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
       "options": { "showHeader": true, "cellHeight": "sm", "sortBy": [{ "displayName": "created_at", "desc": true }] },
@@ -182,8 +184,8 @@
         {
           "refId": "A",
           "queryType": "table",
-          "queryText": "SELECT created_at, model, effort, status, input_tokens, output_tokens, total_tokens, cost_usd, estimated_neurons, detail, json_extract(metadata_json, '$.repoFullName') AS repo, json_extract(metadata_json, '$.pullNumber') AS pr FROM ai_usage_events WHERE feature = 'ai_review_pr' AND provider = 'codex' ORDER BY created_at DESC LIMIT 100",
-          "rawQueryText": "SELECT created_at, model, effort, status, input_tokens, output_tokens, total_tokens, cost_usd, estimated_neurons, detail, json_extract(metadata_json, '$.repoFullName') AS repo, json_extract(metadata_json, '$.pullNumber') AS pr FROM ai_usage_events WHERE feature = 'ai_review_pr' AND provider = 'codex' ORDER BY created_at DESC LIMIT 100"
+          "queryText": "SELECT created_at, model, effort, status, input_tokens, output_tokens, total_tokens, cost_usd, estimated_neurons, detail, json_extract(metadata_json, '$.repoFullName') AS repo, json_extract(metadata_json, '$.pullNumber') AS pr FROM ai_usage_events WHERE feature = 'ai_review_pr' AND (provider = 'codex' OR (('+' || model || '+') LIKE '%+codex+%' OR ('+' || model || '+') LIKE '%+codex:%')) ORDER BY created_at DESC LIMIT 100",
+          "rawQueryText": "SELECT created_at, model, effort, status, input_tokens, output_tokens, total_tokens, cost_usd, estimated_neurons, detail, json_extract(metadata_json, '$.repoFullName') AS repo, json_extract(metadata_json, '$.pullNumber') AS pr FROM ai_usage_events WHERE feature = 'ai_review_pr' AND (provider = 'codex' OR (('+' || model || '+') LIKE '%+codex+%' OR ('+' || model || '+') LIKE '%+codex:%')) ORDER BY created_at DESC LIMIT 100"
         }
       ]
     }

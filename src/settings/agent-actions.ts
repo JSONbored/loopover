@@ -767,6 +767,22 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     : ciUnverified
       ? "CI could not be verified"
       : "";
+  // Hoisted above section 1 (#stale-disposition-label-cleanup) so the review_state_label sibling-label
+  // cleanup below can tell whether the owner/automation "not reviewGood" fallback hold (below, #1089) still
+  // wants `labels.manualReview` this same pass, even when this ternary's own choice picks a different label
+  // (e.g. ciUnverified: reviewGood is false, so the ternary below picks changesRequested, but the fallback
+  // still separately wants manualReview) — without this, the cleanup would remove a label the fallback is
+  // about to re-add later in this same pass. See its own doc comment at the (former) point of use below.
+  const manualHoldReason =
+    guardrailHit
+      ? `verdict=${conclusion}; ${guardrailReason}`
+      : ciUnverified
+        ? "CI could not be verified"
+        : conclusion === "action_required"
+          ? "review requires maintainer action"
+          : !reviewGood && !willClose && (!closeEligible || acting("close"))
+            ? `verdict=${conclusion}${ciReason ? `; ${ciReason}` : ""}`
+            : null;
 
   // 1) manual-review label — a configurable, single-purpose label for guardrail holds. This is intentionally
   // separate from review_state_label so a one-shot repo can opt into `manual-review` without also enabling the
@@ -888,6 +904,29 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
             : !linkedIssueCloseInFlight && !unlinkedIssueMatchViolated && reviewGood && input.unlinkedIssueMatchClose !== undefined
               ? { comment: sanitizePublicComment(input.unlinkedIssueMatchClose.comment) }
               : {}),
+      });
+    }
+    // Stale disposition-label cleanup (#stale-disposition-label-cleanup): the four states above
+    // (readyToMerge/manualReview/migrationCollision/changesRequested) are mutually exclusive — a PR should
+    // carry exactly one. But the ternary above only ever ADDS the current one; a label from a PRIOR pass
+    // (e.g. changesRequested while CI was red) never got removed once the PR became healthy again, so it sat
+    // on the PR forever alongside whatever the bot added next. Clear every OTHER configured sibling that is
+    // still live on the PR. `manualReview` is excluded from this pass's removal when `manualHoldReason` is
+    // non-null even though it isn't this ternary's own `label` choice (e.g. ciUnverified: reviewGood is false
+    // so the ternary picks changesRequested here, but the separate owner/automation fallback below still
+    // independently wants manualReview and may re-add it later in this SAME pass) — removing it here would
+    // race against that later add.
+    const dispositionLabelSiblings = [labels.readyToMerge, labels.manualReview, labels.migrationCollision, labels.changesRequested];
+    for (const stale of dispositionLabelSiblings) {
+      if (stale === null || stale === label || !hasLabel(input.pr.labels, stale)) continue;
+      if (stale === labels.manualReview && manualHoldReason !== null) continue;
+      actions.push({
+        actionClass: "label",
+        autonomyClass: "review_state_label",
+        requiresApproval: approval("review_state_label"),
+        reason: `disposition resolved — clearing the stale "${stale}" label`,
+        label: stale,
+        labelOp: "remove",
       });
     }
     // Flag-then-close double-check, Pass 1: add the pending-closure label + a warning comment citing the specific
@@ -1076,16 +1115,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // below) so a repo with every relevant class off stays fully quiescent — see "plans nothing when every class is
   // at a non-acting level". For the owner/admin/automation-bot branch (`!closeEligible`) this is unchanged: those
   // authors are never close-eligible regardless of the `close` autonomy dial, so the hold must still surface.
-  const manualHoldReason =
-    guardrailHit
-      ? `verdict=${conclusion}; ${guardrailReason}`
-      : ciUnverified
-        ? "CI could not be verified"
-        : conclusion === "action_required"
-          ? "review requires maintainer action"
-          : !reviewGood && !willClose && (!closeEligible || acting("close"))
-            ? `verdict=${conclusion}${ciReason ? `; ${ciReason}` : ""}`
-            : null;
+  // (manualHoldReason itself is now computed earlier, above section 1 — see its doc comment there.)
   if (
     manualHoldReason !== null &&
     labels.manualReview !== null &&

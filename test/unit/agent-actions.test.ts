@@ -120,6 +120,66 @@ describe("planAgentMaintenanceActions (#778)", () => {
     ]);
   });
 
+  describe("stale disposition-label cleanup (#stale-disposition-label-cleanup)", () => {
+    it("clears a stale changes-requested label once the PR becomes healthy again", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { review_state_label: "auto" }, pr: { labels: [AGENT_LABEL_CHANGES] } }));
+      expect(plan).toContainEqual(expect.objectContaining({ actionClass: "label", label: AGENT_LABEL_READY }));
+      expect(plan).toContainEqual(expect.objectContaining({ actionClass: "label", label: AGENT_LABEL_CHANGES, labelOp: "remove" }));
+    });
+
+    it("clears a stale manual-review label once the guardrail no longer hits", () => {
+      // No guardrailHit this pass (changedPaths/hardGuardrailGlobs empty, the default) — a prior pass's
+      // manual-review hold has resolved, so it must not linger once the PR is genuinely ready-to-merge.
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { review_state_label: "auto" }, pr: { labels: [AGENT_LABEL_NEEDS_REVIEW] } }));
+      expect(plan).toContainEqual(expect.objectContaining({ actionClass: "label", label: AGENT_LABEL_READY }));
+      expect(plan).toContainEqual(expect.objectContaining({ actionClass: "label", label: AGENT_LABEL_NEEDS_REVIEW, labelOp: "remove" }));
+    });
+
+    it("clears a stale ready-to-merge label when the PR newly becomes guarded", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", review_state_label: "auto" }, changedPaths: ["src/settings/agent-actions.ts"], hardGuardrailGlobs: ["src/settings/**"], pr: { labels: [AGENT_LABEL_READY], mergeableState: "clean" } }));
+      expect(plan).toContainEqual(expect.objectContaining({ actionClass: "label", label: AGENT_LABEL_NEEDS_REVIEW, labelOp: "add" }));
+      expect(plan).toContainEqual(expect.objectContaining({ actionClass: "label", label: AGENT_LABEL_READY, labelOp: "remove" }));
+    });
+
+    it("clears every stale sibling at once when more than one lingers from prior passes", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { review_state_label: "auto" }, pr: { labels: [AGENT_LABEL_CHANGES, AGENT_LABEL_MIGRATION_COLLISION] } }));
+      expect(plan).toContainEqual(expect.objectContaining({ actionClass: "label", label: AGENT_LABEL_READY }));
+      expect(plan).toContainEqual(expect.objectContaining({ actionClass: "label", label: AGENT_LABEL_CHANGES, labelOp: "remove" }));
+      expect(plan).toContainEqual(expect.objectContaining({ actionClass: "label", label: AGENT_LABEL_MIGRATION_COLLISION, labelOp: "remove" }));
+    });
+
+    it("is idempotent — no remove actions when the PR already carries only the correct label", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { review_state_label: "auto" }, pr: { labels: [AGENT_LABEL_READY] } }));
+      expect(plan.filter((a) => a.actionClass === "label" && a.labelOp === "remove")).toEqual([]);
+    });
+
+    it("never emits a remove for a sibling label that is configured OFF (null)", () => {
+      // readyToMergeLabel disabled entirely: nothing gets ADDED for the healthy verdict, but a stale
+      // changes-requested label from before must still be cleared -- disabling the "success" label must not
+      // suppress cleanup of a now-wrong one.
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { review_state_label: "auto" }, readyToMergeLabel: null, pr: { labels: [AGENT_LABEL_CHANGES] } }));
+      expect(plan.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_READY)).toBe(false);
+      expect(plan).toContainEqual(expect.objectContaining({ actionClass: "label", label: AGENT_LABEL_CHANGES, labelOp: "remove" }));
+    });
+
+    it("does NOT clear manual-review when the owner/automation CI-unverified fallback still wants it, even though this ternary picked changes-requested", () => {
+      // ciUnverified makes reviewGood false, so the review_state_label ternary picks changes-requested here --
+      // but the separate manualHoldReason fallback (ciUnverified branch) still independently wants
+      // manual-review and may re-add it later in this same pass; the cleanup must not race against that.
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { review_state_label: "auto" }, ciState: "unverified", pr: { labels: [AGENT_LABEL_NEEDS_REVIEW] } }));
+      expect(plan.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW && a.labelOp === "remove")).toBe(false);
+      expect(plan).toContainEqual(expect.objectContaining({ actionClass: "label", label: AGENT_LABEL_CHANGES }));
+    });
+
+    it("never touches the pending-closure label, which has its own dedicated clear path", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { review_state_label: "auto" }, linkedIssueHardRule: { violated: false, reason: null }, pr: { labels: [AGENT_LABEL_PENDING_CLOSURE] } }));
+      expect(plan.some((a) => a.label === AGENT_LABEL_PENDING_CLOSURE && a.labelOp === "remove")).toBe(true);
+      // exactly one remove for it (from the existing dedicated clearLinkedIssueFlag path), not a duplicate from
+      // the new sibling-cleanup loop (which does not include pendingClosure in its sibling set at all).
+      expect(plan.filter((a) => a.label === AGENT_LABEL_PENDING_CLOSURE && a.labelOp === "remove")).toHaveLength(1);
+    });
+  });
+
   it("approves a passing verdict and never re-approves; a failing one closes (never approves, never requests changes)", () => {
     expect(classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { approve: "auto" } })))).toContain("approve");
     expect(classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { approve: "auto" }, pr: { labels: [], reviewDecision: "APPROVED" } })))).not.toContain("approve");

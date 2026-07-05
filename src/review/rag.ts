@@ -127,7 +127,7 @@ const SKIP_FILE_RE =
 const BINARY_EXT_RE =
   /\.(png|jpe?g|gif|webp|avif|bmp|tiff?|heic|psd|svg|ico|pdf|zip|gz|tgz|tar|bz2|xz|zst|7z|rar|wasm|woff2?|otf|ttf|eot|mp4|mov|webm|mkv|mp3|wav|flac|ogg|opus|bin|exe|dll|so|dylib|node|class|jar|pyc|sqlite|db|parquet|onnx|gguf|safetensors|pt|pth|ckpt|npy|npz)$/i;
 const CODE_EXT_RE =
-  /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|kts|rb|php|c|h|cc|cpp|hpp|cs|swift|scala|sh|bash|zsh|sql|graphql|proto|toml|yaml|yml|json|jsonc|css|scss|less|vue|svelte|astro|tf|hcl|dart|lua|ex|exs|clj|cljs|cljc|hs|jl|nim|zig|groovy)$/i;
+  /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|go|rs|java|kt|kts|rb|php|c|h|cc|cpp|hpp|cs|swift|scala|sh|bash|zsh|sql|graphql|proto|toml|yaml|yml|json|jsonc|css|scss|less|vue|svelte|astro|tf|hcl|dart|lua|ex|exs|clj|cljs|cljc|hs|jl|nim|zig|groovy)$/i;
 // Doc extensions mirror the canonical DOCS_EXTENSIONS set in signals/path-matchers.ts
 // (md, mdx, markdown, rst, adoc, asciidoc); the long-form `markdown`/`asciidoc`
 // spellings were missing here, so e.g. NOTES.markdown / guide.asciidoc were

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { isAgentConfigured } from "../../src/settings/autonomy";
 import {
   buildFocusManifestGuidance,
   compileFocusManifestPolicy,
@@ -192,6 +193,19 @@ describe("parseFocusManifestContent", () => {
     expect(manifest.gate.requireFreshRebaseWindowMinutes).toBe(10);
     // #2563: gate.lockfileIntegrity also round-trips through the real parser.
     expect(manifest.gate.lockfileIntegrityMode).toBe("off");
+  });
+
+  it("parses .gittensory.minimal.yml with zero warnings and enables no agent actions (#2054)", () => {
+    const content = readFileSync(".gittensory.minimal.yml", "utf8");
+    const manifest = parseFocusManifestContent(content, "repo_file");
+    expect(manifest.warnings).toEqual([]);
+    expect(manifest.present).toBe(true);
+    expect(manifest.gate.enabled).toBe(false);
+    expect(isAgentConfigured(manifest.settings.autonomy)).toBe(false);
+    const round = parseFocusManifest({ gate: gateConfigToJson(manifest.gate), settings: { autonomy: manifest.settings.autonomy } });
+    expect(round.warnings).toEqual([]);
+    expect(round.gate.enabled).toBe(false);
+    expect(isAgentConfigured(round.settings.autonomy)).toBe(false);
   });
 });
 

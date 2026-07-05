@@ -3,6 +3,7 @@
 # ============================================================================
 #
 # Copy this file to your repo root as `.gittensory.yml` and customize from here.
+# (This filename is not read directly — only `.gittensory.yml` / `.github/gittensory.yml` are.)
 # For every supported field, defaults, and examples see `.gittensory.yml.example`.
 #
 # Safe by default:

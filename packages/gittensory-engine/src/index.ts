@@ -101,8 +101,25 @@ export * from "./plan-export.js";
 export * from "./plan-templates.js";
 export * from "./portfolio/queue.js";
 export {
+  applyAiPolicyFatigueToRankInput,
+  createAiPolicyFatigueCacheEntry,
+  describeAiPolicyFatigueCache,
+  renderAiPolicyFatigueMarkdown,
+  resolveAiPolicyFatigueVerdict,
   resolveAiPolicyVerdict,
   scanAiPolicyText,
+  type AiFatigueDocLanguageChange,
+  type AiFatiguePullRequestMetadata,
+  type AiPolicyFatigueRankAdjustment,
+  type AiPolicyFatigueRankInput,
+  type AiPolicyFatigueCacheEntry,
+  type AiPolicyFatigueCacheState,
+  type AiPolicyFatigueEvidence,
+  type AiPolicyFatigueEvidenceKind,
+  type AiPolicyFatigueInput,
+  type AiPolicyFatigueLevel,
+  type AiPolicyFatigueVerdict,
+  type AiPolicyPriorityAdjustment,
   type AiPolicySource,
   type AiPolicyVerdict,
 } from "./ai-policy-map.js";

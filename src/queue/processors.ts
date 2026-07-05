@@ -10797,9 +10797,17 @@ async function closeReviewEvasionSelfCloseIfActive(
     );
     return;
   }
-  // Live re-check (#2130-style): the PR's live head/state may have moved since the webhook was ingested.
+  // Live re-check (#2130-style): the PR's live head may have moved since the webhook was ingested.
+  // A legitimate self-close webhook is already closed by definition, so allow that one stale reason only
+  // when GitHub still reports the same head SHA we started reviewing; every other stale result means the
+  // enforcement justification no longer matches the live PR.
   const freshness = await fetchPullRequestFreshness(env, { installationId, repoFullName, pullNumber: pr.number, expectedHeadSha: pr.headSha });
-  if (freshness.status !== "current") {
+  const sameHeadSelfClosed =
+    freshness.status === "stale" &&
+    freshness.reason === "closed" &&
+    freshness.liveHeadSha !== null &&
+    freshness.liveHeadSha.toLowerCase() === pr.headSha.toLowerCase();
+  if (freshness.status !== "current" && !sameHeadSelfClosed) {
     await recordAuditEvent(env, {
       eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
       actor: "gittensory",

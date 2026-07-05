@@ -21744,6 +21744,32 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       expect(strike?.outcome).toBe("completed");
     });
 
+    it("reopens and re-closes when the live self-closed PR is already closed on the reviewed head", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+      await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", authorLogin: "contributor", deliveryId: "review-start-1" });
+      await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
+      vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({
+        status: "stale",
+        reason: "closed",
+        expectedHeadSha: "abc123",
+        liveHeadSha: "ABC123",
+        liveState: "closed",
+      });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "self-close-live-closed", eventName: "pull_request", payload: closedPayload("contributor") });
+
+      const patches = calls.filter((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"));
+      expect(patches.length).toBeGreaterThanOrEqual(2); // same-head closed is the normal self-close state: reopen then re-close
+      const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.review_evasion_closed").first<{ outcome: string; detail: string }>();
+      expect(audit?.outcome).toBe("completed");
+      expect(await repositoriesModule.hasActiveReviewForHeadSha(env, "JSONbored/gittensory", 42, "abc123")).toBe(false);
+      const strike = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("moderation.violation.review_evasion").first<{ outcome: string }>();
+      expect(strike?.outcome).toBe("completed");
+    });
+
     it("retries (via a thrown lock-contended error) when a concurrent delivery already holds the per-PR actuation lock", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
@@ -21922,13 +21948,13 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       expect(audit?.detail).toContain("pull_requests: write not granted");
     });
 
-    it("denies enforcement when live PR state has moved since the webhook was received", async () => {
+    it("denies enforcement when the closed live PR is not on the reviewed head", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
-      vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "head_changed", expectedHeadSha: "abc123", liveHeadSha: "def456", liveState: "closed" });
+      vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "closed", expectedHeadSha: "abc123", liveHeadSha: "def456", liveState: "closed" });
 
       await processJob(env, { type: "github-webhook", deliveryId: "self-close-stale", eventName: "pull_request", payload: closedPayload("contributor") });
 

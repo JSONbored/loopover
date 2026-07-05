@@ -931,6 +931,38 @@ test("scanPatch does not flag truncated Braintrust/ScrapeGraphAI keys or identif
   );
 });
 
+test("scanPatch flags Langfuse public and Hyperbolic API keys with high confidence", () => {
+  const fakeLangfusePublicKey = "pk-lf-" + "a".repeat(20);
+  const langfuseFindings = scanPatch("src/config.ts", hunk([`const langfuse = "${fakeLangfusePublicKey}";`]));
+  assert.equal(langfuseFindings.length, 1);
+  assert.equal(langfuseFindings[0].kind, "langfuse_public_key");
+  assert.equal(langfuseFindings[0].confidence, "high");
+
+  const fakeHyperbolicKey = "hb_" + "b".repeat(20);
+  const hyperbolicFindings = scanPatch("src/config.ts", hunk([`const hyperbolic = "${fakeHyperbolicKey}";`]));
+  assert.equal(hyperbolicFindings.length, 1);
+  assert.equal(hyperbolicFindings[0].kind, "hyperbolic_api_key");
+  assert.equal(hyperbolicFindings[0].confidence, "high");
+});
+
+test("scanPatch does not flag truncated Langfuse/Hyperbolic keys or identifier continuation", () => {
+  assert.equal(scanPatch("src/config.ts", hunk([`const langfuse = "pk-lf-${"a".repeat(19)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const langfuse = "pk-lf-${"a".repeat(20)}.suffix";`])).some((f) => f.kind === "langfuse_public_key"),
+    false,
+  );
+
+  assert.equal(scanPatch("src/config.ts", hunk([`const hyperbolic = "hb_${"b".repeat(19)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const hyperbolic = "hb_${"b".repeat(20)}_suffix";`])).some((f) => f.kind === "hyperbolic_api_key"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const hyperbolic = "hb_${"b".repeat(20)}-suffix";`])).some((f) => f.kind === "hyperbolic_api_key"),
+    false,
+  );
+});
+
 test("scanPatch flags additional high-confidence SaaS/cloud/CI credential formats", () => {
   const cases = [
     ["google_oauth_client_secret", "GOCSPX-" + b62(28)],

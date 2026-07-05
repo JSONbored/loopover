@@ -332,6 +332,18 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Langfuse public API key: `pk-lf-` + UUID-shaped body (pairs with `sk-lf-` secret key).
+    kind: "langfuse_public_key",
+    re: /\bpk-lf-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_.-])/,
+    confidence: "high",
+  },
+  {
+    // Hyperbolic API key: `hb_` + base62 body.
+    kind: "hyperbolic_api_key",
+    re: /\bhb_[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
     // Google OAuth 2.0 client secret: `GOCSPX-` + 28 base64url chars.
     kind: "google_oauth_client_secret",
     re: /\bGOCSPX-[A-Za-z0-9_-]{28}\b/,

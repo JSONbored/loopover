@@ -340,6 +340,20 @@ export type FocusManifestReviewConfig = {
   /** `review.auto_review`: deterministic eligibility filters that skip the AI review (never a gate failure).
    *  Empty/default ⇒ every PR is reviewed (byte-identical). (#1954 / #2038–#2041) */
   autoReview: AutoReviewConfig;
+  /** `review.labeling_rules`: deterministic `{label, when}` rules that SUGGEST a non-scoring label when a PR's
+   *  changed paths / title / description match. Surfaced as advisory suggestions, and auto-applied only when the
+   *  repo's `autoLabelEnabled` is set. Reserved `gittensor:` labels are refused at parse. Empty (default) ⇒ no
+   *  suggestion (byte-identical). (#2045, part of #1959) */
+  labelingRules: LabelingRule[];
+};
+
+/** One `review.labeling_rules[]` entry: a non-reserved `label` plus the deterministic `when` criteria that must ALL
+ *  match for it to fire. A rule always has at least one criterion (enforced at parse). */
+export type LabelingRule = {
+  label: string;
+  whenPaths: string[];
+  titleContains: string | null;
+  descriptionContains: string | null;
 };
 
 /** Per-repo AI review eligibility knobs under `review.auto_review`. Unset fields are byte-identical defaults. */
@@ -524,7 +538,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   publicNotes: [],
   gate: { ...EMPTY_GATE_CONFIG },
   settings: {},
-  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG } },
+  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [] },
   features: { ...EMPTY_FEATURES_CONFIG },
   contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
   repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -554,7 +568,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     warnings,
     gate: { ...EMPTY_GATE_CONFIG },
     settings: {},
-    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG } },
+    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [] },
     features: { ...EMPTY_FEATURES_CONFIG },
     contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
     repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -1469,7 +1483,7 @@ function parsePublicSafeText(value: JsonValue | undefined, field: string, warnin
  * throws; invalid/unsafe values are dropped with warnings.
  */
 function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewConfig {
-  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG } };
+  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [] };
   if (value === undefined || value === null) return empty;
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "review" must be a mapping; ignoring it.`);
@@ -1512,6 +1526,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
   const pathFilters = parseReviewPathFilters(r.path_filters, warnings);
   const preMergeChecks = parseReviewPreMergeChecks(r.pre_merge_checks, warnings);
   const autoReview = parseAutoReviewConfig(r.auto_review, warnings);
+  const labelingRules = parseReviewLabelingRules(r.labeling_rules, warnings);
   return {
     present:
       footerText !== null ||
@@ -1526,6 +1541,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
       pathFilters.length > 0 ||
       preMergeChecks.length > 0 ||
       autoReviewPresent(autoReview) ||
+      labelingRules.length > 0 ||
       Object.keys(fields).length > 0 ||
       Object.keys(enrichmentAnalyzers).length > 0,
     footerText,
@@ -1542,7 +1558,55 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
     excludePaths,
     pathFilters,
     preMergeChecks,
+    labelingRules,
   };
+}
+
+/** The reserved label namespace Gittensor uses for scoring/type/priority (`gittensor:bug`, `gittensor:feature`,
+ *  `gittensor:priority`, …). A maintainer's `labeling_rules` must not drive these — they're managed by the scorer
+ *  and the type-labeler, never by ad-hoc manifest rules — so any `gittensor:`-prefixed label is refused at parse. */
+const RESERVED_LABEL_PREFIX = "gittensor:";
+
+/** Parse `review.labeling_rules` into deterministic {@link LabelingRule}s (mirrors {@link parseReviewPreMergeChecks}).
+ *  Non-list warns + ignores; each entry needs a public-safe, NON-reserved `label` and at least one `when` criterion
+ *  (when_paths / title_contains / description_contains). Invalid entries are dropped with a warning; capped at
+ *  MAX_PATH_INSTRUCTIONS so a hostile manifest can't bloat the matcher. Pure. */
+function parseReviewLabelingRules(value: JsonValue | undefined, warnings: string[]): LabelingRule[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    warnings.push(`Manifest "review.labeling_rules" must be a list of rules; ignoring it.`);
+    return [];
+  }
+  const out: LabelingRule[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (out.length >= MAX_PATH_INSTRUCTIONS) {
+      warnings.push(`Manifest "review.labeling_rules" is capped at ${MAX_PATH_INSTRUCTIONS} entries; dropping the rest.`);
+      break;
+    }
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      warnings.push(`Manifest "review.labeling_rules[${index}]" must be a mapping; ignoring it.`);
+      continue;
+    }
+    const e = entry as Record<string, JsonValue>;
+    const label = e.label === undefined || e.label === null ? null : parsePublicSafeText(e.label, `review.labeling_rules[${index}].label`, warnings);
+    if (label === null) {
+      if (e.label === undefined || e.label === null) warnings.push(`Manifest "review.labeling_rules[${index}].label" is required; ignoring the entry.`);
+      continue; // non-string / empty / not-public-safe already warned by parsePublicSafeText
+    }
+    if (label.toLowerCase().startsWith(RESERVED_LABEL_PREFIX)) {
+      warnings.push(`Manifest "review.labeling_rules[${index}].label" ("${label}") uses the reserved "${RESERVED_LABEL_PREFIX}" namespace; ignoring the entry.`);
+      continue;
+    }
+    const titleContains = e.title_contains === undefined || e.title_contains === null ? null : parsePublicSafeText(e.title_contains, `review.labeling_rules[${index}].title_contains`, warnings);
+    const descriptionContains = e.description_contains === undefined || e.description_contains === null ? null : parsePublicSafeText(e.description_contains, `review.labeling_rules[${index}].description_contains`, warnings);
+    const whenPaths = parseManifestGlobList(e.when_paths, `review.labeling_rules[${index}].when_paths`, warnings);
+    if (whenPaths.length === 0 && titleContains === null && descriptionContains === null) {
+      warnings.push(`Manifest "review.labeling_rules[${index}]" needs at least one of when_paths / title_contains / description_contains; ignoring it.`);
+      continue;
+    }
+    out.push({ label, whenPaths, titleContains, descriptionContains });
+  }
+  return out;
 }
 
 function autoReviewPresent(config: AutoReviewConfig): boolean {
@@ -1805,6 +1869,15 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   }
   if (Object.keys(review.fields).length > 0) out.fields = { ...review.fields } as Record<string, JsonValue>;
   if (Object.keys(review.enrichmentAnalyzers).length > 0) out.enrichment = { ...review.enrichmentAnalyzers } as Record<string, JsonValue>;
+  if (review.labelingRules.length > 0) {
+    out.labeling_rules = review.labelingRules.map((rule) => {
+      const entry: Record<string, JsonValue> = { label: rule.label };
+      if (rule.whenPaths.length > 0) entry.when_paths = [...rule.whenPaths];
+      if (rule.titleContains !== null) entry.title_contains = rule.titleContains;
+      if (rule.descriptionContains !== null) entry.description_contains = rule.descriptionContains;
+      return entry;
+    });
+  }
   return out;
 }
 

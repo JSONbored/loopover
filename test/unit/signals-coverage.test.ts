@@ -1127,7 +1127,7 @@ describe("signal coverage edge cases", () => {
       collisions: buildCollisionReport(directRepo.fullName, [], [currentPr]),
       preflight: buildPreflightResult({ repoFullName: directRepo.fullName, title: "Fix isolated issue", body: "Fixes #99", linkedIssues: [99] }, directRepo, [], [currentPr]),
       settings: gateSettings,
-      review: { present: true, footerText: "Reviewed by the Acme maintainer bot.", note: "Run npm test before pushing.", fields: { relatedWork: false }, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { skipDrafts: null, ignoreAuthors: [], ignoreTitleKeywords: [], baseBranches: [], autoPauseAfterReviewedCommits: null } },
+      review: { present: true, footerText: "Reviewed by the Acme maintainer bot.", note: "Run npm test before pushing.", fields: { relatedWork: false }, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { skipDrafts: null, ignoreAuthors: [], ignoreTitleKeywords: [], baseBranches: [], autoPauseAfterReviewedCommits: null }, labelingRules: [] },
       aiReview: { notes: "The change is focused.\n\n**Nits (2)**\n- Add a test for the </details> edge case.\n- Keep the validator helper scoped." },
     });
     expect(customizedComment).toContain("Reviewed by the Acme maintainer bot."); // custom footer lead

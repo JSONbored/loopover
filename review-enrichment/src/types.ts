@@ -528,6 +528,14 @@ export interface FloatingPromiseFinding {
   call: string;
 }
 
+/** An explicit `any` annotation, `<any>` assertion, or `as any` cast newly added in a TS diff (#2017, part of #1499).
+ *  Reports file, line, and kind only — never surrounding code. */
+export interface UnsafeAnyFinding {
+  file: string;
+  line: number;
+  kind: "annotation" | "cast" | "assertion";
+}
+
 /** An absolute HTTP(S) URL or raw IP:port endpoint hardcoded in non-test, non-config source (#2027, part of #1499).
  *  Reports location, kind, and a redacted/truncated host — never full paths or query strings. */
 export interface HardcodedUrlFinding {
@@ -588,6 +596,7 @@ export interface BriefFindings {
   floatingPromise?: FloatingPromiseFinding[];
   deepNesting?: DeepNestingFinding[];
   errorSwallow?: ErrorSwallowFinding[];
+  unsafeAny?: UnsafeAnyFinding[];
   i18n?: I18nFinding[];
   hardcodedUrl?: HardcodedUrlFinding[];
   commitLint?: CommitLintFinding[];

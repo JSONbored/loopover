@@ -52,6 +52,7 @@ const EXPECTED_ANALYZERS = [
   "floatingPromise",
   "deepNesting",
   "errorSwallow",
+  "unsafeAny",
   "i18n",
   "commitLint",
 ];

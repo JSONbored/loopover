@@ -38,6 +38,7 @@ import { scanErrorSwallow } from "./error-swallow.js";
 import { scanFloatingPromise } from "./floating-promise.js";
 import { scanSizeSmell } from "./size-smell.js";
 import { scanCommitLint } from "./commit-lint.js";
+import { scanUnsafeAny } from "./unsafe-any.js";
 import { scanTerminology } from "./terminology.js";
 import { scanTodoMarker } from "./todo-marker.js";
 import { scanTyposquat } from "./typosquat.js";
@@ -1136,6 +1137,35 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanErrorSwallow(req, signal),
+  }),
+  descriptor({
+    name: "unsafeAny",
+    title: "Unsafe any (TS)",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Counts and locates explicit `any` annotations, `<any>` assertions, and `as any` casts newly introduced in TypeScript diffs.",
+      looksAt: "Added lines in changed non-test .ts/.tsx/.mts/.cts source files.",
+      reports: "File, line, and kind: annotation, cast, or assertion.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Structural regex only (no type-checker). String literals and comment lines are skipped; findings are capped.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Unsafe any (explicit any introduced by this PR)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${helpers.safeCodeSpan(item.kind)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanUnsafeAny(req, signal),
   }),
   descriptor({
     name: "i18n",

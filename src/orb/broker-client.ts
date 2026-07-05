@@ -174,11 +174,22 @@ export async function registerOrbRelayTarget(
   }
 }
 
-export type OrbRelayRegistrationState = { registered: boolean; lastAttemptAtMs: number | null; attempts: number };
+// `attempts` (below) is a lifetime total, never reset -- it answers "did this recover after prior
+// failures" (see registerOrbRelayWithMonitor) but can't tell "is it CURRENTLY stuck" from "it hiccuped
+// once years ago". `consecutiveFailures` is the complementary streak: it resets to 0 on any success, so
+// only a SUSTAINED run of back-to-back failures grows it -- the same shape as ai.ts's
+// `aiConsecutiveFailures` / `AI_UNHEALTHY_FAILURE_STREAK`.
+export type OrbRelayRegistrationState = { registered: boolean; lastAttemptAtMs: number | null; attempts: number; consecutiveFailures: number };
 
 export function createOrbRelayRegistrationState(): OrbRelayRegistrationState {
-  return { registered: false, lastAttemptAtMs: null, attempts: 0 };
+  return { registered: false, lastAttemptAtMs: null, attempts: 0, consecutiveFailures: 0 };
 }
+
+// Mirrors AI_UNHEALTHY_FAILURE_STREAK's shape (src/selfhost/ai.ts): one bad registration attempt is
+// routine (the broker had a slow tick, a deploy in flight, a momentary network blip) and must not alert
+// on its own -- only a SUSTAINED run of consecutive failures indicates the broker link is actually
+// stuck rather than just having hiccuped once (#selfhost-runtime-drift follow-up).
+export const ORB_RELAY_REGISTER_UNHEALTHY_FAILURE_STREAK = 3;
 
 // Mirrors RELAY_RETRY_BACKOFF_MINUTES (src/orb/relay.ts) for the same reason: a sustained broker outage must not
 // re-attempt registration on every ~1min tick -- fleet-wide, that is a synchronized retry storm against a
@@ -206,11 +217,13 @@ export async function registerOrbRelayTargetWithRetry(
   state.lastAttemptAtMs = nowMs;
   state.attempts += 1;
   const result = await registerOrbRelayTarget(env, fetchImpl);
-  if (result.status === "skipped") return { status: "skipped" };
+  if (result.status === "skipped") return { status: "skipped" }; // intentional no-op, not a broker failure -- leaves the streak untouched
   if (result.status === "registered") {
     state.registered = true;
+    state.consecutiveFailures = 0;
     return { status: "registered" };
   }
+  state.consecutiveFailures += 1;
   /* v8 ignore next -- registerOrbRelayTarget's own "failed" returns always set a string reason (http_NNN or an
    * error message); the undefined arm only satisfies exactOptionalPropertyTypes for the shared result shape. */
   return result.reason !== undefined ? { status: "failed", reason: result.reason } : { status: "failed" };

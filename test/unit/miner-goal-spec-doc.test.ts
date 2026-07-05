@@ -43,7 +43,7 @@ describe("miner goal spec docs (#2300)", () => {
 
   it("parses the root example file through the engine parser", () => {
     const example = readFileSync(examplePath, "utf8");
-    const parsed = parseMinerGoalSpecContent(example, ".gittensory-miner.yml.example");
+    const parsed = parseMinerGoalSpecContent(example);
     expect(parsed.present).toBe(true);
     expect(parsed.spec).toMatchObject({
       minerEnabled: true,

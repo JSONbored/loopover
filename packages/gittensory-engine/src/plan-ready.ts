@@ -16,3 +16,11 @@ function nextReadySteps(plan: PlanDag): PlanStep[] {
 export function hasPlanReadySteps(plan: PlanDag): boolean {
   return nextReadySteps(plan).length > 0;
 }
+
+/**
+ * Count steps runnable now: `pending` with every dependency `completed` or `skipped`. Mirrors hosted
+ * `nextReadySteps(plan).length`. Pure.
+ */
+export function countPlanReadySteps(plan: PlanDag): number {
+  return nextReadySteps(plan).length;
+}

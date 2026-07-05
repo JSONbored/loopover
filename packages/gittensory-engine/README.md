@@ -540,6 +540,7 @@ dashboard progress summaries:
 - `isPlanProgressComplete(plan)` — every step is `completed` or `skipped` (empty plans are not complete; mirrors `planProgress`'s `completed` status)
 - `resolvePlanOverallStatus(plan)` — coarse status (`pending` | `running` | `completed` | `failed` | `blocked`); mirrors `planProgress`'s `status`
 - `hasPlanReadySteps(plan)` — any step is runnable now (`pending` with satisfied dependencies; mirrors `nextReadySteps(plan).length > 0`)
+- `countPlanReadySteps(plan)` — number of runnable steps now (mirrors `nextReadySteps(plan).length`)
 - `isPlanTerminated(plan)` — plan reached a terminal outcome (`failed` step or every step `completed`/`skipped`; empty plans are not terminated)
 
 ## Opportunity competition

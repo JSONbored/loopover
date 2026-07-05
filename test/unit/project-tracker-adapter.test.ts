@@ -711,9 +711,31 @@ describe("maybeSuggestMilestoneMatchForPr (#3183 webhook-level gating)", () => {
       mode: "suggest" as const,
       backend: "github" as const,
       deliveryId: "test-delivery",
+      eventName: "pull_request",
+      action: "opened",
       ...overrides,
     };
   }
+
+  it("does nothing for review webhooks with pull_request payloads", async () => {
+    let called = false;
+    vi.stubGlobal("fetch", async () => {
+      called = true;
+      return new Response("unexpected", { status: 500 });
+    });
+    await maybeSuggestMilestoneMatchForPr(baseArgs({ eventName: "pull_request_review", action: "submitted" }));
+    expect(called).toBe(false);
+  });
+
+  it("does nothing for pull_request actions that do not change title/body matching inputs", async () => {
+    let called = false;
+    vi.stubGlobal("fetch", async () => {
+      called = true;
+      return new Response("unexpected", { status: 500 });
+    });
+    await maybeSuggestMilestoneMatchForPr(baseArgs({ action: "labeled" }));
+    expect(called).toBe(false);
+  });
 
   it("does nothing when installationId is falsy (never touches the network)", async () => {
     let called = false;

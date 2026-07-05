@@ -320,6 +320,12 @@ type IssueComment = {
   user?: { type?: string; login?: string } | null;
 };
 
+const PROJECT_TRACKER_PULL_REQUEST_ACTIONS = new Set(["opened", "edited", "reopened", "synchronize"]);
+
+function shouldSuggestProjectTrackerForWebhook(eventName: string, action: string | undefined): boolean {
+  return eventName === "pull_request" && action !== undefined && PROJECT_TRACKER_PULL_REQUEST_ACTIONS.has(action);
+}
+
 /** Only knows "github" vs. "linear" -- kept as a standalone alias (mirroring {@link ProjectMilestoneMatchModeInput}
  *  below) rather than importing RepositorySettings, so this integrations module has no dependency on the
  *  settings type. */
@@ -395,8 +401,9 @@ export async function maybeSuggestProjectOrMilestoneMatch(
 
 /**
  * Webhook-level entry point (#3183): folds the "should this even run" gating (installed app, PR still open,
- * feature opted in) AND the best-effort error logging into one call, so the PR-webhook handler in
- * processors.ts has a single, unconditional call site with no logic/logging body of its own -- everything
+ * feature opted in, and a PR lifecycle/title-body webhook) AND the best-effort error logging into one call, so
+ * the PR-webhook handler in processors.ts has a single, unconditional call site with no logic/logging body of
+ * its own -- everything
  * testable lives here, where it already has dedicated, isolated coverage, rather than in an inline closure
  * inside the huge webhook file that only a full pipeline test could exercise.
  */
@@ -412,7 +419,10 @@ export async function maybeSuggestMilestoneMatchForPr(args: {
   mode: ProjectMilestoneMatchModeInput;
   backend: ProjectMilestoneMatchBackendInput;
   deliveryId: string;
+  eventName: string;
+  action: string | undefined;
 }): Promise<void> {
+  if (!shouldSuggestProjectTrackerForWebhook(args.eventName, args.action)) return;
   if (!args.installationId) return;
   if (args.prState !== "open") return;
   if (!args.mode || args.mode === "off") return;

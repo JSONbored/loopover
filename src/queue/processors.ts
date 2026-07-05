@@ -5383,6 +5383,8 @@ async function processGitHubWebhook(
         mode: settings.autoProjectMilestoneMatch,
         backend: settings.autoProjectMilestoneMatchBackend,
         deliveryId,
+        eventName,
+        action: payload.action,
       });
       // Draft-dodge guard (#converted-to-draft): a contributor converting an OPEN PR to draft cannot use
       // draft state to keep a gate-rejected PR alive. When a prior gate failure exists for the PR's current

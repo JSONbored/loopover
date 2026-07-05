@@ -1266,6 +1266,34 @@
       }
     },
     {
+      "name": "unusedExport",
+      "title": "Unused exports (dead-on-arrival)",
+      "category": "quality",
+      "cost": "github-light",
+      "defaultEnabled": true,
+      "profiles": [
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "files",
+        "github-token",
+        "head-sha"
+      ],
+      "limits": {
+        "maxSymbols": 10,
+        "maxSearches": 10,
+        "maxFindings": 25
+      },
+      "docs": {
+        "summary": "Flags exports newly added by the PR that have zero non-declaration references anywhere in the repo.",
+        "looksAt": "Direct `export const/let/var/function/class/interface/type/enum` declarations added in changed non-test TS/JS source files, cross-checked via repo-scoped GitHub Code Search.",
+        "reports": "File, line, and symbol name of each dead-on-arrival export — never file contents.",
+        "network": "One bounded GitHub Code Search query per candidate symbol (capped). Requires headSha and GitHub token forwarding for private repos.",
+        "notes": "Conservative: re-export lists and `export *` are ignored (same as undocumented-export). Skips symbols shorter than 3 chars. Fail-safe on search errors or incomplete results."
+      }
+    },
+    {
       "name": "commitLint",
       "title": "Conventional-commit subjects",
       "category": "quality",

@@ -493,6 +493,7 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("unsafeAny", findings.unsafeAny));
   lines.push(...renderDescriptorSection("a11y", findings.a11y));
   lines.push(...renderDescriptorSection("i18n", findings.i18n));
+  lines.push(...renderDescriptorSection("unusedExport", findings.unusedExport));
   lines.push(...renderDescriptorSection("hardcodedUrl", findings.hardcodedUrl));
   lines.push(...renderDescriptorSection("commitLint", findings.commitLint));
 

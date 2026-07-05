@@ -55,6 +55,7 @@ const EXPECTED_ANALYZERS = [
   "unsafeAny",
   "a11y",
   "i18n",
+  "unusedExport",
   "commitLint",
 ];
 

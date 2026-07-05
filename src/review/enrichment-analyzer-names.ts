@@ -49,6 +49,7 @@ export const REES_ANALYZER_NAMES = [
   "unsafeAny",
   "a11y",
   "i18n",
+  "unusedExport",
   "commitLint",
 ] as const;
 

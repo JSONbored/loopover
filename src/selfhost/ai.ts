@@ -515,8 +515,8 @@ export function codexErrorFromStdout(stdout: string): string | null {
 type SpawnFn = (
   cmd: string,
   args: string[],
-  opts: { env: Record<string, string | undefined>; input?: string; timeoutMs: number; cwd?: string },
-) => Promise<{ stdout: string; code: number | null; stderr?: string; timedOut?: boolean }>;
+  opts: { env: Record<string, string | undefined>; input?: string; timeoutMs: number; firstOutputTimeoutMs?: number; cwd?: string },
+) => Promise<{ stdout: string; code: number | null; stderr?: string; timedOut?: boolean; noOutput?: boolean }>;
 
 async function defaultSpawn(): Promise<SpawnFn> {
   const cp = await import("node:child_process");
@@ -535,15 +535,35 @@ async function defaultSpawn(): Promise<SpawnFn> {
         // that partial output may contain the real error detail (e.g. codex JSONL error lines).
         resolve({ stdout, code: null, stderr, timedOut: true });
       }, o.timeoutMs);
+      // Secondary "first-output" deadline: if the subprocess produces no stdout within this window it is almost
+      // certainly stuck waiting on a hung API connection (not mid-generation). Kill it early so the caller can
+      // surface a distinct error and the chain can fail fast rather than blocking for the full timeoutMs.
+      let firstOutputTimer: ReturnType<typeof setTimeout> | undefined;
+      if (o.firstOutputTimeoutMs != null && o.firstOutputTimeoutMs > 0) {
+        firstOutputTimer = setTimeout(() => {
+          child.kill("SIGKILL");
+          clearTimeout(timer);
+          resolve({ stdout, code: null, stderr, timedOut: true, noOutput: true });
+        }, o.firstOutputTimeoutMs);
+      }
       /* v8 ignore stop */
-      child.stdout?.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
+      child.stdout?.on("data", (d: Buffer) => {
+        stdout += d.toString("utf8");
+        // Cancel the first-output timer as soon as any data arrives — the API connection is live.
+        if (firstOutputTimer !== undefined) {
+          clearTimeout(firstOutputTimer);
+          firstOutputTimer = undefined;
+        }
+      });
       child.stderr?.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
       child.on("error", (e) => {
         clearTimeout(timer);
+        if (firstOutputTimer !== undefined) clearTimeout(firstOutputTimer);
         reject(e);
       });
       child.on("close", (code) => {
         clearTimeout(timer);
+        if (firstOutputTimer !== undefined) clearTimeout(firstOutputTimer);
         resolve({ stdout, code, stderr });
       });
       if (o.input != null) {
@@ -706,15 +726,25 @@ export function createCodexAi(
         if (codexModel) args.push("--model", codexModel);
         args.push("-c", `model_reasoning_effort="${effort}"`);
         attempted = true;
-        const { stdout, code, stderr, timedOut } = await spawn("codex", args, {
+        const { stdout, code, stderr, timedOut, noOutput } = await spawn("codex", args, {
           env,
           // `codex exec` reads stdin when no prompt argv is provided; keep PR prompts/diffs out of process listings.
           input: prompt,
           timeoutMs,
+          // Kill early if the codex CLI produces no output within 60 s — this indicates a hung API connection
+          // (the subprocess started and received its prompt but the OpenAI request never returned a first byte).
+          // Surfaced as a distinct codex_timeout_no_output error so it groups separately in Sentry from
+          // mid-generation timeouts and operators can diagnose API connectivity vs. generation latency.
+          firstOutputTimeoutMs: 60_000,
           cwd: await isolatedCliCwd(),
         });
         stdoutForMetrics = stdout;
         if (timedOut) {
+          if (noOutput) {
+            // The subprocess produced zero stdout — the codex CLI never received a response from the API.
+            // The stderr startup banner ("Reading prompt from stdin...") is expected and uninformative here.
+            throw new Error("codex_timeout_no_output: codex CLI started but received no API response within 60 s — check OpenAI API connectivity and the configured model");
+          }
           // Include whatever the JSONL stream captured before the kill — codex writes errors there, not to stderr.
           const detail = codexErrorFromStdout(stdout) ?? (redactSecrets(stderr ?? "").slice(0, 200) || "no output");
           throw new Error(`codex_timeout: ${detail}`);

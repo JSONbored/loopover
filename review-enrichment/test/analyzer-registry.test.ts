@@ -31,6 +31,7 @@ const EXPECTED_ANALYZERS = [
   "history",
   "docCommentDrift",
   "duplication",
+  "errorSwallow",
   "churnHotspot",
   "blameLink",
   "approvalIntegrity",

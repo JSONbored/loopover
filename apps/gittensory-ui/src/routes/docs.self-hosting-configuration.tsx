@@ -480,10 +480,16 @@ features:
         regardless of this setting. Default <code>false</code>.
       </p>
       <p>
-        <code>blockedPaths</code> (top-level, alongside <code>wantedPaths</code>) — globs off-limits
-        to contributors. Touching one yields a <code>manifest_blocked_path</code> finding,
-        enforceable when <code>gate.manifestPolicy: block</code> is set. Default <code>[]</code>{" "}
-        (nothing blocked).
+        <code>blockedPaths</code> (top-level, alongside <code>wantedPaths</code>) is{" "}
+        <strong>contributor-facing guidance only</strong> — it never blocks, holds, or produces a
+        gate finding. A touched path surfaces in contributor onboarding guidance and in
+        gittensory&apos;s own risk-reason commentary, but the gate itself never enforces it.{" "}
+        <strong>The only mechanism that actually holds a PR for a touched path</strong> is{" "}
+        <code>settings.hardGuardrailGlobs</code> (config-as-code only, described above) — a
+        would-merge PR that touches a configured guardrail glob is held for manual review regardless
+        of <code>blockedPaths</code>. A legacy top-level <code>blockedPaths</code> that once acted
+        as an enforcement mechanism is retired; setting it produces a migration warning pointing at{" "}
+        <code>settings.hardGuardrailGlobs</code>. Default <code>[]</code> (nothing listed).
       </p>
 
       <h3>settings anti-abuse block</h3>
@@ -555,6 +561,23 @@ features:
   maxAppendedEntries: 1               # Positive integer cap on new entries per PR. Default: unbounded.
   duplicateKeyFields: [slug]          # Field name(s) used to detect a duplicate entry. Default: [] (no dedup check).
   validatorId: my-registry-validator  # Optional identifier for a custom per-entry validator. Default: none.`}
+      />
+
+      <h3>repoDocGeneration</h3>
+      <p>
+        Lets gittensory open a pull request that refreshes this repo&apos;s own{" "}
+        <code>AGENTS.md</code>/<code>CLAUDE.md</code> (and, additively, a skill file) on a schedule
+        — never a direct commit. Disabled by default: an unconfigured repo, or an explicit{" "}
+        <code>enabled: false</code>, means no repo-doc refresh ever runs for it.
+      </p>
+      <CodeBlock
+        filename=".gittensory.yml"
+        lang="yaml"
+        code={`repoDocGeneration:
+  enabled: true                       # Opt in. Default: false (fully disabled).
+  scope: [agents]                     # "agents" (AGENTS.md/CLAUDE.md) and/or "skills". Default: [agents].
+  allowOverwriteExisting: false       # Refresh a file that needs manual review to change. Default: false.
+  refreshIntervalDays: 7              # Minimum days between refreshes. Default: 7.`}
       />
 
       <h2>Instance-wide write switches (SELFHOST_DEPLOYMENT_MODE)</h2>

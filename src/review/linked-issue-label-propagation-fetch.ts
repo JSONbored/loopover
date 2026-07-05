@@ -38,11 +38,41 @@ export async function fetchLinkedIssueLabelsForPropagation(args: {
   repoFullName: string;
   linkedIssues: number[];
   installationId: number;
+  prAuthorLogin: string | null | undefined;
 }): Promise<string[]> {
   if (args.linkedIssues.length === 0) return [];
   const linkedIssues = args.linkedIssues.slice(0, MAX_LINKED_ISSUES_TO_FETCH);
-  const token = (await createInstallationToken(args.env, args.installationId).catch(() => undefined)) ?? args.env.GITHUB_PUBLIC_TOKEN;
-  const admissionKey = githubRateLimitAdmissionKeyForToken(args.env, token, args.installationId);
-  const results = await Promise.all(linkedIssues.map((issueNumber) => fetchLinkedIssueFacts(args.env, args.repoFullName, issueNumber, token, admissionKey)));
-  return results.flatMap((result) => (result.status === "found" && result.facts.state === "open" ? result.facts.labels : []));
+  const token =
+    (await createInstallationToken(args.env, args.installationId).catch(
+      () => undefined,
+    )) ?? args.env.GITHUB_PUBLIC_TOKEN;
+  const admissionKey = githubRateLimitAdmissionKeyForToken(
+    args.env,
+    token,
+    args.installationId,
+  );
+  const results = await Promise.all(
+    linkedIssues.map((issueNumber) =>
+      fetchLinkedIssueFacts(
+        args.env,
+        args.repoFullName,
+        issueNumber,
+        token,
+        admissionKey,
+      ),
+    ),
+  );
+  return results.flatMap((result) => {
+    if (result.status !== "found" || result.facts.state !== "open") return [];
+    const prAuthorLogin = args.prAuthorLogin?.toLowerCase();
+    if (!prAuthorLogin) return [];
+    const issueAuthorLogin = result.facts.authorLogin?.toLowerCase();
+    const assignees = result.facts.assignees.map((login) =>
+      login.toLowerCase(),
+    );
+    return issueAuthorLogin === prAuthorLogin ||
+      assignees.includes(prAuthorLogin)
+      ? result.facts.labels
+      : [];
+  });
 }

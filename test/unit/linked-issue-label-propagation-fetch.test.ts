@@ -9,57 +9,120 @@ describe("fetchLinkedIssueLabelsForPropagation (#priority-linked-issue-gate)", (
     vi.restoreAllMocks();
   });
 
-  function stubFetch(handler: (url: string, method: string) => Response | Promise<Response>) {
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => handler(input.toString(), init?.method ?? "GET"));
+  function stubFetch(
+    handler: (url: string, method: string) => Response | Promise<Response>,
+  ) {
+    vi.stubGlobal(
+      "fetch",
+      async (input: RequestInfo | URL, init?: RequestInit) =>
+        handler(input.toString(), init?.method ?? "GET"),
+    );
   }
 
   it("returns [] and fetches nothing when there are no linked issues", async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     const env = createTestEnv({});
-    const result = await fetchLinkedIssueLabelsForPropagation({ env, repoFullName: "owner/repo", linkedIssues: [], installationId: 123 });
+    const result = await fetchLinkedIssueLabelsForPropagation({
+      env,
+      repoFullName: "owner/repo",
+      linkedIssues: [],
+      installationId: 123,
+      prAuthorLogin: "contrib",
+    });
     expect(result).toEqual([]);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("returns the flattened labels for a single found linked issue", async () => {
     stubFetch((url) => {
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
-      if (url.endsWith("/issues/1")) return Response.json({ number: 1, state: "open", user: { login: "contrib" }, labels: ["gittensor:priority", "help wanted"] });
+      if (url.includes("/access_tokens"))
+        return Response.json({ token: "installation-token" });
+      if (url.endsWith("/issues/1"))
+        return Response.json({
+          number: 1,
+          state: "open",
+          user: { login: "contrib" },
+          labels: ["gittensor:priority", "help wanted"],
+        });
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({});
-    const result = await fetchLinkedIssueLabelsForPropagation({ env, repoFullName: "owner/repo", linkedIssues: [1], installationId: 123 });
+    const result = await fetchLinkedIssueLabelsForPropagation({
+      env,
+      repoFullName: "owner/repo",
+      linkedIssues: [1],
+      installationId: 123,
+      prAuthorLogin: "contrib",
+    });
     expect(result).toEqual(["gittensor:priority", "help wanted"]);
   });
 
   it("surfaces only the successful issue's labels when one of several linked issues fails to fetch (partial fail-open)", async () => {
     stubFetch((url) => {
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
-      if (url.endsWith("/issues/1")) return Response.json({ number: 1, state: "open", assignees: [{ login: "contrib" }], labels: ["gittensor:priority"] });
-      if (url.endsWith("/issues/2")) return new Response("server error", { status: 500 });
+      if (url.includes("/access_tokens"))
+        return Response.json({ token: "installation-token" });
+      if (url.endsWith("/issues/1"))
+        return Response.json({
+          number: 1,
+          state: "open",
+          assignees: [{ login: "contrib" }],
+          labels: ["gittensor:priority"],
+        });
+      if (url.endsWith("/issues/2"))
+        return new Response("server error", { status: 500 });
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({});
-    const result = await fetchLinkedIssueLabelsForPropagation({ env, repoFullName: "owner/repo", linkedIssues: [1, 2], installationId: 123 });
+    const result = await fetchLinkedIssueLabelsForPropagation({
+      env,
+      repoFullName: "owner/repo",
+      linkedIssues: [1, 2],
+      installationId: 123,
+      prAuthorLogin: "contrib",
+    });
     expect(result).toEqual(["gittensor:priority"]);
   });
 
   it("returns [] when every linked issue fails to fetch (fully fail-open — never applies a sensitive label without a verified source)", async () => {
     stubFetch((url) => {
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens"))
+        return Response.json({ token: "installation-token" });
       return new Response("server error", { status: 500 });
     });
     const env = createTestEnv({});
-    const result = await fetchLinkedIssueLabelsForPropagation({ env, repoFullName: "owner/repo", linkedIssues: [1, 2], installationId: 123 });
+    const result = await fetchLinkedIssueLabelsForPropagation({
+      env,
+      repoFullName: "owner/repo",
+      linkedIssues: [1, 2],
+      installationId: 123,
+      prAuthorLogin: "contrib",
+    });
     expect(result).toEqual([]);
   });
 
   it("falls back to the public token and still fails open (never throws) when the installation-token mint fails", async () => {
-    const spy = vi.spyOn(appModule, "createInstallationToken").mockRejectedValue(new Error("mint failed"));
-    stubFetch((url) => (url.endsWith("/issues/1") ? Response.json({ number: 1, state: "open", user: { login: "contrib" }, labels: ["gittensor:priority"] }) : new Response("not found", { status: 404 })));
+    const spy = vi
+      .spyOn(appModule, "createInstallationToken")
+      .mockRejectedValue(new Error("mint failed"));
+    stubFetch((url) =>
+      url.endsWith("/issues/1")
+        ? Response.json({
+            number: 1,
+            state: "open",
+            user: { login: "contrib" },
+            labels: ["gittensor:priority"],
+          })
+        : new Response("not found", { status: 404 }),
+    );
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
-    const result = await fetchLinkedIssueLabelsForPropagation({ env, repoFullName: "owner/repo", linkedIssues: [1], installationId: 123 });
+    const result = await fetchLinkedIssueLabelsForPropagation({
+      env,
+      repoFullName: "owner/repo",
+      linkedIssues: [1],
+      installationId: 123,
+      prAuthorLogin: "contrib",
+    });
     expect(result).toEqual(["gittensor:priority"]);
     spy.mockRestore();
   });
@@ -67,51 +130,127 @@ describe("fetchLinkedIssueLabelsForPropagation (#priority-linked-issue-gate)", (
   it("caps the number of linked issues fetched at 50, ignoring any beyond the cap (defense in depth against an unbounded parallel fan-out)", async () => {
     let issueFetchCount = 0;
     stubFetch((url) => {
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens"))
+        return Response.json({ token: "installation-token" });
       if (/\/issues\/\d+$/.test(url)) {
         issueFetchCount += 1;
-        return Response.json({ number: 1, state: "open", user: { login: "contrib" }, labels: ["gittensor:priority"] });
+        return Response.json({
+          number: 1,
+          state: "open",
+          user: { login: "contrib" },
+          labels: ["gittensor:priority"],
+        });
       }
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({});
     const manyIssues = Array.from({ length: 75 }, (_, i) => i + 1);
-    const result = await fetchLinkedIssueLabelsForPropagation({ env, repoFullName: "owner/repo", linkedIssues: manyIssues, installationId: 123 });
+    const result = await fetchLinkedIssueLabelsForPropagation({
+      env,
+      repoFullName: "owner/repo",
+      linkedIssues: manyIssues,
+      installationId: 123,
+      prAuthorLogin: "contrib",
+    });
     expect(issueFetchCount).toBe(50);
     expect(result).toEqual(Array(50).fill("gittensor:priority"));
   });
 
-  it("trusts a priority label on any verified open linked issue, independent of PR author ownership", async () => {
+  it("ignores a priority label on an open linked issue when the PR author neither opened nor is assigned to it", async () => {
     stubFetch((url) => {
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
-      if (url.endsWith("/issues/777")) return Response.json({ number: 777, state: "open", user: { login: "maintainer" }, assignees: [], labels: ["gittensor:priority"] });
+      if (url.includes("/access_tokens"))
+        return Response.json({ token: "installation-token" });
+      if (url.endsWith("/issues/777"))
+        return Response.json({
+          number: 777,
+          state: "open",
+          user: { login: "maintainer" },
+          assignees: [],
+          labels: ["gittensor:priority"],
+        });
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({});
-    const result = await fetchLinkedIssueLabelsForPropagation({ env, repoFullName: "owner/repo", linkedIssues: [777], installationId: 123 });
-    expect(result).toEqual(["gittensor:priority"]);
+    const result = await fetchLinkedIssueLabelsForPropagation({
+      env,
+      repoFullName: "owner/repo",
+      linkedIssues: [777],
+      installationId: 123,
+      prAuthorLogin: "attacker",
+    });
+    expect(result).toEqual([]);
   });
 
   it("ignores a priority label on a closed linked issue, even when the PR author is tied to it", async () => {
     stubFetch((url) => {
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
-      if (url.endsWith("/issues/777")) return Response.json({ number: 777, state: "closed", user: { login: "contrib" }, labels: ["gittensor:priority"] });
+      if (url.includes("/access_tokens"))
+        return Response.json({ token: "installation-token" });
+      if (url.endsWith("/issues/777"))
+        return Response.json({
+          number: 777,
+          state: "closed",
+          user: { login: "contrib" },
+          labels: ["gittensor:priority"],
+        });
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({});
-    const result = await fetchLinkedIssueLabelsForPropagation({ env, repoFullName: "owner/repo", linkedIssues: [777], installationId: 123 });
+    const result = await fetchLinkedIssueLabelsForPropagation({
+      env,
+      repoFullName: "owner/repo",
+      linkedIssues: [777],
+      installationId: 123,
+      prAuthorLogin: "contrib",
+    });
     expect(result).toEqual([]);
   });
 
-  it("does not require a PR author to propagate labels from a verified open linked issue", async () => {
+  it("does not propagate labels when the PR author is missing", async () => {
     stubFetch((url) => {
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
-      if (url.endsWith("/issues/1")) return Response.json({ number: 1, state: "open", user: { login: "contrib" }, labels: ["gittensor:priority"] });
+      if (url.includes("/access_tokens"))
+        return Response.json({ token: "installation-token" });
+      if (url.endsWith("/issues/1"))
+        return Response.json({
+          number: 1,
+          state: "open",
+          user: { login: "contrib" },
+          labels: ["gittensor:priority"],
+        });
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({});
-    const result = await fetchLinkedIssueLabelsForPropagation({ env, repoFullName: "owner/repo", linkedIssues: [1], installationId: 123 });
-    expect(result).toEqual(["gittensor:priority"]);
+    const result = await fetchLinkedIssueLabelsForPropagation({
+      env,
+      repoFullName: "owner/repo",
+      linkedIssues: [1],
+      installationId: 123,
+      prAuthorLogin: null,
+    });
+    expect(result).toEqual([]);
   });
 
+  it("propagates labels when the PR author is assigned to the open linked issue", async () => {
+    stubFetch((url) => {
+      if (url.includes("/access_tokens"))
+        return Response.json({ token: "installation-token" });
+      if (url.endsWith("/issues/9"))
+        return Response.json({
+          number: 9,
+          state: "open",
+          user: { login: "maintainer" },
+          assignees: [{ login: "contrib" }],
+          labels: ["gittensor:priority"],
+        });
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({});
+    const result = await fetchLinkedIssueLabelsForPropagation({
+      env,
+      repoFullName: "owner/repo",
+      linkedIssues: [9],
+      installationId: 123,
+      prAuthorLogin: "Contrib",
+    });
+    expect(result).toEqual(["gittensor:priority"]);
+  });
 });

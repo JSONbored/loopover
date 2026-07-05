@@ -956,6 +956,50 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Netlify build-hook URL — the trailing id triggers a production build, like the webhook rules above.
+    kind: "netlify_build_hook_url",
+    re: /https:\/\/api\.netlify\.com\/build_hooks\/[0-9a-f]{24}/,
+    confidence: "high",
+  },
+  {
+    // Vercel deploy-hook URL — `.../deploy/prj_<id>/<token>`; the trailing token triggers a deployment.
+    kind: "vercel_deploy_hook_url",
+    re: /https:\/\/api\.vercel\.com\/v1\/integrations\/deploy\/prj_[A-Za-z0-9]+\/[A-Za-z0-9]+/,
+    confidence: "high",
+  },
+  {
+    // Render deploy-hook URL — `.../deploy/srv-<id>?key=<key>`; the `key` query param triggers a deployment.
+    kind: "render_deploy_hook_url",
+    re: /https:\/\/api\.render\.com\/deploy\/srv-[A-Za-z0-9]+\?key=[A-Za-z0-9_-]+/,
+    confidence: "high",
+  },
+  {
+    // Healthchecks.io ping URL — the UUID is the check's secret address; a leak lets anyone suppress its alerts.
+    kind: "healthchecks_ping_url",
+    re: /https:\/\/hc-ping\.com\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/,
+    confidence: "high",
+  },
+  {
+    // Pipedream workflow trigger — the subdomain of `.m.pipedream.net` is the endpoint's secret address. The
+    // negative lookahead stops the host matching a look-alike suffix domain (`.m.pipedream.net.evil.com`).
+    kind: "pipedream_webhook_url",
+    re: /https:\/\/[a-z0-9]+\.m\.pipedream\.net(?![a-z0-9.])/,
+    confidence: "high",
+  },
+  {
+    // Azure Logic App callback URL — the `sig=` query param is a SAS that authorizes triggering the workflow.
+    kind: "azure_logic_app_url",
+    re: /https:\/\/[a-z0-9.-]+\.logic\.azure\.com(?::443)?\/workflows\/[^\s"']*sig=/,
+    confidence: "high",
+  },
+  {
+    // Google Apps Script web-app URL — the `/macros/s/<deployment-id>/exec` id is a capability address for the
+    // deployed script (anyone with the URL can invoke it).
+    kind: "google_apps_script_url",
+    re: /https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]{30,}\/exec/,
+    confidence: "high",
+  },
+  {
     kind: "private_key",
     re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/,
     confidence: "high",

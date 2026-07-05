@@ -1573,3 +1573,42 @@ test("scanPatch does not flag near-misses of the webhook-URL and token formats",
     assert.equal(findings.length, 0, `near-miss should not match: ${nm}`);
   }
 });
+
+test("scanPatch flags deployment-trigger and webhook URLs that embed a secret", () => {
+  const uuid = [hex(8), hex(4), hex(4), hex(4), hex(12)].join("-");
+  const cases = [
+    ["netlify_build_hook_url", "https://api.netlify.com/build_hooks/" + hex(24)],
+    ["vercel_deploy_hook_url", "https://api.vercel.com/v1/integrations/deploy/prj_" + b62(12) + "/" + b62(24)],
+    ["render_deploy_hook_url", "https://api.render.com/deploy/srv-" + b62(20) + "?key=" + b62(20)],
+    ["healthchecks_ping_url", "https://hc-ping.com/" + uuid],
+    ["pipedream_webhook_url", "https://" + b62(12).toLowerCase() + ".m.pipedream.net"],
+    [
+      "azure_logic_app_url",
+      "https://prod-01.westus.logic.azure.com/workflows/" + hex(32) + "/triggers/manual/paths/invoke?sig=" + b62(24),
+    ],
+    ["google_apps_script_url", "https://script.google.com/macros/s/" + b62(40) + "/exec"],
+  ];
+  for (const [kind, secret] of cases) {
+    const findings = scanPatch("src/config.ts", hunk([`const c = "${secret}";`]));
+    assert.equal(findings.length, 1, `${kind}: expected exactly one finding, got ${JSON.stringify(findings)}`);
+    assert.equal(findings[0].kind, kind, `${kind}: wrong kind`);
+    assert.equal(findings[0].confidence, "high", `${kind}: wrong confidence`);
+  }
+});
+
+test("scanPatch does not flag near-misses of the deployment-hook URL formats", () => {
+  const nearMisses = [
+    // Vendor API/docs/dashboard URLs that carry no secret path segment — nothing to leak.
+    "https://api.netlify.com/api/v1/sites",
+    "https://vercel.com/docs/deploy-hooks",
+    "https://render.com/docs/deploy-hooks",
+    // A Render deploy URL WITHOUT the `key` query param is not the triggerable secret URL.
+    "https://api.render.com/deploy/srv-" + b62(20),
+    // A look-alike host is not the real Pipedream endpoint host.
+    "https://example.m.pipedream.net.evil.com/path",
+  ];
+  for (const nm of nearMisses) {
+    const findings = scanPatch("src/config.ts", hunk([`const c = "${nm}";`]));
+    assert.equal(findings.length, 0, `near-miss should not match: ${nm}`);
+  }
+});

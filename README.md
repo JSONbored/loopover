@@ -61,6 +61,8 @@ See [Tuning your reviews](https://gittensory.aethereal.dev/docs/tuning) for the 
 | Website           | [gittensory.aethereal.dev](https://gittensory.aethereal.dev/)                                                                      |
 | Docs              | [gittensory.aethereal.dev/docs](https://gittensory.aethereal.dev/docs)                                                             |
 | MCP package       | [@jsonbored/gittensory-mcp](https://www.npmjs.com/package/@jsonbored/gittensory-mcp)                                               |
+| Engine package    | [`@jsonbored/gittensory-engine`](packages/gittensory-engine/README.md) — shared deterministic logic for the review stack and miner |
+| Miner package     | [`@jsonbored/gittensory-miner`](packages/gittensory-miner/README.md) — local foundation CLI for the autonomous miner runtime        |
 | API               | [API browser](https://gittensory.aethereal.dev/api) and [OpenAPI JSON](https://gittensory-api.aethereal.dev/openapi.json)          |
 | GitHub App        | [Install](https://github.com/apps/gittensory/installations/new) and [setup docs](https://gittensory.aethereal.dev/docs/github-app) |
 | Browser extension | [Extension page](https://gittensory.aethereal.dev/extension)                                                                       |

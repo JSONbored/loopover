@@ -535,6 +535,7 @@ dashboard progress summaries:
 - `hasPlanPendingSteps(plan)` — any step is `pending`
 - `hasPlanRunningSteps(plan)` — any step is `running`
 - `hasPlanSkippedSteps(plan)` — any step is `skipped`
+- `hasPlanCompletedSteps(plan)` — any step is `completed`
 
 ## Opportunity competition
 

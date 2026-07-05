@@ -396,3 +396,50 @@ test("scanPatchForIacMisconfig does not flag the secure counterpart of each TLS-
     );
   }
 });
+
+test("scanPatchForIacMisconfig flags insecure Docker Compose / container-runtime settings", () => {
+  // In each case the matched VALUE is the insecure action itself, so there is no safe-value form of the line.
+  const cases = [
+    ["+    security_opt: [seccomp:unconfined]", "seccomp-unconfined-runtime"],
+    ["+      - apparmor:unconfined", "apparmor-unconfined"],
+    ["+    userns_mode: host", "userns-host"],
+    ["+    ipc: host", "ipc-host"],
+    ["+    cap_add: [ALL]", "cap-add-all"],
+    ["+      - no-new-privileges:false", "no-new-privileges-off"],
+    ["+      - /var/run/docker.sock:/var/run/docker.sock", "docker-socket-mount"],
+  ];
+  for (const [added, kind] of cases) {
+    const findings = scanPatchForIacMisconfig(
+      "docker-compose.yml",
+      ["@@ -1,0 +1,1 @@", added].join("\n"),
+    );
+    assert.deepEqual(
+      findings,
+      [{ file: "docker-compose.yml", line: 1, kind }],
+      `${kind}: expected exactly one finding of that kind, got ${JSON.stringify(findings)}`,
+    );
+  }
+});
+
+test("scanPatchForIacMisconfig does not flag the secure counterpart of each container-runtime setting", () => {
+  // The secure value uses a different token the regex never matches. `cap_drop: [ALL]` is the SAFE hardening
+  // (drop all caps) and must not fire the `cap_add: [ALL]` rule.
+  const safe = [
+    "+    security_opt: [seccomp:runtime-default]",
+    "+      - apparmor:docker-default",
+    "+    userns_mode: private",
+    "+    ipc: private",
+    "+    cap_drop: [ALL]",
+    "+      - no-new-privileges:true",
+    "+      - ./data:/app/data",
+    // Referencing the socket path (how the CLI addresses the daemon) is NOT a mount — must not be flagged.
+    "+    DOCKER_HOST: unix:///var/run/docker.sock",
+  ];
+  for (const added of safe) {
+    assert.deepEqual(
+      scanPatchForIacMisconfig("docker-compose.yml", ["@@ -1,0 +1,1 @@", added].join("\n")),
+      [],
+      `should not flag: ${added.trim()}`,
+    );
+  }
+});

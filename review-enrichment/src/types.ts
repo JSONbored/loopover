@@ -250,7 +250,14 @@ export interface IacMisconfigFinding {
     | "verify-ssl-off"
     | "validate-certs-off"
     | "tls-skip-verify"
-    | "trust-all-server-certs";
+    | "trust-all-server-certs"
+    | "seccomp-unconfined-runtime"
+    | "apparmor-unconfined"
+    | "userns-host"
+    | "ipc-host"
+    | "cap-add-all"
+    | "no-new-privileges-off"
+    | "docker-socket-mount";
 }
 
 /** A newly-added dependency whose install compiles native code (npm node-gyp addon) or has no prebuilt wheel

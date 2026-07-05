@@ -339,6 +339,20 @@ export function renderBrief(
           return "sets `tls_skip_verify`/`insecure_skip_verify: true`, so TLS certificate verification is skipped";
         case "trust-all-server-certs":
           return "sets `TrustServerCertificate=true`, so the client trusts any database server certificate";
+        case "seccomp-unconfined-runtime":
+          return "runs the container with `seccomp:unconfined`, disabling the syscall filter";
+        case "apparmor-unconfined":
+          return "runs the container with `apparmor:unconfined`, disabling the AppArmor profile";
+        case "userns-host":
+          return "sets `userns_mode: host`, disabling user-namespace remapping so container UID 0 is host root";
+        case "ipc-host":
+          return "sets `ipc: host`, sharing the host IPC namespace (host shared memory is reachable from the container)";
+        case "cap-add-all":
+          return "adds `ALL` Linux capabilities to the container (`cap_add: [ALL]`), which is close to privileged";
+        case "no-new-privileges-off":
+          return "disables the `no-new-privileges` protection, allowing setuid binaries to escalate privileges";
+        case "docker-socket-mount":
+          return "mounts the host Docker socket (`/var/run/docker.sock`) into the container — this grants host-level control";
       }
     };
 

@@ -120,6 +120,7 @@ export {
 } from "./governor-ledger.js";
 export * from "./plan-export.js";
 export { countPlanStepsByStatus } from "./plan-step-stats.js";
+export { isPlanFullyCompleted } from "./plan-completion.js";
 export * from "./plan-templates.js";
 export * from "./portfolio/queue.js";
 export {

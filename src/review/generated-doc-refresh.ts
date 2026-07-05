@@ -66,7 +66,15 @@ export function refreshGeneratedDoc(currentContent: string | null, generatedSect
   if ("error" in block) return { action: "manual-review-required", reason: block.error };
   const generatedStartIndex = generatedSection.indexOf(markers.start);
   if (generatedStartIndex === -1) return { action: "manual-review-required", reason: "generated section is missing the start marker" };
-  const replacementStart = Math.max(0, block.startIndex - generatedStartIndex);
+  // When the renderer declares a prefix (generatedStartIndex > 0, e.g. skill-file YAML frontmatter), the WHOLE
+  // file up to the marker is that prefix -- there is no other content to preserve ahead of it, by construction
+  // (a prefixed doc type is entirely machine-generated). Replacing from 0 in that case -- rather than walking
+  // back `generatedStartIndex` bytes from the marker's CURRENT position -- avoids assuming the current file's
+  // prefix is the SAME LENGTH as the freshly rendered one: that assumption breaks (landing mid-frontmatter,
+  // corrupting the file) the moment the prefix's rendered length changes, e.g. a repo rename shortening
+  // repoSkillName. A prefix-less doc type (generatedStartIndex === 0, e.g. AGENTS.md/CLAUDE.md) is unaffected --
+  // it keeps replacing from the marker's own position, preserving whatever real content precedes it.
+  const replacementStart = generatedStartIndex > 0 ? 0 : block.startIndex;
   const currentSection = currentContent.slice(replacementStart, block.endIndex);
   if (currentSection === generatedSection) return { action: "no-change" };
   const before = currentContent.slice(0, replacementStart);

@@ -24,7 +24,7 @@ import { closeIssue, closePullRequest, createIssueComment, createPullRequestRevi
 import { fetchPullRequestFreshness, pullRequestFreshnessDetail } from "../github/pr-freshness";
 import { isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { boundStructuredCloseReasonsForPersistence, buildAgentActionAudit, formatAgentPermissionDenial, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness, type AgentActionMode } from "../settings/agent-execution";
-import type { PlannedAgentAction } from "../settings/agent-actions";
+import { AGENT_LABEL_NEEDS_REVIEW, type PlannedAgentAction } from "../settings/agent-actions";
 import type { AgentActionClass, AgentPendingActionParams, AutonomyLevel, AutonomyPolicy } from "../types";
 import { errorMessage } from "../utils/json";
 import {
@@ -175,6 +175,12 @@ export type AgentActionExecutionContext = {
   // required-only view was already clean). Absent/undefined ⇒ fold-all mode, unchanged from before this field
   // existed.
   expectedCiContexts?: ReadonlyArray<string> | null | undefined;
+  // settings.manualReviewLabel (#3472 split-brain), resolved by the CALLER (same "the executor has no settings
+  // access" shape as expectedCiContexts above): the approve/merge live label guard (step 7b below) needs the
+  // SAME configured label name the planner itself resolves labels.manualReview from (agent-actions.ts), so a
+  // custom label name is honored instead of only ever checking the literal default. `null` explicitly disables
+  // the manual-review label (and this guard with it); absent/undefined uses the default AGENT_LABEL_NEEDS_REVIEW.
+  manualReviewLabel?: string | null | undefined;
 };
 
 export type ModerationContextSettings = {
@@ -215,7 +221,8 @@ function coupledCloseOutcome(planned: PlannedAgentAction[], outcomes: AgentActio
  * through the SAME deny-toward-safety gate stack:
  *   pause (#776 kill-switch) → current autonomy → dry_run → approval (auto_with_approval → #779 queue) →
  *   write-permission (#775, checked BEFORE any GitHub call so a known-denied write never spends freshness/live-CI
- *   API budget) → label/close correlation → freshness → live-CI re-verification → the real mutation.
+ *   API budget) → label/close correlation → freshness → manual-review hold (approve/merge only, #3472) →
+ *   live-CI re-verification → the real mutation.
  * Only `live` mode performs a real mutation; `dry_run` records what it WOULD do. Every path writes one
  * `agent.action.<class>` audit record (#776) EXCEPT a write-permission denial repeated within
  * PR_WRITE_DENIAL_COOLDOWN_MS of the last one for the same installation/repo/PR/action-class, which is counted but
@@ -331,6 +338,23 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       if (freshness.status !== "current") {
         await audit("denied", `${pullRequestFreshnessDetail(freshness)} — action not executed`);
         continue;
+      }
+      // 7b) Manual-review hold guard (#3472 split-brain): approve/merge is planned from a snapshot (the DB's
+      // cached pr.labels, or a plan staged earlier for approval) that can predate a SIBLING pass for this exact
+      // PR/head publishing a manual-review hold (label + assign) while THIS pass's own — possibly much slower —
+      // AI review or gate evaluation was still in flight. The per-PR actuation lock (#2129) only serializes each
+      // pass's plan-and-execute critical section; it does not make one pass aware of another's disposition, and
+      // the stored PR row can itself lag the live label write by a full webhook round-trip. Re-check the SAME
+      // live fetch that just proved this head is current (no extra GitHub call) for the configured manual-review
+      // label: if present, a hold is standing for this exact head and must not be silently overridden by a
+      // merit verdict computed before that hold existed. Only a maintainer removing the label, or a new commit
+      // (which the freshness check above already denies as stale), lifts it.
+      if (action.actionClass === "approve" || action.actionClass === "merge") {
+        const manualReviewLabel = ctx.manualReviewLabel === null ? null : (ctx.manualReviewLabel ?? AGENT_LABEL_NEEDS_REVIEW);
+        if (manualReviewLabel !== null && freshness.liveLabels.some((label) => label.toLowerCase() === manualReviewLabel.toLowerCase())) {
+          await audit("denied", `manual-review label "${manualReviewLabel}" is present on the live PR — ${action.actionClass} not executed`);
+          continue;
+        }
       }
     }
     // 8) Live CI re-verification for a merge or a CI-driven heuristic close (#2128): the CI aggregate that drove

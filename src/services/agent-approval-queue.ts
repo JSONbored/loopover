@@ -356,6 +356,10 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       // executeAgentMaintenanceActions) needs the same configured expectedCiContexts this accept-time
       // re-check (above) and the original plan were both evaluated against.
       expectedCiContexts: settings.expectedCiContexts,
+      // #3472 split-brain: a staged approve/merge can sit queued long enough for a SIBLING pass to publish a
+      // manual-review hold on this same PR/head before the maintainer accepts — the executor's own live guard
+      // (step 7b of executeAgentMaintenanceActions) needs the configured label to check for.
+      manualReviewLabel: settings.manualReviewLabel,
     },
     plan,
   );

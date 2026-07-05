@@ -345,6 +345,28 @@ test("computePhase7CalibrationLoop fails closed when the replay harness is degra
   }
 });
 
+test("REGRESSION: malformed historical replay scores fail closed instead of permitting autonomy increases", () => {
+  for (const compositeScore of [{} as never, Number.NaN, Number.POSITIVE_INFINITY] as const) {
+    const result = computePhase7CalibrationLoop({
+      config: enabledConfig({ autonomyIncreaseMinAccuracy: 0.99 }),
+      prOutcome: sufficientPrOutcome(1),
+      historicalReplay: {
+        ...healthyReplay(0.82),
+        compositeScore,
+      },
+      now: NOW,
+    });
+
+    assert.equal(result.bySource.historical_replay.accuracy, null);
+    assert.equal(result.combinedAccuracy, 1);
+    assert.equal(result.replayHarnessHold, true);
+    assert.equal(result.autonomyIncreasePermitted, false);
+    assert.ok(result.holdReasons.includes("invalid_replay_score"));
+    assert.ok(!result.audit.contributingSources.includes("historical_replay"));
+    assert.ok(result.audit.rejectedSources.some((row) => row.reason === "invalid_replay_score"));
+  }
+});
+
 test("computePhase7CalibrationLoop fails closed on stale replay rather than silently using pr_outcome only", () => {
   const result = computePhase7CalibrationLoop({
     config: enabledConfig(),

@@ -331,9 +331,11 @@ export function shouldScheduleHistoricalReplayRun(input: {
 
 function extractHistoricalReplayScore(
   compositeScore: number | GateVerdictCompositeCalibrationScore,
-): number {
-  if (typeof compositeScore === "number") return roundScore(compositeScore);
-  return roundScore(compositeScore.compositeScore);
+): number | null {
+  const rawScore =
+    typeof compositeScore === "number" ? compositeScore : compositeScore.compositeScore;
+  if (!Number.isFinite(rawScore)) return null;
+  return roundScore(rawScore);
 }
 
 /**
@@ -423,6 +425,10 @@ export function computePhase7CalibrationLoop(input: {
       replayHarnessHold = true;
       holdReasons.push("replay_run_stale");
       rejectedSources.push({ source: "historical_replay", reason: "replay_run_stale" });
+    } else if (accuracy === null) {
+      replayHarnessHold = true;
+      holdReasons.push("invalid_replay_score");
+      rejectedSources.push({ source: "historical_replay", reason: "invalid_replay_score" });
     } else {
       contributingSources.push("historical_replay");
     }

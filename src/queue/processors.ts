@@ -5633,6 +5633,7 @@ async function processGitHubWebhook(
       if (payload.action === "opened" && installationId && issue.authorLogin) {
         const repoOwner = payload.repository.full_name.includes("/")
           ? payload.repository.full_name.slice(0, payload.repository.full_name.indexOf("/"))
+          /* v8 ignore next -- defensive: GitHub webhooks always use owner/repo form; empty repoOwner means authorIsOwner is always false */
           : "";
         const authorLogin = issue.authorLogin;
         const authorIsOwner = authorLogin.toLowerCase() === repoOwner.toLowerCase();

@@ -76,10 +76,10 @@ LITESTREAM_REGION=us-east-1`}
         rather than leaving you with nothing).
       </p>
       <Callout variant="warn" title="A failed SQLite backup never prunes">
-        If the SQLite online backup fails verification (a non-empty file whose{" "}
-        <code>PRAGMA integrity_check</code> doesn't come back <code>ok</code>), the script deletes
-        the bad output, logs the failure, and — critically —{" "}
-        <strong>skips the retention prune for the sqlite target on that run</strong>, so a broken
+        If the SQLite online backup fails verification — the <code>.backup</code> command itself
+        fails, the output file is empty, or its <code>PRAGMA integrity_check</code> doesn't come
+        back <code>ok</code> — the script deletes the bad output, logs the failure, and — critically
+        — <strong>skips the retention prune for the sqlite target on that run</strong>, so a broken
         backup can never push a known-good one out of the retained window. Postgres and Qdrant
         retention still run normally on that same pass, since only the SQLite leg failed. The run
         still exits non-zero so the failure is loud.

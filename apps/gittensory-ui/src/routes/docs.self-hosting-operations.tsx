@@ -345,7 +345,7 @@ docker compose --profile postgres --profile observability --profile backup up -d
           {
             title: "review_audit (fixed overhead per PR, unbounded)",
             description:
-              "One row per finalized gate decision plus one per realized merge/close outcome — a few small text columns each, so bytes per row are trivial (well under 1KB). It has no retention policy in src/db/retention.ts, so it grows forever. At real-world row sizes this stays in the tens of MB per thousand PRs reviewed; it will not be what fills your disk, but it is the cleanest per-PR-volume number to extrapolate from if you want one.",
+              "Roughly 2 rows per PR — one finalized gate decision plus one realized merge/close outcome — each a few small text columns (well under 1KB/row). It has no retention policy in src/db/retention.ts, so it grows forever. Don't trust a blanket MB-per-thousand-PRs estimate here; measure your own instance's actual growth with pg_total_relation_size('review_audit') (or the equivalent SQLite page count) after a known number of PRs, then extrapolate from that.",
           },
           {
             title: "webhook_events (fixed overhead per delivery, unbounded)",

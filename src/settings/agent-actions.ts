@@ -1,7 +1,7 @@
 import type { AgentActionClass, AutoMaintainPolicy, AutoMergeMethod, AutonomyPolicy } from "../types";
 import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckConclusion } from "../rules/advisory";
 import { DEFAULT_AUTO_MAINTAIN_POLICY, autonomyRequiresApproval, isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
-import { isGuardrailHit } from "../signals/change-guardrail";
+import { changedPathsHittingGuardrail, isGuardrailHit } from "../signals/change-guardrail";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../review/linked-issue-hard-rules";
 import { sanitizePublicComment } from "../github/commands";
 
@@ -357,6 +357,13 @@ function resolveAgentDispositionLabels(settings: AgentDispositionLabelSettings):
   };
 }
 
+function guardrailHoldReason(changedPaths: string[], hardGuardrailGlobs: string[]): string {
+  const matches = changedPathsHittingGuardrail(changedPaths, hardGuardrailGlobs);
+  if (matches.length === 0) return "guarded path -> manual review (changed-file list unavailable)";
+  const visible = matches.slice(0, 3).map((path) => `\`${path}\``).join(", ");
+  return `guarded path -> manual review (${visible}${matches.length > 3 ? `, and ${matches.length - 3} more` : ""})`;
+}
+
 /**
  * Accuracy circuit-breaker (#self-improve / GAP-4): when auto-merge is DISABLED for a repo (the auto-tuner
  * engaged the holdonly flag after merge precision dropped, or a human set it), DOWNGRADE a would-MERGE into a
@@ -620,6 +627,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // never auto-merge, auto-approve, or auto-close a PR whose diff we don't know. Repos with no guardrails
   // configured stay permissive.
   const guardrailHit = isGuardrailHit(input.changedPaths, input.hardGuardrailGlobs);
+  const guardrailReason = guardrailHit ? guardrailHoldReason(input.changedPaths, input.hardGuardrailGlobs) : null;
   // Manual review is the RARE exception (the operator's minimize-manual goal): the ONLY things that hold a PR
   // for a human instead of merge/close are an auto-merge-ready PR that touches a hard-guardrail path, or a
   // live migration-number collision detected against the CURRENT tip of the base branch (#2550 — a sibling PR
@@ -702,7 +710,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       actionClass: "label",
       autonomyClass: "merge",
       requiresApproval: false,
-      reason: `verdict=${conclusion}; guarded path → manual review`,
+      reason: `verdict=${conclusion}; ${guardrailReason ?? "guarded path -> manual review"}`,
       label: labels.manualReview,
       labelOp: "add",
     });
@@ -727,7 +735,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
         : input.migrationCollisionHold !== undefined
           ? `verdict=${conclusion}; ${input.migrationCollisionHold.reason}`
           : heldForManualReview
-            ? `verdict=${conclusion}; guarded path → manual review`
+            ? `verdict=${conclusion}; ${guardrailReason ?? "guarded path -> manual review"}`
             : `verdict=${conclusion}; CI green`;
     if (label !== null && !hasLabelOrPlanned(input.pr.labels, actions, label)) {
       actions.push({
@@ -913,7 +921,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // review-good-but-not-yet-mergeable → held briefly (rebase/approve resolves it next pass).
   const manualHoldReason =
     guardrailHit
-      ? `verdict=${conclusion}; guarded path → manual review`
+      ? `verdict=${conclusion}; ${guardrailReason ?? "guarded path -> manual review"}`
       : ciUnverified
         ? "CI could not be verified"
         : conclusion === "action_required"

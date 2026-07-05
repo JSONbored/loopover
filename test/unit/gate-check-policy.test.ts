@@ -601,7 +601,7 @@ describe("focus-manifest policy gate (#555)", () => {
   // Path-based manual review lives in settings.hardGuardrailGlobs, not manifest policy.
   const POLICY_FINDINGS = {
     manifest_linked_issue_required: { code: "manifest_linked_issue_required", title: "Maintainer requires a linked issue", severity: "warning" as const, detail: "Manifest requires a linked issue.", action: "Link the issue." },
-    manifest_missing_tests: { code: "manifest_missing_tests", title: "Maintainer test expectations unmet", severity: "warning" as const, detail: "Manifest expects test evidence.", action: "Add tests." },
+    manifest_missing_tests: { code: "manifest_missing_tests", title: "Configured validation evidence missing", severity: "warning" as const, detail: "No changed test files or passing validation evidence were detected.", action: "Add regression/invariant coverage, update relevant tests, or attach passing validation output." },
   };
 
   function manifestAdvisory(code: keyof typeof POLICY_FINDINGS): Advisory {

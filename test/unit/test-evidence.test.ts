@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyTestCoverage, hasLocalTestEvidence, isTestPath } from "../../src/signals/test-evidence";
+import { classifyTestCoverage, hasLocalTestEvidence, hasValidationNote, isTestPath } from "../../src/signals/test-evidence";
 
 describe("test evidence helpers", () => {
   it("detects common test path conventions", () => {
@@ -75,6 +75,12 @@ describe("test evidence helpers", () => {
     expect(hasLocalTestEvidence({ testFiles: ["internal/cache_test.go"] })).toBe(true);
     expect(hasLocalTestEvidence({ tests: [] })).toBe(false);
     expect(hasLocalTestEvidence({})).toBe(false);
+  });
+
+  it("detects PR-body validation notes used by review and manifest-policy gates", () => {
+    expect(hasValidationNote("Validated with npm run test:ci and a smoke run.")).toBe(true);
+    expect(hasValidationNote("Manual check passed for the dashboard.")).toBe(true);
+    expect(hasValidationNote("Refactors the route naming only.")).toBe(false);
   });
 });
 

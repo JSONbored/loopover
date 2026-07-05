@@ -182,7 +182,7 @@ import {
   buildPullRequestAdvisory,
   evaluateGateCheck,
 } from "../rules/advisory";
-import { isTestPath } from "../signals/test-evidence";
+import { hasValidationNote, isTestPath } from "../signals/test-evidence";
 import { detectNotificationEvents } from "../notifications/events";
 import {
   deliverNotification,
@@ -832,13 +832,14 @@ export async function runRetentionPrune(
 const PUBLIC_MANIFEST_POLICY_FINDING_OVERRIDES: Partial<
   Record<
     FocusManifestFinding["code"],
-    Pick<AdvisoryFinding, "detail" | "action">
+    Pick<AdvisoryFinding, "title" | "detail" | "action">
   >
 > = {
   manifest_missing_tests: {
-    detail: "Maintainer test expectations are not satisfied by this PR.",
+    title: "Configured validation evidence missing",
+    detail: "No changed test files or passing validation evidence were detected for this PR.",
     action:
-      "Add or update tests, or attach passing validation output that satisfies the maintainer's test expectations.",
+      "Add regression/invariant coverage, update relevant tests, or attach passing validation output that satisfies the repo's configured expectations.",
   },
 };
 
@@ -852,7 +853,7 @@ export function publicSafeManifestPolicyFinding(
     detail: finding.detail,
     /* v8 ignore next -- the three manifest policy findings always carry an action; the no-action arm is unreachable. */
     ...(finding.action !== undefined ? { action: finding.action } : {}),
-    // Override the leaky detail/action with a static, public-safe version for the codes whose raw text would echo
+    // Override the leaky title/detail/action with static, public-safe text for codes whose raw text would echo
     // private blocked-path globs / test expectations; codes absent from the table keep their already-generic text.
     ...PUBLIC_MANIFEST_POLICY_FINDING_OVERRIDES[finding.code],
   };
@@ -7610,7 +7611,7 @@ async function maybePublishPrPublicSurface(
         linkedIssueCount: pr.linkedIssues.length,
         testFileCount: manifestFiles.filter((file) => isTestPath(file.path))
           .length,
-        passedValidationCount: 0,
+        passedValidationCount: hasValidationNote(pr.body ?? "") ? 1 : 0,
       });
       const policyCodes = new Set([
         "manifest_blocked_path",

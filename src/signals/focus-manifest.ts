@@ -2132,14 +2132,16 @@ export function buildFocusManifestGuidance(args: {
   }
 
   if (manifest.testExpectations.length > 0 && testFileCount === 0 && passedValidationCount === 0) {
+    const safeExpectations = manifest.testExpectations.filter(isFocusManifestPublicSafe).slice(0, 3);
+    const expectationDetail = safeExpectations.length > 0 ? ` Expected evidence: ${safeExpectations.join("; ")}.` : "";
     findings.push({
       code: "manifest_missing_tests",
       severity: "warning",
-      title: "Maintainer test expectations unmet",
-      detail: `Maintainer expects test evidence: ${manifest.testExpectations.slice(0, 3).join("; ")}.`,
-      action: "Add or update tests, or attach passing validation output that satisfies the maintainer's test expectations.",
+      title: "Configured validation evidence missing",
+      detail: `No changed test files or passing validation evidence were detected for this PR.${expectationDetail}`,
+      action: "Add regression/invariant coverage, update relevant tests, or attach passing validation output that satisfies the repo's configured expectations.",
     });
-    publicNextSteps.push("Add tests or attach passing validation that meets the maintainer's test expectations.");
+    publicNextSteps.push("Add relevant tests or passing validation evidence that matches the repo's configured expectations.");
   }
 
   if (manifest.issueDiscoveryPolicy === "discouraged") {

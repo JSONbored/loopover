@@ -6266,6 +6266,92 @@ describe("queue processors", () => {
     });
   });
 
+  it("accepts PR-body validation evidence for configured manifest test expectations", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertInstallation(env, {
+      installation: {
+        id: 123,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+        events: ["pull_request"],
+      },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+      manifestPolicyGateMode: "block",
+      requireLinkedIssue: false,
+      typeLabelsEnabled: false,
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { testExpectations: ["Run npm run test:ci."] });
+    await upsertPullRequestFile(env, {
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 43,
+      path: "src/feature.ts",
+      status: "modified",
+      additions: 1,
+      deletions: 0,
+      changes: 1,
+      payload: {},
+    });
+
+    const gatePatches: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/gate-validation/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 901 }, { status: 201 });
+      if (url.includes("/check-runs/901") && method === "PATCH") {
+        gatePatches.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+        return Response.json({ id: 901, html_url: "https://github.com/checks/901" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-validation-evidence",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: {
+          number: 43,
+          title: "Validated change",
+          state: "open",
+          user: { login: "contributor" },
+          head: { sha: "gate-validation" },
+          labels: [],
+          body: "Validated with npm run test:ci.",
+        },
+      },
+    });
+
+    expect(gatePatches).toHaveLength(1);
+    expect(gatePatches[0]).toMatchObject({ status: "completed", conclusion: "success" });
+    expect(JSON.stringify(gatePatches[0])).not.toContain("Configured validation evidence missing");
+    expect(JSON.stringify(gatePatches[0])).not.toContain("manifest_missing_tests");
+  });
+
   it("stamps a gate-only surface even when local Gate check-summary persistence fails", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(

@@ -20,6 +20,10 @@ export function hasLocalTestEvidence(input: { tests?: string[] | undefined; test
   return (input.tests ?? []).length > 0 || (input.testFiles ?? []).some((file) => isTestPath(file));
 }
 
+export function hasValidationNote(value: string): boolean {
+  return /\b(test(?:ed|s|ing)?|validation|validated|verified|manual check|smoke|pytest|vitest|npm test|pnpm test|cargo test|go test)\b/i.test(value);
+}
+
 /**
  * Coarse classification of how much test coverage accompanies a set of changed paths.
  * Used by slop signals to weight diffs that touch source but include no tests differently

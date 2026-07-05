@@ -14,9 +14,11 @@ describe("publicSafeManifestPolicyFinding", () => {
       action: "Add or update tests for the private fuzz suite.",
     };
     const safe = publicSafeManifestPolicyFinding(finding);
+    expect(safe.title).toBe("Configured validation evidence missing");
     expect(safe.detail).not.toContain("private fuzz suite");
     expect(safe.action).not.toContain("private fuzz suite");
-    expect(safe.detail).toBe("Maintainer test expectations are not satisfied by this PR.");
+    expect(safe.detail).toBe("No changed test files or passing validation evidence were detected for this PR.");
+    expect(safe.action).toBe("Add regression/invariant coverage, update relevant tests, or attach passing validation output that satisfies the repo's configured expectations.");
   });
 
   it("passes through a finding whose detail is already generic (no override)", () => {

@@ -26,7 +26,7 @@ import type { GittensorContributorSnapshot } from "../gittensor/api";
 import { nowIso } from "../utils/json";
 import { sanitizePublicComment } from "../queue-intelligence";
 import { labelMatchesPattern, projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview";
-import { hasLocalTestEvidence, isTestPath } from "./test-evidence";
+import { hasLocalTestEvidence, hasValidationNote, isTestPath } from "./test-evidence";
 import { isFailingCheckSummary } from "./local-branch";
 import { isDuplicateClusterWinnerByClaim } from "./duplicate-winner";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
@@ -5010,10 +5010,6 @@ export function hasClearNoIssueRationale(pr: Pick<PullRequestRecord, "title" | "
   // `ci[\s-]+only` covers CI/workflow-only PRs using the same Conventional Commits spelling.
   // `refactor[\s-]+only` covers internal refactors with no behavior change using the same spelling.
   return /\b(?:no issue\s*(?:because\b|:)|no linked issue\s*(?:because\b|:)|no ticket\s*(?:because\b|:)|(?:maintenance|docs?[\s-]+only|tests?[\s-]+only|ci[\s-]+only|refactor[\s-]+only|typo|chore|cleanup)\b)/i.test([pr.title, pr.body ?? ""].join(" "));
-}
-
-function hasValidationNote(value: string): boolean {
-  return /\b(test(?:ed|s|ing)?|validation|validated|verified|manual check|smoke|pytest|vitest|npm test|pnpm test|cargo test|go test)\b/i.test(value);
 }
 
 function gateStatus(gateEnabled: boolean, conclusion: PublicPrPanelGateEvaluation["conclusion"]): string {

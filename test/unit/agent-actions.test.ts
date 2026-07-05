@@ -387,7 +387,20 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(label?.label).toBe(AGENT_LABEL_NEEDS_REVIEW);
       expect(label?.label).not.toBe(AGENT_LABEL_READY);
       expect(label?.reason).toContain("guarded path");
+      expect(label?.reason).toContain("src/scoring/model.ts");
       expect(classes(plan)).not.toContain("merge");
+    });
+
+    it("explains when guardrail hold is fail-closed because changed files are unavailable", () => {
+      const label = planAgentMaintenanceActions(input({
+        conclusion: "success",
+        autonomy: { merge: "auto" },
+        changedPaths: [],
+        hardGuardrailGlobs: ["src/scoring/**"],
+        pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" },
+      })).find((a) => a.actionClass === "label");
+      expect(label?.label).toBe(AGENT_LABEL_NEEDS_REVIEW);
+      expect(label?.reason).toContain("changed-file list unavailable");
     });
 
     it("does not re-plan the manual-review label when the guarded PR already carries it (idempotent)", () => {

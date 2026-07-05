@@ -339,7 +339,13 @@ describe("buildFocusManifestGuidance", () => {
   it("surfaces missing preferred labels and test expectations", () => {
     const guidance = buildFocusManifestGuidance({ manifest: wanted, changedPaths: ["src/x.ts"], labels: [], linkedIssueCount: 1, testFileCount: 0, passedValidationCount: 0 });
     expect(guidance.findings.some((finding) => finding.code === "manifest_missing_preferred_label")).toBe(true);
-    expect(guidance.findings.some((finding) => finding.code === "manifest_missing_tests")).toBe(true);
+    const missingTests = guidance.findings.find((finding) => finding.code === "manifest_missing_tests");
+    expect(missingTests).toMatchObject({
+      title: "Configured validation evidence missing",
+      detail: expect.stringContaining("No changed test files or passing validation evidence were detected"),
+      action: "Add regression/invariant coverage, update relevant tests, or attach passing validation output that satisfies the repo's configured expectations.",
+    });
+    expect(missingTests?.detail).toContain("unit tests for new branches.");
   });
 
   it("treats passing validation as satisfying test expectations", () => {

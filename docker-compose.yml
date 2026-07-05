@@ -15,6 +15,7 @@
 #   --profile pgbouncer     PgBouncer connection pooler in front of Postgres
 #   --profile qdrant        Qdrant vector database for RAG
 #   --profile ollama        Local Ollama AI backend
+#   --profile visual-review Headless Chromium (browserless) for before/after PR screenshot capture
 #   --profile litestream    Continuous SQLite backup to S3/B2/R2 via Litestream
 #   --profile caddy         Caddy HTTPS terminator with auto-TLS (set DOMAIN= in .env)
 #   --profile observability Prometheus + Alertmanager + Loki + Promtail + Grafana (pre-wired)
@@ -137,6 +138,13 @@ services:
         condition: service_healthy
         required: false
       pgbouncer:
+        condition: service_healthy
+        required: false
+      # Unlike postgres/qdrant above, this is NOT a crash-loop risk if lost: visual capture is used
+      # per-PR-event, long after boot, not at startup, and every capture call is already fail-safe
+      # (a network error just degrades to a placeholder, never a thrown error). This dependency exists
+      # purely so `docker compose --profile visual-review up` starts services in a sensible order.
+      browserless:
         condition: service_healthy
         required: false
     # Sane defaults so a runaway optional service (below) can't OOM-kill or starve the core review pipeline;
@@ -322,6 +330,51 @@ services:
       resources:
         limits:
           memory: "${OLLAMA_MEM_LIMIT:-8g}"
+
+  # ── Browserless / visual review (--profile visual-review) ──────────────────
+  # Headless Chromium for automated before/after PR screenshot capture (src/review/visual/**).
+  # Set BOTH of these in .env (browserless always requires a token; there is no way around setting
+  # it in two places — the server reads TOKEN below, the app embeds the same value in the client URL):
+  #   BROWSERLESS_TOKEN=<a-strong-random-value>
+  #   BROWSER_WS_ENDPOINT=ws://browserless:3000?token=<the-same-value>
+  # Then rebuild the app image with --build-arg INSTALL_VISUAL_REVIEW=true (installs puppeteer-core;
+  # see Dockerfile) and set GITTENSORY_REVIEW_SCREENSHOTS=true. Unset/default = fully inert, no
+  # container, no screenshots, no error — this whole feature is opt-in end to end.
+  browserless:
+    image: ghcr.io/browserless/chromium:latest
+    restart: unless-stopped
+    <<: *default-logging
+    profiles: ["visual-review"]
+    environment:
+      # Deliberately a SOFT default (":-", not ":?") -- docker compose interpolates every service's env
+      # vars for the WHOLE FILE even when a service's profile isn't active, so a hard-required var here
+      # would break `docker compose up` for every self-hoster NOT using visual review. If left unset,
+      # browserless auto-generates its own random token per boot (see its startup log) that will never
+      # match whatever you hardcoded into BROWSER_WS_ENDPOINT below -- captures then just fail closed
+      # (graceful placeholder, not a crash) instead of authenticating. Set BROWSERLESS_TOKEN explicitly.
+      TOKEN: ${BROWSERLESS_TOKEN:-}
+      # Self-host reviews PRs one at a time in practice; keep this low so a stray retry storm can't
+      # spin up a dozen Chromium tabs. Raise via env if you genuinely need more parallel captures.
+      CONCURRENT: "${BROWSERLESS_CONCURRENT:-2}"
+      QUEUED: "${BROWSERLESS_QUEUED:-4}"
+      TIMEOUT: "${BROWSERLESS_TIMEOUT_MS:-30000}"
+    # Never published to the host — reached only over the internal docker network at ws://browserless:3000,
+    # same in-network-only posture as postgres/redis/qdrant.
+    expose:
+      - "3000"
+    # Chrome needs real shared memory or it crashes under load writing to /tmp instead of /dev/shm.
+    # Docker's 64 MiB default is far too small for this; 2g matches browserless's own documented minimum.
+    shm_size: "2g"
+    deploy:
+      resources:
+        limits:
+          memory: "${BROWSERLESS_MEM_LIMIT:-2g}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/docs"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
 
   # ── Litestream (--profile litestream) ─────────────────────────────────────
   # Continuous WAL backup of the SQLite DB to S3/B2/R2. Copy litestream.yml.example

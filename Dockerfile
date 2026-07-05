@@ -52,7 +52,8 @@ RUN mkdir -p /home/node/.npm-global /home/node/.npm \
 USER node
 RUN if [ "$INSTALL_AI_CLIS" = "true" ]; then npm install -g --foreground-scripts @anthropic-ai/claude-code@2.1.187 @openai/codex@0.142.0 && npm cache clean --force; fi
 USER root
-# Optional: enable visual review via an external Chrome sidecar (e.g. `browserless/chrome:latest`).
+# Optional: enable visual review via an external Chrome sidecar (docker-compose --profile visual-review
+# bundles `ghcr.io/browserless/chromium:latest`, or point at your own browserless-compatible instance).
 # Build with `--build-arg INSTALL_VISUAL_REVIEW=true` then set BROWSER_WS_ENDPOINT=<ws-url> at runtime.
 ARG INSTALL_VISUAL_REVIEW=false
 COPY package*.json ./

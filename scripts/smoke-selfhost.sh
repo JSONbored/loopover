@@ -15,6 +15,12 @@
 #
 # Assert an event must NOT appear (e.g. no AI-CLI-missing warning, no failed relay registration):
 #   SELFHOST_SMOKE_FORBID_EVENTS="selfhost_ai_cli_missing" ./scripts/smoke-selfhost.sh gittensory:selfhost-ci
+#
+# Visual review (#3608): also boots a browserless/chromium sidecar, wires BROWSER_WS_ENDPOINT +
+# PUBLIC_SITE_ORIGIN automatically, and asserts the on-demand /gittensory/shot?url= route returns a real
+# PNG -- proving captureShot() actually renders through the self-host stub end to end, not just that the
+# app boots. The IMAGE under test must have been built with --build-arg INSTALL_VISUAL_REVIEW=true.
+#   SELFHOST_SMOKE_VISUAL_REVIEW=1 ./scripts/smoke-selfhost.sh gittensory:selfhost-ci-visual
 set -euo pipefail
 
 IMAGE="${1:?usage: smoke-selfhost.sh <image>}"
@@ -32,6 +38,8 @@ REDIS_NAME="${SELFHOST_SMOKE_REDIS_NAME:-gt-smoke-redis-$$}"
 APP_NAME="${SELFHOST_SMOKE_APP_NAME:-gt-smoke-app-$$}"
 PORT="${SELFHOST_SMOKE_PORT:-8787}"
 HEALTH_TIMEOUT_SECONDS="${SELFHOST_SMOKE_HEALTH_TIMEOUT_SECONDS:-90}"
+VISUAL_REVIEW="${SELFHOST_SMOKE_VISUAL_REVIEW:-0}"
+BROWSERLESS_NAME="${SELFHOST_SMOKE_BROWSERLESS_NAME:-gt-smoke-browserless-$$}"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -51,7 +59,7 @@ else
 fi
 
 cleanup() {
-  docker rm -f "$APP_NAME" "$REDIS_NAME" >/dev/null 2>&1 || true
+  docker rm -f "$APP_NAME" "$REDIS_NAME" "$BROWSERLESS_NAME" >/dev/null 2>&1 || true
   if [ "$NETWORK_OWNED" = "1" ]; then
     docker network rm "$NETWORK_NAME" >/dev/null 2>&1 || true
   fi
@@ -77,6 +85,46 @@ if [ "$redis_ok" != "1" ]; then
   echo "::error::$REDIS_NAME never responded to PING" >&2
   docker logs "$REDIS_NAME" >&2 || true
   exit 1
+fi
+
+VISUAL_EXTRA_ENV_ARGS=()
+if [ "$VISUAL_REVIEW" = "1" ]; then
+  echo "smoke-selfhost: booting browserless/chromium for visual-review mode"
+  BROWSERLESS_TOKEN_SMOKE="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+  docker run -d --name "$BROWSERLESS_NAME" --network "$NETWORK_NAME" --shm-size 2g \
+    -e "TOKEN=${BROWSERLESS_TOKEN_SMOKE}" \
+    ghcr.io/browserless/chromium:latest >/dev/null
+  browserless_ok=0
+  for _ in $(seq 1 30); do
+    if docker exec "$BROWSERLESS_NAME" curl -sf "http://127.0.0.1:3000/docs" >/dev/null 2>&1; then
+      browserless_ok=1
+      break
+    fi
+    sleep 2
+  done
+  if [ "$browserless_ok" != "1" ]; then
+    echo "::error::$BROWSERLESS_NAME never became ready" >&2
+    docker logs "$BROWSERLESS_NAME" >&2 || true
+    exit 1
+  fi
+  # GITTENSORY_REVIEW_SCREENSHOTS must be on: the /gittensory/shot route itself 404s when it's off
+  # (deliberately "truly inert" by design, src/api/routes.ts), independent of BROWSER_WS_ENDPOINT.
+  #
+  # SMOKE_SHOT_TARGET must be a REAL, publicly resolvable URL, unlike this script's other *.example
+  # placeholder values -- those are only ever used as opaque header/origin STRINGS, never fetched. This
+  # one IS fetched: the browser inside the browserless container actually navigates to it, so a fake
+  # .example domain would fail DNS resolution and captureShot() would correctly (but uselessly, for this
+  # test) degrade to null -- silently turning the assertion below into a no-op rather than a real proof.
+  # Defaults to example.com (IANA-reserved for exactly this kind of testing, stable, minimal). isSafeHttpUrl
+  # (SSRF guard) also means this can't be pointed at a docker-internal hostname -- it must stay a real
+  # public host, matching how production actually uses this endpoint (real preview-deploy URLs, never
+  # internal addresses). Placed BEFORE the caller's own EXTRA_ENV_ARGS so an explicit override still wins.
+  SMOKE_SHOT_TARGET="${SELFHOST_SMOKE_VISUAL_TARGET_URL:-https://example.com}"
+  VISUAL_EXTRA_ENV_ARGS=(
+    -e "GITTENSORY_REVIEW_SCREENSHOTS=true"
+    -e "BROWSER_WS_ENDPOINT=ws://${BROWSERLESS_NAME}:3000?token=${BROWSERLESS_TOKEN_SMOKE}"
+    -e "PUBLIC_SITE_ORIGIN=${SMOKE_SHOT_TARGET}"
+  )
 fi
 
 # Extra env, one KEY=VALUE per line -- turned into repeated -e flags. Deliberately whitespace/newline
@@ -106,6 +154,7 @@ docker run -d --name "$APP_NAME" --network "$NETWORK_NAME" -p "127.0.0.1:${PORT}
   -e "REDIS_URL=redis://${REDIS_NAME}:6379" \
   -e "SELFHOST_SETUP_TOKEN=${SETUP_TOKEN}" \
   -e "PUBLIC_API_ORIGIN=${SELFHOST_SMOKE_PUBLIC_API_ORIGIN:-https://selfhost-smoke.example}" \
+  "${VISUAL_EXTRA_ENV_ARGS[@]}" \
   "${EXTRA_ENV_ARGS[@]}" \
   "${EXTRA_VOLUME_ARGS[@]}" \
   "$IMAGE" >/dev/null
@@ -129,6 +178,29 @@ echo "smoke-selfhost: checking /health, /ready, /metrics"
 curl -sf "http://127.0.0.1:${PORT}/health" | grep -q '"status":"ok"'
 curl -sf "http://127.0.0.1:${PORT}/ready" | grep -q '"ok":true'
 curl -sf "http://127.0.0.1:${PORT}/metrics" | grep -q 'gittensory_uptime_seconds'
+
+if [ "$VISUAL_REVIEW" = "1" ]; then
+  echo "smoke-selfhost: checking /gittensory/shot renders a real PNG through the self-host browser stub"
+  SHOT_URL="http://127.0.0.1:${PORT}/gittensory/shot?url=$(printf '%s' "$SMOKE_SHOT_TARGET" | tr -d '\n')"
+  SHOT_HEADERS="$(curl -sf -D - -o /tmp/gt-smoke-shot.png "$SHOT_URL")"
+  echo "$SHOT_HEADERS" | grep -qi '^content-type: image/png' || {
+    echo "::error::/gittensory/shot did not return image/png" >&2
+    echo "$SHOT_HEADERS" >&2
+    docker logs "$APP_NAME" >&2 || true
+    docker logs "$BROWSERLESS_NAME" >&2 || true
+    exit 1
+  }
+  SHOT_BYTES="$(wc -c </tmp/gt-smoke-shot.png | tr -d ' ')"
+  # A real rendered page is comfortably more than a placeholder/error graphic would be; catches a "PNG
+  # content-type but empty/near-empty body" false pass.
+  if [ "$SHOT_BYTES" -lt 1024 ]; then
+    echo "::error::/gittensory/shot returned a suspiciously small PNG (${SHOT_BYTES} bytes)" >&2
+    docker logs "$APP_NAME" >&2 || true
+    exit 1
+  fi
+  echo "smoke-selfhost: /gittensory/shot returned a real PNG (${SHOT_BYTES} bytes)"
+  rm -f /tmp/gt-smoke-shot.png
+fi
 
 LOGS="$(docker logs "$APP_NAME" 2>&1)"
 

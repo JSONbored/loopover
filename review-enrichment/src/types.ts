@@ -473,6 +473,15 @@ export interface DebugLeftoverFinding {
   kind: "debugger" | "console" | "print";
 }
 
+/** An absolute HTTP(S) URL or raw IP:port endpoint hardcoded in non-test, non-config source (#2027, part of #1499).
+ *  Reports location, kind, and a redacted/truncated host — never full paths or query strings. */
+export interface HardcodedUrlFinding {
+  file: string;
+  line: number;
+  kind: "http-url" | "ip-endpoint";
+  host: string;
+}
+
 /** A PR commit subject that does not conform to the Conventional Commits spec (#2021, part of #1499). Reports a
  *  short SHA prefix, the subject, and the failing reason — never author/email. */
 export interface CommitLintFinding {
@@ -519,6 +528,7 @@ export interface BriefFindings {
   magicNumber?: MagicNumberFinding[];
   conflictMarker?: ConflictMarkerFinding[];
   debugLeftover?: DebugLeftoverFinding[];
+  hardcodedUrl?: HardcodedUrlFinding[];
   commitLint?: CommitLintFinding[];
 }
 

@@ -16,6 +16,7 @@ const EXPECTED_ANALYZERS = [
   "license",
   "installScript",
   "heavyDependency",
+  "hardcodedUrl",
   "actionPin",
   "eol",
   "redos",

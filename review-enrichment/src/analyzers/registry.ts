@@ -11,6 +11,7 @@ import { dependencyAnalyzer } from "./dependency/descriptor.js";
 import { scanDocCommentDrift } from "./doc-comment-drift.js";
 import { scanDuplication } from "./duplication-scan.js";
 import { scanEol } from "./eol-check.js";
+import { scanHardcodedUrl } from "./hardcoded-url.js";
 import { scanHeavyDependencies } from "./heavy-dependency.js";
 import { scanHistory } from "./history.js";
 import { scanIacMisconfig } from "./iac-misconfig.js";
@@ -135,6 +136,35 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanHeavyDependencies(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "hardcodedUrl",
+    title: "Hardcoded URLs and endpoints",
+    category: "config",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxLineChars: 2000, maxHostChars: 40 },
+    docs: {
+      summary:
+        "Flags absolute HTTP(S) URLs and raw IP:port endpoints newly added in non-test, non-config source.",
+      looksAt: "Added lines in changed source files, excluding tests, config manifests, and comment/import lines.",
+      reports: "File, line, kind (http-url or ip-endpoint), and a redacted host — never full paths or queries.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "localhost, 127.0.0.1, and example.com are allowlisted. Distinct from the secret scanner — no credential detection.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Hardcoded URLs/endpoints (should usually come from config)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${helpers.safeCodeSpan(item.kind)} host ${helpers.safeCodeSpan(item.host)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanHardcodedUrl(req, signal),
   }),
   descriptor({
     name: "actionPin",

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createD1Adapter, nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import {
+  backupAcknowledgedGaugeValue,
   buildHealthBody,
   codexAuthReadinessProbe,
   githubAppReadinessProbe,
@@ -207,6 +208,14 @@ describe("sqliteBackupAdvisory (#8 data-safety)", () => {
     expect(sqliteBackupAdvisory({ usingSqlite: true, backupAcknowledged: false })).toMatch(/single SQLite file with no acknowledged backup/);
     expect(sqliteBackupAdvisory({ usingSqlite: true, backupAcknowledged: true })).toBeNull(); // operator acknowledged
     expect(sqliteBackupAdvisory({ usingSqlite: false, backupAcknowledged: false })).toBeNull(); // Postgres
+  });
+});
+
+describe("backupAcknowledgedGaugeValue (#2089)", () => {
+  it("mirrors the advisory: 0 only when SQLite has no acknowledged backup", () => {
+    expect(backupAcknowledgedGaugeValue({ usingSqlite: true, backupAcknowledged: false })).toBe(0);
+    expect(backupAcknowledgedGaugeValue({ usingSqlite: true, backupAcknowledged: true })).toBe(1);
+    expect(backupAcknowledgedGaugeValue({ usingSqlite: false, backupAcknowledged: false })).toBe(1);
   });
 });
 

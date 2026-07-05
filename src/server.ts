@@ -43,6 +43,7 @@ import { createOrbRelayRegistrationState, isOrbBrokerMode, registerOrbRelayTarge
 import { exportOrbBatch } from "./selfhost/orb-collector";
 import { createD1Adapter, nodeSqliteDriver } from "./selfhost/d1-adapter";
 import {
+  backupAcknowledgedGaugeValue,
   buildHealthBody,
   codexAuthReadinessProbe,
   githubAppReadinessProbe,
@@ -375,10 +376,11 @@ async function main(): Promise<void> {
   );
   // Data-safety advisory (#8): warn LOUDLY at boot if running on a single SQLite file with no acknowledged backup,
   // so an operator doesn't run with zero durability while /ready answers 200.
-  const backupAdvisory = sqliteBackupAdvisory({
+  const sqliteBackupOpts = {
     usingSqlite: !usePostgres,
     backupAcknowledged: process.env.BACKUP_ACKNOWLEDGED === "true",
-  });
+  };
+  const backupAdvisory = sqliteBackupAdvisory(sqliteBackupOpts);
   if (backupAdvisory)
     console.warn(
       JSON.stringify({
@@ -688,6 +690,7 @@ async function main(): Promise<void> {
   gauge("gittensory_uptime_seconds", () =>
     Math.floor((Date.now() - startedAt) / 1000),
   );
+  gauge("gittensory_backup_acknowledged", () => backupAcknowledgedGaugeValue(sqliteBackupOpts));
   // Pre-initialize job counters to 0 so they appear in the first Prometheus scrape (lazy counters
   // created on first use would otherwise cause "No data" in Grafana until the first job event).
   for (const c of [

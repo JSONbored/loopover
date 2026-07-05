@@ -52,6 +52,7 @@ const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["gittensory_github_rest_rate_limit_remaining", { help: "Newest observed GitHub REST rate-limit remaining count, by key scope.", type: "gauge" }],
   ["gittensory_host_load_avg1_per_core", { help: "One-minute host load average normalized by CPU core count.", type: "gauge" }],
   ["gittensory_uptime_seconds", { help: "Self-host process uptime in seconds.", type: "gauge" }],
+  ["gittensory_backup_acknowledged", { help: "1 when SQLite backup is acknowledged or Postgres is in use; 0 when the boot backup advisory would fire.", type: "gauge" }],
   ["gittensory_http_requests_total", { help: "HTTP app requests by response status class.", type: "counter" }],
   ["gittensory_http_request_duration_seconds", { help: "HTTP app request duration in seconds.", type: "histogram" }],
   ["gittensory_webhook_dedup_total", { help: "Webhook deliveries deduplicated before enqueue.", type: "counter" }],

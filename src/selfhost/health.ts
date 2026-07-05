@@ -150,3 +150,8 @@ export function sqliteBackupAdvisory(opts: { usingSqlite: boolean; backupAcknowl
   if (!opts.usingSqlite || opts.backupAcknowledged) return null;
   return "Running on a single SQLite file with no acknowledged backup — if the volume is lost, ALL review state is lost. Enable the Litestream sidecar (see the maintainer self-hosting docs) to stream the WAL to S3/B2/MinIO, then set BACKUP_ACKNOWLEDGED=true to silence this warning. (Multi-instance: use DATABASE_URL=postgres://… instead.)";
 }
+
+/** Prometheus gauge value mirroring {@link sqliteBackupAdvisory}: 1 when Postgres or backup is acknowledged, 0 when the advisory would fire. */
+export function backupAcknowledgedGaugeValue(opts: { usingSqlite: boolean; backupAcknowledged: boolean }): 0 | 1 {
+  return sqliteBackupAdvisory(opts) === null ? 1 : 0;
+}

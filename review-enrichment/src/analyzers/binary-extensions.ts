@@ -88,6 +88,22 @@ export const BINARY_FILE_EXTENSIONS = [
   "arrow",
   "orc",
   "msgpack",
+  // More common binary formats: audio/video containers, disk images, and ML artifacts.
+  "m4a",
+  "m4v",
+  "aac",
+  "opus",
+  "wma",
+  "aiff",
+  "flv",
+  "wmv",
+  "iso",
+  "dmg",
+  "pkl",
+  "pickle",
+  "joblib",
+  "tflite",
+  "keras",
 ] as const;
 
 const BINARY_EXT_SET = new Set<string>(BINARY_FILE_EXTENSIONS);

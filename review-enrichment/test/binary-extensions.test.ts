@@ -28,6 +28,13 @@ test("isBinaryFileExtension and BINARY_EXT_RE agree on known binary paths", () =
     "wire/msg.msgpack",
     "native/mod.pyd",
     "build/Release/addon.node",
+    "audio/track.m4a",
+    "audio/sound.opus",
+    "video/clip.flv",
+    "release/app.dmg",
+    "release/image.iso",
+    "models/scaler.pkl",
+    "models/model.tflite",
   ]) {
     const ext = path.slice(path.lastIndexOf(".") + 1);
     assert.equal(isBinaryFileExtension(ext), true, path);

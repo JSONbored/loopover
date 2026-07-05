@@ -47,6 +47,7 @@ import { scanUndocumentedExport } from "./undocumented-export.js";
 import { scanUnusedExport } from "./unused-export.js";
 import { scanExhaustivenessDrift } from "./exhaustiveness-drift.js";
 import { scanFlakyTest } from "./flaky-test.js";
+import { scanApiBreak } from "./api-break.js";
 import type {
   AnalyzerDescriptor,
   AnalyzerFn,
@@ -1374,6 +1375,39 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanCommitLint(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "apiBreak",
+    title: "Breaking API change (removed/renamed export)",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxEntrypoints: 25, maxFindings: 25 },
+    docs: {
+      summary:
+        "Flags an exported symbol a PR removes or renames in a package public entrypoint — a semver-major break for downstream consumers shipped without a major version bump.",
+      looksAt:
+        "Removed (-) top-level export declarations and re-exports in changed public-entrypoint files (index/mod/main/public-api) whose name is not re-added anywhere in the same file's patch.",
+      reports:
+        "Public entrypoint file, old-file line, and the removed or renamed exported symbol name — never surrounding code.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Conservative: only a top-level export whose exact name disappears from the file's public surface is reported; a same-name edit (signature or value change) or a non-entrypoint file is never flagged. Bounded by entrypoint and finding caps; fail-safe on absent or malformed patches.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = [
+        "### Breaking API changes (exported symbol removed or renamed in a public entrypoint)",
+      ];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${helpers.safeCodeSpan(item.symbol)} removed from the public surface`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanApiBreak(req, signal),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

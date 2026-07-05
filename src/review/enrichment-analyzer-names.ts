@@ -53,6 +53,7 @@ export const REES_ANALYZER_NAMES = [
   "exhaustiveness",
   "flakyTest",
   "commitLint",
+  "apiBreak",
 ] as const;
 
 export type ReesAnalyzerName = (typeof REES_ANALYZER_NAMES)[number];

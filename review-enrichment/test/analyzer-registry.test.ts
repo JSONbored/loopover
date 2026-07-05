@@ -59,6 +59,7 @@ const EXPECTED_ANALYZERS = [
   "exhaustiveness",
   "flakyTest",
   "commitLint",
+  "apiBreak",
 ];
 
 test("analyzer descriptors cover the runtime registry in stable order", () => {

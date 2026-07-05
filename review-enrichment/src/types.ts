@@ -592,6 +592,15 @@ export interface CommitLintFinding {
 }
 
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
+/** An exported symbol a PR removes or renames in a package public entrypoint — a semver-major break for
+ *  downstream consumers shipped without a major version bump (#1510, part of #1499). Reports file, old-file line,
+ *  and the removed/renamed symbol name only — never code. */
+export interface ApiBreakFinding {
+  file: string;
+  line: number;
+  symbol: string;
+}
+
 export interface BriefFindings {
   dependency?: DependencyFinding[];
   dependencyDiff?: DependencyDiffFinding[];
@@ -642,6 +651,7 @@ export interface BriefFindings {
   flakyTest?: FlakyTestFinding[];
   hardcodedUrl?: HardcodedUrlFinding[];
   commitLint?: CommitLintFinding[];
+  apiBreak?: ApiBreakFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

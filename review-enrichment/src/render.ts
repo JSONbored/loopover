@@ -498,6 +498,7 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("flakyTest", findings.flakyTest));
   lines.push(...renderDescriptorSection("hardcodedUrl", findings.hardcodedUrl));
   lines.push(...renderDescriptorSection("commitLint", findings.commitLint));
+  lines.push(...renderDescriptorSection("apiBreak", findings.apiBreak));
 
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 

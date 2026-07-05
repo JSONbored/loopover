@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { backupAcknowledgedGaugeValue } from "../../src/selfhost/health";
 import { gauge, gaugeVector, incr, observe, registerMetricMeta, renderMetrics, resetMetrics, setSelfHostedMetricsMode } from "../../src/selfhost/metrics";
 
 afterEach(() => {
@@ -63,6 +64,16 @@ describe("metrics registry (#982)", () => {
 
     expect(await renderMetrics()).toBe(
       "# HELP gittensory_jobs_processed_total Durable queue jobs processed successfully.\n# TYPE gittensory_jobs_processed_total counter\ngittensory_jobs_processed_total 1\n",
+    );
+  });
+
+  it("renders gittensory_backup_acknowledged with seeded metadata (#2089)", async () => {
+    gauge("gittensory_backup_acknowledged", () =>
+      backupAcknowledgedGaugeValue({ usingSqlite: true, backupAcknowledged: false }),
+    );
+
+    expect(await renderMetrics()).toBe(
+      "# HELP gittensory_backup_acknowledged 1 when SQLite backup is acknowledged or Postgres is in use; 0 when the boot backup advisory would fire.\n# TYPE gittensory_backup_acknowledged gauge\ngittensory_backup_acknowledged 0\n",
     );
   });
 

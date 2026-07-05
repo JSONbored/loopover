@@ -112,7 +112,11 @@ test("scanUnusedExport: enforces the maxSearches cap", async () => {
   }));
   let searches = 0;
   const fetchFn = async (url) => {
-    if (url.includes("/contents/")) return new Response("export function fn() {}", { status: 200 });
+    if (url.includes("/contents/")) {
+      const match = /file(\d+)\.ts/.exec(url);
+      const idx = match ? match[1] : "0";
+      return new Response(`export function fn${idx}() {}`, { status: 200 });
+    }
     if (url.includes("/search/code")) {
       searches += 1;
       return new Response(searchJson(0, []), { status: 200 });

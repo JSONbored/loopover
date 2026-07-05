@@ -1116,7 +1116,7 @@ export const REES_ANALYZERS = [
       network:
         "One bounded GitHub Code Search query per candidate symbol (capped). Requires headSha and GitHub token forwarding for private repos.",
       notes:
-        "Conservative: re-export lists and `export *` are ignored (same as undocumented-export). Skips symbols shorter than 3 chars. Fail-safe on search errors or incomplete results.",
+        "Conservative: re-export lists and `export *` are ignored (same as undocumented-export). Skips symbols shorter than 3 chars. Checks same-file references in the headSha file before querying default-branch Code Search (where brand-new PR exports are usually absent). Fail-safe on search errors or incomplete results.",
     },
   },
   {

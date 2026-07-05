@@ -38,7 +38,7 @@ describe("isGeneratedFile", () => {
     }
   });
 
-  it("matches source maps for every first-class JS/TS, MDX, Sass/SCSS/Less, and front-end framework extension", () => {
+  it("matches source maps for every first-class JS/TS, MDX, HTML, Sass/SCSS/Less, and front-end framework extension", () => {
     // `.mjs`/`.cjs` are recognized code extensions (isCodeFile), so their bundlers' source
     // maps are generated output too — the same as `.js.map` / `.tsx.map`.
     for (const path of [
@@ -54,6 +54,7 @@ describe("isGeneratedFile", () => {
       "dist/styles.scss.map",
       "dist/theme.sass.map",
       "dist/theme.less.map",
+      "dist/index.html.map",
     ]) {
       expect(isGeneratedFile(path)).toBe(true);
     }

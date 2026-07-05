@@ -66,7 +66,7 @@ function isGeneratedFileFrom(parts: NormalizedPath): boolean {
     // Source maps for every first-class JS/TS bundle extension. `.mjs`/`.cjs` are already
     // recognized code extensions (isCodeFile), so their bundlers' `.mjs.map` / `.cjs.map`
     // maps are generated output too — the same as `.js.map`.
-    /\.(js|jsx|mjs|cjs|ts|tsx|mts|cts|vue|svelte|astro|mdx|scss|sass|less|css)\.map$/.test(norm) ||
+    /\.(js|jsx|mjs|cjs|ts|tsx|mts|cts|vue|svelte|astro|mdx|scss|sass|less|html|css)\.map$/.test(norm) ||
     base === "worker-configuration.d.ts"
   );
 }

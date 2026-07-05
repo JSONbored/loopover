@@ -62,6 +62,7 @@ const EXPECTED_ANALYZERS = [
   "apiBreak",
   "deprecatedDep",
   "revertRecurrence",
+  "coverageDelta",
 ];
 
 test("analyzer descriptors cover the runtime registry in stable order", () => {

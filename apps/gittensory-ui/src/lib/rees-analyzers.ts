@@ -1295,6 +1295,32 @@ export const REES_ANALYZERS = [
         "Conservative: only a message-confirmed revert commit whose removed range overlaps an added range is reported (one finding per file); line-range overlap is a heuristic across history, and lockfiles/generated/binary paths are skipped. Fail-safe on missing token/invalid slug/fetch error or an aborted signal.",
     },
   },
+  {
+    name: "coverageDelta",
+    title: "Coverage gaps on changed lines",
+    category: "quality",
+    cost: "github-heavy",
+    defaultEnabled: true,
+    profiles: ["balanced", "deep"],
+    requires: ["files", "github-token", "head-sha"],
+    limits: {
+      maxRunsProbed: 5,
+      maxFilesReported: 15,
+      maxLinesPerFile: 20,
+    },
+    docs: {
+      summary:
+        "Flags added lines in a PR that the project's own latest successful CI coverage report records as never executed — measured test gaps on exactly the touched lines, not a guess about whether tests look present.",
+      looksAt:
+        "The PR's added new-file line numbers, intersected with the zero-hit lines parsed from the coverage artifact (lcov, Istanbul coverage-final.json, or Cobertura XML) of the head commit's most recent successful workflow run.",
+      reports:
+        "Each changed file and the specific added line numbers with no test coverage — never file contents.",
+      network:
+        "Calls the GitHub Actions runs and artifacts APIs and downloads one coverage artifact zip, each bounded by fixed fanout and byte caps. Requires GitHub token forwarding.",
+      notes:
+        "Conservative and fail-safe: only an added line the report explicitly marks zero-hit is flagged, so a missing token, absent artifact, unparseable report, or fetch error yields no finding rather than a false one. Bounded by run, file, and line caps.",
+    },
+  },
 ] as const satisfies readonly ReesAnalyzerDoc[];
 
 export const REES_ANALYZER_NAMES = REES_ANALYZERS.map((analyzer) => analyzer.name);

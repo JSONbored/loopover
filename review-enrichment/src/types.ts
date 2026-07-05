@@ -629,6 +629,17 @@ export interface RevertRecurrenceFinding {
   revertedPr?: number;
 }
 
+/** Added new-file lines in a changed file that the project's OWN latest successful CI coverage report marks as
+ *  executed zero times — real measured test gaps on exactly the lines this PR introduces, not a heuristic about
+ *  whether tests "look" present (#1516, part of #1499). Derived from the GitHub Actions coverage artifact of the
+ *  PR head commit (lcov / Istanbul `coverage-final.json` / Cobertura XML), intersected with the patch's added
+ *  line numbers. Reports the file and the uncovered line numbers only — never file contents. */
+export interface CoverageDeltaFinding {
+  file: string;
+  /** 1-based new-file line numbers among the PR's added lines the coverage report records as never executed. */
+  uncoveredLines: number[];
+}
+
 export interface BriefFindings {
   dependency?: DependencyFinding[];
   dependencyDiff?: DependencyDiffFinding[];
@@ -682,6 +693,7 @@ export interface BriefFindings {
   apiBreak?: ApiBreakFinding[];
   deprecatedDep?: DeprecatedDependencyFinding[];
   revertRecurrence?: RevertRecurrenceFinding[];
+  coverageDelta?: CoverageDeltaFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

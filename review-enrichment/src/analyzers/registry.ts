@@ -50,6 +50,7 @@ import { scanFlakyTest } from "./flaky-test.js";
 import { scanApiBreak } from "./api-break.js";
 import { scanDeprecatedDependencies } from "./deprecated-dep.js";
 import { scanRevertRecurrence } from "./revert-recurrence.js";
+import { scanCoverageDelta } from "./coverage-delta.js";
 import type {
   AnalyzerDescriptor,
   AnalyzerFn,
@@ -1488,6 +1489,51 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanRevertRecurrence(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "coverageDelta",
+    title: "Coverage gaps on changed lines",
+    category: "quality",
+    cost: "github-heavy",
+    defaultEnabled: true,
+    requires: ["files", "github-token", "head-sha"],
+    limits: {
+      maxRunsProbed: 5,
+      maxFilesReported: 15,
+      maxLinesPerFile: 20,
+    },
+    docs: {
+      summary:
+        "Flags added lines in a PR that the project's own latest successful CI coverage report records as never executed — measured test gaps on exactly the touched lines, not a guess about whether tests look present.",
+      looksAt:
+        "The PR's added new-file line numbers, intersected with the zero-hit lines parsed from the coverage artifact (lcov, Istanbul coverage-final.json, or Cobertura XML) of the head commit's most recent successful workflow run.",
+      reports:
+        "Each changed file and the specific added line numbers with no test coverage — never file contents.",
+      network:
+        "Calls the GitHub Actions runs and artifacts APIs and downloads one coverage artifact zip, each bounded by fixed fanout and byte caps. Requires GitHub token forwarding.",
+      notes:
+        "Conservative and fail-safe: only an added line the report explicitly marks zero-hit is flagged, so a missing token, absent artifact, unparseable report, or fetch error yields no finding rather than a false one. Bounded by run, file, and line caps.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = [
+        "### Coverage gaps on changed lines (added lines the project's own CI coverage marks as untested)",
+      ];
+      for (const item of findings) {
+        const shown = item.uncoveredLines.slice(0, 8);
+        const more =
+          item.uncoveredLines.length > shown.length
+            ? ` (+${item.uncoveredLines.length - shown.length} more)`
+            : "";
+        const label = item.uncoveredLines.length === 1 ? "line" : "lines";
+        lines.push(
+          `- ${helpers.safeCodeSpan(item.file)} — uncovered added ${label} ${helpers.safeCodeSpan(shown.join(", "))}${more}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal, analysis, diagnostics }) =>
+      scanCoverageDelta(req, fetch, { signal, analysis, diagnostics }),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

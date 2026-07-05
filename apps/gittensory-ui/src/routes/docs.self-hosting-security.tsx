@@ -129,22 +129,26 @@ function SelfHostingSecurity() {
 
       <h2>TLS termination</h2>
       <p>
-        A webhook endpoint and a stable <code>PUBLIC_API_ORIGIN</code> (see{" "}
-        <Link to="/docs/self-hosting-github-app">GitHub App and Orb</Link>) both need real HTTPS.
-        The compose file ships two ways to get it without hand-rolling a reverse proxy, plus a third
-        option if you already run one.
+        These are the three shipped ways to get real HTTPS without hand-rolling a reverse proxy —
+        but only Caddy and bring-your-own-proxy give you a <em>publicly reachable</em> origin. If
+        GitHub itself needs to reach this instance (a direct App in push mode, per{" "}
+        <Link to="/docs/self-hosting-github-app">GitHub App and Orb</Link>), Tailscale's private
+        tailnet address does not satisfy that — GitHub's servers can't reach it. Tailscale is the
+        right fit when only your own team/CI needs access, or as the transport for a{" "}
+        <Link to="/docs/self-hosting-github-app">brokered, pull-mode</Link> instance that never
+        needs to receive an inbound webhook at all.
       </p>
       <FeatureRow
         items={[
           {
             title: "Caddy (--profile caddy)",
             description:
-              "A public HTTPS terminator with automatic Let's Encrypt certificates. Use this when the instance needs a real internet-facing domain.",
+              "A public HTTPS terminator with automatic Let's Encrypt certificates. Required for a direct App in push mode; use this when the instance needs a real internet-facing domain.",
           },
           {
             title: "Tailscale (--profile tailscale)",
             description:
-              "A private-network sidecar — no public port at all. Use this when only your own team needs to reach the instance.",
+              "A private-network sidecar — no public port at all, but also not reachable by GitHub's own webhook delivery. Use this for team/CI-only access, or alongside brokered pull mode.",
           },
           {
             title: "Bring your own reverse proxy",
@@ -208,9 +212,10 @@ function SelfHostingSecurity() {
       <Callout variant="warn" title="Remove the app's own port mapping">
         The <code>gittensory</code> service's compose entry has a direct{" "}
         <code>{`ports: ["\${PORT:-8787}:8787"]`}</code> mapping with a comment marking exactly this:
-        remove it once Caddy (or Tailscale, below) is your public listener, or the app stays
-        reachable on <code>:8787</code> with no TLS, bypassing the proxy entirely and defeating the
-        whole point of adding it.
+        remove it once Caddy is your public listener, or the app stays reachable on{" "}
+        <code>:8787</code> with no TLS, bypassing the proxy entirely and defeating the whole point
+        of adding it. (This rule is Caddy-specific — the Tailscale profile below needs the{" "}
+        <em>opposite</em> treatment; see its own callout.)
       </Callout>
       <p>
         Prefer certificates you already manage — an internal CA, a wildcard cert issued elsewhere —

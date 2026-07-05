@@ -78,11 +78,15 @@ SELFHOST_SETUP_TOKEN=change-this-long-random-value  # unlocks /setup for a fresh
       </p>
       <Callout variant="note">
         <code>https://reviews.example.com</code> above is a placeholder — it assumes you already
-        have a real domain terminating TLS. If you don't yet, see{" "}
-        <Link to="/docs/self-hosting-security">Security</Link>'s TLS termination section for the two
-        shipped ways to get one: the <code>caddy</code> profile (a public domain with automatic
-        Let's Encrypt certs) or the <code>tailscale</code> profile (a private tailnet address, no
-        public port needed).
+        have a real domain terminating TLS. GitHub delivers webhooks to whatever{" "}
+        <code>PUBLIC_API_ORIGIN</code> you set here, so it must be an address GitHub's servers can
+        actually reach: the <code>caddy</code> profile (see{" "}
+        <Link to="/docs/self-hosting-security">Security</Link>'s TLS termination section) is the
+        shipped way to get one, or bring your own public reverse proxy. The <code>tailscale</code>{" "}
+        profile's private tailnet address does <strong>not</strong> work here — GitHub cannot
+        deliver webhooks to it. A Tailscale-only instance should use brokered pull mode instead (it
+        polls for work rather than receiving pushed webhooks) — see "Pull vs. push relay mode"
+        below.
       </Callout>
       <Callout variant="note">
         Manual App creation (below) is still fully supported — for an air-gapped instance, a
@@ -305,22 +309,28 @@ ORB_RELAY_MODE=pull  # or omit for push (the default) -- see "Choosing a relay m
         scenario for the smoke tests that exercise both relay modes.
       </p>
 
-      <h2>Webhook checks</h2>
+      <h2>Connectivity checks</h2>
+      <p>
+        Confirm you can reach the instance at all before checking GitHub's own webhook delivery:
+      </p>
       <CodeBlock
         lang="bash"
         code={`curl https://reviews.example.com/health
 curl https://reviews.example.com/ready`}
       />
       <p>
-        <code>reviews.example.com</code> here stands in for whatever fronts the app on real HTTPS —
-        the <code>caddy</code> profile's domain, an existing reverse proxy, or (for Tailscale
-        instances) the tailnet address on port 8787 instead of a public domain at all. See{" "}
-        <Link to="/docs/self-hosting-security">Security</Link>'s TLS termination section if you
-        haven't set one of those up yet.
+        <code>reviews.example.com</code> here stands in for whatever you're checking from — the{" "}
+        <code>caddy</code> profile's domain, an existing reverse proxy, or (if you're on the same
+        tailnet) a Tailscale instance's tailnet address on port 8787. This only confirms{" "}
+        <em>you</em> can reach the instance, not that <em>GitHub</em> can — a Tailscale-only
+        instance in push mode will pass this check and still never receive a real webhook, since
+        GitHub itself cannot reach a private tailnet address (see the callout above on{" "}
+        <code>PUBLIC_API_ORIGIN</code>).
       </p>
       <p>
         After installing the App on a test repo, open a small PR and confirm the webhook delivery
-        appears in GitHub and a job appears in self-host logs. Continue with{" "}
+        appears in GitHub and a job appears in self-host logs — this is the check that actually
+        proves GitHub can reach you. Continue with{" "}
         <Link to="/docs/self-hosting-operations">Operations</Link> for log and metric checks.
       </p>
     </DocsPage>

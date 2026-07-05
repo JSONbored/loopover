@@ -8,14 +8,19 @@
 // is defined HERE. No imports from reviewbot. The logic is byte-faithful to the reviewbot source
 // (src/core/prompt-injection.ts); there are no stricter-tsconfig deltas — the module is already total.
 
+// The three [^.]{0,N} gaps below deliberately exclude only "." (a sentence boundary), NOT "\n" -- an attacker
+// can trivially defeat a same-sentence-only match by wrapping a line ("Ignore all previous\ninstructions"),
+// and a PR title/body/diff routinely carries line breaks that don't end the phrase's logical continuation the
+// way a period does. The bounded {0,N} count (not a period) is what keeps a gap from ever spanning two
+// unrelated statements, so allowing it to also cross a bare newline is a real-attack fix, not a broadening.
 const INJECTION_SOURCE = [
-  "\\b(?:ignore|disregard|forget|override|bypass)\\b[^.\\n]{0,40}\\b(?:previous|prior|above|earlier|all|the|any)\\b[^.\\n]{0,24}\\b(?:instructions?|prompts?|rules?|rubric|policy|guidelines?|directions?)\\b",
+  "\\b(?:ignore|disregard|forget|override|bypass)\\b[^.]{0,40}\\b(?:previous|prior|above|earlier|all|the|any)\\b[^.]{0,24}\\b(?:instructions?|prompts?|rules?|rubric|policy|guidelines?|directions?)\\b",
   "\\byou are now\\b",
   "\\b(?:system|developer)\\s+prompt\\b",
   "\\b(?:approve|merge|accept|whitelist|allow|pass)\\s+(?:this|the)\\s+(?:submission|pr|pull[ -]?request|entry|request|content|review)\\b",
-  "\\bas an?\\s+(?:ai|assistant|language model)\\b[^.\\n]{0,30}\\b(?:you must|ignore|approve)\\b",
-  "\\b(?:print|reveal|output|repeat|leak)\\b[^.\\n]{0,30}\\b(?:system prompt|rubric|instructions?)\\b",
-  "\\b(?:pretend|roleplay)\\b[^.\\n]{0,24}\\b(?:you\\s+are|to\\s+be)\\b",
+  "\\bas an?\\s+(?:ai|assistant|language model)\\b[^.]{0,30}\\b(?:you must|ignore|approve)\\b",
+  "\\b(?:print|reveal|output|repeat|leak)\\b[^.]{0,30}\\b(?:system prompt|rubric|instructions?)\\b",
+  "\\b(?:pretend|roleplay)\\b[^.]{0,24}\\b(?:you\\s+are|to\\s+be)\\b",
 ].join("|");
 
 export const PROMPT_INJECTION_RE = new RegExp(INJECTION_SOURCE, "i");

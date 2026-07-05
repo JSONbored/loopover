@@ -45,6 +45,7 @@ export const REES_ANALYZER_NAMES = [
   "sizeSmell",
   "floatingPromise",
   "deepNesting",
+  "errorSwallow",
   "commitLint",
 ] as const;
 

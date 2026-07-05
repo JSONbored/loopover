@@ -33,6 +33,7 @@ import { scanMagicNumbers } from "./magic-number.js";
 import { scanConflictMarkers } from "./conflict-marker.js";
 import { scanDebugLeftover } from "./debug-leftover.js";
 import { scanDeepNesting } from "./deep-nesting.js";
+import { scanErrorSwallow } from "./error-swallow.js";
 import { scanFloatingPromise } from "./floating-promise.js";
 import { scanSizeSmell } from "./size-smell.js";
 import { scanCommitLint } from "./commit-lint.js";
@@ -1105,6 +1106,35 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanDeepNesting(req, signal),
+  }),
+  descriptor({
+    name: "errorSwallow",
+    title: "Swallowed errors",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags newly-added catch/except blocks that swallow the error — empty body, unused binding, or a bare `return null`.",
+      looksAt: "Added lines in changed non-test JS/TS/Python source files.",
+      reports: "File, line, and kind: empty-catch, unused-binding, or return-null.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Multiline catch bodies are collected with brace balance. Catches that log, rethrow, or reference the binding are not flagged. Brace counting is character-level (string literals are not stripped).",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Swallowed errors (empty catch / unused binding / return null)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${helpers.safeCodeSpan(item.kind)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanErrorSwallow(req, signal),
   }),
   descriptor({
     name: "commitLint",

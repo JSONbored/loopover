@@ -51,6 +51,7 @@ const EXPECTED_ANALYZERS = [
   "sizeSmell",
   "floatingPromise",
   "deepNesting",
+  "errorSwallow",
   "commitLint",
 ];
 

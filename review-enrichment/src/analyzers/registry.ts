@@ -42,6 +42,7 @@ import { scanTerminology } from "./terminology.js";
 import { scanTodoMarker } from "./todo-marker.js";
 import { scanTyposquat } from "./typosquat.js";
 import { scanUndocumentedExport } from "./undocumented-export.js";
+import { scanUnusedExport } from "./unused-export.js";
 import type {
   AnalyzerDescriptor,
   AnalyzerFn,
@@ -1163,6 +1164,38 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanI18nRegression(req, signal),
+  }),
+  descriptor({
+    name: "unusedExport",
+    title: "Unused exports (dead-on-arrival)",
+    category: "quality",
+    cost: "github-light",
+    defaultEnabled: true,
+    requires: ["files", "github-token", "head-sha"],
+    limits: { maxSymbols: 10, maxSearches: 10, maxFindings: 25 },
+    docs: {
+      summary:
+        "Flags exports newly added by the PR that have zero non-declaration references anywhere in the repo.",
+      looksAt:
+        "Direct `export const/let/var/function/class/interface/type/enum` declarations added in changed non-test TS/JS source files, cross-checked via repo-scoped GitHub Code Search.",
+      reports: "File, line, and symbol name of each dead-on-arrival export — never file contents.",
+      network:
+        "One bounded GitHub Code Search query per candidate symbol (capped). Requires headSha and GitHub token forwarding for private repos.",
+      notes:
+        "Conservative: re-export lists and `export *` are ignored (same as undocumented-export). Skips symbols shorter than 3 chars. Fail-safe on search errors or incomplete results.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Unused exports (new export with no references in the repo)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} exports ${helpers.safeCodeSpan(item.symbol)} with no references found`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal, analysis, diagnostics }) =>
+      scanUnusedExport(req, fetch, { signal, analysis, diagnostics }),
   }),
   descriptor({
     name: "commitLint",

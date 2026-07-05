@@ -44,7 +44,7 @@ gate:
     minScore: 60
   # aiReview:                  # opt-in AI maintainer review (off by default; needs the AI flags enabled)
   #   mode: advisory           # block | advisory | off — block only blocks on a dual-model consensus defect
-  #   byok: false              # use a maintainer Anthropic/OpenAI key for the write-up; consensus stays free Workers AI
+  #   byok: false              # use a maintainer Anthropic/OpenAI key for the write-up; consensus stays on the free/default reviewer
   #   allAuthors: false        # true reviews every PR author with the selected self-host model(s)
   #   provider: anthropic      # anthropic | openai — which BYOK provider (the secret key is set via the dashboard, never here)
   #   model: claude-3-5-sonnet-latest   # optional model override for the BYOK write-up

@@ -52,8 +52,9 @@ export function reviewVectorAdapter(vectorize: Vectorize): VectorAdapter {
   };
 }
 
-// ── Inference (Workers AI → InferenceAdapter). Feature-gated. Mirrors `ai.run(model, options)`; the cast
-//    bridges the overloaded Workers-AI `run` to the portable single-signature shape. ──
+// ── Inference (the Ai-shaped adapter → InferenceAdapter). Feature-gated. Mirrors `ai.run(model, options)`;
+//    the cast bridges the overloaded `run` signature to the portable single-signature shape. `ai` is
+//    Workers AI historically, and on self-host is the generic provider router (src/selfhost/ai.ts). ──
 export function reviewInferenceAdapter(ai: Ai): InferenceAdapter {
   return { run: (model, options) => (ai as unknown as { run(m: string, o: Record<string, unknown>): Promise<unknown> }).run(model, options) };
 }

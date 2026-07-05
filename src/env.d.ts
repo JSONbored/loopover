@@ -47,7 +47,13 @@ declare global {
     PUBLIC_SITE_ORIGIN?: string;
     AI_SUMMARIES_ENABLED?: string;
     AI_PUBLIC_COMMENTS_ENABLED?: string;
+    /** Model id for a genuine Cloudflare Workers AI binding only — no live deployment (hosted or self-host)
+     *  binds `env.AI` to Workers AI today (see CONVERGENCE_RUNBOOK.md), and self-host discards any
+     *  `@cf/`-prefixed value here. Self-host operators should use the provider-specific `*_AI_MODEL` vars below. */
     WORKERS_AI_SUMMARY_MODEL?: string;
+    /** Daily spend cap in Cloudflare Workers AI "neurons" for the free/default-reviewer path (shared across
+     *  ai-review/ai-slop/ai-summaries/planner). The unit name is a Workers-AI holdover; it's applied as a
+     *  provider-agnostic heuristic budget regardless of which configured provider actually serves the request. */
     AI_DAILY_NEURON_BUDGET?: string;
     /** Per-repository/day cap for maintainer-paid BYOK AI review provider calls. */
     AI_BYOK_DAILY_REPO_LIMIT?: string;

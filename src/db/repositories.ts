@@ -962,8 +962,9 @@ async function recordAiKeyChange(
 
 /**
  * Decrypt a repo's BYOK key for an AI call. Returns null when no key is configured OR the encryption
- * secret is unavailable OR decryption fails — so the caller silently falls back to free Workers AI and
- * a misconfiguration never blocks the review. The plaintext key must be used immediately and never cached.
+ * secret is unavailable OR decryption fails — so the caller silently falls back to the free/default
+ * reviewer and a misconfiguration never blocks the review. The plaintext key must be used immediately
+ * and never cached.
  */
 export async function getDecryptedRepositoryAiKey(env: Env, fullName: string): Promise<DecryptedRepositoryAiKey | null> {
   const secret = env.TOKEN_ENCRYPTION_SECRET;

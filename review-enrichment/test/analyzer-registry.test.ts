@@ -45,6 +45,7 @@ const EXPECTED_ANALYZERS = [
   "todoMarker",
   "magicNumber",
   "conflictMarker",
+  "debugLeftover",
   "commitLint",
 ];
 

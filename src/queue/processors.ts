@@ -4805,6 +4805,19 @@ async function verifiedGlobalOpenItemCount(
  * as NOT open (excluded from the count), never left as an unverified "counts toward the cap" default, because
  * this count gates an irreversible close (#2479 gate finding, second pass).
  */
+async function isBelowAccountAgeThreshold(
+  env: Env,
+  installationId: number,
+  authorLogin: string,
+  accountAgeThresholdDays: number | null | undefined,
+): Promise<boolean> {
+  if (typeof accountAgeThresholdDays !== "number") return false;
+  const createdAt = await getGithubUserCreatedAt(env, installationId, authorLogin);
+  if (!createdAt) return false;
+  const ageDays = (Date.now() - Date.parse(createdAt)) / (24 * 60 * 60 * 1000);
+  return ageDays < accountAgeThresholdDays;
+}
+
 async function maybeCloseIssueOverContributorCap(
   env: Env,
   args: { installationId: number; repoFullName: string; issue: IssueRecord; settings: RepositorySettings },
@@ -4817,7 +4830,10 @@ async function maybeCloseIssueOverContributorCap(
   const globalCap = resolveGlobalContributorOpenItemCap(env);
   if ((typeof cap !== "number" && globalCap === null) || !authorLogin) return;
 
-  const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")) : "";
+  const repoOwner = repoFullName.includes("/")
+    ? repoFullName.slice(0, repoFullName.indexOf("/"))
+    /* v8 ignore next -- defensive: GitHub always uses owner/repo form; empty repoOwner means authorIsOwner is always false */
+    : "";
   const authorIsOwner = authorLogin.toLowerCase() === repoOwner.toLowerCase();
   const authorIsAdmin = parseGitHubLoginList(env.ADMIN_GITHUB_LOGINS).has(authorLogin.toLowerCase());
   const authorIsAutomationBot = isProtectedAutomationAuthor(authorLogin);
@@ -4825,15 +4841,7 @@ async function maybeCloseIssueOverContributorCap(
 
   // Account-age throttle (#2561): mirror the PR-path cap tightening — a below-threshold author gets half
   // the configured per-repo issue cap (rounded up, minimum 1). Fail-open when created_at cannot be resolved.
-  let isNewAccount = false;
-  const accountAgeThresholdDays = settings.accountAgeThresholdDays;
-  if (typeof accountAgeThresholdDays === "number") {
-    const createdAt = await getGithubUserCreatedAt(env, installationId, authorLogin);
-    if (createdAt) {
-      const ageDays = (Date.now() - Date.parse(createdAt)) / (24 * 60 * 60 * 1000);
-      isNewAccount = ageDays < accountAgeThresholdDays;
-    }
-  }
+  const isNewAccount = await isBelowAccountAgeThreshold(env, installationId, authorLogin, settings.accountAgeThresholdDays);
 
   // Install-wide check first (#2562): reuses the shared autoCloseExemptLogins list, same as the PR path.
   // verifiedGlobalOpenItemCount live-verifies every OTHER counted item before trusting it toward an
@@ -5650,17 +5658,14 @@ async function processGitHubWebhook(
           !authorIsAutomationBot &&
           typeof accountAgeThresholdDays === "number"
         ) {
-          const createdAt = await getGithubUserCreatedAt(env, installationId, authorLogin);
-          if (createdAt) {
-            const ageDays = (Date.now() - Date.parse(createdAt)) / (24 * 60 * 60 * 1000);
-            if (ageDays < accountAgeThresholdDays) {
-              if (resolveAutonomy(issueSettings.autonomy, "review_state_label") === "auto") {
+          if (await isBelowAccountAgeThreshold(env, installationId, authorLogin, accountAgeThresholdDays)) {
+            if (resolveAutonomy(issueSettings.autonomy, "review_state_label") === "auto") {
               const newAccountMode = resolveAgentActionMode({
                 globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
                 agentPaused: issueSettings.agentPaused,
                 agentDryRun: issueSettings.agentDryRun,
               });
-              const newAccountLabel = issueSettings.newAccountLabel ?? "new-account";
+              const newAccountLabel = issueSettings.newAccountLabel;
               await ensurePullRequestLabel(
                 env,
                 installationId,
@@ -5672,7 +5677,6 @@ async function processGitHubWebhook(
                 /* v8 ignore next -- fail-safe: a label-application failure must never block the rest of the handler */
                 () => undefined,
               );
-              }
             }
           }
         }

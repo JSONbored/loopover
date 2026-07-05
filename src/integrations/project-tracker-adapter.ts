@@ -3,7 +3,7 @@ import { githubRateLimitAdmissionKeyForInstallation, makeInstallationOctokit } f
 import { createIssueComment } from "../github/pr-actions";
 import { findLinearNativeLink, LinearAdapter } from "./linear-adapter";
 import { termOverlap, tokenize, type CollisionTerms } from "../signals/engine";
-import { errorMessage } from "../utils/json";
+import { errorMessage, parsePositiveInt } from "../utils/json";
 
 /** Repo-scoped context shared by every ProjectTrackerAdapter call (#3183). */
 export type ProjectTrackerContext = {
@@ -55,13 +55,6 @@ type GitHubMilestone = {
 // any realistic open-milestone/open-project/PR-comment count, while still bounding worst-case API calls.
 const GITHUB_LIST_PAGE_LIMIT = 3;
 
-/** A positive-integer milestone/issue number as a string, or null if `value` isn't one. Guards against a
- *  malformed/forged `milestoneId` reaching GitHub's PATCH as `NaN` or a negative/zero number. */
-function parsePositiveIntegerId(value: string): number | null {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
 /** GitHub REST implementation of {@link ProjectTrackerAdapter}. Only the Milestone half is real (#3183) --
  *  Projects v2 lives in the separate {@link GitHubProjectsAdapter} (#3184), so those two methods are inert here. */
 export class GitHubMilestonesAdapter implements ProjectTrackerAdapter {
@@ -96,7 +89,7 @@ export class GitHubMilestonesAdapter implements ProjectTrackerAdapter {
   }
 
   async attachToMilestone(ctx: ProjectTrackerContext, pullNumber: number, milestoneId: string): Promise<ProjectTrackerAttachResult> {
-    const milestoneNumber = parsePositiveIntegerId(milestoneId);
+    const milestoneNumber = parsePositiveInt(milestoneId);
     if (milestoneNumber === null) return { attached: false };
     const { owner, repo } = parseRepoFullName(ctx.repoFullName);
     const token = await createInstallationToken(ctx.env, ctx.installationId);

@@ -118,7 +118,7 @@ describe("GitHubMilestonesAdapter (#3183)", () => {
     });
     const adapter = new GitHubMilestonesAdapter();
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
-    for (const invalidId of ["not-a-number", "0", "-5", "3.5", ""]) {
+    for (const invalidId of ["not-a-number", "0", "-5", "3.5", "", " 14", "1e2"]) {
       const result = await adapter.attachToMilestone({ env, installationId: 123, repoFullName: "JSONbored/gittensory" }, 4, invalidId);
       expect(result).toEqual({ attached: false });
     }

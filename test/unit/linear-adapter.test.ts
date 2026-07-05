@@ -117,6 +117,20 @@ describe("findLinearNativeLink (#3186)", () => {
     expect(result).toEqual({ project: null, milestone: null });
   });
 
+  it("returns nulls for a blank PR URL without calling Linear", async () => {
+    let called = false;
+    vi.stubGlobal("fetch", async () => {
+      called = true;
+      return new Response("unexpected", { status: 500 });
+    });
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    await upsertRepositoryLinearKey(env, { repoFullName: "acme/widgets", key: "lin_api_test_key" });
+    for (const prUrl of ["", "   "]) {
+      await expect(findLinearNativeLink({ env, installationId: 123, repoFullName: "acme/widgets" }, prUrl)).resolves.toEqual({ project: null, milestone: null });
+    }
+    expect(called).toBe(false);
+  });
+
   it("finds a native-linked issue's project and milestone via attachmentsForURL", async () => {
     const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
     await upsertRepositoryLinearKey(env, { repoFullName: "acme/widgets", key: "lin_api_test_key" });

@@ -111,6 +111,7 @@ export type LinearNativeLinkResult = {
  */
 export async function findLinearNativeLink(ctx: ProjectTrackerContext, prUrl: string): Promise<LinearNativeLinkResult> {
   const none: LinearNativeLinkResult = { project: null, milestone: null };
+  if (typeof prUrl !== "string" || prUrl.trim().length === 0) return none;
   const apiKey = await getDecryptedRepositoryLinearKey(ctx.env, ctx.repoFullName);
   if (!apiKey) return none;
   const data = await linearGraphQl<AttachmentsForUrlResponse>(

@@ -112,6 +112,13 @@ const DOCKER_SOCKET_MOUNT_RE =
 const HSTS_DISABLED_RE = /\bStrict-Transport-Security\b[^\n]*\bmax-age\s*=\s*0\b/i;
 const REFERRER_UNSAFE_URL_RE = /\bReferrer-Policy\b[^\n]*\bunsafe-url\b/i;
 const COOKIE_NOT_HTTPONLY_RE = /\bhttp[_-]?only\b[\s"'=:,-]*false\b/i;
+const COOP_UNSAFE_NONE_RE =
+  /\bCross-Origin-Opener-Policy\b[^\n]*\bunsafe-none\b/i;
+// The value must be exactly `0` (filter off), not `10`/`01` — `(?![0-9])` rejects a digit continuation.
+// Accepts both `X-XSS-Protection: 0` and nginx `add_header X-XSS-Protection "0"`.
+const XSS_PROTECTION_OFF_RE =
+  /\bX-XSS-Protection\b(?:\s*:\s*|\s+)["']?0(?![0-9])/i;
+const FRAME_OPTIONS_ALLOWALL_RE = /\bX-Frame-Options\b[^\n]*\bALLOWALL\b/i;
 
 function* patchLines(patch: string): Generator<string> {
   let start = 0;
@@ -538,6 +545,24 @@ export function scanPatchForIacMisconfig(
     if (
       COOKIE_NOT_HTTPONLY_RE.test(body) &&
       pushFinding(findings, seen, path, newLine, "cookie-not-httponly", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      COOP_UNSAFE_NONE_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "coop-unsafe-none", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      XSS_PROTECTION_OFF_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "x-xss-protection-off", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      FRAME_OPTIONS_ALLOWALL_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "frame-options-allowall", maxFindings)
     ) {
       return findings;
     }

@@ -461,6 +461,9 @@ test("scanPatchForIacMisconfig flags insecure HTTP security-header settings", ()
     ["+    add_header Strict-Transport-Security \"max-age=0\";", "hsts-disabled"],
     ["+    add_header Referrer-Policy \"unsafe-url\";", "referrer-policy-leak"],
     ["+    httpOnly: false", "cookie-not-httponly"],
+    ["+    add_header Cross-Origin-Opener-Policy \"unsafe-none\";", "coop-unsafe-none"],
+    ["+    add_header X-XSS-Protection \"0\";", "x-xss-protection-off"],
+    ["+    add_header X-Frame-Options \"ALLOWALL\";", "frame-options-allowall"],
   ];
   for (const [added, kind] of cases) {
     const findings = scanPatchForIacMisconfig(
@@ -482,6 +485,11 @@ test("scanPatchForIacMisconfig does not flag secure HTTP header values (incl. Ca
     "+    add_header Cache-Control \"max-age=0\";",
     "+    add_header Referrer-Policy \"strict-origin-when-cross-origin\";",
     "+    httpOnly: true",
+    "+    add_header Cross-Origin-Opener-Policy \"same-origin\";",
+    "+    add_header X-XSS-Protection \"1; mode=block\";",
+    "+    add_header X-Frame-Options \"SAMEORIGIN\";",
+    // A bare `unsafe-none` config key without the COOP header token must NOT fire the COOP rule.
+    "+    unsafe-none = false",
   ];
   for (const added of safe) {
     assert.deepEqual(

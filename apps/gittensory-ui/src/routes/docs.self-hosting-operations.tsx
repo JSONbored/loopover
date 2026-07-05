@@ -556,6 +556,41 @@ volumes:
         log for the same subsystem.
       </p>
 
+      <h2>Re-gate sweeps (agent-regate-sweep)</h2>
+      <p>
+        Live PR review is webhook-driven, but open PRs still need periodic re-evaluation — the base
+        branch moves, duplicate clusters resolve, settings change, and approved PRs can sit unmerged
+        until CI re-runs. A scheduled sweep (<code>agent-regate-sweep</code>, every ~2 minutes on
+        the maintenance tick) fans out lightweight <code>agent-regate-pr</code> jobs for the stalest
+        open PRs per repo (cap <code>SWEEP_MAX_PRS=3</code> by default, REST-budget sized).
+      </p>
+      <FeatureRow
+        items={[
+          {
+            title: "What it recomputes",
+            description:
+              "Gate verdict + auto-maintain actions for open, non-draft PRs the webhook has not refreshed recently. Does not re-run AI unless the live pipeline would.",
+          },
+          {
+            title: "How candidates are picked",
+            description:
+              "Sorted by lastRegatedAt ascending (stalest first), skipping PRs a webhook touched within ~2 minutes. Dry-run suppresses GitHub writes but still advances lastRegatedAt so coverage keeps moving.",
+          },
+          {
+            title: "Backlog-convergence companion",
+            description:
+              "A separate backlog-convergence-sweep repairs PRs whose public review surface (comment/check/label) never published for the current head — a case the main sweep can miss when a per-PR job dead-letters after fan-out.",
+          },
+        ]}
+      />
+      <p>
+        Log markers: <code>regate_sweep_throttled</code> (sweep temporarily paused),{" "}
+        <code>regate_sweep_trigger_backlog_deferred</code> (prior regate work still draining —
+        avoids piling duplicate fan-outs). In metrics, break down deferrals by{" "}
+        <code>job_type=agent-regate-pr</code> or <code>agent-regate-sweep</code> when GitHub
+        rate-limit pressure spikes.
+      </p>
+
       <h2>Routine checks</h2>
       <ul>
         <li>Queue pending count is not growing without processing.</li>

@@ -103,7 +103,12 @@ rees_analyzer_config_invalid`}
       <h2>RAG returns no context</h2>
       <ul>
         <li>
-          Confirm <code>GITTENSORY_REVIEW_RAG=true</code> and repo activation.
+          Confirm <code>GITTENSORY_REVIEW_RAG=true</code>, the repo is in{" "}
+          <code>GITTENSORY_REVIEW_REPOS</code> (or has <code>features.rag: true</code> in private
+          config), and RAG indexing has run — see{" "}
+          <Link to="/docs/self-hosting-configuration">Configuration</Link> for the three activation
+          layers (<code>is_registered</code> is only required for Gittensor-scored paths, not RAG on
+          a self-host allowlist).
         </li>
         <li>Confirm Qdrant or the vector backend is reachable from the app container.</li>
         <li>Confirm the embedding endpoint and model are running.</li>

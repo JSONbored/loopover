@@ -302,11 +302,41 @@ GITHUB_METADATA_CACHE_TTL_SECONDS=600`}
       </p>
       <CodeBlock filename="self-host env vars" code={SELFHOST_ENV_REFERENCE_MARKDOWN} />
 
+      <h2>Repo activation — three layers</h2>
+      <p>
+        Self-host docs and logs use &quot;activation&quot; for more than one mechanism. They stack
+        independently:
+      </p>
+      <FeatureRow
+        items={[
+          {
+            title: "Feature allowlist (env)",
+            description:
+              "GITTENSORY_REVIEW_REPOS lists which repos run the converged per-PR path (safety, unified comment, grounding, RAG, reputation, …). Empty/unset ⇒ no repo runs those features, regardless of individual GITTENSORY_REVIEW_* flags. Per-repo features: overrides in a private or public .gittensory.yml features: block can force on/off per repo (subject to env kill-switches).",
+          },
+          {
+            title: "Gate activation (DB or private config)",
+            description:
+              "Whether the Gittensory check-run and deterministic gate rules run for a repo. Stored in the instance database (control panel, PUT /v1/repos/:owner/:repo/settings, or POST …/activation) and/or in gate.checkMode / gate.enabled in .gittensory.yml. The one-click activation endpoint applies advisory-first defaults: gate on, linked-issue/duplicate/quality rules in advisory mode, AI review still off.",
+          },
+          {
+            title: "Gittensor registration (is_registered)",
+            description:
+              "The registry sync (GITTENSOR_REGISTRY_URL) marks repos present in the upstream snapshot with is_registered=1. That flag gates Gittensor-scored mining, evidence graphs, and several maintainer analytics — not basic webhook review. Brokered Orb installs may keep is_registered=0; listConvergenceRepos still pre-indexes GITTENSORY_REVIEW_REPOS for RAG.",
+          },
+        ]}
+      />
+      <p>
+        Preview before flipping: <code>GET /v1/repos/:owner/:repo/activation-preview</code> runs the
+        deterministic advisory engine over recent cached PRs (no AI cost) and returns a{" "}
+        <code>recommendedAction</code> of <code>enable_advisory</code> when the gate is still off.
+      </p>
+
       <h2>Per-PR feature flags</h2>
       <p>
         Most review capabilities need both their own flag and the repo in{" "}
-        <code>GITTENSORY_REVIEW_REPOS</code>. This gives you a global kill switch and a per-repo
-        rollout switch.
+        <code>GITTENSORY_REVIEW_REPOS</code> (unless a per-repo <code>features:</code> override says
+        otherwise). This gives you a global kill switch and a per-repo rollout switch.
       </p>
       <CodeBlock
         filename=".env"

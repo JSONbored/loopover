@@ -38,7 +38,7 @@ function SelfHostingRag() {
           {
             title: "Repo activation",
             description:
-              "GITTENSORY_REVIEW_RAG=true and the repo in GITTENSORY_REVIEW_REPOS, or a private per-repo feature toggle.",
+              "GITTENSORY_REVIEW_RAG=true, repo in GITTENSORY_REVIEW_REPOS (or features.rag: true in private config). Gittensor is_registered is not required for self-host RAG when the allowlist covers the repo.",
           },
           {
             title: "Vector backend",

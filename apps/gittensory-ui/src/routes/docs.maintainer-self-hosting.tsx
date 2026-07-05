@@ -195,6 +195,74 @@ function MaintainerSelfHosting() {
         ))}
       </div>
 
+      <h2>Onboarding simplification proposal (#1574)</h2>
+      <p>
+        This section records today&apos;s accurate setup path and the gaps worth closing next — the
+        issue deliverable for making self-host onboarding as fast as CodeRabbit while keeping robust
+        per-repo policy in container-private config.
+      </p>
+
+      <h3>Today&apos;s recommended path (verified)</h3>
+      <ol>
+        <li>
+          <code>cp .env.selfhost.example .env</code> — conservative defaults (<code>dry-run</code>,
+          small <code>GITTENSORY_REVIEW_REPOS</code>).
+        </li>
+        <li>
+          Pull or build the image (<code>INSTALL_AI_CLIS=true</code> by default;{" "}
+          <code>--build-arg INSTALL_AI_CLIS=false</code> for deterministic-only).
+        </li>
+        <li>
+          One-click GitHub App via <code>/setup</code> + <code>SELFHOST_SETUP_TOKEN</code> (
+          <code>Checks: write</code> included — re-approve on existing Apps after permission bumps).
+        </li>
+        <li>
+          Mount <code>./gittensory-config</code> and copy{" "}
+          <code>config/examples/global.gittensory.yml</code> →{" "}
+          <code>gittensory-config/.gittensory.yml</code> for a centralized private default (per-repo
+          files deep-merge on top).
+        </li>
+        <li>
+          Add each pilot repo to <code>GITTENSORY_REVIEW_REPOS</code>, watch a PR in{" "}
+          <code>dry-run</code>, then enable advisory gate mode from the control panel or{" "}
+          <code>POST /v1/repos/:owner/:repo/activation</code>.
+        </li>
+        <li>
+          Go live by unsetting <code>SELFHOST_DEPLOYMENT_MODE</code>; tune autonomy in private
+          config when ready.
+        </li>
+      </ol>
+
+      <h3>Gaps and proposed improvements</h3>
+      <FeatureRow
+        items={[
+          {
+            title: "Single-command repo onboarding",
+            description:
+              "Today: edit .env allowlist, copy YAML templates, sign into the panel, click activate. Proposed: one CLI/API command that adds owner/repo to GITTENSORY_REVIEW_REPOS, seeds gittensory-config/owner__repo/.gittensory.yml from global.gittensory.yml, and POSTs activation — idempotent, dry-run aware.",
+          },
+          {
+            title: "Centralized private default only",
+            description:
+              "Most fleets need one gittensory-config/.gittensory.yml (already supported) with optional per-repo overrides — docs now treat that as the default story instead of implying every repo needs its own file.",
+          },
+          {
+            title: "Advisory-by-default on first install",
+            description:
+              "The activation endpoint already applies CodeRabbit-style advisory ramp (gate on, deterministic rules advisory, AI off). Proposed: auto-call it on first webhook for a newly installed repo when a SELFHOST_AUTO_ACTIVATE_REPOS flag lists the repo — still overrideable via private config.",
+          },
+          {
+            title: "Clearer activation vocabulary",
+            description:
+              "Docs now separate GITTENSORY_REVIEW_REPOS (feature allowlist), gate activation (check + rules), and is_registered (Gittensor registry). Proposed: surface all three in the control-panel repo workspace with plain labels instead of making operators infer from logs.",
+          },
+        ]}
+      />
+      <Callout variant="note">
+        None of the proposals above require code changes to adopt today&apos;s path — they describe
+        UX we can add without weakening the private-config model or env-level kill switches.
+      </Callout>
+
       <h2>How self-hosting fits with hosted docs</h2>
       <p>
         The hosted maintainer workflow still applies: review modes, gate settings, safety rules, and

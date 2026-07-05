@@ -182,6 +182,83 @@ review_context_fetch_failed   # REES/RAG/grounding context failure`}
         or RAG deliberately.
       </p>
 
+      <h2>6. Activate your first repo</h2>
+      <p>
+        Three separate knobs are easy to conflate — each does something different, and all three
+        matter for a smooth first rollout:
+      </p>
+      <FeatureRow
+        items={[
+          {
+            title: "GITTENSORY_REVIEW_REPOS (env allowlist)",
+            description:
+              "Turns on the per-PR converged review path (unified comment, safety, grounding, RAG, etc.) for named repos. Empty means none — even when the global GITTENSORY_REVIEW_* flags are true.",
+          },
+          {
+            title: "Gate activation (DB or private config)",
+            description:
+              "Turns on the Gittensory check-run and deterministic gate rules for a repo. One-click via the control panel or POST /v1/repos/:owner/:repo/activation; or set gate.checkMode / gate.enabled in a mounted private .gittensory.yml.",
+          },
+          {
+            title: "is_registered (Gittensor registry)",
+            description:
+              "Set automatically when your repo appears in the GITTENSOR_REGISTRY_URL snapshot. Needed for Gittensor-scored mining/evidence features, not for basic PR review on a self-host.",
+          },
+        ]}
+      />
+      <p>
+        <strong>Recommended first-repo path today:</strong> add the repo to{" "}
+        <code>GITTENSORY_REVIEW_REPOS</code>, seed a private global default, then enable advisory
+        gate mode once webhook delivery works.
+      </p>
+      <CodeBlock
+        filename=".env"
+        code={`GITTENSORY_REVIEW_REPOS=owner/my-repo
+SELFHOST_DEPLOYMENT_MODE=dry-run   # keep shadowing until you trust output`}
+      />
+      <p>
+        Copy the shipped global private default into the compose-mounted config directory (edit your
+        copy — never commit real policy to a public repo):
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`mkdir -p gittensory-config
+cp config/examples/global.gittensory.yml gittensory-config/.gittensory.yml
+# optional per-repo override:
+mkdir -p gittensory-config/owner__my-repo
+cp config/examples/global.gittensory.yml gittensory-config/owner__my-repo/.gittensory.yml`}
+      />
+      <p>
+        Sign in to the control panel (<code>ADMIN_GITHUB_LOGINS</code> must include your GitHub
+        login), open the repo workspace, preview what Gittensory would have flagged on recent PRs,
+        then enable advisory mode in one click — the same patch as:
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`curl -X POST "https://reviews.example.com/v1/repos/owner/my-repo/activation" \\
+  -H "Authorization: Bearer <session-or-api-token>" \\
+  -H "Content-Type: application/json" \\
+  -d '{}'`}
+      />
+      <Callout variant="note">
+        That activation endpoint turns on the gate check plus deterministic rules in{" "}
+        <strong>advisory</strong> mode (non-blocking, no auto-merge) — a CodeRabbit-style ramp. AI
+        review stays off until you configure it separately. Full semantics in{" "}
+        <Link to="/docs/self-hosting-configuration">Configuration</Link>.
+      </Callout>
+      <Callout variant="warn" title="Checks: write on the GitHub App">
+        If reviews compute but no <code>Gittensory Orb Review Agent</code> check-run appears, open
+        your App&apos;s permissions page and confirm <strong>Checks: write</strong> is granted —
+        <code>checks: read</code> alone 403s the write silently. New permissions also require a
+        one-time re-approval on each installation; see{" "}
+        <Link to="/docs/self-hosting-github-app">GitHub App and Orb</Link>.
+      </Callout>
+      <p>
+        When output looks right, switch <code>SELFHOST_DEPLOYMENT_MODE</code> from{" "}
+        <code>dry-run</code> to unset (live writes). For a shorter future path, see the onboarding
+        proposal on <Link to="/docs/maintainer-self-hosting">Self-hosted reviews</Link>.
+      </p>
+
       <h2>Defaults at a glance</h2>
       <p>
         Nothing below needs a flag to start; everything past the first row needs an explicit{" "}

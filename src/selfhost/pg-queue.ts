@@ -900,21 +900,25 @@ export function createPgQueue(
         // pending maintenance need must coalesce into the existing row without resetting how long that need has
         // genuinely been outstanding -- otherwise a re-enqueue cadence shorter than the trickle's maxDeferAgeMs
         // (4h default) can keep re-arming the clock forever, and sustained pressure defers the job indefinitely.
-        await pool.query(
+        // Guarded by status='pending' so a concurrent claim between the SELECT and here loses cleanly (rowCount
+        // 0) instead of silently overwriting a processing row -- mirrors the merge path above (gate finding).
+        const superseded = await pool.query(
           `UPDATE ${TABLE}
              SET payload=$1, run_after=GREATEST(run_after, $2), priority=GREATEST(priority, $3), job_key=$4,
                  foreground_lane=$5, claim_sort_key=CASE WHEN claim_sort_key>0 THEN LEAST(claim_sort_key, $7) ELSE $7 END, last_error=NULL
-           WHERE id=$6`,
+           WHERE id=$6 AND status='pending'`,
           [payload, runAfter, priority, key, lane, existing.id, claimSortKey],
         );
-        await pool.query(
-          `DELETE FROM ${TABLE}
-           WHERE status='pending' AND id<>$1 AND job_key IS NOT NULL AND left(job_key, $2)=$3`,
-          [existing.id, supersededKeyPrefix.length, supersededKeyPrefix],
-        );
-        await recordQueueMetric("gittensory_jobs_coalesced_total");
-        kickOne();
-        return;
+        if (superseded.rowCount) {
+          await pool.query(
+            `DELETE FROM ${TABLE}
+             WHERE status='pending' AND id<>$1 AND job_key IS NOT NULL AND left(job_key, $2)=$3`,
+            [existing.id, supersededKeyPrefix.length, supersededKeyPrefix],
+          );
+          await recordQueueMetric("gittensory_jobs_coalesced_total");
+          kickOne();
+          return;
+        }
       }
     }
     if (key) {
@@ -927,16 +931,18 @@ export function createPgQueue(
       if (existing) {
         // See the supersededKeyPrefix branch above: created_at is preserved across a coalesced re-enqueue so the
         // maintenance trickle clock reflects genuine wait time, not the most recent re-request.
-        await pool.query(
+        const coalesced = await pool.query(
           `UPDATE ${TABLE}
              SET payload=$1, run_after=GREATEST(run_after, $2), priority=GREATEST(priority, $3),
                  foreground_lane=$4, claim_sort_key=CASE WHEN claim_sort_key>0 THEN LEAST(claim_sort_key, $6) ELSE $6 END, last_error=NULL
-           WHERE id=$5`,
+           WHERE id=$5 AND status='pending'`,
           [payload, runAfter, priority, lane, existing.id, claimSortKey],
         );
-        await recordQueueMetric("gittensory_jobs_coalesced_total");
-        kickOne();
-        return;
+        if (coalesced.rowCount) {
+          await recordQueueMetric("gittensory_jobs_coalesced_total");
+          kickOne();
+          return;
+        }
       }
     }
     await pool.query(

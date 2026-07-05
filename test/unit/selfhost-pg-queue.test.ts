@@ -65,6 +65,8 @@ interface MockPool {
   /** Pre-load a job to be returned by the next RETURNING claim query. */
   enqueueJob(id: string, payload: object, attempts?: number, jobKey?: string | null): void;
   setDeferUpdateRowCount(rowCount: number): void;
+  /** Default rowCount for coalesce/supersede/merge payload UPDATEs (defaults to 1 = won the race). */
+  setCoalesceUpdateRowCount(rowCount: number): void;
   /** Queues per-call rowCounts for the "AND status='dead'" revive UPDATE, one entry consumed per call in order
    *  (default 1 when the queue is empty) — lets a test simulate an overlapping reviver already winning the race
    *  on a specific row (rowCount 0) while another succeeds (rowCount 1). */
@@ -112,6 +114,7 @@ interface MockPool {
 function makePool(): MockPool {
   const results: Partial<QueryResult>[] = [];
   let deferUpdateRowCount = 1;
+  let coalesceUpdateRowCount = 1;
   const reviveUpdateRowCounts: number[] = [];
   let rateLimitRows: Array<{ admission_key?: string | null; repo_full_name?: string | null; remaining: number | string | null; reset_at: string | null; observed_at?: string | null }> = [];
   let pressureLive: { cnt: number; oldest: number | null; runnableCnt?: number; oldestRunnable?: number | null } = {
@@ -194,6 +197,9 @@ function makePool(): MockPool {
     if (q.includes("SET status='pending', run_after=GREATEST")) {
       return { rows: [], rowCount: deferUpdateRowCount };
     }
+    if (q.includes("SET payload=$1, run_after=GREATEST") && q.includes("WHERE id=")) {
+      return { rows: [], rowCount: coalesceUpdateRowCount };
+    }
     if (q.includes("SET status='pending', run_after=$1, last_error=NULL")) {
       const rowCount = reviveUpdateRowCounts.length > 0 ? (reviveUpdateRowCounts.shift() ?? 1) : 1;
       return { rows: [], rowCount };
@@ -229,6 +235,9 @@ function makePool(): MockPool {
     },
     setDeferUpdateRowCount(rowCount) {
       deferUpdateRowCount = rowCount;
+    },
+    setCoalesceUpdateRowCount(rowCount) {
+      coalesceUpdateRowCount = rowCount;
     },
     setReviveUpdateRowCounts(rowCounts) {
       reviveUpdateRowCounts.length = 0;
@@ -615,14 +624,8 @@ describe("createPgQueue (durable #977)", () => {
       ["rag-index-repo:jsonbored/gittensory:".length, "rag-index-repo:jsonbored/gittensory:"],
     );
     expect(m.pool.query).toHaveBeenCalledWith(
-      expect.stringContaining("SET payload=$1, run_after=GREATEST"),
-      expect.arrayContaining([
-        expect.stringContaining('"requestedBy":"schedule"'),
-        expect.any(Number),
-        0,
-        "rag-index-repo:jsonbored/gittensory:full",
-        "existing-incremental",
-      ]),
+      expect.stringContaining("WHERE id=$6 AND status='pending'"),
+      expect.anything(),
     );
     expect(m.pool.query).toHaveBeenCalledWith(
       expect.stringContaining("DELETE FROM _selfhost_jobs"),
@@ -695,6 +698,49 @@ describe("createPgQueue (durable #977)", () => {
     expect(m.pool.query).toHaveBeenCalledWith(
       expect.stringContaining("INSERT INTO"),
       expect.arrayContaining([expect.stringContaining('"paths":["src/b.ts"]')]),
+    );
+  });
+
+  it("REGRESSION (gate finding): a lost supersede race falls through to insert instead of deleting sibling pending rows", async () => {
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // absorbedByKey check
+    m.fn.mockResolvedValueOnce({ rows: [{ id: "existing-incremental" }], rowCount: 1 }); // supersede lookup
+    m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // guarded supersede UPDATE loses the race
+
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+    });
+
+    expect(m.pool.query).not.toHaveBeenCalledWith(
+      expect.stringContaining("DELETE FROM _selfhost_jobs"),
+      expect.anything(),
+    );
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO"),
+      expect.arrayContaining([expect.stringContaining('"requestedBy":"schedule"')]),
+    );
+  });
+
+  it("REGRESSION (gate finding): a lost simple-coalesce race falls through to insert instead of silently overwriting", async () => {
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    m.fn.mockResolvedValueOnce({ rows: [{ id: "existing" }], rowCount: 1 }); // keyed lookup
+    m.setCoalesceUpdateRowCount(0);
+
+    await q.binding.send(ciWebhook("ci-2", "check_run"), { delaySeconds: 1 });
+
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("WHERE id=$5 AND status='pending'"),
+      expect.anything(),
+    );
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO"),
+      expect.arrayContaining([expect.stringContaining('"deliveryId":"ci-2"')]),
     );
   });
 

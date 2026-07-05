@@ -91,4 +91,80 @@ describe("compileRepoPolicyCompilerOutput", () => {
     );
     expect(output.publicOutputBoundaries!.join(" ")).not.toMatch(/wallet|payout/i);
   });
+
+  it("uses the policy summary for preferred direct-PR and issue-discovery lanes", () => {
+    const directPreferred = compile({
+      repoFullName: "owner/direct-preferred",
+      manifest: parseFocusManifest({ wantedPaths: ["src/"], issueDiscoveryPolicy: "neutral" }),
+      generatedAt: "2026-06-01T00:00:00.000Z",
+    });
+    const directLane = lanes(directPreferred, 2).find((l) => l.id === "direct-pr")!;
+    expect(directLane.title).toBe("Direct pull request lane (preferred)");
+    expect(directLane.summary).toBe("Direct PRs on the maintainer-wanted areas are preferred.");
+
+    const issuePreferred = compile({
+      repoFullName: "owner/issue-preferred",
+      manifest: parseFocusManifest({ wantedPaths: ["src/"], issueDiscoveryPolicy: "encouraged" }),
+      generatedAt: "2026-06-01T00:00:00.000Z",
+    });
+    const issueLane = lanes(issuePreferred, 2).find((l) => l.id === "issue-discovery")!;
+    expect(issueLane.title).toBe("Issue discovery lane (preferred)");
+    expect(issueLane.summary).toBe("Issue-discovery is the preferred contribution mode for this repo.");
+  });
+
+  it("reuses direct-PR preferred paths on the issue-discovery lane and filters direct-tagged notes", () => {
+    const output = compile({
+      repoFullName: "owner/lanes",
+      manifest: parseFocusManifest({
+        wantedPaths: ["src/core/", "lib/"],
+        linkedIssuePolicy: "required",
+        publicNotes: ["Keep PRs narrow.", "Use direct API calls sparingly."],
+      }),
+      generatedAt: "2026-06-01T00:00:00.000Z",
+    });
+    const directLane = lanes(output, 2).find((l) => l.id === "direct-pr")!;
+    const issueLane = lanes(output, 2).find((l) => l.id === "issue-discovery")!;
+    expect(issueLane.preferredPaths).toEqual(directLane.preferredPaths);
+    expect(directLane.publicNotes).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/tracked issue before opening/i),
+        "Keep PRs narrow.",
+        "Use direct API calls sparingly.",
+      ]),
+    );
+    expect(issueLane.publicNotes).toEqual(["Keep PRs narrow."]);
+  });
+
+  it("defaults generatedAt when omitted and is deterministic for identical inputs", () => {
+    const manifest = parseFocusManifest({ wantedPaths: ["src/"], preferredLabels: ["bug"] });
+    const fixed = compile({ repoFullName: "owner/repo", manifest, generatedAt: "2026-06-01T00:00:00.000Z" });
+    const again = compile({ repoFullName: "owner/repo", manifest, generatedAt: "2026-06-01T00:00:00.000Z" });
+    expect(fixed).toEqual(again);
+
+    const defaulted = compile({ repoFullName: "owner/repo", manifest });
+    expect(defaulted.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("surfaces label policy fields and filters unsafe readiness warnings", () => {
+    const output = compile({
+      repoFullName: "owner/repo",
+      manifest: parseFocusManifest({
+        wantedPaths: ["src/"],
+        preferredLabels: ["bug", "wallet"],
+      }),
+      generatedAt: "2026-06-01T00:00:00.000Z",
+    });
+    expect(labelPolicy(output).preferredLabels).toEqual(["bug"]);
+    expect(labelPolicy(output).requiredLabels).toEqual([]);
+    expect(labelPolicy(output).discouragedLabels).toEqual([]);
+    expect(output.readinessWarnings!.join(" ")).not.toMatch(/wallet/i);
+    expect(output.readinessWarnings).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/previewable before publication/i),
+        expect.stringMatching(/maintainer-only context/i),
+      ]),
+    );
+    expect(output.maintainerExpectations!.length).toBeGreaterThan(0);
+    expect(output.privateOwnerContext).toBeDefined();
+  });
 });

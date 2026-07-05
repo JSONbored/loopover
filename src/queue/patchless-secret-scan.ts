@@ -9,6 +9,8 @@ export const SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS = 512_000;
 const SECRET_SCAN_FETCH_PROBE_CHARS = SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS + 1;
 /** Bound concurrent Contents API reads during patch-less secret-scan enrichment. */
 const SECRET_SCAN_PATCH_FALLBACK_MAX_CONCURRENT = 4;
+/** Aggregate Contents API read budget for one PR secret-scan fallback pass. */
+export const SECRET_SCAN_PATCH_FALLBACK_MAX_FETCHES = 100;
 /** Max patch-less paths listed in the fail-closed advisory detail (title still reports the full count). */
 export const INCOMPLETE_PATCH_LESS_PATH_DETAIL_MAX = 5;
 
@@ -68,6 +70,29 @@ export function hasPatchLessSecretScanCandidates(
   });
 }
 
+function patchLessSecretScanFetchCost(
+  file: PullRequestFileRecord,
+  baseSha?: string | null | undefined,
+): number {
+  const existingPatch = typeof file.payload?.patch === "string" ? file.payload.patch : "";
+  if (existingPatch) return 0;
+  const status = file.status ?? "modified";
+  if (!shouldAttemptPatchLessSecretScan(file, status, baseSha)) return 0;
+  return status === "added" ? 1 : 2;
+}
+
+function patchLessSecretScanFetchCostExceedsBudget(
+  files: PullRequestFileRecord[],
+  baseSha?: string | null | undefined,
+): boolean {
+  let fetches = 0;
+  for (const file of files) {
+    fetches += patchLessSecretScanFetchCost(file, baseSha);
+    if (fetches > SECRET_SCAN_PATCH_FALLBACK_MAX_FETCHES) return true;
+  }
+  return false;
+}
+
 export function markEligiblePatchLessFilesIncomplete(
   files: PullRequestFileRecord[],
   baseSha?: string | null | undefined,
@@ -89,6 +114,8 @@ export const patchlessSecretScanInternals = {
   syntheticSecretScanPatch,
   isOverSecretScanContentLimit,
   markPatchLessSecretScanIncomplete,
+  patchLessSecretScanFetchCost,
+  patchLessSecretScanFetchCostExceedsBudget,
 };
 
 export function incompletePatchLessSecretScanFinding(
@@ -146,6 +173,9 @@ export async function enrichSecretScanFilesWithPatchFallback(
 ): Promise<PullRequestFileRecord[]> {
   const headSha = args.headSha?.trim();
   if (!headSha) return files;
+  if (patchLessSecretScanFetchCostExceedsBudget(files, args.baseSha)) {
+    return markEligiblePatchLessFilesIncomplete(files, args.baseSha);
+  }
   return mapPatchLessSecretScanFilesWithConcurrency(
     files,
     SECRET_SCAN_PATCH_FALLBACK_MAX_CONCURRENT,

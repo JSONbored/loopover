@@ -4,6 +4,7 @@ import {
   addedLinesForSecretScan,
   enrichSecretScanFilesWithPatchFallback,
   incompletePatchLessSecretScanFinding,
+  SECRET_SCAN_PATCH_FALLBACK_MAX_FETCHES,
   markEligiblePatchLessFilesIncomplete,
   patchlessSecretScanInternals,
 } from "../../src/queue/patchless-secret-scan";
@@ -556,6 +557,63 @@ describe("enrichSecretScanFilesWithPatchFallback", () => {
     expect(secretLeakFinding(buildSecretScanDiff(enriched))?.code).toBe("secret_leak");
   });
 
+  it("fails closed without fetching when patch-less files exceed the aggregate fetch budget", async () => {
+    let fetches = 0;
+    const fetcher: FileFetcher = {
+      async getFileContent() {
+        fetches += 1;
+        return "const ok = 1;\n";
+      },
+    };
+    const files = Array.from({ length: SECRET_SCAN_PATCH_FALLBACK_MAX_FETCHES + 1 }, (_, index) => ({
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      path: `bulk-${index}.env`,
+      status: "added" as const,
+      additions: 1,
+      deletions: 0,
+      changes: 1,
+      payload: {},
+    }));
+    const enriched = await enrichSecretScanFilesWithPatchFallback(files, {
+      headSha: "head-sha",
+      fetcher,
+    });
+    expect(fetches).toBe(0);
+    expect(enriched.every((file) => file.payload.secretScanIncomplete === true)).toBe(true);
+    expect(incompletePatchLessSecretScanFinding(enriched)?.title).toContain(
+      `(${SECRET_SCAN_PATCH_FALLBACK_MAX_FETCHES + 1})`,
+    );
+  });
+
+  it("allows patch-less files at the aggregate fetch budget", async () => {
+    let fetches = 0;
+    const fetcher: FileFetcher = {
+      async getFileContent(path, ref) {
+        fetches += 1;
+        if (ref === "head-sha") return `const ok = "${path}";`;
+        return null;
+      },
+    };
+    const files = Array.from({ length: SECRET_SCAN_PATCH_FALLBACK_MAX_FETCHES }, (_, index) => ({
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      path: `bulk-${index}.env`,
+      status: "added" as const,
+      additions: 1,
+      deletions: 0,
+      changes: 1,
+      payload: {},
+    }));
+    const enriched = await enrichSecretScanFilesWithPatchFallback(files, {
+      headSha: "head-sha",
+      fetcher,
+    });
+    expect(fetches).toBe(SECRET_SCAN_PATCH_FALLBACK_MAX_FETCHES);
+    expect(enriched.every((file) => typeof file.payload.patch === "string")).toBe(true);
+    expect(incompletePatchLessSecretScanFinding(enriched)).toBeNull();
+  });
+
   it("synthesizes a scannable patch for a patch-less renamed file with a newly added secret", async () => {
     const fetcher: FileFetcher = {
       async getFileContent(path, ref) {
@@ -832,6 +890,8 @@ describe("patchlessSecretScanInternals", () => {
     syntheticSecretScanPatch,
     isOverSecretScanContentLimit,
     markPatchLessSecretScanIncomplete,
+    patchLessSecretScanFetchCost,
+    patchLessSecretScanFetchCostExceedsBudget,
   } = patchlessSecretScanInternals;
 
   it("hasPatchLessSecretScanCandidates ignores inline patches and ineligible statuses", () => {
@@ -868,6 +928,22 @@ describe("patchlessSecretScanInternals", () => {
       },
     ];
     expect(hasPatchLessSecretScanCandidates(files, null)).toBe(true);
+    expect(
+      hasPatchLessSecretScanCandidates(
+        [
+          {
+            repoFullName: "acme/widgets",
+            pullNumber: 7,
+            path: "default-status.ts",
+            additions: 1,
+            deletions: 0,
+            changes: 1,
+            payload: {},
+          },
+        ] as Parameters<typeof hasPatchLessSecretScanCandidates>[0],
+        "base-sha",
+      ),
+    ).toBe(true);
     expect(
       hasPatchLessSecretScanCandidates(
         [
@@ -918,6 +994,34 @@ describe("patchlessSecretScanInternals", () => {
       path: "secrets.env",
     } as Parameters<typeof markPatchLessSecretScanIncomplete>[0]);
     expect(incomplete.payload?.secretScanIncomplete).toBe(true);
+  });
+
+  it("counts aggregate fetch budget by patch-less status and eligibility", () => {
+    const added = {
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      path: "added.env",
+      status: "added",
+      additions: 1,
+      deletions: 0,
+      changes: 1,
+      payload: {},
+    };
+    const modified = { ...added, path: "modified.env", status: "modified" };
+    const inline = { ...added, path: "inline.env", payload: { patch: "+ok" } };
+    const removed = { ...added, path: "removed.env", status: "removed" };
+    expect(patchLessSecretScanFetchCost(added, null)).toBe(1);
+    expect(patchLessSecretScanFetchCost(modified, "base-sha")).toBe(2);
+    expect(patchLessSecretScanFetchCost(modified, null)).toBe(0);
+    expect(patchLessSecretScanFetchCost(inline, null)).toBe(0);
+    expect(patchLessSecretScanFetchCost(removed, "base-sha")).toBe(0);
+    expect(patchLessSecretScanFetchCostExceedsBudget([added], null)).toBe(false);
+    expect(
+      patchLessSecretScanFetchCostExceedsBudget(
+        Array.from({ length: SECRET_SCAN_PATCH_FALLBACK_MAX_FETCHES + 1 }, () => added),
+        null,
+      ),
+    ).toBe(true);
   });
 
   it("addedLinesForSecretScan handles identical content and multiset decrements", () => {

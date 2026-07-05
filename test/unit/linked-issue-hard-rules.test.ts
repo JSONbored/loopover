@@ -4,11 +4,14 @@ import * as backfillModule from "../../src/github/backfill";
 import {
   DEFAULT_LINKED_ISSUE_HARD_RULES,
   evaluateLinkedIssueHardRules,
+  hasVerifiableOpenLinkedIssueReference,
   loadLinkedIssueHardRules,
   resolveLinkedIssueHardRule,
+  resolveLinkedIssueHasOpenReference,
   type LinkedIssueFacts,
   type LinkedIssueHardRulesConfig,
 } from "../../src/review/linked-issue-hard-rules";
+import type { LinkedIssueFactsFetch } from "../../src/github/backfill";
 import { normalizeLinkedIssueHardRulesConfig } from "../../src/review/linked-issue-hard-rules-config";
 import { parseFocusManifest, resolveEffectiveSettings } from "../../src/signals/focus-manifest";
 import { setLocalManifestReader } from "../../src/signals/focus-manifest-loader";
@@ -495,5 +498,97 @@ describe("resolveLinkedIssueHardRule (#1144 — overflow + orchestration)", () =
     // the hard-rule violation above is computed independently and is unaffected by it either way.
     const db = { linkedIssueGateMode: "advisory", requireLinkedIssue: false } as unknown as RepositorySettings;
     expect(resolveEffectiveSettings(db, parseFocusManifest(null)).linkedIssueGateMode).toBe("advisory");
+  });
+});
+
+describe("hasVerifiableOpenLinkedIssueReference (#unlinked-issue-guardrail-followup — pure evaluator)", () => {
+  const found = (state: string): LinkedIssueFactsFetch => ({ status: "found", facts: { number: 1, state, labels: [], assignees: [], authorLogin: null } });
+  const notFound: LinkedIssueFactsFetch = { status: "not_found" };
+  const fetchError: LinkedIssueFactsFetch = { status: "fetch_error" };
+
+  it("fails open (true) on an empty input — the caller handles the zero-citation case separately", () => {
+    expect(hasVerifiableOpenLinkedIssueReference([])).toBe(true);
+  });
+
+  it("is true when at least one linked issue is confirmed open", () => {
+    expect(hasVerifiableOpenLinkedIssueReference([found("open")])).toBe(true);
+    expect(hasVerifiableOpenLinkedIssueReference([found("closed"), found("open")])).toBe(true);
+  });
+
+  it("is false when every linked issue conclusively resolves to NOT open (closed or confirmed-missing), with zero ambiguity", () => {
+    expect(hasVerifiableOpenLinkedIssueReference([found("closed")])).toBe(false);
+    expect(hasVerifiableOpenLinkedIssueReference([notFound])).toBe(false);
+    expect(hasVerifiableOpenLinkedIssueReference([found("closed"), notFound])).toBe(false);
+  });
+
+  it("fails open (true) whenever ANY result is ambiguous (fetch_error), even if none are confirmed open", () => {
+    expect(hasVerifiableOpenLinkedIssueReference([fetchError])).toBe(true);
+    expect(hasVerifiableOpenLinkedIssueReference([found("closed"), fetchError])).toBe(true);
+    expect(hasVerifiableOpenLinkedIssueReference([notFound, fetchError])).toBe(true);
+  });
+
+  it("a confirmed-open result takes priority over an ambiguous one present in the same set", () => {
+    expect(hasVerifiableOpenLinkedIssueReference([found("open"), fetchError])).toBe(true);
+  });
+});
+
+describe("resolveLinkedIssueHasOpenReference (#unlinked-issue-guardrail-followup — live orchestration)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("returns true and fetches nothing when there are no linked issues", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [] });
+    expect(result).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns true when the linked issue is confirmed open", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) =>
+      input.toString().includes("/issues/") ? Response.json({ number: 7, state: "open", labels: [], assignees: [] }) : new Response("missing", { status: 404 }),
+    );
+    const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [7] });
+    expect(result).toBe(true);
+  });
+
+  it("returns false when the linked issue is confirmed CLOSED — the exact stale-link gaming case", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) =>
+      input.toString().includes("/issues/") ? Response.json({ number: 7, state: "closed", labels: [], assignees: [] }) : new Response("missing", { status: 404 }),
+    );
+    const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [7] });
+    expect(result).toBe(false);
+  });
+
+  it("fails open (true) when the fetch errors transiently rather than confirming the issue is dead", async () => {
+    vi.stubGlobal("fetch", async () => new Response("server error", { status: 500 }));
+    const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [7] });
+    expect(result).toBe(true);
+  });
+
+  it("still resolves correctly (via the public-token fallback) when no installationId is supplied at all", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) =>
+      input.toString().includes("/issues/") ? Response.json({ number: 7, state: "closed", labels: [], assignees: [] }) : new Response("missing", { status: 404 }),
+    );
+    const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [7], installationId: null });
+    expect(result).toBe(false);
+  });
+
+  it("falls back to the public token (and still resolves) when installationId is set but token minting fails", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) =>
+      input.toString().includes("/app/installations/") ? new Response("forbidden", { status: 403 }) : input.toString().includes("/issues/") ? Response.json({ number: 7, state: "open", labels: [], assignees: [] }) : new Response("missing", { status: 404 }),
+    );
+    const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [7], installationId: 123 });
+    expect(result).toBe(true);
+  });
+
+  it("checks multiple linked issues and is true when only one of several is open", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/issues/1")) return Response.json({ number: 1, state: "closed", labels: [], assignees: [] });
+      if (url.endsWith("/issues/2")) return Response.json({ number: 2, state: "open", labels: [], assignees: [] });
+      return new Response("missing", { status: 404 });
+    });
+    const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [1, 2] });
+    expect(result).toBe(true);
   });
 });

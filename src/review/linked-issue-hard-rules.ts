@@ -1,5 +1,6 @@
-import { fetchLinkedIssueFacts } from "../github/backfill";
+import { fetchLinkedIssueFacts, type LinkedIssueFactsFetch } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
+import { createInstallationToken } from "../github/app";
 import { extractLinkedIssueNumbersWithOverflow } from "../db/repositories";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { DEFAULT_LINKED_ISSUE_HARD_RULES } from "./linked-issue-hard-rules-config";
@@ -183,4 +184,50 @@ export async function resolveLinkedIssueHardRule(args: {
     return undefined;
   }
   return evaluateLinkedIssueHardRules({ issues: issueFacts, config: args.config, repoOwner: args.repoOwner, prAuthorLogin: args.prAuthorLogin });
+}
+
+// ── Stale/fabricated-link countermeasure for the "must link an issue" HARD gate (#unlinked-issue-guardrail-
+// followup) ──────────────────────────────────────────────────────────────────────────────────────────────
+//
+// `pr.linkedIssues` (extractLinkedIssueNumbersWithOverflow) is a pure body-text regex match — it never checks
+// whether the cited issue is actually OPEN. So a repo running `linkedIssueGateMode: "block"` (requires a
+// linked issue to merge) can be satisfied by a contributor citing an already-CLOSED or fabricated issue
+// number, which defeats the whole point of requiring a link. This pair of functions gives the gate a
+// verified, fail-open "is at least one citation a real, currently open issue" signal to use INSTEAD of bare
+// presence, without changing what `pr.linkedIssues` itself means anywhere else it's used (duplicate-winner
+// overlap, label propagation, scoring, etc. all keep reading raw presence).
+
+/**
+ * PURE evaluator. `true` means "treat the presence check as satisfied" — either a linked issue is CONFIRMED
+ * open, or at least one fetch was ambiguous (`fetch_error`) and we can't rule out a real open issue behind
+ * it. `false` — the only case this whole mechanism exists to catch — means EVERY fetched result conclusively
+ * resolved to NOT an open issue (found-but-closed, or a confirmed 404), with zero ambiguity. An empty input
+ * (nothing was fetched, e.g. the caller didn't need to check) fails open to `true` — the caller is
+ * responsible for handling "no linked issues at all" separately (that's the existing bare-presence check).
+ */
+export function hasVerifiableOpenLinkedIssueReference(fetchResults: LinkedIssueFactsFetch[]): boolean {
+  if (fetchResults.length === 0) return true;
+  if (fetchResults.some((result) => result.status === "found" && result.facts.state === "open")) return true;
+  return fetchResults.some((result) => result.status === "fetch_error");
+}
+
+/**
+ * Orchestrate the live per-issue fetch for {@link hasVerifiableOpenLinkedIssueReference}. Mints its own
+ * installation token (falling back to the public token, exactly like fetchLinkedIssueFacts's own
+ * hasProvenAccess discipline degrades a public-token 404 to `fetch_error` rather than a confirmed miss) so
+ * callers only need an `installationId`, mirroring `resolveLinkedIssueAuthorLogins`'s lazy-token pattern.
+ * Fail-safe: a token-mint failure still proceeds on the public token rather than skipping the check.
+ */
+export async function resolveLinkedIssueHasOpenReference(args: {
+  env: Env;
+  repoFullName: string;
+  linkedIssues: number[];
+  installationId?: number | null | undefined;
+}): Promise<boolean> {
+  if (args.linkedIssues.length === 0) return true;
+  const ciToken = args.installationId ? await createInstallationToken(args.env, args.installationId).catch(() => undefined) : undefined;
+  const token = ciToken ?? args.env.GITHUB_PUBLIC_TOKEN;
+  const admissionKey = githubRateLimitAdmissionKeyForToken(args.env, token, args.installationId);
+  const fetchResults = await Promise.all(args.linkedIssues.map((issueNumber) => fetchLinkedIssueFacts(args.env, args.repoFullName, issueNumber, token, admissionKey)));
+  return hasVerifiableOpenLinkedIssueReference(fetchResults);
 }

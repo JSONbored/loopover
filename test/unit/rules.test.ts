@@ -73,6 +73,68 @@ describe("advisory rules", () => {
     expect(advisory.findings.map((finding) => finding.code)).toContain("missing_linked_issue");
   });
 
+  it("does NOT flag a cited-but-unverified linked issue as missing (byte-identical to today when the caller hasn't confirmed it's dead)", () => {
+    const pr: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 13,
+      title: "Fix a bug",
+      state: "open",
+      authorLogin: "oktofeesh1",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: [],
+      linkedIssues: [7],
+    };
+
+    const advisory = buildPullRequestAdvisory(repo, pr, { requireLinkedIssue: true });
+
+    expect(advisory.findings.map((finding) => finding.code)).not.toContain("missing_linked_issue");
+  });
+
+  it("flags a linked issue as missing when the caller has confirmed none of the citations resolve to an open issue (#unlinked-issue-guardrail-followup)", () => {
+    // pr.linkedIssues is populated by a pure body-text regex that never checks the cited issue's real state --
+    // a contributor can otherwise satisfy `requireLinkedIssue`/`linkedIssueGateMode: block` by citing an
+    // already-CLOSED (or fabricated) issue number. confirmedNoOpenLinkedIssue is the caller's live-verified
+    // signal that every citation is conclusively dead.
+    const pr: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 14,
+      title: "Fix a bug",
+      state: "open",
+      authorLogin: "oktofeesh1",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: [],
+      linkedIssues: [7],
+    };
+
+    const advisory = buildPullRequestAdvisory(repo, pr, { requireLinkedIssue: true, confirmedNoOpenLinkedIssue: true });
+
+    expect(advisory.conclusion).toBe("neutral");
+    const finding = advisory.findings.find((f) => f.code === "missing_linked_issue");
+    expect(finding).toBeDefined();
+    expect(finding?.detail).toContain("could not be verified as a currently open issue");
+  });
+
+  it("confirmedNoOpenLinkedIssue is a no-op when the PR links nothing at all (the existing zero-citation path still drives the finding, with its own detail text)", () => {
+    const pr: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 15,
+      title: "Fix a bug",
+      state: "open",
+      authorLogin: "oktofeesh1",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: [],
+      linkedIssues: [],
+    };
+
+    const advisory = buildPullRequestAdvisory(repo, pr, { requireLinkedIssue: true, confirmedNoOpenLinkedIssue: true });
+
+    const finding = advisory.findings.find((f) => f.code === "missing_linked_issue");
+    expect(finding?.detail).toBe("No closing reference or linked issue number was found in the PR metadata/body.");
+  });
+
   it("marks unknown repositories as action required", () => {
     const advisory = buildRepositoryAdvisory(null, "owner/repo");
     expect(advisory.conclusion).toBe("action_required");

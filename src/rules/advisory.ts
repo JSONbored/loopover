@@ -190,6 +190,15 @@ export function buildPullRequestAdvisory(
      *  surface a `self_authored_linked_issue` finding when the PR author also opened the linked issue. Absent
      *  or empty ⇒ the finding is never raised (fail-open: unknown issue authorship stays advisory-only). */
     linkedIssueAuthorLogins?: (string | null | undefined)[];
+    /** Same-account issue-avoidance countermeasure (#unlinked-issue-guardrail-followup): `pr.linkedIssues` is
+     *  populated by a pure body-text regex that never checks whether the cited issue is actually OPEN, so a
+     *  contributor can satisfy `linkedIssueGateMode: "block"` by citing an already-CLOSED (or fabricated)
+     *  issue number. When the caller has live-verified that NONE of this PR's linked issue numbers resolve to
+     *  a confirmed-open issue, it sets this true and `missing_linked_issue` fires exactly as if nothing were
+     *  linked at all. Absent/false ⇒ byte-identical to today (presence alone still satisfies the requirement)
+     *  — this is fail-open by construction: the caller only ever sets it true after a live check confirms
+     *  every reference is dead, never on ambiguity. */
+    confirmedNoOpenLinkedIssue?: boolean;
   } = {},
 ): Advisory {
   const repoFullName = pr?.repoFullName ?? repo?.fullName ?? "unknown/unknown";
@@ -215,7 +224,7 @@ export function buildPullRequestAdvisory(
       action: "Re-deliver the webhook or wait for the next sync.",
     });
   } else {
-    addPullRequestFindings(repo, pr, findings, context.otherOpenPullRequests ?? [], Boolean(context.requireLinkedIssue), Boolean(context.duplicateWinnerEnabled), context.linkedIssueAuthorLogins ?? []);
+    addPullRequestFindings(repo, pr, findings, context.otherOpenPullRequests ?? [], Boolean(context.requireLinkedIssue), Boolean(context.duplicateWinnerEnabled), context.linkedIssueAuthorLogins ?? [], Boolean(context.confirmedNoOpenLinkedIssue));
   }
   return advisory("pull_request", targetKey, repoFullName, findings, "Pull request advisory generated.", pr?.number, undefined, pr?.headSha ?? undefined);
 }
@@ -675,6 +684,7 @@ function addPullRequestFindings(
   requireLinkedIssue: boolean,
   duplicateWinnerEnabled: boolean,
   linkedIssueAuthorLogins: (string | null | undefined)[],
+  confirmedNoOpenLinkedIssue: boolean,
 ): void {
   if (pr.state !== "open") {
     findings.push({
@@ -684,12 +694,15 @@ function addPullRequestFindings(
       detail: `The pull request state is ${pr.state}.`,
     });
   }
-  if (pr.linkedIssues.length === 0 && requireLinkedIssue) {
+  const noLinkedIssueCited = pr.linkedIssues.length === 0;
+  if ((noLinkedIssueCited || confirmedNoOpenLinkedIssue) && requireLinkedIssue) {
     findings.push({
       code: "missing_linked_issue",
       severity: "warning",
       title: "No linked issue detected",
-      detail: "No closing reference or linked issue number was found in the PR metadata/body.",
+      detail: noLinkedIssueCited
+        ? "No closing reference or linked issue number was found in the PR metadata/body."
+        : "The PR cites an issue number, but it could not be verified as a currently open issue.",
       action: "If this PR is intended to solve an issue, link it explicitly in the PR body.",
     });
   } else {

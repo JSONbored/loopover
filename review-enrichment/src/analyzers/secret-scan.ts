@@ -356,6 +356,18 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // MiniMax Token Plan subscription key: `sk-cp-` + base62 body (distinct from OpenAI `sk-proj-`/`sk-ant-`).
+    kind: "minimax_token_plan_key",
+    re: /\bsk-cp-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // MiniMax pay-per-token API key: `sk-api-` + base62 body.
+    kind: "minimax_pay_per_token_key",
+    re: /\bsk-api-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
     // Google OAuth 2.0 client secret: `GOCSPX-` + 28 base64url chars.
     kind: "google_oauth_client_secret",
     re: /\bGOCSPX-[A-Za-z0-9_-]{28}\b/,

@@ -999,6 +999,42 @@ test("scanPatch does not flag truncated Gladia/WorkOS keys or identifier continu
   );
 });
 
+test("scanPatch flags MiniMax Token Plan and pay-per-token API keys with high confidence", () => {
+  const fakeMinimaxCpKey = "sk-cp-" + "a".repeat(20);
+  const minimaxCpFindings = scanPatch("src/config.ts", hunk([`const minimax = "${fakeMinimaxCpKey}";`]));
+  assert.equal(minimaxCpFindings.length, 1);
+  assert.equal(minimaxCpFindings[0].kind, "minimax_token_plan_key");
+  assert.equal(minimaxCpFindings[0].confidence, "high");
+
+  const fakeMinimaxApiKey = "sk-api-" + "b".repeat(20);
+  const minimaxApiFindings = scanPatch("src/config.ts", hunk([`const minimax = "${fakeMinimaxApiKey}";`]));
+  assert.equal(minimaxApiFindings.length, 1);
+  assert.equal(minimaxApiFindings[0].kind, "minimax_pay_per_token_key");
+  assert.equal(minimaxApiFindings[0].confidence, "high");
+});
+
+test("scanPatch does not flag truncated MiniMax keys or identifier continuation", () => {
+  assert.equal(scanPatch("src/config.ts", hunk([`const minimax = "sk-cp-${"a".repeat(19)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const minimax = "sk-cp-${"a".repeat(20)}_suffix";`])).some((f) => f.kind === "minimax_token_plan_key"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const minimax = "sk-cp-${"a".repeat(20)}-suffix";`])).some((f) => f.kind === "minimax_token_plan_key"),
+    false,
+  );
+
+  assert.equal(scanPatch("src/config.ts", hunk([`const minimax = "sk-api-${"b".repeat(19)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const minimax = "sk-api-${"b".repeat(20)}_suffix";`])).some((f) => f.kind === "minimax_pay_per_token_key"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const minimax = "sk-api-${"b".repeat(20)}-suffix";`])).some((f) => f.kind === "minimax_pay_per_token_key"),
+    false,
+  );
+});
+
 test("scanPatch flags additional high-confidence SaaS/cloud/CI credential formats", () => {
   const cases = [
     ["google_oauth_client_secret", "GOCSPX-" + b62(28)],

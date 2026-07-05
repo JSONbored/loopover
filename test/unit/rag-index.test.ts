@@ -302,6 +302,85 @@ describe("indexRepo: MAX_CHUNKS_PER_REPO cap holds", () => {
     expect(await countChunks(env, PROJECT, "gittensory")).toBeLessThanOrEqual(MAX_CHUNKS_PER_REPO);
     expect(result.indexed).toBe(MAX_CHUNKS_PER_REPO);
   });
+
+  it("still indexes package.json (and other root manifest/config files) on a repo whose file count exceeds the cap (regression: manifestPriority)", async () => {
+    const { env } = indexEnv();
+    // Alphabetically, "package.json" sorts AFTER most of "src/f0.ts".."src/f<N>.ts" — so without
+    // manifest-first prioritization it would be starved out once the cap is reached, exactly as it
+    // was in prod for gittensory's own repo (#confirmed via repo_chunks query).
+    const overCap = MAX_CHUNKS_PER_REPO + 25;
+    const tree: Array<{ path: string; size: number }> = [
+      { path: "package.json", size: 20 },
+      { path: "tsconfig.json", size: 20 },
+      { path: "pnpm-workspace.yaml", size: 20 },
+      { path: "go.mod", size: 20 },
+      { path: "Cargo.toml", size: 20 },
+      { path: "pyproject.toml", size: 20 },
+      { path: "requirements.txt", size: 20 },
+      { path: "wrangler.jsonc", size: 20 },
+      ...Array.from({ length: overCap }, (_, i) => ({ path: `src/f${i}.ts`, size: 20 })),
+    ];
+    const files: Record<string, string> = {
+      "package.json": '{"name":"gittensory"}\n',
+      "tsconfig.json": "{}\n",
+      "pnpm-workspace.yaml": "packages:\n",
+      "go.mod": "module example.com/foo\n",
+      "Cargo.toml": "[package]\n",
+      "pyproject.toml": "[project]\n",
+      "requirements.txt": "flask\n",
+      "wrangler.jsonc": "{}\n",
+    };
+    for (let i = 0; i < overCap; i++) files[`src/f${i}.ts`] = `export const f${i} = ${i};\n`;
+    stubGithub({ tree, files });
+
+    const result = await indexRepo(env, PROJECT, REPO);
+
+    expect(result.capped).toBe(true);
+    expect(result.indexed).toBe(MAX_CHUNKS_PER_REPO);
+    const indexedPaths = await pathsFor(env, PROJECT, "gittensory");
+    for (const manifest of [
+      "package.json",
+      "tsconfig.json",
+      "pnpm-workspace.yaml",
+      "go.mod",
+      "Cargo.toml",
+      "pyproject.toml",
+      "requirements.txt",
+      "wrangler.jsonc",
+    ]) {
+      expect(indexedPaths).toContain(manifest);
+    }
+  });
+});
+
+describe("manifestPriority ordering (via indexRepo, well under the cap)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("orders manifest/config files first, then other code, then docs — byte-identical file SET to before when the cap never matters", async () => {
+    const { env } = indexEnv();
+    stubGithub({
+      tree: [
+        { path: "README.md", size: 10 },
+        { path: "src/z.ts", size: 10 },
+        { path: "package.json", size: 10 },
+        { path: "src/a.ts", size: 10 },
+      ],
+      files: {
+        "README.md": "# Title\n",
+        "src/z.ts": "export const z = 1;\n",
+        "package.json": '{"name":"x"}\n',
+        "src/a.ts": "export const a = 1;\n",
+      },
+    });
+
+    const result = await indexRepo(env, PROJECT, REPO);
+
+    // Nowhere near the cap: every indexable file is still indexed (same SET as filePriority alone
+    // would have produced) — only the ORDER of indexing/upsert changed, not the outcome.
+    expect(result.capped).toBe(false);
+    expect(result.files).toBe(4);
+    expect(await pathsFor(env, PROJECT, "gittensory")).toEqual(["README.md", "package.json", "src/a.ts", "src/z.ts"]);
+  });
 });
 
 describe("reindexChangedPaths: delete + re-upsert only the changed paths", () => {

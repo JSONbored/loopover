@@ -15,8 +15,11 @@
 //      Vectorize/AI binding, a GitHub error, an oversized repo, or a partial batch degrades to "indexed less /
 //      nothing" rather than failing the job. `upsertChunks` itself already no-ops to 0 when infra is absent.
 //   2. FREE-TIER — `isIndexablePath` filters the tree to CODE (not the content/data corpus), source is
-//      prioritized, and a hard MAX_CHUNKS_PER_REPO cap bounds stored vectors per repo (the same cap retrieval
-//      assumes). We stop fetching once the cap is reached.
+//      prioritized ahead of docs, manifest/config files (package.json, tsconfig*.json, wrangler.*,
+//      pnpm-workspace.yaml, go.mod, Cargo.toml, pyproject.toml, ...) are prioritized ahead of THAT
+//      (manifestPriority — on a repo over the cap they'd otherwise tie every other source file and lose
+//      the alphabetical tiebreaker), and a hard MAX_CHUNKS_PER_REPO cap bounds stored vectors per repo
+//      (the same cap retrieval assumes). We stop fetching once the cap is reached.
 //
 // GATING — the caller (processors.ts) only DISPATCHES indexing when `isRagEnabled(env)` is true, and the cron
 // only ENQUEUES the fan-out under the same flag; flag-OFF (the default) this module is never invoked, makes no
@@ -24,6 +27,7 @@
 
 import { createInstallationToken } from "../github/app";
 import { githubRateLimitAdmissionKeyForInstallation, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../github/client";
+import { isConfigFile, isDependencyManifestFile } from "../signals/path-matchers";
 import { repoParts } from "../utils/json";
 import { createReviewAdapters } from "./adapters";
 import {
@@ -41,6 +45,23 @@ import {
 
 /** A single indexable entry from the repo git tree (path + size, used by isIndexablePath's size guard). */
 type TreeEntry = { path: string; size?: number | undefined };
+
+/**
+ * Sort key that puts small, high-value manifest/config files (package.json, tsconfig*.json,
+ * wrangler.jsonc, pnpm-workspace.yaml, go.mod, Cargo.toml, pyproject.toml, requirements*.txt, ...)
+ * AHEAD of filePriority's code/doc split. On a repo whose file count exceeds MAX_CHUNKS_PER_REPO,
+ * `indexRepo`'s per-file loop stops once the cap is hit — with only `filePriority` (code=0, doc=1)
+ * as the sort key, a manifest file ties every other source file at priority 0 and then loses on the
+ * alphabetical tiebreaker, so it can be starved out entirely by volume (verified in prod: gittensory's
+ * own package.json never got indexed). These files are already indexable code (JSON/TOML/YAML all
+ * match CODE_EXT_RE in `./rag`) — this only reorders them, it does not change what's included.
+ * Reuses the same "manifest-like filename" classifiers signals/path-matchers.ts already exports for
+ * slop classification (isDependencyManifestFile / isConfigFile) rather than inventing a second
+ * filename vocabulary.
+ */
+function manifestPriority(path: string): number {
+  return isDependencyManifestFile(path) || isConfigFile(path) ? -1 : filePriority(path);
+}
 
 /** Cap on how many chunks we upsert per Vectorize/D1 write batch (bounds the bound-param + neuron cost per call;
  *  embedTexts itself batches the AI calls at EMBED_BATCH internally). */
@@ -230,8 +251,9 @@ export type IndexRepoResult = { indexed: number; files: number; capped: boolean 
 
 /**
  * FULL (re)index of a repo's CODE into the RAG index. Fetches the git tree at the default branch, filters to
- * indexable code/docs (isIndexablePath), prioritizes source over docs, fetches each file's content, chunks it
- * (chunkFile), and upserts (embed + Vectorize + repo_chunks via upsertChunks) up to MAX_CHUNKS_PER_REPO.
+ * indexable code/docs (isIndexablePath), prioritizes manifest/config files first, then source over docs
+ * (manifestPriority), fetches each file's content, chunks it (chunkFile), and upserts (embed + Vectorize +
+ * repo_chunks via upsertChunks) up to MAX_CHUNKS_PER_REPO.
  *
  * Idempotent: chunk ids are stable (namespace|path::idx) so re-running upserts (ON CONFLICT updates) the same
  * rows rather than duplicating. Fully FAIL-SAFE — any error (no infra, GitHub down, bad file) degrades to
@@ -263,7 +285,7 @@ export async function indexRepo(
     if (rawTree === null) return empty;
     const tree = rawTree
       .filter((entry) => isIndexablePath(entry.path, entry.size))
-      .sort((a, b) => filePriority(a.path) - filePriority(b.path) || a.path.localeCompare(b.path));
+      .sort((a, b) => manifestPriority(a.path) - manifestPriority(b.path) || a.path.localeCompare(b.path));
     await pruneMissingPaths(infra, project, repoName, new Set(tree.map((entry) => entry.path)));
     if (tree.length === 0) return empty;
 

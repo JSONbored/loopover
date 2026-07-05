@@ -133,7 +133,10 @@ const CODE_EXT_RE =
 // spellings were missing here, so e.g. NOTES.markdown / guide.asciidoc were
 // misclassified as skip instead of doc.
 const DOC_EXT_RE = /\.(md|mdx|markdown|rst|adoc|asciidoc|txt)$/i;
-const ALLOW_EXTLESS_RE = /(^|\/)(Dockerfile|Makefile|Justfile|Procfile)$/i;
+// `go.mod`/`go.work` (Go's extensionless dependency manifests) belong here for the same reason as
+// Dockerfile/Makefile: no recognized extension, but a real, high-value source file that must not
+// fall through to "skip" (go.sum/go.work.sum are resolved-tree lockfiles, already excluded above).
+const ALLOW_EXTLESS_RE = /(^|\/)(Dockerfile|Makefile|Justfile|Procfile|go\.mod|go\.work)$/i;
 
 /** code | doc | skip. Skips dependency/build/content/data/binary paths — RAG indexes code for code
  *  review, not the (potentially huge) submission/content corpus. */

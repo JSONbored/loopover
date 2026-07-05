@@ -66,6 +66,12 @@ describe("rag: code-not-content filtering (free-tier cost guard)", () => {
     ]) {
       expect(classifyRepoFile(p)).toBe("code");
     }
+    // Go's extensionless dependency manifests (go.mod/go.work) are real, high-value source — same
+    // extensionless-allowlist treatment as Dockerfile/Makefile. Their resolved-tree lockfile
+    // siblings (go.sum/go.work.sum) stay excluded via SKIP_FILE_RE below.
+    expect(classifyRepoFile("go.mod")).toBe("code");
+    expect(classifyRepoFile("go.work")).toBe("code");
+    expect(classifyRepoFile("nested/module/go.mod")).toBe("code");
     expect(classifyRepoFile("README.md")).toBe("doc");
     expect(classifyRepoFile("docs/architecture.mdx")).toBe("doc");
     // long-form doc spellings (parity with signals/path-matchers DOCS_EXTENSIONS)
@@ -78,6 +84,9 @@ describe("rag: code-not-content filtering (free-tier cost guard)", () => {
     expect(classifyRepoFile("dist/bundle.js")).toBe("skip");
     expect(classifyRepoFile("package-lock.json")).toBe("skip");
     expect(classifyRepoFile("pnpm-lock.yaml")).toBe("skip");
+    // go.sum stays skipped despite go.mod/go.work now being recognized — SKIP_FILE_RE's lockfile
+    // check runs before ALLOW_EXTLESS_RE, so the resolved-tree lockfile never becomes indexable.
+    expect(classifyRepoFile("go.sum")).toBe("skip");
     expect(classifyRepoFile("public/logo.png")).toBe("skip");
     expect(classifyRepoFile("app.min.js")).toBe("skip");
     // more binary blobs: media/archives/fonts/compiled artifacts and ML model weights

@@ -15,7 +15,7 @@ test("classifyAddedFile treats bower_components and jspm_packages as vendored, l
     assert.equal(classifyAddedFile(path), "vendored", path);
   }
   // Existing vendored directories still classify (control).
-  for (const path of ["node_modules/x/index.js", "vendor/foo.rb", "third_party/lib.c", "third-party/lib.c", "vendors/a.js"]) {
+  for (const path of ["node_modules/x/index.js", "vendor/foo.rb", "third_party/lib.c", "third-party/lib.c", "vendors/a.js", "vendored/dep.js"]) {
     assert.equal(classifyAddedFile(path), "vendored", path);
   }
   // Directory-segment anchored: a source file merely NAMED like the dir is not vendored; plain source is null.

@@ -25,7 +25,7 @@ const MAX_FINDINGS = 30; // keep the brief bounded
 // installed-dependency directories — the same vendored case as node_modules — so a committed tree under either
 // is a vendored artifact, not contributor source (mirrors src/signals/path-matchers.ts's vendored classifier).
 const VENDORED_PATH_RE =
-  /(?:^|\/)(?:vendor|vendors|node_modules|bower_components|jspm_packages|third[_-]party)\//;
+  /(?:^|\/)(?:vendor|vendored|vendors|node_modules|bower_components|jspm_packages|third[_-]party)\//;
 // Minified files carry no reviewable source in the diff (effectively vendored).
 const MINIFIED_RE = /\.min\.[cm]?[jt]s$|\.min\.css$/i;
 

@@ -405,29 +405,30 @@ describe("AI review cache (#1)", () => {
     });
   });
 
-  describe("getLatestPublishedAiReview — maintainer-gated freeze reuse across a head-SHA change (#regate-churn)", () => {
+  describe("getLatestPublishedAiReview — maintainer-gated freeze reuse at the current head SHA (#regate-churn)", () => {
     it("misses when nothing has ever been published for this PR", async () => {
       const env = createTestEnv();
       await putCachedAiReview(env, "o/r", 50, "sha1", "block", { notes: "unpublished", reviewerCount: 1 });
-      expect(await getLatestPublishedAiReview(env, "o/r", 50, "block")).toBeNull();
+      expect(await getLatestPublishedAiReview(env, "o/r", 50, "sha1", "block")).toBeNull();
     });
 
-    it("returns the most recently PUBLISHED review across DIFFERENT head SHAs (a contributor push while held)", async () => {
+    it("misses a published review from a different head SHA so a contributor push gets reviewed", async () => {
       const env = createTestEnv();
       await putCachedAiReview(env, "o/r", 51, "sha1", "block", { notes: "first review", reviewerCount: 1 });
       await markAiReviewPublished(env, "o/r", 51, "sha1");
       // A newer head SHA exists (the contributor pushed again), but was never independently published.
       await putCachedAiReview(env, "o/r", 51, "sha2", "block", { notes: "never published", reviewerCount: 1 });
 
-      expect(await getLatestPublishedAiReview(env, "o/r", 51, "block")).toEqual({ notes: "first review", reviewerCount: 1, findings: [] });
+      expect(await getLatestPublishedAiReview(env, "o/r", 51, "sha2", "block")).toBeNull();
+      expect(await getLatestPublishedAiReview(env, "o/r", 51, "sha1", "block")).toEqual({ notes: "first review", reviewerCount: 1, findings: [] });
     });
 
     it("respects the ai_review_mode filter, same as getCachedAiReview", async () => {
       const env = createTestEnv();
       await putCachedAiReview(env, "o/r", 52, "sha1", "advisory", { notes: "advisory mode", reviewerCount: 1 });
       await markAiReviewPublished(env, "o/r", 52, "sha1");
-      expect(await getLatestPublishedAiReview(env, "o/r", 52, "block")).toBeNull();
-      expect(await getLatestPublishedAiReview(env, "o/r", 52, "advisory")).toEqual({ notes: "advisory mode", reviewerCount: 1, findings: [] });
+      expect(await getLatestPublishedAiReview(env, "o/r", 52, "sha1", "block")).toBeNull();
+      expect(await getLatestPublishedAiReview(env, "o/r", 52, "sha1", "advisory")).toEqual({ notes: "advisory mode", reviewerCount: 1, findings: [] });
     });
 
     it("round-trips findings and metadata like getCachedAiReview", async () => {
@@ -439,7 +440,7 @@ describe("AI review cache (#1)", () => {
         metadata: { inputFingerprint: "fp-v1" },
       });
       await markAiReviewPublished(env, "o/r", 53, "sha1");
-      expect(await getLatestPublishedAiReview(env, "o/r", 53, "block")).toEqual({
+      expect(await getLatestPublishedAiReview(env, "o/r", 53, "sha1", "block")).toEqual({
         notes: "held review",
         reviewerCount: 2,
         findings: [{ code: "ai_review_split", severity: "critical", title: "Split", detail: "One reviewer blocked." }],
@@ -447,7 +448,7 @@ describe("AI review cache (#1)", () => {
       });
     });
 
-    it("picks the LATEST published head when more than one head was independently published", async () => {
+    it("returns only the published review for the requested head", async () => {
       const env = createTestEnv();
       vi.useFakeTimers();
       try {
@@ -459,7 +460,8 @@ describe("AI review cache (#1)", () => {
         await putCachedAiReview(env, "o/r", 54, "sha2", "block", { notes: "newer published review", reviewerCount: 1 });
         await markAiReviewPublished(env, "o/r", 54, "sha2");
 
-        expect(await getLatestPublishedAiReview(env, "o/r", 54, "block")).toEqual({ notes: "newer published review", reviewerCount: 1, findings: [] });
+        expect(await getLatestPublishedAiReview(env, "o/r", 54, "sha2", "block")).toEqual({ notes: "newer published review", reviewerCount: 1, findings: [] });
+        expect(await getLatestPublishedAiReview(env, "o/r", 54, "sha1", "block")).toEqual({ notes: "older published review", reviewerCount: 1, findings: [] });
       } finally {
         vi.useRealTimers();
       }

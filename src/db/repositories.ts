@@ -4073,23 +4073,23 @@ export async function getCachedAiReview(
   };
 }
 
-/** #regate-churn (maintainer-gated freeze): the most recently PUBLISHED AI review for this PR, regardless of
- *  which head SHA it was computed against. Used ONLY when the PR is currently held for manual review — a repeat
- *  contributor push must not buy a fresh, real AI call (or a chance to flip the published verdict via plain LLM
- *  non-determinism) while the PR sits in that state; only an explicit maintainer retrigger (which bypasses this
- *  entirely, see `webhook.forceAiReview`) may spend a new one. A nullish/never-published PR is a miss (the caller
- *  falls through to a normal fresh review — this only ever REUSES an already-surfaced result, never invents one). */
+/** #regate-churn (maintainer-gated freeze): the most recently PUBLISHED AI review for this PR
+ *  at the current head SHA. The manual-review label is sticky, so it must never pin findings across
+ *  contributor pushes; a nullish/different-head/never-published PR is a miss and the caller falls
+ *  through to normal fresh-review eligibility. */
 export async function getLatestPublishedAiReview(
   env: Env,
   repoFullName: string,
   pullNumber: number,
+  headSha: string | null | undefined,
   mode: string,
 ): Promise<{ notes: string; reviewerCount: number; findings: AdvisoryFinding[]; metadata?: Record<string, unknown> | undefined } | null> {
+  if (!headSha) return null;
   const row = await env.DB
     .prepare(
-      "SELECT notes, reviewer_count AS reviewerCount, findings_json AS findingsJson, metadata_json AS metadataJson FROM ai_review_cache WHERE repo_full_name = ? AND pull_number = ? AND ai_review_mode = ? AND published_at IS NOT NULL ORDER BY published_at DESC LIMIT 1",
+      "SELECT notes, reviewer_count AS reviewerCount, findings_json AS findingsJson, metadata_json AS metadataJson FROM ai_review_cache WHERE repo_full_name = ? AND pull_number = ? AND head_sha = ? AND ai_review_mode = ? AND published_at IS NOT NULL ORDER BY published_at DESC LIMIT 1",
     )
-    .bind(repoFullName, pullNumber, mode)
+    .bind(repoFullName, pullNumber, headSha, mode)
     .first<{ notes: string; reviewerCount: number; findingsJson: string | null; metadataJson: string | null }>();
   if (!row) return null;
   const metadata = parseJson<Record<string, unknown>>(row.metadataJson, {});

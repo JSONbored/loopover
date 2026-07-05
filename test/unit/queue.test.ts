@@ -4175,11 +4175,11 @@ describe("queue processors", () => {
       expect(forceAudit?.detail).toContain("explicit force re-gate bypassed");
     });
 
-    it("maintainer-gated freeze: a PR already held for manual review does not spend a fresh AI call on a later contributor push, even to a NEW head SHA", async () => {
+    it("maintainer-gated freeze: a contributor push to a new head SHA gets a fresh AI review despite the sticky label", async () => {
       let aiCalls = 0;
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-        AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Fresh (should not happen while frozen).", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+        AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Fresh review for new held head.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
         AI_DAILY_NEURON_BUDGET: "100000",
@@ -4223,15 +4223,14 @@ describe("queue processors", () => {
 
       await processJob(env, { type: "agent-regate-pr", deliveryId: "held-push-retry", repoFullName: "JSONbored/gittensory", prNumber: 75, installationId: 123 });
 
-      expect(aiCalls).toBe(0); // frozen -- the new push never bought a fresh AI review
-      expect(stickyComment.current?.body).toContain("Original held review."); // the OLD published verdict is reused
-      const freezeAudit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? and target_key = ?")
+      expect(aiCalls).toBeGreaterThan(0); // the sticky label cannot pin the old head's review across a push
+      expect(stickyComment.current?.body).toContain("Fresh review for new held head.");
+      const freezeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
         .bind("github_app.ai_review_frozen_reuse", "JSONbored/gittensory#75")
-        .first<{ outcome: string; detail: string }>();
-      expect(freezeAudit?.outcome).toBe("completed");
-      expect(freezeAudit?.detail).toContain("held for manual review");
+        .first<{ n: number }>();
+      expect(freezeAudit?.n).toBe(0);
 
-      // An explicit maintainer/collaborator retrigger unfreezes it — a fresh AI call IS spent.
+      // An explicit maintainer/collaborator retrigger still bypasses any cache and spends a fresh call.
       await processJob(env, { type: "agent-regate-pr", deliveryId: "held-push-force-retrigger", repoFullName: "JSONbored/gittensory", prNumber: 75, installationId: 123, force: true });
       expect(aiCalls).toBeGreaterThan(0);
       const bypassAudit = await env.DB.prepare("select outcome from audit_events where event_type = ? and target_key = ?")
@@ -4400,7 +4399,7 @@ describe("queue processors", () => {
       expect(freezeAudit?.n).toBe(0);
     });
 
-    it("maintainer-gated freeze: a held PR with nothing ever published falls through gracefully (no reuse, no crash, no fresh AI while frozen)", async () => {
+    it("maintainer-gated freeze: a held PR with nothing published falls through to a fresh AI review", async () => {
       let aiCalls = 0;
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
@@ -4432,14 +4431,14 @@ describe("queue processors", () => {
         processJob(env, { type: "agent-regate-pr", deliveryId: "held-never-published", repoFullName: "JSONbored/gittensory", prNumber: 77, installationId: 123 }),
       ).resolves.toBeUndefined();
 
-      expect(aiCalls).toBe(0); // still frozen -- no fresh call, even though there was nothing to reuse either
+      expect(aiCalls).toBeGreaterThan(0); // no current published review exists, so normal fresh-review eligibility applies
       const freezeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
         .bind("github_app.ai_review_frozen_reuse", "JSONbored/gittensory#77")
         .first<{ n: number }>();
       expect(freezeAudit?.n).toBe(0); // nothing was actually reused, so no reuse audit either
     });
 
-    it("swallows a getLatestPublishedAiReview read failure and a frozen-reuse audit write failure without throwing", async () => {
+    it("manual-review label alone does not block fresh review eligibility", async () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: async () => ({ response: JSON.stringify({ assessment: "Fresh.", blockers: [], nits: [], suggestions: [] }) }) } as unknown as Ai,
@@ -4466,21 +4465,9 @@ describe("queue processors", () => {
         return Response.json({});
       });
 
-      const readSpy = vi.spyOn(repositoriesModule, "getLatestPublishedAiReview").mockRejectedValueOnce(new Error("D1 read error"));
       await expect(
-        processJob(env, { type: "agent-regate-pr", deliveryId: "frozen-read-fails", repoFullName: "JSONbored/gittensory", prNumber: 78, installationId: 123 }),
+        processJob(env, { type: "agent-regate-pr", deliveryId: "manual-label-fresh-review", repoFullName: "JSONbored/gittensory", prNumber: 78, installationId: 123 }),
       ).resolves.toBeUndefined();
-      readSpy.mockRestore();
-
-      const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
-      const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
-        if (event.eventType === "github_app.ai_review_frozen_reuse") throw new Error("audit DB down");
-        await originalRecordAuditEvent(auditEnv, event);
-      });
-      await expect(
-        processJob(env, { type: "agent-regate-pr", deliveryId: "frozen-audit-fails", repoFullName: "JSONbored/gittensory", prNumber: 78, installationId: 123 }),
-      ).resolves.toBeUndefined();
-      auditSpy.mockRestore();
     });
   });
   });

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_SCORING_CONSTANTS,
   detectActiveModel,
   findUnmodeledConstantKeys,
   findUnmodeledUpstreamConstants,
@@ -73,8 +72,8 @@ NOVELTY_BONUS_SCALAR = 3
     expect(detectActiveModel({ SRC_TOK_SATURATION_SCALE: 58 })).toBe("pending_saturation_model");
     expect(
       detectActiveModel({
-        MAX_CODE_DENSITY_MULTIPLIER: DEFAULT_SCORING_CONSTANTS.MAX_CODE_DENSITY_MULTIPLIER,
-        MIN_TOKEN_SCORE_FOR_BASE_SCORE: DEFAULT_SCORING_CONSTANTS.MIN_TOKEN_SCORE_FOR_BASE_SCORE,
+        MAX_CODE_DENSITY_MULTIPLIER: 1.15,
+        MIN_TOKEN_SCORE_FOR_BASE_SCORE: 5,
       }),
     ).toBe("current_density_model");
     expect(detectActiveModel({})).toBe("unknown");

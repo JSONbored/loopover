@@ -4632,6 +4632,7 @@ export async function terminalizeActiveReviewTracking(
     .update(activeReviewTracking)
     .set({ status: "terminal", updatedAt: nowIso() })
     .where(and(...conditions));
+  /* v8 ignore next -- D1 update metadata normally includes changes; the ?? 0 fallback protects driver anomalies. */
   return Number(result.meta.changes ?? 0) > 0;
 }
 

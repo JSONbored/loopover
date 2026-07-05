@@ -5472,6 +5472,7 @@ async function processGitHubWebhook(
           installationId,
           repoFullName,
           pr,
+          payload,
           settings,
         );
       }
@@ -10537,7 +10538,7 @@ async function closeReviewEvasionSelfCloseIfActive(
       actor: "gittensory",
       targetKey,
       outcome: "denied",
-      detail: `autonomy for close is not acting -- review-evasion self-close not enforced for ${pr.authorLogin ?? "unknown"}`,
+      detail: `autonomy for close is not acting -- review-evasion self-close not enforced for ${pr.authorLogin}`,
       metadata: { deliveryId, repoFullName, headSha: pr.headSha },
     }).catch(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
@@ -10551,7 +10552,7 @@ async function closeReviewEvasionSelfCloseIfActive(
       actor: "gittensory",
       targetKey,
       outcome: "completed",
-      detail: `dry-run: would reopen + re-close review-evasion self-close by ${pr.authorLogin ?? "unknown"} -- active review on headSha ${pr.headSha}`,
+      detail: `dry-run: would reopen + re-close review-evasion self-close by ${pr.authorLogin} -- active review on headSha ${pr.headSha}`,
       metadata: { deliveryId, repoFullName, headSha: pr.headSha, mode: "dry_run" },
     }).catch(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
@@ -10566,7 +10567,7 @@ async function closeReviewEvasionSelfCloseIfActive(
       actor: "gittensory",
       targetKey,
       outcome: "denied",
-      detail: `agent actions paused -- review-evasion self-close not enforced for ${pr.authorLogin ?? "unknown"}`,
+      detail: `agent actions paused -- review-evasion self-close not enforced for ${pr.authorLogin}`,
       metadata: { deliveryId, repoFullName, headSha: pr.headSha },
     }).catch(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
@@ -10585,7 +10586,7 @@ async function closeReviewEvasionSelfCloseIfActive(
       actor: "gittensory",
       targetKey,
       outcome: "denied",
-      detail: `denied review-evasion enforcement for ${pr.authorLogin ?? "unknown"} -- pull_requests: write not granted`,
+      detail: `denied review-evasion enforcement for ${pr.authorLogin} -- pull_requests: write not granted`,
       metadata: { deliveryId, repoFullName, headSha: pr.headSha },
     }).catch(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
@@ -10619,7 +10620,7 @@ async function closeReviewEvasionSelfCloseIfActive(
       actor: "gittensory",
       targetKey,
       outcome: "error",
-      detail: `FAILED to reopen ${pr.authorLogin ?? "unknown"}'s self-close for review-evasion enforcement -- the reopen API call did not succeed`,
+      detail: `FAILED to reopen ${pr.authorLogin}'s self-close for review-evasion enforcement -- the reopen API call did not succeed`,
       metadata: { deliveryId, repoFullName, headSha: pr.headSha, error: errorMessage(reopenError) },
     }).catch(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
@@ -10636,7 +10637,7 @@ async function closeReviewEvasionSelfCloseIfActive(
       actor: "gittensory",
       targetKey,
       outcome: "error",
-      detail: `FAILED to re-close review-evasion self-close by ${pr.authorLogin ?? "unknown"} -- the close API call did not succeed; the PR may still be open`,
+      detail: `FAILED to re-close review-evasion self-close by ${pr.authorLogin} -- the close API call did not succeed; the PR may still be open`,
       metadata: { deliveryId, repoFullName, headSha: pr.headSha, error: errorMessage(closeError) },
     }).catch(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
@@ -10668,7 +10669,7 @@ async function closeReviewEvasionSelfCloseIfActive(
     actor: "gittensory",
     targetKey,
     outcome: "completed",
-    detail: `re-closed a review-evasion self-close by ${pr.authorLogin ?? "unknown"} -- active review on headSha ${pr.headSha} was in progress`,
+    detail: `re-closed a review-evasion self-close by ${pr.authorLogin} -- active review on headSha ${pr.headSha} was in progress`,
     metadata: { deliveryId, repoFullName, headSha: pr.headSha },
   }).catch(
     /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
@@ -10707,6 +10708,7 @@ async function maybeCloseReviewEvasionDraftConversion(
   installationId: number,
   repoFullName: string,
   pr: PullRequestRecord,
+  payload: GitHubWebhookPayload,
   settings: RepositorySettings,
 ): Promise<void> {
   const actuationLock = await claimPrActuationLock(env, repoFullName, pr.number);
@@ -10714,7 +10716,7 @@ async function maybeCloseReviewEvasionDraftConversion(
     throw new PrActuationLockContendedError(repoFullName, pr.number, "review-evasion-draft");
   }
   try {
-    await closeReviewEvasionDraftConversionIfActive(env, deliveryId, installationId, repoFullName, pr, settings);
+    await closeReviewEvasionDraftConversionIfActive(env, deliveryId, installationId, repoFullName, pr, payload, settings);
   } finally {
     await releasePrActuationLock(env, repoFullName, pr.number, actuationLock.ownerToken);
   }
@@ -10726,11 +10728,17 @@ async function closeReviewEvasionDraftConversionIfActive(
   installationId: number,
   repoFullName: string,
   pr: PullRequestRecord,
+  payload: GitHubWebhookPayload,
   settings: RepositorySettings,
 ): Promise<void> {
   if ((settings.reviewEvasionProtection ?? "off") !== "close") return;
+  const converter = (payload.sender?.login ?? "").toLowerCase();
   const authorLogin = (pr.authorLogin ?? "").toLowerCase();
-  if (!authorLogin) return;
+  // Only the PR's OWN author converting their OWN PR to draft is a draft-conversion-evasion candidate -- a
+  // third party (e.g. a maintainer converting a contributor's PR to draft) is an ordinary maintainer action,
+  // not evasion, and must never be enforced against the AUTHOR who didn't do it (mirrors the self-close
+  // sibling's identical actor check).
+  if (!converter || !authorLogin || converter !== authorLogin) return;
   if (isProtectedAutomationAuthor(pr.authorLogin)) return;
   if (!pr.headSha) return;
   if (await hasMaintainerOrOwnerPermission(env, installationId, repoFullName, authorLogin)) return;
@@ -10748,7 +10756,7 @@ async function closeReviewEvasionDraftConversionIfActive(
       actor: "gittensory",
       targetKey,
       outcome: "denied",
-      detail: `autonomy for close is not acting -- review-evasion draft-conversion not enforced for ${pr.authorLogin ?? "unknown"}`,
+      detail: `autonomy for close is not acting -- review-evasion draft-conversion not enforced for ${pr.authorLogin}`,
       metadata: { deliveryId, repoFullName, headSha: pr.headSha },
     }).catch(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
@@ -10762,7 +10770,7 @@ async function closeReviewEvasionDraftConversionIfActive(
       actor: "gittensory",
       targetKey,
       outcome: "completed",
-      detail: `dry-run: would close review-evasion draft-conversion by ${pr.authorLogin ?? "unknown"} -- active review on headSha ${pr.headSha}`,
+      detail: `dry-run: would close review-evasion draft-conversion by ${pr.authorLogin} -- active review on headSha ${pr.headSha}`,
       metadata: { deliveryId, repoFullName, headSha: pr.headSha, mode: "dry_run" },
     }).catch(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
@@ -10776,7 +10784,7 @@ async function closeReviewEvasionDraftConversionIfActive(
       actor: "gittensory",
       targetKey,
       outcome: "denied",
-      detail: `agent actions paused -- review-evasion draft-conversion not enforced for ${pr.authorLogin ?? "unknown"}`,
+      detail: `agent actions paused -- review-evasion draft-conversion not enforced for ${pr.authorLogin}`,
       metadata: { deliveryId, repoFullName, headSha: pr.headSha },
     }).catch(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
@@ -10792,7 +10800,7 @@ async function closeReviewEvasionDraftConversionIfActive(
       actor: "gittensory",
       targetKey,
       outcome: "denied",
-      detail: `denied review-evasion enforcement for ${pr.authorLogin ?? "unknown"} -- pull_requests: write not granted`,
+      detail: `denied review-evasion enforcement for ${pr.authorLogin} -- pull_requests: write not granted`,
       metadata: { deliveryId, repoFullName, headSha: pr.headSha },
     }).catch(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
@@ -10827,7 +10835,7 @@ async function closeReviewEvasionDraftConversionIfActive(
       actor: "gittensory",
       targetKey,
       outcome: "error",
-      detail: `FAILED to close review-evasion draft-conversion by ${pr.authorLogin ?? "unknown"} -- the close API call did not succeed; the PR may still be open`,
+      detail: `FAILED to close review-evasion draft-conversion by ${pr.authorLogin} -- the close API call did not succeed; the PR may still be open`,
       metadata: { deliveryId, repoFullName, headSha: pr.headSha, error: errorMessage(closeError) },
     }).catch(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
@@ -10857,7 +10865,7 @@ async function closeReviewEvasionDraftConversionIfActive(
     actor: "gittensory",
     targetKey,
     outcome: "completed",
-    detail: `closed a review-evasion draft-conversion by ${pr.authorLogin ?? "unknown"} -- active review on headSha ${pr.headSha} was in progress`,
+    detail: `closed a review-evasion draft-conversion by ${pr.authorLogin} -- active review on headSha ${pr.headSha} was in progress`,
     metadata: { deliveryId, repoFullName, headSha: pr.headSha },
   }).catch(
     /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */

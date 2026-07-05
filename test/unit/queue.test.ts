@@ -21673,6 +21673,23 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
     });
 
+    it("REGRESSION (gate-flagged): does nothing when a THIRD PARTY converts someone else's PR to draft (not the author) -- an ordinary maintainer action, not self-evasion, must never be enforced against the author who didn't do it", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls, { collaboratorPermission: "write" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+      await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
+
+      const payload = draftEvasionPayload("contributor");
+      payload.sender = { login: "a-maintainer", type: "User" }; // the CONVERTER, distinct from pull_request.user (the author)
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-evasion-third-party", eventName: "pull_request", payload });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+      const audit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.review_evasion_closed").first<{ n: number }>();
+      expect(audit?.n).toBe(0);
+    });
+
     it("dry-run: audits the would-be enforcement without mutating GitHub or recording a live strike", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);

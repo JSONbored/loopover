@@ -14,8 +14,8 @@ CREATE TABLE IF NOT EXISTS active_review_tracking (
   author_login TEXT,
   delivery_id TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
-  started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS active_review_tracking_pr_unique ON active_review_tracking (repo_full_name, pull_number);
 

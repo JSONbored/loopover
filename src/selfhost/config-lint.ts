@@ -73,8 +73,13 @@ function unknownTopLevelWarnings(text: string | null | undefined): string[] {
   const parsed = parseTopLevelObject(trimmed);
   if (parsed === null) return [];
   const keys = Object.keys(parsed).filter((key) => !TOP_LEVEL_FIELD_SET.has(key));
-  const retiredWarnings = keys.filter((key) => key in RETIRED_FIELD_MIGRATION_WARNINGS).map((key) => RETIRED_FIELD_MIGRATION_WARNINGS[key]!);
-  const unknown = keys.filter((key) => !(key in RETIRED_FIELD_MIGRATION_WARNINGS)).map(formatFieldName);
+  // `hasOwnProperty.call`, NOT `key in`: a manifest field named like an Object.prototype member
+  // (`constructor`, `toString`, `hasOwnProperty`, ...) would otherwise test true for the inherited
+  // property and resolve to the prototype's function instead of a real retired-field warning string,
+  // corrupting the string[] result and suppressing the genuine unknown-field warning.
+  const isRetired = (key: string): boolean => Object.prototype.hasOwnProperty.call(RETIRED_FIELD_MIGRATION_WARNINGS, key);
+  const retiredWarnings = keys.filter(isRetired).map((key) => RETIRED_FIELD_MIGRATION_WARNINGS[key]!);
+  const unknown = keys.filter((key) => !isRetired(key)).map(formatFieldName);
   return [
     ...retiredWarnings,
     ...(unknown.length > 0 ? [`Manifest contains unknown top-level field${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}.`] : []),

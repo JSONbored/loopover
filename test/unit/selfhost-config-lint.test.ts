@@ -159,6 +159,16 @@ unknownSecretKey: super-secret-value
     expect(JSON.stringify(result)).not.toContain("/tmp/private");
   });
 
+  it("treats a field named like an Object.prototype member as unknown, not retired", () => {
+    const result = lintManifestText("wantedPaths: [src/]\nconstructor: whatever\n");
+
+    expect(result.ok).toBe(false);
+    expect(result.recognizedFields).toEqual(["wantedPaths"]);
+    expect(result.warnings).toEqual(["Manifest contains unknown top-level field: constructor."]);
+    // Every warning must be a real string — a prototype-name collision must never leak a function.
+    expect(result.warnings.every((warning) => typeof warning === "string")).toBe(true);
+  });
+
   it("uses singular wording for one unknown top-level field", () => {
     const result = lintManifestText("wantedPaths: [src/]\nunknownSecretKey: super-secret-value\n");
 

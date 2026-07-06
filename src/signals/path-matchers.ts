@@ -81,12 +81,15 @@ function isGeneratedFileFrom(parts: NormalizedPath): boolean {
     // plugin emits `.pb.cr`, the Haskell plugin emits `.pb.hs`, the Scala plugin emits `.pb.scala`, and the Objective-C plugin emits
     // `.pbobjc.{h,m}` plus gRPC `.pbrpc.{h,m}` service stubs. Swift gRPC emits sibling `.grpc.swift`
     // service stubs; grpc-kotlin emits sibling `*GrpcKt.kt` coroutine service stubs; grpc-java emits
-    // sibling `*Grpc.java` service stubs.
+    // sibling `*Grpc.java` service stubs; grpc-dotnet emits sibling `*Grpc.cs` service stubs; the Dart
+    // gRPC plugin emits sibling `.pbgrpc.dart` service stubs.
     // `.pb.dart`/`.pb.kt`/`.pb.cs` (the `.pb` infix keeps hand-written sources from matching).
     /\.pb\.(go|ts|js|cc|h|swift|dart|kt|cs|rs|ex|erl|hrl|cr|hs|scala)$/.test(norm) ||
     /\.grpc\.swift$/.test(norm) ||
     /grpckt\.kt$/.test(norm) ||
     /grpc\.java$/.test(norm) ||
+    /grpc\.cs$/.test(norm) ||
+    /\.pbgrpc\.dart$/.test(norm) ||
     /\.pbobjc\.(h|m)$/.test(norm) ||
     /\.pbrpc\.(h|m)$/.test(norm) ||
     // Python protobuf: message stubs are `*_pb2.py[i]`; the gRPC plugin emits sibling

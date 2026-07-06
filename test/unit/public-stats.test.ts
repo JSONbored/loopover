@@ -149,6 +149,30 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.totals.minutesSaved).toBe(2742 * MINUTES_SAVED_PER_PR);
   });
 
+  it("implements the #2070 ROI contract: real estimate, flat fallback, empty ledger → 0", async () => {
+    const estimate = await getPublicStats(
+      stubEnv((sql) => {
+        if (isEffort(sql)) return [{ avgMinutes: 12 }];
+        return ledger(sql);
+      }),
+      NOW,
+    );
+    expect(estimate.totals.minutesSaved).toBe(Math.round(2742 * 12));
+    expect(estimate.totals.minutesSaved).not.toBe(2742 * MINUTES_SAVED_PER_PR);
+
+    const fallback = await getPublicStats(
+      stubEnv((sql) => {
+        if (isEffort(sql)) return [{ avgMinutes: null }];
+        return ledger(sql);
+      }),
+      NOW,
+    );
+    expect(fallback.totals.minutesSaved).toBe(2742 * MINUTES_SAVED_PER_PR);
+
+    const empty = await getPublicStats(stubEnv(() => []), NOW);
+    expect(empty.totals.minutesSaved).toBe(0);
+  });
+
   it("breaks byProject ties on project name so equal-reviewed repos keep a deterministic order", async () => {
     // Two repos share reviewed=10, fed in reverse-alphabetical input order; the busier repo
     // still leads and the tied pair must come out alphabetically, not in arbitrary SQL order.

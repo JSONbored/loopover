@@ -17,6 +17,7 @@ import {
   StatusPill,
   type Status,
 } from "@/components/site/control-primitives";
+import { ActivationPreview } from "@/components/site/app-panels/activation-preview";
 import { AiReviewSettings } from "@/components/site/app-panels/ai-review-settings";
 import { MaintainerSettings } from "@/components/site/app-panels/maintainer-settings";
 import { StatCard } from "@/components/site/primitives";
@@ -350,6 +351,8 @@ function MaintainerDashboardView() {
               </tbody>
             </table>
           </section>
+
+          <ActivationPreview reviewability={data.reviewability} />
 
           <SurfacePreview reviewability={data.reviewability} />
 

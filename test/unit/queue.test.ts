@@ -2660,7 +2660,7 @@ describe("queue processors", () => {
     ]);
   });
 
-  it("REGRESSION: issue-side linked PR wake queues every linked PR so hard-rule changes cannot leave stale passing gates", async () => {
+  it("REGRESSION: issue-side linked PR wake caps linked PR fanout to the sweep budget", async () => {
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
@@ -2697,13 +2697,13 @@ describe("queue processors", () => {
     });
 
     expect(fetchCount).toBe(0);
-    expect(sent).toHaveLength(SWEEP_MAX_PRS + 2);
+    expect(sent).toHaveLength(SWEEP_MAX_PRS);
     expect(sent.map(({ message }) => message)).toEqual(
-      Array.from({ length: SWEEP_MAX_PRS + 2 }, (_, index) =>
+      Array.from({ length: SWEEP_MAX_PRS }, (_, index) =>
         expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: index + 1, installationId: 9001 }),
       ),
     );
-    expect(sent.map(({ options }) => options)).toEqual([undefined, { delaySeconds: 10 }, { delaySeconds: 20 }, { delaySeconds: 30 }, { delaySeconds: 40 }]);
+    expect(sent.map(({ options }) => options)).toEqual([undefined, { delaySeconds: 10 }, { delaySeconds: 20 }]);
   });
 
   it("REGRESSION (#2371): a coalesced issue-side signal schedules a trailing re-review so an add-then-remove sequence is never lost", async () => {

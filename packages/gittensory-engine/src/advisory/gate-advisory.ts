@@ -620,3 +620,14 @@ function normalizeScore(value: number | null | undefined): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   return Math.max(0, Math.min(100, Math.round(value)));
 }
+
+/** @internal Exported for unit tests of advisory severity wiring. */
+export const gateAdvisoryInternals = {
+  highestSeverity,
+  conclusionForSeverity,
+  buildSizeHoldFinding,
+  promoteAdvisoryToBlock,
+  isConfiguredGateBlocker,
+  buildQualityGateWarning,
+  buildSlopGateBlocker,
+};

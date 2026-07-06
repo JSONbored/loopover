@@ -70,8 +70,11 @@ describe("review.auto_review wiring (#1954)", () => {
     auditSpy.mockRestore();
   });
 
-  it("resolveAutoReviewSkipForPullRequest skips manifest load when author is blacklisted or frozen", async () => {
-    const loadSpy = vi.spyOn(focusManifestLoader, "loadRepoFocusManifest");
+  it("resolveAutoReviewSkipForPullRequest loads the manifest before blacklisted or frozen AI-only skips", async () => {
+    const manifest = parseFocusManifest({ review: { changed_files_summary: true } });
+    const loadSpy = vi.spyOn(focusManifestLoader, "loadRepoFocusManifest").mockResolvedValue(manifest);
+    const countSpy = vi.spyOn(repositoriesModule, "countPublishedAiReviewHeads");
+
     await expect(
       resolveAutoReviewSkipForPullRequest({} as Env, {
         authorBlacklisted: true,
@@ -82,7 +85,7 @@ describe("review.auto_review wiring (#1954)", () => {
         deliveryId: "d1",
         headSha: "sha1",
       }),
-    ).resolves.toEqual({ skipReason: null, reviewManifest: null });
+    ).resolves.toEqual({ skipReason: null, reviewManifest: manifest });
     await expect(
       resolveAutoReviewSkipForPullRequest({} as Env, {
         authorBlacklisted: false,
@@ -93,8 +96,11 @@ describe("review.auto_review wiring (#1954)", () => {
         deliveryId: "d2",
         headSha: "sha2",
       }),
-    ).resolves.toEqual({ skipReason: null, reviewManifest: null });
-    expect(loadSpy).not.toHaveBeenCalled();
+    ).resolves.toEqual({ skipReason: null, reviewManifest: manifest });
+    expect(loadSpy).toHaveBeenCalledTimes(2);
+    expect(countSpy).not.toHaveBeenCalled();
+
+    countSpy.mockRestore();
     loadSpy.mockRestore();
   });
 

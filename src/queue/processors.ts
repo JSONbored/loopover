@@ -6319,7 +6319,7 @@ export async function auditPullRequestAutoReviewSkip(
   }).catch(() => undefined);
 }
 
-/** Resolve auto-review eligibility for a PR, loading the manifest only when cheaper skip predicates pass. (#1954) */
+/** Resolve auto-review eligibility for a PR, loading the manifest for deterministic review surfaces before AI-only skips. (#1954) */
 export async function resolveAutoReviewSkipForPullRequest(
   env: Env,
   args: {
@@ -6333,10 +6333,10 @@ export async function resolveAutoReviewSkipForPullRequest(
     headSha: string | null | undefined;
   },
 ): Promise<{ skipReason: string | null; reviewManifest: FocusManifest | null }> {
-  if (args.authorBlacklisted || args.isFrozenForManualReview) {
-    return { skipReason: null, reviewManifest: null };
-  }
   const reviewManifest = await loadRepoFocusManifest(env, args.repoFullName).catch(() => null);
+  if (args.authorBlacklisted || args.isFrozenForManualReview) {
+    return { skipReason: null, reviewManifest };
+  }
   const reviewedCommitCount = await countPublishedAiReviewHeads(env, args.repoFullName, args.pr.number).catch(() => 0);
   const skipReason = resolvePullRequestAutoReviewSkipReason({
     forceAiReview: args.forceAiReview,

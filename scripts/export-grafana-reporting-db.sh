@@ -321,7 +321,6 @@ SELECT
   )::text AS metadata_json,
   created_at
 FROM ai_usage_events
-WHERE feature = 'ai_review_pr'
 " "$AI_CSV"
     sqlite_import_csv "$AI_CSV" "ai_usage_events"
   fi
@@ -519,8 +518,7 @@ SELECT
     'pullNumber', json_extract(metadata_json, '$.pullNumber')
   ) AS metadata_json,
   created_at
-FROM main.ai_usage_events
-WHERE feature = 'ai_review_pr';
+FROM main.ai_usage_events;
 DETACH report;
 "
 fi

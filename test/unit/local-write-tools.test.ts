@@ -94,72 +94,56 @@ describe("buildTestGenSpec (#2188)", () => {
   });
 });
 
-// #2177 (follow-up-issue action spec slice of #1962).
+// #2177 (follow-up-issue slice of #1962).
 describe("buildFollowUpIssueSpec (#2177)", () => {
-  it("builds a follow_up_issue spec with composed title/body, labels, and the local-execution boundary", () => {
-    const s = buildFollowUpIssueSpec({
-      repoFullName: "o/r",
-      pullNumber: 42,
-      labels: ["gittensor:bug"],
-      finding: {
-        title: "Handle null branch in widget loader",
-        detail: "The loader never guards a null response.",
-        path: "src/widget.ts",
-        action: "Add a regression test for the null path.",
-      },
-    });
-    expect(s.action).toBe("follow_up_issue");
+  it("delegates to the file_issue spec shape, composing a bounded title/body from the finding", () => {
+    const s = buildFollowUpIssueSpec({ repoFullName: "o/r", path: "src/a.ts", line: 42, finding: "Null check missing before dereference." });
+    expect(s.action).toBe("file_issue"); // reuses buildFileIssueSpec's exact spec shape — no new write path
     expect(s.boundary).toBe(LOCAL_WRITE_BOUNDARY);
-    expect(s.description).toContain("Follow-up: Handle null branch in widget loader");
-    expect(s.command).toBe(
-      "gh issue create --repo 'o/r' --title 'Follow-up: Handle null branch in widget loader' --body 'Deferred from review on PR #42.\nFile: `src/widget.ts`\n\nThe loader never guards a null response.\n\n**Suggested next step**\nAdd a regression test for the null path.\n\n_Filed locally from a deferred review finding — gittensory supplies content only._' --label 'gittensor:bug'",
-    );
-    expect(s.inputs).toMatchObject({ labels: ["gittensor:bug"], pullNumber: 42 });
-    expect(s.inputs.finding).toEqual({
-      title: "Handle null branch in widget loader",
-      detail: "The loader never guards a null response.",
-      path: "src/widget.ts",
-      action: "Add a regression test for the null path.",
-    });
+    expect(s.command).toContain("gh issue create");
+    expect(s.command).toContain("Follow up: src/a.ts:42");
+    expect(s.command).toContain("Null check missing before dereference.");
   });
 
-  it("omits labels and optional finding fields when absent, and strips HTML comment markers from the finding text", () => {
-    const s = buildFollowUpIssueSpec({
-      repoFullName: "o/r",
-      finding: {
-        title: "<!-- marker -->Follow-up: it's noisy",
-        detail: "Detail <!-- hidden --> stays public-safe.",
-      },
-    });
-    expect(s.command).toContain("--title 'Follow-up: it'\\''s noisy'");
-    expect(s.command).not.toContain("<!--");
+  it("wires the supplied label as a --label arg (point-bearing label branch)", () => {
+    const s = buildFollowUpIssueSpec({ repoFullName: "o/r", path: "src/a.ts", line: 1, finding: "x", label: "gittensor:bug" });
+    expect(s.command).toContain("--label 'gittensor:bug'");
+    expect(s.inputs.labels).toEqual(["gittensor:bug"]);
+  });
+
+  it("omits --label entirely when no label is supplied (empty-label branch)", () => {
+    const s = buildFollowUpIssueSpec({ repoFullName: "o/r", path: "src/a.ts", line: 1, finding: "x" });
     expect(s.command).not.toContain("--label");
-    expect(s.inputs).toMatchObject({ labels: [] });
-    expect(s.inputs.finding).toEqual({ title: "Follow-up: it's noisy", detail: "Detail  stays public-safe." });
-    expect(s.inputs).not.toHaveProperty("pullNumber");
-    expect(s.description).toContain("Follow-up: it's noisy");
+    expect(s.inputs.labels).toEqual([]);
   });
 
-  it("bounds an over-long finding title before delegating to gh issue create", () => {
-    const longTitle = "x".repeat(140);
-    const s = buildFollowUpIssueSpec({ repoFullName: "o/r", finding: { title: longTitle, detail: "short detail" } });
-    const titleMatch = s.command.match(/--title '([^']|'\\'')*'/);
-    expect(titleMatch).not.toBeNull();
-    const titleArg = titleMatch![0].replace(/^--title '/, "").replace(/'$/, "").replace(/'\\''/g, "'");
-    expect(titleArg.startsWith("Follow-up: ")).toBe(true);
-    expect(titleArg.length).toBeLessThanOrEqual(120);
+  it("falls back to the bare path when no line is supplied (path-only branch)", () => {
+    const s = buildFollowUpIssueSpec({ repoFullName: "o/r", path: "src/a.ts", finding: "x" });
+    expect(s.command).toContain("Follow up: src/a.ts'");
+    expect(s.command).not.toContain("src/a.ts:");
   });
 
-  it("preserves an existing Follow-up prefix and bounds an over-long composed body", () => {
-    const s = buildFollowUpIssueSpec({
-      repoFullName: "o/r",
-      finding: {
-        title: "Follow-up: tighten null handling",
-        detail: "d".repeat(5000),
-      },
-    });
-    expect(s.description).toContain("Follow-up: tighten null handling");
-    expect(s.command.length).toBeLessThan(7000);
-    expect(s.command.endsWith("'")).toBe(true);
+  it("falls back to the bare path when line is 0 or negative (no commentable line, mirrors fix-handoff's sentinel)", () => {
+    expect(buildFollowUpIssueSpec({ repoFullName: "o/r", path: "src/a.ts", line: 0, finding: "x" }).command).toContain("Follow up: src/a.ts'");
+    expect(buildFollowUpIssueSpec({ repoFullName: "o/r", path: "src/a.ts", line: -1, finding: "x" }).command).toContain("Follow up: src/a.ts'");
+  });
+
+  it("strips an embedded HTML-comment marker and fenced block before composing the body (public-safe)", () => {
+    const finding = "<!-- gittensory:fix-handoff -->\n**Fix handoff — Blocker at `src/a.ts:42`**\nNull check missing.\n\n```suggestion\nif (!x) return null;\n```";
+    const s = buildFollowUpIssueSpec({ repoFullName: "o/r", path: "src/a.ts", line: 42, finding });
+    expect(s.command).not.toContain("<!--");
+    expect(s.command).not.toContain("```");
+    expect(s.command).toContain("Null check missing.");
+  });
+
+  it("POSIX-escapes an embedded single quote in the composed title/body", () => {
+    const s = buildFollowUpIssueSpec({ repoFullName: "o/r", path: "src/a.ts", line: 1, finding: "it's broken" });
+    expect(s.command).toContain("it'\\''s broken");
+  });
+
+  it("bounds an unreasonably long finding to a fixed maximum body length", () => {
+    const s = buildFollowUpIssueSpec({ repoFullName: "o/r", path: "src/a.ts", line: 1, finding: "x".repeat(10000) });
+    expect(s.inputs.body).toBeDefined();
+    expect((s.inputs.body as string).length).toBeLessThanOrEqual(4000);
   });
 });

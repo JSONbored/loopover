@@ -43,91 +43,6 @@ export function buildFileIssueSpec(input: { repoFullName: string; title: string;
   return spec("file_issue", "File a new issue.", { repoFullName: input.repoFullName, title: input.title, body: input.body, labels }, command);
 }
 
-export type DeferredReviewFinding = {
-  title: string;
-  detail: string;
-  path?: string | undefined;
-  action?: string | undefined;
-};
-
-const FOLLOW_UP_ISSUE_TITLE_MAX = 120;
-const FOLLOW_UP_ISSUE_BODY_MAX = 4000;
-
-function stripFollowUpMarkers(value: string): string {
-  return value.replace(/<!--[\s\S]*?-->/g, "").replace(/\r\n/g, "\n").trim();
-}
-
-function boundFollowUpLine(value: string, max: number): string {
-  const cleaned = stripFollowUpMarkers(value).replace(/\s+/g, " ").trim();
-  if (cleaned.length <= max) return cleaned;
-  return `${cleaned.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
-}
-
-function boundFollowUpBody(value: string, max: number): string {
-  const cleaned = stripFollowUpMarkers(value).trim();
-  if (cleaned.length <= max) return cleaned;
-  return `${cleaned.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
-}
-
-function composeFollowUpIssueTitle(finding: DeferredReviewFinding): string {
-  const cleaned = stripFollowUpMarkers(finding.title);
-  if (/^follow-up:/i.test(cleaned)) {
-    return boundFollowUpLine(cleaned, FOLLOW_UP_ISSUE_TITLE_MAX);
-  }
-  const prefix = "Follow-up: ";
-  return `${prefix}${boundFollowUpLine(cleaned, FOLLOW_UP_ISSUE_TITLE_MAX - prefix.length)}`;
-}
-
-function composeFollowUpIssueBody(input: { finding: DeferredReviewFinding; pullNumber?: number | undefined }): string {
-  const lines: string[] = [];
-  if (input.pullNumber !== undefined) lines.push(`Deferred from review on PR #${input.pullNumber}.`);
-  if (input.finding.path) lines.push(`File: \`${input.finding.path}\``);
-  lines.push("", boundFollowUpLine(input.finding.detail, FOLLOW_UP_ISSUE_BODY_MAX));
-  if (input.finding.action) {
-    lines.push("", "**Suggested next step**", boundFollowUpLine(input.finding.action, 500));
-  }
-  lines.push("", "_Filed locally from a deferred review finding — gittensory supplies content only._");
-  return boundFollowUpBody(lines.join("\n"), FOLLOW_UP_ISSUE_BODY_MAX);
-}
-
-function sanitizeFollowUpFinding(finding: DeferredReviewFinding): Record<string, string> {
-  const sanitized: Record<string, string> = {
-    title: stripFollowUpMarkers(finding.title),
-    detail: stripFollowUpMarkers(finding.detail),
-  };
-  if (finding.path) sanitized.path = finding.path;
-  if (finding.action) sanitized.action = stripFollowUpMarkers(finding.action);
-  return sanitized;
-}
-
-/** File a follow-up issue for a deferred review finding (#2177, #1962 slice). */
-export function buildFollowUpIssueSpec(input: {
-  repoFullName: string;
-  finding: DeferredReviewFinding;
-  labels?: string[] | undefined;
-  pullNumber?: number | undefined;
-}): LocalWriteActionSpec {
-  const sanitizedFinding = sanitizeFollowUpFinding(input.finding);
-  const title = composeFollowUpIssueTitle(input.finding);
-  const body = composeFollowUpIssueBody({ finding: input.finding, pullNumber: input.pullNumber });
-  const fileSpec = buildFileIssueSpec({
-    repoFullName: input.repoFullName,
-    title,
-    body,
-    labels: input.labels,
-  });
-  return {
-    ...fileSpec,
-    action: "follow_up_issue",
-    description: `File a follow-up issue for a deferred review finding: ${title}`,
-    inputs: {
-      ...fileSpec.inputs,
-      finding: sanitizedFinding,
-      ...(input.pullNumber !== undefined ? { pullNumber: input.pullNumber } : {}),
-    },
-  };
-}
-
 /** Add labels to an issue or PR (gh issue edit also targets PRs). */
 export function buildApplyLabelsSpec(input: { repoFullName: string; number: number; labels: string[] }): LocalWriteActionSpec {
   const labelArgs = input.labels.map((label) => ` --add-label ${sq(label)}`).join("");
@@ -180,4 +95,41 @@ export function buildTestGenSpec(input: {
     { repoFullName: input.repoFullName, targetFiles: input.targetFiles, framework: input.framework, testDir, criteria },
     command,
   );
+}
+
+// #2177 (follow-up-issue slice of #1962). Reuses buildFileIssueSpec's exact spec shape ("file_issue") — a
+// deferred review finding is just another issue-worth-filing content source, so there is no new spec verb or
+// no-cloud-write boundary here, only a deterministic title/body composer in front of the SAME builder.
+const FOLLOW_UP_ISSUE_TITLE_MAX = 200;
+const FOLLOW_UP_ISSUE_BODY_MAX = 4000;
+
+// Strip any machine-readable marker (e.g. fix-handoff's HTML comment marker, or a stray fenced block) before
+// the finding's text becomes issue content — a follow-up issue is read by a HUMAN triaging a backlog, not a
+// harness, so it should read as prose, not carry an internal marker meant for a different consumer.
+function stripMachineMarkers(text: string): string {
+  return text
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Build a LOCAL-execution spec to file a follow-up issue for a review finding a maintainer wants TRACKED
+ *  rather than blocked on this PR. Composes a bounded, public-safe title/body from the finding and delegates to
+ *  {@link buildFileIssueSpec}'s exact "file_issue" spec shape — no new write path. `label` is optional: when the
+ *  caller supplies a point-bearing label (e.g. "gittensor:bug"), the follow-up carries it so the tracked issue
+ *  is itself a scored, actionable contribution target; omitted ⇒ no labels at all (empty-label branch). */
+export function buildFollowUpIssueSpec(input: {
+  repoFullName: string;
+  path: string;
+  line?: number | undefined;
+  finding: string;
+  label?: string | null | undefined;
+}): LocalWriteActionSpec {
+  const location = input.line && input.line > 0 ? `${input.path}:${input.line}` : input.path;
+  const safeFinding = stripMachineMarkers(input.finding).slice(0, FOLLOW_UP_ISSUE_BODY_MAX);
+  const title = `Follow up: ${location}`.slice(0, FOLLOW_UP_ISSUE_TITLE_MAX);
+  const body = `Deferred review finding at \`${location}\`:\n\n${safeFinding}`.slice(0, FOLLOW_UP_ISSUE_BODY_MAX);
+  const labels = input.label ? [input.label] : [];
+  return buildFileIssueSpec({ repoFullName: input.repoFullName, title, body, labels });
 }

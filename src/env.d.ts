@@ -198,6 +198,12 @@ declare global {
      *  on the contributor's own machine (no source upload, no server-side write). Default OFF — unset/false
      *  keeps the review path byte-identical (no spec is ever built). */
     GITTENSORY_REVIEW_TEST_GENERATION?: string;
+    /** Fix-handoff blocks (#2176, config slice of #1962): when truthy (AND the repo is in GITTENSORY_REVIEW_REPOS
+     *  AND the repo's `.gittensory.yml` sets `review.fixHandoff: true`), a review finding is ALSO rendered as a
+     *  structured, machine-readable "apply this fix" block (src/review/fix-handoff-render.ts) for the
+     *  contributor's OWN local agent to consume — content only, no server-side write, no execution. Default
+     *  OFF — unset/false keeps the review path byte-identical (no block is ever built). */
+    GITTENSORY_REVIEW_FIX_HANDOFF?: string;
     /** Convergence (safety): when truthy, the ported safety scan runs in the review path — (1) untrusted PR
      *  title/body/diff is defanged (prompt-injection neutralized) before it reaches the AI reviewer, and (2)
      *  the PR diff is scanned for leaked secrets, surfacing a `secret_leak` blocker. Default OFF —

@@ -180,6 +180,11 @@ function Tuning() {
           tests locally. Per-PR.
         </li>
         <li>
+          <code>GITTENSORY_REVIEW_FIX_HANDOFF</code> — renders a review finding as a structured,
+          machine-readable "apply this fix" block for the contributor's own local agent to consume —
+          content only, no server-side write, no execution. Per-PR.
+        </li>
+        <li>
           <code>GITTENSORY_REVIEW_PLANNER</code> — enables <code>@gittensory plan</code>, an
           on-demand structured implementation plan posted to the PR thread. Per-PR.
         </li>

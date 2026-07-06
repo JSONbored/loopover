@@ -110,6 +110,7 @@ import {
   buildCreateBranchSpec,
   buildDeleteBranchSpec,
   buildFileIssueSpec,
+  buildFollowUpIssueSpec,
   buildOpenPrSpec,
   buildPostEligibilityCommentSpec,
   buildTestGenSpec,
@@ -324,6 +325,14 @@ const testGenShape = {
   framework: z.enum(TEST_FRAMEWORKS),
   testDir: z.string().min(1).max(255).optional(),
   criteria: z.array(z.string().min(1).max(300)).max(20).optional(),
+};
+// #2177 (follow-up-issue slice of #1962): composes a file_issue spec from a single deferred review finding.
+const followUpIssueShape = {
+  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
+  path: z.string().min(1).max(500),
+  line: z.number().int().positive().optional(),
+  finding: z.string().min(1).max(WRITE_TOOL_BODY_MAX),
+  label: z.string().min(1).max(100).optional(),
 };
 const localWriteActionOutputSchema = {
   action: z.string(),
@@ -1483,6 +1492,16 @@ export class GittensoryMcp {
         outputSchema: localWriteActionOutputSchema,
       },
       async (input) => this.toolResult(this.localWriteSpec(buildTestGenSpec(input))),
+    );
+    server.registerTool(
+      "gittensory_file_follow_up_issue",
+      {
+        description:
+          "Build a LOCAL-execution spec to file a follow-up issue for a review finding a maintainer wants TRACKED rather than blocked on this PR. Composes a bounded, public-safe title/body from the finding (run it with your own gh creds; gittensory never performs the write).",
+        inputSchema: followUpIssueShape,
+        outputSchema: localWriteActionOutputSchema,
+      },
+      async (input) => this.toolResult(this.localWriteSpec(buildFollowUpIssueSpec(input))),
     );
 
     // #783 multi-step plan DAG — stateless: pass the plan back each call.

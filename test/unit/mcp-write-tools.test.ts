@@ -71,4 +71,25 @@ describe("MCP miner write-tools (#780)", () => {
     });
     expect(result.isError).toBeTruthy();
   });
+
+  // #2177 (follow-up-issue slice of #1962).
+  it("file_follow_up_issue composes a file_issue spec from a deferred finding, with and without a label", async () => {
+    const client = await connect();
+    const withLabel = await client.callTool({
+      name: "gittensory_file_follow_up_issue",
+      arguments: { repoFullName: "o/r", path: "src/a.ts", line: 42, finding: "Null check missing before dereference.", label: "gittensor:bug" },
+    });
+    expect(withLabel.isError).toBeFalsy();
+    const spec = withLabel.structuredContent as Spec;
+    expect(spec.action).toBe("file_issue");
+    expect(spec.command).toContain("Follow up: src/a.ts:42");
+    expect(spec.command).toContain("--label 'gittensor:bug'");
+
+    const withoutLabel = await client.callTool({
+      name: "gittensory_file_follow_up_issue",
+      arguments: { repoFullName: "o/r", path: "src/a.ts", finding: "Null check missing." },
+    });
+    expect(withoutLabel.isError).toBeFalsy();
+    expect((withoutLabel.structuredContent as Spec).command).not.toContain("--label");
+  });
 });

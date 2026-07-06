@@ -820,6 +820,30 @@ describe("planAgentMaintenanceActions (#778)", () => {
         expect.objectContaining({ actionClass: "label", autonomyClass: "close", requiresApproval: false, label: AGENT_LABEL_NEEDS_REVIEW }),
       ]);
     });
+
+    it("requires approval for the unlinked-issue-match manual-review fallbacks (1d/1e) when merge is auto_with_approval", () => {
+      const holdMatched = { unlinkedIssueMatchHold: { reason: "this PR links no issue, but appears to directly solve open issue #42 without linking it", comment: "Please add a linking reference." } };
+      const hold = planAgentMaintenanceActions(input({
+        conclusion: "success",
+        autonomy: { merge: "auto_with_approval" },
+        ...holdMatched,
+        pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" },
+      }));
+      expect(hold).toEqual([
+        expect.objectContaining({ actionClass: "label", autonomyClass: "merge", requiresApproval: true, label: AGENT_LABEL_NEEDS_REVIEW, comment: holdMatched.unlinkedIssueMatchHold.comment }),
+      ]);
+
+      const closeRepeated = { unlinkedIssueMatchClose: { reason: "repeat of the same unlinked-issue pattern already flagged", comment: "Closing: please link the issue you're solving going forward." } };
+      const closeFallback = planAgentMaintenanceActions(input({
+        conclusion: "success",
+        autonomy: { merge: "auto_with_approval" },
+        ...closeRepeated,
+        pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" },
+      }));
+      expect(closeFallback).toEqual([
+        expect.objectContaining({ actionClass: "label", autonomyClass: "merge", requiresApproval: true, label: AGENT_LABEL_NEEDS_REVIEW, comment: closeRepeated.unlinkedIssueMatchClose.comment }),
+      ]);
+    });
   });
 
   describe("AI/review blockers remain blocking even when CI is green", () => {

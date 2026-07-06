@@ -7,13 +7,15 @@ import {
 import { buildCapture, mapFilesToRoutes, resolvePreviewUrlTemplate, resolveVisualRoutes } from "../../src/review/visual/capture";
 import * as pixelDiffModule from "../../src/review/visual/pixel-diff";
 import * as previewUrlModule from "../../src/review/visual/preview-url";
+import * as shotModule from "../../src/review/visual/shot";
 import { sha256Hex } from "../../src/utils/crypto";
 import { createTestEnv } from "../helpers/d1";
 
 /** Minimal in-memory R2Bucket-compatible store (mirrors the self-host filesystem blob-store's get/put
  *  surface) — lets a test pre-seed a "cached" screenshot at the exact fingerprinted key capturePage derives,
- *  without needing a real browser binding to produce fresh bytes. */
-function memoryReviewAudit(): R2Bucket {
+ *  without needing a real browser binding to produce fresh bytes. `failPut: true` makes every put() reject,
+ *  for testing the caller's own `.catch(() => undefined)` degrade-gracefully path. */
+function memoryReviewAudit(options: { failPut?: boolean } = {}): R2Bucket {
   const store = new Map<string, Uint8Array>();
   return {
     async get(key: string) {
@@ -21,8 +23,28 @@ function memoryReviewAudit(): R2Bucket {
       return bytes ? ({ body: new Response(bytes).body } as unknown as R2ObjectBody) : null;
     },
     async put(key: string, value: unknown) {
+      if (options.failPut) throw new Error("simulated storage failure");
       const bytes = new Uint8Array(await new Response(value as BodyInit).arrayBuffer());
       store.set(key, bytes);
+      return { key } as unknown as R2Object;
+    },
+  } as unknown as R2Bucket;
+}
+
+/** An R2Bucket whose get() resolves to a cached object whose body stream ERRORS when read — for testing
+ *  capturePage's "cache hit but reading the bytes back fails" degrade-gracefully path. */
+function reviewAuditWithBrokenCachedBody(key: string): R2Bucket {
+  return {
+    async get(requestedKey: string) {
+      if (requestedKey !== key) return null;
+      const body = new ReadableStream({
+        start(controller) {
+          controller.error(new Error("simulated read failure"));
+        },
+      });
+      return { body } as unknown as R2ObjectBody;
+    },
+    async put() {
       return { key } as unknown as R2Object;
     },
   } as unknown as R2Bucket;
@@ -466,6 +488,128 @@ describe("buildCapture pixel-diff wiring (#3674)", () => {
       const desktopCall = compareSpy.mock.calls.find(([before, after]) => before !== undefined || after !== undefined);
       expect(desktopCall?.[0]).toEqual(beforeBytes);
       expect(desktopCall?.[1]).toEqual(afterBytes);
+    } finally {
+      availableSpy.mockRestore();
+      compareSpy.mockRestore();
+    }
+  });
+
+  it("returns just the URL (no bytes) on a cache hit when diffing is unavailable — the real default, includeBytes stays false", async () => {
+    const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() });
+    const beforeKey = await shotKey(6, "before", "desktop", "https://prod.example.com/app");
+    await env.REVIEW_AUDIT!.put(beforeKey, new Uint8Array([1, 2, 3]), {} as R2PutOptions);
+
+    const result = await buildCapture(
+      env,
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 6, previewUrl: "https://preview.example.com" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+    );
+
+    expect(result.routes[0]?.beforeUrl).toContain("/gittensory/shot?key=");
+    expect(result.routes[0]?.diffUrl).toBeUndefined();
+  });
+
+  it("degrades to no bytes (never throws) when reading a cached screenshot's body fails", async () => {
+    const availableSpy = vi.spyOn(pixelDiffModule, "isVisualDiffAvailable").mockReturnValue(true);
+    const compareSpy = vi.spyOn(pixelDiffModule, "compareCapturedScreenshots").mockResolvedValue(null);
+    try {
+      const beforeKey = await shotKey(7, "before", "desktop", "https://prod.example.com/app");
+      const env = createTestEnv({
+        PUBLIC_API_ORIGIN: "https://worker.example",
+        PUBLIC_SITE_ORIGIN: "https://prod.example.com",
+        REVIEW_AUDIT: reviewAuditWithBrokenCachedBody(beforeKey),
+      });
+
+      const result = await buildCapture(
+        env,
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 7, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      );
+
+      expect(result.routes[0]?.beforeUrl).toContain("/gittensory/shot?key=");
+    } finally {
+      availableSpy.mockRestore();
+      compareSpy.mockRestore();
+    }
+  });
+
+  it("returns just the URL (no bytes) for a fresh successful render when diffing is unavailable — the real default", async () => {
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([5, 5, 5]), authWalled: false });
+    try {
+      const env = createTestEnv({
+        PUBLIC_API_ORIGIN: "https://worker.example",
+        PUBLIC_SITE_ORIGIN: "https://prod.example.com",
+        REVIEW_AUDIT: memoryReviewAudit(),
+      });
+
+      const result = await buildCapture(
+        env,
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 11, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      );
+
+      expect(captureShotSpy).toHaveBeenCalled();
+      expect(result.routes[0]?.beforeUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.diffUrl).toBeUndefined();
+    } finally {
+      captureShotSpy.mockRestore();
+    }
+  });
+
+  it("threads fresh screenshot bytes to the diff provider right after a successful render, not just on a cache hit", async () => {
+    const availableSpy = vi.spyOn(pixelDiffModule, "isVisualDiffAvailable").mockReturnValue(true);
+    const compareSpy = vi.spyOn(pixelDiffModule, "compareCapturedScreenshots").mockResolvedValue(null);
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: new Uint8Array([9, 9, 9]), authWalled: false });
+    try {
+      const env = createTestEnv({
+        PUBLIC_API_ORIGIN: "https://worker.example",
+        PUBLIC_SITE_ORIGIN: "https://prod.example.com",
+        REVIEW_AUDIT: memoryReviewAudit(),
+      });
+
+      await buildCapture(
+        env,
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 8, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      );
+
+      expect(captureShotSpy).toHaveBeenCalled();
+      const bothSidesFresh = compareSpy.mock.calls.find(([before, after]) => before !== undefined && after !== undefined);
+      expect(bothSidesFresh?.[0]).toEqual(new Uint8Array([9, 9, 9]));
+      expect(bothSidesFresh?.[1]).toEqual(new Uint8Array([9, 9, 9]));
+    } finally {
+      availableSpy.mockRestore();
+      compareSpy.mockRestore();
+      captureShotSpy.mockRestore();
+    }
+  });
+
+  it("still returns a diff URL even when persisting the diff image fails (fire-and-forget put, mirrors capturePage's own pattern)", async () => {
+    const availableSpy = vi.spyOn(pixelDiffModule, "isVisualDiffAvailable").mockReturnValue(true);
+    const compareSpy = vi.spyOn(pixelDiffModule, "compareCapturedScreenshots").mockResolvedValue({
+      status: "changed",
+      changedPixelPercent: 30,
+      diffImagePng: new Uint8Array([7, 7, 7]),
+    });
+    try {
+      const env = createTestEnv({
+        PUBLIC_API_ORIGIN: "https://worker.example",
+        PUBLIC_SITE_ORIGIN: "https://prod.example.com",
+        REVIEW_AUDIT: memoryReviewAudit({ failPut: true }),
+      });
+
+      const result = await buildCapture(
+        env,
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 10, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      );
+
+      expect(result.routes[0]?.diffUrl).toContain("/gittensory/shot?key=");
     } finally {
       availableSpy.mockRestore();
       compareSpy.mockRestore();

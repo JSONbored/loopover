@@ -185,6 +185,9 @@ export function parseGittensoryMentionCommand(body: string | null | undefined): 
   const rawVerb = (match[1]?.toLowerCase() || "help") as GittensoryMentionCommandName | GittensoryActionCommandName;
   const requested = (GITTENSORY_ACTION_COMMAND_ALIASES[rawVerb] ?? rawVerb) as GittensoryMentionCommandName | GittensoryActionCommandName;
   if (ACTION_COMMANDS.has(requested as GittensoryActionCommandName)) {
+    // match[2] is captured by a `*`-quantified group outside any optional wrapper, so it always matches
+    // (possibly empty) and is never actually undefined; the ?? below is a noUncheckedIndexedAccess guard only.
+    /* v8 ignore next */
     const trailing = (match[2] ?? "").trim();
     const tail = trailing.length > 0 ? trailing : undefined;
     const name = requested as GittensoryActionCommandName;

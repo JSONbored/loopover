@@ -10,6 +10,8 @@ import {
   parseGittensoryMentionCommand,
   sanitizePublicComment,
   suggestCommand,
+  GITTENSORY_ACTION_COMMAND_CATALOG,
+  GITTENSORY_ACTION_COMMANDS,
   githubCommandsInternals,
 } from "../../src/github/commands";
 
@@ -138,6 +140,38 @@ describe("GitHub mention commands", () => {
     const bare = githubCommandsInternals.helpSections();
     expect(bare.join("\n")).not.toContain("Did you mean");
     expect(bare.join("\n")).toContain("**Commands**");
+  });
+
+  it("keeps GITTENSORY_ACTION_COMMAND_CATALOG in sync with GITTENSORY_ACTION_COMMANDS (#2167)", () => {
+    expect(GITTENSORY_ACTION_COMMAND_CATALOG.map((command) => command.id)).toEqual([...GITTENSORY_ACTION_COMMANDS]);
+    expect(GITTENSORY_ACTION_COMMAND_CATALOG).toHaveLength(GITTENSORY_ACTION_COMMANDS.length);
+    for (const command of GITTENSORY_ACTION_COMMAND_CATALOG) {
+      expect(command.title.trim().length).toBeGreaterThan(0);
+      expect(command.description.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it("helpSections documents every PR action command with authorization notes (#2167)", () => {
+    const body = githubCommandsInternals.helpSections().join("\n");
+    expect(body).toContain("**PR action commands**");
+    expect(body).toContain("maintainer or collaborator authorization");
+    expect(body).toContain("pause` and `resume` affect only auto-review");
+    for (const action of GITTENSORY_ACTION_COMMANDS) {
+      expect(body).toContain(`@gittensory ${action}`);
+    }
+    const rendered = githubCommandsInternals.actionCommandHelpSections().join("\n");
+    expect(rendered).toContain("@gittensory re-review");
+    const helpCard = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory")!,
+      repo: null,
+      issue: { number: 1, title: "t", state: "open" },
+      pullRequest: null,
+      actorKind: "maintainer",
+    });
+    expect(helpCard).toContain("PR action commands");
+    expect(helpCard).toContain("@gittensory gate-override");
+    expect(helpCard).toContain("@gittensory explain");
+    expect(helpCard).toContain("Additional safe details");
   });
 
   it("isGittensoryActionCommand distinguishes action verbs from Q&A commands", () => {

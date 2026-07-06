@@ -62,8 +62,49 @@ type SnapshotCommandName = Exclude<GittensoryMentionCommandName, "help" | "miner
 // @gittensory gate-override is not silently downgraded to "help"). #1960 adds the PR control-surface verbs
 // (review, pause, resume, resolve, configuration, explain) as pure parse targets; per-command dispatch is
 // wired incrementally in follow-up bounties, each mirroring maybeProcessGateOverrideCommand.
-export const GITTENSORY_ACTION_COMMANDS = ["gate-override", "review", "pause", "resume", "resolve", "configuration", "explain"] as const;
-export type GittensoryActionCommandName = (typeof GITTENSORY_ACTION_COMMANDS)[number];
+export const GITTENSORY_ACTION_COMMAND_CATALOG = [
+  {
+    id: "gate-override",
+    title: "Gate override",
+    description: "Record a maintainer override for this commit's gate check only (does not persist across new commits).",
+  },
+  {
+    id: "review",
+    title: "Request review",
+    description: "Request an auto-review run on the current PR head (`@gittensory re-review` is an alias).",
+  },
+  {
+    id: "pause",
+    title: "Pause auto-review",
+    description: "Pause auto-review for this PR with an optional reason; does not change gate enforcement.",
+  },
+  {
+    id: "resume",
+    title: "Resume auto-review",
+    description: "Resume auto-review for this PR with an optional reason; does not change gate enforcement.",
+  },
+  {
+    id: "resolve",
+    title: "Resolve finding",
+    description: "Mark a review finding as resolved, optionally naming the finding in trailing text.",
+  },
+  {
+    id: "configuration",
+    title: "Show configuration",
+    description: "Show the effective resolved review configuration for this repository.",
+  },
+  {
+    id: "explain",
+    title: "Explain finding",
+    description: "Explain a specific review finding; supply the finding reference in trailing text.",
+  },
+] as const;
+
+export type GittensoryActionCommandName = (typeof GITTENSORY_ACTION_COMMAND_CATALOG)[number]["id"];
+
+export const GITTENSORY_ACTION_COMMANDS = GITTENSORY_ACTION_COMMAND_CATALOG.map(
+  (command) => command.id,
+) as readonly GittensoryActionCommandName[];
 
 // Alternate spellings that resolve to a canonical action command name so both forms dispatch to the same
 // handler. Only "re-review" exists today (#1960); the map stays a single source of truth for any future alias.
@@ -700,6 +741,19 @@ function commandSections(
   }
 }
 
+function actionCommandHelpSections(): string[] {
+  return [
+    "**PR action commands**",
+    "",
+    "- These verbs require maintainer or collaborator authorization (per command-authorization policy).",
+    "- `pause` and `resume` affect only auto-review scheduling — they never change the gate disposition or make review advisory.",
+    "",
+    ...GITTENSORY_ACTION_COMMAND_CATALOG.map(
+      (command) => `- \`@gittensory ${command.id}\` ${sanitizePublicComment(command.description)}`,
+    ),
+  ];
+}
+
 function helpSections(unknownVerb?: string | undefined): string[] {
   return [
     "**Commands**",
@@ -724,6 +778,8 @@ function helpSections(unknownVerb?: string | undefined): string[] {
     "- `@gittensory intake-health` summarizes contributor-intake health.",
     "- `@gittensory outcome-patterns` summarizes what the repo merges vs closes.",
     "- `@gittensory noise-report` highlights queue noise to triage first.",
+    "",
+    ...actionCommandHelpSections(),
   ];
 }
 
@@ -1631,4 +1687,5 @@ export const githubCommandsInternals = {
   refreshSections,
   askSections,
   helpSections,
+  actionCommandHelpSections,
 };

@@ -285,6 +285,17 @@ describe("github webhook queue isolation (#audit-webhook-queue)", () => {
     expect(metrics).toContain('gittensory_webhook_enqueue_total{action="other",event="other",result="queued"} 1');
   });
 
+  it("REGRESSION (#zero-trace-webhook-loss): an unparseable delivery still gets a durable webhook_events row instead of vanishing with no trace", async () => {
+    const env = createTestEnv();
+    env.WEBHOOKS = { send: async () => undefined } as unknown as Queue;
+
+    await expect(enqueueWebhookByEnv(env, "invalid-json-trace", "pull_request", "{not json")).resolves.toBe("invalid_json");
+
+    const event = await getWebhookEvent(env, "invalid-json-trace");
+    expect(event).toMatchObject({ deliveryId: "invalid-json-trace", status: "error" });
+    expect(event?.payloadHash).toBeTruthy();
+  });
+
   it("rejects retired direct review-app webhooks when the self-host review runtime is absent", async () => {
     const env = createTestEnv();
     delete env.SELFHOST_TRANSIENT_CACHE;

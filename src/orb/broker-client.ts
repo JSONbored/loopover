@@ -7,6 +7,8 @@
 // The signal is the ENROLLMENT SECRET's presence: a brokered self-host sets ORB_ENROLLMENT_SECRET (issued by the
 // operator), cloud never does — so this path is inert on cloud and the deploy is byte-identical there.
 
+import { incr } from "../selfhost/metrics";
+
 /** The Orb's hosted broker base; override (ORB_BROKER_URL) only to point at a private gittensory deployment. */
 const DEFAULT_BROKER_URL = "https://gittensory-api.aethereal.dev";
 // The broker's cold token mint can take many seconds when GitHub is throttling the App; allow headroom so the one
@@ -256,7 +258,20 @@ export async function drainOrbRelay(
     for (const e of body.events ?? []) {
       if (typeof e.deliveryId === "string" && typeof e.eventName === "string" && typeof e.rawBody === "string") {
         out.push({ deliveryId: e.deliveryId, eventName: e.eventName, rawBody: e.rawBody });
+        continue;
       }
+      // #zero-trace-webhook-loss: a batch entry missing/mistyping one of the three required fields was
+      // previously discarded with no record anywhere — indistinguishable from the Orb never having relayed it.
+      incr("gittensory_orb_relay_malformed_events_total");
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "orb_relay_malformed_event_dropped",
+          hasDeliveryId: typeof e.deliveryId === "string",
+          hasEventName: typeof e.eventName === "string",
+          hasRawBody: typeof e.rawBody === "string",
+        }),
+      );
     }
     return out;
   } catch (error) {

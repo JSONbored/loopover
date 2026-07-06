@@ -142,15 +142,20 @@ export async function enqueueWebhookByEnv(env: Env, deliveryId: string, eventNam
     return "review_unavailable";
   }
 
+  // #zero-trace-webhook-loss: hash the raw body (independent of whether it parses) BEFORE the parse attempt, so
+  // an unparseable delivery can still be durably recorded below instead of vanishing with no row anywhere.
+  const payloadHash = await sha256Hex(rawBody);
   let payload: GitHubWebhookPayload;
   try {
     payload = JSON.parse(rawBody) as GitHubWebhookPayload;
   } catch {
+    // installation/repository/action are unknown pre-parse; deliveryId + eventName + the hash are enough for an
+    // operator to trace this delivery instead of it being indistinguishable from "GitHub never sent it."
+    await recordWebhookEvent(env, { deliveryId, eventName, payloadHash, status: "error", errorSummary: "invalid_json" });
     recordWebhookEnqueueMetric(eventName, undefined, "invalid_json");
     return "invalid_json";
   }
 
-  const payloadHash = await sha256Hex(rawBody);
   const existingEvent = await getWebhookEvent(env, deliveryId);
   // Suppress redelivery of an already-processed event (on success its payloadHash is overwritten to a
   // "processed" sentinel, so a hash match alone misses it and the event re-runs its side effects) or one

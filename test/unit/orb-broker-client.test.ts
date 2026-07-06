@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { counterValue, resetMetrics } from "../../src/selfhost/metrics";
 import {
   createOrbRelayRegistrationState,
   drainOrbRelay,
@@ -362,7 +363,9 @@ describe("drainOrbRelay (pull-mode drain)", () => {
     expect(await drainOrbRelay({})).toEqual([]);
   });
 
-  it("POSTs the ack list, parses returned events, and filters malformed ones", async () => {
+  it("POSTs the ack list, parses returned events, and filters malformed ones (#zero-trace-webhook-loss: logs + counts the drop)", async () => {
+    resetMetrics();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { fetchImpl, calls } = captureFetch(
       Response.json({
         events: [
@@ -380,6 +383,11 @@ describe("drainOrbRelay (pull-mode drain)", () => {
     expect(calls[0]?.url).toBe("https://gittensory-api.aethereal.dev/v1/orb/relay/pull");
     expect((calls[0]?.init?.headers as Record<string, string>).authorization).toBe("Bearer s");
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ ack: ["prev-1"] });
+    expect(counterValue("gittensory_orb_relay_malformed_events_total")).toBe(1);
+    const logged = errors.mock.calls.map((c) => String(c[0])).find((line) => line.includes("orb_relay_malformed_event_dropped"));
+    expect(logged).toBeDefined();
+    expect(JSON.parse(logged!)).toMatchObject({ level: "error", event: "orb_relay_malformed_event_dropped", hasDeliveryId: true, hasEventName: true, hasRawBody: false });
+    errors.mockRestore();
   });
 
   it("tolerates a missing events array (?? [] arm)", async () => {

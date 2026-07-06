@@ -68,7 +68,7 @@ describe("config/examples review templates (#1682)", () => {
 
   it("documents shipped inline-comment review toggles in gittensory.full.yml (#2156)", () => {
     const full = readConfigExample("gittensory.full.yml");
-    for (const field of ["inline_comments", "suggestions", "finding_categories"]) {
+    for (const field of ["inline_comments", "suggestions", "finding_categories", "inline_comments_per_category"]) {
       expect(full, `missing review field ${field}`).toMatch(new RegExp(`# ${field}:`));
     }
   });
@@ -99,6 +99,17 @@ describe("config/examples review templates (#1682)", () => {
     const off = parseFocusManifest({ review: { effort_score: false } });
     expect(off.review.effortScore).toBe(false);
     expect(resolveReviewPromptOverrides(off).effortScore).toBe(false);
+  });
+
+  it("resolves review.inline_comments_per_category via manifest parse + helper (#2159)", () => {
+    const full = readConfigExample("gittensory.full.yml");
+    expect(full).toMatch(/# inline_comments_per_category:/);
+    expect(parseFocusManifest({}).review.inlineCommentsPerCategory).toBeNull();
+    expect(resolveReviewPromptOverrides(parseFocusManifest({})).inlineCommentsPerCategory).toBeNull();
+    const on = parseFocusManifest({ review: { inline_comments_per_category: 2 } });
+    expect(on.review.inlineCommentsPerCategory).toBe(2);
+    expect(resolveReviewPromptOverrides(on).inlineCommentsPerCategory).toBe(2);
+    expect(reviewConfigToJson(on.review)).toEqual({ inline_comments_per_category: 2 });
   });
 
   it("locks in review.test_generation via manifest parse + JSON round-trip and documents it in gittensory.full.yml (#2189)", () => {

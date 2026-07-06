@@ -468,6 +468,8 @@ review:
   # When true, inline findings with precise fixes render as one-click suggestion blocks (requires inline_comments).
   # finding_categories: false
   # When true, inline findings are tagged with a category label (requires inline_comments).
+  # inline_comments_per_category: 3
+  # Optional per-category sub-cap before the hard total inline-comment cap (#2159). Unset ⇒ byte-identical.
 
   # Fix-handoff blocks (#2176). Bool | null. Default: null/false — byte-identical.
   # Requires operator flag GITTENSORY_REVIEW_FIX_HANDOFF + cutover allowlist AND this toggle.

@@ -183,6 +183,40 @@ describe("selectInlineComments (#inline-comments)", () => {
       expect(out[0]?.body).toBe("**Blocker (correctness):** Missing null check.\n\n```suggestion\nif (!x) return;\n```");
     });
   });
+
+  describe("per-category cap (#2159)", () => {
+    const capFiles = [fileWith("src/a.ts", "@@ -1,0 +1,6 @@\n+1\n+2\n+3\n+4\n+5\n+6")];
+    const styleFindings: InlineFinding[] = Array.from({ length: 4 }, (_, index) => ({
+      path: "src/a.ts",
+      line: index + 1,
+      severity: "nit" as const,
+      body: `style-${index + 1}`,
+      category: "style" as const,
+    }));
+    const securityFinding: InlineFinding = {
+      path: "src/a.ts",
+      line: 5,
+      severity: "blocker",
+      body: "security issue",
+      category: "security",
+    };
+
+    it("defaults to byte-identical first-seen selection when perCategoryCap is omitted", () => {
+      const out = selectInlineComments([...styleFindings, securityFinding], capFiles);
+      expect(out.map((comment) => comment.body)).toEqual([
+        "**Nit:** style-1",
+        "**Nit:** style-2",
+        "**Nit:** style-3",
+        "**Nit:** style-4",
+        "**Blocker:** security issue",
+      ]);
+    });
+
+    it("limits each category and prefers blockers/security when perCategoryCap is set", () => {
+      const out = selectInlineComments([...styleFindings, securityFinding], capFiles, false, false, null, 2);
+      expect(out.map((comment) => comment.body)).toEqual(["**Blocker:** security issue", "**Nit:** style-1", "**Nit:** style-2"]);
+    });
+  });
 });
 
 describe("postInlineReviewComments (#inline-comments, fail-safe)", () => {

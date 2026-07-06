@@ -8004,6 +8004,7 @@ async function maybePublishPrPublicSurface(
   let reviewMemoryEnabledForReview = false;
   let findingCategoriesEnabledForReview = false;
   let minFindingSeverityForReview: ReviewFindingSeverity | null = null;
+  let inlineCommentsPerCategoryForReview: number | null = null;
   let aiReviewExpected = false;
   let aiReviewWasReused = false;
   let gateFinalized = false;
@@ -8515,6 +8516,7 @@ async function maybePublishPrPublicSurface(
     changedFilesSummaryEnabledForReview = deterministicReviewOverrides.changedFilesSummary;
     effortScoreEnabledForReview = deterministicReviewOverrides.effortScore;
     minFindingSeverityForReview = deterministicReviewOverrides.minFindingSeverity;
+    inlineCommentsPerCategoryForReview = deterministicReviewOverrides.inlineCommentsPerCategory;
     // review.memory (#2179, part of #1964): deterministic, no-AI -- resolved the same unconditional way as
     // changed_files_summary/effort_score above (must apply even when the AI review itself is skipped this
     // pass). ANDed with the operator's GITTENSORY_REVIEW_MEMORY kill-switch at the actual apply site below
@@ -9884,6 +9886,7 @@ async function maybePublishPrPublicSurface(
       suggestionsEnabled: suggestionsEnabledForReview,
       categoriesEnabled: findingCategoriesEnabledForReview,
       minFindingSeverity: minFindingSeverityForReview,
+      perCategoryCap: inlineCommentsPerCategoryForReview,
     });
   }
   if (decision.willLabel) {

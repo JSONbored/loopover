@@ -54,15 +54,24 @@ type SnapshotCommandName = Exclude<GittensoryMentionCommandName, "help" | "miner
 // Action commands are NOT Q&A: they perform a side effect (handled before the mention-command path) rather
 // than producing a public answer card. They are intentionally kept OUT of the Q&A catalog/unions so the
 // exhaustive Q&A switches stay total, but parseGittensoryMentionCommand still recognizes them (so a bare
-// @gittensory gate-override is not silently downgraded to "help").
-export const GITTENSORY_ACTION_COMMANDS = ["gate-override"] as const;
+// @gittensory gate-override is not silently downgraded to "help"). #1960 adds the PR control-surface verbs
+// (review, pause, resume, resolve, configuration, explain) as pure parse targets; per-command dispatch is
+// wired incrementally in follow-up bounties, each mirroring maybeProcessGateOverrideCommand.
+export const GITTENSORY_ACTION_COMMANDS = ["gate-override", "review", "pause", "resume", "resolve", "configuration", "explain"] as const;
 export type GittensoryActionCommandName = (typeof GITTENSORY_ACTION_COMMANDS)[number];
+
+// Alternate spellings that resolve to a canonical action command name so both forms dispatch to the same
+// handler. Only "re-review" exists today (#1960); the map stays a single source of truth for any future alias.
+const GITTENSORY_ACTION_COMMAND_ALIASES: Record<string, GittensoryActionCommandName> = {
+  "re-review": "review",
+};
 
 export type GittensoryMentionCommand = {
   name: GittensoryMentionCommandName | GittensoryActionCommandName;
   raw: string;
   question?: string | undefined;
   reason?: string | undefined;
+  argument?: string | undefined;
 };
 
 type PublicAnswerCard = {
@@ -161,6 +170,11 @@ export type MaintainerQueueDigest = {
   controlPanelUrl?: string | null | undefined;
 };
 
+// Verbs whose trailing free text is a lookup key (e.g. `explain <finding-id>`) rather than free-form prose —
+// exposed as `argument` instead of `reason` so a handler can tell "no target supplied" apart from "no reason
+// supplied" (#1960). Every other action command (gate-override, pause, resolve) keeps the existing `reason` shape.
+const ARGUMENT_ACTION_COMMANDS = new Set<GittensoryActionCommandName>(["explain"]);
+
 export function parseGittensoryMentionCommand(body: string | null | undefined): GittensoryMentionCommand | null {
   if (!body) return null;
   // `(?![\w-])` requires the mention to end at a non-identifier char, so other usernames that merely
@@ -168,10 +182,15 @@ export function parseGittensoryMentionCommand(body: string | null | undefined): 
   // bare `@gittensory help` command. A space, end-of-string, or punctuation still matches.
   const match = body.match(/(?:^|\s)@gittensory(?![\w-])(?:\s+([a-z-]+))?([^\n\r]*)/i);
   if (!match) return null;
-  const requested = (match[1]?.toLowerCase() || "help") as GittensoryMentionCommandName | GittensoryActionCommandName;
+  const rawVerb = (match[1]?.toLowerCase() || "help") as GittensoryMentionCommandName | GittensoryActionCommandName;
+  const requested = (GITTENSORY_ACTION_COMMAND_ALIASES[rawVerb] ?? rawVerb) as GittensoryMentionCommandName | GittensoryActionCommandName;
   if (ACTION_COMMANDS.has(requested as GittensoryActionCommandName)) {
-    const reason = (match[2] ?? "").trim();
-    return { name: requested as GittensoryActionCommandName, raw: match[0].trim(), reason: reason.length > 0 ? reason : undefined };
+    const trailing = (match[2] ?? "").trim();
+    const tail = trailing.length > 0 ? trailing : undefined;
+    const name = requested as GittensoryActionCommandName;
+    return ARGUMENT_ACTION_COMMANDS.has(name)
+      ? { name, raw: match[0].trim(), argument: tail }
+      : { name, raw: match[0].trim(), reason: tail };
   }
   const name = COMMANDS.has(requested as GittensoryMentionCommandName) ? (requested as GittensoryMentionCommandName) : "help";
   const question = name === "ask" ? (match[2] ?? "").trim() : undefined;
@@ -202,6 +221,15 @@ export function isMaintainerQueueDigestCommand(command: GittensoryMentionCommand
 
 export function isMaintainerOnlyCommand(command: GittensoryMentionCommandName): boolean {
   return isMaintainerQueueDigestCommand(command);
+}
+
+/** True for gate-override and every #1960 PR control-surface verb (review/pause/resume/resolve/configuration/
+ *  explain) — the action commands that perform a side effect via their own dispatch rather than the Q&A answer-
+ *  card path. The Q&A mention-command handler (maybeProcessGittensoryMentionCommand) uses this to bail before
+ *  narrowing to a GittensoryMentionCommandName, so a newly-registered action verb is never misrendered as a
+ *  Q&A card while its own dispatch handler has not landed yet (or has, and already claimed the event). */
+export function isGittensoryActionCommand(name: GittensoryMentionCommandName | GittensoryActionCommandName): name is GittensoryActionCommandName {
+  return ACTION_COMMANDS.has(name as GittensoryActionCommandName);
 }
 
 // Commands that dispatch to a real AI orchestrator call (planNextWork / explainBlockersWithAgent /

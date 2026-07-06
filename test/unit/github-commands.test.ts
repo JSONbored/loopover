@@ -4,6 +4,7 @@ import {
   buildMaintainerQueueDigest,
   buildPublicAgentCommandComment,
   isAuthorizedCommandActor,
+  isGittensoryActionCommand,
   isMaintainerOnlyCommand,
   parseAgentCommandFeedbackContext,
   parseGittensoryMentionCommand,
@@ -45,6 +46,52 @@ describe("GitHub mention commands", () => {
     expect(parseGittensoryMentionCommand("@gittensory2 preflight")).toBeNull();
     expect(isMaintainerOnlyCommand("queue-summary")).toBe(true);
     expect(isMaintainerOnlyCommand("preflight")).toBe(false);
+  });
+
+  it("registers the #1960 PR control-surface action verbs (review/pause/resume/resolve/configuration/explain)", () => {
+    // Each new verb is recognized as a first-class action command (not silently downgraded to "help") and
+    // carries the trailing free text as `reason`, mirroring gate-override's existing shape.
+    expect(parseGittensoryMentionCommand("@gittensory review")).toMatchObject({ name: "review", reason: undefined });
+    expect(parseGittensoryMentionCommand("@gittensory review flaky test unrelated to this diff")).toMatchObject({
+      name: "review",
+      reason: "flaky test unrelated to this diff",
+    });
+    // "re-review" is an alias for "review" — both spellings resolve to the same canonical command name.
+    expect(parseGittensoryMentionCommand("@gittensory re-review")).toMatchObject({ name: "review", reason: undefined });
+    expect(parseGittensoryMentionCommand("@gittensory re-review please, new commits landed")).toMatchObject({
+      name: "review",
+      reason: "please, new commits landed",
+    });
+    expect(parseGittensoryMentionCommand("@gittensory pause")).toMatchObject({ name: "pause", reason: undefined });
+    expect(parseGittensoryMentionCommand("@gittensory pause waiting on design sign-off")).toMatchObject({
+      name: "pause",
+      reason: "waiting on design sign-off",
+    });
+    expect(parseGittensoryMentionCommand("@gittensory resume")).toMatchObject({ name: "resume", reason: undefined });
+    expect(parseGittensoryMentionCommand("@gittensory resume design signed off")).toMatchObject({
+      name: "resume",
+      reason: "design signed off",
+    });
+    expect(parseGittensoryMentionCommand("@gittensory resolve")).toMatchObject({ name: "resolve", reason: undefined });
+    expect(parseGittensoryMentionCommand("@gittensory resolve finding-42")).toMatchObject({ name: "resolve", reason: "finding-42" });
+    expect(parseGittensoryMentionCommand("@gittensory configuration")).toMatchObject({ name: "configuration", reason: undefined });
+    // "explain" captures its trailing text as `argument` (a lookup key), not `reason` (free-form prose) — so a
+    // handler can tell "no finding id supplied" apart from "no reason supplied".
+    expect(parseGittensoryMentionCommand("@gittensory explain")).toMatchObject({ name: "explain", argument: undefined });
+    expect(parseGittensoryMentionCommand("@gittensory explain finding-7")).toMatchObject({ name: "explain", argument: "finding-7" });
+    expect(parseGittensoryMentionCommand("@gittensory explain finding-7")).not.toHaveProperty("reason");
+    // An unknown verb still resolves to "help", and a bare mention still resolves to "help" (unchanged).
+    expect(parseGittensoryMentionCommand("@gittensory reveiw")).toMatchObject({ name: "help" });
+    expect(parseGittensoryMentionCommand("@gittensory")).toMatchObject({ name: "help" });
+  });
+
+  it("isGittensoryActionCommand distinguishes action verbs from Q&A commands", () => {
+    for (const action of ["gate-override", "review", "pause", "resume", "resolve", "configuration", "explain"] as const) {
+      expect(isGittensoryActionCommand(action)).toBe(true);
+    }
+    for (const qa of ["help", "ask", "preflight", "queue-summary"] as const) {
+      expect(isGittensoryActionCommand(qa)).toBe(false);
+    }
   });
 
   it("authorizes maintainers and confirmed miner PR authors only", () => {

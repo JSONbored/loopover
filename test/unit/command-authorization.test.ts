@@ -131,6 +131,32 @@ describe("repo command authorization policy", () => {
     });
   });
 
+  it("defaults the #1960 PR control-surface verbs to maintainer/collaborator-only, except review (widenable to confirmed_miner)", () => {
+    expect(commandAuthorizationAllowedRoles(undefined, "review")).toEqual(["maintainer", "collaborator", "confirmed_miner"]);
+    for (const command of ["pause", "resume", "resolve", "configuration", "explain"]) {
+      expect(commandAuthorizationAllowedRoles(undefined, command)).toEqual(["maintainer", "collaborator"]);
+    }
+    // A confirmed-miner PR author can self-trigger "review" (the #824 self-rerun precedent), but not "pause".
+    expect(
+      evaluateCommandAuthorization({ commandName: "review", commenterLogin: "miner", pullRequestAuthorLogin: "miner", minerStatus: "confirmed" }),
+    ).toMatchObject({ authorized: true, reason: "confirmed_miner_pr_author", actorKind: "author" });
+    expect(
+      evaluateCommandAuthorization({ commandName: "pause", commenterLogin: "miner", pullRequestAuthorLogin: "miner", minerStatus: "confirmed" }),
+    ).toMatchObject({ authorized: false, reason: "maintainer_command_requires_maintainer" });
+    // Maintainers and collaborators are authorized on every new verb.
+    for (const command of ["review", "pause", "resume", "resolve", "configuration", "explain"]) {
+      expect(evaluateCommandAuthorization({ commandName: command, commenterAssociation: "OWNER" })).toMatchObject({ authorized: true, reason: "maintainer_invocation" });
+      expect(evaluateCommandAuthorization({ commandName: command, commenterAssociation: "COLLABORATOR" })).toMatchObject({ authorized: true, reason: "collaborator_invocation" });
+    }
+    // A spoofable pr_author role added to one of the maintainer-only new verbs is clamped off with a warning;
+    // the confirmed_miner role on "review" is not spoofable via author_association and survives untouched.
+    const clamped = normalizeCommandAuthorizationPolicy({ commands: { resolve: ["collaborator", "pr_author"], review: ["confirmed_miner"] } });
+    expect(clamped.warnings).toContain("Ignored author command authorization roles for maintainer-only command: resolve.");
+    expect(clamped.warnings).not.toContain("Ignored author command authorization roles for maintainer-only command: review.");
+    expect(clamped.policy.commands.resolve).toEqual(["collaborator"]);
+    expect(clamped.policy.commands.review).toEqual(["confirmed_miner"]);
+  });
+
   it("falls back to default roles for inherited object property command names", () => {
     for (const commandName of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
       expect(commandAuthorizationAllowedRoles(undefined, commandName)).toEqual(["maintainer", "collaborator", "confirmed_miner"]);

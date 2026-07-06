@@ -14,6 +14,16 @@ export const DEFAULT_COMMAND_AUTHORIZATION_POLICY: RepositoryCommandAuthorizatio
     "noise-report": ["maintainer", "collaborator"],
     "gate-override": ["maintainer", "collaborator"],
     plan: ["maintainer", "collaborator"],
+    // #1960 PR control-surface verbs. "review" is deliberately widenable to confirmed_miner (same self-rerun
+    // precedent already applied to review-now, #824) — a confirmed miner may re-trigger review on their own PR.
+    // The rest (pause/resume/resolve/configuration/explain) are conservative maintainer/collaborator-only
+    // defaults out of the box; a maintainer who wants to widen them can do so via commandAuthorization overrides.
+    review: ["maintainer", "collaborator", "confirmed_miner"],
+    pause: ["maintainer", "collaborator"],
+    resume: ["maintainer", "collaborator"],
+    resolve: ["maintainer", "collaborator"],
+    configuration: ["maintainer", "collaborator"],
+    explain: ["maintainer", "collaborator"],
   },
 };
 

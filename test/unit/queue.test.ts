@@ -21561,6 +21561,67 @@ describe("queue processors", () => {
     expect(overridden ?? null).toBeNull();
   });
 
+  it("a #1960 action-command verb with no dispatch handler wired yet (e.g. pause) is bailed out of the Q&A answer-card path, not misrendered as help (#2160)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 93,
+      title: "Not yet wired",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "action-verb-scaffold" },
+      labels: [],
+      body: "Validation: npm test",
+    });
+    const calls = { token: 0, permission: 0, comments: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) {
+        calls.token += 1;
+        return Response.json({ token: "installation-token" });
+      }
+      if (url.includes("/collaborators/")) {
+        calls.permission += 1;
+        return Response.json({ permission: "admin" });
+      }
+      if (url.includes("/comments")) {
+        calls.comments += 1;
+        return Response.json([]);
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "action-verb-scaffold",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 93, title: "Not yet wired", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 900, body: "@gittensory pause waiting on design sign-off", author_association: "OWNER", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    // No handler claims a bare "pause" comment yet (its dispatch lands in a follow-up bounty), so the Q&A
+    // answer-card path must bail rather than post a stray "help" card or any other Q&A comment.
+    expect(calls.comments).toBe(0);
+    const feedback = await env.DB.prepare("select id from audit_events where event_type = ?").bind("github_app.agent_command_feedback_prompted").first<{ id: string }>();
+    expect(feedback ?? null).toBeNull();
+  });
+
   it("ops-alerts job no-ops when GITTENSORY_REVIEW_OPS is OFF (does no anomaly scan)", async () => {
     const env = createTestEnv(); // flag unset → OFF
     await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 1)")

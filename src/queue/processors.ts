@@ -163,6 +163,7 @@ import {
   type GittensoryMentionCommandName,
   isAiCostBearingCommand,
   isAuthorizedCommandActor,
+  isGittensoryActionCommand,
   isMaintainerQueueDigestCommand,
   parseAgentCommandFeedbackContext,
   parseGittensoryMentionCommand,
@@ -12124,9 +12125,10 @@ async function maybeProcessGittensoryMentionCommand(
   if (payload.action !== "created") return false;
   const command = parseGittensoryMentionCommand(payload.comment?.body);
   if (!command) return false;
-  // Action commands (e.g. gate-override) are handled by their own dispatch earlier in processGitHubWebhook;
-  // they never produce a Q&A answer card here. Bail so the rest of this handler narrows to Q&A commands.
-  if (command.name === "gate-override") return false;
+  // Action commands (gate-override + the #1960 PR control-surface verbs) are handled by their own dispatch
+  // earlier in processGitHubWebhook; they never produce a Q&A answer card here. Bail so the rest of this
+  // handler narrows to Q&A commands only.
+  if (isGittensoryActionCommand(command.name)) return false;
   const repoFullName = payload.repository?.full_name;
   const issue = payload.issue;
   const installationId = getInstallationId(payload);

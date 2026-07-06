@@ -4266,6 +4266,15 @@ async function recordGitHubResponse(
   resource: "rest" | "graphql",
   admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<void> {
+  // #rate-limit-admission-attribution: a response with no resolvable admission key (a genuinely tokenless /
+  // unauthenticated request -- GitHub's unauthenticated REST bucket is a separate, always-tiny 60/hour-per-IP
+  // cap -- or a token whose installation can't be determined) draws from a bucket this table has no way to name.
+  // Persisting it as a NULL-keyed row would let the admission-check fallback (fallbackObservationCanOverrideExact,
+  // selfhost/queue-common.ts) misattribute that unrelated, much-smaller bucket's exhaustion onto the shared
+  // public-token bucket every OTHER unkeyed job's admission decision depends on, permanently starving them even
+  // when the public-token bucket itself has headroom. Mirrors the equivalent `if (admissionKey)` guard already
+  // applied to the in-memory cache write (observeGitHubRestRateLimit, github/client.ts).
+  if (!admissionKey) return;
   const resetHeader = response.headers.get("x-ratelimit-reset");
   const resetAt = resetHeader && Number.isFinite(Number(resetHeader)) ? new Date(Number(resetHeader) * 1000).toISOString() : undefined;
   await recordGitHubRateLimitObservation(env, {

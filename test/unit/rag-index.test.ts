@@ -783,10 +783,13 @@ describe("merged-PR incremental re-index trigger (webhook)", () => {
     return sent.filter((m) => m.type === "rag-index-repo");
   }
 
-  it("a MERGED PR into an allowlisted repo enqueues a rag-index-repo job with the changed paths", async () => {
+  it("a MERGED PR into an allowlisted repo enqueues a rag-index-repo job with the changed paths and installationId", async () => {
     const ragJobs = await runMergedPrWebhook({});
+    // REGRESSION (#rate-limit-admission-attribution): installationId must be threaded through so the queue's
+    // admission check attributes this job to the repo's OWN installation bucket, not the shared public-token
+    // bucket -- omitting it starves an installed repo's re-index behind unrelated public-token traffic.
     expect(ragJobs).toEqual([
-      { type: "rag-index-repo", requestedBy: "webhook", repoFullName: "JSONbored/gittensory", paths: ["src/a.ts", "README.md"] },
+      { type: "rag-index-repo", requestedBy: "webhook", repoFullName: "JSONbored/gittensory", paths: ["src/a.ts", "README.md"], installationId: 123 },
     ]);
   });
 

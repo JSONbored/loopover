@@ -1618,6 +1618,7 @@ async function maybeEnqueueRagReindexForMergedPr(
   pullNumber: number,
   action: string | undefined,
   mergedAt: string | null | undefined,
+  installationId: number,
 ): Promise<void> {
   if (!(await convergedFeatureActive(env, repoFullName, "rag"))) return;
   // A PR that merged: closed action + a merged_at timestamp. (A closed-unmerged PR changed nothing on the base.)
@@ -1633,6 +1634,11 @@ async function maybeEnqueueRagReindexForMergedPr(
     requestedBy: "webhook",
     repoFullName,
     paths,
+    // #rate-limit-admission-attribution: without this, the queue's admission check has no installationId to key
+    // off (githubRateLimitAdmissionKeyForJob), so it falls back to the shared public-token bucket instead of this
+    // repo's own (usually healthy) installation bucket -- starving an installed repo's re-index behind unrelated
+    // public-token traffic even though its own budget has headroom.
+    installationId,
   });
 }
 
@@ -5926,6 +5932,7 @@ async function processGitHubWebhook(
           pr.number,
           payload.action,
           payload.pull_request.merged_at,
+          installationId,
         ).catch((error) => {
           /* v8 ignore next -- best-effort: a RAG re-index enqueue failure is logged, never surfaced to the gate. */
           console.error(

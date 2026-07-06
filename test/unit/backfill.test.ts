@@ -5603,8 +5603,12 @@ describe("GitHub backfill", () => {
         );
       });
 
-      const first = await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token");
-      const second = await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token");
+      // admissionKey mirrors the real caller (processors.ts), which always resolves + passes its own admission
+      // key -- omitting it here would exercise the (deliberately unpersisted) no-attribution path instead of
+      // this test's actual point: that a cache hit does not double-record telemetry for the SAME bucket.
+      const admissionKey = githubRateLimitAdmissionKeyForPublicToken();
+      const first = await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token", admissionKey);
+      const second = await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token", admissionKey);
 
       expect([...(first as Set<string>)]).toEqual(["validate"]);
       expect([...(second as Set<string>)]).toEqual(["validate"]);
@@ -5618,6 +5622,7 @@ describe("GitHub backfill", () => {
         path: "/branches/main/protection/required_status_checks",
         statusCode: 200,
         remaining: 4999,
+        admissionKey,
       });
     });
 

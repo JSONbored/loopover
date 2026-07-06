@@ -1974,6 +1974,15 @@ describe("suggestCommand (#2170)", () => {
     expect(suggestCommand("prefligt")).toBe("preflight");
     expect(suggestCommand("zzzzzzzzzz")).toBeNull();
   });
+
+  it("exercises every levenshtein branch used by suggestCommand", () => {
+    const { levenshteinDistance } = githubCommandsInternals;
+    expect(levenshteinDistance("abc", "abc")).toBe(0);
+    expect(levenshteinDistance("", "abc")).toBe(3);
+    expect(levenshteinDistance("abc", "")).toBe(3);
+    expect(levenshteinDistance("kitten", "sitting")).toBe(3);
+    expect(levenshteinDistance("a", "b")).toBe(1);
+  });
 });
 
 describe("ask citation helpers", () => {

@@ -4,6 +4,7 @@ import {
   countRecentDeadLetters,
   countRecentDeadLettersByType,
   countRecentAuditEventsForActorAndTarget,
+  findHottestReviewTargetForRepo,
   hasAuditEventForDelivery,
   getLatestScorePreview,
   getRepoAuthorPullRequestHistory,
@@ -554,6 +555,33 @@ describe("database row parser hardening", () => {
     expect(await countRecentAuditEventsForActorAndTarget(env, "chatty", "github_app.review_nag_ping", "owner/repo#1", "2026-06-24T09:00:00.000Z")).toBe(2);
     expect(await countRecentAuditEventsForActorAndTarget(env, "chatty", "github_app.review_nag_ping", "owner/repo#1", "2026-06-24T11:00:00.000Z")).toBe(1); // only the 12:00 one
     expect(await countRecentAuditEventsForActorAndTarget(env, "chatty", "github_app.review_nag_ping", "owner/repo#1", "2026-06-24T13:00:00.000Z")).toBe(0); // none after the cutoff → count(*) returns 0
+  });
+
+  it("findHottestReviewTargetForRepo returns the PR with the most published surfaces in the window, scoped to ONE repo (#orb-ci-stuck-repeat)", async () => {
+    const env = createTestEnv();
+    const publish = (targetKey: string, createdAt: string) =>
+      recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", actor: "contributor", targetKey, outcome: "completed", createdAt });
+    // owner/repo#1: 3 publishes in-window -- the hottest target for this repo.
+    await publish("owner/repo#1", "2026-06-24T10:00:00.000Z");
+    await publish("owner/repo#1", "2026-06-24T10:05:00.000Z");
+    await publish("owner/repo#1", "2026-06-24T10:10:00.000Z");
+    // owner/repo#2: only 1 publish -- must not win over #1.
+    await publish("owner/repo#2", "2026-06-24T10:00:00.000Z");
+    // A DIFFERENT event type on the SAME PR must not count (the eventType filter).
+    await recordAuditEvent(env, { eventType: "github_app.ai_review_cache_hit", actor: "contributor", targetKey: "owner/repo#1", outcome: "completed", createdAt: "2026-06-24T10:07:00.000Z" });
+    // A DIFFERENT repo with an overlapping numeric suffix must not leak into this repo's count (the LIKE scope).
+    await publish("owner/repo-fork#1", "2026-06-24T10:00:00.000Z");
+    await publish("owner/repo-fork#1", "2026-06-24T10:05:00.000Z");
+    await publish("owner/repo-fork#1", "2026-06-24T10:06:00.000Z");
+    await publish("owner/repo-fork#1", "2026-06-24T10:07:00.000Z");
+
+    const hottest = await findHottestReviewTargetForRepo(env, "owner/repo", "2026-06-24T09:00:00.000Z");
+    expect(hottest).toEqual({ targetKey: "owner/repo#1", count: 3 });
+
+    // A cutoff AFTER all the recorded publishes must find nothing.
+    expect(await findHottestReviewTargetForRepo(env, "owner/repo", "2026-06-24T11:00:00.000Z")).toBeNull();
+    // An unregistered/unpublished repo must find nothing.
+    expect(await findHottestReviewTargetForRepo(env, "owner/nothing-here", "2026-06-24T09:00:00.000Z")).toBeNull();
   });
 
   it("hasAuditEventForDelivery finds a matching deliveryId inside metadata_json, scoped to actor+eventType+targetKey (#2560)", async () => {

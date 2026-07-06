@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, not, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, like, not, or, sql, type SQL } from "drizzle-orm";
 import { getDb } from "./client";
 import {
   activeReviewTracking,
@@ -2550,6 +2550,40 @@ export async function countRecentAuditEventsForActorAndTarget(env: Env, actor: s
   /* v8 ignore next -- count(*) always returns exactly one row; the empty-array guard only satisfies the destructure type. */
   if (!row) return 0;
   return row.count;
+}
+
+/** #orb-ci-stuck-repeat / #orb-retry-storm ops-alerts signal: the single PR within `repoFullName` that published
+ *  the most review surfaces in the last `sinceIso`-bounded window, and how many. `github_app.pr_public_surface_
+ *  published` is a genuine INSERT-only event (never upserted) recorded once per successful publish pass
+ *  (processors.ts's finishPublicSurfacePublication), so unlike ai_review_cache or review_audit's gate_decision
+ *  rows (both keyed + upserted on `(repo, pr, headSha)`, so a repeat pass at an UNCHANGED head silently
+ *  overwrites rather than accumulates), this correctly counts repeat publishes even when the head SHA never
+ *  changes -- exactly the shape of a stuck-CI or sweep retry-storm bleed. Returns null when the repo published
+ *  no surfaces in the window at all. */
+export async function findHottestReviewTargetForRepo(
+  env: Env,
+  repoFullName: string,
+  sinceIso: string,
+): Promise<{ targetKey: string; count: number } | null> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({ targetKey: auditEvents.targetKey, count: sql<number>`count(*)` })
+    .from(auditEvents)
+    .where(
+      and(
+        eq(auditEvents.eventType, "github_app.pr_public_surface_published"),
+        like(auditEvents.targetKey, `${repoFullName}#%`),
+        gte(auditEvents.createdAt, sinceIso),
+      ),
+    )
+    .groupBy(auditEvents.targetKey)
+    .orderBy(desc(sql`count(*)`))
+    .limit(1);
+  /* v8 ignore next -- the WHERE clause's `like(auditEvents.targetKey, ...)` can never match a NULL target_key
+   *  (SQL LIKE against NULL is NULL, never true), so a returned row always has a non-null targetKey; the
+   *  column's nullable TS type is a schema-wide default this specific query structurally rules out. */
+  if (!row || row.targetKey === null) return null;
+  return { targetKey: row.targetKey, count: row.count };
 }
 
 /** Moderation-rules engine (#selfhost-mod-engine): the actor's TOTAL violation count across every rule type in

@@ -14,9 +14,15 @@
 //     services/outcome-calibration.ts (buildRepoOutcomeCalibration).
 //
 // NOTIFY PATH: gittensory has NO Discord / operator webhook (notifications/service.ts is a per-recipient,
-// pull-based BADGE feed — the wrong channel for an operator anomaly). So, per the task ("Discord/webhook if
-// present, else a structured log"), an anomaly emits a structured `console.warn` log line (the house
-// `JSON.stringify({ ev: ... })` convention used across the worker) that Workers Logs/Observability surfaces.
+// pull-based BADGE feed — the wrong channel for an operator anomaly). So an anomaly emits a structured
+// `console.error` log line with an `event` field (#orb-ci-stuck-repeat: this was previously `console.warn` with
+// an `ev` field — forwardStructuredLogToSentry, src/selfhost/sentry.ts, only wraps console.log/console.error
+// -- never console.warn -- and keys the Sentry issue off a field literally named `event`, not `ev`. Under the
+// old shape, every anomaly this module ever found was invisible to Sentry regardless of whether Sentry was
+// active; it only ever reached Workers Logs, which is why a 20+-hour token-usage bleed went unnoticed until a
+// human queried the database directly. `console.error` + `event` is the same convention every other Sentry-
+// visible anomaly signal in this codebase already uses (selfhost_ai_provider_failed, regate_repair_exhausted,
+// ci_stuck_review_repeat_suppressed).
 //
 // DEFERRED (NOT implemented here): the auto-tune / auto-apply config-mutation self-improve loop. The ported
 // pure logic + D1 store already exist in src/review/auto-apply.ts, but actually CLOSING the loop (mutating a
@@ -24,7 +30,7 @@
 // `override_audit` D1 tables (none of which exist in gittensory's migrations yet) plus a careful soak/promote
 // design. This module is READ-ONLY observability: it reports drift; it never changes what blocks a live PR.
 
-import { listRepositories } from "../db/repositories";
+import { findHottestReviewTargetForRepo, listRepositories } from "../db/repositories";
 import { isAgentConfigured } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { loadGatePrecisionReport, type GatePrecisionReport } from "../services/gate-precision";
@@ -47,12 +53,24 @@ const GATE_FALSE_POSITIVE_THRESHOLD = 0.3;
 const RECOMMENDATION_NEGATIVE_THRESHOLD = 0.5;
 /** Don't judge the recommendation negative-rate off a trickle of resolved outcomes. */
 const MIN_RECOMMENDATION_RESOLVED = 5;
+/** #orb-ci-stuck-repeat / #orb-retry-storm: more than this many published review surfaces for the SAME PR within
+ *  REVIEW_BURST_WINDOW_HOURS is not normal iteration (a human pushing a few follow-up commits tops out well
+ *  below this) -- it is the signature of a stuck-CI finalize loop or a sweep retry storm. Conservative on
+ *  purpose: an actively-iterated PR with several quick pushes should never trip this. */
+const REVIEW_BURST_THRESHOLD = 6;
+/** Rolling window the review-burst count is computed over. Short enough that the hourly ops-alerts cron catches
+ *  a live bleed within one or two ticks, not the 20+ hours it took a human to notice the incident this exists
+ *  to prevent from recurring. */
+const REVIEW_BURST_WINDOW_HOURS = 2;
 
-/** One repo's outcome reports + the repo it covers — the input to the pure anomaly detector. */
+/** One repo's outcome reports + the repo it covers — the input to the pure anomaly detector. `reviewBurst` is
+ *  optional so existing snapshot-fixture tests need not be touched; absent/null means "not computed", not
+ *  "healthy" -- the caller (runOpsAlerts/computeOpsStats) always populates it today. */
 export interface RepoOutcomeSnapshot {
   repoFullName: string;
   gatePrecision: GatePrecisionReport;
   calibration: OutcomeCalibration;
+  reviewBurst?: { targetKey: string; count: number } | null | undefined;
 }
 
 /**
@@ -93,6 +111,15 @@ export function detectOutcomeAnomalies(snapshot: RepoOutcomeSnapshot): string[] 
     );
   }
 
+  // REVIEW BURST (#orb-ci-stuck-repeat / #orb-retry-storm): the same PR published far more review surfaces than
+  // normal iteration ever produces within a short window -- catch a stuck-CI finalize loop or sweep retry storm
+  // within this scan's own next tick instead of requiring a human to notice hours later.
+  if (snapshot.reviewBurst && snapshot.reviewBurst.count >= REVIEW_BURST_THRESHOLD) {
+    out.push(
+      `review burst: ${snapshot.reviewBurst.targetKey} published ${snapshot.reviewBurst.count} review surfaces in the last ${REVIEW_BURST_WINDOW_HOURS}h — likely a stuck-CI finalize loop or retry storm, not normal iteration. Investigate why this PR keeps re-triggering a fresh review.`,
+    );
+  }
+
   return out;
 }
 
@@ -127,25 +154,28 @@ async function opsScanRepos(env: Env): Promise<string[]> {
  */
 export async function runOpsAlerts(env: Env): Promise<Record<string, string[]>> {
   const found: Record<string, string[]> = {};
+  const reviewBurstSinceIso = new Date(Date.now() - REVIEW_BURST_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
   try {
     const repos = await opsScanRepos(env);
     for (const repoFullName of repos) {
       try {
-        const [gatePrecision, calibration] = await Promise.all([
+        const [gatePrecision, calibration, reviewBurst] = await Promise.all([
           loadGatePrecisionReport(env, repoFullName),
           buildRepoOutcomeCalibration(env, repoFullName),
+          findHottestReviewTargetForRepo(env, repoFullName, reviewBurstSinceIso),
         ]);
-        const anomalies = detectOutcomeAnomalies({ repoFullName, gatePrecision, calibration });
+        const anomalies = detectOutcomeAnomalies({ repoFullName, gatePrecision, calibration, reviewBurst });
         if (anomalies.length === 0) continue;
         found[repoFullName] = anomalies;
-        // Structured log = gittensory's notify path (no Discord/operator webhook exists). One line per repo.
-        console.warn(JSON.stringify({ ev: "ops_anomaly", repo: repoFullName, at: nowIso(), anomalies }));
+        // Structured log = gittensory's notify path (no Discord/operator webhook exists) AND the Sentry path
+        // (level:"error" + an `event` field reaches forwardStructuredLogToSentry). One line per repo.
+        console.error(JSON.stringify({ level: "error", event: "ops_anomaly", repo: repoFullName, at: nowIso(), anomalies }));
       } catch (error) {
-        console.warn(JSON.stringify({ ev: "ops_anomaly_repo_error", repo: repoFullName, message: errorMessage(error).slice(0, 200) }));
+        console.error(JSON.stringify({ level: "error", event: "ops_anomaly_repo_error", repo: repoFullName, message: errorMessage(error).slice(0, 200) }));
       }
     }
   } catch (error) {
-    console.warn(JSON.stringify({ ev: "ops_anomaly_error", message: errorMessage(error).slice(0, 200) }));
+    console.error(JSON.stringify({ level: "error", event: "ops_anomaly_error", message: errorMessage(error).slice(0, 200) }));
   }
   return found;
 }
@@ -177,11 +207,13 @@ export interface OpsStatsPayload {
 export async function computeOpsStats(env: Env): Promise<OpsStatsPayload> {
   const repos = await opsScanRepos(env);
   const rows: OpsStatsRepoRow[] = [];
+  const reviewBurstSinceIso = new Date(Date.now() - REVIEW_BURST_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
   for (const repoFullName of repos) {
     try {
-      const [gatePrecision, calibration] = await Promise.all([
+      const [gatePrecision, calibration, reviewBurst] = await Promise.all([
         loadGatePrecisionReport(env, repoFullName),
         buildRepoOutcomeCalibration(env, repoFullName),
+        findHottestReviewTargetForRepo(env, repoFullName, reviewBurstSinceIso),
       ]);
       rows.push({
         repoFullName,
@@ -196,7 +228,7 @@ export async function computeOpsStats(env: Env): Promise<OpsStatsPayload> {
           discriminates: calibration.slop.discriminates,
         },
         recommendations: calibration.recommendations,
-        anomalies: detectOutcomeAnomalies({ repoFullName, gatePrecision, calibration }),
+        anomalies: detectOutcomeAnomalies({ repoFullName, gatePrecision, calibration, reviewBurst }),
       });
     } catch {
       /* a per-repo failure must not blank the whole feed */

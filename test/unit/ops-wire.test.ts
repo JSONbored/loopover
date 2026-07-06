@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
-import { recordGateBlockOutcome, upsertPullRequestFromGitHub } from "../../src/db/repositories";
+import { recordAuditEvent, recordGateBlockOutcome, upsertPullRequestFromGitHub } from "../../src/db/repositories";
 import {
   computeOpsStats,
   detectOutcomeAnomalies,
@@ -127,6 +127,22 @@ describe("detectOutcomeAnomalies — over gittensory's own outcome data", () => 
     };
     expect(detectOutcomeAnomalies(snap).length).toBe(3);
   });
+
+  it("flags a review burst — the same PR published far more review surfaces than normal iteration in the window (#orb-ci-stuck-repeat)", () => {
+    const snap: RepoOutcomeSnapshot = { ...healthySnapshot, reviewBurst: { targetKey: "owner/repo#42", count: 9 } };
+    const out = detectOutcomeAnomalies(snap);
+    expect(out.some((a) => /review burst/.test(a) && /owner\/repo#42/.test(a) && /9 review surfaces/.test(a))).toBe(true);
+  });
+
+  it("does NOT flag a review burst below the threshold", () => {
+    const snap: RepoOutcomeSnapshot = { ...healthySnapshot, reviewBurst: { targetKey: "owner/repo#42", count: 2 } };
+    expect(detectOutcomeAnomalies(snap).some((a) => /review burst/.test(a))).toBe(false);
+  });
+
+  it("does NOT flag a review burst when none was computed (absent/null)", () => {
+    expect(detectOutcomeAnomalies({ ...healthySnapshot, reviewBurst: null }).some((a) => /review burst/.test(a))).toBe(false);
+    expect(detectOutcomeAnomalies(healthySnapshot).some((a) => /review burst/.test(a))).toBe(false); // field omitted entirely
+  });
 });
 
 // ── DB-backed cron + endpoint integration over the real migrated schema ─────────────────────────────────────
@@ -157,19 +173,20 @@ async function seedGateFalsePositiveAnomaly(env: Env, repoFullName: string): Pro
 describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("emits a structured ops_anomaly log naming the repo + drift on a seeded anomaly", async () => {
+  it("emits a structured ops_anomaly log naming the repo + drift on a seeded anomaly, at error level (#orb-ci-stuck-repeat -- so it reaches Sentry)", async () => {
     const env = createTestEnv();
     await seedRegisteredRepo(env, "owner/repo");
     await seedGateFalsePositiveAnomaly(env, "owner/repo");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const found = await runOpsAlerts(env);
 
     expect(found["owner/repo"]?.some((a) => /gate false-positive spike/.test(a))).toBe(true);
-    const logged = warn.mock.calls.map((c) => String(c[0])).find((line) => line.includes("ops_anomaly") && line.includes("owner/repo"));
+    const logged = errors.mock.calls.map((c) => String(c[0])).find((line) => line.includes("ops_anomaly") && line.includes("owner/repo"));
     expect(logged).toBeDefined();
-    const parsed = JSON.parse(logged!) as { ev: string; repo: string; anomalies: string[] };
-    expect(parsed.ev).toBe("ops_anomaly");
+    const parsed = JSON.parse(logged!) as { level: string; event: string; repo: string; anomalies: string[] };
+    expect(parsed.level).toBe("error");
+    expect(parsed.event).toBe("ops_anomaly");
     expect(parsed.repo).toBe("owner/repo");
     expect(parsed.anomalies.some((a) => /missing_linked_issue/.test(a))).toBe(true);
   });
@@ -182,12 +199,33 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
       await recordGateBlockOutcome(env, { repoFullName: "owner/clean", pullNumber: i, blockerCodes: ["slop_risk"] });
       await upsertPullRequestFromGitHub(env, "owner/clean", { number: i, title: `PR ${i}`, state: "closed", merged_at: null } as never);
     }
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const found = await runOpsAlerts(env);
 
     expect(found["owner/clean"]).toBeUndefined();
-    expect(warn.mock.calls.map((c) => String(c[0])).some((line) => line.includes("ops_anomaly\""))).toBe(false);
+    expect(errors.mock.calls.map((c) => String(c[0])).some((line) => line.includes("ops_anomaly\""))).toBe(false);
+  });
+
+  it("detects and reports a review burst end-to-end (a PR published far more review surfaces than normal in the window)", async () => {
+    const env = createTestEnv();
+    await seedRegisteredRepo(env, "owner/repo");
+    for (let i = 0; i < 7; i += 1) {
+      await recordAuditEvent(env, {
+        eventType: "github_app.pr_public_surface_published",
+        actor: "contributor",
+        targetKey: "owner/repo#99",
+        outcome: "completed",
+      });
+    }
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const found = await runOpsAlerts(env);
+
+    expect(found["owner/repo"]?.some((a) => /review burst/.test(a) && /owner\/repo#99/.test(a))).toBe(true);
+    const stats = await computeOpsStats(env);
+    const row = stats.repos.find((r) => r.repoFullName === "owner/repo");
+    expect(row?.anomalies.some((a) => /review burst/.test(a))).toBe(true);
   });
 
   it("fails safe per-repo: a load error on one repo is logged and the scan continues (ops_anomaly_repo_error)", async () => {
@@ -196,12 +234,12 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
     // The repo is scanned, but the per-repo precision load throws → caught at the inner catch.
     // gate-precision reads pull_requests (Drizzle, quoted table name) per repo.
     poisonDbPrepare(env, /"pull_requests"/i);
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const found = await runOpsAlerts(env); // resolves (never throws)
 
     expect(found).toEqual({});
-    expect(warn.mock.calls.map((c) => String(c[0])).some((line) => line.includes("ops_anomaly_repo_error") && line.includes("owner/repo"))).toBe(true);
+    expect(errors.mock.calls.map((c) => String(c[0])).some((line) => line.includes("ops_anomaly_repo_error") && line.includes("owner/repo"))).toBe(true);
   });
 
   it("fails safe at the top level: a repo-scan error is swallowed (ops_anomaly_error), returns {}", async () => {
@@ -209,12 +247,12 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
     // opsScanRepos → listRepositories reads the repositories table (Drizzle, quoted); poison it so the
     // outer try throws.
     poisonDbPrepare(env, /"repositories"/i);
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const found = await runOpsAlerts(env); // resolves (never throws)
 
     expect(found).toEqual({});
-    expect(warn.mock.calls.map((c) => String(c[0])).some((line) => line.includes("ops_anomaly_error"))).toBe(true);
+    expect(errors.mock.calls.map((c) => String(c[0])).some((line) => line.includes("ops_anomaly_error"))).toBe(true);
   });
 });
 

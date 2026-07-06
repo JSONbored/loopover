@@ -1,6 +1,7 @@
 // Units for the deep-nesting analyzer (#2030). Own file so concurrent analyzer PRs don't collide.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { performance } from "node:perf_hooks";
 import {
   advanceControlFlowDepth,
   DEFAULT_MAX_DEPTH,
@@ -27,6 +28,17 @@ test("advanceControlFlowDepth: tracks control-flow braces, not object literals",
   assert.deepEqual(advanceControlFlowDepth("if (a) {", 0), { depth: 1, peak: 1 });
   assert.deepEqual(advanceControlFlowDepth("const cfg = { a: { b: {", 0), { depth: 0, peak: 0 });
   assert.deepEqual(advanceControlFlowDepth("if (a) { foo({ x: 1 }); }", 0), { depth: 0, peak: 1 });
+});
+
+test("advanceControlFlowDepth: handles brace-heavy lines in linear time", () => {
+  const maliciousLine = `if (${"a".repeat(1900)}) ${"{".repeat(50)}`;
+  const start = performance.now();
+
+  for (let i = 0; i < 100; i++) {
+    assert.deepEqual(advanceControlFlowDepth(maliciousLine, 0), { depth: 1, peak: 1 });
+  }
+
+  assert.ok(performance.now() - start < 500);
 });
 
 test("scanPatchForDeepNesting: flags a deeply nested added block", () => {

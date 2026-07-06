@@ -12,13 +12,69 @@ const MAX_LINE_CHARS = 2000;
 
 type BraceKind = "control" | "other";
 
+function isWhitespace(ch: string): boolean {
+  return ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === "\f" || ch === "\v";
+}
+
+function isWordChar(ch: string): boolean {
+  const code = ch.charCodeAt(0);
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57) || ch === "_" || ch === "$";
+}
+
+function previousNonSpace(code: string, fromExclusive: number): number {
+  for (let i = fromExclusive - 1; i >= 0; i--) {
+    if (!isWhitespace(code[i]!)) return i;
+  }
+  return -1;
+}
+
+function readWordBefore(code: string, fromInclusive: number): { word: string; start: number } | undefined {
+  let end = fromInclusive;
+  while (end >= 0 && !isWordChar(code[end]!)) end--;
+  if (end < 0) return undefined;
+
+  let start = end;
+  while (start >= 0 && isWordChar(code[start]!)) start--;
+  return { word: code.slice(start + 1, end + 1).toLowerCase(), start: start + 1 };
+}
+
+function matchingOpenParen(code: string, closeIdx: number): number {
+  let depth = 0;
+  for (let i = closeIdx; i >= 0; i--) {
+    const ch = code[i]!;
+    if (ch === ")") {
+      depth++;
+    } else if (ch === "(") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
 /** True when `{` opens control-flow scope (if/for/try/=>/function), not an object literal. Pure. */
 export function isControlFlowOpenBrace(code: string, braceIdx: number): boolean {
-  const before = code.slice(0, braceIdx).trimEnd();
-  if (/(?:=>|\belse|\btry|\bfinally|\bdo)\s*$/i.test(before)) return true;
-  if (/\b(?:if|for|while|switch|catch|with)\s*\([^)]*\)\s*$/i.test(before)) return true;
-  if (/\b(?:async\s+)?function(?:\s+\w+)?\s*\([^)]*\)\s*$/i.test(before)) return true;
-  return false;
+  const beforeEnd = previousNonSpace(code, braceIdx);
+  if (beforeEnd < 0) return false;
+
+  if (code[beforeEnd] === ">" && code[previousNonSpace(code, beforeEnd)] === "=") return true;
+
+  const directWord = readWordBefore(code, beforeEnd);
+  if (directWord && ["else", "try", "finally", "do"].includes(directWord.word)) return true;
+
+  if (code[beforeEnd] !== ")") return false;
+
+  const openParen = matchingOpenParen(code, beforeEnd);
+  if (openParen < 0) return false;
+  const callee = readWordBefore(code, previousNonSpace(code, openParen));
+  if (!callee) return false;
+  if (["if", "for", "while", "switch", "catch", "with"].includes(callee.word)) return true;
+
+  if (callee.word === "function") return true;
+  const maybeFunction = readWordBefore(code, previousNonSpace(code, callee.start));
+  if (maybeFunction?.word !== "function") return false;
+  const maybeAsync = readWordBefore(code, previousNonSpace(code, maybeFunction.start));
+  return !maybeAsync || maybeAsync.word === "async";
 }
 
 /** Advance control-flow brace depth over one code fragment and return ending depth + peak. Pure. */

@@ -209,6 +209,7 @@ export type RepoSettingsPreview = {
     includeMaintainerAuthors: boolean;
     requireLinkedIssue: boolean;
     badgeEnabled: boolean;
+    publicQualityMetrics: boolean;
     aiReviewMode: RepositorySettings["aiReviewMode"];
     aiReviewByok: boolean;
     aiReviewProvider: string | null;
@@ -336,6 +337,7 @@ export function buildRepoSettingsPreview(args: {
       includeMaintainerAuthors: settings.includeMaintainerAuthors,
       requireLinkedIssue: settings.requireLinkedIssue,
       badgeEnabled: settings.badgeEnabled ?? false,
+      publicQualityMetrics: settings.publicQualityMetrics ?? false,
       aiReviewMode: settings.aiReviewMode,
       aiReviewByok: settings.aiReviewByok,
       aiReviewProvider: settings.aiReviewProvider ?? null,

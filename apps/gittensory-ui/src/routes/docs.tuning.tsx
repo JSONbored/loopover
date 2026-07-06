@@ -458,7 +458,8 @@ function Tuning() {
           <code>includeMaintainerAuthors</code> (default <code>false</code>),{" "}
           <code>requireLinkedIssue</code> (default <code>false</code>), <code>backfillEnabled</code>{" "}
           (default <code>true</code>), <code>privateTrustEnabled</code> (default <code>true</code>),
-          and <code>badgeEnabled</code> (README status badge, default <code>false</code>).
+          and <code>badgeEnabled</code> (README status badge, default <code>false</code>),
+          and <code>publicQualityMetrics</code> (public review-quality page, default <code>false</code>).
         </li>
         <li>
           <code>agentPaused</code> (per-repo kill-switch, default <code>false</code>) and{" "}

@@ -45,6 +45,7 @@ import {
   PullRequestReviewabilitySchema,
   PreflightResultSchema,
   PublicRepoStatsSchema,
+  PublicQualityMetricsSchema,
   PublicStatsSchema,
   QueueHealthSchema,
   ReadinessSchema,
@@ -86,6 +87,7 @@ export function buildOpenApiSpec() {
   registry.register("Repository", RepositorySchema);
   registry.register("PublicRepoStats", PublicRepoStatsSchema);
   registry.register("PublicStats", PublicStatsSchema);
+  registry.register("PublicQualityMetrics", PublicQualityMetricsSchema);
   registry.register("Advisory", AdvisorySchema);
   registry.register("ActionPortfolio", ActionPortfolioSchema);
   registry.register("WorkboardItem", WorkboardItemSchema);
@@ -186,6 +188,20 @@ export function buildOpenApiSpec() {
       200: { description: "Public GitHub repository stars/forks for the website chrome; only JSONbored/gittensory is accepted.", content: { "application/json": { schema: PublicRepoStatsSchema } } },
       400: { description: "Invalid or non-allowlisted GitHub repository" },
       503: { description: "GitHub repository stats are unavailable" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/public/repos/{owner}/{repo}/quality",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
+    responses: {
+      200: {
+        description:
+          "Public per-repo review-quality metrics: gate false-positive rates, merge-vs-close ratio, and weekly trend. Aggregate counts only; opt-in via publicQualityMetrics.",
+        content: { "application/json": { schema: PublicQualityMetricsSchema } },
+      },
+      404: { description: "Repo is unknown/private/uninstalled or has not opted in" },
+      503: { description: "Public quality metrics are temporarily unavailable" },
     },
   });
   registry.registerPath({
@@ -1030,7 +1046,7 @@ function applySecurityMetadata(document: GeneratedOpenApiDocument): GeneratedOpe
 }
 
 function isProtectedPath(path: string): boolean {
-  if (path === "/health" || path === "/openapi.json" || path === "/mcp" || path === "/v1/mcp/compatibility" || path === "/v1/public/stats" || path === "/v1/public/github/repos/{owner}/{repo}/stats") return false;
+  if (path === "/health" || path === "/openapi.json" || path === "/mcp" || path === "/v1/mcp/compatibility" || path === "/v1/public/stats" || path === "/v1/public/github/repos/{owner}/{repo}/stats" || path === "/v1/public/repos/{owner}/{repo}/quality") return false;
   if (path.startsWith("/v1/auth/")) return path === "/v1/auth/extension/session";
   if (path === "/v1/github/webhook") return false;
   return path.startsWith("/v1/");

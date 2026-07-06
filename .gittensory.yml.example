@@ -596,6 +596,9 @@ settings:
   # Render a README status badge for the repo. Bool. Default: false.
   badgeEnabled: false
 
+  # Publish a public per-repo review-quality page. Bool. Default: false.
+  publicQualityMetrics: false
+
   # Per-repo kill-switch: when true, the agent does nothing on this repo.
   # Bool. Default: false.
   agentPaused: false

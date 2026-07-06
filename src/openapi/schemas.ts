@@ -122,6 +122,49 @@ export const PublicStatsSchema = z
   })
   .openapi("PublicStats");
 
+export const PublicQualityMetricsSchema = z
+  .object({
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    gate: z.object({
+      blocked: z.number(),
+      blockedThenMerged: z.number(),
+      falsePositiveRate: z.number().nullable(),
+      precisionPct: z.number().nullable(),
+      topGateTypes: z.array(
+        z.object({
+          gateType: z.string(),
+          blocked: z.number(),
+          blockedThenMerged: z.number(),
+          falsePositiveRate: z.number().nullable(),
+          precisionPct: z.number().nullable(),
+        }),
+      ),
+    }),
+    outcomes: z.object({
+      merged: z.number(),
+      closed: z.number(),
+      mergeRatioPct: z.number().nullable(),
+    }),
+    slop: z.object({
+      totalResolved: z.number(),
+      overallMergeRate: z.number().nullable(),
+      discriminates: z.boolean().nullable(),
+    }),
+    trend: z.array(
+      z.object({
+        weekStart: z.string(),
+        gateBlocked: z.number(),
+        gateBlockedThenMerged: z.number(),
+        gateFalsePositiveRate: z.number().nullable(),
+        outcomesMerged: z.number(),
+        outcomesClosed: z.number(),
+        mergeRatioPct: z.number().nullable(),
+      }),
+    ),
+  })
+  .openapi("PublicQualityMetrics");
+
 export const WorkboardItemSchema = z
   .object({
     repoFullName: z.string(),
@@ -668,6 +711,7 @@ export const RepositorySettingsSchema = z
     backfillEnabled: z.boolean(),
     privateTrustEnabled: z.boolean(),
     badgeEnabled: z.boolean().optional(),
+    publicQualityMetrics: z.boolean().optional(),
     commandAuthorization: z.object({
       default: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])),
       commands: z.record(z.string(), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"]))),
@@ -756,6 +800,7 @@ export const RepoSettingsPreviewSchema = z
       includeMaintainerAuthors: z.boolean(),
       requireLinkedIssue: z.boolean(),
       badgeEnabled: z.boolean(),
+      publicQualityMetrics: z.boolean(),
       aiReviewMode: z.enum(["off", "advisory", "block"]),
       aiReviewByok: z.boolean(),
       aiReviewProvider: z.string().nullable(),

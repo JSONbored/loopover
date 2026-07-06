@@ -30,6 +30,7 @@ import {
   persistScoringModelSnapshot,
   upsertRepositoryFromGitHub,
   upsertRepositorySettings,
+  recordGateBlockOutcome,
   createAgentRun,
   replaceAgentActions,
   upsertAgentRecommendationOutcome,
@@ -255,6 +256,44 @@ describe("api routes", () => {
     const unknown = await app.request("/v1/public/repos/acme/missing/badge.json", {}, env);
     expect(unknown.status).toBe(404);
     await expect(unknown.json()).resolves.toMatchObject({ message: "unavailable" });
+  });
+
+  it("serves public per-repo review-quality metrics only for installed, opted-in repos (#2568)", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+
+    await upsertRepositoryFromGitHub(env, { name: "quality", full_name: "acme/quality", private: false, owner: { login: "acme" }, default_branch: "main" }, 560);
+    await upsertRepositorySettings(env, { repoFullName: "acme/quality", publicQualityMetrics: true });
+    await upsertPullRequestFromGitHub(env, "acme/quality", { number: 1, title: "Merged", state: "merged", created_at: "2026-06-01T00:00:00Z", merged_at: "2026-06-02T00:00:00Z", labels: [] });
+    await upsertPullRequestFromGitHub(env, "acme/quality", { number: 2, title: "Merged too", state: "merged", created_at: "2026-06-01T01:00:00Z", merged_at: "2026-06-02T01:00:00Z", labels: [] });
+    await upsertPullRequestFromGitHub(env, "acme/quality", { number: 3, title: "Closed", state: "closed", created_at: "2026-06-03T00:00:00Z", labels: [] });
+    await upsertPullRequestFromGitHub(env, "acme/quality", { number: 4, title: "Closed 2", state: "closed", created_at: "2026-06-03T01:00:00Z", labels: [] });
+    await upsertPullRequestFromGitHub(env, "acme/quality", { number: 5, title: "Closed 3", state: "closed", created_at: "2026-06-03T02:00:00Z", labels: [] });
+    await updatePullRequestSlopAssessment(env, "acme/quality", 1, { slopRisk: 0, slopBand: "clean" });
+    for (let i = 1; i <= 5; i += 1) {
+      await recordGateBlockOutcome(env, {
+        repoFullName: "acme/quality",
+        pullNumber: i,
+        blockerCodes: ["missing_linked_issue"],
+      });
+    }
+
+    const ok = await app.request("/v1/public/repos/acme/quality/quality", {}, env);
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("cache-control")).toContain("stale-while-revalidate");
+    const body = (await ok.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      repoFullName: "acme/quality",
+      gate: { blocked: 5, blockedThenMerged: 2, falsePositiveRate: 0.4, precisionPct: 60 },
+      outcomes: { merged: 2, closed: 3, mergeRatioPct: 40 },
+    });
+    expect(JSON.stringify(body)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
+    expect(body.trend).toHaveLength(8);
+
+    await upsertRepositoryFromGitHub(env, { name: "quality-off", full_name: "acme/quality-off", private: false, owner: { login: "acme" }, default_branch: "main" }, 561);
+    const notOptedIn = await app.request("/v1/public/repos/acme/quality-off/quality", {}, env);
+    expect(notOptedIn.status).toBe(404);
+    await expect(notOptedIn.json()).resolves.toMatchObject({ error: "not_found" });
   });
 
   it("persists the badgeEnabled opt-in through the settings write endpoint (#541)", async () => {

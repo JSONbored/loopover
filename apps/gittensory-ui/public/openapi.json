@@ -9241,6 +9241,9 @@
           "updatedAt": {
             "type": "string",
             "nullable": true
+          },
+          "publicQualityMetrics": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -9959,6 +9962,9 @@
                   "defaultAllowed",
                   "commandOverrides"
                 ]
+              },
+              "publicQualityMetrics": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -9987,6 +9993,7 @@
               "includeMaintainerAuthors",
               "requireLinkedIssue",
               "badgeEnabled",
+              "publicQualityMetrics",
               "aiReviewMode",
               "aiReviewByok",
               "aiReviewProvider",
@@ -13416,6 +13423,164 @@
           "maintainerNextSteps",
           "privateSummary"
         ]
+      },
+      "PublicQualityMetrics": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "gate": {
+            "type": "object",
+            "properties": {
+              "blocked": {
+                "type": "number"
+              },
+              "blockedThenMerged": {
+                "type": "number"
+              },
+              "falsePositiveRate": {
+                "type": "number",
+                "nullable": true
+              },
+              "precisionPct": {
+                "type": "number",
+                "nullable": true
+              },
+              "topGateTypes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "gateType": {
+                      "type": "string"
+                    },
+                    "blocked": {
+                      "type": "number"
+                    },
+                    "blockedThenMerged": {
+                      "type": "number"
+                    },
+                    "falsePositiveRate": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "precisionPct": {
+                      "type": "number",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "gateType",
+                    "blocked",
+                    "blockedThenMerged",
+                    "falsePositiveRate",
+                    "precisionPct"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "blocked",
+              "blockedThenMerged",
+              "falsePositiveRate",
+              "precisionPct",
+              "topGateTypes"
+            ]
+          },
+          "outcomes": {
+            "type": "object",
+            "properties": {
+              "merged": {
+                "type": "number"
+              },
+              "closed": {
+                "type": "number"
+              },
+              "mergeRatioPct": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "merged",
+              "closed",
+              "mergeRatioPct"
+            ]
+          },
+          "slop": {
+            "type": "object",
+            "properties": {
+              "totalResolved": {
+                "type": "number"
+              },
+              "overallMergeRate": {
+                "type": "number",
+                "nullable": true
+              },
+              "discriminates": {
+                "type": "boolean",
+                "nullable": true
+              }
+            },
+            "required": [
+              "totalResolved",
+              "overallMergeRate",
+              "discriminates"
+            ]
+          },
+          "trend": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "weekStart": {
+                  "type": "string"
+                },
+                "gateBlocked": {
+                  "type": "number"
+                },
+                "gateBlockedThenMerged": {
+                  "type": "number"
+                },
+                "gateFalsePositiveRate": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "outcomesMerged": {
+                  "type": "number"
+                },
+                "outcomesClosed": {
+                  "type": "number"
+                },
+                "mergeRatioPct": {
+                  "type": "number",
+                  "nullable": true
+                }
+              },
+              "required": [
+                "weekStart",
+                "gateBlocked",
+                "gateBlockedThenMerged",
+                "gateFalsePositiveRate",
+                "outcomesMerged",
+                "outcomesClosed",
+                "mergeRatioPct"
+              ]
+            }
+          }
+        },
+        "required": [
+          "repoFullName",
+          "generatedAt",
+          "gate",
+          "outcomes",
+          "slop",
+          "trend"
+        ]
       }
     },
     "parameters": {},
@@ -16516,6 +16681,46 @@
             "GittensorySessionCookie": []
           }
         ]
+      }
+    },
+    "/v1/public/repos/{owner}/{repo}/quality": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public per-repo review-quality metrics: gate false-positive rates, merge-vs-close ratio, and weekly trend. Aggregate counts only; opt-in via publicQualityMetrics.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicQualityMetrics"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Repo is unknown/private/uninstalled or has not opted in"
+          },
+          "503": {
+            "description": "Public quality metrics are temporarily unavailable"
+          }
+        }
       }
     }
   },

@@ -39,6 +39,7 @@ type MaintainerSettings = {
   includeMaintainerAuthors: boolean;
   requireLinkedIssue: boolean;
   badgeEnabled: boolean;
+  publicQualityMetrics: boolean;
   commandAuthorization: CommandAuthorization;
   autonomy: Partial<Record<AgentActionClass, AutonomyLevel>>;
   autoMaintain: { requireApprovals: number; mergeMethod: AutoMergeMethod };
@@ -107,6 +108,7 @@ const EDITABLE_KEYS: Array<keyof MaintainerSettings> = [
   "includeMaintainerAuthors",
   "requireLinkedIssue",
   "badgeEnabled",
+  "publicQualityMetrics",
   "commandAuthorization",
   "autonomy",
   "autoMaintain",
@@ -265,6 +267,7 @@ const SURFACE_FIELDS: FieldDef[] = [
   { key: "includeMaintainerAuthors", label: "Include maintainer-authored PRs", kind: "toggle" },
   { key: "requireLinkedIssue", label: "Require a linked issue", kind: "toggle" },
   { key: "badgeEnabled", label: "Repo badge", kind: "toggle" },
+  { key: "publicQualityMetrics", label: "Public quality page", kind: "toggle" },
 ];
 
 function repoApiBase(repoFullName: string): string | null {

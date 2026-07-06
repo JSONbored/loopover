@@ -806,6 +806,9 @@ export type RepositorySettings = {
   /** Opt-in for the public, unauthenticated README status badge (#541). Always populated by the DB layer
    *  (default false); optional so existing settings fixtures/callers need not be touched. */
   badgeEnabled?: boolean | undefined;
+  /** Opt-in for the public per-repo review-quality page (#2568). Always populated by the DB layer
+   *  (default false); optional so existing settings fixtures/callers need not be touched. */
+  publicQualityMetrics?: boolean | undefined;
   commandAuthorization?: RepositoryCommandAuthorizationPolicy | undefined;
   /** Per-repo contributor blacklist (#1425, anti-abuse): banned GitHub logins whose PRs/issues the engine
    *  deterministically closes ahead of merit review. Layered the same as other settings (`.gittensory.yml` >

@@ -188,6 +188,7 @@ import { buildOperatorDashboardPayload } from "../services/operator-dashboard";
 import { buildSelfDogfoodRegistrationPack, resolveSelfDogfoodRepoFullName } from "../services/self-dogfood-registration-pack";
 import { buildSubnetInterfaceDescriptor } from "../services/subnet-interface";
 import { buildPublicRepoQuality, type PublicRepoQuality } from "../services/public-repo-quality";
+import { loadPublicQualityMetrics } from "../services/public-quality-metrics";
 import { buildShieldsBadge, renderBadgeSvg, renderUnavailableBadgeSvg } from "./badge";
 import {
   buildWeeklyValueReport,
@@ -306,6 +307,16 @@ async function loadPublicRepoBadge(env: Env, owner: string, repo: string): Promi
   if (!settings.badgeEnabled) return null;
   const pullRequests = await listPullRequests(env, repository.fullName);
   return buildPublicRepoQuality(pullRequests);
+}
+
+// Resolves the public per-repo review-quality metrics (#2568), enforcing the same public-safety gates as the
+// README badge: public, installed, and opted in via `publicQualityMetrics`. Returns null otherwise.
+async function loadPublicRepoQualityMetrics(env: Env, owner: string, repo: string) {
+  const repository = await getRepository(env, `${owner}/${repo}`);
+  if (!repository || repository.isPrivate || !repository.isInstalled) return null;
+  const settings = await getRepositorySettings(env, repository.fullName);
+  if (!settings.publicQualityMetrics) return null;
+  return loadPublicQualityMetrics(env, repository.fullName);
 }
 
 async function recordRouteProductUsage(
@@ -668,6 +679,7 @@ const repositorySettingsSchema = z.object({
   backfillEnabled: z.boolean().default(true),
   privateTrustEnabled: z.boolean().default(true),
   badgeEnabled: z.boolean().default(false),
+  publicQualityMetrics: z.boolean().default(false),
   commandAuthorization: z
     .object({
       default: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4).optional(),
@@ -717,6 +729,7 @@ const maintainerSettingsSchema = z
     closeOwnerAuthors: z.boolean(),
     requireLinkedIssue: z.boolean(),
     badgeEnabled: z.boolean(),
+    publicQualityMetrics: z.boolean(),
     agentPaused: z.boolean(),
     agentDryRun: z.boolean(),
     requireFreshRebaseWindowMinutes: z.number().int().positive().nullable(),
@@ -963,6 +976,22 @@ export function createApp() {
     }
     c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
     return c.json(buildShieldsBadge(quality, 600));
+  });
+
+  // Public per-repo review-quality metrics (#2568). Unauthenticated; aggregate counts/rates only; opt-in via
+  // `publicQualityMetrics`. 404 when the repo is unknown/private/uninstalled or has not opted in.
+  app.get("/v1/public/repos/:owner/:repo/quality", async (c) => {
+    try {
+      const metrics = await loadPublicRepoQualityMetrics(c.env, c.req.param("owner"), c.req.param("repo"));
+      if (!metrics) {
+        c.header("Cache-Control", "public, max-age=300");
+        return c.json({ error: "not_found" }, 404);
+      }
+      c.header("Cache-Control", "public, max-age=300, stale-while-revalidate=3600");
+      return c.json(metrics);
+    } catch {
+      return c.json({ error: "public_quality_metrics_unavailable" }, 503);
+    }
   });
 
   // Visual before/after screenshot endpoint (visual-capture port). PUBLIC + UNAUTHENTICATED by design: it
@@ -3765,6 +3794,7 @@ export function createApp() {
         backfillEnabled: parsed.data.backfillEnabled,
         privateTrustEnabled: parsed.data.privateTrustEnabled,
         badgeEnabled: parsed.data.badgeEnabled,
+        publicQualityMetrics: parsed.data.publicQualityMetrics,
         commandAuthorization: normalizeCommandAuthorizationPolicy(parsed.data.commandAuthorization).policy,
         contributorBlacklist: normalizeContributorBlacklist(parsed.data.contributorBlacklist).entries,
       }),
@@ -5431,6 +5461,7 @@ function requiresApiToken(path: string): boolean {
   if (path === "/v1/mcp/compatibility") return false;
   if (/^\/v1\/public\/github\/repos\/[^/]+\/[^/]+\/stats$/.test(path)) return false;
   if (/^\/v1\/public\/repos\/[^/]+\/[^/]+\/badge\.(svg|json)$/.test(path)) return false;
+  if (/^\/v1\/public\/repos\/[^/]+\/[^/]+\/quality$/.test(path)) return false;
   if (path === "/v1/public/subnet-interface") return false;
   if (path === "/v1/public/stats") return false;
   if (path === "/openapi.json") return false;

@@ -101,6 +101,7 @@ export const repositorySettings = sqliteTable("repository_settings", {
   backfillEnabled: integer("backfill_enabled", { mode: "boolean" }).notNull().default(true),
   privateTrustEnabled: integer("private_trust_enabled", { mode: "boolean" }).notNull().default(true),
   badgeEnabled: integer("badge_enabled", { mode: "boolean" }).notNull().default(false),
+  publicQualityMetrics: integer("public_quality_metrics", { mode: "boolean" }).notNull().default(false),
   commandAuthorizationJson: text("command_authorization_json").notNull().default("{}"),
   // Per-repo contributor blacklist (#1425): a JSON array of { login, reason?, evidence?, addedAt? } entries.
   contributorBlacklistJson: text("contributor_blacklist_json").notNull().default("[]"),

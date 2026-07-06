@@ -294,6 +294,7 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     autoLabelEnabled: "autoLabelEnabled:",
     typeLabelsEnabled: "typeLabelsEnabled:",
     badgeEnabled: "badgeEnabled:",
+    publicQualityMetrics: "publicQualityMetrics:",
     gittensorLabel: "gittensorLabel:",
     createMissingLabel: "createMissingLabel:",
     publicSurface: "publicSurface:",
@@ -2321,6 +2322,18 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     const db = { badgeEnabled: false } as unknown as RepositorySettings;
     const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { badgeEnabled: true } }));
     expect(eff.badgeEnabled).toBe(true); // settings: override wins over the DB-stored value
+  });
+
+  it("wires settings.publicQualityMetrics into the manifest parser and lets it override the DB value (#2568)", () => {
+    const parsedTrue = parseFocusManifest({ settings: { publicQualityMetrics: true } });
+    expect(parsedTrue.settings.publicQualityMetrics).toBe(true);
+    expect(parsedTrue.warnings).toEqual([]);
+    const parsedFalse = parseFocusManifest({ settings: { publicQualityMetrics: false } });
+    expect(parsedFalse.settings.publicQualityMetrics).toBe(false);
+
+    const db = { publicQualityMetrics: false } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { publicQualityMetrics: true } }));
+    expect(eff.publicQualityMetrics).toBe(true);
   });
 
   it("wires settings.typeLabelsEnabled into the manifest parser and lets a per-repo override win over a global default (#label-decoupling)", () => {

@@ -6,6 +6,7 @@ import {
   parseFocusManifest,
   parseFocusManifestContent,
   resolveReviewPromptOverrides,
+  resolveTestGenerationEnabled,
   reviewConfigToJson,
 } from "../../src/signals/focus-manifest";
 
@@ -99,6 +100,20 @@ describe("config/examples review templates (#1682)", () => {
     const off = parseFocusManifest({ review: { effort_score: false } });
     expect(off.review.effortScore).toBe(false);
     expect(resolveReviewPromptOverrides(off).effortScore).toBe(false);
+  });
+
+  it("resolves review.test_generation via manifest parse + boolean helper (#2189)", () => {
+    const full = readConfigExample("gittensory.full.yml");
+    expect(full).toMatch(/# test_generation:/);
+    expect(parseFocusManifest({}).review.testGeneration).toBeNull();
+    expect(resolveTestGenerationEnabled(parseFocusManifest({}))).toBe(false);
+    const on = parseFocusManifest({ review: { test_generation: true } });
+    expect(on.review.testGeneration).toBe(true);
+    expect(resolveTestGenerationEnabled(on)).toBe(true);
+    expect(reviewConfigToJson(on.review)).toEqual({ test_generation: true });
+    const off = parseFocusManifest({ review: { test_generation: false } });
+    expect(off.review.testGeneration).toBe(false);
+    expect(resolveTestGenerationEnabled(off)).toBe(false);
   });
 
   it("parses gittensory.minimal.yml with zero warnings and enables no agent actions", () => {

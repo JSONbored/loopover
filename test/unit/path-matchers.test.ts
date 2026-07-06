@@ -153,6 +153,18 @@ describe("isGeneratedFile", () => {
     expect(classifyChangedFile("gen/service_pb.lua")).toBe("generated");
   });
 
+  it("matches Perl protobuf output alongside the other protoc plugins", () => {
+    expect(isGeneratedFile("gen/service_pb.pm")).toBe(true);
+    expect(isGeneratedFile("lib/MyApp.pm")).toBe(false);
+    expect(classifyChangedFile("gen/service_pb.pm")).toBe("generated");
+  });
+
+  it("matches Scala protobuf output alongside the other protoc plugins", () => {
+    expect(isGeneratedFile("proto/messages.pb.scala")).toBe(true);
+    expect(isGeneratedFile("src/Main.scala")).toBe(false);
+    expect(classifyChangedFile("proto/messages.pb.scala")).toBe("generated");
+  });
+
   it("matches Kotlin gRPC coroutine stubs alongside the other protoc plugins", () => {
     expect(isGeneratedFile("gen/GreeterGrpcKt.kt")).toBe(true);
     expect(isGeneratedFile("src/Greeter.kt")).toBe(false);
@@ -508,6 +520,8 @@ describe("classifyChangedFile", () => {
       ["proto/messages.pb.hs", "generated"],
       ["gen/service_pb.nim", "generated"],
       ["gen/service_pb.lua", "generated"],
+      ["gen/service_pb.pm", "generated"],
+      ["proto/messages.pb.scala", "generated"],
       ["gen/GreeterGrpcKt.kt", "generated"],
       ["gen/GreeterGrpc.java", "generated"],
       ["gen/service_grpc_pb.js", "generated"],

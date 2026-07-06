@@ -231,3 +231,13 @@ export {
   resolveDuplicateClusterWinnerNumber,
   type DuplicateClaimMember,
 } from "./duplicate-winner.js";
+// Predicted-gate type surface + pure helpers (#2276): a miner models its own gate verdict with the same
+// shapes the maintainer gate uses; buildPredictedGateVerdict itself follows in #2283.
+export {
+  predictedGateNote,
+  publicSafeFinding,
+  type GateCheckConclusion,
+  type GatePolicyPack,
+  type PredictedGateInput,
+  type PredictedGateVerdict,
+} from "./predicted-gate.js";

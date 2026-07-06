@@ -3133,8 +3133,10 @@ describe("review.auto_review (#1954 / #2038–#2041)", () => {
     expect(evaluateAutoReviewSkipReason({ ...empty, ignoreTitleKeywords: ["wip"] }, { ...input, title: "Fix WIP regression" })).toBe("review skipped (WIP title)");
     expect(evaluateAutoReviewSkipReason({ ...empty, ignoreTitleKeywords: ["wip"] }, { ...input, title: "Fix regression" })).toBeNull();
     expect(evaluateAutoReviewSkipReason({ ...empty, skipLabels: ["do-not-review"] }, { ...input, labels: ["Do-Not-Review"] })).toBe("review skipped (label)");
+    expect(evaluateAutoReviewSkipReason({ ...empty, skipLabels: ["wip", "hold"] }, { ...input, labels: ["hold"] })).toBe("review skipped (label)");
     expect(evaluateAutoReviewSkipReason({ ...empty, skipLabels: ["wip"] }, { ...input, labels: ["feature"] })).toBeNull();
     expect(evaluateAutoReviewSkipReason({ ...empty, skipLabels: ["wip"] }, { ...input, labels: [] })).toBeNull();
+    expect(evaluateAutoReviewSkipReason({ ...empty, skipLabels: [] }, { ...input, labels: ["feature"] })).toBeNull();
     expect(evaluateAutoReviewSkipReason({ ...empty, baseBranches: ["main"] }, { ...input, baseRef: "develop" })).toBe(
       "review skipped (base branch out of scope)",
     );
@@ -3196,6 +3198,9 @@ describe("review.auto_review (#1954 / #2038–#2041)", () => {
     const deduped = parseFocusManifest({ review: { auto_review: { skip_labels: ["WIP", "wip", ""] } } });
     expect(deduped.review.autoReview.skipLabels).toEqual(["wip"]);
     expect(deduped.warnings.some((w) => /skip_labels\[2\]/.test(w))).toBe(true);
+    const nonString = parseFocusManifest({ review: { auto_review: { skip_labels: ["wip", 42] } } });
+    expect(nonString.review.autoReview.skipLabels).toEqual(["wip"]);
+    expect(nonString.warnings.some((w) => /skip_labels\[1\]/.test(w))).toBe(true);
     const unsafe = parseFocusManifest({ review: { auto_review: { skip_labels: ["wip", "reward payout"] } } });
     expect(unsafe.review.autoReview.skipLabels).toEqual(["wip"]);
     expect(unsafe.warnings.some((w) => /skip_labels\[1\]/.test(w))).toBe(true);

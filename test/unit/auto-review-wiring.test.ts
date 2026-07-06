@@ -46,6 +46,15 @@ describe("review.auto_review wiring (#1954)", () => {
         baseRef: "main",
       }),
     ).toBeNull();
+    expect(
+      resolvePullRequestAutoReviewSkipReason({
+        manifest,
+        isDraft: false,
+        author: "alice",
+        title: "feat: thing",
+        baseRef: "main",
+      }),
+    ).toBeNull();
   });
 
   it("resolvePullRequestAutoReviewSkipReason: matches the documented *[bot] author glob", () => {
@@ -166,6 +175,19 @@ describe("review.auto_review wiring (#1954)", () => {
         headSha: "sha4",
       }),
     ).resolves.toEqual({ skipReason: null, reviewManifest: null });
+
+    loadSpy.mockResolvedValueOnce(labelManifest);
+    await expect(
+      resolveAutoReviewSkipForPullRequest({} as Env, {
+        authorBlacklisted: false,
+        isFrozenForManualReview: false,
+        repoFullName: "acme/widgets",
+        pr: { number: 7, title: "feat", baseRef: "main", isDraft: false },
+        author: "alice",
+        deliveryId: "d7",
+        headSha: "sha7",
+      }),
+    ).resolves.toEqual({ skipReason: null, reviewManifest: labelManifest });
 
     loadSpy.mockRestore();
   });

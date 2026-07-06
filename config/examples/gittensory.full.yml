@@ -766,6 +766,12 @@ settings:
 #   # fallback for whatever it omits. Only takes effect when inline_comments is already on. Bool or null.
 #   # Default: null/false.
 #   finding_categories: false
+#   # How strictly a linked issue must actually be SATISFIED by the PR (distinct from linkedIssuePolicy,
+#   # which only checks a link EXISTS). off = not evaluated; advisory = surface a finding; block = can
+#   # become a hard blocker (confirmed-contributor-gated). This is the config knob only — parsed and
+#   # normalized here; the merge/close decision that reads it is a separate maintainer slice.
+#   # off | advisory | block. Default: off (byte-identical when unset).
+#   linkedIssueSatisfaction: off
 #   # Maintainer-declared DETERMINISTIC content assertions (title/description must contain a phrase, a
 #   # label must be present), optionally gated to a path glob. A failed check is advisory by default;
 #   # `enforce: true` makes it a hard gate blocker. Empty/default ⇒ no finding (no AI judgment involved).

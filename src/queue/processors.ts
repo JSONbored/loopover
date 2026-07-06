@@ -1368,7 +1368,7 @@ async function refreshOpenPullRequestsForScheduledSweep(
 // head SHA, which resets the count naturally (the target key is scoped to repo+PR+SHA).
 const REGATE_REPAIR_ATTEMPT_EVENT_TYPE = "agent.sweep.regate.repair_attempt";
 const REGATE_REPAIR_EXHAUSTED_EVENT_TYPE = "agent.sweep.regate.repair_exhausted";
-const REGATE_REPAIR_MAX_ATTEMPTS_PER_SHA = 3;
+const REGATE_REPAIR_MAX_ATTEMPTS_PER_SHA = 2;
 const REGATE_REPAIR_ATTEMPT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
 function regateRepairTargetKey(repoFullName: string, prNumber: number, headSha: string): string {
@@ -1435,6 +1435,21 @@ async function surfaceRepairPriorityPullNumbers(
         detail: `re-gate repair exhausted after ${attempts} attempt(s) for the same head SHA; falling back to ordinary staleness cadence`,
         metadata: { repoFullName, prNumber: pr.number, headSha: pr.headSha, attempts },
       });
+      // level:"error" is deliberate, not a code failure: this line only fires once the cap above already
+      // stopped the wasteful repair loop, so its OWN existence is the operator-visible signal (via the
+      // structured log → Sentry forwarder, forwardStructuredLogToSentry) that a PR kept failing repair for the
+      // same head SHA — the same "surface an anomaly at error level" convention selfhost_ai_provider_failed /
+      // selfhost_ai_providers_exhausted already use in src/selfhost/ai.ts.
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "regate_repair_exhausted",
+          repo: repoFullName,
+          pullNumber: pr.number,
+          headSha: pr.headSha,
+          attempts,
+        }),
+      );
     }),
   );
   return [...priorityPullNumbers];

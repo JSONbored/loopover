@@ -6284,22 +6284,32 @@ describe("queue processors", () => {
       });
     }
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
+    try {
+      await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
 
-    // No longer treated as priority repair -- either not fanned at all, or fanned as an ordinary "regate-sweep:"
-    // candidate, but never re-dispatched as "regate-repair:" once the same SHA has exhausted its attempt budget.
-    const fanned = sent.filter((job): job is Extract<import("../../src/types").JobMessage, { type: "agent-regate-pr" }> => job.type === "agent-regate-pr");
-    expect(fanned.every((job) => job.deliveryId !== "regate-repair:owner/agent-repo#1")).toBe(true);
-    const exhausted = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
-      .bind("agent.sweep.regate.repair_exhausted", targetKey)
-      .first<{ n: number }>();
-    expect(exhausted?.n).toBe(1);
-    // No further repair-attempt event was recorded for the exhausted SHA this tick.
-    const attempts = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
-      .bind("agent.sweep.regate.repair_attempt", targetKey)
-      .first<{ n: number }>();
-    expect(attempts?.n).toBe(3);
+      // No longer treated as priority repair -- either not fanned at all, or fanned as an ordinary "regate-sweep:"
+      // candidate, but never re-dispatched as "regate-repair:" once the same SHA has exhausted its attempt budget.
+      const fanned = sent.filter((job): job is Extract<import("../../src/types").JobMessage, { type: "agent-regate-pr" }> => job.type === "agent-regate-pr");
+      expect(fanned.every((job) => job.deliveryId !== "regate-repair:owner/agent-repo#1")).toBe(true);
+      const exhausted = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("agent.sweep.regate.repair_exhausted", targetKey)
+        .first<{ n: number }>();
+      expect(exhausted?.n).toBe(1);
+      // No further repair-attempt event was recorded for the exhausted SHA this tick.
+      const attempts = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("agent.sweep.regate.repair_attempt", targetKey)
+        .first<{ n: number }>();
+      expect(attempts?.n).toBe(3);
+      // Sentry-visible signal (via the structured-log forwarder) fires exactly once alongside the audit event.
+      const exhaustedLogs = errors.mock.calls.filter(([line]) => typeof line === "string" && line.includes("regate_repair_exhausted"));
+      expect(exhaustedLogs).toHaveLength(1);
+      const logged = JSON.parse(exhaustedLogs[0]![0] as string) as Record<string, unknown>;
+      expect(logged).toMatchObject({ level: "error", event: "regate_repair_exhausted", repo: "owner/agent-repo", pullNumber: 1, headSha: "stuck-sha", attempts: 3 });
+    } finally {
+      errors.mockRestore();
+    }
   });
 
   it("REGRESSION (#orb-retry-storm): a repair dispatch under the attempt cap records a repair_attempt audit event, and a second sweep tick does not duplicate the repair_exhausted event once already flagged", async () => {

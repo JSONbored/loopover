@@ -4102,8 +4102,8 @@ async function maybeInvalidateCiCacheOnLegacyCiEvent(
  * Wake linked PRs on an issue-side signal (#2259). Labeling/unlabeling (e.g. maintainer-only) or
  * assigning/unassigning on a linked ISSUE can flip a linked-issue hard-rule verdict, but that only gets
  * re-evaluated when the PR ITSELF receives a webhook or the staleness-ordered sweep eventually reaches it —
- * which can lag for many cycles on a repo with more than a few open PRs. Enqueue a bounded, staggered batch of
- * per-PR re-gate jobs for OPEN PRs that link this issue instead of doing the expensive live re-review inline.
+ * which can lag for many cycles on a repo with more than a few open PRs. Enqueue staggered per-PR re-gate jobs
+ * for EVERY open PR that links this issue instead of doing the expensive live re-review inline.
  * Uses its OWN coalesce window (issueLinkedPrReReviewCoalesced,
  * DISTINCT from CI-completion's — #2371): the two triggers are not interchangeable, so a shared window let an
  * unrelated CI re-review silently suppress a genuinely different issue-side signal. Within the issue-side
@@ -4132,12 +4132,11 @@ async function maybeReReviewOnLinkedIssueChange(
   if (isConvergenceRepoAllowed(env, repoFullName)) {
     const openPullRequests = await listOpenPullRequests(env, repoFullName);
     // Issue-side label/assignment changes can flip linked-issue hard-rule verdicts from mergeable to close.
-    // Wake a rate-aware leading batch promptly; the staleness-ordered sweep still converges any linked tail
-    // without letting one issue webhook fan out unbounded foreground re-gates. Stagger the jobs so the expensive
-    // re-gates do not run inline or stampede the queue consumer.
+    // Wake every linked PR promptly: a silent tail can keep stale passing gate/check state after the issue flips
+    // to an ineligible hard-rule state. Stagger the jobs so the expensive re-gates do not run inline or stampede
+    // the queue consumer.
     const linkingPrs = openPullRequests
       .filter((pr) => pr.linkedIssues.includes(issueNumber))
-      .slice(0, SWEEP_MAX_PRS)
       .map((pr) => ({ number: pr.number, createdAt: pr.createdAt ?? null }));
     for (const [index, pr] of linkingPrs.entries()) {
       const prNumber = pr.number;

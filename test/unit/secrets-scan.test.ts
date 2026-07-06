@@ -146,8 +146,17 @@ describe("scanForSecrets — deterministic secret-pattern scanner", () => {
     ["installation-token", 'token: "installation-token"'],
     ["access-token", 'token = "access-token"'],
     ["some-mock-secret-value", 'secret: "some-mock-secret-value"'],
-  ])("does NOT flag a lowercase-hyphenated word compound: %s (#3041)", (_name, snippet) => {
+  ])("does NOT flag a clear lowercase-hyphenated fixture value: %s (#3041)", (_name, snippet) => {
     expect(scanForSecrets(snippet).kinds).not.toContain("generic_secret_assignment");
+  });
+
+  it.each([
+    ["password", 'password = "alpha-bravo-charlie-delta"'],
+    ["passwd", 'passwd: "alpha-bravo-charlie-delta"'],
+    ["client_secret", 'client_secret = "alpha-bravo-charlie-delta"'],
+    ["multi-segment token", 'token = "alpha-bravo-charlie-delta"'],
+  ])("flags a plausible lowercase-hyphenated credential assigned to %s", (_name, snippet) => {
+    expect(scanForSecrets(snippet).kinds).toContain("generic_secret_assignment");
   });
 
   it("still flags a real-looking generic secret with digits and mixed case (regression guard for #3041)", () => {
@@ -158,10 +167,10 @@ describe("scanForSecrets — deterministic secret-pattern scanner", () => {
     expect(scanForSecrets(`fakeSecret = "${fakeSecret}"`).kinds).toContain("generic_secret_assignment");
   });
 
-  it("a single lowercase word with no hyphen is unaffected by the new hyphenated-compound exclusion (#3041)", () => {
+  it("a single lowercase word with no hyphen is unaffected by the token-fixture exclusion (#3041)", () => {
     // 20 lowercase letters, no repeats and no sequential run, so it isn't already caught by the entropy/
-    // placeholder checks either -- proves LOWERCASE_HYPHENATED_COMPOUND_PATTERN specifically requires a
-    // hyphen (2+ segments) and does not accidentally match a single unhyphenated word.
+    // placeholder checks either -- proves the token-fixture exclusion specifically requires one two-word
+    // hyphenated value and does not accidentally match a single unhyphenated word.
     const singleWord = "qwzxvbnmalskdjfhgpoiu";
     expect(scanForSecrets(`token = "${singleWord}"`).kinds).toContain("generic_secret_assignment");
   });

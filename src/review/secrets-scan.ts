@@ -40,9 +40,9 @@ const SECRET_PATTERNS: Array<{ name: string; re: RegExp }> = [
 // VALUE can be checked against isPlaceholderSecretValue before counting as a hit; the value itself is never
 // returned from this module (only the kind name), preserving the existing never-echo-the-secret guarantee.
 const GENERIC_SECRET_ASSIGNMENT_PATTERN =
-  /(?:api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret)["']?\s*[:=]\s*["']([A-Za-z0-9+/=_-]{16,})["']/gi;
+  /((?:api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret))["']?\s*[:=]\s*["']([A-Za-z0-9+/=_-]{16,})["']/gi;
 
-const PLACEHOLDER_VALUE_PATTERN = /placeholder|change[_-]?me|your[_-]|<[^>]*>|\bexample\b|redacted|dummy|\bsample\b|\btodo\b|\bfixme\b|\binsert\b|replace[_-]?me|\bfake\b/i;
+const PLACEHOLDER_VALUE_PATTERN = /placeholder|change[_-]?me|your[_-]|<[^>]*>|\bexample\b|redacted|dummy|\bsample\b|\btodo\b|\bfixme\b|\binsert\b|replace[_-]?me|\bfake\b|\bmock\b/i;
 
 // #2553 gate review finding: a string with NO repeated characters (e.g. "abcdefghijklmnop123") has HIGH
 // Shannon entropy by raw character-frequency counting, but is obviously not a real secret -- entropy alone
@@ -63,22 +63,18 @@ function hasLongSequentialRun(value: string): boolean {
   return false;
 }
 
-// #3041: a value made ENTIRELY of lowercase words joined by hyphens (2+ segments, e.g. the test-fixture
-// literal "installation-token" used 351+ times across this repo's own test suite as a mock fetch-response
-// token) reads as an ordinary English-word compound identifier -- a mock/fixture name -- not a generated
-// credential. Real secrets/tokens are essentially always alphanumeric, mixed-case, or base64/hex; they are
-// never a pure lowercase-hyphenated phrase. Require at least one hyphen (2+ segments) so this stays narrow
-// and doesn't broaden into excluding arbitrary single lowercase words that could plausibly be real secrets.
-const LOWERCASE_HYPHENATED_COMPOUND_PATTERN = /^[a-z]+(-[a-z]+)+$/;
+// #3041: fixture names like "installation-token" are common in this repo and should not trip the
+// generic token-assignment heuristic. Keep that carve-out key-aware and two-word-only: lowercase
+// hyphenated values assigned to password/passwd/client_secret remain plausible passphrase-style credentials.
+const LOWERCASE_HYPHENATED_TOKEN_FIXTURE_PATTERN = /^[a-z]+-[a-z]+$/;
 
 /** True for an obvious non-secret filler value: a known placeholder phrase, a string built from at most 2
  *  distinct characters (e.g. "xxxxxxxxxxxxxxxx", "----------------"), a long monotonic character-code run
- *  (e.g. "abcdefghijklmnop123"), or a lowercase-hyphenated word compound (e.g. "installation-token") — real
- *  high-entropy secrets never look like any of these. */
-function isPlaceholderSecretValue(value: string): boolean {
+ *  (e.g. "abcdefghijklmnop123"), or a narrow token fixture name (e.g. "installation-token"). */
+function isPlaceholderSecretValue(key: string, value: string): boolean {
   if (PLACEHOLDER_VALUE_PATTERN.test(value)) return true;
   if (new Set(value.toLowerCase()).size <= 2) return true;
-  if (LOWERCASE_HYPHENATED_COMPOUND_PATTERN.test(value)) return true;
+  if (key.toLowerCase() === "token" && LOWERCASE_HYPHENATED_TOKEN_FIXTURE_PATTERN.test(value)) return true;
   return hasLongSequentialRun(value);
 }
 
@@ -88,9 +84,9 @@ function hasGenericSecretAssignment(text: string): boolean {
   GENERIC_SECRET_ASSIGNMENT_PATTERN.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = GENERIC_SECRET_ASSIGNMENT_PATTERN.exec(text)) !== null) {
-    // The pattern's sole capturing group is mandatory (not `?`/`*`-wrapped), so it is always present
-    // whenever the overall match succeeds -- non-null by construction, not a runtime branch.
-    if (!isPlaceholderSecretValue(match[1]!)) return true;
+    // The key and value groups are mandatory (not `?`/`*`-wrapped), so both are always present
+    // whenever the overall match succeeds -- non-null by construction, not runtime branches.
+    if (!isPlaceholderSecretValue(match[1]!, match[2]!)) return true;
   }
   return false;
 }

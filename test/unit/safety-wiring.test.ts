@@ -305,6 +305,19 @@ describe("secret-leak finding in the advisory build", () => {
     expect(out).toContain("### ok.ts (added) +2/-1\n@@\n+const a = 1;");
   });
 
+  it("blocks lowercase-hyphenated password assignments as generic secret leaks", () => {
+    const diff = [
+      "### config/prod.env (modified) +1/-0",
+      "@@ -0,0 +1 @@",
+      '+password = "alpha-bravo-charlie-delta"',
+    ].join("\n");
+    const finding = secretLeakFinding(diff);
+    expect(finding?.code).toBe("secret_leak");
+    expect(finding?.severity).toBe("critical");
+    expect(finding?.title).toContain("generic_secret_assignment");
+    expect(finding?.detail).toContain("config/prod.env:1");
+  });
+
   it("FLAG-OFF: a concrete leaked secret STILL produces the secret_leak finding (unconditional, #audit-3.4)", async () => {
     const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "false" });
     const adv = advisory();

@@ -158,6 +158,25 @@ describe("runGittensoryAiReview gating", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("still reserves the tie-break budget (at the x1 fallback multiplier) when a configured reviewer has no distinct fallback model", async () => {
+    // A self-host pair with no explicit `fallback` reuses its own model (primaryFallback === primary.model),
+    // so the worst-case tie-break reservation must fall back to the x1 multiplier instead of x2 -- still
+    // non-zero, still enforced against the shared daily budget.
+    const run = vi.fn();
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "600",
+    });
+    await expect(
+      runGittensoryAiReview(env, { ...baseInput, mode: "block", reviewers: [{ model: "claude-code" }, { model: "codex" }] }),
+    ).resolves.toMatchObject({
+      status: "quota_exceeded",
+    });
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("clamps a non-numeric AI_MAX_OUTPUT_TOKENS back to the default", async () => {
     const run = vi.fn(async () => ({ response: reviewJson() }));
     const env = createTestEnv({

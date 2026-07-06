@@ -63,6 +63,8 @@ export type GittensoryMentionCommand = {
   raw: string;
   question?: string | undefined;
   reason?: string | undefined;
+  /** Present when a non-empty verb was unrecognized and downgraded to `help` (#2170). */
+  unknownVerb?: string | undefined;
 };
 
 type PublicAnswerCard = {
@@ -161,6 +163,51 @@ export type MaintainerQueueDigest = {
   controlPanelUrl?: string | null | undefined;
 };
 
+const ALL_KNOWN_COMMAND_NAMES = [...GITTENSORY_MENTION_COMMAND_CATALOG.map((command) => command.id), ...GITTENSORY_ACTION_COMMANDS] as const;
+
+/** Max Levenshtein distance for a did-you-mean suggestion on an unrecognized verb (#2170). */
+const COMMAND_SUGGEST_MAX_DISTANCE = 2;
+
+function levenshteinDistance(left: string, right: string): number {
+  if (left === right) return 0;
+  if (left.length === 0) return right.length;
+  if (right.length === 0) return left.length;
+  const rows = left.length + 1;
+  const cols = right.length + 1;
+  const matrix: number[][] = Array.from({ length: rows }, () => Array<number>(cols).fill(0));
+  for (let row = 0; row < rows; row++) matrix[row]![0] = row;
+  for (let col = 0; col < cols; col++) matrix[0]![col] = col;
+  for (let row = 1; row < rows; row++) {
+    for (let col = 1; col < cols; col++) {
+      const cost = left[row - 1] === right[col - 1] ? 0 : 1;
+      matrix[row]![col] = Math.min(
+        matrix[row - 1]![col]! + 1,
+        matrix[row]![col - 1]! + 1,
+        matrix[row - 1]![col - 1]! + cost,
+      );
+    }
+  }
+  return matrix[left.length]![right.length]!;
+}
+
+/** Pure did-you-mean suggester for unrecognized @gittensory verbs (#2170). */
+export function suggestCommand(rawVerb: string): string | null {
+  const verb = rawVerb.trim().toLowerCase();
+  if (!verb) return null;
+  if (COMMANDS.has(verb as GittensoryMentionCommandName) || ACTION_COMMANDS.has(verb as GittensoryActionCommandName)) {
+    return null;
+  }
+  let best: { name: string; distance: number } | null = null;
+  for (const name of ALL_KNOWN_COMMAND_NAMES) {
+    const distance = levenshteinDistance(verb, name);
+    if (best === null || distance < best.distance) {
+      best = { name, distance };
+    }
+  }
+  if (!best || best.distance === 0 || best.distance > COMMAND_SUGGEST_MAX_DISTANCE) return null;
+  return best.name;
+}
+
 export function parseGittensoryMentionCommand(body: string | null | undefined): GittensoryMentionCommand | null {
   if (!body) return null;
   // `(?![\w-])` requires the mention to end at a non-identifier char, so other usernames that merely
@@ -168,14 +215,25 @@ export function parseGittensoryMentionCommand(body: string | null | undefined): 
   // bare `@gittensory help` command. A space, end-of-string, or punctuation still matches.
   const match = body.match(/(?:^|\s)@gittensory(?![\w-])(?:\s+([a-z-]+))?([^\n\r]*)/i);
   if (!match) return null;
-  const requested = (match[1]?.toLowerCase() || "help") as GittensoryMentionCommandName | GittensoryActionCommandName;
+  const rawVerb = match[1]?.toLowerCase();
+  if (!rawVerb) {
+    return { name: "help", raw: match[0].trim() };
+  }
+  const requested = rawVerb as GittensoryMentionCommandName | GittensoryActionCommandName;
   if (ACTION_COMMANDS.has(requested as GittensoryActionCommandName)) {
     const reason = (match[2] ?? "").trim();
     return { name: requested as GittensoryActionCommandName, raw: match[0].trim(), reason: reason.length > 0 ? reason : undefined };
   }
-  const name = COMMANDS.has(requested as GittensoryMentionCommandName) ? (requested as GittensoryMentionCommandName) : "help";
-  const question = name === "ask" ? (match[2] ?? "").trim() : undefined;
-  return { name, raw: match[0].trim(), question: question && question.length > 0 ? question : undefined };
+  if (COMMANDS.has(requested as GittensoryMentionCommandName)) {
+    const name = requested as GittensoryMentionCommandName;
+    const question = name === "ask" ? (match[2] ?? "").trim() : undefined;
+    return {
+      name,
+      raw: match[0].trim(),
+      question: question && question.length > 0 ? question : undefined,
+    };
+  }
+  return { name: "help", raw: match[0].trim(), unknownVerb: rawVerb };
 }
 
 export function isMaintainerAssociation(association: string | null | undefined): boolean {
@@ -258,7 +316,7 @@ export function buildPublicAgentCommandComment(args: {
   // Action commands (e.g. gate-override) never reach this Q&A renderer — they are handled and short-circuited
   // earlier — so narrow the widened parse name back to a Q&A command name for the answer-card helpers.
   const commandName = args.command.name as GittensoryMentionCommandName;
-  const sections = commandSections(commandName, args.bundle, args.officialMiner, args.maintainerDigest, args.command.question);
+  const sections = commandSections(commandName, args.bundle, args.officialMiner, args.maintainerDigest, args.command.question, args.command.unknownVerb);
   const card = buildPublicAnswerCard({
     command: commandName,
     sections,
@@ -593,10 +651,11 @@ function commandSections(
   officialMiner: GittensorContributorSnapshot | null | undefined,
   maintainerDigest: MaintainerQueueDigest | null | undefined,
   question?: string | undefined,
+  unknownVerb?: string | undefined,
 ): string[] {
   switch (command) {
     case "help":
-      return helpSections();
+      return helpSections(unknownVerb);
     case "ask":
       return askSections(bundle, question);
     case "miner-context":
@@ -628,10 +687,16 @@ function commandSections(
   }
 }
 
-function helpSections(): string[] {
+function helpSections(unknownVerb?: string | undefined): string[] {
+  const suggestion = unknownVerb ? suggestCommand(unknownVerb) : null;
+  const didYouMean =
+    suggestion !== null
+      ? [`- Did you mean \`@gittensory ${suggestion}\`?`, ""]
+      : [];
   return [
     "**Commands**",
     "",
+    ...didYouMean,
     "- `@gittensory help` shows this command list.",
     "- `@gittensory ask <question>` answers contribution-quality Q&A with source citations and freshness.",
     "- `@gittensory preflight` summarizes public PR hygiene.",

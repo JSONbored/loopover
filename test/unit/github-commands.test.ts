@@ -8,6 +8,7 @@ import {
   parseAgentCommandFeedbackContext,
   parseGittensoryMentionCommand,
   sanitizePublicComment,
+  suggestCommand,
   githubCommandsInternals,
 } from "../../src/github/commands";
 
@@ -31,6 +32,8 @@ describe("GitHub mention commands", () => {
     expect(parseGittensoryMentionCommand("@gittensory needs-author")?.name).toBe("needs-author");
     expect(parseGittensoryMentionCommand("@gittensory duplicate-clusters")?.name).toBe("duplicate-clusters");
     expect(parseGittensoryMentionCommand("@gittensory unknown")?.name).toBe("help");
+    expect(parseGittensoryMentionCommand("@gittensory unknown")).toMatchObject({ name: "help", unknownVerb: "unknown" });
+    expect(parseGittensoryMentionCommand("@gittensory")).toMatchObject({ name: "help", unknownVerb: undefined });
     // gate-override is an action command: it must be recognized (NOT downgraded to "help") and carry the
     // trailing free text as its reason.
     expect(parseGittensoryMentionCommand("@gittensory gate-override")).toMatchObject({ name: "gate-override", reason: undefined });
@@ -1929,6 +1932,61 @@ describe("GitHub mention commands", () => {
     expect(digest.repoFullName).toBe("this repository");
     expect(digest.reviewNowPullRequests).toHaveLength(0);
     expect(digest.needsAuthorPullRequests).toHaveLength(0);
+  });
+});
+
+describe("suggestCommand (#2170)", () => {
+  it("suggests the nearest known command for a close typo", () => {
+    expect(suggestCommand("prefliht")).toBe("preflight");
+    expect(suggestCommand("blokcers")).toBe("blockers");
+  });
+
+  it("returns null for gibberish beyond the edit-distance threshold", () => {
+    expect(suggestCommand("zzzz")).toBeNull();
+    expect(suggestCommand("xyzzyqwerty")).toBeNull();
+  });
+
+  it("returns null for empty or already-known verbs", () => {
+    expect(suggestCommand("")).toBeNull();
+    expect(suggestCommand("   ")).toBeNull();
+    expect(suggestCommand("help")).toBeNull();
+    expect(suggestCommand("preflight")).toBeNull();
+    expect(suggestCommand("gate-override")).toBeNull();
+  });
+
+  it("surfaces a did-you-mean line for unrecognized verbs but not for bare @gittensory", () => {
+    const typo = parseGittensoryMentionCommand("@gittensory prefliht")!;
+    const typoBody = buildPublicAgentCommandComment({
+      command: typo,
+      repo: null,
+      issue: { number: 1, title: "t", state: "open" },
+      pullRequest: null,
+      actorKind: "maintainer",
+    });
+    expect(typoBody).toContain("Did you mean `@gittensory preflight`?");
+
+    const bare = parseGittensoryMentionCommand("@gittensory")!;
+    const bareBody = buildPublicAgentCommandComment({
+      command: bare,
+      repo: null,
+      issue: { number: 1, title: "t", state: "open" },
+      pullRequest: null,
+      actorKind: "maintainer",
+    });
+    expect(bareBody).not.toContain("Did you mean");
+  });
+
+  it("does not suggest when the verb is recognized", () => {
+    const ok = parseGittensoryMentionCommand("@gittensory preflight")!;
+    expect(ok.unknownVerb).toBeUndefined();
+    const body = buildPublicAgentCommandComment({
+      command: ok,
+      repo: null,
+      issue: { number: 1, title: "t", state: "open" },
+      pullRequest: null,
+      actorKind: "maintainer",
+    });
+    expect(body).not.toContain("Did you mean");
   });
 });
 

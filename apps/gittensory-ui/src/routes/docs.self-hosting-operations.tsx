@@ -501,6 +501,177 @@ volumes:
   runner-work-2:`}
       />
 
+      <h2>Enabling Sentry (your own DSN)</h2>
+      <p>
+        Sentry is <strong>opt-in and off by default</strong>. Leave <code>SENTRY_DSN</code> unset
+        for a complete no-op with negligible overhead — no events leave your box. When you want
+        error tracking, point the runtime at a project you control in your own Sentry organization.
+      </p>
+      <CodeBlock
+        filename=".env"
+        code={`# Your Sentry project DSN — never commit this to git
+SENTRY_DSN=https://examplePublicKey@o0.ingest.sentry.io/0
+SENTRY_ENVIRONMENT=production
+SENTRY_SERVER_NAME=gittensory-us-east
+SENTRY_RELEASE=gittensory-selfhost@2026.07.05
+# Optional: sample review tracing spans (0.05 = 5%)
+# SENTRY_TRACES_SAMPLE_RATE=0.05`}
+      />
+      <p>
+        Official release images bake <code>GITTENSORY_VERSION</code> as the default release id;
+        override with <code>SENTRY_RELEASE</code> when you tag custom builds. Mount secrets with{" "}
+        <code>SENTRY_DSN_FILE</code> instead of inline env when you prefer a file-backed DSN. After
+        changing Sentry env, restart the <code>gittensory</code> service — there is no hot reload.
+      </p>
+      <Callout variant="note">
+        Community self-hosters should send events only to their own DSN. The shipped stack never
+        phones home to a maintainer-owned project unless you configure one.
+      </Callout>
+
+      <h2>Sentry context taxonomy</h2>
+      <p>
+        Self-host Sentry events carry a small, scrubbed taxonomy so operators can filter by
+        subsystem without opening raw payloads. Structured error logs forwarded from{" "}
+        <code>console.error</code> use the JSON <code>event</code> slug as the issue type; direct
+        captures use a <code>kind</code> or review <code>operation</code> tag instead.
+      </p>
+      <FeatureRow
+        items={[
+          {
+            title: "Tags (indexed, low cardinality)",
+            description:
+              "repo (also indexed when logs emit repository), pr, head_sha, kind, subsystem, jobType, operation, agent, decision_outcome, provider, model, monitor, installation_id_hash (never raw installation id), trace_id, span_id.",
+          },
+          {
+            title: "Contexts (full scrubbed detail)",
+            description:
+              "gittensory (engine captures), review (failed reviews), log (structured console lines), sentry_monitor (cron failures), otel (active trace ids). Secrets, tokens, bodies, diffs, prompts, and review text are redacted before send.",
+          },
+          {
+            title: "Subsystems",
+            description:
+              "webhook, queue, github, ai, gate, publish, scheduled, backup, relay — map to the engine paths named in issue #1824.",
+          },
+        ]}
+      />
+      <p>
+        Cron monitor slugs follow{" "}
+        <code>gittensory-selfhost-&#123;environment&#125;-&#123;loop&#125;</code> (for example{" "}
+        <code>gittensory-selfhost-production-scheduled-loop</code>). Pair monitor alerts with queue
+        depth, dead-job counts, and the matching structured log event.
+      </p>
+
+      <h2>Sentry alert classes and runbook</h2>
+      <p>
+        Tune Sentry alert rules for <strong>persistent failure classes</strong>, not one-off
+        fail-open noise. The table below lists actionable signals, what they usually mean, and the
+        first checks an operator should run. Prometheus/Grafana alerts in the observability profile
+        cover the same failure modes from a metrics angle — use both when Sentry is enabled.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-token-sm">
+          <thead>
+            <tr className="border-hairline text-left text-token-xs text-muted-foreground">
+              <th className="py-2 pr-4 font-medium">Alert class</th>
+              <th className="py-2 pr-4 font-medium">Sentry signal</th>
+              <th className="py-2 pr-4 font-medium">Threshold guidance</th>
+              <th className="py-2 font-medium">First response</th>
+            </tr>
+          </thead>
+          <tbody className="divide-hairline">
+            <tr>
+              <td className="py-2 pr-4 align-top">Dead-letter growth</td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                <code>selfhost_job_dead</code>, <code>queue_pump_crashed</code>, missed{" "}
+                <code>queue-dead-letter-revive</code> monitor
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Page when dead jobs stay &gt; 0 for &gt;30m or the revive monitor misses twice
+              </td>
+              <td className="py-2 align-top text-muted-foreground">
+                Check Grafana dead-job panel, <code>/metrics</code>{" "}
+                <code>gittensory_jobs_dead_total</code>, queue logs; replay from DLQ dashboard only
+                after fixing root cause
+              </td>
+            </tr>
+            <tr>
+              <td className="py-2 pr-4 align-top">Check-run permission gaps</td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                <code>check_run_post_denied</code> grouped by repo
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Alert when the same repo hits ≥3 denials in 1h (transient GitHub blips are normal)
+              </td>
+              <td className="py-2 align-top text-muted-foreground">
+                Re-run activation, confirm Checks:write on the GitHub App, verify installation still
+                has access to the repo
+              </td>
+            </tr>
+            <tr>
+              <td className="py-2 pr-4 align-top">AI provider exhaustion</td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                <code>close_breaker_engaged</code>, <code>selfhost_ai_provider</code> errors, review
+                failures tagged <code>operation=ai_review</code>
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Warn on first breaker; page when breaker stays engaged &gt;15m or error rate &gt;25%
+                of reviews in 1h
+              </td>
+              <td className="py-2 align-top text-muted-foreground">
+                Check provider quotas, <code>AI_*</code> env, CLI availability (
+                <code>INSTALL_AI_CLIS</code>), and Grafana AI usage panels
+              </td>
+            </tr>
+            <tr>
+              <td className="py-2 pr-4 align-top">Relay / broker failures</td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                <code>orb_relay_drain</code>, <code>orb_relay_register</code>,{" "}
+                <code>orb_broker_unavailable</code>, missed relay monitors
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Page when relay register/drain monitors miss twice or broker errors persist &gt;10m
+              </td>
+              <td className="py-2 align-top text-muted-foreground">
+                Verify Orb enrollment secrets, outbound connectivity, and broker health; check relay
+                logs without exposing enrollment material
+              </td>
+            </tr>
+            <tr>
+              <td className="py-2 pr-4 align-top">Backup failures</td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                <code>selfhost_backup_advisory</code>, backup container non-zero exits, stale backup
+                freshness metric
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Page when backup freshness &gt;2× <code>BACKUP_INTERVAL_SECONDS</code> or verify
+                script fails twice
+              </td>
+              <td className="py-2 align-top text-muted-foreground">
+                Inspect <code>docker compose logs backup</code>, disk space, and{" "}
+                <Link to="/docs/self-hosting-backup-scaling">backup docs</Link>; do not delete the
+                last good backup after a failed run
+              </td>
+            </tr>
+            <tr>
+              <td className="py-2 pr-4 align-top">Scheduled monitor misses</td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Sentry monitor alert on <code>scheduled-loop</code>, <code>orb-export</code>, or
+                other wrapped loops
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Use Sentry&apos;s built-in monitor failure thresholds (2 consecutive misses on most
+                loops)
+              </td>
+              <td className="py-2 align-top text-muted-foreground">
+                Process may still be alive but cron work stopped — check{" "}
+                <code>selfhost_cron_error</code>, queue pump logs, and restart the app container if
+                the loop crashed without taking down the process
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
       <h2>Sentry server name</h2>
       <p>
         <code>SENTRY_SERVER_NAME</code> sets a clean, human name for this instance in Sentry (for
@@ -551,9 +722,12 @@ volumes:
         ]}
       />
       <p>
-        A missed monitor means the process may still be alive but the recurring work is not checking
-        in on schedule. Pair the monitor with queue depth, dead-job counts, and the structured error
-        log for the same subsystem.
+        Monitor loop slugs (the <code>&#123;loop&#125;</code> segment in the slug) are{" "}
+        <code>scheduled-loop</code>, <code>orb-export</code>, <code>orb-relay-drain</code>,{" "}
+        <code>orb-relay-register</code>, and <code>queue-dead-letter-revive</code>. A missed monitor
+        means the process may still be alive but the recurring work is not checking in on schedule.
+        Pair the monitor with queue depth, dead-job counts, and the structured error log for the
+        same subsystem.
       </p>
 
       <h2>Re-gate sweeps (agent-regate-sweep)</h2>

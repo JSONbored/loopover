@@ -19,6 +19,9 @@ type SentryNs = typeof import("@sentry/node");
 type SentryClient = NonNullable<ReturnType<SentryNs["init"]>>;
 type SentryMonitorConfig = NonNullable<Parameters<SentryNs["captureCheckIn"]>[1]>;
 export type SentryMonitorName = "scheduled-loop" | "orb-export" | "orb-relay-drain" | "orb-relay-register" | "queue-dead-letter-revive";
+export const SENTRY_MONITOR_NAMES: readonly SentryMonitorName[] = ["scheduled-loop", "orb-export", "orb-relay-drain", "orb-relay-register", "queue-dead-letter-revive"];
+export const SENTRY_OPERATIONAL_SUBSYSTEMS = { webhook: "GitHub webhook ingest and enqueue", queue: "Job claim, process, dead-letter revival, and pump loops", github: "GitHub App token minting and broker calls", ai: "AI provider attempts, rate limits, and close-breaker engagement", gate: "Gate verdict and check-run publish", publish: "PR comment and public-surface publish", scheduled: "Maintenance tick, regate sweeps, and cron fan-out", backup: "Backup profile runs and freshness advisories", relay: "Orb relay register/drain and broker export loops" } as const;
+export const SENTRY_OPERATIONAL_TAG_KEYS = ["repo", "repository", "owner", "installation_id_hash", "pull", "pullNumber", "pr", "head_sha", "project", "kind", "subsystem", "job_type", "jobType", "reason", "result", "deliveryId", "provider", "model", "effort", "timeoutMs", "trace_id", "span_id", "operation", "agent", "decision_outcome", "event", "monitor"] as const;
 type SentryScope = {
   setContext(name: string, context: Record<string, unknown>): void;
   setTag(key: string, value: string): void;
@@ -34,7 +37,7 @@ let digestHexSync: DigestHex | undefined;
 const SECRET_KEY =
   /(token|secret|key|password|passwd|authorization|auth|dsn|cookie|bearer|credential|private)/i;
 const PAYLOAD_KEY =
-  /(^|[_-])(body|payload|patch|diff|prompt|rubric|guardrail|headers?|cookies?|title|config|review[-_]?text|review[-_]?content)([_-]|$)|^(body|payload|patch|diff|prompt|rubric|guardrail|headers?|cookies?|title|config|review[-_]?text|review[-_]?content)$/i;
+  /(^|[_-])(body|payload|patch|diff|prompt|rubric|guardrail|headers?|cookies?|title|config|review[-_]?text|review[-_]?content|comment[-_]?text|comment[-_]?body)([_-]|$)|^(body|payload|patch|diff|prompt|rubric|guardrail|headers?|cookies?|title|config|review[-_]?text|review[-_]?content|comment[-_]?text|comment[-_]?body)$/i;
 const SECRET_VALUE = new RegExp(
   [
     `${"github" + "_pat_"}[A-Za-z0-9_]+`,
@@ -271,6 +274,7 @@ function tagHashedInstallation(scope: SentryScope, context: Record<string, unkno
   if (hash) scope.setTag("installation_id_hash", hash);
 }
 
+function applyOperationalTags(scope: SentryScope, context: Record<string, unknown>): void { const normalized: Record<string, unknown> = typeof context.repository === "string" && context.repo === undefined ? { ...context, repo: context.repository } : { ...context }; tagHashedInstallation(scope, normalized); for (const key of SENTRY_OPERATIONAL_TAG_KEYS) { const tagValue = normalized[key]; if (typeof tagValue === "string" || typeof tagValue === "number") scope.setTag(key, String(tagValue)); } }
 function scrubString(value: string): string {
   return value
     .replace(QUERY_SECRET_VALUE, `$1${REDACTED}`)
@@ -435,8 +439,7 @@ export function captureError(
   if (!active || !Sentry) return;
   Sentry.withScope((scope) => {
     setOtelTraceScope(scope);
-    if (context) scope.setContext("gittensory", hashedInstallationContext(context));
-    if (context) tagHashedInstallation(scope, context);
+    if (context) { const safeContext = hashedInstallationContext(context); scope.setContext("gittensory", safeContext); applyOperationalTags(scope, safeContext); }
     Sentry!.captureException(
       error instanceof Error ? error : new Error(String(error)),
     );
@@ -456,22 +459,13 @@ export function captureReviewFailure(
     if (context) {
       const safeContext = hashedInstallationContext(context);
       scope.setContext("review", safeContext);
-      tagHashedInstallation(scope, context);
-      for (const tag of ["owner", "repo", "pr", "head_sha", "operation", "agent", "decision_outcome"]) {
-        const value = safeContext[tag];
-        if (value !== undefined && value !== null)
-          scope.setTag(tag, String(value));
-      }
+      applyOperationalTags(scope, safeContext);
     }
     Sentry!.captureException(
       error instanceof Error ? error : new Error(String(error)),
     );
   });
 }
-
-// The structured-log fields worth indexing as Sentry tags — the dimensions operators filter + group by. Only
-// string|number values are tagged; everything else stays in the full "log" context.
-const SENTRY_LOG_TAG_KEYS = ["repo", "repository", "installation_id_hash", "pull", "pullNumber", "pr", "project", "kind", "deliveryId", "provider", "model", "effort", "timeoutMs", "trace_id", "span_id", "operation", "agent", "decision_outcome"] as const;
 
 /** A SHORT location suffix — " (repo#pr)" — for a no-message error title, so the issue list shows WHERE without
  *  dumping every scalar field (which made titles unreadably long, e.g. trailing a full deliveryId). The complete
@@ -591,13 +585,8 @@ export function forwardStructuredLogToSentry(line: unknown, fromErrorSink = fals
     scope.setLevel(severity);
     setOtelTraceScope(scope);
     scope.setContext("log", safeObj);
-    if (event) scope.setTag("event", event);
-    // Index the dimensions operators filter + group by, so issues are findable without digging into the context.
-    for (const key of SENTRY_LOG_TAG_KEYS) {
-      const tagValue = safeObj[key];
-      if (typeof tagValue === "string" || typeof tagValue === "number")
-        scope.setTag(key, String(tagValue));
-    }
+    if (event) safeObj.event = event;
+    applyOperationalTags(scope, safeObj);
     // Group recurrences of ONE failure into a single issue (by event, not the variable detail in the value).
     if (event) scope.setFingerprint(["gittensory-log", event]);
     // Sentry uses event.transaction as the issue culprit fallback when the stack has no frames; point it at the
@@ -642,8 +631,9 @@ export async function withSentryMonitor<T>(
     Sentry.withScope((scope) => {
       scope.setLevel("error");
       setOtelTraceScope(scope);
-      scope.setContext("sentry_monitor", safeMonitorContext(name, monitorSlug, context));
-      scope.setTag("monitor", monitorSlug);
+      const monitorContext = safeMonitorContext(name, monitorSlug, context);
+      scope.setContext("sentry_monitor", monitorContext);
+      applyOperationalTags(scope, { ...monitorContext, monitor: monitorSlug, kind: `sentry_monitor_${name}`, subsystem: "scheduled" });
       scope.setFingerprint(["gittensory-sentry-monitor", name]);
       Sentry!.captureException(error instanceof Error ? error : new Error(String(error)));
     });

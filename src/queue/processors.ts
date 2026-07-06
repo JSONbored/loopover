@@ -334,7 +334,7 @@ import {
   PR_PANEL_RETRIGGER_MARKER,
   type ContributorProfile,
 } from "../signals/engine";
-import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
+import { isDuplicateClusterWinnerByClaim, resolveDuplicateClusterWinnerNumber } from "../signals/duplicate-winner";
 import { buildUnifiedReviewDiff, totalAddedLineCount } from "../review/review-diff";
 import { estimateReviewEffort } from "../review/review-effort";
 import { buildUnifiedCommentBody } from "../review/unified-comment-bridge";
@@ -2768,6 +2768,8 @@ async function runAgentMaintenancePlanAndExecute(
   const approvalsSatisfied =
     autoMaintain.requireApprovals === 0 ||
     (liveReviewDecision ?? pr.reviewDecision) === "APPROVED";
+  const duplicateWinnerEnabled = env.GITTENSORY_DUPLICATE_WINNER === "true";
+  const openDuplicateSiblings = linkedIssueDuplicatePullRequestRecordsForGate(pr, otherOpenPullRequests);
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
     blockerTitles: gate.blockers.map((blocker) => blocker.title),
@@ -2822,10 +2824,21 @@ async function runAgentMaintenancePlanAndExecute(
       // (it can still close on its own merits — CI/conflict/blockers). Flag-OFF short-circuits ⇒ the real
       // count is used (byte-identical). Sparse legacy rows fail closed so duplicate evidence remains visible.
       linkedDuplicateCount: dupWinnerLinkedDuplicateCount(
-        linkedIssueDuplicatePullRequestRecordsForGate(pr, otherOpenPullRequests),
+        openDuplicateSiblings,
         pr.number,
         pr.linkedIssueClaimedAt,
-        env.GITTENSORY_DUPLICATE_WINNER === "true",
+        duplicateWinnerEnabled,
+        pr.createdAt,
+      ),
+      // #dup-winner-credit: name the cluster's actual winner in a loser's close comment instead of a generic
+      // "duplicate of another open PR". `null` (flag off, this PR IS the winner, or an ambiguous election)
+      // falls back to the pre-existing generic wording in agent-actions.ts, byte-identical to before this existed.
+      linkedDuplicateWinnerNumber: dupWinnerLinkedDuplicateWinnerNumber(
+        openDuplicateSiblings,
+        pr.number,
+        pr.linkedIssueClaimedAt,
+        duplicateWinnerEnabled,
+        pr.createdAt,
       ),
       headSha: pr.headSha,
       mergeBlockedSha: pr.mergeBlockedSha,
@@ -7322,17 +7335,37 @@ export async function runAiSlopForAdvisory(
  * when count > 0). Flag-OFF (default) returns the real sibling count — byte-identical to today.
  */
 export function dupWinnerLinkedDuplicateCount(
-  openSiblings: Pick<PullRequestRecord, "number" | "linkedIssueClaimedAt">[],
+  openSiblings: Pick<PullRequestRecord, "number" | "linkedIssueClaimedAt" | "createdAt">[],
   prNumber: number,
   linkedIssueClaimedAt: string | null | undefined,
   duplicateWinnerEnabled: boolean,
+  createdAt?: string | null | undefined,
 ): number {
   if (
     duplicateWinnerEnabled &&
-    isDuplicateClusterWinnerByClaim({ number: prNumber, linkedIssueClaimedAt }, openSiblings)
+    isDuplicateClusterWinnerByClaim({ number: prNumber, linkedIssueClaimedAt, createdAt }, openSiblings)
   )
     return 0;
   return openSiblings.length;
+}
+
+/**
+ * Duplicate-winner adjudication (#dup-winner-credit) seam for naming the cluster's actual winner in a loser's
+ * close comment. Returns `null` (generic "duplicate of another open PR" wording, byte-identical to before this
+ * existed) when the flag is off, this PR IS the winner (nothing to name — its close reason omits the cause
+ * entirely via {@link dupWinnerLinkedDuplicateCount}), or the election is too ambiguous to name a specific
+ * winner ({@link resolveDuplicateClusterWinnerNumber}'s fail-closed `null`).
+ */
+export function dupWinnerLinkedDuplicateWinnerNumber(
+  openSiblings: Pick<PullRequestRecord, "number" | "linkedIssueClaimedAt" | "createdAt">[],
+  prNumber: number,
+  linkedIssueClaimedAt: string | null | undefined,
+  duplicateWinnerEnabled: boolean,
+  createdAt?: string | null | undefined,
+): number | null {
+  if (!duplicateWinnerEnabled) return null;
+  const winner = resolveDuplicateClusterWinnerNumber({ number: prNumber, linkedIssueClaimedAt, createdAt }, openSiblings);
+  return winner === null || winner === prNumber ? null : winner;
 }
 
 /**

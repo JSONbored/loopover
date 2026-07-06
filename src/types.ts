@@ -476,11 +476,16 @@ export type PullRequestRecord = {
   mergeableState?: string | null | undefined;
   reviewDecision?: string | null | undefined;
   body?: string | null | undefined;
+  /** GitHub's own PR creation time (`pull_request.created_at`) — the ground-truth order contributors actually
+   *  opened their PRs in, independent of when gittensory's own webhook/sweep pipeline happened to observe or
+   *  process this PR. NOT the same as {@link linkedIssueClaimedAt} (gittensory's own sync-time). Preferred for
+   *  duplicate-cluster winner election when present on both sides being compared (#dup-winner). */
   createdAt?: string | null | undefined;
   updatedAt?: string | null | undefined;
   closedAt?: string | null | undefined;
   /** First time Gittensory observed this PR claiming one or more linked issues. Used to elect same-issue
-   * duplicate winners by claim order instead of PR number. */
+   * duplicate winners by claim order instead of PR number ONLY when {@link createdAt} is unavailable on either
+   * side of a comparison. */
   linkedIssueClaimedAt?: string | null | undefined;
   labels: string[];
   linkedIssues: number[];

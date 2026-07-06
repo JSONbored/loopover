@@ -5256,6 +5256,11 @@ function toPullRequestRecord(repoFullName: string, pr: GitHubPullRequestPayload)
     mergeableState: pr.mergeable_state ?? pr.mergeableState ?? mergeableBooleanState(pr.mergeable),
     reviewDecision: pr.reviewDecision,
     body: pr.body,
+    // GitHub's true PR-creation time (#dup-winner true-creation-time). Already persisted into payloadJson via
+    // compactGitHubPayload below and re-surfaced correctly by toPullRequestRecordFromRow on any later read — this
+    // populates it on the IMMEDIATE upsert return too, so a caller acting on this same call's result (not a
+    // subsequent DB round-trip) sees the same value instead of `undefined`.
+    createdAt: pr.created_at,
     labels: (pr.labels ?? []).flatMap((label) => (label.name ? [label.name] : [])),
     linkedIssues: extractLinkedIssueNumbers(pr.body ?? ""),
   };

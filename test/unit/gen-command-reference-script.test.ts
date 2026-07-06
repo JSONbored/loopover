@@ -75,6 +75,7 @@ describe("gen-command-reference script (#3046)", () => {
     it("extracts a fixture with exactly 15 total commands without throwing", () => {
       const publicIds = Array.from({ length: 10 }, (_, i) => `{ id: "public-${i}", title: "Public ${i}", description: "Desc ${i}." },`).join("\n");
       const maintainerIds = Array.from({ length: 5 }, (_, i) => `{ id: "maint-${i}", title: "Maint ${i}", description: "Desc ${i}." },`).join("\n");
+      const actionIds = Array.from({ length: 7 }, (_, i) => `{ id: "action-${i}", title: "Action ${i}", description: "Desc ${i}." },`).join("\n");
       const root = fixtureRoot(`
         const PUBLIC_MENTION_COMMAND_CATALOG = [
           ${publicIds}
@@ -82,18 +83,23 @@ describe("gen-command-reference script (#3046)", () => {
         const MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG = [
           ${maintainerIds}
         ] as const;
+        const GITTENSORY_ACTION_COMMAND_CATALOG = [
+          ${actionIds}
+        ] as const;
       `);
 
-      const { publicCommands, maintainerCommands } = collectCommandCatalogs({ rootDir: root });
+      const { publicCommands, maintainerCommands, actionCommands } = collectCommandCatalogs({ rootDir: root });
       expect(publicCommands).toHaveLength(10);
       expect(maintainerCommands).toHaveLength(5);
+      expect(actionCommands).toHaveLength(7);
     });
 
-    it("extracts the real 10 public + 9 maintainer-only commands from the real repo source", () => {
-      const { publicCommands, maintainerCommands } = collectCommandCatalogs({ rootDir: process.cwd() });
+    it("extracts the real 10 public + 9 maintainer-only + 7 action commands from the real repo source", () => {
+      const { publicCommands, maintainerCommands, actionCommands } = collectCommandCatalogs({ rootDir: process.cwd() });
 
       expect(publicCommands).toHaveLength(10);
       expect(maintainerCommands).toHaveLength(9);
+      expect(actionCommands).toHaveLength(7);
       expect(publicCommands.map((c: CommandCatalogEntry) => c.id)).toEqual([
         "help",
         "ask",

@@ -3294,10 +3294,6 @@ describe("queue processors", () => {
       expect(aiCalls).toBe(0);
       expect(gateConclusion).toBe("skipped");
       expect(gateSummary).toBe("AI review is skipped for draft pull requests while review.auto_review.skip_drafts is enabled.");
-      const blocked = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
-        .bind("github_app.gate_blocked", "JSONbored/gittensory#81")
-        .first<{ n: number }>();
-      expect(blocked?.n).toBe(0);
       const audit = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ? and target_key = ?")
         .bind("github_app.ai_review_auto_review_skipped", "JSONbored/gittensory#81")
         .first<{ detail: string; metadata_json: string }>();

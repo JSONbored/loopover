@@ -13,7 +13,7 @@
 // repo that hasn't opted in (the default) or a PR that already links an issue (the common case) pays
 // nothing beyond two boolean checks.
 
-import { hasRecentAuditEvent, listOpenIssues, recordAuditEvent } from "../db/repositories";
+import { hasRecentAuditEventForOtherTarget, listOpenIssues, recordAuditEvent } from "../db/repositories";
 import { findUnlinkedIssueCandidates, type CandidateOpenIssue } from "../signals/unlinked-issue-candidates";
 import type { UnlinkedIssueGuardrailConfig } from "../types";
 import { verifyUnlinkedIssueMatch } from "./unlinked-issue-match";
@@ -32,6 +32,7 @@ export type ResolveUnlinkedIssueMatchDispositionInput = {
   /** The PR's OWN linked-issue count (already extracted by the caller) -- the guardrail only ever runs
    *  against a PR that links NOTHING; a PR linking a different issue is out of scope for this check. */
   linkedIssueCount: number;
+  pullNumber: number;
   prTitle: string;
   prBody: string | null | undefined;
   changedPaths: string[];
@@ -42,23 +43,28 @@ export type ResolveUnlinkedIssueMatchDispositionInput = {
   prAuthorLogin: string | null | undefined;
 };
 
-/** Has this contributor triggered a confirmed unlinked-issue match anywhere (any repo) within the recency
- *  window? Fail-safe: a read error resolves to "no prior match" (never wrongly escalates on a DB hiccup). */
-async function hasPriorUnlinkedIssueMatch(env: Env, authorLogin: string): Promise<boolean> {
+/** Has this contributor triggered a confirmed unlinked-issue match on another PR (any repo) within the
+ *  recency window? Fail-safe: a read error resolves to "no prior match" (never wrongly escalates on a DB hiccup). */
+function unlinkedIssueMatchTargetKey(repoFullName: string, pullNumber: number): string {
+  return `${repoFullName}#${pullNumber}`;
+}
+
+async function hasPriorUnlinkedIssueMatch(env: Env, authorLogin: string, currentTargetKey: string): Promise<boolean> {
   const sinceIso = new Date(Date.now() - UNLINKED_ISSUE_MATCH_REPEAT_WINDOW_MS).toISOString();
-  return hasRecentAuditEvent(env, authorLogin, UNLINKED_ISSUE_MATCH_AUDIT_EVENT_TYPE, sinceIso).catch(() => false);
+  return hasRecentAuditEventForOtherTarget(env, authorLogin, UNLINKED_ISSUE_MATCH_AUDIT_EVENT_TYPE, currentTargetKey, sinceIso).catch(() => false);
 }
 
 /** Record THIS occurrence so a later PR from the same contributor can be recognized as a repeat. Fire-and-
  *  forget: a write failure must never block the gate -- worst case, a future occurrence fails open to a hold
  *  instead of escalating, never the reverse. */
-async function recordUnlinkedIssueMatchOccurrence(env: Env, repoFullName: string, authorLogin: string, issueNumber: number): Promise<void> {
+async function recordUnlinkedIssueMatchOccurrence(env: Env, repoFullName: string, pullNumber: number, authorLogin: string, issueNumber: number): Promise<void> {
   await recordAuditEvent(env, {
     eventType: UNLINKED_ISSUE_MATCH_AUDIT_EVENT_TYPE,
     actor: authorLogin,
-    targetKey: `${repoFullName}#${issueNumber}`,
+    targetKey: unlinkedIssueMatchTargetKey(repoFullName, pullNumber),
     outcome: "completed",
     detail: `unlinked PR diff matched open issue #${issueNumber} without a linking reference`,
+    metadata: { issueNumber },
   }).catch(() => undefined);
 }
 
@@ -101,8 +107,9 @@ export async function resolveUnlinkedIssueMatchDisposition(env: Env, input: Reso
         comment: `This PR doesn't link an issue, but its diff appears to directly solve #${candidate.issue.number}. If that's right, please add a linking reference (e.g. \`Closes #${candidate.issue.number}\`) so it's credited correctly; if this is a coincidence, a maintainer will clear this hold shortly.`,
       };
     }
-    const isRepeat = await hasPriorUnlinkedIssueMatch(env, authorLogin);
-    await recordUnlinkedIssueMatchOccurrence(env, input.repoFullName, authorLogin, candidate.issue.number);
+    const currentTargetKey = unlinkedIssueMatchTargetKey(input.repoFullName, input.pullNumber);
+    const isRepeat = await hasPriorUnlinkedIssueMatch(env, authorLogin, currentTargetKey);
+    await recordUnlinkedIssueMatchOccurrence(env, input.repoFullName, input.pullNumber, authorLogin, candidate.issue.number);
     if (isRepeat) {
       return {
         kind: "close",

@@ -18,6 +18,7 @@ async function seedIssue(env: Awaited<ReturnType<typeof createTestEnv>>, number:
 
 const BASE_INPUT = {
   repoFullName: "owner/repo",
+  pullNumber: 101,
   linkedIssueCount: 0,
   prTitle: "fix webhook retry duplicate bug",
   prBody: null as string | null,
@@ -119,7 +120,7 @@ describe("resolveUnlinkedIssueMatchDisposition", () => {
   });
 
   describe("repeat-offense escalation (#unlinked-issue-guardrail-followup)", () => {
-    it("escalates to a CLOSE on a second confirmed match by the SAME contributor", async () => {
+    it("escalates to a CLOSE on a second confirmed match by the SAME contributor on a different PR", async () => {
       const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
       const env = createTestEnv({ AI: { run } as unknown as Ai });
       await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
@@ -127,11 +128,23 @@ describe("resolveUnlinkedIssueMatchDisposition", () => {
       const first = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
       expect(first?.kind).toBe("hold");
 
-      const second = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+      const second = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, pullNumber: 102, config: config() });
       expect(second?.kind).toBe("close");
       expect(second?.reason).toContain("#7");
       expect(second?.reason).toContain("repeat");
       expect(second?.comment).toContain("already flagged");
+    });
+
+    it("does NOT escalate when the same confirmed PR is reprocessed", async () => {
+      const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+      const env = createTestEnv({ AI: { run } as unknown as Ai });
+      await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+
+      const first = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, pullNumber: 101, config: config() });
+      expect(first?.kind).toBe("hold");
+
+      const replay = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, pullNumber: 101, config: config() });
+      expect(replay?.kind).toBe("hold");
     });
 
     it("does NOT escalate a second match by a DIFFERENT contributor", async () => {
@@ -166,7 +179,7 @@ describe("resolveUnlinkedIssueMatchDisposition", () => {
       const first = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
       expect(first?.kind).toBe("hold");
 
-      const second = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, repoFullName: "owner/other-repo", config: config() });
+      const second = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, repoFullName: "owner/other-repo", pullNumber: 101, config: config() });
       expect(second?.kind).toBe("close");
     });
 

@@ -2504,6 +2504,7 @@ async function runAgentMaintenancePlanAndExecute(
     unlinkedIssueGuardrailConfig.mode === "hold" && pr.linkedIssues.length === 0
       ? await resolveUnlinkedIssueMatchDisposition(env, {
           repoFullName,
+          pullNumber: pr.number,
           config: unlinkedIssueGuardrailConfig,
           linkedIssueCount: pr.linkedIssues.length,
           prTitle: pr.title,

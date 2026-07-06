@@ -2513,6 +2513,16 @@ export async function hasRecentAuditEvent(env: Env, actor: string, eventType: st
   return rows.length > 0;
 }
 
+export async function hasRecentAuditEventForOtherTarget(env: Env, actor: string, eventType: string, currentTargetKey: string, sinceIso: string): Promise<boolean> {
+  const db = getDb(env.DB);
+  const rows = await db
+    .select({ id: auditEvents.id })
+    .from(auditEvents)
+    .where(and(eq(auditEvents.actor, actor), eq(auditEvents.eventType, eventType), not(eq(auditEvents.targetKey, currentTargetKey)), gte(auditEvents.createdAt, sinceIso)))
+    .limit(1);
+  return rows.length > 0;
+}
+
 /** Count-returning variant of {@link hasRecentAuditEvent}, additionally scoped to one `targetKey` (e.g. a single
  *  `owner/repo#123` PR/issue) rather than the actor's activity across the whole repo. Backs the review-request
  *  nagging cooldown (#2463): counting how many `@gittensory` pings a contributor has sent on ONE thread within

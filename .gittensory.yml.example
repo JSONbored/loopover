@@ -411,6 +411,12 @@ review:
   # AI reviewer as additive reference context.
   # impact_map: false
 
+  # When true, the AI reviewer's prompt gains an additive "repo quality-culture profile" reference block --
+  # typical merged-PR size + common accepted labels, derived from this repo's own merge history. Reference-only
+  # grounding; never a gate/scoring input. Requires operator flag GITTENSORY_REVIEW_CULTURE_PROFILE. Bool or
+  # null. Default: null/false — byte-identical. (#2995)
+  # culture_profile: false
+
   # Display-only floor for inline AI findings (`critical` | `major` | `minor` | `nitpick`). Findings below the
   # configured level are suppressed from inline comments — never from gate blockers. Default: null (show all).
   # min_finding_severity: major
@@ -825,6 +831,11 @@ settings:
 #   # symbols -- is computed, rendered as a compact unified-comment section, and fed to the AI reviewer
 #   # as additive reference context. Bool or null. Default: null/false (#2184, part of #1971).
 #   impact_map: false
+#   # When true, the AI reviewer's prompt gains an additive "repo quality-culture profile" reference block --
+#   # typical merged-PR size + common accepted labels, derived from this repo's OWN recent merge history
+#   # (recent_merged_pull_requests). Reference-only grounding, never a gate/scoring input; requires the operator
+#   # flag GITTENSORY_REVIEW_CULTURE_PROFILE. Bool or null. Default: null/false. (#2995)
+#   culture_profile: false
 #   # When true, an inline finding is ALSO tagged with a category (security/correctness/performance/
 #   # maintainability/tests/style) -- the AI reviewer self-categorizes, with a deterministic path/keyword
 #   # fallback for whatever it omits. Only takes effect when inline_comments is already on. Bool or null.

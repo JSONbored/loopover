@@ -435,6 +435,10 @@ import { extractChangedSymbols } from "../review/impact-symbols";
 import { computeImpactMap } from "../review/impact-map";
 import { formatImpactMapPromptSection, shouldComputeImpactMap } from "../review/impact-map-wire";
 import {
+  buildRepoCultureProfileContext,
+  isRepoCultureProfileEnabled,
+} from "../review/repo-culture-profile-wire";
+import {
   buildReviewEnrichment,
   isEnrichmentEnabled,
   isReesGithubTokenForwardingEnabled,
@@ -6669,6 +6673,11 @@ export async function runAiReviewForAdvisory(
     // compute the deterministic impact map and splice it into the reviewer prompt as additive reference
     // context. Absent/false ⇒ byte-identical reviewer prompt (no impact-map computation, no RAG query for it).
     reviewImpactMap?: boolean | undefined;
+    // `.gittensory.yml` review.culture_profile (#2995), resolved by the caller from the cached manifest. ANDed
+    // here with the GITTENSORY_REVIEW_CULTURE_PROFILE global flag to decide whether to append the repo's
+    // quality-culture reference block (typical merged-PR size + common labels) to the reviewer prompt. Absent/
+    // false ⇒ byte-identical (no section, no extra D1 read).
+    reviewCultureProfile?: boolean | undefined;
     // The inbound webhook delivery id that triggered this review (#codex-timeout-fields) — forwarded to a
     // self-host provider's failure log purely for operator correlation; never read by any review logic. Absent
     // (e.g. a sweep/repair fan-out with no single originating delivery, or a unit test) ⇒ the log line omits it.
@@ -6874,6 +6883,15 @@ export async function runAiReviewForAdvisory(
       });
       impactMapContext = formatImpactMapPromptSection(impactMap);
     }
+    // Repo quality-culture profile (#2995, flag-gated by GITTENSORY_REVIEW_CULTURE_PROFILE AND the per-repo
+    // `review.culture_profile` opt-in). Derives a compact reference block from the repo's OWN merge history
+    // (typical PR size, common accepted labels) and appends it as additive grounding — exactly like RAG. Both
+    // gates OFF (default) → NO new branch: no D1 read, and `cultureProfileContext` is left undefined so the
+    // prompt is byte-identical to today. Fully fail-safe (any error/insufficient-history degrades to "").
+    const cultureProfileContext =
+      isRepoCultureProfileEnabled(env) && args.reviewCultureProfile === true
+        ? await buildRepoCultureProfileContext(env, args.repoFullName)
+        : undefined;
     // Review-enrichment (#1472, flag-gated by GITTENSORY_REVIEW_ENRICHMENT + REES_URL). POST the PR to the external
     // REES for the heavy/external analysis the reviewer can't run (dependency CVEs, secrets, license/EOL/supply-chain);
     // its public-safe brief splices into the prompt next to grounding + RAG. Flag-OFF (default) → no call, no branch,
@@ -6933,6 +6951,7 @@ export async function runAiReviewForAdvisory(
       providerKey,
       grounding,
       ragContext: ragContextResult?.text,
+      cultureProfileContext,
       observability: { rag: ragTelemetry },
       impactMapContext,
       enrichment,
@@ -8554,6 +8573,7 @@ async function maybePublishPrPublicSurface(
             pathFilters: reviewPathFilters,
             selfHostAiModel: reviewSelfHostAiModel,
             impactMap: reviewImpactMap,
+            cultureProfile: reviewCultureProfile,
           } = resolveReviewPromptOverrides(reviewManifest);
           inlineCommentsEnabledForReview = shouldRequestInlineFindings(
             env,
@@ -8603,12 +8623,18 @@ async function maybePublishPrPublicSurface(
               "reputation",
               repoFullName,
             ),
+            // Repo quality-culture profile (#2995): its own cache (signal_snapshots, TTL + merged-PR-count
+            // invalidation) can refresh independently of this PR's head SHA, exactly like RAG's vector index —
+            // so a repo with it active also bypasses the AI-review result cache rather than fingerprinting a
+            // value that can't prove freshness.
+            cultureProfile: isRepoCultureProfileEnabled(env) && reviewCultureProfile === true,
           };
           const dynamicReviewContextActive =
             dynamicReviewFeatures.grounding ||
             dynamicReviewFeatures.rag ||
             dynamicReviewFeatures.enrichment ||
-            dynamicReviewFeatures.reputation;
+            dynamicReviewFeatures.reputation ||
+            dynamicReviewFeatures.cultureProfile;
           const inputFingerprint = await aiReviewCacheInputFingerprint({
             title: pr.title,
             mode: settings.aiReviewMode,
@@ -8761,6 +8787,7 @@ async function maybePublishPrPublicSurface(
               reviewFindingCategories,
               reviewSelfHostAiModel,
               reviewImpactMap,
+              reviewCultureProfile,
               deliveryId: webhook.deliveryId,
             });
             // `persistable === false` (only the lock-contention placeholder — see runAiReviewForAdvisory's return

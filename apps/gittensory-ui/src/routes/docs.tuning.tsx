@@ -147,6 +147,13 @@ function Tuning() {
           per-repo <code>review.impact_map</code> opt-in — neither alone is sufficient. Per-PR.
         </li>
         <li>
+          <code>GITTENSORY_REVIEW_CULTURE_PROFILE</code> — appends a "repo quality-culture profile"
+          reference block to the reviewer prompt: typical merged-PR size and common accepted labels,
+          derived from this repo's own merge history. Additive reference only — never a gate or
+          scoring input. Also requires the per-repo <code>review.culture_profile: true</code> opt-in
+          in <code>.gittensory.yml</code>. Per-PR.
+        </li>
+        <li>
           <code>GITTENSORY_REVIEW_REPUTATION</code> — submitter-reputation spend control. A new,
           burst, or low-reputation submitter is downgraded to a deterministic-only review; good
           reputation proceeds normally. Never surfaced publicly — no comment, label, or check shows

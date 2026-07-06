@@ -124,6 +124,7 @@ import { buildPredictedGateVerdict } from "../rules/predicted-gate";
 import { buildIssueSlopAssessment, buildSlopAssessment } from "../signals/slop";
 import { buildRepoDataQuality } from "../signals/data-quality";
 import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
+import { buildCheckTestEvidenceReport } from "./check-test-evidence";
 import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
 import { loadUpstreamStatus } from "../upstream/ruleset";
 
@@ -768,6 +769,20 @@ const checkIssueSlopShape = {
 
 const checkIssueSlopOutputSchema = checkSlopRiskOutputSchema;
 
+const checkTestEvidenceShape = {
+  changedPaths: z.array(z.string().min(1).max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles),
+  testPaths: z.array(z.string().min(1).max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+};
+
+const checkTestEvidenceOutputSchema = {
+  classification: z.enum(["strong", "adequate", "weak", "absent"]).optional(),
+  codeFileCount: z.number().int().min(0).optional(),
+  testFileCount: z.number().int().min(0).optional(),
+  docsOnly: z.boolean().optional(),
+  guidance: z.array(z.string()).optional(),
+  generatedAt: z.string().optional(),
+};
+
 const predictGateOutputSchema = {
   predicted: z.boolean().optional(),
   basis: z.string().optional(),
@@ -1232,6 +1247,17 @@ export class GittensoryMcp {
         outputSchema: checkIssueSlopOutputSchema,
       },
       async (input) => this.toolResult(await this.checkIssueSlop(input)),
+    );
+
+    server.registerTool(
+      "gittensory_check_test_evidence",
+      {
+        description:
+          "Classify whether a planned change carries enough accompanying test evidence from changed paths and optional test-file paths alone — metadata-only, no source upload, no GitHub writes. Returns a coverage-gap band and actionable guidance.",
+        inputSchema: checkTestEvidenceShape,
+        outputSchema: checkTestEvidenceOutputSchema,
+      },
+      async (input) => this.toolResult(await this.checkTestEvidence(input)),
     );
 
     server.registerTool(
@@ -2220,6 +2246,15 @@ export class GittensoryMcp {
     return {
       summary: `Issue slop risk: ${assessment.band}.`,
       data: { band: assessment.band, findings: assessment.findings } as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async checkTestEvidence(input: z.infer<z.ZodObject<typeof checkTestEvidenceShape>>): Promise<ToolPayload> {
+    await this.enforceToolRateLimit("gittensory_check_test_evidence");
+    const report = buildCheckTestEvidenceReport(input);
+    return {
+      summary: `Test-evidence classification: ${report.classification}.`,
+      data: report as unknown as Record<string, unknown>,
     };
   }
 

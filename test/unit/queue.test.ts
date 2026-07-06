@@ -21946,6 +21946,30 @@ describe("queue processors", () => {
     errors.mockRestore();
   });
 
+  it("sweep-liveness-watchdog job no-ops when GITTENSORY_SWEEP_WATCHDOG is OFF (does no scan, no re-enqueue)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue }); // flag unset → OFF
+    await upsertRepositoryFromGitHub(env, { name: "stale-repo", full_name: "owner/stale-repo", private: false, owner: { login: "owner" } }, 9310);
+    await upsertRepositorySettings(env, { repoFullName: "owner/stale-repo", autonomy: { merge: "auto" } });
+    await upsertPullRequestFromGitHub(env, "owner/stale-repo", { number: 1, title: "PR1", state: "open", user: { login: "c" }, head: { sha: "a1" }, labels: [], body: "" });
+
+    await processJob(env, { type: "sweep-liveness-watchdog", requestedBy: "test" });
+
+    expect(sent).toEqual([]);
+  });
+
+  it("sweep-liveness-watchdog job runs the liveness scan and re-enqueues a stale repo when GITTENSORY_SWEEP_WATCHDOG is ON", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ GITTENSORY_SWEEP_WATCHDOG: "true", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    await upsertRepositoryFromGitHub(env, { name: "stale-repo", full_name: "owner/stale-repo", private: false, owner: { login: "owner" } }, 9311);
+    await upsertRepositorySettings(env, { repoFullName: "owner/stale-repo", autonomy: { merge: "auto" } });
+    await upsertPullRequestFromGitHub(env, "owner/stale-repo", { number: 1, title: "PR1", state: "open", user: { login: "c" }, head: { sha: "a1" }, labels: [], body: "" });
+
+    await processJob(env, { type: "sweep-liveness-watchdog", requestedBy: "test" });
+
+    expect(sent).toEqual([expect.objectContaining({ type: "agent-regate-sweep", repoFullName: "owner/stale-repo", installationId: 9311 })]);
+  });
+
   describe("type label decoupling (#label-decoupling)", () => {
     function stubTypeLabelFetch(prNumber: number, seen: { posted: string[]; removed: string[]; checkRunCreated: boolean }) {
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

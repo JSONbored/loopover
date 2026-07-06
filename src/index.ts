@@ -5,6 +5,7 @@ import { processDlqBatch } from "./queue/dlq";
 import { processJob } from "./queue/processors";
 import { isOrbBrokerEnabled } from "./orb/broker";
 import { isOpsEnabled } from "./review/ops-wire";
+import { isSweepWatchdogEnabled } from "./review/sweep-watchdog";
 import { isRagEnabled } from "./review/rag-wire";
 import { isSelfTuneEnabled } from "./review/selftune-wire";
 import {
@@ -179,6 +180,11 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     // review-outcome data. Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never created,
     // so the cron tick does ZERO new work and the enqueued set is byte-identical to today.
     if (selfHostedReviews && isOpsEnabled(env)) jobs.push({ type: "ops-alerts", requestedBy: "schedule" });
+    // Self-heal (flag GITTENSORY_SWEEP_WATCHDOG). Hourly liveness check over the same repo set the scheduled
+    // regate sweep covers — re-enqueues a targeted sweep for any repo whose sweep marker has gone stale despite
+    // having open PRs to regate. Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never
+    // created, so the cron tick does ZERO new work and the enqueued set is byte-identical to today.
+    if (selfHostedReviews && isSweepWatchdogEnabled(env)) jobs.push({ type: "sweep-liveness-watchdog", requestedBy: "schedule" });
     // Convergence (self-improve / auto-tune, flag GITTENSORY_REVIEW_SELFTUNE). Hourly self-improvement tick over
     // gittensory's own review-outcome data: compute tuning recommendations, shadow-soak any strictly-tightening
     // one, and auto-promote it to live only after the soak window passes the gate (TIGHTENING-ONLY, audited).

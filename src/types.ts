@@ -188,6 +188,15 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
+      // Self-heal (flag-gated by GITTENSORY_SWEEP_WATCHDOG). Scan the SAME acting-autonomy repo set the
+      // scheduled regate sweep covers for a stalled per-repo sweep (open PRs present, but none regated within
+      // the staleness window) — emit a structured `sweep_liveness_stale` log AND re-enqueue a targeted
+      // `agent-regate-sweep` for just that repo. Enqueued hourly by the cron ONLY when the flag is ON
+      // (index.ts), so flag-OFF this job never exists.
+      type: "sweep-liveness-watchdog";
+      requestedBy: "schedule" | "api" | "test";
+    }
+  | {
       // Convergence (self-improve / auto-tune, flag-gated by GITTENSORY_REVIEW_SELFTUNE). Run the ported
       // self-improvement loop over gittensory's review-outcome data — compute tuning recommendations,
       // SHADOW-SOAK any strictly-tightening one, and AUTO-PROMOTE it to live only after the soak window passes

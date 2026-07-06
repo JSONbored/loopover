@@ -76,6 +76,13 @@
     // aggregate. Read-only observability; the auto-tune/config-mutation self-improve loop is NOT wired here.
     // Default OFF — flag-OFF the cron enqueues no ops job and the endpoint 404s, byte-identical to today.
     "GITTENSORY_REVIEW_OPS": "false",
+    // Self-heal (#audit-sweep-fanout-isolation follow-up): an hourly watchdog over the SAME acting-autonomy repo
+    // set the scheduled regate sweep covers — a repo with open PRs whose last-regated marker hasn't advanced in
+    // over the staleness window gets a structured `sweep_liveness_stale` log (Sentry-visible) AND a single
+    // targeted `agent-regate-sweep` re-enqueue for just that repo, so a stalled sweep recovers on its own instead
+    // of requiring a human to notice and manually trigger it. Default OFF — flag-OFF the cron enqueues no
+    // watchdog job, byte-identical to today.
+    "GITTENSORY_SWEEP_WATCHDOG": "false",
     // Convergence (RAG retrieval): at review time, query the codebase vector index for code/docs semantically
     // related to the PR's changed files and append a RELEVANT EXISTING CODE / DOCS section to the reviewer
     // prompt — additive reference context (callers, related modules, conventions), exactly like grounding.

@@ -491,6 +491,7 @@ import {
 import { DEFAULT_UNLINKED_ISSUE_GUARDRAIL } from "../review/unlinked-issue-guardrail-config";
 import { resolveUnlinkedIssueMatchDisposition } from "../review/unlinked-issue-guardrail";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
+import { isSweepWatchdogEnabled, runSweepLivenessWatchdog } from "../review/sweep-watchdog";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
 import {
   isCloseHoldOnly,
@@ -1110,6 +1111,12 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       // when the flag is ON, but a stale in-flight job that lands after a flag-flip must still no-op, so
       // flag-OFF does zero work here too. Read-only telemetry — never throws into the queue.
       if (isOpsEnabled(env)) await runOpsAlerts(env);
+      return;
+    case "sweep-liveness-watchdog":
+      // Self-heal (flag GITTENSORY_SWEEP_WATCHDOG). Defense-in-depth: the cron only ENQUEUES this when the flag
+      // is ON, but a stale in-flight job that lands after a flag-flip must still no-op, so flag-OFF does zero
+      // work here too. Fails safe internally — never throws into the queue.
+      if (isSweepWatchdogEnabled(env)) await runSweepLivenessWatchdog(env);
       return;
     case "selftune":
       // Convergence (self-improve / auto-tune, flag GITTENSORY_REVIEW_SELFTUNE). Defense-in-depth: the cron only

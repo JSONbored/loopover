@@ -241,6 +241,12 @@ declare global {
      *  byte-identical to today. NOTE: this is read-only OBSERVABILITY only; the auto-tune / config-mutation
      *  self-improve loop (src/review/auto-apply.ts) is deliberately NOT wired here — see ops-wire.ts. */
     GITTENSORY_REVIEW_OPS?: string;
+    /** Self-heal: when truthy, an hourly watchdog scans the SAME acting-autonomy repo set the scheduled regate
+     *  sweep covers for a repo whose sweep marker hasn't advanced despite having open PRs to regate, emits a
+     *  structured `sweep_liveness_stale` log (Sentry-visible), and re-enqueues a targeted `agent-regate-sweep`
+     *  for just that repo. Default OFF — unset/false means the cron tick enqueues NO watchdog job (does no new
+     *  work), so the worker is byte-identical to today. */
+    GITTENSORY_SWEEP_WATCHDOG?: string;
     /** Convergence (RAG retrieval): when truthy, the AI reviewer prompt gains a RELEVANT EXISTING CODE / DOCS
      *  section — at review time the codebase vector index is queried for code/docs semantically related to the
      *  PR's changed files (callers, related modules, existing conventions) and appended as additive reference

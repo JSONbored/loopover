@@ -604,6 +604,47 @@ describe("worker entrypoint", () => {
     expect(sent.some((m) => m.type === "ops-alerts")).toBe(false);
   });
 
+  it("enqueues the sweep-liveness-watchdog job hourly ONLY when GITTENSORY_SWEEP_WATCHDOG is ON (flag-OFF is byte-identical)", async () => {
+    const sentFor = async (watchdogFlag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
+      const sent: Array<import("../../src/types").JobMessage> = [];
+      const env = createTestEnv({
+        ...(watchdogFlag === undefined ? {} : { GITTENSORY_SWEEP_WATCHDOG: watchdogFlag }),
+        JOBS: {
+          async send(message: import("../../src/types").JobMessage) {
+            sent.push(message);
+          },
+        } as unknown as Queue,
+      });
+      const waitUntil: Promise<unknown>[] = [];
+      await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+      await Promise.all(waitUntil);
+      return sent;
+    };
+
+    // Flag OFF (default) → no sweep-liveness-watchdog job; the enqueued set is unchanged from today.
+    expect((await sentFor()).some((m) => m.type === "sweep-liveness-watchdog")).toBe(false);
+    expect((await sentFor("false")).some((m) => m.type === "sweep-liveness-watchdog")).toBe(false);
+    // Flag ON → exactly one sweep-liveness-watchdog job, enqueued in the hourly window.
+    const on = await sentFor("true");
+    expect(on.filter((m) => m.type === "sweep-liveness-watchdog")).toEqual([{ type: "sweep-liveness-watchdog", requestedBy: "schedule" }]);
+  });
+
+  it("does NOT enqueue sweep-liveness-watchdog outside the hourly window even when GITTENSORY_SWEEP_WATCHDOG is ON", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      GITTENSORY_SWEEP_WATCHDOG: "true",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    const waitUntil: Promise<unknown>[] = [];
+    await worker.scheduled(controllerFor("2026-05-25T05:15:00.000Z"), env, executionContext(waitUntil)); // non-hourly
+    await Promise.all(waitUntil);
+    expect(sent.some((m) => m.type === "sweep-liveness-watchdog")).toBe(false);
+  });
+
   it("enqueues selftune hourly only when GITTENSORY_REVIEW_SELFTUNE is ON", async () => {
     const sentFor = async (
       selfTuneFlag?: string,

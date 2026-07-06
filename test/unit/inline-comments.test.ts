@@ -360,6 +360,40 @@ describe("maybePostInlineComments (#inline-comments, review-path entry)", () => 
     expect(calls[0]?.body).toMatchObject({ comments: [{ path: "src/a.ts", line: 2, side: "RIGHT", body: "**Nit (maintainability):** guard this" }] });
   });
 
+  it("threads perCategoryCap end-to-end when set (#2159)", async () => {
+    const getFiles = vi.fn(async () => [
+      fileWith("src/a.ts", "@@ -1,0 +1,4 @@\n+1\n+2\n+3\n+4"),
+    ]);
+    const styleFindings: InlineFinding[] = Array.from({ length: 3 }, (_, index) => ({
+      path: "src/a.ts",
+      line: index + 1,
+      severity: "nit" as const,
+      body: `style-${index + 1}`,
+      category: "style" as const,
+    }));
+    const securityFinding: InlineFinding = { path: "src/a.ts", line: 4, severity: "blocker", body: "security", category: "security" };
+    const calls: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null });
+      if (url.endsWith("/pulls/3/reviews")) return Response.json({ id: 14 });
+      return new Response("unexpected", { status: 500 });
+    });
+    await maybePostInlineComments(envWithKey(), {
+      ...base,
+      aiReview: { inlineFindings: [...styleFindings, securityFinding] },
+      getFiles,
+      perCategoryCap: 1,
+    });
+    expect(calls[0]?.body).toMatchObject({
+      comments: [
+        { body: "**Blocker:** security" },
+        { body: "**Nit:** style-1" },
+      ],
+    });
+  });
+
   it("omits the category tag end-to-end when categoriesEnabled is not passed (default off, backward compatible)", async () => {
     const getFiles = vi.fn(async () => files);
     const withCategory: InlineFinding[] = [{ path: "src/a.ts", line: 2, severity: "nit", body: "guard this", category: "maintainability" }];

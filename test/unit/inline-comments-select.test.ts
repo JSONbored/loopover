@@ -92,6 +92,17 @@ describe("selectAnchoredInlineFindings (#2159)", () => {
     expect(selectAnchoredInlineFindings(findings, files).map((finding) => finding.body)).toEqual(["first"]);
   });
 
+  it("skips every category when perCategoryCap is zero", () => {
+    const findings: InlineFinding[] = [{ path: "src/a.ts", line: 1, severity: "nit", body: "style", category: "style" }];
+    expect(selectAnchoredInlineFindings(findings, files, { perCategoryCap: 0 })).toEqual([]);
+  });
+
+  it("ignores files with empty or missing patch content", () => {
+    const findings: InlineFinding[] = [{ path: "src/empty.ts", line: 1, severity: "nit", body: "missing patch" }];
+    expect(selectAnchoredInlineFindings(findings, [{ path: "src/empty.ts", payload: { patch: "" } }])).toEqual([]);
+    expect(rightSideLinesFromPatch("preamble only").size).toBe(0);
+  });
+
   it("still enforces the total cap after per-category trimming", () => {
     const findings: InlineFinding[] = Array.from({ length: 6 }, (_, index) => ({
       path: "src/a.ts",

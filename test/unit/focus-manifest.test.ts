@@ -3151,6 +3151,7 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
     const bad = parseFocusManifest({ review: { inline_comments_per_category: -1 } });
     expect(bad.review.inlineCommentsPerCategory).toBeNull();
     expect(bad.warnings.some((w) => /review\.inline_comments_per_category/.test(w))).toBe(true);
+    expect(parseFocusManifest({ review: { inline_comments_per_category: "nope" } }).review.inlineCommentsPerCategory).toBeNull();
     expect(resolveReviewPromptOverrides(on).inlineCommentsPerCategory).toBe(3);
     expect(resolveReviewPromptOverrides(parseFocusManifest({})).inlineCommentsPerCategory).toBeNull();
   });

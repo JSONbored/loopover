@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Build and deploy the self-host runtime from a prebuilt bundle without relying on host Node/npm.
 #
+# After a successful run, verify with: ./scripts/selfhost-post-update-check.sh
+#
 # Defaults are intentionally operator-friendly:
 #   ./scripts/deploy-selfhost-prebuilt.sh
 #

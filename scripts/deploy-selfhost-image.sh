@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Pull and deploy a published self-host image without rebuilding on the host.
 #
+# After a successful run, verify with: ./scripts/selfhost-post-update-check.sh
+#
 # Defaults to the latest official image:
 #   ./scripts/deploy-selfhost-image.sh
 #

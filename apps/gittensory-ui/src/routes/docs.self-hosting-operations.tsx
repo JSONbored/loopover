@@ -607,18 +607,74 @@ volumes:
 
       <h2>Updating and rolling back</h2>
       <p>
-        Both update paths below only ever restart the <code>gittensory</code> app service (
-        <code>--no-deps</code>) — they never touch other compose-profile services or their state
-        (Postgres, Redis, Qdrant, and Grafana&apos;s own <code>grafana-data</code> volume), and they
-        never touch <code>.env</code> keys other than the one they persist for next time. That means{" "}
-        <code>.env</code>, the <code>gittensory-config/</code> mount, every data volume — including
-        the app&apos;s own <code>/data</code> volume where Codex/Claude Code auth material lives —
-        and any <code>docker-compose.override.yml</code> are preserved automatically across an
-        update. You don&apos;t need to back those up or re-supply them just to run either script,
-        and you only need to recreate a profile service yourself if you&apos;re deliberately
-        upgrading that service (its own image tag in <code>docker-compose.yml</code>, or a
-        Postgres/Redis/Qdrant major-version bump) rather than the app.
+        Day-two operator flow: pull or build a new app image, restart only the{" "}
+        <code>gittensory</code> service, verify <code>/ready</code>, and confirm the release id. Use{" "}
+        <Link to="/docs/self-hosting-releases">Releases and images</Link> to pick a tag; use the
+        checklists below so updates never overwrite operator-owned secrets, config, or data.
       </p>
+
+      <Callout variant="safety" title="Operator-owned — deploy scripts never overwrite these">
+        <ul>
+          <li>
+            <code>.env</code> and any <code>*_FILE</code> secret mounts — deploy scripts only write
+            back <code>GITTENSORY_IMAGE</code> (image path) or <code>SENTRY_RELEASE</code> /{" "}
+            <code>GITTENSORY_VERSION</code> (source path).
+          </li>
+          <li>
+            <code>./gittensory-config/</code> bind mount — private per-repo{" "}
+            <code>.gittensory.yml</code> policy.
+          </li>
+          <li>
+            Named data volumes — especially <code>gittensory-data</code> (SQLite DB, Codex/Claude
+            auth under <code>/data</code>), <code>gittensory-pg</code>, <code>qdrant-data</code>,{" "}
+            <code>gittensory-backups</code>, and Grafana&apos;s <code>grafana-data</code>.
+          </li>
+          <li>
+            Optional <code>docker-compose.override.yml</code> — still loaded via{" "}
+            <code>SELFHOST_COMPOSE_FILES</code> when set, or automatically when present beside{" "}
+            <code>docker-compose.yml</code>.
+          </li>
+        </ul>
+      </Callout>
+
+      <FeatureRow
+        items={[
+          {
+            title: "Restart gittensory only (normal app update)",
+            description:
+              "Both deploy-selfhost-image.sh and deploy-selfhost-prebuilt.sh run docker compose up -d --no-deps gittensory. Redis, Postgres, Qdrant, Grafana, backup sidecars, and every volume stay running with their existing data.",
+          },
+          {
+            title: "Recreate a profile service (separate step)",
+            description:
+              "Only when you deliberately change that service's image or major version — e.g. docker compose --profile postgres pull postgres && docker compose --profile postgres up -d postgres. Never required just to ship a new gittensory app build.",
+          },
+        ]}
+      />
+
+      <h3>Preflight checklist</h3>
+      <ol>
+        <li>
+          Read release notes for migration or env changes — migrations are forward-only (see
+          Rollback below).
+        </li>
+        <li>
+          Take a fresh backup when the release may change schema — see{" "}
+          <Link to="/docs/self-hosting-backup-scaling">Backup and scaling</Link>.
+        </li>
+        <li>
+          Source path only: <code>git pull</code> and confirm <code>git status</code> is clean (no
+          uncommitted local changes the build would silently pick up).
+        </li>
+        <li>
+          Image path only: note the current tag or digest from <code>docker inspect</code> on the
+          running <code>gittensory</code> container so rollback has a known-good target.
+        </li>
+        <li>
+          Confirm routine health is green before you start —{" "}
+          <code>curl http://localhost:8787/ready</code> and a quick <code>docker compose ps</code>.
+        </li>
+      </ol>
 
       <h3>Path 1: pull a published image</h3>
       <p>
@@ -667,7 +723,42 @@ GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost@sha256:... ./scripts/depl
         even when those three are present).
       </p>
 
-      <h3>Rollback: no dedicated command today</h3>
+      <h3>Post-update checklist</h3>
+      <ol>
+        <li>
+          Wait for the deploy script&apos;s health wait to finish (or run the helper below if you
+          updated manually with plain <code>docker compose</code>).
+        </li>
+        <li>
+          <code>curl http://localhost:8787/ready</code> returns HTTP 200.
+        </li>
+        <li>
+          <code>docker compose ps gittensory</code> shows <code>healthy</code>.
+        </li>
+        <li>
+          Tail logs for <code>selfhost_listening</code> and, on first boot after a schema bump,{" "}
+          <code>selfhost_migrations_applied</code> — not <code>selfhost_job_dead</code>.
+        </li>
+        <li>
+          Confirm the release id — neither <code>/health</code> nor <code>/ready</code> exposes a
+          version string; check <code>.env</code> and the running container image instead.
+        </li>
+      </ol>
+      <CodeBlock
+        lang="bash"
+        code={`./scripts/selfhost-post-update-check.sh
+# equivalent manual checks:
+curl -sf http://localhost:8787/ready
+docker compose ps gittensory
+grep -E '^(GITTENSORY_IMAGE|GITTENSORY_VERSION|SENTRY_RELEASE)=' .env
+docker inspect --format '{{.Config.Image}}' "$(docker compose ps -q gittensory)"`}
+      />
+      <p>
+        If any check fails, see <Link to="/docs/self-hosting-troubleshooting">Troubleshooting</Link>
+        .
+      </p>
+
+      <h3>Rollback: no dedicated command</h3>
       <p>
         There is no <code>rollback</code> script. Rolling back means re-running one of the two
         scripts above pointed at an older target:
@@ -698,42 +789,6 @@ GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost@sha256:... ./scripts/depl
         restore that backup to a scratch database and boot the older code against it before doing
         the same on the live instance.
       </Callout>
-
-      <h3>Before and after any update</h3>
-      <p>Before updating:</p>
-      <ul>
-        <li>
-          Source-based deploys: <code>git status</code> is clean (no uncommitted local changes the
-          build would silently pick up or drop).
-        </li>
-        <li>
-          A current, verified backup exists if the update includes schema changes — see{" "}
-          <Link to="/docs/self-hosting-backup-scaling">Backup and scaling</Link>.
-        </li>
-      </ul>
-      <p>
-        After updating, work through the same checks as any other health pass — see{" "}
-        <strong>Health endpoints</strong> and <strong>Useful commands</strong> above: confirm{" "}
-        <code>/ready</code> returns 200, <code>docker compose ps</code> shows the service{" "}
-        <code>healthy</code>, and tail recent logs for startup errors or an unexpected absence of{" "}
-        <code>selfhost_listening</code> / <code>selfhost_migrations_applied</code>.
-      </p>
-      <p>
-        Neither <code>/health</code> nor <code>/ready</code> reports a version, so confirm the
-        deployed release directly — <code>GITTENSORY_IMAGE</code> or <code>SENTRY_RELEASE</code> in{" "}
-        <code>.env</code> records what the deploy script just resolved, and{" "}
-        <code>docker inspect</code> confirms what the running container actually has:
-      </p>
-      <CodeBlock
-        lang="bash"
-        code={`grep -E '^(GITTENSORY_IMAGE|GITTENSORY_VERSION|SENTRY_RELEASE)=' .env
-docker inspect --format '{{.Config.Image}}' "$(docker compose ps -q gittensory)"`}
-      />
-
-      <p>
-        If an operating check fails, go to{" "}
-        <Link to="/docs/self-hosting-troubleshooting">Self-host troubleshooting</Link>.
-      </p>
 
       <h2>Uninstalling and decommissioning</h2>
       <p>

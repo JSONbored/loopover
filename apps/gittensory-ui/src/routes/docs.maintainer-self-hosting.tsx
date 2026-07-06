@@ -69,7 +69,7 @@ const SECTION_LINKS = [
   {
     title: "Operations",
     description:
-      "Health checks, logs, metrics, dashboards, jobs, queues, and daily operator routines.",
+      "Health checks, logs, metrics, safe update/rollback checklists, deploy scripts, and daily operator routines.",
     to: "/docs/self-hosting-operations",
   },
   {

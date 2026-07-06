@@ -5,25 +5,35 @@
 // into the Workers-safe loader via setLocalManifestReader at boot (server.ts), so this module's fs import never
 // reaches the Cloudflare bundle.
 //
-// Layout (CodeRabbit-style: per-repo override, layered over a global default). For a repo `JSONbored/gittensory`
-// the reader tries, in priority order:
+// Layout (CodeRabbit-style: per-repo override, layered over a global default, layered over a cross-repo shared
+// base — #1959). For a repo `JSONbored/gittensory` the reader tries, in priority order:
 //   1. `jsonbored__gittensory/.gittensory.yml`  — owner-qualified folder (robust to repo-name collisions across owners)
 //   2. `gittensory/.gittensory.yml`             — bare repo-name folder (the clean, human-readable layout)
 //   3. `jsonbored__gittensory.yml`              — flat owner__repo file (the original #1390 layout; back-compat)
 //   4. `.gittensory.yml`                        — GLOBAL default at the dir root, shared by every repo.
-// `.yaml` / `.json` are accepted everywhere `.yml` is. With only ONE of {a per-repo candidate, the global default}
-// present, its raw text is returned unchanged — byte-identical to the original #1390 behavior. With BOTH present,
-// they are DEEP-MERGED (the per-repo file overlaid onto the global default): nested mappings (`gate`, `settings`,
-// `review`, `features`, `contentLane`, and their own nested blocks) merge key by key, arrays replace wholesale
-// (never concatenated), and an explicit YAML/JSON `null` at a key always overrides the global value there — which
-// clears a setting wherever the manifest parser already treats an explicit null as "off"/"clear" (e.g.
-// `settings.contributorOpenPrCap`, `settings.accountAgeThresholdDays`), and is otherwise equivalent to omitting the
-// key. A per-repo key that is simply absent leaves the corresponding global value untouched. If ONE file fails to
-// parse as a YAML/JSON mapping (or is oversized), the merge is skipped and the OTHER file's raw text is used alone
-// — a still-valid sibling's policy is never silently discarded just because its counterpart is broken. If BOTH
-// fail, the per-repo file's raw text is returned (matching the original single-candidate priority), so a doubly
-// broken pair degrades exactly like a single malformed manifest always has. The slug is lowercased (GitHub repo
-// full-names are case-insensitive; #1390 already lowercased).
+//   5. `_shared/.gittensory.yml`                — SHARED BASE (#1959), the lowest-priority layer: one house policy
+//      an operator running many repos writes once instead of copy-pasting into every repo's private config.
+// `.yaml` / `.json` are accepted everywhere `.yml` is. With only ONE of {a per-repo candidate, the global default,
+// the shared base} present, its raw text is returned unchanged — byte-identical to the original #1390 behavior
+// (and to the pre-#1959 2-layer behavior when no shared base is mounted, the common case). With more than one
+// present, they are DEEP-MERGED in ascending priority (shared base → global default → per-repo file): nested
+// mappings (`gate`, `settings`, `review`, `features`, `contentLane`, and their own nested blocks) merge key by key,
+// arrays replace wholesale (never concatenated), and an explicit YAML/JSON `null` at a key always overrides a
+// lower layer's value there — which clears a setting wherever the manifest parser already treats an explicit null
+// as "off"/"clear" (e.g. `settings.contributorOpenPrCap`, `settings.accountAgeThresholdDays`), and is otherwise
+// equivalent to omitting the key. A key that is simply absent from a higher layer leaves the lower layer's value at
+// that key untouched. If a layer fails to parse as a YAML/JSON mapping (or is oversized), it is dropped from the
+// fold and the remaining, still-valid layers merge as if it were never mounted — a broken layer never discards a
+// still-good sibling's policy, and never blocks a review. If NONE of the present layers parse, the highest-priority
+// present layer's raw text is returned (matching the original single-candidate priority), so a doubly/triply broken
+// set degrades exactly like a single malformed manifest always has. The slug is lowercased (GitHub repo full-names
+// are case-insensitive; #1390 already lowercased).
+//
+// Known limitation (#1959): the shared-base folder name `_shared` could collide with a bare repo-name folder
+// (layer 2) for a real GitHub repo literally named `_shared` — `isSafeRepoSegment` permits `_` as an interior
+// character, so that repo name is technically valid. This is a deliberately accepted edge case; an operator
+// hosting a repo named exactly `_shared` should rename this folder via a private, documented convention rather
+// than relying on any automatic disambiguation.
 import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -49,6 +59,12 @@ function isSafeRepoSegment(segment: string): boolean {
 /** Global-default candidates (relative to GITTENSORY_REPO_CONFIG_DIR): the dir-root `.gittensory.{yml,yaml,json}`,
  *  deep-merged under any per-repo file (or applied alone, when a repo has no per-repo file of its own). */
 export const GLOBAL_CONFIG_CANDIDATES: string[] = [...CONFIG_BASENAMES];
+
+/** Shared-base candidates (#1959, relative to GITTENSORY_REPO_CONFIG_DIR): `_shared/.gittensory.{yml,yaml,json}`,
+ *  sibling to the per-repo folders inside the SAME container-private directory — no new env var. This is the
+ *  lowest-priority layer: a cross-repo "house policy" an operator running many repos writes once, deep-merged
+ *  UNDER both the global default and any per-repo file (or applied alone, when neither of those exists). */
+export const SHARED_BASE_CONFIG_CANDIDATES: string[] = CONFIG_BASENAMES.map((base) => join("_shared", base));
 
 /** Per-repo private-config candidate paths (relative to GITTENSORY_REPO_CONFIG_DIR), in priority order:
  *  owner-qualified folder → bare repo-name folder → flat `owner__repo` file (the #1390 back-compat form). The slug
@@ -121,39 +137,56 @@ export function mergeConfigOverlay(base: unknown, override: unknown): unknown {
   return merged;
 }
 
-/** Combine a global-default and a per-repo config's raw text, given that BOTH files exist. Both parse as mappings
- *  → deep-merged (the per-repo file overlaid onto the global default via {@link mergeConfigOverlay}) into one JSON
- *  document — a lossless round trip for the downstream `parseFocusManifestContent` (it starts with `{`, so that
- *  parser `JSON.parse`s it) since both inputs are already JSON-safe values. Only one parses → that file's raw text
- *  alone (best-effort: a broken sibling never discards a still-valid file's policy). Neither parses → the per-repo
- *  text (matching the original single-candidate-wins priority, so it flows downstream to the same "malformed,
- *  ignoring" warning a lone broken manifest always got). */
-function combineConfigText(globalText: string, repoText: string): string {
-  const globalRaw = parseConfigMapping(globalText);
-  const repoRaw = parseConfigMapping(repoText);
-  if (globalRaw && repoRaw) return JSON.stringify(mergeConfigOverlay(globalRaw, repoRaw));
-  if (repoRaw) return repoText;
-  if (globalRaw) return globalText;
-  return repoText;
+/** Combine any number of config-text layers, given in ASCENDING priority order (lowest first, e.g.
+ *  `[sharedText, globalText, repoText]` — #1959), into the raw text `parseFocusManifestContent` should parse.
+ *  `null` entries (a layer whose file simply doesn't exist) are ignored outright. Every remaining, present layer is
+ *  tolerantly parsed via {@link parseConfigMapping}; layers that parse as a mapping are folded left-to-right with
+ *  {@link mergeConfigOverlay} (each later — higher-priority — layer overlays every earlier one), so a 3-way fold
+ *  reduces to exactly the existing 2-way "per-repo overlays global" semantics when only 2 layers are present, and to
+ *  a single file's raw text when only 1 is. A present-but-unparseable layer (malformed, oversized, or a parsed
+ *  non-mapping value) is DROPPED from the fold — never blocks, never discards a still-valid sibling's policy —
+ *  which is why fewer than 2 layers may end up parsed even when more than 2 are present on disk. With 0 parsed
+ *  layers, the highest-priority PRESENT layer's raw text is returned unchanged (matching the original
+ *  single-candidate priority, so a fully-broken set degrades exactly like a single malformed manifest always has).
+ *  With exactly 1 parsed layer, that layer's own raw text is returned unchanged — never re-serialized — so a lone
+ *  valid file's formatting/comments survive untouched, identical to the pre-#1959 "only one side present" case.
+ *  Only 2+ successfully parsed layers are actually re-serialized as merged JSON. */
+function combineConfigLayers(layersAscendingPriority: (string | null)[]): string | null {
+  const present = layersAscendingPriority.filter((text): text is string => text !== null);
+  if (present.length === 0) return null;
+  const parsedLayers: { text: string; mapping: Record<string, unknown> }[] = [];
+  for (const text of present) {
+    const mapping = parseConfigMapping(text);
+    if (mapping) parsedLayers.push({ text, mapping });
+  }
+  if (parsedLayers.length === 0) return present[present.length - 1]!; // none parsed → highest-priority present layer, raw
+  if (parsedLayers.length === 1) return parsedLayers[0]!.text; // exactly one parsed → its raw text, unchanged
+  let merged: unknown = parsedLayers[0]!.mapping;
+  for (const layer of parsedLayers.slice(1)) merged = mergeConfigOverlay(merged, layer.mapping);
+  return JSON.stringify(merged);
 }
 
 /** Build the container-local manifest reader over GITTENSORY_REPO_CONFIG_DIR, or null when the dir is unset/blank
- *  (⇒ the loader keeps fetching the public `.gittensory.yml`). Looks up the first existing per-repo candidate and
- *  the global-default candidate independently: with only one present, its raw text is returned unchanged; with
- *  both present, they are deep-merged (see the module header) and returned as one JSON document; with neither
- *  present, null (⇒ the loader falls through to the public file). An invalid repo full name yields no per-repo
- *  candidates and is NOT served the global default (it is never a real webhook repo). */
+ *  (⇒ the loader keeps fetching the public `.gittensory.yml`). Looks up the first existing per-repo candidate, the
+ *  global-default candidate, and the shared-base candidate (#1959) independently and folds whichever are present
+ *  in ascending priority (shared → global → per-repo) via {@link combineConfigLayers}: with only one present, its
+ *  raw text is returned unchanged; with two or more, they are deep-merged (see the module header) and returned as
+ *  one JSON document; with none present, null (⇒ the loader falls through to the public file). An invalid repo
+ *  full name yields no per-repo candidates and is NOT served the global default or the shared base either (it is
+ *  never a real webhook repo). */
 export function makeLocalManifestReader(dir: string | undefined): RepoFocusManifestFetcher | null {
   const trimmed = (dir ?? "").trim();
   if (!trimmed) return null;
   const base = resolve(trimmed);
   return async (repoFullName: string): Promise<string | null> => {
     const perRepo = localConfigCandidates(repoFullName);
-    if (perRepo.length === 0) return null; // invalid repo name → no per-repo file AND no global default
-    const [repoText, globalText] = await Promise.all([readFirstExisting(base, perRepo), readFirstExisting(base, GLOBAL_CONFIG_CANDIDATES)]);
-    if (repoText === null) return globalText;
-    if (globalText === null) return repoText;
-    return combineConfigText(globalText, repoText);
+    if (perRepo.length === 0) return null; // invalid repo name → no per-repo file, global default, or shared base
+    const [sharedText, globalText, repoText] = await Promise.all([
+      readFirstExisting(base, SHARED_BASE_CONFIG_CANDIDATES),
+      readFirstExisting(base, GLOBAL_CONFIG_CANDIDATES),
+      readFirstExisting(base, perRepo),
+    ]);
+    return combineConfigLayers([sharedText, globalText, repoText]);
   };
 }
 

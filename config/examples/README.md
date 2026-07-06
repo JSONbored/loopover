@@ -23,6 +23,7 @@ ${GITTENSORY_REPO_CONFIG_DIR}/owner__repo/.gittensory.yml   # 1. owner-qualified
 ${GITTENSORY_REPO_CONFIG_DIR}/repo/.gittensory.yml          # 2. bare repo-name folder
 ${GITTENSORY_REPO_CONFIG_DIR}/owner__repo.yml               # 3. flat file (back-compat)
 ${GITTENSORY_REPO_CONFIG_DIR}/.gittensory.yml               # 4. global default, shared by every repo
+${GITTENSORY_REPO_CONFIG_DIR}/_shared/.gittensory.yml       # 5. shared base (#1959), lowest priority
 ```
 
 `.yaml` and `.json` are accepted everywhere `.yml` is. Every one of these files uses the **exact
@@ -36,19 +37,27 @@ or into your private mount and customize from there.
 
 From highest to lowest priority:
 
-1. **Private per-repo file**, deep-merged over **2** when both exist (see below) — or used alone
-   when only a per-repo file exists.
-2. **Private global default** (`${GITTENSORY_REPO_CONFIG_DIR}/.gittensory.yml`) — used alone when
-   a repo has no per-repo file of its own.
-3. When **neither** a private per-repo nor a private global file exists, the loader falls back to
-   the **public repo `.gittensory.yml`** (or `.github/gittensory.yml`) fetched from GitHub.
-4. **Dashboard/API-stored settings** for the repo.
-5. **Built-in safe defaults.**
+1. **Private per-repo file**, deep-merged over **2** and **3** when more than one exists (see
+   below) — or used alone when it is the only private layer present.
+2. **Private global default** (`${GITTENSORY_REPO_CONFIG_DIR}/.gittensory.yml`) — deep-merged
+   under **1** when both exist; used alone when a repo has no per-repo file of its own and no
+   shared base is mounted.
+3. **Private shared base** (`${GITTENSORY_REPO_CONFIG_DIR}/_shared/.gittensory.yml`, #1959) — the
+   lowest-priority private layer, deep-merged under both **1** and **2**. An operator running many
+   repos writes a house review policy (e.g. a default `review.tone`, `path_filters`, or
+   `labeling_rules`) here **once** instead of copy-pasting it into every repo's per-repo file or
+   the global default. `.yaml`/`.json` are accepted, same as every other candidate. Absent (the
+   default, common case) ⇒ byte-identical behavior to the pre-#1959 2-layer chain.
+4. When **none** of the three private layers above exists, the loader falls back to the **public
+   repo `.gittensory.yml`** (or `.github/gittensory.yml`) fetched from GitHub.
+5. **Dashboard/API-stored settings** for the repo.
+6. **Built-in safe defaults.**
 
-Layers 1-2 are evaluated together as one private-config layer: if *either* a per-repo or a global
-file exists privately, the public file in layer 3 is **never consulted** for that repo. This is
-unchanged from the original private-config behavior (#1390) — only the interaction *between* the
-private per-repo and private global layers is new.
+Layers 1-3 are evaluated together as one private-config layer: if *any* of a per-repo file, a
+global default, or a shared base exists privately, the public file in layer 4 is **never
+consulted** for that repo. This is unchanged from the original private-config behavior (#1390) —
+only the interaction *among* the three private layers is new (the per-repo/global interaction
+shipped first; the shared base is the newest, lowest layer, #1959).
 
 This chain governs *per-repo review policy* only. A separate, lower-level set of **deployment
 environment variables** (`GITTENSORY_REVIEW_*` flags, AI provider keys/models, self-host runtime
@@ -60,24 +69,28 @@ narrows what's already permitted. See the generated, always-current
 
 ## Overlay (deep-merge) semantics
 
-When **both** a per-repo file and a global default exist for a repo, they are merged — the
-per-repo file overlaid onto the global default:
+When **two or more** of {a per-repo file, a global default, a shared base} exist for a repo, they
+are merged in ascending priority — shared base first, global default overlaid on top of that, then
+the per-repo file overlaid on top of that (see [Shared base layer](#shared-base-layer-multi-repo-operators-1959)
+below for the shared base specifically):
 
 - **Nested mappings** (`gate`, `settings`, `review`, `features`, `contentLane`, and their own
-  nested blocks like `gate.readiness` or `gate.aiReview`) merge **key by key**. A per-repo file
-  only needs to mention the keys it wants to change; everything else is inherited from global.
+  nested blocks like `gate.readiness` or `gate.aiReview`) merge **key by key**. A higher-priority
+  file only needs to mention the keys it wants to change; everything else is inherited from the
+  next layer down.
 - **Arrays** (`wantedPaths`, `preferredLabels`, `testExpectations`,
   `review.pathInstructions`, `review.excludePaths`, `contentLane.duplicateKeyFields`, etc.)
-  **replace wholesale** — a per-repo array is never concatenated with the global one.
-- An **explicit `null`** at a key in the per-repo file always overrides the global value there.
-  This clears a setting wherever the manifest parser already treats an explicit `null` as
+  **replace wholesale** — a higher-priority array is never concatenated with a lower layer's.
+- An **explicit `null`** at a key in a higher-priority file always overrides a lower layer's value
+  there. This clears a setting wherever the manifest parser already treats an explicit `null` as
   "off"/"clear" — e.g. `settings.contributorOpenPrCap`, `settings.contributorOpenIssueCap`,
   `settings.accountAgeThresholdDays`, and the enforcement label names
   (`settings.blacklistLabel`/`contributorCapLabel`/`reviewNagLabel`, see below) — and is a harmless
   no-op (equivalent to omitting the key) everywhere else.
-- If either file fails to parse (or is malformed/oversized), the merge is skipped and the
-  still-valid file is used alone; a still-good sibling's policy is never silently discarded just
-  because the other file is broken.
+- If any layer fails to parse (or is malformed/oversized), it is dropped from the merge and the
+  remaining, still-valid layers merge as if it were never mounted; a still-good layer's policy is
+  never silently discarded just because another layer is broken, and a broken layer never blocks a
+  review.
 
 ### Example 1 — global defaults + a per-repo override
 
@@ -126,6 +139,62 @@ settings:
   autoCloseExemptLogins:
     - your-trusted-regular
 ```
+
+## Shared base layer (multi-repo operators, #1959)
+
+An operator running **many** repos through the same self-host instance can express one house
+review policy — e.g. a default `review.tone`, a baseline `path_filters`/`wantedPaths` set, or
+common `labeling_rules` — **once**, instead of copy-pasting it into every repo's per-repo file or
+even the global default. That policy lives at:
+
+```
+${GITTENSORY_REPO_CONFIG_DIR}/_shared/.gittensory.yml
+```
+
+(`.yaml`/`.json` also accepted, same lookup order as every other candidate — see
+[`shared.gittensory.yml`](./shared.gittensory.yml) for a starter). It sits at the **lowest**
+priority of the three private layers: a per-repo file overlays a global default, which overlays
+the shared base — the shared base fills in only the fields a higher layer is silent on. This is
+the exact same deep-merge helper and array-replace/explicit-null-clear semantics described above,
+folded across one more layer; it is not a new merge algorithm.
+
+**Absent shared base is the default, common case** — with no `_shared/.gittensory.yml` mounted,
+behavior is byte-identical to the pre-#1959 2-layer chain. A malformed or unreadable shared file
+fails safe exactly like a malformed per-repo or global file always has: it is dropped from the
+merge and the remaining, still-valid layers combine as if it were never mounted — a broken shared
+base never blocks a review.
+
+### Example 4 — shared base + global default + a per-repo override, all three present
+
+`_shared/.gittensory.yml` (shared base — one house policy for every repo on this instance):
+
+```yaml
+review:
+  tone: friendly-terse
+gate:
+  duplicates: block
+```
+
+`.gittensory.yml` (global default — this instance's own baseline, silent on `review.tone`):
+
+```yaml
+gate:
+  enabled: true
+```
+
+`owner__repo/.gittensory.yml` (per-repo override — only touches what's different for this repo):
+
+```yaml
+gate:
+  enabled: true
+  # duplicates is inherited from the shared base (still "block") — neither this file nor the
+  # global default repeats it.
+```
+
+The effective config for `owner/repo` has `review.tone: friendly-terse` (from the shared base;
+neither global nor the per-repo file mentions it), `gate.duplicates: block` (from the shared base,
+passed through untouched by global), and `gate.enabled: true` (set the same way by both global and
+the per-repo file).
 
 ## Label autonomy scoping for one-shot review mode
 

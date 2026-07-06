@@ -79,8 +79,9 @@ services:
       PORT: "8787"
       DATABASE_PATH: /data/gittensory.sqlite
       # Container-private per-repo config (#1390): point at a mounted dir holding {owner}__{repo}/.gittensory.yml
-      # files layered over an optional root .gittensory.yml global default (a per-repo file overrides only the
-      # keys it sets; anything it doesn't mention is inherited from the global default — see
+      # files layered over an optional root .gittensory.yml global default, itself layered over an optional
+      # _shared/.gittensory.yml cross-repo base for multi-repo operators (#1959) — a higher layer overrides only the
+      # keys it sets; anything it doesn't mention is inherited from the next layer down — see
       # config/examples/README.md). Keeps each repo's policy OUT of the public GitHub repo so contributors can't
       # game the rules. Empty/unmounted ⇒ repos use the public file / defaults.
       GITTENSORY_REPO_CONFIG_DIR: "${GITTENSORY_REPO_CONFIG_DIR:-/config}"

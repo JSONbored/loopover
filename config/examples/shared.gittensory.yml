@@ -1,0 +1,30 @@
+# ============================================================================
+# Self-host PRIVATE shared base — GENERIC EXAMPLE, safe to publish (#1959)
+# ============================================================================
+#
+# Copy this file to `${GITTENSORY_REPO_CONFIG_DIR}/_shared/.gittensory.yml` and edit your copy —
+# never this one. This is the LOWEST-priority layer: a house review policy an operator running
+# MANY repos writes ONCE here instead of copy-pasting it into every repo's private config. It is
+# deep-merged UNDER both the global default (global.gittensory.yml) and any per-repo override
+# (repo-override.gittensory.yml) — any key it doesn't mention is inherited from whichever of those
+# two files is present; see ../README.md for the full precedence chain.
+#
+# Absent shared base (the default, common case) => byte-identical behavior to the pre-#1959
+# 2-layer chain — this file only matters once you actually mount one.
+# ============================================================================
+
+# House-wide review tone and defaults every repo starts from unless a higher layer overrides it.
+review:
+  tone: friendly-terse
+
+# A default wanted-paths guidance for repos that don't set their own — a per-repo or global
+# wantedPaths list REPLACES this wholesale (array-replace overlay semantics), it never merges with
+# it.
+wantedPaths:
+  - src/**
+  - test/**
+
+gate:
+  # House baseline: duplicates block by default fleet-wide. A repo needing a different policy sets
+  # its own `gate.duplicates` in its per-repo file (or the global default) to override just this key.
+  duplicates: block

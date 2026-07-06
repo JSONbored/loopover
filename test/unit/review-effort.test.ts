@@ -10,7 +10,7 @@ function file(path: string, added: number): ReviewEffortFile {
   return { path, patch: srcPatch(added) };
 }
 
-describe("estimateReviewEffort", () => {
+describe("estimateReviewEffort (#2151)", () => {
   it("returns band 1 and a floored minute for an empty change set", () => {
     expect(estimateReviewEffort([])).toEqual({ band: 1, minutes: 1 });
   });
@@ -48,5 +48,10 @@ describe("estimateReviewEffort", () => {
     const effort = estimateReviewEffort([file("src/a.ts", 10), file("src/b.ts", 10)]); // (10+10) + 2*3 = 26 -> band 2
     expect(effort.band).toBe(2);
     expect(effort.minutes).toBe(13);
+  });
+
+  it("maps a scattered multi-file change to band 5 (#2151)", () => {
+    const files = Array.from({ length: 5 }, (_, i) => file(`src/mod${i}.ts`, 100)); // 500 + 5*3 = 515 -> band 5
+    expect(estimateReviewEffort(files)).toEqual({ band: 5, minutes: 258 });
   });
 });

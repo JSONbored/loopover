@@ -4,7 +4,7 @@ import {
   suggestCommand as suggestCommandFromCatalog,
   type CommandSuggestCatalog,
 } from "./command-suggest";
-import { gittensoryFooter } from "./footer";
+import { gittensoryFooter, GITTENSORY_SITE_URL } from "./footer";
 import type { AgentRunBundle } from "../services/agent-orchestrator";
 import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } from "../gittensor/api";
 import type { AgentActionRecord, RepositoryCommandAuthorizationPolicy } from "../types";
@@ -780,6 +780,8 @@ function helpSections(unknownVerb?: string | undefined): string[] {
     "- `@gittensory noise-report` highlights queue noise to triage first.",
     "",
     ...actionCommandHelpSections(),
+    "",
+    `- Full command reference (syntax, roles, gate boundary): ${GITTENSORY_SITE_URL}/docs/gittensory-commands`,
   ];
 }
 

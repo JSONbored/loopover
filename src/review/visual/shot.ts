@@ -198,6 +198,23 @@ const MAX_SCROLL_STEPS = 6;
 // Lets a scroll-linked CSS transition/JS listener finish reacting before the frame is captured — short enough
 // that 6 steps stays a quick "evidence" clip, long enough that a typical transition (150–300ms) has settled.
 const SCROLL_SETTLE_MS = 350;
+const SCROLL_EVALUATE_TIMEOUT_MS = 2_000;
+
+async function withScrollOperationTimeout<T>(operation: Promise<T>, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`scroll ${label} timed out after ${SCROLL_EVALUATE_TIMEOUT_MS}ms`)), SCROLL_EVALUATE_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    clearTimeout(timeoutId as ReturnType<typeof setTimeout>);
+  }
+}
+
+async function waitForScrollSettle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, SCROLL_SETTLE_MS));
+}
 
 /**
  * Capture a short sequence of viewport-cropped frames while scrolling `url` from top to bottom, for assembly
@@ -253,14 +270,20 @@ export async function captureScrollFrames(env: Env, url: string, viewport: Viewp
     // browser realm, not this Worker/Node one) — this project's `lib` deliberately excludes `dom` (it would
     // shadow the Workers-runtime `Request`/`Response` globals used everywhere else), so these two reach the
     // browser globals via `globalThis` instead of the bare identifiers, which don't resolve at compile time.
-    const scrollHeight = await page.evaluate(() => (globalThis as unknown as { document: { documentElement: { scrollHeight: number } } }).document.documentElement.scrollHeight);
+    const scrollHeight = await withScrollOperationTimeout(
+      page.evaluate(() => (globalThis as unknown as { document: { documentElement: { scrollHeight: number } } }).document.documentElement.scrollHeight),
+      "height",
+    );
     const maxScroll = Math.max(0, scrollHeight - viewport.height);
     const stepCount = maxScroll === 0 ? 1 : MAX_SCROLL_STEPS;
     const frames: Uint8Array[] = [];
     for (let step = 0; step < stepCount; step++) {
       const position = stepCount === 1 ? 0 : Math.round((maxScroll * step) / (stepCount - 1));
-      await page.evaluate((y) => (globalThis as unknown as { window: { scrollTo: (x: number, yPos: number) => void } }).window.scrollTo(0, y), position);
-      await page.evaluate((ms) => new Promise((resolve) => setTimeout(resolve, ms)), SCROLL_SETTLE_MS);
+      await withScrollOperationTimeout(
+        page.evaluate((y) => (globalThis as unknown as { window: { scrollTo: (x: number, yPos: number) => void } }).window.scrollTo(0, y), position),
+        "scroll",
+      );
+      await waitForScrollSettle();
       frames.push((await page.screenshot({ type: "png", fullPage: false })) as Uint8Array);
     }
     return { frames, authWalled: false };

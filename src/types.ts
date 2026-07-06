@@ -612,6 +612,14 @@ export type RepositorySettings = {
   checkRunMode: "off" | "enabled";
   checkRunDetailLevel: "minimal" | "standard" | "deep";
   gateCheckMode: "off" | "enabled";
+  /** Scheduled re-gate sweep candidate ordering (#3815). `staleness` (default) picks whichever open PR the
+   *  sweep has gone longest WITHOUT re-gating (see selectRegateCandidates), which is what gives the sweep its
+   *  documented full-coverage-in-ceil(open/max)-ticks convergence guarantee even under dry-run/pause (when
+   *  GitHub's own `updatedAt` writes are suppressed). `oldest-first` instead always picks the oldest-created
+   *  open PRs first, for an operator who wants deterministic creation-order draining over that guarantee.
+   *  Selection-time only — real-time webhook-driven review is not gated by this and can process any PR at
+   *  any time regardless of the chosen order. */
+  regateSweepOrderMode: "staleness" | "oldest-first";
   /** The actual runtime authority for whether the "Gittensory Orb Review Agent" check-run publishes (#2852).
    *  See {@link ReviewCheckMode}. `gateCheckMode` above stays wired for API/back-compat display but no longer
    *  drives the publish decision on its own. */

@@ -213,6 +213,7 @@ export type FocusManifestSettings = Partial<
     | "checkRunMode"
     | "checkRunDetailLevel"
     | "gateCheckMode"
+    | "regateSweepOrderMode"
     | "reviewCheckMode"
     | "autoProjectMilestoneMatch"
     | "autoProjectMilestoneMatchBackend"
@@ -1417,6 +1418,8 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   if (checkRunDetailLevel !== null) out.checkRunDetailLevel = checkRunDetailLevel;
   const gateCheckMode = normalizeOptionalEnum(r.gateCheckMode, "settings.gateCheckMode", ["off", "enabled"] as const, warnings);
   if (gateCheckMode !== null) out.gateCheckMode = gateCheckMode;
+  const regateSweepOrderMode = normalizeOptionalEnum(r.regateSweepOrderMode, "settings.regateSweepOrderMode", ["staleness", "oldest-first"] as const, warnings);
+  if (regateSweepOrderMode !== null) out.regateSweepOrderMode = regateSweepOrderMode;
   // Same tri-state field as gate.checkMode above (the friendly gate alias overlays onto it in
   // resolveEffectiveSettings, and wins when both are set).
   const reviewCheckMode = normalizeOptionalEnum(r.reviewCheckMode, "settings.reviewCheckMode", ["required", "visible", "disabled"] as const, warnings);

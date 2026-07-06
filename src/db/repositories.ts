@@ -497,6 +497,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
       gateCheckMode: "off",
+      regateSweepOrderMode: "staleness",
       reviewCheckMode: "disabled",
       autoProjectMilestoneMatch: "off",
       autoProjectMilestoneMatchBackend: "github",
@@ -573,6 +574,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     checkRunMode: parseCheckRunMode(row.checkRunMode),
     checkRunDetailLevel: parseCheckRunDetailLevel(row.checkRunDetailLevel),
     gateCheckMode: parseGateCheckMode(row.gateCheckMode),
+    regateSweepOrderMode: parseRegateSweepOrderMode(row.regateSweepOrderMode),
     reviewCheckMode: parseReviewCheckMode(row.reviewCheckMode),
     autoProjectMilestoneMatch: parseProjectMilestoneMatchMode(row.projectMilestoneMatchMode),
     autoProjectMilestoneMatchBackend: parseProjectMilestoneMatchBackend(row.autoProjectMilestoneMatchBackend),
@@ -685,6 +687,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     checkRunMode: settings.checkRunMode ?? "off",
     checkRunDetailLevel: settings.checkRunDetailLevel ?? "minimal",
     gateCheckMode: settings.gateCheckMode ?? "off",
+    regateSweepOrderMode: settings.regateSweepOrderMode ?? "staleness",
     // Legacy-write compatibility (#2852): a caller that sets ONLY gateCheckMode (never touching the newer,
     // more expressive reviewCheckMode) must keep its historical effect -- "enabled" still means the check
     // publishes. This is safe under this function's existing "no field is preserved from the DB, an absent
@@ -769,6 +772,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       checkRunMode: resolved.checkRunMode,
       checkRunDetailLevel: resolved.checkRunDetailLevel,
       gateCheckMode: resolved.gateCheckMode,
+      regateSweepOrderMode: resolved.regateSweepOrderMode,
       reviewCheckMode: resolved.reviewCheckMode,
       projectMilestoneMatchMode: resolved.autoProjectMilestoneMatch,
       autoProjectMilestoneMatchBackend: resolved.autoProjectMilestoneMatchBackend,
@@ -845,6 +849,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         checkRunMode: resolved.checkRunMode,
         checkRunDetailLevel: resolved.checkRunDetailLevel,
         gateCheckMode: resolved.gateCheckMode,
+        regateSweepOrderMode: resolved.regateSweepOrderMode,
         reviewCheckMode: resolved.reviewCheckMode,
       projectMilestoneMatchMode: resolved.autoProjectMilestoneMatch,
       autoProjectMilestoneMatchBackend: resolved.autoProjectMilestoneMatchBackend,
@@ -6692,6 +6697,10 @@ function parseCheckRunDetailLevel(value: string): RepositorySettings["checkRunDe
 
 function parseGateCheckMode(value: string): RepositorySettings["gateCheckMode"] {
   return value === "enabled" ? "enabled" : "off";
+}
+
+function parseRegateSweepOrderMode(value: string): RepositorySettings["regateSweepOrderMode"] {
+  return value === "oldest-first" ? "oldest-first" : "staleness";
 }
 
 function parseReviewCheckMode(value: string): RepositorySettings["reviewCheckMode"] {

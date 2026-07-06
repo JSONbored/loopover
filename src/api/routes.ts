@@ -651,6 +651,7 @@ const repositorySettingsSchema = z.object({
   // this full-replace route that omits this field must land on the same safe default as a never-configured row.
   checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]).default("minimal"),
   gateCheckMode: z.enum(["off", "enabled"]).default("off"),
+  regateSweepOrderMode: z.enum(["staleness", "oldest-first"]).default("staleness"),
   // #2852: deliberately NO `.default()` here (unlike every sibling field above) -- this is a non-partial,
   // full-replace schema (see upsertRepositorySettings call below, which passes every parsed field straight
   // through with no read-merge of the current row), so an eager default would mask a legacy caller that only
@@ -708,6 +709,7 @@ const maintainerSettingsSchema = z
     checkRunMode: z.enum(["off", "enabled"]),
     checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]),
     gateCheckMode: z.enum(["off", "enabled"]),
+    regateSweepOrderMode: z.enum(["staleness", "oldest-first"]),
     reviewCheckMode: z.enum(["required", "visible", "disabled"]),
     gatePack: z.enum(["gittensor", "oss-anti-slop"]),
     linkedIssueGateMode: z.enum(["off", "advisory", "block"]),
@@ -3768,6 +3770,7 @@ export function createApp() {
         checkRunMode: parsed.data.checkRunMode,
         checkRunDetailLevel: parsed.data.checkRunDetailLevel,
         gateCheckMode: parsed.data.gateCheckMode,
+        regateSweepOrderMode: parsed.data.regateSweepOrderMode,
         // #2852: this route is a full-replace, non-partial schema (every sibling field has a `.default()`),
         // so a caller that only ever sends gateCheckMode must still get its historical effect on the actual
         // publish authority -- derive it explicitly here rather than relying on a passthrough `undefined`

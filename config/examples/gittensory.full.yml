@@ -522,6 +522,9 @@ settings:
   # Check-run detail. minimal | standard | deep. Default: minimal.
   checkRunDetailLevel: minimal
 
+  # Sweep order. staleness | oldest-first. Default: staleness.
+  regateSweepOrderMode: staleness
+
   # Which public surfaces are used.
   # off | comment_and_label | comment_only | label_only. Default: comment_and_label.
   publicSurface: comment_and_label

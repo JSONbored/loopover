@@ -288,6 +288,7 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     publicSignalLevel: "publicSignalLevel:",
     checkRunMode: "checkRunMode:",
     checkRunDetailLevel: "checkRunDetailLevel:",
+    regateSweepOrderMode: "regateSweepOrderMode:",
     reviewCheckMode: "checkMode:", // `gate.checkMode` above documents the same underlying knob.
     autoProjectMilestoneMatch: "autoProjectMilestoneMatch:",
     autoProjectMilestoneMatchBackend: "autoProjectMilestoneMatchBackend:",

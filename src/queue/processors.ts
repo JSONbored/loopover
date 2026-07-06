@@ -1711,6 +1711,7 @@ async function sweepRepoRegate(
     now: nowIso(),
     priorityPullNumbers,
     priorityBypassesFreshness: priorityPullNumbers.length > 0,
+    orderMode: settings.regateSweepOrderMode,
     ...(repairCandidateLimit !== null ? { max: repairCandidateLimit } : {}),
   });
   // No stale PRs this tick — stay quiet rather than writing an empty heartbeat to the audit feed.

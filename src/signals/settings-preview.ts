@@ -189,6 +189,7 @@ export type RepoSettingsPreview = {
     checkRunMode: RepositorySettings["checkRunMode"];
     checkRunDetailLevel: RepositorySettings["checkRunDetailLevel"];
     gateCheckMode: RepositorySettings["gateCheckMode"];
+    regateSweepOrderMode: RepositorySettings["regateSweepOrderMode"];
     reviewCheckMode: RepositorySettings["reviewCheckMode"];
     gatePack: RepositorySettings["gatePack"];
     linkedIssueGateMode: RepositorySettings["linkedIssueGateMode"];
@@ -317,6 +318,7 @@ export function buildRepoSettingsPreview(args: {
       checkRunMode: settings.checkRunMode,
       checkRunDetailLevel: settings.checkRunDetailLevel,
       gateCheckMode: settings.gateCheckMode,
+      regateSweepOrderMode: settings.regateSweepOrderMode,
       reviewCheckMode: settings.reviewCheckMode,
       gatePack: settings.gatePack,
       linkedIssueGateMode: settings.linkedIssueGateMode,

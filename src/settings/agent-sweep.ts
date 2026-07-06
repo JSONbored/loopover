@@ -31,6 +31,11 @@ export const SWEEP_FRESHNESS_MS = 2 * 60 * 1000;
 // behind a per-PR backlog and drained together).
 export const SWEEP_FANOUT_DEDUP_MS = 90 * 1000;
 
+// Candidate ordering mode (#3815, RepositorySettings["regateSweepOrderMode"]). "staleness" (default) is
+// selectRegateCandidates' original ordering; "oldest-first" is opt-in per repo. See the function doc comment
+// for the convergence-guarantee rationale each preserves.
+export type RegateSweepOrderMode = "staleness" | "oldest-first";
+
 /**
  * Select the open PRs a single repo sweep should recompute: drop drafts and anything a webhook touched within
  * `freshnessWindowMs` of `now` (don't race an in-flight review), then take the `max` PRs the sweep has gone
@@ -42,6 +47,22 @@ export const SWEEP_FANOUT_DEDUP_MS = 90 * 1000;
  * suppressed), so a just-regated PR sorts freshest and the next pass covers the next-stalest — full coverage of
  * all open PRs in ceil(open/max) sweeps. GitHub's `updatedAt` is used ONLY for the freshness skip (a PR a
  * webhook is actively gating), never for the sort. Pure + deterministic: same inputs → same ordered batch.
+ *
+ * `orderMode` (#3815, default `"staleness"`): an opt-in `"oldest-first"` mode instead orders candidates by
+ * `createdAt` ascending, for an operator who wants deterministic creation-order draining over the staleness
+ * sort's own convergence property. Unlike `regateProgress` above, a PR's `createdAt` never changes, so
+ * `oldest-first`'s sort key alone cannot advance past an already-dispatched PR — without something else, the
+ * same oldest `max` PRs would recur every sweep forever.
+ *
+ * `oldest-first` instead excludes whichever PR(s) hold the CURRENT candidate pool's single most-recent
+ * `lastRegatedAt` value — i.e. whichever PR(s) this repo's immediately preceding sweep dispatched (every
+ * candidate in one dispatch is stamped with the exact same `lastRegatedAt`, see markPullRequestsRegated),
+ * deferring them until an even-newer dispatch supersedes them. This is a RELATIVE comparison within the pool
+ * on every call, never an absolute time window against `now` — so, unlike a fixed freshness window, it holds
+ * regardless of how far apart consecutive sweeps actually run (a delayed/backpressured sweep, or dry-run/pause
+ * suppressing GitHub's `updatedAt` entirely), giving `oldest-first` the same timing-independent, full-coverage-
+ * in-ceil(open/max)-sweeps guarantee `staleness` has. Selection-time only: real-time webhook-driven review is
+ * not gated by this sort and can still process any PR out of order at any moment.
  */
 export function selectRegateCandidates(input: {
   pulls: PullRequestRecord[];
@@ -50,9 +71,11 @@ export function selectRegateCandidates(input: {
   priorityBypassesFreshness?: boolean;
   freshnessWindowMs?: number;
   max?: number;
+  orderMode?: RegateSweepOrderMode;
 }): PullRequestRecord[] {
   const freshnessWindowMs = input.freshnessWindowMs ?? SWEEP_FRESHNESS_MS;
   const max = input.max ?? SWEEP_MAX_PRS;
+  const orderMode = input.orderMode ?? "staleness";
   const nowMs = Date.parse(input.now);
   const freshCutoff = Number.isFinite(nowMs) ? nowMs - freshnessWindowMs : Number.NaN;
   // Don't-race-webhook guard: a PR whose GitHub `updatedAt` is within the window was almost certainly just gated
@@ -70,13 +93,22 @@ export function selectRegateCandidates(input: {
     const created = pr.createdAt ? Date.parse(pr.createdAt) : Number.NaN;
     return Number.isFinite(created) ? created : 0;
   };
+  // Creation-order key (#3815, "oldest-first" mode): always the PR's own createdAt, never lastRegatedAt — a
+  // repeatedly-regated PR must NOT sort as if newly created. A missing/unparseable createdAt falls back to
+  // epoch (same convention as regateProgress above), so it sorts oldest; ties (including every missing-createdAt
+  // PR) are broken by PR number, same as every other mode.
+  const creationOrder = (pr: PullRequestRecord): number => {
+    const created = pr.createdAt ? Date.parse(pr.createdAt) : Number.NaN;
+    return Number.isFinite(created) ? created : 0;
+  };
+  const orderKey = orderMode === "oldest-first" ? creationOrder : regateProgress;
   const priorityPullNumbers =
     input.priorityPullNumbers instanceof Set
       ? input.priorityPullNumbers
       : new Set(input.priorityPullNumbers ?? []);
   const repairPriority = (pr: PullRequestRecord): number =>
     priorityPullNumbers.has(pr.number) ? 0 : 1;
-  return input.pulls
+  const eligible = input.pulls
     .filter((pr) => pr.state === "open" && !pr.isDraft)
     .filter((pr) => {
       if (
@@ -86,8 +118,33 @@ export function selectRegateCandidates(input: {
         return true;
       if (!Number.isFinite(freshCutoff)) return true;
       return webhookFreshness(pr) <= freshCutoff;
-    })
-    .sort((a, b) => repairPriority(a) - repairPriority(b) || regateProgress(a) - regateProgress(b) || a.number - b.number)
+    });
+  // Most-recent-dispatch exclusion (#3815, "oldest-first" mode only — see the doc comment above): find the
+  // single latest lastRegatedAt value across the currently-eligible pool, then defer whichever PR(s) hold it.
+  // A pool with no lastRegatedAt at all (nothing ever dispatched) has no most-recent value, so nothing defers.
+  let mostRecentRegatedMs = Number.NEGATIVE_INFINITY;
+  if (orderMode === "oldest-first") {
+    for (const pr of eligible) {
+      const regated = pr.lastRegatedAt ? Date.parse(pr.lastRegatedAt) : Number.NaN;
+      if (Number.isFinite(regated) && regated > mostRecentRegatedMs) mostRecentRegatedMs = regated;
+    }
+  }
+  // Only called (via deferredCount/the final filter below) when orderMode is already "oldest-first" — the
+  // caller gates on that, so this never needs its own mode check.
+  const isMostRecentlyDispatched = (pr: PullRequestRecord): boolean => {
+    if (input.priorityBypassesFreshness && priorityPullNumbers.has(pr.number)) return false;
+    const regated = pr.lastRegatedAt ? Date.parse(pr.lastRegatedAt) : Number.NaN;
+    return Number.isFinite(regated) && regated === mostRecentRegatedMs;
+  };
+  const deferredCount = orderMode === "oldest-first" ? eligible.filter(isMostRecentlyDispatched).length : 0;
+  // Starvation guard: only actually defer when doing so still leaves at least one candidate. If EVERY eligible
+  // PR ties on the same lastRegatedAt (e.g. a small backlog whose entire open-PR count fits in one sweep, so
+  // every PR was dispatched together last time), deferring all of them would starve the sweep forever with
+  // nothing better to fall back to — proceed with the full pool instead.
+  const shouldDefer = deferredCount > 0 && deferredCount < eligible.length;
+  return eligible
+    .filter((pr) => !shouldDefer || !isMostRecentlyDispatched(pr))
+    .sort((a, b) => repairPriority(a) - repairPriority(b) || orderKey(a) - orderKey(b) || a.number - b.number)
     .slice(0, Math.max(0, max));
 }
 

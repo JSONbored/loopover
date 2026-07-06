@@ -6491,6 +6491,42 @@ describe("queue processors", () => {
     expect(fanned.map((job) => (job as Extract<import("../../src/types").JobMessage, { type: "agent-regate-pr" }>).prNumber)).toEqual([2, 1, 3]);
   });
 
+  it("REGRESSION (#3815): regateSweepOrderMode 'oldest-first' fans out per-PR jobs in creation order with a monotonic delaySeconds stagger", async () => {
+    const dispatched: { prNumber: number; delaySeconds: number | undefined }[] = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(m: import("../../src/types").JobMessage, options?: { delaySeconds?: number }) {
+          if (m.type === "agent-regate-pr") dispatched.push({ prNumber: m.prNumber, delaySeconds: options?.delaySeconds ?? 0 });
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9403, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9403);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, regateSweepOrderMode: "oldest-first", gateCheckMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    // Deliberately seeded out of PR-number order: #1 is the NEWEST, #3 is the OLDEST — proves the fan-out
+    // follows createdAt, not insertion/number order.
+    const created: Record<number, string> = { 1: "2026-05-20T00:00:00.000Z", 2: "2026-05-10T00:00:00.000Z", 3: "2026-05-01T00:00:00.000Z" };
+    for (const number of [1, 2, 3]) {
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", {
+        number,
+        title: `PR${number}`,
+        state: "open",
+        user: { login: "c" },
+        head: { sha: `a${number}` },
+        labels: [],
+        body: "",
+        created_at: created[number]!,
+        updated_at: created[number]!,
+      });
+    }
+    vi.setSystemTime(new Date("2026-05-28T00:00:00.000Z")); // well past the 2-min webhook-freshness window for all three
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
+
+    expect(dispatched.map((d) => d.prNumber)).toEqual([3, 2, 1]); // oldest-created (#3) first, newest (#1) last
+    expect(dispatched.map((d) => d.delaySeconds)).toEqual([0, 10, 20]); // strictly increasing with dispatch order
+  });
+
   it("REGRESSION: scheduled sweeps repair every missing current Gate check without waiting behind another repo backlog", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({

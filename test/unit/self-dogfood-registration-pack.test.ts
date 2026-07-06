@@ -55,6 +55,7 @@ function settingsFor(repoFullName: string, overrides: Partial<RepositorySettings
     checkRunMode: "enabled",
     checkRunDetailLevel: "standard",
     gateCheckMode: "off",
+    regateSweepOrderMode: "staleness",
     reviewCheckMode: "disabled",
     gatePack: "gittensor",
     linkedIssueGateMode: "advisory",

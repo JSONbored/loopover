@@ -9244,6 +9244,13 @@
           },
           "publicQualityMetrics": {
             "type": "boolean"
+          },
+          "regateSweepOrderMode": {
+            "type": "string",
+            "enum": [
+              "staleness",
+              "oldest-first"
+            ]
           }
         },
         "required": [
@@ -9254,6 +9261,7 @@
           "checkRunMode",
           "checkRunDetailLevel",
           "gateCheckMode",
+          "regateSweepOrderMode",
           "reviewCheckMode",
           "gatePack",
           "linkedIssueGateMode",
@@ -9965,6 +9973,13 @@
               },
               "publicQualityMetrics": {
                 "type": "boolean"
+              },
+              "regateSweepOrderMode": {
+                "type": "string",
+                "enum": [
+                  "staleness",
+                  "oldest-first"
+                ]
               }
             },
             "required": [
@@ -9975,6 +9990,7 @@
               "checkRunMode",
               "checkRunDetailLevel",
               "gateCheckMode",
+              "regateSweepOrderMode",
               "reviewCheckMode",
               "gatePack",
               "linkedIssueGateMode",

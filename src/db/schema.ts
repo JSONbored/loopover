@@ -51,6 +51,9 @@ export const repositorySettings = sqliteTable("repository_settings", {
   checkRunMode: text("check_run_mode").notNull().default("off"),
   checkRunDetailLevel: text("check_run_detail_level").notNull().default("minimal"),
   gateCheckMode: text("gate_check_mode").notNull().default("off"),
+  // Scheduled re-gate sweep candidate ordering (#3815). staleness | oldest-first. Default staleness — see
+  // RepositorySettings["regateSweepOrderMode"] for the full convergence-guarantee rationale.
+  regateSweepOrderMode: text("regate_sweep_order_mode").notNull().default("staleness"),
   reviewCheckMode: text("review_check_mode").notNull().default("disabled"),
   projectMilestoneMatchMode: text("project_milestone_match_mode").notNull().default("off"),
   autoProjectMilestoneMatchBackend: text("auto_project_milestone_match_backend").notNull().default("github"),

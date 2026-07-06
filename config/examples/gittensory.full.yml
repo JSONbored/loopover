@@ -816,6 +816,19 @@ settings:
   #   mode: off          # off | hold. Default: off.
   #   minConfidence: 0.85  # Number 0-1. Minimum AI-verifier confidence to treat a candidate as a real match.
 
+  # Before/after screenshot-table gate (#2006): a DETERMINISTIC check (no AI, zero hallucination risk) that a
+  # contributor visual/frontend PR's body contains a markdown table with before/after image markup (either
+  # `![alt](url)` or `<img>`, inside a `| ... |` table). Scoped to whenLabels OR whenPaths (either match is
+  # enough); both empty ⇒ enforced on every PR once enabled. Also rejects an image pasted outside any table, or
+  # a screenshot committed to the repo under a scoped path (should be uploaded to the PR body instead). Off by
+  # default -- opt in per repo.
+  # screenshotTableGate:
+  #   enabled: false                        # Default: false (off).
+  #   whenLabels: [frontend, visual]         # Enforce only when the PR carries one of these labels. Default: [] (no label scoping).
+  #   whenPaths: ["apps/ui/**", "src/**/*.tsx"]  # Enforce only when a changed file matches one of these globs. Default: [] (no path scoping).
+  #   action: close                          # close | request_changes | comment. Default: close.
+  #   message: "Custom close reason..."      # Overrides the built-in templated contract message. Default: null (built-in message).
+
 # Maintainer AI review tuning (`.gittensory.yml` top-level `review:` block). These knobs shape the advisory AI
 # review prompt and file selection only — gate/slop/secret-scan are unaffected.
 # review:

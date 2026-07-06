@@ -1,5 +1,5 @@
 import { parse as parseYaml } from "yaml";
-import type { GatePolicyPack, GateRuleMode, JsonValue, LinkedIssueHardRulesConfig, LinkedIssueLabelPropagationConfig, PrTypeLabelSet, RepositorySettings, ReviewCheckMode, UnlinkedIssueGuardrailConfig } from "../types";
+import type { GatePolicyPack, GateRuleMode, JsonValue, LinkedIssueHardRulesConfig, LinkedIssueLabelPropagationConfig, PrTypeLabelSet, RepositorySettings, ReviewCheckMode, ScreenshotTableGateConfig, UnlinkedIssueGuardrailConfig } from "../types";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy } from "../settings/autonomy";
 import { normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import { mergeContributorBlacklists, normalizeContributorBlacklist } from "../settings/contributor-blacklist";
@@ -8,6 +8,7 @@ import { DEFAULT_TYPE_LABELS, MAX_TYPE_LABEL_NAME_LENGTH, normalizeTypeLabelSet 
 import { DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION, normalizeLinkedIssueLabelPropagationConfig, VALID_LINKED_ISSUE_LABEL_PROPAGATION_MODES } from "../review/linked-issue-label-propagation";
 import { DEFAULT_LINKED_ISSUE_HARD_RULES, isLinkedIssueHardRuleMode, normalizeLinkedIssueHardRulesConfig } from "../review/linked-issue-hard-rules-config";
 import { DEFAULT_UNLINKED_ISSUE_GUARDRAIL, isUnlinkedIssueGuardrailMode, normalizeUnlinkedIssueGuardrailConfig } from "../review/unlinked-issue-guardrail-config";
+import { DEFAULT_SCREENSHOT_TABLE_GATE, isScreenshotTableGateAction, normalizeScreenshotTableGateConfig } from "../review/screenshot-table-gate";
 import { normalizeModerationLabel, normalizeModerationRules } from "../settings/moderation-rules";
 import { REES_ANALYZER_NAME_SET, type ReesAnalyzerName } from "../review/enrichment-analyzer-names";
 import { hasUnsafeWildcardCount } from "./change-guardrail";
@@ -294,6 +295,10 @@ export type FocusManifestSettings = Partial<
   linkedIssueLabelPropagation?: Partial<LinkedIssueLabelPropagationConfig> | undefined;
   linkedIssueHardRules?: Partial<LinkedIssueHardRulesConfig> | undefined;
   unlinkedIssueGuardrail?: Partial<UnlinkedIssueGuardrailConfig> | undefined;
+  // Screenshot-table gate (#2006): same sparse-partial merge reasoning as linkedIssueHardRules/
+  // unlinkedIssueGuardrail above -- a manifest naming only `enabled` must not silently reset `whenLabels`/
+  // `whenPaths`/`action`/`message` back to their defaults.
+  screenshotTableGate?: Partial<ScreenshotTableGateConfig> | undefined;
 };
 
 /** Field keys for the public review-panel rows a maintainer can show/hide via `review.fields`. */
@@ -1589,6 +1594,21 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   } else if (r.unlinkedIssueGuardrail !== undefined) {
     warnings.push(`Manifest "settings.unlinkedIssueGuardrail" must be an object; ignoring it and keeping any existing policy.`);
   }
+  // Screenshot-table gate (#2006): same sparse-partial overlay contract as unlinkedIssueGuardrail above -- a
+  // repo naming only `enabled` must not silently reset `whenLabels`/`whenPaths`/`action`/`message`.
+  if (typeof r.screenshotTableGate === "object" && r.screenshotTableGate !== null && !Array.isArray(r.screenshotTableGate)) {
+    const rawGate = r.screenshotTableGate as Record<string, unknown>;
+    const validated = normalizeScreenshotTableGateConfig(rawGate, warnings);
+    const sparseGate: Partial<ScreenshotTableGateConfig> = {};
+    if (typeof rawGate.enabled === "boolean") sparseGate.enabled = validated.enabled;
+    if (Array.isArray(rawGate.whenLabels)) sparseGate.whenLabels = validated.whenLabels;
+    if (Array.isArray(rawGate.whenPaths)) sparseGate.whenPaths = validated.whenPaths;
+    if (isScreenshotTableGateAction(rawGate.action)) sparseGate.action = validated.action;
+    if (typeof rawGate.message === "string" && rawGate.message.trim().length > 0) sparseGate.message = validated.message;
+    out.screenshotTableGate = sparseGate;
+  } else if (r.screenshotTableGate !== undefined) {
+    warnings.push(`Manifest "settings.screenshotTableGate" must be an object; ignoring it and keeping any existing policy.`);
+  }
   // Contributor blacklist (#1425): `settings.contributorBlacklist` is a list of banned-login entries. Only set it
   // when at least one VALID entry survives normalization, so a malformed block never blanks the DB-configured
   // list via the resolver's `{...dbSettings, ...manifest.settings}` overlay. Normalization warnings are folded in.
@@ -2858,6 +2878,7 @@ export function resolveEffectiveSettings(
     linkedIssueLabelPropagation: linkedIssueLabelPropagationOverride,
     linkedIssueHardRules: linkedIssueHardRulesOverride,
     unlinkedIssueGuardrail: unlinkedIssueGuardrailOverride,
+    screenshotTableGate: screenshotTableGateOverride,
     ...restManifestSettings
   } = manifest.settings;
   const effective: RepositorySettings = { ...dbSettings, ...restManifestSettings };
@@ -2902,6 +2923,16 @@ export function resolveEffectiveSettings(
     effective.unlinkedIssueGuardrail = {
       mode: unlinkedIssueGuardrailOverride.mode ?? base.mode,
       minConfidence: unlinkedIssueGuardrailOverride.minConfidence ?? base.minConfidence,
+    };
+  }
+  if (screenshotTableGateOverride !== undefined) {
+    const base = dbSettings.screenshotTableGate ?? DEFAULT_SCREENSHOT_TABLE_GATE;
+    effective.screenshotTableGate = {
+      enabled: screenshotTableGateOverride.enabled ?? base.enabled,
+      whenLabels: screenshotTableGateOverride.whenLabels ?? base.whenLabels,
+      whenPaths: screenshotTableGateOverride.whenPaths ?? base.whenPaths,
+      action: screenshotTableGateOverride.action ?? base.action,
+      message: screenshotTableGateOverride.message ?? base.message,
     };
   }
   applyGateConfigOverrides(effective, manifest.gate);

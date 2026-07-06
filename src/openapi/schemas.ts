@@ -762,6 +762,15 @@ export const RepositorySettingsSchema = z
     reviewEvasionProtection: z.enum(["off", "close"]).optional(),
     reviewEvasionLabel: z.string().nullable().optional(),
     reviewEvasionComment: z.boolean().optional(),
+    screenshotTableGate: z
+      .object({
+        enabled: z.boolean(),
+        whenLabels: z.array(z.string()),
+        whenPaths: z.array(z.string()),
+        action: z.enum(["close", "request_changes", "comment"]),
+        message: z.string().optional(),
+      })
+      .optional(),
     createdAt: z.string().nullable().optional(),
     updatedAt: z.string().nullable().optional(),
   })

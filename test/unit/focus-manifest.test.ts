@@ -344,6 +344,7 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     linkedIssueLabelPropagation: "linkedIssueLabelPropagation:",
     linkedIssueHardRules: "linkedIssueHardRules:",
     unlinkedIssueGuardrail: "unlinkedIssueGuardrail:",
+    screenshotTableGate: "screenshotTableGate:",
   } satisfies Record<Exclude<keyof FocusManifestSettings, (typeof SETTINGS_GATE_ALIASED_FIELDS)[number]>, string>;
 
   it.each(Object.entries(SETTINGS_FIELD_TOKENS))("documents settings.%s", (_field, token) => {
@@ -2663,6 +2664,36 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     const parsed = parseFocusManifest({ settings: { unlinkedIssueGuardrail: "oops" } });
     expect(parsed.settings.unlinkedIssueGuardrail).toBeUndefined();
     expect(parsed.warnings).toContain(`Manifest "settings.unlinkedIssueGuardrail" must be an object; ignoring it and keeping any existing policy.`);
+  });
+
+  it("wires settings.screenshotTableGate into the manifest parser as a sparse override (#2006)", () => {
+    const parsed = parseFocusManifest({ settings: { screenshotTableGate: { enabled: true, whenLabels: ["frontend"], whenPaths: ["apps/ui/**"], action: "close", message: "custom" } } });
+    expect(parsed.settings.screenshotTableGate).toEqual({ enabled: true, whenLabels: ["frontend"], whenPaths: ["apps/ui/**"], action: "close", message: "custom" });
+    expect(parsed.warnings).toEqual([]);
+  });
+
+  it("resolveEffectiveSettings merges a partial screenshotTableGate override without clearing the lower-layer whenLabels/whenPaths (#2006)", () => {
+    const db = { screenshotTableGate: { enabled: false, whenLabels: ["frontend"], whenPaths: ["apps/ui/**"], action: "close" } } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { screenshotTableGate: { enabled: true } } }));
+    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: ["frontend"], whenPaths: ["apps/ui/**"], action: "close" });
+  });
+
+  it("resolveEffectiveSettings falls back to the built-in default when the DB layer has no screenshotTableGate at all (#2006)", () => {
+    const db = {} as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { screenshotTableGate: { enabled: true } } }));
+    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: [], whenPaths: [], action: "close" });
+  });
+
+  it("drops a malformed screenshotTableGate.action field instead of replacing existing policy with defaults (#2006)", () => {
+    const parsed = parseFocusManifest({ settings: { screenshotTableGate: { enabled: true, action: "delete" } } });
+    expect(parsed.settings.screenshotTableGate).toEqual({ enabled: true });
+    expect(parsed.warnings.some((w) => w.includes("settings.requireScreenshotTable.action"))).toBe(true);
+  });
+
+  it("warns and ignores a malformed top-level screenshotTableGate value (#2006)", () => {
+    const parsed = parseFocusManifest({ settings: { screenshotTableGate: "oops" } });
+    expect(parsed.settings.screenshotTableGate).toBeUndefined();
+    expect(parsed.warnings).toContain(`Manifest "settings.screenshotTableGate" must be an object; ignoring it and keeping any existing policy.`);
   });
 
   it("parses aiReview from settings: and lets gate.aiReview win in resolveEffectiveSettings", () => {

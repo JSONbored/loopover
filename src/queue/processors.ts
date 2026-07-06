@@ -490,6 +490,7 @@ import {
 } from "../review/linked-issue-hard-rules";
 import { DEFAULT_UNLINKED_ISSUE_GUARDRAIL } from "../review/unlinked-issue-guardrail-config";
 import { resolveUnlinkedIssueMatchDisposition } from "../review/unlinked-issue-guardrail";
+import { DEFAULT_SCREENSHOT_TABLE_GATE, evaluateScreenshotTableGate } from "../review/screenshot-table-gate";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
 import { isSweepWatchdogEnabled, runSweepLivenessWatchdog } from "../review/sweep-watchdog";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
@@ -2708,6 +2709,24 @@ async function runAgentMaintenancePlanAndExecute(
     settings.contributorBlacklist,
   );
 
+  // Screenshot-table gate (#2006): a DETERMINISTIC check (no AI) that an in-scope (label/path-matched)
+  // contributor visual/frontend PR's body contains a before/after screenshot table. Off by default
+  // (settings.screenshotTableGate.enabled === false), so the pure evaluator below is effectively free for the
+  // common case. Only "close" is wired as an enforcement action here (the other configured actions stay
+  // advisory, matching the issue's phased rollout) -- the ternary below is the ONLY place that reads `.action`.
+  /* v8 ignore next -- defensive: resolveRepositorySettings always populates screenshotTableGate (getRepositorySettings's DB defaults), so this fallback is unreachable in practice. */
+  const screenshotTableGateConfig = settings.screenshotTableGate ?? DEFAULT_SCREENSHOT_TABLE_GATE;
+  const screenshotTableGateResult = evaluateScreenshotTableGate({
+    config: screenshotTableGateConfig,
+    prBody: pr.body,
+    prLabels: pr.labels,
+    changedFiles: changedPaths,
+  });
+  const screenshotTableMatch =
+    screenshotTableGateResult.violated && screenshotTableGateConfig.action === "close"
+      ? { matched: true, reason: screenshotTableGateResult.reason }
+      : undefined;
+
   // Account-age throttle (#2561, anti-abuse): a friction/visibility signal for the classic ban-evasion pattern
   // (a banned login gets a fresh account the same day) — NEVER an automatic close on account age alone. Off
   // (null accountAgeThresholdDays, the default) ⇒ this block is a no-op, no extra GitHub API call at all.
@@ -2862,6 +2881,7 @@ async function runAgentMaintenancePlanAndExecute(
       : {}),
     // Always threaded (the DB layer populates it, default "slop"); the planner applies its own fallback.
     blacklistLabel: settings.blacklistLabel,
+    ...(screenshotTableMatch !== undefined ? { screenshotTableMatch } : {}),
     ...(contributorCapMatch !== undefined ? { contributorCapMatch } : {}),
     // Always threaded (the DB layer populates it, default "over-contributor-limit"); the planner applies its
     // own fallback.

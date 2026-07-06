@@ -157,6 +157,14 @@ export const repositorySettings = sqliteTable("repository_settings", {
   reviewEvasionProtection: text("review_evasion_protection").notNull().default("off"),
   reviewEvasionLabel: text("review_evasion_label").notNull().default("review-evasion"),
   reviewEvasionComment: integer("review_evasion_comment", { mode: "boolean" }).notNull().default(true),
+  // Config-driven before/after screenshot-table gate (#2006): off by default. whenLabels/whenPaths are JSON
+  // string arrays (mirrors contributorBlacklistJson's shape); screenshotTableGateMessage is nullable ("no
+  // override" is a `.gittensory.yml`-only concept -- null here means "use the built-in default message").
+  screenshotTableGateEnabled: integer("screenshot_table_gate_enabled", { mode: "boolean" }).notNull().default(false),
+  screenshotTableGateWhenLabelsJson: text("screenshot_table_gate_when_labels_json").notNull().default("[]"),
+  screenshotTableGateWhenPathsJson: text("screenshot_table_gate_when_paths_json").notNull().default("[]"),
+  screenshotTableGateAction: text("screenshot_table_gate_action").notNull().default("close"),
+  screenshotTableGateMessage: text("screenshot_table_gate_message"),
   createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });

@@ -990,8 +990,26 @@ export type RepositorySettings = {
   /** Review-evasion protection: whether to post the public explanation comment before the enforcement close.
    *  Default true. */
   reviewEvasionComment?: boolean | undefined;
+  /** Config-driven before/after screenshot-table gate (#2006): a DETERMINISTIC check (no AI, zero hallucination
+   *  risk) that a contributor visual/frontend PR's body contains a markdown table with before/after image
+   *  markup, scoped to the repo's configured labels/paths (`whenLabels`/`whenPaths`, OR-matched). Off by
+   *  default (`enabled: false`) -- opt in per repo, mirroring every other anti-abuse mechanism's shape. See
+   *  `review/screenshot-table-gate.ts` for the normalizer and the pure evaluator. */
+  screenshotTableGate?: ScreenshotTableGateConfig | undefined;
   createdAt?: string | null | undefined;
   updatedAt?: string | null | undefined;
+};
+
+export type ScreenshotTableGateAction = "close" | "request_changes" | "comment";
+
+/** Per-repo config for the before/after screenshot-table gate (#2006). See {@link RepositorySettings.screenshotTableGate}
+ *  and `review/screenshot-table-gate.ts` for the normalizer + pure evaluator. */
+export type ScreenshotTableGateConfig = {
+  enabled: boolean;
+  whenLabels: string[];
+  whenPaths: string[];
+  action: ScreenshotTableGateAction;
+  message?: string | undefined;
 };
 
 export type CommandAuthorizationRole = "maintainer" | "collaborator" | "pr_author" | "confirmed_miner";
@@ -1131,7 +1149,7 @@ export type AgentPendingActionParams = {
   // (#2127), and the actuation-time live-CI re-check (#2364) — which only applies to a heuristic close — still
   // fires correctly once the row is replayed through pendingActionToPlanned, rather than silently skipping for
   // a lost discriminator.
-  closeKind?: "linked-issue-hard-rule" | "blacklist" | "contributor_cap" | "review_nag" | "heuristic";
+  closeKind?: "linked-issue-hard-rule" | "blacklist" | "contributor_cap" | "review_nag" | "screenshot_table" | "heuristic";
   // For a CI-driven heuristic close, persist the CI state that must still hold when the staged action replays
   // (#2364). This is separate from closeKind because heuristic closes also cover non-CI adverse signals.
   // ALWAYS set (to "failed" or "not_required") for a freshly planned heuristic close (#2478) -- never omitted --

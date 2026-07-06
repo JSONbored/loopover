@@ -1891,3 +1891,73 @@ describe("review-nag cooldown short-circuit (#2463)", () => {
     expect(classes(planAgentMaintenanceActions(nagged({ autonomy: { close: "auto" } })))).toEqual(["close", "label"]);
   });
 });
+
+describe("screenshot-table gate short-circuit (#2006)", () => {
+  const missingTable = (extra: Partial<AgentActionPlanInput> = {}) =>
+    input({
+      conclusion: "success",
+      autonomy: { close: "auto", approve: "auto", merge: "auto" },
+      screenshotTableMatch: { matched: true, reason: "This pull request changes UI/visual code but its description is missing a before/after screenshot table." },
+      ...extra,
+    });
+
+  it("closes a PR missing its screenshot table, winning over a passing gate (no merit review / merge)", () => {
+    const plan = planAgentMaintenanceActions(missingTable());
+    expect(classes(plan)).toEqual(["close"]); // short-circuit: no approve/merge despite a SUCCESS gate; no coupled label
+    expect(plan[0]).toMatchObject({ actionClass: "close", closeKind: "screenshot_table" });
+    expect(plan[0]?.closeReasons).toEqual(["missing before/after screenshot table"]);
+  });
+
+  it("interpolates the configured contract reason into the close comment", () => {
+    const plan = planAgentMaintenanceActions(missingTable());
+    expect(plan[0]?.closeComment).toContain("before/after screenshot table");
+    expect(plan[0]?.closeComment).toContain("This is an automated maintenance action.");
+  });
+
+  it("falls back to a generic reason when the trigger passes reason: null", () => {
+    const plan = planAgentMaintenanceActions(missingTable({ screenshotTableMatch: { matched: true, reason: null } }));
+    expect(plan[0]?.closeComment).toContain("missing a before/after screenshot table");
+  });
+
+  it("pins the close to the reviewed head, mirroring blacklist/contributor-cap/review-nag", () => {
+    const plan = planAgentMaintenanceActions(missingTable({ pr: { labels: [], headSha: "h-reviewed" } }));
+    expect(plan.find((a) => a.actionClass === "close")).toMatchObject({ closeKind: "screenshot_table", expectedHeadSha: "h-reviewed" });
+  });
+
+  it("omits expectedHeadSha when the PR record has no headSha (defensive fallback)", () => {
+    const plan = planAgentMaintenanceActions(missingTable());
+    expect(plan.find((a) => a.actionClass === "close")?.expectedHeadSha).toBeUndefined();
+  });
+
+  it("fires AHEAD of CI — closes even while CI is still pending (not the pending early-return)", () => {
+    expect(classes(planAgentMaintenanceActions(missingTable({ ciState: "pending" })))).toEqual(["close"]);
+  });
+
+  it("NEVER fires for the owner, an admin login, or an automation bot (standing rule) — the PR falls through to normal disposition", () => {
+    expect(classes(planAgentMaintenanceActions(missingTable({ authorIsOwner: true })))).not.toContain("close");
+    expect(classes(planAgentMaintenanceActions(missingTable({ authorIsAdmin: true })))).not.toContain("close");
+    expect(classes(planAgentMaintenanceActions(missingTable({ authorIsAutomationBot: true })))).not.toContain("close");
+  });
+
+  it("no-ops when the match is not matched (normal disposition runs)", () => {
+    expect(classes(planAgentMaintenanceActions(missingTable({ screenshotTableMatch: { matched: false, reason: null } })))).not.toContain("close");
+  });
+
+  it("plans nothing when `close` autonomy is not acting", () => {
+    expect(planAgentMaintenanceActions(missingTable({ autonomy: {} }))).toEqual([]);
+    expect(classes(planAgentMaintenanceActions(missingTable({ autonomy: { close: "auto" } })))).toEqual(["close"]);
+  });
+
+  it("is exempt from the close-precision breaker (no closeKind: 'heuristic', mirroring blacklist/contributor-cap/review-nag)", () => {
+    const plan = planAgentMaintenanceActions(missingTable());
+    const closeAction = plan.find((a) => a.actionClass === "close");
+    const downgraded = downgradeCloseToHold(plan, true, {});
+    expect(downgraded).toEqual(plan);
+    expect(closeAction?.closeKind).not.toBe("heuristic");
+  });
+
+  it("is independent of the blacklist short-circuit — a matched blacklist entry still wins when both are present", () => {
+    const plan = planAgentMaintenanceActions(missingTable({ blacklistMatch: { matched: true, reason: "plagiarism" } }));
+    expect(plan[0]).toMatchObject({ closeKind: "blacklist" });
+  });
+});

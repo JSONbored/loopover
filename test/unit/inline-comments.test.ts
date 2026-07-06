@@ -78,6 +78,20 @@ describe("addedLinesFromPatch (#2140)", () => {
     const patch = "@@ -1,3 +1,4 @@\n ctx1\n-removed\n+added2\n+added3\n ctx4\n\\ No newline at end of file";
     expect([...addedLinesFromPatch(patch)].sort((a, b) => a - b)).toEqual([2, 3]);
   });
+
+  it("handles multiple hunks and ignores preamble before the first hunk header", () => {
+    const patch = "preamble line\n@@ -10,1 +10,2 @@\n ctx10\n+add11\n@@ -50,0 +60,1 @@\n+add60";
+    expect([...addedLinesFromPatch(patch)].sort((a, b) => a - b)).toEqual([11, 60]);
+  });
+
+  it("returns an empty set when there is no hunk header (or an empty patch)", () => {
+    expect(addedLinesFromPatch("no hunks here").size).toBe(0);
+    expect(addedLinesFromPatch("").size).toBe(0);
+  });
+
+  it("does not add a spurious line for a trailing newline split artifact", () => {
+    expect([...addedLinesFromPatch("@@ -1,1 +1,2 @@\n ctx\n+added2\n")].sort((a, b) => a - b)).toEqual([2]);
+  });
 });
 
 describe("selectInlineComments (#inline-comments)", () => {

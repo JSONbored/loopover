@@ -78,7 +78,8 @@ function isGeneratedFileFrom(parts: NormalizedPath): boolean {
     // `.pb.cc` / `.pb.h`, the Swift plugin emits `.pb.swift`, the Dart plugin emits `.pb.dart`,
     // the Kotlin plugin emits `.pb.kt`, the Java plugin emits `.pb.java`, the C# plugin emits `.pb.cs`, the Rust plugin emits `.pb.rs`,
     // the Elixir plugin emits `.pb.ex`, the Erlang gpb plugin emits `.pb.erl` / `.pb.hrl`, the Crystal
-    // plugin emits `.pb.cr`, the Haskell plugin emits `.pb.hs`, the Scala plugin emits `.pb.scala`, and the Objective-C plugin emits
+    // plugin emits `.pb.cr`, the Haskell plugin emits `.pb.hs`, the Scala plugin emits `.pb.scala`, the Rust
+    // plugin emits `.pb.rs` (and prost/tonic also emit underscore `*_pb.rs` / `*_grpc_pb.rs` siblings), and the Objective-C plugin emits
     // `.pbobjc.{h,m}` plus gRPC `.pbrpc.{h,m}` service stubs. Swift gRPC emits sibling `.grpc.swift`
     // service stubs; grpc-kotlin emits sibling `*GrpcKt.kt` coroutine service stubs; grpc-java emits
     // sibling `*Grpc.java` service stubs; grpc-dotnet emits sibling `*Grpc.cs` service stubs; the Dart
@@ -108,6 +109,9 @@ function isGeneratedFileFrom(parts: NormalizedPath): boolean {
     /_pb\.lua$/.test(norm) ||
     // Perl protobuf: message stubs are `*_pb.pm`.
     /_pb\.pm$/.test(norm) ||
+    // Rust prost/tonic underscore stubs: `*_pb.rs` message output; tonic gRPC emits sibling `*_grpc_pb.rs`.
+    /_pb\.rs$/.test(norm) ||
+    /_grpc_pb\.rs$/.test(norm) ||
     // JavaScript/TypeScript grpc-node protobuf: message stubs are `*_pb.{js,ts,d.ts}`; gRPC emits
     // sibling `*_grpc_pb.{js,ts,d.ts}` service stubs (underscore form, not `.pb.js`).
     /_pb\.(js|ts)$/.test(norm) ||

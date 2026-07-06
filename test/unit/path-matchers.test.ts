@@ -169,6 +169,15 @@ describe("isGeneratedFile", () => {
     expect(classifyChangedFile("proto/messages.pb.scala")).toBe("generated");
   });
 
+  it("matches Rust prost/tonic underscore protobuf stubs alongside the dot-pb spellings", () => {
+    expect(isGeneratedFile("gen/service_pb.rs")).toBe(true);
+    expect(isGeneratedFile("gen/service_grpc_pb.rs")).toBe(true);
+    expect(isGeneratedFile("src/lib.rs")).toBe(false);
+    expect(isGeneratedFile("src/main.rs")).toBe(false);
+    expect(classifyChangedFile("gen/service_pb.rs")).toBe("generated");
+    expect(classifyChangedFile("gen/service_grpc_pb.rs")).toBe("generated");
+  });
+
   it("matches Kotlin gRPC coroutine stubs alongside the other protoc plugins", () => {
     expect(isGeneratedFile("gen/GreeterGrpcKt.kt")).toBe(true);
     expect(isGeneratedFile("src/Greeter.kt")).toBe(false);
@@ -543,6 +552,8 @@ describe("classifyChangedFile", () => {
       ["gen/service_pb.lua", "generated"],
       ["gen/service_pb.pm", "generated"],
       ["proto/messages.pb.scala", "generated"],
+      ["gen/service_pb.rs", "generated"],
+      ["gen/service_grpc_pb.rs", "generated"],
       ["gen/GreeterGrpcKt.kt", "generated"],
       ["gen/GreeterGrpc.java", "generated"],
       ["proto/messages.pb.java", "generated"],

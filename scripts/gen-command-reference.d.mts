@@ -24,11 +24,13 @@ export declare function renderCommandList(entries: CommandCatalogEntry[]): strin
 export declare function collectCommandCatalogs(options?: CommandCatalogOptions): {
   publicCommands: CommandCatalogEntry[];
   maintainerCommands: CommandCatalogEntry[];
+  actionCommands: CommandCatalogEntry[];
 };
 
 export declare function renderCommandReferenceModule(catalogs: {
   publicCommands: CommandCatalogEntry[];
   maintainerCommands: CommandCatalogEntry[];
+  actionCommands: CommandCatalogEntry[];
 }): string;
 
 export declare function writeCommandReference(options?: WriteCommandReferenceOptions): {
@@ -36,4 +38,5 @@ export declare function writeCommandReference(options?: WriteCommandReferenceOpt
   outputPath: string;
   publicCommands: CommandCatalogEntry[];
   maintainerCommands: CommandCatalogEntry[];
+  actionCommands: CommandCatalogEntry[];
 };

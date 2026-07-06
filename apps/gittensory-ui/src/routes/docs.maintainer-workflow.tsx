@@ -158,6 +158,10 @@ GET /v1/repos/:owner/:repo/registration-readiness`}
         only:
       </p>
       <CodeBlock code={MAINTAINER_COMMAND_LIST} />
+      <p>
+        For syntax, default roles, PR action verbs, and the gate vs auto-review boundary, see the{" "}
+        <Link to="/docs/gittensory-commands">@gittensory command reference</Link>.
+      </p>
 
       <Callout variant="safety">
         Public-facing comments are sanitized before they leave the Worker. Private scoring, reward,

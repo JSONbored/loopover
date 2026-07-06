@@ -87,6 +87,20 @@ describe("config/examples review templates (#1682)", () => {
     expect(resolveReviewPromptOverrides(off).changedFilesSummary).toBe(false);
   });
 
+  it("resolves review.effort_score via manifest parse + boolean helper (#2152)", () => {
+    const full = readConfigExample("gittensory.full.yml");
+    expect(full).toMatch(/# effort_score:/);
+    expect(parseFocusManifest({}).review.effortScore).toBeNull();
+    expect(resolveReviewPromptOverrides(parseFocusManifest({})).effortScore).toBe(false);
+    const on = parseFocusManifest({ review: { effort_score: true } });
+    expect(on.review.effortScore).toBe(true);
+    expect(resolveReviewPromptOverrides(on).effortScore).toBe(true);
+    expect(reviewConfigToJson(on.review)).toEqual({ effort_score: true });
+    const off = parseFocusManifest({ review: { effort_score: false } });
+    expect(off.review.effortScore).toBe(false);
+    expect(resolveReviewPromptOverrides(off).effortScore).toBe(false);
+  });
+
   it("parses gittensory.minimal.yml with zero warnings and enables no agent actions", () => {
     const manifest = parseFocusManifestContent(readConfigExample("gittensory.minimal.yml"), "repo_file");
     expect(manifest.warnings).toEqual([]);

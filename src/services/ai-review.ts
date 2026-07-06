@@ -1729,12 +1729,21 @@ export async function runGittensoryAiReview(
   const dual = combine !== "single" && (!configured || configured.length > 1);
   const freeAiCalls =
     (input.mode === "block" ? (dual ? 2 : 1) : 0) + (input.providerKey ? 0 : 1);
+  // Consensus disagreements may spend extra free calls on the order-swapped tie-break judge. Reserve the
+  // worst-case retry budget up front so the daily limiter remains a hard cap even when judge output is unstable.
+  const tieBreakAiCalls =
+    input.mode === "block" && dual && combine === "consensus"
+      ? 2 * 3 * (primaryFallback && primaryFallback !== primary.model ? 2 : 1)
+      : 0;
   // Estimate against the EFFECTIVE system prompt (`system`) so grounding's extra context is billed against the
   // budget. Flag-OFF, `system === REVIEW_SYSTEM_PROMPT`, so the estimate is byte-identical to today.
   const estimatedNeurons =
-    freeAiCalls === 0
+    (freeAiCalls === 0
       ? 0
-      : estimateNeurons(system.length + user.length, maxTokens, freeAiCalls);
+      : estimateNeurons(system.length + user.length, maxTokens, freeAiCalls)) +
+    (tieBreakAiCalls === 0
+      ? 0
+      : estimateNeurons(system.length + user.length, 512, tieBreakAiCalls));
   // FAIL-SAFE default (#budget-no-starve): the daily neuron budget is a runaway-LOOP backstop, not a normal-
   // operation gate. An absent/empty/non-numeric env var must default HIGH (the clamp max), never to a tiny value
   // that silently starves every dual-AI review into quota_exceeded — that exact misconfig (the deployed worker

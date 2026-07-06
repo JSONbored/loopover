@@ -30,6 +30,13 @@
 #   docker compose --profile observability up -d                 # metrics + logs + dashboards
 #   docker compose --profile rees up -d                           # local REES review enrichment
 #   docker compose --profile tailscale --profile runners up -d   # tailnet + CI runners
+#
+# HOST CLOCK (#3811): containers share the HOST kernel clock, so this compose file cannot fix a
+# drifting clock for you -- configure at least two independent NTP sources on the host itself
+# (chrony/ntpd), not just one. A single dead NTP source silently drifts the clock with no local
+# symptom until GitHub App JWT auth starts failing ("Bad credentials") once the drift exceeds the
+# JWT's 60s skew tolerance. See docs/self-hosting/operations → "Host clock sync (NTP)" and the
+# gittensory_clock_skew_seconds Grafana panel/alert (--profile observability) for live drift.
 
 # Bounded container logging (#audit-rate-headroom): every service below defaults to Docker's
 # json-file driver, which has NO size cap on its own -- a long-running 24/7 stack can fill the

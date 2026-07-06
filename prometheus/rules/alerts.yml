@@ -479,3 +479,34 @@ groups:
           summary: "gittensory AI provider {{ $labels.provider }} circuit breaker is open"
           description: "Provider {{ $labels.provider }} has failed repeatedly and its circuit breaker is skipping calls fast during its cooldown (sustained 5m)."
           runbook: "Check that provider's credentials/reachability (CLI auth for claude-code/codex, or the configured API key/base URL for HTTP providers) via gittensory_ai_provider_failures_total{provider=\"...\"} and recent selfhost_ai_provider_failed logs."
+
+  # ── Host clock sync (#3811) ───────────────────────────────────────────────
+  - name: gittensory-system-health
+    rules:
+      - alert: GittensoryClockSkewWarning
+        # GitHub App JWTs are signed with iat backdated 60s for skew tolerance and exp at now+540s
+        # (createAppJwt, src/github/app.ts). A local clock running ahead erodes that backdate; once skew
+        # approaches it, GitHub can reject the JWT as not-yet-valid ("Bad credentials"), breaking ALL
+        # GitHub App auth fleet-wide -- exactly what happened when edge-us-01's sole NTP source died and
+        # its clock drifted ~3 minutes unnoticed. 60s is well under that 3-minute drift, so this fires long
+        # before auth actually breaks.
+        expr: abs(gittensory_clock_skew_seconds) > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory host clock has drifted {{ $value | printf \"%.0f\" }}s from GitHub's server time"
+          description: "Clock skew has been over 60s (sustained 5m). GitHub App JWT auth starts failing once skew approaches the 60s iat backdate margin."
+          runbook: "Check `chronyc sources` / `chronyc tracking` on the host. Confirm at least one NTP source shows a nonzero Reach (Reach: 0 means that source has never successfully synced). Configure redundant NTP sources -- a single dead source is a silent single point of failure."
+
+      - alert: GittensoryClockSkewCritical
+        # 120s is comfortably past the 60s JWT backdate margin -- GitHub App auth is very likely already
+        # failing fleet-wide by this point.
+        expr: abs(gittensory_clock_skew_seconds) > 120
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "gittensory host clock skew is CRITICAL ({{ $value | printf \"%.0f\" }}s) -- GitHub App auth is likely failing"
+          description: "Clock skew has exceeded 120s (sustained 2m), well past the point GitHub App JWT auth (\"Bad credentials\") is expected to start failing fleet-wide."
+          runbook: "Same as GittensoryClockSkewWarning, but treat as urgent: fix NTP sync immediately (chronyc sources, chronyc makestep, restart chrony if every source stays at Reach: 0). Check for github_app_jwt_rejected logs to confirm auth impact."

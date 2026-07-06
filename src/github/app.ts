@@ -4,6 +4,7 @@ import {
   isOrbBrokerMode,
 } from "../orb/broker-client";
 import { updateInstallationPermissions } from "../db/repositories";
+import { recordClockSkewFromResponse } from "../selfhost/clock-skew";
 import {
   clearGitHubResponseCacheForTest,
   githubRateLimitAdmissionKeyForInstallation,
@@ -203,18 +204,22 @@ export async function withInstallationTokenRetry<T>(
 }
 
 /** POST the App-installations access-token endpoint with a given JWT. Extracted so mintInstallationToken can
- *  issue the same request twice — once with the cached JWT, once with a freshly-signed one on a 401 (#2453). */
-function requestInstallationTokenWithJwt(
+ *  issue the same request twice — once with the cached JWT, once with a freshly-signed one on a 401 (#2453).
+ *  Also samples clock skew (#3811) from the response's Date header: this JWT-authenticated mint is exactly
+ *  the call that fails first when the local clock drifts, so no extra network round-trip is needed to check it. */
+async function requestInstallationTokenWithJwt(
   jwt: string,
   installationId: number,
 ): Promise<Response> {
-  return timeoutFetch(
+  const response = await timeoutFetch(
     `https://api.github.com/app/installations/${installationId}/access_tokens`,
     {
       method: "POST",
       headers: githubHeaders(`Bearer ${jwt}`),
     },
   );
+  recordClockSkewFromResponse(response);
+  return response;
 }
 
 /** Mint a fresh installation token (broker or local App-JWT) and cache it. `cached` is the expired/absent prior

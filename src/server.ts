@@ -51,6 +51,7 @@ import {
   sqliteBackupAdvisory,
   type ReadinessProbe,
 } from "./selfhost/health";
+import { clockSkewSecondsSample } from "./selfhost/clock-skew";
 import { gauge, gaugeVector, incr, observe, renderMetrics, setSelfHostedMetricsMode } from "./selfhost/metrics";
 import { runSelfHostMigrations } from "./selfhost/migrate";
 import { createPgAdapter, tuneGithubRateLimitObservationsAutovacuum } from "./selfhost/pg-adapter";
@@ -671,6 +672,7 @@ async function main(): Promise<void> {
   // -1 (not 0) when unavailable -- a genuine idle host reads 0, so a dashboard can tell "known idle" apart
   // from "no signal on this platform" (see host-pressure.ts).
   gauge("gittensory_host_load_avg1_per_core", async () => (await maintenancePressure()).hostLoadAvg1PerCore ?? -1);
+  gauge("gittensory_clock_skew_seconds", () => clockSkewSecondsSample());
   // Backlog-vs-fresh-intake fairness lanes (#selfhost-lane-observability, see queue-fairness.ts): the SAME
   // `foreground_lane` classification the claim-time fairness mechanism itself consults, so an operator can see
   // whether a stuck-looking queue is actually a real, unresolved PR-review backlog (high backlog-convergence

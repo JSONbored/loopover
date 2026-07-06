@@ -97,6 +97,27 @@ selfhost_webhook_enqueue_binding_missing`}
 docker compose --profile postgres --profile observability --profile backup up -d`}
       />
 
+      <h2>Host clock sync (NTP)</h2>
+      <Callout variant="warn" title="A single NTP source is a silent single point of failure">
+        GitHub App JWTs are signed with a timestamp from this process's clock, backdated 60 seconds
+        for skew tolerance. If the host clock drifts past that margin, GitHub starts rejecting the
+        JWT as not-yet-valid — <strong>every</strong> GitHub App request fails with a generic{" "}
+        <code>Bad credentials</code> error, with no obvious link back to the clock. Configure at
+        least two independent NTP sources on the host (not just in the container) so a single dead
+        source can't silently take the whole clock out from under you.
+      </Callout>
+      <p>
+        Check sync health with <code>chronyc sources</code> (or <code>ntpq -p</code> on an{" "}
+        <code>ntpd</code> host) — every configured source should show a nonzero <code>Reach</code>{" "}
+        value; <code>Reach: 0</code> means that source has never successfully synced. The{" "}
+        <code>gittensory_clock_skew_seconds</code> gauge on the <strong>Clock Sync (NTP)</strong>{" "}
+        row of the main Grafana dashboard tracks the live drift between this process and GitHub's
+        server time, sampled from the <code>Date</code> header of the GitHub App's own
+        installation-token mint calls — no extra network probe required. The bundled Prometheus
+        rules alert at 60s (warning) and 120s (critical) drift, both well under the margin that
+        actually breaks JWT auth.
+      </p>
+
       <h2>Alerting — required for a 24/7 deployment</h2>
       <p>
         Alertmanager ships with a valid but <strong>silent</strong> default: every alert routes to a

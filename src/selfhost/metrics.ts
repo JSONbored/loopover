@@ -51,6 +51,7 @@ const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["gittensory_jobs_claimed_by_lane_total", { help: "Foreground jobs claimed via the backlog-vs-fresh-intake fairness lane.", type: "counter" }],
   ["gittensory_github_rest_rate_limit_remaining", { help: "Newest observed GitHub REST rate-limit remaining count, by key scope.", type: "gauge" }],
   ["gittensory_host_load_avg1_per_core", { help: "One-minute host load average normalized by CPU core count.", type: "gauge" }],
+  ["gittensory_clock_skew_seconds", { help: "Clock skew in seconds between this process and GitHub's server time (positive = ahead), sampled from GitHub App JWT-mint response Date headers.", type: "gauge" }],
   ["gittensory_uptime_seconds", { help: "Self-host process uptime in seconds.", type: "gauge" }],
   ["gittensory_backup_acknowledged", { help: "1 when SQLite backup is acknowledged or Postgres is in use; 0 when the boot backup advisory would fire.", type: "gauge" }],
   ["gittensory_http_requests_total", { help: "HTTP app requests by response status class.", type: "counter" }],

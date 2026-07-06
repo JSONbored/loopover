@@ -27,8 +27,12 @@ import {
 import type { Advisory } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 import { getInstallation, upsertInstallation } from "../../src/db/repositories";
+import { clockSkewSecondsSample, resetClockSkewForTest } from "../../src/selfhost/clock-skew";
 
-beforeEach(() => clearInstallationTokenCacheForTest());
+beforeEach(() => {
+  clearInstallationTokenCacheForTest();
+  resetClockSkewForTest();
+});
 
 describe("GitHub check runs", () => {
   afterEach(() => {
@@ -191,6 +195,25 @@ describe("GitHub check runs", () => {
     expect(first).toBe("installation-token-1");
     expect(second).toBe("installation-token-1");
     expect(mints).toBe(1);
+  });
+
+  it("(#3811) samples clock skew from the installation-token mint response's Date header", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-06T12:05:00.000Z")); // 5 minutes ahead of the stubbed response's Date
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) {
+        return new Response(JSON.stringify({ token: "installation-token", expires_at: new Date(Date.now() + 60 * 60_000).toISOString() }), {
+          headers: { "content-type": "application/json", date: "Mon, 06 Jul 2026 12:00:00 GMT" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await createInstallationToken(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 4242);
+    expect(clockSkewSecondsSample()).toBe(300);
+    vi.useRealTimers();
   });
 
   it("REGRESSION (#2453): evicts a rejected App JWT and retries the mint once instead of failing outright", async () => {

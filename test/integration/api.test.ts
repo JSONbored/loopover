@@ -294,6 +294,35 @@ describe("api routes", () => {
     const notOptedIn = await app.request("/v1/public/repos/acme/quality-off/quality", {}, env);
     expect(notOptedIn.status).toBe(404);
     await expect(notOptedIn.json()).resolves.toMatchObject({ error: "not_found" });
+
+    // Private repos stay unavailable even when installed and explicitly opted in.
+    await upsertRepositoryFromGitHub(env, { name: "quality-private", full_name: "acme/quality-private", private: true, owner: { login: "acme" }, default_branch: "main" }, 562);
+    await upsertRepositorySettings(env, { repoFullName: "acme/quality-private", publicQualityMetrics: true });
+    const privateRes = await app.request("/v1/public/repos/acme/quality-private/quality", {}, env);
+    expect(privateRes.status).toBe(404);
+
+    // Opted in but NOT installed → unavailable.
+    await upsertRepositoryFromGitHub(env, { name: "quality-uninstalled", full_name: "acme/quality-uninstalled", private: false, owner: { login: "acme" }, default_branch: "main" });
+    await upsertRepositorySettings(env, { repoFullName: "acme/quality-uninstalled", publicQualityMetrics: true });
+    const notInstalled = await app.request("/v1/public/repos/acme/quality-uninstalled/quality", {}, env);
+    expect(notInstalled.status).toBe(404);
+
+    // Unknown repo → unavailable.
+    const unknown = await app.request("/v1/public/repos/acme/missing-quality/quality", {}, env);
+    expect(unknown.status).toBe(404);
+    await expect(unknown.json()).resolves.toMatchObject({ error: "not_found" });
+  });
+
+  it("persists the publicQualityMetrics opt-in through the settings write endpoint (#2568)", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const response = await app.request(
+      "/v1/internal/repos/acme/quality/settings",
+      { method: "POST", headers: { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ publicQualityMetrics: true }) },
+      env,
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ repoFullName: "acme/quality", publicQualityMetrics: true });
   });
 
   it("persists the badgeEnabled opt-in through the settings write endpoint (#541)", async () => {

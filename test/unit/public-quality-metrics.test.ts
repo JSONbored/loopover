@@ -125,6 +125,28 @@ describe("buildPublicQualityTrend", () => {
     );
     expect(trend.every((row) => row.gateBlocked === 0 && row.outcomesMerged === 0)).toBe(true);
   });
+
+  it("skips trend rows with unparseable timestamps and invalid date strings", () => {
+    const currentMonday = isoWeekStart(NOW);
+    const trend = buildPublicQualityTrend(
+      [
+        block(1, "x", "not-a-date"),
+        { repoFullName: "owner/repo", pullNumber: 2, blockerCodes: ["x"], overridden: false, blockedAt: `${currentMonday}T10:00:00.000Z` },
+      ],
+      [
+        pr(1, "closed", { updatedAt: "also-not-a-date", createdAt: "still-not-a-date" }),
+        pr(2, "merged", { mergedAt: `${currentMonday}T12:00:00.000Z` }),
+      ],
+      NOW,
+      1,
+    );
+    expect(trend[0]).toMatchObject({
+      gateBlocked: 1,
+      gateBlockedThenMerged: 1,
+      outcomesMerged: 1,
+      outcomesClosed: 0,
+    });
+  });
 });
 
 describe("buildPublicQualityMetricsFromRecords", () => {

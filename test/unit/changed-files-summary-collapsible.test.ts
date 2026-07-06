@@ -28,7 +28,7 @@ const files: ChangedFileSummaryInput[] = [
   { path: "package-lock.json", additions: 100, deletions: 50 },
 ];
 
-describe("buildChangedFilesSummaryCollapsible", () => {
+describe("buildChangedFilesSummaryCollapsible (#2145)", () => {
   it("groups changed files by category with file counts and +/- totals", () => {
     const c = buildChangedFilesSummaryCollapsible(files);
     expect(c).not.toBeNull();
@@ -69,7 +69,7 @@ describe("buildChangedFilesSummaryCollapsible", () => {
   });
 });
 
-describe("buildUnifiedCommentBody changedFilesSummary wiring (#1957)", () => {
+describe("buildUnifiedCommentBody changedFilesSummary wiring (#1957 / #2145)", () => {
   const base = {
     gate: gate(),
     panelRows,
@@ -82,6 +82,7 @@ describe("buildUnifiedCommentBody changedFilesSummary wiring (#1957)", () => {
     const body = buildUnifiedCommentBody({ ...base, changedFilesSummary: files });
     expect(body).toContain("Changed files");
     expect(body).toContain("| Source | 2 | +45 | -10 |");
+    expect(body).toMatch(/<details><summary><b>Changed files<\/b><\/summary>/);
   });
 
   it("does NOT add a Changed files section when changedFilesSummary is absent (flag-OFF parity)", () => {

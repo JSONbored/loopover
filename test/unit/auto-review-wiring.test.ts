@@ -188,6 +188,9 @@ describe("review.auto_review wiring (#1954)", () => {
         eventType: "github_app.ai_review_auto_review_skipped",
         detail: "review skipped (ignored author)",
         targetKey: "acme/widgets#7",
+        metadata: expect.objectContaining({
+          summary: "The author matches review.auto_review.ignore_authors, so AI review is skipped.",
+        }),
       }),
     );
 

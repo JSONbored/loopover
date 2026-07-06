@@ -21,6 +21,8 @@ import {
   resolveReviewPreMergeChecks,
   composeRepoReviewContext,
   evaluateAutoReviewSkipReason,
+  resolveAutoReviewSkipSummary,
+  AUTO_REVIEW_SKIP_SUMMARY,
   resolveAutoReviewConfig,
   resolveReviewPromptOverrides,
   composeManifestReviewInstructions,
@@ -3165,6 +3167,14 @@ describe("review.auto_review (#1954 / #2038–#2041)", () => {
     );
     expect(evaluateAutoReviewSkipReason({ ...empty, autoPauseAfterReviewedCommits: 0 }, { ...input, reviewedCommitCount: 99 })).toBeNull();
     expect(evaluateAutoReviewSkipReason({ ...empty, autoPauseAfterReviewedCommits: null }, { ...input, reviewedCommitCount: 99 })).toBeNull();
+  });
+
+  it("resolveAutoReviewSkipSummary maps every known skip reason to a public-safe sentence (#2067)", () => {
+    for (const [reason, summary] of Object.entries(AUTO_REVIEW_SKIP_SUMMARY)) {
+      expect(resolveAutoReviewSkipSummary(reason)).toBe(summary);
+      expect(summary.length).toBeGreaterThan(0);
+    }
+    expect(resolveAutoReviewSkipSummary("review skipped (unknown)")).toBe("review skipped (unknown)");
   });
 
   it("parses auto_pause_after_reviewed_commits with bounds validation (#2042)", () => {

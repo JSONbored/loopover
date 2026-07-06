@@ -3244,6 +3244,69 @@ describe("queue processors", () => {
       expect(audit?.detail).toBe("review skipped (draft)");
     });
 
+    it("publishes a skipped Orb review check with a human summary when auto-review eligibility fails (#2067)", async () => {
+      let aiCalls = 0;
+      let gateConclusion: string | null = null;
+      let gateSummary: string | null = null;
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env);
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { review: { auto_review: { skip_drafts: true } } });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 81,
+        title: "Draft feature",
+        state: "open",
+        draft: true,
+        user: { login: "contributor" },
+        head: { sha: "a81" },
+        labels: [],
+        body: "Closes #1",
+      } as never);
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 81, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/pulls/81/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+        if (url.endsWith("/pulls/81")) return Response.json({ number: 81, title: "Draft feature", state: "open", draft: true, user: { login: "contributor" }, head: { sha: "a81" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+        if (url.includes("/commits/a81/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/commits/a81/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/81/comments")) return method === "POST" ? Response.json({ id: 81 }, { status: 201 }) : Response.json([]);
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        if (url.includes("/check-runs") && (method === "POST" || method === "PATCH")) {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { conclusion?: string; output?: { summary?: string } };
+          if (body.conclusion) gateConclusion = body.conclusion;
+          if (body.output?.summary) gateSummary = body.output.summary;
+          return Response.json({ id: 981, html_url: "https://github.com/check/981" }, { status: method === "POST" ? 201 : 200 });
+        }
+        return Response.json({});
+      });
+
+      await expect(
+        processJob(env, { type: "agent-regate-pr", deliveryId: "auto-review-skip-status", repoFullName: "JSONbored/gittensory", prNumber: 81, installationId: 123 }),
+      ).resolves.toBeUndefined();
+      expect(aiCalls).toBe(0);
+      expect(gateConclusion).toBe("skipped");
+      expect(gateSummary).toBe("AI review is skipped for draft pull requests while review.auto_review.skip_drafts is enabled.");
+      const blocked = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.gate_blocked", "JSONbored/gittensory#81")
+        .first<{ n: number }>();
+      expect(blocked?.n).toBe(0);
+      const audit = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_auto_review_skipped", "JSONbored/gittensory#81")
+        .first<{ detail: string; metadata_json: string }>();
+      expect(audit?.detail).toBe("review skipped (draft)");
+      expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({
+        summary: "AI review is skipped for draft pull requests while review.auto_review.skip_drafts is enabled.",
+      });
+    });
+
     it("skips AI review when review.auto_review.skip_labels matches a PR label (#2062)", async () => {
       let aiCalls = 0;
       const env = createTestEnv({

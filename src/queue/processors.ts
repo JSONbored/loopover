@@ -362,6 +362,7 @@ import {
   composeManifestReviewInstructions,
   filterReviewFilesForAi,
   resolvePullRequestAutoReviewSkipReason,
+  resolveAutoReviewSkipSummary,
   resolveRepoEnrichmentToggles,
   resolveReviewAutoReviewConfig,
   resolveReviewPathInstructions,
@@ -6311,14 +6312,22 @@ export async function auditPullRequestAutoReviewSkip(
     skipReason: string;
   },
 ): Promise<void> {
+  const summary = resolveAutoReviewSkipSummary(args.skipReason);
   await recordAuditEvent(env, {
     eventType: "github_app.ai_review_auto_review_skipped",
     actor: args.actor,
     targetKey: `${args.repoFullName}#${args.pullNumber}`,
     outcome: "completed",
     detail: args.skipReason,
-    metadata: { deliveryId: args.deliveryId, repoFullName: args.repoFullName, headSha: args.headSha ?? null },
+    metadata: { deliveryId: args.deliveryId, repoFullName: args.repoFullName, headSha: args.headSha ?? null, summary },
   }).catch(() => undefined);
+  await recordGithubProductUsage(env, "ai_review_auto_review_skipped", {
+    actor: args.actor,
+    repoFullName: args.repoFullName,
+    targetKey: `${args.repoFullName}#${args.pullNumber}`,
+    outcome: "skipped",
+    metadata: { skipReason: args.skipReason, summary },
+  });
 }
 
 /** Resolve auto-review eligibility for a PR, loading the manifest only when cheaper skip predicates pass. (#1954) */
@@ -8872,21 +8881,31 @@ async function maybePublishPrPublicSurface(
             decisionOutcome: gateEvaluation?.conclusion,
           },
           () =>
-            createOrUpdateGateCheckRun(
-              env,
-              installationId,
-              repoFullName,
-              advisory,
-              gatePolicy,
-              {
-                checkRunId: pendingGateCheckRunId,
-                // #5 (audit): publish the AUTHORITATIVE surface-lane-merged verdict so the check-run conclusion matches
-                // the disposition; without this the check re-derives the generic verdict and shows green on a surface-
-                // lane reject/manual PR that is actually auto-closed/held. Undefined (gate off) ⇒ re-derive (identical).
-                gate: gateEvaluation,
-              },
-              mode,
-            ),
+            autoReviewSkipReason
+              ? createOrUpdateSkippedGateCheckRun(
+                  env,
+                  installationId,
+                  repoFullName,
+                  advisory,
+                  resolveAutoReviewSkipSummary(autoReviewSkipReason),
+                  mode,
+                  { checkRunId: pendingGateCheckRunId },
+                )
+              : createOrUpdateGateCheckRun(
+                  env,
+                  installationId,
+                  repoFullName,
+                  advisory,
+                  gatePolicy,
+                  {
+                    checkRunId: pendingGateCheckRunId,
+                    // #5 (audit): publish the AUTHORITATIVE surface-lane-merged verdict so the check-run conclusion matches
+                    // the disposition; without this the check re-derives the generic verdict and shows green on a surface-
+                    // lane reject/manual PR that is actually auto-closed/held. Undefined (gate off) ⇒ re-derive (identical).
+                    gate: gateEvaluation,
+                  },
+                  mode,
+                ),
         );
         if (gateCheckResult?.kind === "published") {
           gateFinalized = true;
@@ -8897,7 +8916,7 @@ async function maybePublishPrPublicSurface(
             headSha: advisory.headSha,
             checkRunId: gateCheckResult.id,
             /* v8 ignore next -- gate-enabled publication always has a gate evaluation. */
-            conclusion: gateEvaluation?.conclusion ?? null,
+            conclusion: autoReviewSkipReason ? "skipped" : (gateEvaluation?.conclusion ?? null),
             detailsUrl: gateCheckResult.html_url,
             deliveryId: webhook.deliveryId,
           }).catch((error) => {

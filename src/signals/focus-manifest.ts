@@ -2314,6 +2314,36 @@ export function evaluateAutoReviewSkipReason(config: AutoReviewConfig, input: Au
   return null;
 }
 
+/** Known auto-review skip reason tokens returned by `evaluateAutoReviewSkipReason`. (#2067) */
+export type AutoReviewSkipReason =
+  | "review skipped (draft)"
+  | "review skipped (ignored author)"
+  | "review skipped (WIP title)"
+  | "review skipped (label)"
+  | "review skipped (docs only)"
+  | "review skipped (too large)"
+  | "review skipped (base branch out of scope)"
+  | "review paused (commit threshold)";
+
+/** Public-safe one-line summaries for each auto-review skip reason — mirrors settings-preview `SKIP_SUMMARY`. (#2067) */
+export const AUTO_REVIEW_SKIP_SUMMARY: Record<AutoReviewSkipReason, string> = {
+  "review skipped (draft)": "AI review is skipped for draft pull requests while review.auto_review.skip_drafts is enabled.",
+  "review skipped (ignored author)": "The author matches review.auto_review.ignore_authors, so AI review is skipped.",
+  "review skipped (WIP title)": "The title matches review.auto_review.ignore_title_keywords, so AI review is skipped.",
+  "review skipped (label)": "A configured review.auto_review.skip_labels label is present, so AI review is skipped.",
+  "review skipped (docs only)": "Every changed file is documentation while review.auto_review.skip_docs_only is enabled, so AI review is skipped.",
+  "review skipped (too large)": "The pull request exceeds review.auto_review.max_added_lines or max_files, so AI review is skipped.",
+  "review skipped (base branch out of scope)": "The base branch is outside review.auto_review.base_branches, so AI review is skipped.",
+  "review paused (commit threshold)": "Published AI review count reached review.auto_review.auto_pause_after_reviewed_commits, so further AI review is paused.",
+};
+
+export function resolveAutoReviewSkipSummary(skipReason: string): string {
+  if (Object.prototype.hasOwnProperty.call(AUTO_REVIEW_SKIP_SUMMARY, skipReason)) {
+    return AUTO_REVIEW_SKIP_SUMMARY[skipReason as AutoReviewSkipReason];
+  }
+  return skipReason;
+}
+
 export function resolvePullRequestAutoReviewSkipReason(args: {
   forceAiReview?: boolean | undefined;
   manifest: FocusManifest | null;

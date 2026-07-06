@@ -175,6 +175,13 @@ export interface UnifiedReviewInput {
    *  `review.effort_score` — see `resolveReviewPromptOverrides`'s `effortScore`); omitted ⇒ no chip
    *  (byte-identical). (#1955) */
   reviewEffort?: { band: 1 | 2 | 3 | 4 | 5; minutes: number };
+  /** Linked-issue satisfaction advisory (#2174, render slice of #1961): whether this PR's diff appears to
+   *  satisfy the linked issue's own intent/acceptance criteria — `addressed` / `partial` / `unaddressed` plus a
+   *  short rationale, already public-safe (see `src/services/linked-issue-satisfaction.ts`). PRESENTATION
+   *  ONLY — rendered as an additive collapsible section; never changes `status`/the gate verdict. Absent
+   *  (default; the host only resolves this when `review.linkedIssueSatisfaction` is on) ⇒ no section is
+   *  rendered, byte-identical to today. */
+  linkedIssueSatisfaction?: { status: "addressed" | "partial" | "unaddressed"; rationale: string };
 }
 
 /** One row of the readiness signal table (gittensory side, host-provided; the engine adds Code review). */
@@ -437,6 +444,22 @@ function formatReviewTimestamp(value: string | number | Date | undefined): strin
   return time.toISOString().replace(/\.\d{3}Z$/, "Z").replace("T", " ").replace("Z", " UTC");
 }
 
+const LINKED_ISSUE_SATISFACTION_LABELS: Record<"addressed" | "partial" | "unaddressed", string> = {
+  addressed: "Addressed",
+  partial: "Partially addressed",
+  unaddressed: "Not yet addressed",
+};
+
+/** Render the linked-issue satisfaction advisory (#2174) as a `status` heading + rationale body, or "" when
+ *  absent — the caller only appends the section when this returns non-empty, so an unresolved advisory omits
+ *  the section entirely (byte-identical to today). Angle-escaping happens once, in the shared `details()`
+ *  wrapper the caller passes this body to (matching every other collapsible section's own convention). */
+function linkedIssueSatisfactionBlock(result: UnifiedReviewInput["linkedIssueSatisfaction"]): string {
+  if (!result?.rationale.trim()) return "";
+  const label = LINKED_ISSUE_SATISFACTION_LABELS[result.status];
+  return `**${label}**\n${result.rationale.trim()}`;
+}
+
 /** Render the failing CI checks as a bullet list of `name — reason` (reason only when the check carried one),
  *  preferring failingDetails (which pairs each name with its WHY: codecov %/test/lint reason) and falling back
  *  to the bare failingChecks names. Public-safe: only check names + their already-public short summary, both
@@ -561,6 +584,15 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
   if (failingChecks) blocks.push(`**CI checks failing**\n${failingChecks}`);
 
   blocks.push(signalTable(input, ctx));
+
+  // Linked-issue satisfaction advisory (#2174): additive, collapsed section — omitted entirely when the host
+  // never resolved a result (default) or `review.comment_verbosity: quiet` trims decorative detail, exactly
+  // like Nits/extraCollapsibles above. Never affects `status`/the gate verdict.
+  const satisfactionBody = linkedIssueSatisfactionBlock(input.linkedIssueSatisfaction);
+  if (satisfactionBody && verbosity !== "quiet") {
+    blocks.push(details("Linked issue satisfaction", satisfactionBody, undefined, collapsiblesOpen));
+  }
+
   if (verbosity !== "quiet") {
     for (const c of ctx.extraCollapsibles ?? []) {
       if (c.body.trim()) {
@@ -600,6 +632,7 @@ export function buildUnifiedReviewInput(opts: {
   verdictReason?: string;
   reviewEffort?: { band: 1 | 2 | 3 | 4 | 5; minutes: number };
   maxFindingsCaps?: { blockers: number | null; nits: number | null };
+  linkedIssueSatisfaction?: { status: "addressed" | "partial" | "unaddressed"; rationale: string };
 }): UnifiedReviewInput {
   const ex = extractReviewSummary(opts.reviews);
   const changedFiles = typeof opts.changedFiles === "number" ? opts.changedFiles : opts.changedFiles.length;
@@ -618,6 +651,7 @@ export function buildUnifiedReviewInput(opts: {
     ...(opts.verdictReason !== undefined ? { verdictReason: opts.verdictReason } : {}),
     ...(opts.reviewEffort !== undefined ? { reviewEffort: opts.reviewEffort } : {}),
     ...(opts.maxFindingsCaps !== undefined ? { maxFindingsCaps: opts.maxFindingsCaps } : {}),
+    ...(opts.linkedIssueSatisfaction !== undefined ? { linkedIssueSatisfaction: opts.linkedIssueSatisfaction } : {}),
   };
 }
 

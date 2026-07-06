@@ -278,6 +278,37 @@ describe("renderUnifiedReviewComment", () => {
     expect(withoutEffort).not.toContain("review effort:");
   });
 
+  it("renders each linked-issue satisfaction status as its own labeled section, and omits it entirely when absent (#2174)", () => {
+    const addressed = renderUnifiedReviewComment(
+      { ...base, linkedIssueSatisfaction: { status: "addressed", rationale: "The diff renames the field exactly as the issue asked." } },
+      {},
+    );
+    expect(addressed).toContain("<summary><b>Linked issue satisfaction</b>");
+    expect(addressed).toContain("**Addressed**");
+    expect(addressed).toContain("The diff renames the field exactly as the issue asked.");
+
+    const partial = renderUnifiedReviewComment({ ...base, linkedIssueSatisfaction: { status: "partial", rationale: "Fixes the crash but not the doc update." } }, {});
+    expect(partial).toContain("**Partially addressed**");
+
+    const unaddressed = renderUnifiedReviewComment({ ...base, linkedIssueSatisfaction: { status: "unaddressed", rationale: "The diff does not touch the reported crash." } }, {});
+    expect(unaddressed).toContain("**Not yet addressed**");
+
+    // Byte-identical-when-absent: no field at all ⇒ no section, no leaked heading text.
+    const withoutField = renderUnifiedReviewComment({ ...base }, {});
+    expect(withoutField).not.toContain("Linked issue satisfaction");
+  });
+
+  it("omits the linked-issue satisfaction section when the rationale is empty/whitespace (defensive)", () => {
+    const md = renderUnifiedReviewComment({ ...base, linkedIssueSatisfaction: { status: "addressed", rationale: "   " } }, {});
+    expect(md).not.toContain("Linked issue satisfaction");
+  });
+
+  it("angle-escapes the linked-issue satisfaction rationale (public-safe)", () => {
+    const md = renderUnifiedReviewComment({ ...base, linkedIssueSatisfaction: { status: "unaddressed", rationale: "<script>alert(1)</script>" } }, {});
+    expect(md).not.toContain("<script>");
+    expect(md).toContain("&lt;script&gt;");
+  });
+
   it("lists failing check names + per-check details under a 'CI checks failing' section (FIX D3)", () => {
     const md = renderUnifiedReviewComment(
       {
@@ -501,6 +532,17 @@ describe("buildUnifiedReviewInput", () => {
     const withoutCaps = buildUnifiedReviewInput({ changedFiles: 1, reviews: [reviewNote("merge")] });
     expect(withoutCaps.maxFindingsCaps).toBeUndefined();
   });
+
+  it("threads the optional linkedIssueSatisfaction result through to the input when provided, omits it otherwise (#2174)", () => {
+    const withResult = buildUnifiedReviewInput({
+      changedFiles: 1,
+      reviews: [reviewNote("merge")],
+      linkedIssueSatisfaction: { status: "partial", rationale: "Fixes the crash but not the doc update." },
+    });
+    expect(withResult.linkedIssueSatisfaction).toEqual({ status: "partial", rationale: "Fixes the crash but not the doc update." });
+    const withoutResult = buildUnifiedReviewInput({ changedFiles: 1, reviews: [reviewNote("merge")] });
+    expect(withoutResult.linkedIssueSatisfaction).toBeUndefined();
+  });
 });
 
 describe("renderReviewingPlaceholder", () => {
@@ -616,6 +658,22 @@ describe("review.comment_verbosity (#2047)", () => {
     expect(md).not.toContain("Changed files");
     expect(md).toContain("a real blocker");
     expect(md).toContain("**Code review**"); // signal table row always present
+  });
+
+  it("quiet also drops the linked-issue satisfaction section (#2174)", () => {
+    const md = renderUnifiedReviewComment(
+      { ...input, linkedIssueSatisfaction: { status: "partial", rationale: "Fixes the crash but not the doc update." } },
+      { ...extraCtx, commentVerbosity: "quiet" },
+    );
+    expect(md).not.toContain("Linked issue satisfaction");
+  });
+
+  it("detailed renders the linked-issue satisfaction section pre-expanded (#2174)", () => {
+    const md = renderUnifiedReviewComment(
+      { ...input, linkedIssueSatisfaction: { status: "addressed", rationale: "Matches the issue's ask." } },
+      { ...extraCtx, commentVerbosity: "detailed" },
+    );
+    expect(md).toContain("<details open><summary><b>Linked issue satisfaction</b>");
   });
 
   it("detailed renders every collapsible pre-expanded (<details open>), including a rawHtml collapsible", () => {

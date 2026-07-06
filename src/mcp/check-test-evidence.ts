@@ -34,7 +34,7 @@ function uniquePaths(paths: readonly string[]): string[] {
   return normalized;
 }
 
-/** Deterministic coverage-gap report for MCP `gittensory_check_test_evidence` (#2235). Pure — paths only. */
+/** Deterministic coverage-gap report for MCP `gittensory_check_test_evidence` (#2277). Pure — paths only. */
 export function buildCheckTestEvidenceReport(input: CheckTestEvidenceInput): CheckTestEvidenceReport {
   const changedPaths = uniquePaths(input.changedPaths ?? []);
   const extraTestPaths = uniquePaths(input.testPaths ?? []);
@@ -48,7 +48,7 @@ export function buildCheckTestEvidenceReport(input: CheckTestEvidenceInput): Che
   if (docsOnly) {
     guidance.push("No code files changed — dedicated test evidence is not required for docs-only churn.");
   } else {
-    guidance.push(CLASSIFICATION_GUIDANCE[classification]);
+    guidance.push(CLASSIFICATION_GUIDANCE[classification]!);
   }
 
   return {

@@ -14,7 +14,7 @@ async function connect() {
   return client;
 }
 
-describe("buildCheckTestEvidenceReport (#2235)", () => {
+describe("buildCheckTestEvidenceReport (#2277)", () => {
   it("classifies code-only changes without tests as absent", () => {
     const report = buildCheckTestEvidenceReport({ changedPaths: ["src/auth.ts", "src/utils.ts"] });
     expect(report.classification).toBe("absent");
@@ -112,7 +112,7 @@ describe("buildCheckTestEvidenceReport (#2235)", () => {
   });
 });
 
-describe("MCP gittensory_check_test_evidence (#2235)", () => {
+describe("MCP gittensory_check_test_evidence (#2277)", () => {
   it("registers the tool and returns a public-safe classification for code-only paths", async () => {
     const client = await connect();
     const { tools } = await client.listTools();

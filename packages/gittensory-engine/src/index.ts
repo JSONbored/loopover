@@ -6,6 +6,18 @@
 // More modules land in follow-up issues.
 export { ENGINE_VERSION } from "./version.js";
 export {
+  classifyTestCoverage,
+  hasLocalTestEvidence,
+  isTestPath,
+  type TestCoverageClassification,
+} from "./test-evidence.js";
+export {
+  computeLocalScorerTokens,
+  type LocalBranchChangedFile,
+  type LocalBranchScorer,
+  type LocalBranchValidation,
+} from "./local-scorer.js";
+export {
   pickTopRankedOpportunities,
   rankOpportunityScore,
   rankOpportunities,

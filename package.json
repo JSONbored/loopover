@@ -81,6 +81,7 @@
     "validate": "npm run typecheck && npm run test:coverage"
   },
   "dependencies": {
+    "@jsonbored/gittensory-engine": "0.1.0",
     "@asteasolutions/zod-to-openapi": "^8.5.0",
     "@cloudflare/puppeteer": "^1.1.0",
     "@hono/node-server": "^2.0.6",

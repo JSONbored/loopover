@@ -148,6 +148,56 @@ describe("self-host monitored recurring work", () => {
     expect(metrics).toContain('gittensory_orb_webhook_total{event="check_suite",result="duplicate"} 1');
   });
 
+  it("REGRESSION (#audit-orb-relay-enqueue-isolation): an enqueue that throws for one event does not abort the rest of the batch", async () => {
+    const state: OrbRelayDrainState = { pendingAck: [], lastDrainAtMs: null };
+    const drain = vi.fn().mockResolvedValue([
+      { deliveryId: "ok-1", eventName: "pull_request", rawBody: "{}" },
+      { deliveryId: "throws-2", eventName: "issues", rawBody: "{}" },
+      { deliveryId: "ok-3", eventName: "check_suite", rawBody: "{}" },
+    ]);
+    const enqueue = vi
+      .fn()
+      .mockResolvedValueOnce("queued")
+      .mockRejectedValueOnce(new Error("D1 write error"))
+      .mockResolvedValueOnce("queued");
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await drainOrbRelayWithMonitor({
+      state,
+      relayEnv: {},
+      env: {} as Env,
+      drain,
+      enqueue,
+    });
+
+    // All 3 events were attempted -- ok-3 was still reached even though throws-2 (the 2nd) rejected.
+    expect(enqueue).toHaveBeenCalledTimes(3);
+    expect(enqueue).toHaveBeenNthCalledWith(3, {}, "ok-3", "check_suite", "{}");
+    // throws-2 is NOT acked (the relay redelivers it next drain), but both successful events are.
+    expect(state.pendingAck).toEqual(["ok-1", "ok-3"]);
+    const logged = errors.mock.calls.map((c) => String(c[0])).find((line) => line.includes("orb_relay_enqueue_threw"));
+    expect(logged).toBeDefined();
+    expect(JSON.parse(logged!)).toMatchObject({ level: "error", event: "orb_relay_enqueue_threw", eventName: "issues", error: "D1 write error" });
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_orb_webhook_total{event="pull_request",result="queued"} 1');
+    expect(metrics).toContain('gittensory_orb_webhook_total{event="issues",result="enqueue_failed"} 1');
+    expect(metrics).toContain('gittensory_orb_webhook_total{event="check_suite",result="queued"} 1');
+    errors.mockRestore();
+  });
+
+  it("logs a non-Error enqueue rejection by stringifying it (the false ternary arm)", async () => {
+    const state: OrbRelayDrainState = { pendingAck: [], lastDrainAtMs: null };
+    const drain = vi.fn().mockResolvedValue([{ deliveryId: "throws-1", eventName: "pull_request", rawBody: "{}" }]);
+    const enqueue = vi.fn().mockRejectedValueOnce("not an Error instance");
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await drainOrbRelayWithMonitor({ state, relayEnv: {}, env: {} as Env, drain, enqueue });
+
+    const logged = errors.mock.calls.map((c) => String(c[0])).find((line) => line.includes("orb_relay_enqueue_threw"));
+    expect(JSON.parse(logged!)).toMatchObject({ error: "not an Error instance" });
+    errors.mockRestore();
+  });
+
   it("clears previous Orb relay acks and stays quiet when the broker has no events", async () => {
     const state: OrbRelayDrainState = { pendingAck: ["previous-delivery"], lastDrainAtMs: null };
     const drain = vi.fn().mockResolvedValue([]);

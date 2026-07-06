@@ -86,12 +86,34 @@ export async function drainOrbRelayWithMonitor(args: {
         result: events.length > 0 ? "events" : "empty",
       });
       for (const ev of events) {
-        const result = await args.enqueue(
-          args.env,
-          ev.deliveryId,
-          ev.eventName,
-          ev.rawBody,
-        );
+        // #audit-orb-relay-enqueue-isolation: an enqueue can throw uncaught (e.g. a D1/Postgres write failure
+        // inside recordWebhookEvent, not just the anticipated failures enqueueWebhookByEnv already returns as a
+        // string result) -- that must not abort the REST of this batch, or every event after the failing one
+        // is silently never attempted this tick. Isolate per event and treat a throw exactly like the existing
+        // non-throwing "enqueue_failed" result: don't ack (the relay redelivers it next drain) and keep going.
+        let result: EnqueueWebhookResult;
+        try {
+          result = await args.enqueue(
+            args.env,
+            ev.deliveryId,
+            ev.eventName,
+            ev.rawBody,
+          );
+        } catch (error) {
+          incr("gittensory_orb_webhook_total", {
+            event: orbRelayMetricEvent(ev.eventName),
+            result: "enqueue_failed",
+          });
+          console.error(
+            JSON.stringify({
+              level: "error",
+              event: "orb_relay_enqueue_threw",
+              eventName: ev.eventName,
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
+          continue;
+        }
         incr("gittensory_orb_webhook_total", {
           event: orbRelayMetricEvent(ev.eventName),
           result,

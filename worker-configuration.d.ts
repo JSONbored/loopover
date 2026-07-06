@@ -56,7 +56,46 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "GITHUB_APP_ID" | "GITHUB_APP_SLUG" | "GITHUB_OAUTH_CLIENT_ID" | "GITHUB_WEBHOOK_MAX_BODY_BYTES" | "GITTENSOR_UPSTREAM_REPO" | "GITTENSOR_UPSTREAM_REF" | "GITTENSOR_REGISTRY_URL" | "SCORING_TIME_DECAY_ENABLED" | "GITTENSORY_AUTO_FILE_DRIFT_ISSUES" | "GITTENSORY_DRIFT_ISSUE_REPO" | "PUBLIC_API_ORIGIN" | "PUBLIC_SITE_ORIGIN" | "ADMIN_GITHUB_LOGINS" | "GITTENSORY_REVIEW_UNIFIED_COMMENT" | "GITTENSORY_REVIEW_INLINE_COMMENTS" | "GITTENSORY_REVIEW_TEST_GENERATION" | "GITTENSORY_REVIEW_SAFETY" | "GITTENSORY_REVIEW_SCREENSHOTS" | "GITTENSORY_REVIEW_GROUNDING" | "GITTENSORY_REVIEW_REPUTATION" | "GITTENSORY_REVIEW_OPS" | "GITTENSORY_SWEEP_WATCHDOG" | "GITTENSORY_PR_RECONCILIATION" | "GITTENSORY_REVIEW_RAG" | "GITTENSORY_REVIEW_IMPACT_MAP" | "GITTENSORY_REVIEW_CULTURE_PROFILE" | "GITTENSORY_REVIEW_MEMORY" | "GITTENSORY_REVIEW_CONTENT_LANE" | "GITTENSORY_REVIEW_SELFTUNE" | "GITHUB_STATUS_ROLLUP_GRAPHQL" | "GITTENSORY_REVIEW_PLANNER" | "GITTENSORY_REVIEW_DRAFT" | "GITTENSORY_REVIEW_PARITY_AUDIT" | "GITTENSORY_REVIEW_REPOS" | "GITTENSORY_PUBLIC_STATS" | "GITTENSORY_PUBLIC_STATS_REPOS" | "GITTENSORY_DUPLICATE_WINNER" | "GITTENSORY_OPEN_PR_FILE_COLLISION">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env,
+		| "ADMIN_GITHUB_LOGINS"
+		| "GITHUB_APP_ID"
+		| "GITHUB_APP_SLUG"
+		| "GITHUB_OAUTH_CLIENT_ID"
+		| "GITHUB_STATUS_ROLLUP_GRAPHQL"
+		| "GITHUB_WEBHOOK_MAX_BODY_BYTES"
+		| "GITTENSOR_REGISTRY_URL"
+		| "GITTENSOR_UPSTREAM_REF"
+		| "GITTENSOR_UPSTREAM_REPO"
+		| "GITTENSORY_AUTO_FILE_DRIFT_ISSUES"
+		| "GITTENSORY_DRIFT_ISSUE_REPO"
+		| "GITTENSORY_DUPLICATE_WINNER"
+		| "GITTENSORY_OPEN_PR_FILE_COLLISION"
+		| "GITTENSORY_PR_RECONCILIATION"
+		| "GITTENSORY_PUBLIC_STATS"
+		| "GITTENSORY_PUBLIC_STATS_REPOS"
+		| "GITTENSORY_REVIEW_CONTENT_LANE"
+		| "GITTENSORY_REVIEW_CULTURE_PROFILE"
+		| "GITTENSORY_REVIEW_DRAFT"
+		| "GITTENSORY_REVIEW_GROUNDING"
+		| "GITTENSORY_REVIEW_IMPACT_MAP"
+		| "GITTENSORY_REVIEW_INLINE_COMMENTS"
+		| "GITTENSORY_REVIEW_MEMORY"
+		| "GITTENSORY_REVIEW_OPS"
+		| "GITTENSORY_REVIEW_PARITY_AUDIT"
+		| "GITTENSORY_REVIEW_PLANNER"
+		| "GITTENSORY_REVIEW_RAG"
+		| "GITTENSORY_REVIEW_REPOS"
+		| "GITTENSORY_REVIEW_REPUTATION"
+		| "GITTENSORY_REVIEW_SAFETY"
+		| "GITTENSORY_REVIEW_SCREENSHOTS"
+		| "GITTENSORY_REVIEW_SELFTUNE"
+		| "GITTENSORY_REVIEW_TEST_GENERATION"
+		| "GITTENSORY_REVIEW_UNIFIED_COMMENT"
+		| "GITTENSORY_SWEEP_WATCHDOG"
+		| "PUBLIC_API_ORIGIN"
+		| "PUBLIC_SITE_ORIGIN"
+		| "SCORING_TIME_DECAY_ENABLED"
+	>> {}
 }
 
 // Begin runtime types
@@ -482,8 +521,7 @@ interface ExecutionContext<Props = unknown> {
     readonly exports: Cloudflare.Exports;
     readonly props: Props;
     cache?: CacheContext;
-    readonly access?: CloudflareAccessContext;
-    tracing: Tracing;
+    tracing?: Tracing;
 }
 type ExportedHandlerFetchHandler<Env = unknown, CfHostMetadata = unknown, Props = unknown> = (request: Request<CfHostMetadata, IncomingRequestCfProperties<CfHostMetadata>>, env: Env, ctx: ExecutionContext<Props>) => Response | Promise<Response>;
 type ExportedHandlerConnectHandler<Env = unknown, Props = unknown> = (socket: Socket, env: Env, ctx: ExecutionContext<Props>) => void | Promise<void>;
@@ -539,10 +577,6 @@ interface CachePurgeOptions {
 interface CacheContext {
     purge(options: CachePurgeOptions): Promise<CachePurgeResult>;
 }
-interface CloudflareAccessContext {
-    readonly aud: string;
-    getIdentity(): Promise<CloudflareAccessIdentity | undefined>;
-}
 declare abstract class ColoLocalActorNamespace {
     get(actorId: string): Fetcher;
 }
@@ -576,7 +610,7 @@ type DurableObjectJurisdiction = "eu" | "fedramp" | "fedramp-high";
 interface DurableObjectNamespaceNewUniqueIdOptions {
     jurisdiction?: DurableObjectJurisdiction;
 }
-type DurableObjectLocationHint = "wnam" | "enam" | "sam" | "weur" | "eeur" | "apac" | "apac-ne" | "apac-se" | "oc" | "afr" | "me";
+type DurableObjectLocationHint = "wnam" | "enam" | "sam" | "weur" | "eeur" | "apac" | "oc" | "afr" | "me";
 type DurableObjectRoutingMode = "primary-only";
 interface DurableObjectNamespaceGetDurableObjectOptions {
     locationHint?: DurableObjectLocationHint;
@@ -672,7 +706,6 @@ interface DurableObjectFacets {
     get<T extends Rpc.DurableObjectBranded | undefined = undefined>(name: string, getStartupOptions: () => FacetStartupOptions<T> | Promise<FacetStartupOptions<T>>): Fetcher<T>;
     abort(name: string, reason: any): void;
     delete(name: string): void;
-    clone(src: string, dst: string): void;
 }
 interface FacetStartupOptions<T extends Rpc.DurableObjectBranded | undefined = undefined> {
     id?: DurableObjectId | string;
@@ -3348,28 +3381,6 @@ interface EventSourceEventSourceInit {
     withCredentials?: boolean;
     fetcher?: Fetcher;
 }
-interface ExecOutput {
-    readonly stdout: ArrayBuffer;
-    readonly stderr: ArrayBuffer;
-    readonly exitCode: number;
-}
-interface ContainerExecOptions {
-    cwd?: string;
-    env?: Record<string, string>;
-    user?: string;
-    stdin?: ReadableStream | "pipe";
-    stdout?: "pipe" | "ignore";
-    stderr?: "pipe" | "ignore" | "combined";
-}
-interface ExecProcess {
-    readonly stdin: WritableStream | null;
-    readonly stdout: ReadableStream | null;
-    readonly stderr: ReadableStream | null;
-    readonly pid: number;
-    readonly exitCode: Promise<number>;
-    output(): Promise<ExecOutput>;
-    kill(signal?: number): void;
-}
 interface Container {
     get running(): boolean;
     start(options?: ContainerStartupOptions): void;
@@ -3383,7 +3394,6 @@ interface Container {
     snapshotDirectory(options: ContainerDirectorySnapshotOptions): Promise<ContainerDirectorySnapshot>;
     snapshotContainer(options: ContainerSnapshotOptions): Promise<ContainerSnapshot>;
     interceptOutboundHttps(addr: string, binding: Fetcher): Promise<void>;
-    exec(cmd: string[], options?: ContainerExecOptions): Promise<ExecProcess>;
 }
 interface ContainerDirectorySnapshot {
     id: string;
@@ -3554,58 +3564,11 @@ declare abstract class Performance {
 }
 interface Tracing {
     enterSpan<T, A extends unknown[]>(name: string, callback: (span: Span, ...args: A) => T, ...args: A): T;
-    startActiveSpan<T, A extends unknown[]>(name: string, callback: (span: Span, ...args: A) => T, ...args: A): T;
     Span: typeof Span;
 }
 declare abstract class Span {
     get isTraced(): boolean;
     setAttribute(key: string, value?: (boolean | number | string)): void;
-    end(): void;
-}
-/**
- * Represents the identity of a user authenticated via Cloudflare Access.
- * This matches the result of calling /cdn-cgi/access/get-identity.
- *
- * The exact structure of the returned object depends on the identity provider
- * configuration for the Access application. The fields below represent commonly
- * available properties, but additional provider-specific fields may be present.
- */
-interface CloudflareAccessIdentity extends Record<string, unknown> {
-    /** The user's email address, if available from the identity provider. */
-    email?: string;
-    /** The user's display name. */
-    name?: string;
-    /** The user's unique identifier. */
-    user_uuid?: string;
-    /** The Cloudflare account ID. */
-    account_id?: string;
-    /** Login timestamp (Unix epoch seconds). */
-    iat?: number;
-    /** The user's IP address at authentication time. */
-    ip?: string;
-    /** Authentication methods used (e.g., "pwd"). */
-    amr?: string[];
-    /** Identity provider information. */
-    idp?: {
-        id: string;
-        type: string;
-    };
-    /** Geographic information about where the user authenticated. */
-    geo?: {
-        country: string;
-    };
-    /** Group memberships from the identity provider. */
-    groups?: Array<{
-        id: string;
-        name: string;
-        email?: string;
-    }>;
-    /** Device posture check results, keyed by check ID. */
-    devicePosture?: Record<string, unknown>;
-    /** True if the user connected via Cloudflare WARP. */
-    is_warp?: boolean;
-    /** True if the user is authenticated via Cloudflare Gateway. */
-    is_gateway?: boolean;
 }
 // ============================================================================
 // Agent Memory
@@ -11236,8 +11199,6 @@ interface RequestInitCfProperties extends Record<string, unknown> {
      * (e.g. { '200-299': 86400, '404': 1, '500-599': 0 })
      */
     cacheTtlByStatus?: Record<string, number>;
-    /** Controls how responses with a `Vary` header are cached for this request. */
-    vary?: RequestInitCfPropertiesVary;
     /**
      * Explicit Cache-Control header value to set on the response stored in cache.
      * This gives full control over cache directives (e.g. 'public, max-age=3600, s-maxage=86400').
@@ -11275,17 +11236,6 @@ interface RequestInitCfProperties extends Record<string, unknown> {
     cacheReserveMinimumFileSize?: number;
     scrapeShield?: boolean;
     apps?: boolean;
-    /**
-     * Controls whether an outbound gRPC-web subrequest from this Worker is
-     * converted to gRPC at the Cloudflare edge.
-     *
-     * - `"passthrough"`: forward the subrequest unchanged as gRPC-web (default).
-     * - `"convert"`: convert the gRPC-web subrequest to gRPC at the edge.
-     *
-     * Provides per-request control over the same edge conversion behavior
-     * gated by the `auto_grpc_convert` compatibility flag.
-     */
-    grpcWeb?: "passthrough" | "convert";
     image?: RequestInitCfPropertiesImage;
     minify?: RequestInitCfPropertiesImageMinify;
     mirage?: boolean;
@@ -11305,63 +11255,6 @@ interface RequestInitCfProperties extends Record<string, unknown> {
      * to point to that CNAME record.
      */
     resolveOverride?: string;
-}
-/**
- * Controls how Workers Standard Vary handles a request header listed by an
- * origin `Vary` response header:
- *
- * - `"normalize"`: normalize the request header value before it is used in the
- *   cache variance key.
- * - `"passthrough"`: use the raw request header value in the cache variance
- *   key.
- * - `"bypass"`: bypass cache when the header appears in the origin `Vary`
- *   response header.
- */
-type RequestInitCfPropertiesVaryAction = "normalize" | "passthrough" | "bypass";
-/** Configuration for Workers Standard Vary support. */
-interface RequestInitCfPropertiesVary {
-    /** The fallback action for varied request headers not listed in `headers`. */
-    default: RequestInitCfPropertiesVaryHeader;
-    /**
-     * Lowercase request header names and their Vary configuration.
-     *
-     * The `accept` header can include `media_types`, the `accept-language`
-     * header can include `languages`, and other headers support only `action`.
-     */
-    headers?: RequestInitCfPropertiesVaryHeaders;
-}
-/** Common Vary behavior for a single request header. */
-interface RequestInitCfPropertiesVaryHeader {
-    /** How this request header contributes to cache variance. */
-    action: RequestInitCfPropertiesVaryAction;
-}
-/** Vary behavior for the `accept` request header. */
-interface RequestInitCfPropertiesVaryAcceptHeader extends RequestInitCfPropertiesVaryHeader {
-    /**
-     * Media types to keep when normalizing the `Accept` request header.
-     *
-     * Named `media_types` to match the serialized `cf.vary` configuration.
-     */
-    media_types?: string[];
-}
-/** Vary behavior for the `accept-language` request header. */
-interface RequestInitCfPropertiesVaryAcceptLanguageHeader extends RequestInitCfPropertiesVaryHeader {
-    /**
-     * Language tags to keep when normalizing the `Accept-Language` request
-     * header.
-     */
-    languages?: string[];
-}
-/**
- * Lowercase request header names and their Vary behavior.
- *
- * The index signature allows arbitrary custom request headers beyond the
- * well-known `accept` and `accept-language` specializations.
- */
-interface RequestInitCfPropertiesVaryHeaders {
-    accept?: RequestInitCfPropertiesVaryAcceptHeader;
-    "accept-language"?: RequestInitCfPropertiesVaryAcceptLanguageHeader;
-    [header: string]: RequestInitCfPropertiesVaryHeader | RequestInitCfPropertiesVaryAcceptHeader | RequestInitCfPropertiesVaryAcceptLanguageHeader | undefined;
 }
 interface BasicImageTransformations {
     /**
@@ -14071,7 +13964,7 @@ declare namespace TailStream {
     interface ConnectEventInfo {
         readonly type: "connect";
     }
-    type EventOutcome = "ok" | "canceled" | "exception" | "unknown" | "killSwitch" | "daemonDown" | "exceededCpu" | "exceededMemory" | "loadShed" | "responseStreamDisconnected" | "scriptNotFound" | "internalError" | "exceededWallTime";
+    type EventOutcome = "ok" | "canceled" | "exception" | "unknown" | "killSwitch" | "daemonDown" | "exceededCpu" | "exceededMemory" | "loadShed" | "responseStreamDisconnected" | "scriptNotFound" | "internalError";
     interface ScriptVersion {
         readonly id: string;
         readonly tag?: string;

@@ -35,3 +35,4 @@ coverage/
 site/.vitepress/cache/
 !migrations/*.sql
 apps/gittensory-ui/public/downloads/gittensory-extension.zip
+.worker-configuration.gen-check.d.ts

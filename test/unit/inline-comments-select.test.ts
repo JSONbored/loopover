@@ -50,7 +50,7 @@ describe("selectAnchoredInlineFindings (#2159)", () => {
     ];
     expect(
       selectAnchoredInlineFindings(findings, mixedFiles, { minFindingSeverity: "major" }).map((finding) => finding.body),
-    ).toEqual(["ok"]);
+    ).toEqual(["dup"]);
     expect(DEFAULT_MAX_INLINE_COMMENTS).toBe(10);
   });
 

@@ -120,6 +120,8 @@ describe("check-docs-drift script", () => {
         "apps/gittensory-ui/src/routes/docs.privacy-security.tsx": buildFlagsPageText(baseFlagNames),
         "apps/gittensory-ui/src/routes/docs.maintainer-workflow.tsx": buildDocsPageText(allBaseCommandIds),
         "apps/gittensory-ui/src/routes/docs.maintainer-install-trust.tsx": buildDocsPageText(allBaseCommandIds),
+        "apps/gittensory-ui/src/routes/docs.gittensory-commands.tsx":
+          'import { PUBLIC_COMMAND_ENTRIES, MAINTAINER_COMMAND_ENTRIES, ACTION_COMMAND_ENTRIES } from "@/lib/command-reference";',
         "apps/gittensory-ui/src/routes/docs.how-reviews-work.tsx": buildGateModePageText(),
         "apps/gittensory-ui/src/routes/docs.github-app.tsx": buildGateModePageText(),
       };

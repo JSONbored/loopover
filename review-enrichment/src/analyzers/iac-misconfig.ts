@@ -116,6 +116,8 @@ const COOP_UNSAFE_NONE_RE =
   /\bCross-Origin-Opener-Policy\b[^\n]*\bunsafe-none\b/i;
 const COEP_UNSAFE_NONE_RE =
   /\bCross-Origin-Embedder-Policy\b[^\n]*\bunsafe-none\b/i;
+const CORP_UNSAFE_NONE_RE =
+  /\bCross-Origin-Resource-Policy\b[^\n]*\bunsafe-none\b/i;
 
 function* patchLines(patch: string): Generator<string> {
   let start = 0;
@@ -554,6 +556,12 @@ export function scanPatchForIacMisconfig(
     if (
       COEP_UNSAFE_NONE_RE.test(body) &&
       pushFinding(findings, seen, path, newLine, "coep-unsafe-none", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      CORP_UNSAFE_NONE_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "corp-unsafe-none", maxFindings)
     ) {
       return findings;
     }

@@ -463,6 +463,7 @@ test("scanPatchForIacMisconfig flags insecure HTTP security-header settings", ()
     ["+    httpOnly: false", "cookie-not-httponly"],
     ["+    add_header Cross-Origin-Opener-Policy \"unsafe-none\";", "coop-unsafe-none"],
     ["+    add_header Cross-Origin-Embedder-Policy \"unsafe-none\";", "coep-unsafe-none"],
+    ["+    add_header Cross-Origin-Resource-Policy \"unsafe-none\";", "corp-unsafe-none"],
   ];
   for (const [added, kind] of cases) {
     const findings = scanPatchForIacMisconfig(
@@ -486,7 +487,8 @@ test("scanPatchForIacMisconfig does not flag secure HTTP header values (incl. Ca
     "+    httpOnly: true",
     "+    add_header Cross-Origin-Opener-Policy \"same-origin\";",
     "+    add_header Cross-Origin-Embedder-Policy \"require-corp\";",
-    // A bare `unsafe-none` config key without a COOP/COEP header token must NOT fire either rule.
+    "+    add_header Cross-Origin-Resource-Policy \"same-origin\";",
+    // A bare `unsafe-none` config key without a COOP/COEP/CORP header token must NOT fire any of those rules.
     "+    unsafe-none = false",
   ];
   for (const added of safe) {

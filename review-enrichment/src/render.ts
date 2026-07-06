@@ -364,6 +364,8 @@ export function renderBrief(
           return "sets `Cross-Origin-Opener-Policy: unsafe-none`, allowing cross-origin pages to retain opener access";
         case "coep-unsafe-none":
           return "sets `Cross-Origin-Embedder-Policy: unsafe-none`, disabling cross-origin isolation requirements for embedded resources";
+        case "corp-unsafe-none":
+          return "sets `Cross-Origin-Resource-Policy: unsafe-none`, allowing any origin to load this resource without isolation";
       }
     };
 

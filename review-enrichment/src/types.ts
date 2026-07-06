@@ -272,7 +272,8 @@ export interface IacMisconfigFinding {
     | "referrer-policy-leak"
     | "cookie-not-httponly"
     | "coop-unsafe-none"
-    | "coep-unsafe-none";
+    | "coep-unsafe-none"
+    | "corp-unsafe-none";
 }
 
 /** A newly-added dependency whose install compiles native code (npm node-gyp addon) or has no prebuilt wheel

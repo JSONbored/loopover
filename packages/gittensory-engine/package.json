@@ -34,6 +34,18 @@
     "./miner-goal-spec-parse": {
       "types": "./dist/miner-goal-spec-parse.d.ts",
       "default": "./dist/miner-goal-spec-parse.js"
+    },
+    "./scoring/model": {
+      "types": "./dist/scoring/model.d.ts",
+      "default": "./dist/scoring/model.js"
+    },
+    "./scoring/preview": {
+      "types": "./dist/scoring/preview.d.ts",
+      "default": "./dist/scoring/preview.js"
+    },
+    "./scoring/pending-pr-scenarios": {
+      "types": "./dist/scoring/pending-pr-scenarios.d.ts",
+      "default": "./dist/scoring/pending-pr-scenarios.js"
     }
   },
   "files": [

@@ -220,3 +220,8 @@ export { rankMetadataOpportunitiesAtOrAboveScore } from "./metadata-min-score.js
 export { pickTopMetadataOpportunitiesAtOrAboveScore } from "./metadata-top-min-score.js";
 export { bestMetadataOpportunity } from "./metadata-best-pick.js";
 export { bestMetadataOpportunityAtOrAboveScore } from "./metadata-best-min-score.js";
+// Score-preview machinery (#2282): namespaced (rather than flattened) so the three ported files keep their
+// own identity and cannot collide with each other or the ~50 other top-level exports above.
+export * as scoringModel from "./scoring/model.js";
+export * as scoringPreview from "./scoring/preview.js";
+export * as scoringPendingPrScenarios from "./scoring/pending-pr-scenarios.js";

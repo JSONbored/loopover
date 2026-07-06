@@ -3005,6 +3005,12 @@ function authoritativeContributorRepoStats(
 async function authenticateMcpRequest(c: AppContext): Promise<AuthIdentity | null> {
   const identity = await authenticatePrivateToken(c.env, extractBearerToken(c.req.header("authorization")));
   if (!identity || identity.kind !== "session") return identity;
+  // Extension-scoped browser sessions (extension:pull_context / extension:contributor_context) are
+  // down-scoped credentials confined to /v1/extension/* by the global route middleware. The /mcp
+  // endpoint lives outside /v1/ (so requiresApiToken, and with it the extension-scope 403, never
+  // runs) and does its own auth here — so it must re-apply that confinement. Without this, a leaked
+  // extension token authenticates to /mcp and invokes MCP tools the scope was meant to forbid.
+  if (identity.session.scopes.some((scope) => scope.startsWith("extension:"))) return null;
   const summary = await loadControlPanelRoleSummary(c.env, identity.actor);
   return summary.roles.length > 0 ? identity : null;
 }

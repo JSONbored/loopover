@@ -345,6 +345,11 @@ export type FocusManifestReviewConfig = {
    *  false (default, absent) = no fix-handoff blocks = byte-identical. Operator-gated too (GITTENSORY_REVIEW_FIX_HANDOFF
    *  + the convergence cutover allowlist) — the manifest toggle is only one of the ANDed gates. (#2176, for #1962) */
   fixHandoff: boolean | null;
+  /** `review.auto_merge_summary`: when true, the unified comment gains a READ-ONLY collapsible showing which
+   *  auto-merge conditions currently pass/fail (CI green, gate passing, mergeable-clean, valid linked issue),
+   *  rendered from already-computed readiness signals. SURFACE ONLY — never changes the merge/close decision.
+   *  null/false (default, absent) = no summary = byte-identical. (#2051, for #1959) */
+  autoMergeSummary: boolean | null;
   /** `review.suggestions`: when true, an inline finding whose AI-provided fix is precise enough to anchor to a
    *  single line is ALSO rendered as a GitHub-native ` ```suggestion ` block a contributor can commit in one
    *  click. Only takes effect when inline comments are already on (a suggestion has nothing to attach to
@@ -777,7 +782,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   publicNotes: [],
   gate: { ...EMPTY_GATE_CONFIG },
   settings: {},
-  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, suggestions: null, changedFilesSummary: null, effortScore: null, testGeneration: null, impactMap: null, cultureProfile: null, reviewMemory: null, findingCategories: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null },
+  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, testGeneration: null, impactMap: null, cultureProfile: null, reviewMemory: null, findingCategories: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null },
   features: { ...EMPTY_FEATURES_CONFIG },
   contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
   repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -808,7 +813,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     warnings,
     gate: { ...EMPTY_GATE_CONFIG },
     settings: {},
-    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, suggestions: null, changedFilesSummary: null, effortScore: null, testGeneration: null, impactMap: null, cultureProfile: null, reviewMemory: null, findingCategories: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null },
+    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, testGeneration: null, impactMap: null, cultureProfile: null, reviewMemory: null, findingCategories: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null },
     features: { ...EMPTY_FEATURES_CONFIG },
     contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
     repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -1783,7 +1788,7 @@ function parsePublicSafeText(value: JsonValue | undefined, field: string, warnin
  * throws; invalid/unsafe values are dropped with warnings.
  */
 function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewConfig {
-  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, suggestions: null, changedFilesSummary: null, effortScore: null, testGeneration: null, impactMap: null, cultureProfile: null, reviewMemory: null, findingCategories: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null };
+  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, testGeneration: null, impactMap: null, cultureProfile: null, reviewMemory: null, findingCategories: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null };
   if (value === undefined || value === null) return empty;
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "review" must be a mapping; ignoring it.`);
@@ -1821,6 +1826,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
   const securityFocus = normalizeOptionalBoolean(r.security_focus, "review.security_focus", warnings);
   const inlineComments = normalizeOptionalBoolean(r.inline_comments, "review.inline_comments", warnings);
   const fixHandoff = normalizeOptionalBoolean(r.fixHandoff, "review.fixHandoff", warnings);
+  const autoMergeSummary = normalizeOptionalBoolean(r.auto_merge_summary, "review.auto_merge_summary", warnings);
   const suggestions = normalizeOptionalBoolean(r.suggestions, "review.suggestions", warnings);
   const changedFilesSummary = normalizeOptionalBoolean(r.changed_files_summary, "review.changed_files_summary", warnings);
   const effortScore = normalizeOptionalBoolean(r.effort_score, "review.effort_score", warnings);
@@ -1856,6 +1862,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
       securityFocus !== null ||
       inlineComments !== null ||
       fixHandoff !== null ||
+      autoMergeSummary !== null ||
       suggestions !== null ||
       changedFilesSummary !== null ||
       effortScore !== null ||
@@ -1893,6 +1900,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
     securityFocus,
     inlineComments,
     fixHandoff,
+    autoMergeSummary,
     suggestions,
     changedFilesSummary,
     effortScore,
@@ -2357,6 +2365,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   if (review.securityFocus !== null) out.security_focus = review.securityFocus;
   if (review.inlineComments !== null) out.inline_comments = review.inlineComments;
   if (review.fixHandoff !== null) out.fixHandoff = review.fixHandoff;
+  if (review.autoMergeSummary !== null) out.auto_merge_summary = review.autoMergeSummary;
   if (review.suggestions !== null) out.suggestions = review.suggestions;
   if (review.changedFilesSummary !== null) out.changed_files_summary = review.changedFilesSummary;
   if (review.effortScore !== null) out.effort_score = review.effortScore;

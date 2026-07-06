@@ -454,6 +454,11 @@ review:
   # Requires operator flag GITTENSORY_REVIEW_FIX_HANDOFF + cutover allowlist AND this toggle.
   # fixHandoff: false
 
+  # Read-only auto-merge readiness summary (#2051). Bool | null. Default: null/false — byte-identical.
+  # When true, the unified comment gains a collapsible showing which auto-merge conditions currently pass/fail
+  # (CI green, gate passing, mergeable-clean, valid linked issue). SURFACE ONLY — never changes the decision.
+  # auto_merge_summary: false
+
   # Boundary-safe test generation (#2189). Bool | null. Default: null/false — byte-identical.
   # Requires operator flag GITTENSORY_REVIEW_TEST_GENERATION AND this toggle.
   # test_generation: false

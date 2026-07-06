@@ -203,6 +203,42 @@ export interface UnifiedCollapsible {
   rawHtml?: boolean;
 }
 
+/** Already-computed auto-merge readiness facts (#2051). The host resolves each from signals it ALREADY has — the
+ *  merge-readiness probe, the gate verdict, the linked-issue check — and injects them here. This module only
+ *  RENDERS them into a read-only table; it never re-derives a condition or calls any merge/close decision path. */
+export interface AutoMergeSummarySignals {
+  /** Every required CI check is green. */
+  ciGreen: boolean;
+  /** The Gittensory gate is passing (no hard blocker). */
+  gatePassing: boolean;
+  /** GitHub reports the branch mergeable / clean (no conflict, not behind). */
+  mergeableClean: boolean;
+  /** The PR references a valid, open linked issue. */
+  linkedIssueValid: boolean;
+}
+
+/** Build the READ-ONLY "auto-merge readiness" collapsible (#2051) — a conditions table showing which auto-merge
+ *  conditions currently pass/fail, rendered purely from the injected {@link AutoMergeSummarySignals}. Informational
+ *  only: it states the current condition states, never a decision or a promise to merge. Pure — no IO, no decision
+ *  path. The caller renders this ONLY when `review.auto_merge_summary` is on, so off ⇒ nothing added ⇒ byte-identical. */
+export function buildAutoMergeSummaryCollapsible(signals: AutoMergeSummarySignals): UnifiedCollapsible {
+  const mark = (ok: boolean): string => (ok ? "✅" : "❌");
+  const rows: Array<[string, boolean]> = [
+    ["CI checks green", signals.ciGreen],
+    ["Gate passing", signals.gatePassing],
+    ["Branch mergeable (clean)", signals.mergeableClean],
+    ["Valid linked issue", signals.linkedIssueValid],
+  ];
+  const body = [
+    "_Read-only snapshot of the current auto-merge conditions — informational; it does not decide or trigger a merge._",
+    "",
+    "| Condition | Status |",
+    "| --- | --- |",
+    ...rows.map(([label, ok]) => `| ${label} | ${mark(ok)} |`),
+  ].join("\n");
+  return { title: "Auto-merge readiness (read-only)", body };
+}
+
 /** The host (gittensory) side: brand, readiness score, signals, sections, re-run, footer. */
 export interface UnifiedCommentContext {
   /** Headline brand, default "Gittensory review". */

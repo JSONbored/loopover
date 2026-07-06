@@ -75,6 +75,9 @@ import {
   scrubEvent,
   resetSentryForTest,
   withSentryMonitor,
+  SENTRY_MONITOR_NAMES,
+  SENTRY_OPERATIONAL_SUBSYSTEMS,
+  SENTRY_OPERATIONAL_TAG_KEYS,
 } from "../../src/selfhost/sentry";
 
 beforeEach(() => {
@@ -195,6 +198,32 @@ describe("scrubEvent — redact secrets before an event leaves the box", () => {
     ]);
     expect(ev.tags.repo).toBe("owner/repo");
     expect(ev.tags.authToken).toBe("[redacted]");
+  });
+
+  it("preserves contexts.review repo/pr while redacting review text fields (#1824, PR #1881 regression)", () => {
+    const ev = scrubbedEvent({
+      contexts: {
+        review: {
+          repo: "owner/repo",
+          pr: 7,
+          head_sha: "abc123",
+          operation: "gate_decision",
+          reviewText: "private review body",
+          reviewBody: "also private",
+          commentBody: "private comment",
+          comment_text: "private comment text",
+        },
+      },
+    }) as any;
+
+    expect(ev.contexts.review.repo).toBe("owner/repo");
+    expect(ev.contexts.review.pr).toBe(7);
+    expect(ev.contexts.review.head_sha).toBe("abc123");
+    expect(ev.contexts.review.operation).toBe("gate_decision");
+    expect(ev.contexts.review.reviewText).toBe("[redacted]");
+    expect(ev.contexts.review.reviewBody).toBe("[redacted]");
+    expect(ev.contexts.review.commentBody).toBe("[redacted]");
+    expect(ev.contexts.review.comment_text).toBe("[redacted]");
   });
 
   it("scrubs request URL/query fields and deletes top-level user data", () => {
@@ -493,14 +522,16 @@ describe("enabled when SENTRY_DSN is set", () => {
     ).toBe("custom@sha");
   });
 
-  it("captureError sends with context, and without context skips setContext", async () => {
+  it("captureError sends with context, tags operational fields, and without context skips setContext", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     captureError(new Error("boom"), { kind: "job_dead" });
     expect(mocks.scope.setContext).toHaveBeenCalledWith("gittensory", {
       kind: "job_dead",
     });
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("kind", "job_dead");
     expect(mocks.captureException).toHaveBeenCalledTimes(1);
     mocks.scope.setContext.mockClear();
+    mocks.scope.setTag.mockClear();
     captureError(new Error("invalid install"), {
       kind: "job_dead",
       installation_id: "not-an-installation",
@@ -508,6 +539,7 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(mocks.scope.setContext).toHaveBeenCalledWith("gittensory", {
       kind: "job_dead",
     });
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("kind", "job_dead");
     mocks.scope.setContext.mockClear();
     captureError("plain string with no context");
     expect(mocks.scope.setContext).not.toHaveBeenCalled();
@@ -762,6 +794,12 @@ describe("enabled when SENTRY_DSN is set", () => {
       "monitor",
       "gittensory-selfhost-prod-orb-export",
     );
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("jobType", "orb-export");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith(
+      "kind",
+      "sentry_monitor_orb-export",
+    );
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("subsystem", "scheduled");
     expect(mocks.scope.setFingerprint).toHaveBeenCalledWith([
       "gittensory-sentry-monitor",
       "orb-export",
@@ -924,6 +962,21 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     expect(mocks.scope.setTag).toHaveBeenCalledWith("model", "gpt-5.5");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("effort", "high");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("timeoutMs", "240000");
+  });
+
+  it("normalizes repository log alias to repo tag (#1881 nit)", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(
+      JSON.stringify({
+        level: "error",
+        event: "check_run_post_denied",
+        repository: "owner/repo",
+        pullNumber: 3,
+        message: "permission denied",
+      }),
+    );
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("repo", "owner/repo");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("repository", "owner/repo");
   });
 
   it("indexes trace ids already present on structured error logs", async () => {
@@ -1149,5 +1202,48 @@ describe("installStructuredLogForwarding — central console sink instrumentatio
     expect(mocks.captureException).toHaveBeenCalledTimes(1);
     expect(lastCapturedError().name).toBe("outer");
     expect(base.error).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Sentry operational taxonomy exports (#1824)", () => {
+  it("exports monitor names aligned with wrapped cron loops", () => {
+    expect(SENTRY_MONITOR_NAMES).toEqual([
+      "scheduled-loop",
+      "orb-export",
+      "orb-relay-drain",
+      "orb-relay-register",
+      "queue-dead-letter-revive",
+    ]);
+  });
+
+  it("exports subsystem taxonomy keys for operator docs", () => {
+    expect(Object.keys(SENTRY_OPERATIONAL_SUBSYSTEMS).sort()).toEqual([
+      "ai",
+      "backup",
+      "gate",
+      "github",
+      "publish",
+      "queue",
+      "relay",
+      "scheduled",
+      "webhook",
+    ]);
+  });
+
+  it("keeps operational tag keys low-cardinality and review-aware", () => {
+    expect(SENTRY_OPERATIONAL_TAG_KEYS).toEqual(
+      expect.arrayContaining([
+        "kind",
+        "subsystem",
+        "jobType",
+        "repo",
+        "pr",
+        "head_sha",
+        "operation",
+        "event",
+        "monitor",
+      ]),
+    );
+    expect(SENTRY_OPERATIONAL_TAG_KEYS).not.toContain("installationId");
   });
 });

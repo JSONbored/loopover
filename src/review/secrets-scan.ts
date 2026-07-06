@@ -42,7 +42,7 @@ const SECRET_PATTERNS: Array<{ name: string; re: RegExp }> = [
 const GENERIC_SECRET_ASSIGNMENT_PATTERN =
   /((?:api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret))["']?\s*[:=]\s*["']([A-Za-z0-9+/=_-]{16,})["']/gi;
 
-const PLACEHOLDER_VALUE_PATTERN = /placeholder|change[_-]?me|your[_-]|<[^>]*>|\bexample\b|redacted|dummy|\bsample\b|\btodo\b|\bfixme\b|\binsert\b|replace[_-]?me|\bfake\b|\bmock\b/i;
+const PLACEHOLDER_VALUE_PATTERN = /placeholder|change[_-]?me|your[_-]|<[^>]*>|\bexample\b|redacted|dummy|\bsample\b|\btodo\b|\bfixme\b|\binsert\b|replace[_-]?me|\bfake\b/i;
 
 // #2553 gate review finding: a string with NO repeated characters (e.g. "abcdefghijklmnop123") has HIGH
 // Shannon entropy by raw character-frequency counting, but is obviously not a real secret -- entropy alone
@@ -67,6 +67,9 @@ function hasLongSequentialRun(value: string): boolean {
 // generic token-assignment heuristic. Keep that carve-out key-aware and two-word-only: lowercase
 // hyphenated values assigned to password/passwd/client_secret remain plausible passphrase-style credentials.
 const LOWERCASE_HYPHENATED_TOKEN_FIXTURE_PATTERN = /^[a-z]+-[a-z]+$/;
+// Lowercase hyphenated mock names are fixtures; mixed-case/digit-bearing values containing "mock" remain
+// plausible credentials and must still be reported by the generic assignment scanner.
+const LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN = /^(?:[a-z]+-)*mock(?:-[a-z]+)*$/;
 
 /** True for an obvious non-secret filler value: a known placeholder phrase, a string built from at most 2
  *  distinct characters (e.g. "xxxxxxxxxxxxxxxx", "----------------"), a long monotonic character-code run
@@ -74,6 +77,7 @@ const LOWERCASE_HYPHENATED_TOKEN_FIXTURE_PATTERN = /^[a-z]+-[a-z]+$/;
 function isPlaceholderSecretValue(key: string, value: string): boolean {
   if (PLACEHOLDER_VALUE_PATTERN.test(value)) return true;
   if (new Set(value.toLowerCase()).size <= 2) return true;
+  if (LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN.test(value)) return true;
   if (key.toLowerCase() === "token" && LOWERCASE_HYPHENATED_TOKEN_FIXTURE_PATTERN.test(value)) return true;
   return hasLongSequentialRun(value);
 }

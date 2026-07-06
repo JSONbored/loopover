@@ -318,6 +318,18 @@ describe("secret-leak finding in the advisory build", () => {
     expect(finding?.detail).toContain("config/prod.env:1");
   });
 
+  it("blocks mixed-case mock-tokenized generic credentials", () => {
+    const diff = [
+      "### config/prod.env (modified) +1/-0",
+      "@@ -0,0 +1 @@",
+      '+password = "prod-mock-aK9xQ2mZw7Ln4Rv8Pt3Bh6"',
+    ].join("\n");
+    const finding = secretLeakFinding(diff);
+    expect(finding?.code).toBe("secret_leak");
+    expect(finding?.title).toContain("generic_secret_assignment");
+    expect(finding?.detail).toContain("config/prod.env:1");
+  });
+
   it("FLAG-OFF: a concrete leaked secret STILL produces the secret_leak finding (unconditional, #audit-3.4)", async () => {
     const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "false" });
     const adv = advisory();

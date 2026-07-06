@@ -167,6 +167,13 @@ describe("scanForSecrets — deterministic secret-pattern scanner", () => {
     expect(scanForSecrets(`fakeSecret = "${fakeSecret}"`).kinds).toContain("generic_secret_assignment");
   });
 
+  it.each([
+    ["mock prefix with mixed-case suffix", 'password = "mock-aK9xQ2mZw7Ln4Rv8Pt3Bh6"'],
+    ["embedded mock with mixed-case suffix", 'secret = "prod-mock-aK9xQ2mZw7Ln4Rv8Pt3Bh6"'],
+  ])("flags mock-tokenized generic credentials unless they are lowercase fixtures: %s", (_name, snippet) => {
+    expect(scanForSecrets(snippet).kinds).toContain("generic_secret_assignment");
+  });
+
   it("a single lowercase word with no hyphen is unaffected by the token-fixture exclusion (#3041)", () => {
     // 20 lowercase letters, no repeats and no sequential run, so it isn't already caught by the entropy/
     // placeholder checks either -- proves the token-fixture exclusion specifically requires one two-word

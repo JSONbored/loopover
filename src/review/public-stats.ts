@@ -14,7 +14,10 @@
 //   reviewed   = merged + closed + commented            (every distinct PR a review surface was published for)
 //   filteredPct = (reviewed - merged) / reviewed         (share resolved WITHOUT a merge — noise kept off humans)
 //   accuracyPct = 1 - reversed / (merged + closed)       (reversed = engine auto-actions a human overturned, live)
-//   minutesSaved = reviewed * MINUTES_SAVED_PER_PR        (estimated maintainer review time saved)
+//   minutesSaved = reviewed * avgReviewEffortMinutes      (estimated maintainer review time saved -- #1955: the
+//                                                          real per-PR average of `estimateReviewEffort`'s minutes,
+//                                                          persisted at publish time; MINUTES_SAVED_PER_PR only
+//                                                          backstops an empty/all-historical ledger)
 //
 // PRIVACY: counts only — no PR content, authors, scores, or reward internals. Safe to serve publicly.
 //
@@ -31,8 +34,11 @@
 // excludeAccount dedup this call deliberately does not use.
 import { getOrbGlobalStats } from "../orb/outcomes";
 
-/** Estimate of maintainer review/triage time saved per reviewed PR. Dial this to taste — it is the single knob
- *  behind the "time saved" stat (at current volume: 20 min ≈ 38 days saved; 15 min ≈ 28 days). */
+/** FALLBACK estimate of maintainer review/triage time saved per reviewed PR, used ONLY when the real per-PR
+ *  average (`estimateReviewEffort`'s minutes, persisted at publish time — see `reviewEffortMinutes` in the
+ *  `github_app.pr_public_surface_published` audit metadata) is unavailable: an empty allowlist, or a ledger whose
+ *  published rows all predate this feature. (#1955 — previously the ONLY figure behind "time saved"; kept as the
+ *  documented degrade rather than removed, since a historical ledger genuinely has no other number to report.) */
 export const MINUTES_SAVED_PER_PR = 20;
 
 /** Truthy-string flag check, matching ops-wire / selftune-wire. */
@@ -179,11 +185,12 @@ export async function getPublicStats(
   // The own-ledger side needs at least one allowlisted project to query; an empty allowlist skips these three
   // queries entirely (own-ledger totals stay zero) but still lets the Orb aggregate below run.
   const inList = projects.map(() => "?").join(", ");
-  const [dispositions, reversalRows, weeklyRows] = projects.length === 0
+  const [dispositions, reversalRows, weeklyRows, effortRows] = projects.length === 0
     ? await Promise.all([
         Promise.resolve<DispositionRow[]>([]),
         Promise.resolve<{ project: string; reversed: number }[]>([]),
         Promise.resolve<{ reviewed: number; merged: number }[]>([]),
+        Promise.resolve<{ avgMinutes: number | null }[]>([]),
       ])
     : await Promise.all([
     safeAll<DispositionRow>(
@@ -235,6 +242,21 @@ export async function getPublicStats(
        )`,
       sinceIso,
       sinceIso,
+      ...projects,
+    ),
+    // review-effort minutes (#1955): a deterministic, no-AI per-PR estimate persisted at publish time
+    // (processors.ts's pr_public_surface_published metadata.reviewEffortMinutes). AVG over every published event
+    // in the allowlist gives a real per-review time figure; a published row that predates this feature (or a
+    // files-fetch failure at publish time) simply has no `reviewEffortMinutes` key, so json_extract returns SQL
+    // NULL for that row and SQLite's AVG silently skips it — an all-historical ledger degrades to a NULL average
+    // (handled below via `?? MINUTES_SAVED_PER_PR`), never a crash or a skewed zero.
+    safeAll<{ avgMinutes: number | null }>(
+      env,
+      `SELECT AVG(json_extract(metadata_json, '$.reviewEffortMinutes')) AS avgMinutes
+         FROM audit_events
+        WHERE event_type = 'github_app.pr_public_surface_published'
+          AND LOWER(substr(target_key, 1, instr(target_key, '#') - 1)) IN (${inList})
+          AND instr(target_key, '#') > 0`,
       ...projects,
     ),
   ]);
@@ -291,6 +313,11 @@ export async function getPublicStats(
 
   const reviewed = reviewedOf(totals);
   const w = weeklyRows[0] ?? { reviewed: 0, merged: 0 };
+  // review-effort minutes (#1955): prefer the REAL average per-review estimate (persisted at publish time from
+  // estimateReviewEffort); an empty/all-null ledger (no allowlisted project, or every published row predates
+  // this feature) falls back to the flat MINUTES_SAVED_PER_PR constant, exactly like every other nullish-SUM
+  // fallback in this module (`?? 0`) — never a crash, never a skewed zero.
+  const avgReviewEffortMinutes = effortRows[0]?.avgMinutes ?? MINUTES_SAVED_PER_PR;
   return {
     generatedAt,
     updatedAt: generatedAt,
@@ -299,7 +326,7 @@ export async function getPublicStats(
       reviewed,
       filteredPct: filteredPct(reviewed, totals.merged),
       accuracyPct: accuracyPct(totals.merged, totals.closed, totals.reversed),
-      minutesSaved: reviewed * MINUTES_SAVED_PER_PR,
+      minutesSaved: Math.round(reviewed * avgReviewEffortMinutes),
     },
     weekly: { reviewed: w.reviewed ?? 0, merged: w.merged ?? 0 },
     byProject,

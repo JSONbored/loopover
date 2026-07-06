@@ -275,6 +275,28 @@ describe("buildUnifiedCommentBody", () => {
     expect(body).toContain("> [!TIP]"); // success → ready → TIP alert
   });
 
+  it("forwards the reviewEffort estimate into the rendered chip when present, and omits it otherwise (#1955)", () => {
+    const withEffort = buildUnifiedCommentBody({
+      gate: gate(),
+      aiReview: { notes: "Clean change." },
+      panelRows,
+      readinessTotal: 88,
+      changedFiles: 3,
+      footerMarkdown: footer,
+      reviewEffort: { band: 2, minutes: 12 },
+    });
+    expect(withEffort).toContain("`review effort: 2/5 (~12 min)`");
+    const withoutEffort = buildUnifiedCommentBody({
+      gate: gate(),
+      aiReview: { notes: "Clean change." },
+      panelRows,
+      readinessTotal: 88,
+      changedFiles: 3,
+      footerMarkdown: footer,
+    });
+    expect(withoutEffort).not.toContain("review effort:");
+  });
+
   it("passes a public review update timestamp into the unified comment", () => {
     const body = buildUnifiedCommentBody({
       gate: gate(),

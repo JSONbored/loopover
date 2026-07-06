@@ -748,6 +748,10 @@ settings:
 #   # deterministic "Changed files" summary: one row per file category, with counts and +/- totals. Bool
 #   # or null. Default: null/false.
 #   changed_files_summary: false
+#   # When true, the unified review comment (only rendered when the unifiedComment feature is on) gains a
+#   # compact "review effort: N/5 (~M min)" chip -- a deterministic, no-AI complexity/time estimate from the
+#   # changed files' added-line volume and file-type mix. Bool or null. Default: null/false.
+#   effort_score: false
 #   # When true, an inline finding is ALSO tagged with a category (security/correctness/performance/
 #   # maintainability/tests/style) -- the AI reviewer self-categorizes, with a deterministic path/keyword
 #   # fallback for whatever it omits. Only takes effect when inline_comments is already on. Bool or null.

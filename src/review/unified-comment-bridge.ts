@@ -314,6 +314,11 @@ export type UnifiedCommentBridgeArgs = {
    *  passes this only when the manifest opts in — see `resolveReviewPromptOverrides`'s `changedFilesSummary`).
    *  (#1957) */
   changedFilesSummary?: ChangedFileSummaryInput[] | undefined;
+  /** Deterministic per-PR review-effort estimate (review.effort_score port, `src/review/review-effort.ts`). When
+   *  present, a compact `review effort: N/5 (~M min)` chip is appended to the status-chip row (passed straight
+   *  through to `buildUnifiedReviewInput`'s `reviewEffort`). No AI. Default OFF (the processor passes this only
+   *  when the manifest opts in — see `resolveReviewPromptOverrides`'s `effortScore`). (#1955) */
+  reviewEffort?: { band: 1 | 2 | 3 | 4 | 5; minutes: number } | undefined;
   /** Line-anchored AI findings, one entry per inline finding (review.finding_categories port). When present +
    *  non-empty, a "Finding categories" collapsible (a count per security/correctness/performance/maintainability/
    *  tests/style category) is appended. A finding missing its own `category` falls back to
@@ -497,6 +502,7 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
     ...(verdictReason !== undefined ? { verdictReason } : {}),
     ...(args.mergeReadiness !== undefined ? { readiness: args.mergeReadiness } : {}),
     ...(args.merged !== undefined ? { merged: args.merged } : {}),
+    ...(args.reviewEffort !== undefined ? { reviewEffort: args.reviewEffort } : {}),
   });
   // The gate already produced 0/1 reviewer notes from a synthesis of the model pair; reflect the caller's
   // actual reviewer count (for the chip + the "N reviewers, synthesized" evidence) without re-deriving it.

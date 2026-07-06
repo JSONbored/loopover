@@ -166,6 +166,12 @@ export interface UnifiedReviewInput {
   consensusBlocker?: boolean;
   /** Reviewers that produced no parseable verdict (a partial review → held, not ready). */
   failedCount?: number;
+  /** Deterministic per-PR review-effort estimate (`estimateReviewEffort`, `src/review/review-effort.ts`) — a
+   *  1-5 complexity band + a minutes estimate from the changed files' added-line volume and file-type mix. No
+   *  AI. Rendered as a compact `review effort: N/5 (~M min)` chip only when the host passes this (gated by
+   *  `review.effort_score` — see `resolveReviewPromptOverrides`'s `effortScore`); omitted ⇒ no chip
+   *  (byte-identical). (#1955) */
+  reviewEffort?: { band: 1 | 2 | 3 | 4 | 5; minutes: number };
 }
 
 /** One row of the readiness signal table (gittensory side, host-provided; the engine adds Code review). */
@@ -323,6 +329,9 @@ function statusChips(input: UnifiedReviewInput, ctx: UnifiedCommentContext): str
     chips.push(ci === "passed" ? "`CI green`" : ci === "failed" ? "`CI failing`" : "`CI pending`");
     if (input.readiness.mergeStateLabel) chips.push(`\`${escapePublicHtmlAngles(input.readiness.mergeStateLabel)}\``);
   }
+  // review.effort_score (#1955): deterministic, no-AI — only rendered when the host resolved + passed it
+  // (gated by the manifest toggle). Absent ⇒ no chip (byte-identical).
+  if (input.reviewEffort) chips.push(`\`review effort: ${input.reviewEffort.band}/5 (~${input.reviewEffort.minutes} min)\``);
   return chips.join(" · ");
 }
 
@@ -544,6 +553,7 @@ export function buildUnifiedReviewInput(opts: {
   decision?: Verdict;
   merged?: boolean;
   verdictReason?: string;
+  reviewEffort?: { band: 1 | 2 | 3 | 4 | 5; minutes: number };
 }): UnifiedReviewInput {
   const ex = extractReviewSummary(opts.reviews);
   const changedFiles = typeof opts.changedFiles === "number" ? opts.changedFiles : opts.changedFiles.length;
@@ -560,6 +570,7 @@ export function buildUnifiedReviewInput(opts: {
     ...(opts.decision !== undefined ? { decision: opts.decision } : {}),
     ...(opts.merged !== undefined ? { merged: opts.merged } : {}),
     ...(opts.verdictReason !== undefined ? { verdictReason: opts.verdictReason } : {}),
+    ...(opts.reviewEffort !== undefined ? { reviewEffort: opts.reviewEffort } : {}),
   };
 }
 

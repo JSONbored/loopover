@@ -15,6 +15,20 @@
 // are NOT part of this aggregation and are heavily entangled with the gate. They are taken as INJECTED
 // deps so the core decision/reversal/gate-action aggregation is fully native here. The host wires its own
 // implementations (or the defaults below, which emit empty/no-signal reports, keeping the payload shape).
+//
+// SCOPE NOTE (#1955 — deterministic review-effort score): this feed's tables (`review_targets`, `review_audit`,
+// and the injected eval/parity engine's own source, `review_audit`'s `gate_decision`/`pr_outcome` rows) are the
+// LEGACY reviewbot ledger — nothing writes new rows to `review_targets` since the self-host convergence cutover
+// (see public-stats.ts's file header), and every write into `review_audit` (outcomes-wire.ts's `pr_outcome`,
+// the gate's `gate_decision`) carries only decision/outcome metadata, never a PR's changed files or patches.
+// There is therefore NO live source this module could aggregate a per-PR review-effort estimate FROM today —
+// unlike public-stats.ts's `getPublicStats`, which reads the ACTIVE `audit_events` ledger the live review
+// pipeline (src/queue/processors.ts) still writes to every publish, and where `estimateReviewEffort`'s minutes
+// are now persisted (`reviewEffortMinutes` in `github_app.pr_public_surface_published` metadata) and averaged.
+// Wiring a same-shaped aggregate here would only ever read back a permanently-null placeholder — scaffolding
+// with no live behavior — so it is deliberately left out of this change rather than faked. A REAL maintainer-
+// dashboard effort aggregate needs its own persisted source (e.g. this module reading `audit_events` the way
+// public-stats.ts now does), which is a genuine follow-up, not a one-line addition to this file.
 
 // ── Inlined report types (ported shapes from reviewbot src/core/{eval,tuning}.ts) ────────────────
 

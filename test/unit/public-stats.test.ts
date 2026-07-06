@@ -30,9 +30,15 @@ const NOW = Date.parse("2026-06-22T00:00:00Z");
 function isWeekly(sql: string): boolean {
   return sql.includes("first_seen");
 }
+// The effort-minutes read is the only one that extracts reviewEffortMinutes from metadata_json (#1955).
+function isEffort(sql: string): boolean {
+  return sql.includes("reviewEffortMinutes");
+}
 function isDispositions(sql: string): boolean {
   return (
-    sql.includes("github_app.pr_public_surface_published") && !isWeekly(sql)
+    sql.includes("github_app.pr_public_surface_published") &&
+    !isWeekly(sql) &&
+    !isEffort(sql)
   );
 }
 // The reversal read is the only one that inspects engine auto-actions (close/merge) against pull_requests state.
@@ -115,6 +121,32 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
       "JSONbored/gittensory",
     ]);
     expect(out.updatedAt).toBe(out.generatedAt);
+  });
+
+  // #1955: minutesSaved now averages the REAL per-PR estimate (estimateReviewEffort's minutes, persisted at
+  // publish time) instead of unconditionally multiplying by the flat MINUTES_SAVED_PER_PR constant. Proves the
+  // new estimate is actually used when the ledger has it — the regression case for the flat-constant replacement.
+  it("uses the real average review-effort minutes when the ledger has them, instead of the flat constant", async () => {
+    const withEffort = (sql: string): Row[] => {
+      if (isEffort(sql)) return [{ avgMinutes: 7.4 }];
+      return ledger(sql);
+    };
+    const out = await getPublicStats(stubEnv(withEffort), NOW);
+    // reviewed = 2742 (same ledger as the base test) * 7.4 = 20290.8 -> rounded.
+    expect(out.totals.minutesSaved).toBe(Math.round(2742 * 7.4));
+    expect(out.totals.minutesSaved).not.toBe(2742 * MINUTES_SAVED_PER_PR);
+  });
+
+  // The nullish arm of `effortRows[0]?.avgMinutes ?? MINUTES_SAVED_PER_PR`: a ledger whose published rows all
+  // predate this feature (or an empty allowlist) yields a NULL average (SQLite's AVG skips missing json_extract
+  // keys entirely) rather than a row missing outright — both must degrade to the flat constant, not NaN/0.
+  it("falls back to the flat MINUTES_SAVED_PER_PR constant when the effort average is SQL NULL", async () => {
+    const nullEffort = (sql: string): Row[] => {
+      if (isEffort(sql)) return [{ avgMinutes: null }];
+      return ledger(sql);
+    };
+    const out = await getPublicStats(stubEnv(nullEffort), NOW);
+    expect(out.totals.minutesSaved).toBe(2742 * MINUTES_SAVED_PER_PR);
   });
 
   it("breaks byProject ties on project name so equal-reviewed repos keep a deterministic order", async () => {
@@ -288,6 +320,60 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.totals.commented).toBe(1);
     expect(out.totals.reversed).toBe(0);
     expect(out.totals.accuracyPct).toBe(100);
+  });
+
+  // #1955: end-to-end over REAL D1/SQLite (not the stub) — a published row's `metadata_json.reviewEffortMinutes`
+  // (the exact shape processors.ts writes at publish time) round-trips through json_extract/AVG into
+  // minutesSaved, proving the SQL itself (not just the mocked shape) computes the real per-PR average.
+  it("averages a real reviewEffortMinutes value out of metadata_json via json_extract (real D1)", async () => {
+    const env = createTestEnv({ GITTENSORY_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
+    const db = env.DB;
+
+    await db
+      .prepare(
+        `INSERT INTO pull_requests (id, repo_full_name, number, title, state, merged_at)
+         VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        "pr-a",
+        "JSONbored/gittensory",
+        10,
+        "small fix",
+        "closed",
+        "2026-06-01T00:00:00.000Z",
+        "pr-b",
+        "JSONbored/gittensory",
+        11,
+        "bigger change",
+        "closed",
+        "2026-06-01T00:00:00.000Z",
+      )
+      .run();
+    await db
+      .prepare(
+        `INSERT INTO audit_events (id, event_type, target_key, outcome, metadata_json)
+         VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        "published-a",
+        "github_app.pr_public_surface_published",
+        "JSONbored/gittensory#10",
+        "completed",
+        JSON.stringify({ reviewEffortMinutes: 4 }),
+        "published-b",
+        "github_app.pr_public_surface_published",
+        "JSONbored/gittensory#11",
+        "completed",
+        JSON.stringify({ reviewEffortMinutes: 96 }),
+      )
+      .run();
+
+    const out = await getPublicStats(env, NOW);
+
+    // avg(4, 96) = 50; reviewed = 2 -> minutesSaved = 100 (not 2 * MINUTES_SAVED_PER_PR = 40).
+    expect(out.totals.reviewed).toBe(2);
+    expect(out.totals.minutesSaved).toBe(100);
+    expect(out.totals.minutesSaved).not.toBe(2 * MINUTES_SAVED_PER_PR);
   });
 
   it("skips the own-ledger queries but still queries the Orb aggregate when the allowlist is empty", async () => {

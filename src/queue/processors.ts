@@ -335,6 +335,7 @@ import {
 } from "../signals/engine";
 import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
 import { buildUnifiedReviewDiff } from "../review/review-diff";
+import { estimateReviewEffort } from "../review/review-effort";
 import { buildUnifiedCommentBody } from "../review/unified-comment-bridge";
 import { randomUUID } from "node:crypto";
 import { isRetryableJobError, RetryableJobError } from "./retryable";
@@ -7663,6 +7664,7 @@ async function maybePublishPrPublicSurface(
   let inlineCommentsEnabledForReview = false;
   let suggestionsEnabledForReview = false;
   let changedFilesSummaryEnabledForReview = false;
+  let effortScoreEnabledForReview = false;
   let findingCategoriesEnabledForReview = false;
   let aiReviewExpected = false;
   let aiReviewWasReused = false;
@@ -7804,6 +7806,26 @@ async function maybePublishPrPublicSurface(
       }).catch(() => undefined);
       return gateEvaluation;
     }
+    // review-effort minutes (#1955): a deterministic, no-AI per-PR estimate persisted onto the SAME published
+    // event public-stats.ts already reads (github_app.pr_public_surface_published) -- so the public "time saved"
+    // stat can average a REAL per-PR figure instead of only the flat MINUTES_SAVED_PER_PR fallback constant.
+    // Computed unconditionally (independent of review.effort_score, which only gates the unified-comment CHIP)
+    // because public-stats is a cross-repo aggregate with no manifest of its own. Reuses the SAME memoized
+    // getReviewFiles() accessor the gate/comment pipeline already resolved this pass -- no extra fetch when the
+    // unified comment already ran; exactly one fetch otherwise. Fail-safe: a files-fetch error here must never
+    // block the publish audit itself, so a throw degrades to `undefined` (public-stats' own COALESCE fallback
+    // then applies, same as a pre-#1955 historical row).
+    const reviewEffortMinutesForStats = await getReviewFiles()
+      .then((files) =>
+        estimateReviewEffort(
+          files.map((file) => ({
+            path: file.path,
+            patch: typeof file.payload?.patch === "string" ? file.payload.patch : undefined,
+          })),
+        ),
+      )
+      .then((effort) => effort.minutes)
+      .catch(() => undefined);
     await recordAuditEvent(env, {
       eventType: "github_app.pr_public_surface_published",
       actor: author,
@@ -7820,6 +7842,7 @@ async function maybePublishPrPublicSurface(
         publishedOutputs,
         failedOutputs,
         gateCheckFinalized: gateFinalized,
+        ...(reviewEffortMinutesForStats !== undefined ? { reviewEffortMinutes: reviewEffortMinutesForStats } : {}),
       },
     });
     await recordGithubProductUsage(env, "pr_public_surface_published", {
@@ -8129,13 +8152,16 @@ async function maybePublishPrPublicSurface(
       deliveryId: webhook.deliveryId,
       headSha: advisory.headSha ?? null,
     }));
-    // review.changed_files_summary (#1957): deterministic, no-AI — resolve it here, UNCONDITIONALLY, rather than
-    // inside the aiReviewWillRun-gated closure below. This table must still render whenever the manifest opts
-    // in even when the AI review itself is skipped this pass (author blacklisted, frozen for manual review, or
-    // AI review disabled for the repo) — it has nothing to do with the AI pipeline. Captured into the
-    // outer-scoped `changedFilesSummaryEnabledForReview` (mirroring inlineCommentsEnabledForReview/
-    // suggestionsEnabledForReview) so it survives past this try block to the publish step below.
-    changedFilesSummaryEnabledForReview = resolveReviewPromptOverrides(reviewManifestForAutoReview).changedFilesSummary;
+    // review.changed_files_summary (#1957) + review.effort_score (#1955): both deterministic, no-AI — resolve
+    // them here, UNCONDITIONALLY, rather than inside the aiReviewWillRun-gated closure below. These sections
+    // must still render whenever the manifest opts in even when the AI review itself is skipped this pass
+    // (author blacklisted, frozen for manual review, or AI review disabled for the repo) — neither has anything
+    // to do with the AI pipeline. One resolve call feeds both outer-scoped flags (mirroring
+    // inlineCommentsEnabledForReview/suggestionsEnabledForReview) so they survive past this try block to the
+    // publish step below.
+    const deterministicReviewOverrides = resolveReviewPromptOverrides(reviewManifestForAutoReview);
+    changedFilesSummaryEnabledForReview = deterministicReviewOverrides.changedFilesSummary;
+    effortScoreEnabledForReview = deterministicReviewOverrides.effortScore;
     const aiReviewWillRun =
       !authorBlacklisted &&
       !isFrozenForManualReview &&
@@ -9344,6 +9370,21 @@ async function maybePublishPrPublicSurface(
                 additions: file.additions,
                 deletions: file.deletions,
               })),
+            }
+          : {}),
+        // review.effort_score (#1955): deterministic, no-AI complexity/time estimate — only computed when the
+        // manifest opts in (effortScoreEnabledForReview, resolved unconditionally above), mirroring
+        // changedFilesSummaryEnabledForReview immediately above. Reuses the SAME unifiedFiles this pass already
+        // resolved (no extra fetch); `patch` comes from the file record's raw payload, the same extraction the AI
+        // review request already uses (reviewFilesForAi.map above).
+        ...(effortScoreEnabledForReview
+          ? {
+              reviewEffort: estimateReviewEffort(
+                unifiedFiles.map((file) => ({
+                  path: file.path,
+                  patch: typeof file.payload?.patch === "string" ? file.payload.patch : undefined,
+                })),
+              ),
             }
           : {}),
         ...(findingCategoriesEnabledForReview && aiReview?.inlineFindings?.length

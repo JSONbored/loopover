@@ -5,6 +5,7 @@ import { PR_PANEL_COMMENT_MARKER } from "../../src/github/comments";
 import * as backfillModule from "../../src/github/backfill";
 import * as rateLimitModule from "../../src/github/rate-limit";
 import * as repositoriesModule from "../../src/db/repositories";
+import * as reviewEffortModule from "../../src/review/review-effort";
 import * as repositorySettingsModule from "../../src/settings/repository-settings";
 import * as sentryModule from "../../src/selfhost/sentry";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
@@ -15501,6 +15502,9 @@ describe("queue processors", () => {
       // #review-audit (#4220): the comment reads the LIVE `dirty` merge-state (not the stale stored one), so it must
       // NOT headline "safe to merge" while the disposition would auto-close the base-conflicting PR.
       expect(postedBody).not.toMatch(/safe to merge/i);
+      // #1955: no `.gittensory.yml` was fetched here (the raw-content URL isn't stubbed, so it 404s and the
+      // manifest resolves to null) — review.effort_score is absent/default OFF, so the effort chip must NOT render.
+      expect(postedBody).not.toMatch(/review effort:/);
     } finally {
       liveCiSpy.mockRestore();
     }
@@ -15826,6 +15830,247 @@ describe("queue processors", () => {
       expect(postedBody).toContain("| Docs | 1 | +2 | -0 |");
     } finally {
       liveCiSpy.mockRestore();
+    }
+  });
+
+  // #1955: with the unified comment on AND `.gittensory.yml` opting into `review.effort_score`, the rendered
+  // comment gains the deterministic, no-AI "review effort: N/5 (~M min)" chip — computed by estimateReviewEffort
+  // from the SAME PR-files fetch the unified branch already does (no separate call). Mirrors the
+  // changed_files_summary test above but asserts the effort chip's presence + exact value instead.
+  it("renders the review effort chip when review.effort_score is on in .gittensory.yml", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_UNIFIED_COMMENT: "1" });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "detected_contributors_only",
+      publicAudienceMode: "gittensor_only",
+      publicSignalLevel: "standard",
+      publicSurface: "comment_and_label",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      checkRunDetailLevel: "minimal",
+      gateCheckMode: "enabled",
+      backfillEnabled: true,
+      privateTrustEnabled: true,
+      autonomy: { update_branch: "auto" },
+    });
+    let postedBody = "";
+    const calls = { comments: 0, gateChecks: 0 };
+    let gateFinalized = false;
+    let failedPostGateMint = false;
+    const liveCiSpy = vi
+      .spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl")
+      .mockRejectedValueOnce(new Error("transient CI read failed"))
+      .mockResolvedValue({
+        ciState: "passed",
+        hasPending: false,
+        hasVisiblePending: false,
+        hasMissingRequiredContext: false,
+        failingDetails: [],
+        nonRequiredFailingDetails: [],
+        ciCompletenessWarning: null,
+      });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") {
+        return Response.json([
+          {
+            uid: 7,
+            githubUsername: "oktofeesh1",
+            githubId: "123",
+            totalPrs: 4,
+            totalMergedPrs: 3,
+            totalOpenPrs: 1,
+            totalClosedPrs: 0,
+            totalOpenIssues: 0,
+            totalClosedIssues: 0,
+            totalSolvedIssues: 0,
+            totalValidSolvedIssues: 0,
+            isEligible: true,
+            credibility: 1,
+            eligibleRepoCount: 1,
+            hotkey: "must-not-leak",
+          },
+        ]);
+      }
+      if (url === "https://api.gittensor.io/miners/123") {
+        return Response.json({
+          repositories: [
+            {
+              repositoryFullName: "JSONbored/gittensory",
+              totalPrs: "4",
+              totalMergedPrs: "3",
+              totalOpenPrs: "1",
+              totalClosedPrs: "0",
+              totalOpenIssues: "0",
+              totalClosedIssues: "0",
+              isEligible: true,
+              credibility: "1.000000",
+            },
+          ],
+        });
+      }
+      if (url === "https://api.gittensor.io/miners/123/prs") return Response.json([]);
+      if (url === "https://mirror.gittensor.io/api/v1/miners/123/issues") return Response.json({ issues: [] });
+      if (url.endsWith("/users/oktofeesh1")) return Response.json({ login: "oktofeesh1", public_repos: 2, followers: 1 });
+      if (url.includes("/users/oktofeesh1/repos")) return Response.json([{ language: "TypeScript" }]);
+      // .gittensory.yml opts into the deterministic effort score — no AI involved.
+      if (url === "https://raw.githubusercontent.com/JSONbored/gittensory/HEAD/.gittensory.yml") {
+        return new Response("review:\n  effort_score: true\n");
+      }
+      if (url.includes("/access_tokens")) {
+        if (gateFinalized && !failedPostGateMint) {
+          failedPostGateMint = true;
+          return new Response("mint failed", { status: 500 });
+        }
+        return Response.json({ token: "installation-token", expires_at: "2026-05-28T00:04:00.000Z" });
+      }
+      // PR files — the unified branch (re)fetches them to count changed files AND (with the toggle above) to
+      // compute the effort estimate. A 10-added-line source file WITH a patch (weighted 10) plus a docs file with
+      // NO `patch` field (exercises the `typeof file.payload?.patch === "string" ? ... : undefined` fallback ->
+      // addedLineCount(undefined) = 0, so it contributes 0 weighted lines but still its per-file overhead):
+      // weighted 10 + 0 + 2 files * 3 overhead = effort 16 -> band 2, minutes round(16 * 0.5) = 8
+      // (see estimateReviewEffort — src/review/review-effort.ts).
+      if (url.includes("/pulls/3/files"))
+        return Response.json([
+          {
+            filename: "src/cache.ts",
+            additions: 10,
+            deletions: 1,
+            status: "modified",
+            patch: `@@ -1,1 +1,11 @@\n${Array.from({ length: 10 }, (_, i) => `+const x${i} = ${i};`).join("\n")}`,
+          },
+          { filename: "README.md", additions: 2, deletions: 0, status: "modified" },
+        ]);
+      if (/\/pulls\/3(?:\?|$)/.test(url)) return Response.json({ number: 3, mergeable_state: "clean" });
+      // Gate check-run — must succeed so `gateEvaluation` is produced and the flag-ON branch runs.
+      // The pending check is POSTed (in_progress), then PATCHed to its completed conclusion.
+      if (url.includes("/check-runs") && method === "GET") return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") {
+        calls.gateChecks += 1;
+        const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string };
+        if (body.status !== "in_progress" || body.conclusion) {
+          gateFinalized = true;
+          clearInstallationTokenCacheForTest();
+        }
+        return Response.json({ id: 901 }, { status: 201 });
+      }
+      if (url.includes("/check-runs/901") && method === "PATCH") {
+        calls.gateChecks += 1;
+        gateFinalized = true;
+        clearInstallationTokenCacheForTest();
+        return Response.json({ id: 901 });
+      }
+      if (url.includes("/issues/3/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/3/comments") && method === "POST") {
+        calls.comments += 1;
+        postedBody = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+        return Response.json({ id: 1, html_url: "https://github.com/comment/1" }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "pr-unified-comment-effort-score",
+        eventName: "pull_request",
+        payload: {
+          action: "synchronize",
+          installation: {
+            id: 123,
+            account: { login: "JSONbored", id: 1, type: "User" },
+            repository_selection: "selected",
+            permissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
+            events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+          },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: {
+            number: 3,
+            title: "Fix webhook duplicate delivery again",
+            state: "open",
+            user: { login: "oktofeesh1" },
+            head: { sha: "unified789" },
+            labels: [{ name: "bug" }],
+            body: "Fixes #1\n\nValidation: npm test",
+          },
+        },
+      });
+
+      expect(calls.comments).toBe(2);
+      expect(postedBody).toContain("<!-- gittensory-pr-panel:v1 -->");
+      // The new deterministic, no-AI chip: band 2 (effort 16 <= BAND_MAX[1]=40), minutes round(16*0.5)=8.
+      expect(postedBody).toContain("`review effort: 2/5 (~8 min)`");
+    } finally {
+      liveCiSpy.mockRestore();
+    }
+  });
+
+  // #1955: the review-effort minutes persisted onto the public-stats audit event (independent of
+  // review.effort_score, which only gates the unified-comment CHIP) must never block the publish itself when the
+  // estimator throws — the publish still completes and simply omits `reviewEffortMinutes` from the event metadata
+  // (public-stats.ts's own COALESCE-style fallback then applies, same as a pre-#1955 historical row).
+  it("swallows an estimateReviewEffort failure when persisting the public-stats minutes — the publish still completes", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commentMode: "all_prs", publicSurface: "comment_only", autoLabelEnabled: false, checkRunMode: "off", gateCheckMode: "enabled", aiReviewMode: "off", gatePack: "oss-anti-slop" });
+    const estimateSpy = vi.spyOn(reviewEffortModule, "estimateReviewEffort").mockImplementationOnce(() => {
+      throw new Error("estimator blew up");
+    });
+    let commentPosted = false;
+    let publishedMetadata: Record<string, unknown> | undefined;
+    const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
+    const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
+      if (event.eventType === "github_app.pr_public_surface_published") {
+        publishedMetadata = event.metadata as Record<string, unknown>;
+      }
+      await originalRecordAuditEvent(auditEnv, event);
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/8/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.endsWith("/pulls/8")) return Response.json({ number: 8, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a8" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/a8/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a8/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/8/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/8/comments") && method === "POST") { commentPosted = true; return Response.json({ id: 1 }, { status: 201 }); }
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+
+    try {
+      await expect(
+        processJob(env, {
+          type: "github-webhook",
+          deliveryId: "effort-estimator-throws",
+          eventName: "pull_request",
+          payload: {
+            action: "opened",
+            installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+            repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+            pull_request: { number: 8, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a8" }, labels: [], body: "Closes #1" },
+          },
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(commentPosted).toBe(true); // the publish completed despite the estimator throwing
+      expect(estimateSpy).toHaveBeenCalled();
+      expect(publishedMetadata).toBeDefined();
+      expect(publishedMetadata).not.toHaveProperty("reviewEffortMinutes");
+    } finally {
+      estimateSpy.mockRestore();
+      auditSpy.mockRestore();
     }
   });
 

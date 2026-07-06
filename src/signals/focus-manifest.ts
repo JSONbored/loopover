@@ -329,6 +329,14 @@ export type FocusManifestReviewConfig = {
    *  existing `classifyChangedFile` classifier (`src/review/changed-files-classify.ts`, built for this table
    *  under #2143). null/false (default, absent) = no changed-files section = byte-identical behavior. (#1957) */
   changedFilesSummary: boolean | null;
+  /** `review.effort_score`: when true, the unified review comment (only rendered when the `unifiedComment`
+   *  convergence feature is on) gains a compact "review effort: N/5 (~M min)" chip — a deterministic, no-AI
+   *  complexity/time estimate from `estimateReviewEffort` (`src/review/review-effort.ts`), weighting each
+   *  changed file's added lines by its category (source costs most; generated/vendored/lockfiles cost least)
+   *  plus a fixed per-file overhead. Mirrors `changedFilesSummary` exactly: same table, same deterministic
+   *  source, same display-only (never touches the AI prompt) shape. null/false (default, absent) = no chip =
+   *  byte-identical behavior. (#1955) */
+  effortScore: boolean | null;
   /** `review.finding_categories`: when true, an inline finding is ALSO tagged with a category (security/
    *  correctness/performance/maintainability/tests/style) — the AI reviewer is asked to self-categorize, with a
    *  deterministic path/keyword fallback (`classifyFindingCategory`) covering whatever it omits. Only takes
@@ -642,7 +650,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   publicNotes: [],
   gate: { ...EMPTY_GATE_CONFIG },
   settings: {},
-  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, findingCategories: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null },
+  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, effortScore: null, findingCategories: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null },
   features: { ...EMPTY_FEATURES_CONFIG },
   contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
   repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -672,7 +680,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     warnings,
     gate: { ...EMPTY_GATE_CONFIG },
     settings: {},
-    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, findingCategories: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null },
+    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, effortScore: null, findingCategories: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null },
     features: { ...EMPTY_FEATURES_CONFIG },
     contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
     repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -1603,7 +1611,7 @@ function parsePublicSafeText(value: JsonValue | undefined, field: string, warnin
  * throws; invalid/unsafe values are dropped with warnings.
  */
 function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewConfig {
-  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, findingCategories: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null };
+  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, effortScore: null, findingCategories: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null };
   if (value === undefined || value === null) return empty;
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "review" must be a mapping; ignoring it.`);
@@ -1642,6 +1650,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
   const inlineComments = normalizeOptionalBoolean(r.inline_comments, "review.inline_comments", warnings);
   const suggestions = normalizeOptionalBoolean(r.suggestions, "review.suggestions", warnings);
   const changedFilesSummary = normalizeOptionalBoolean(r.changed_files_summary, "review.changed_files_summary", warnings);
+  const effortScore = normalizeOptionalBoolean(r.effort_score, "review.effort_score", warnings);
   const findingCategories = normalizeOptionalBoolean(r.finding_categories, "review.finding_categories", warnings);
   const pathInstructions = parseReviewPathInstructions(r.path_instructions, warnings);
   const instructions = parsePublicSafeText(r.instructions, "review.instructions", warnings);
@@ -1663,6 +1672,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
       inlineComments !== null ||
       suggestions !== null ||
       changedFilesSummary !== null ||
+      effortScore !== null ||
       findingCategories !== null ||
       pathInstructions.length > 0 ||
       instructions !== null ||
@@ -1690,6 +1700,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
     inlineComments,
     suggestions,
     changedFilesSummary,
+    effortScore,
     findingCategories,
     pathInstructions,
     instructions,
@@ -2068,6 +2079,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   if (review.inlineComments !== null) out.inline_comments = review.inlineComments;
   if (review.suggestions !== null) out.suggestions = review.suggestions;
   if (review.changedFilesSummary !== null) out.changed_files_summary = review.changedFilesSummary;
+  if (review.effortScore !== null) out.effort_score = review.effortScore;
   if (review.findingCategories !== null) out.finding_categories = review.findingCategories;
   if (review.instructions !== null) out.instructions = review.instructions;
   if (review.pathInstructions.length > 0) out.path_instructions = review.pathInstructions.map((entry) => ({ path: entry.path, instructions: entry.instructions }));
@@ -2219,7 +2231,7 @@ export function composeManifestReviewInstructions(instructions: string | null, t
  *  failure). A null manifest yields the byte-identical defaults. Centralized so the AI-review caller threads them
  *  in one place with the null-manifest branch covered here (unit-tested) rather than inline in the processor.
  *  (#review-profile / #review-tone / #review-security-focus / #review-path-instructions / #review-exclude-paths / #2043 / #selfhost-ai-model-override / #1956) */
-export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { profile: ReviewProfile | null; tone: string | null; securityFocus: boolean; inlineComments: boolean; suggestions: boolean; changedFilesSummary: boolean; findingCategories: boolean; pathInstructions: ReviewPathInstruction[]; instructions: string | null; excludePaths: string[]; pathFilters: string[]; selfHostAiModel: SelfHostAiModelConfig } {
+export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { profile: ReviewProfile | null; tone: string | null; securityFocus: boolean; inlineComments: boolean; suggestions: boolean; changedFilesSummary: boolean; effortScore: boolean; findingCategories: boolean; pathInstructions: ReviewPathInstruction[]; instructions: string | null; excludePaths: string[]; pathFilters: string[]; selfHostAiModel: SelfHostAiModelConfig } {
   // inlineComments resolves to a strict boolean — true ONLY when the manifest explicitly set review.inline_comments:
   // true; null/false/absent ⇒ false. The caller ANDs this per-repo toggle with the operator flag + cutover allowlist.
   // securityFocus resolves the same way — true ONLY when the manifest explicitly set review.security_focus: true.
@@ -2227,9 +2239,11 @@ export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { 
   // inlineComments gate, since a suggestion has nothing to attach to without an inline comment.
   // changedFilesSummary resolves the same way (#1957) — independent of inlineComments/suggestions; it only
   // needs the unified-comment convergence feature itself to be on (the caller's own outer gate).
+  // effortScore resolves the same way (#1955) — like changedFilesSummary, it is deterministic/display-only
+  // (never touches the AI prompt) and only needs the unified-comment convergence feature to be on.
   // findingCategories resolves the same way (#1958) — like suggestions, the caller further ANDs it with the
   // already-resolved inlineComments gate, since a category has nothing to categorize without an inline finding.
-  return { profile: manifest?.review.profile ?? null, tone: manifest?.review.tone ?? null, securityFocus: manifest?.review.securityFocus === true, inlineComments: manifest?.review.inlineComments === true, suggestions: manifest?.review.suggestions === true, changedFilesSummary: manifest?.review.changedFilesSummary === true, findingCategories: manifest?.review.findingCategories === true, pathInstructions: manifest?.review.pathInstructions ?? [], instructions: manifest?.review.instructions ?? null, excludePaths: manifest?.review.excludePaths ?? [], pathFilters: manifest?.review.pathFilters ?? [], selfHostAiModel: resolveReviewSelfHostAiModel(manifest) };
+  return { profile: manifest?.review.profile ?? null, tone: manifest?.review.tone ?? null, securityFocus: manifest?.review.securityFocus === true, inlineComments: manifest?.review.inlineComments === true, suggestions: manifest?.review.suggestions === true, changedFilesSummary: manifest?.review.changedFilesSummary === true, effortScore: manifest?.review.effortScore === true, findingCategories: manifest?.review.findingCategories === true, pathInstructions: manifest?.review.pathInstructions ?? [], instructions: manifest?.review.instructions ?? null, excludePaths: manifest?.review.excludePaths ?? [], pathFilters: manifest?.review.pathFilters ?? [], selfHostAiModel: resolveReviewSelfHostAiModel(manifest) };
 }
 
 /** Resolve `review.pre_merge_checks` from a possibly-null manifest (null = load failure ⇒ no checks). Centralized

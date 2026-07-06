@@ -269,6 +269,14 @@ describe("renderUnifiedReviewComment", () => {
     expect(pending).toContain("`CI pending`");
   });
 
+  it("renders the review-effort chip when present, and omits it entirely when absent (#1955)", () => {
+    const withEffort = renderUnifiedReviewComment({ ...base, reviewEffort: { band: 3, minutes: 42 } }, {});
+    expect(withEffort).toContain("`review effort: 3/5 (~42 min)`");
+    // Byte-identical-when-off: no reviewEffort field at all ⇒ the chip text never appears.
+    const withoutEffort = renderUnifiedReviewComment({ ...base }, {});
+    expect(withoutEffort).not.toContain("review effort:");
+  });
+
   it("lists failing check names + per-check details under a 'CI checks failing' section (FIX D3)", () => {
     const md = renderUnifiedReviewComment(
       {
@@ -469,6 +477,17 @@ describe("buildUnifiedReviewInput", () => {
     expect(input.readiness).toEqual({ ciState: "passed" });
     expect(input.merged).toBe(true);
     expect(input.verdictReason).toBe("auto-merged after green CI");
+  });
+
+  it("threads the optional reviewEffort estimate through to the input when provided, omits it otherwise (#1955)", () => {
+    const withEffort = buildUnifiedReviewInput({
+      changedFiles: 1,
+      reviews: [reviewNote("merge")],
+      reviewEffort: { band: 4, minutes: 90 },
+    });
+    expect(withEffort.reviewEffort).toEqual({ band: 4, minutes: 90 });
+    const withoutEffort = buildUnifiedReviewInput({ changedFiles: 1, reviews: [reviewNote("merge")] });
+    expect(withoutEffort.reviewEffort).toBeUndefined();
   });
 });
 

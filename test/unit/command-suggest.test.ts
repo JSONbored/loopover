@@ -22,10 +22,9 @@ describe("command suggest coverage (#2170)", () => {
 
   it("records unknownVerb only when a non-empty verb fails lookup", () => {
     expect(parseGittensoryMentionCommand(null)).toBeNull();
-    expect(parseGittensoryMentionCommand("@gittensory ask what now?")).toMatchObject({
-      name: "ask",
-      question: "what now?",
-      unknownVerb: undefined,
-    });
+    const ask = parseGittensoryMentionCommand("@gittensory ask what now?");
+    expect(ask?.name).toBe("ask");
+    expect(ask?.question).toBe("what now?");
+    expect(ask?.unknownVerb).toBeUndefined();
   });
 });

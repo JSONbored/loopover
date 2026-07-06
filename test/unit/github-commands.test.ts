@@ -33,7 +33,8 @@ describe("GitHub mention commands", () => {
     expect(parseGittensoryMentionCommand("@gittensory duplicate-clusters")?.name).toBe("duplicate-clusters");
     expect(parseGittensoryMentionCommand("@gittensory unknown")?.name).toBe("help");
     expect(parseGittensoryMentionCommand("@gittensory unknown")).toMatchObject({ name: "help", unknownVerb: "unknown" });
-    expect(parseGittensoryMentionCommand("@gittensory")).toMatchObject({ name: "help", unknownVerb: undefined });
+    expect(parseGittensoryMentionCommand("@gittensory")?.name).toBe("help");
+    expect(parseGittensoryMentionCommand("@gittensory")?.unknownVerb).toBeUndefined();
     // gate-override is an action command: it must be recognized (NOT downgraded to "help") and carry the
     // trailing free text as its reason.
     expect(parseGittensoryMentionCommand("@gittensory gate-override")).toMatchObject({ name: "gate-override", reason: undefined });

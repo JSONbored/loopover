@@ -10244,6 +10244,9 @@ async function maybeProcessPrPanelRetrigger(
       deliveryId,
       action: "manual_retrigger",
       liveFacts,
+      // The user explicitly asked for a re-run: bypass both the AI-review cache and the manual-review freeze so
+      // this pass always spends a fresh opinion instead of silently replaying a stale/cached one (#3725).
+      forceAiReview: true,
     },
   );
   await recordGithubProductUsage(env, "pr_panel_retriggered", {

@@ -4547,6 +4547,75 @@ describe("queue processors", () => {
       expect(bypassAudit?.outcome).toBe("completed"); // the retrigger genuinely bypassed the freeze, not just a coincidental reuse
     });
 
+    it("REGRESSION (#3725, reproduces #3702): the PR-panel rerun checkbox forces a fresh AI review instead of silently replaying a cached one", async () => {
+      // #3702 showed "Code review: No blockers | No AI review summary" (reviewerCount 0) and re-checking the
+      // panel's rerun checkbox repeatedly did not fix it -- the retrigger ran but never set `forceAiReview`, so
+      // it kept reusing whatever was already cached for the unchanged head SHA instead of spending a fresh call.
+      let aiCalls = 0;
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 90, title: "Clean PR awaiting retrigger", state: "open", user: { login: "contributor" }, head: { sha: "a90" }, labels: [], body: "Closes #1" });
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 90, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+
+      const checkedPanel = [
+        "<!-- gittensory-pr-panel:v1 -->",
+        "",
+        "- [x] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review",
+      ].join("\n");
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "maintain" });
+        if (url.includes("/pulls/90/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+        if (url.endsWith("/pulls/90")) return Response.json({ number: 90, title: "Clean PR awaiting retrigger", state: "open", user: { login: "contributor" }, head: { sha: "a90" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+        if (url.includes("/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/90/comments") && method === "GET") return Response.json([{ id: 777, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } }]);
+        if (url.includes("/issues/comments/777") && method === "PATCH") return Response.json({ id: 777 });
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        return Response.json({});
+      });
+
+      // Establish a real, cacheable review at the current head via a normal (non-forced) regate pass.
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "baseline", repoFullName: "JSONbored/gittensory", prNumber: 90, installationId: 123 });
+      const baselineCalls = aiCalls;
+      expect(baselineCalls).toBeGreaterThan(0);
+
+      // A normal repeat pass at the SAME head reuses the cache -- matches the reported symptom (nothing changes).
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "repeat", repoFullName: "JSONbored/gittensory", prNumber: 90, installationId: 123 });
+      expect(aiCalls).toBe(baselineCalls);
+
+      // Checking the panel's "Re-run Gittensory review" checkbox must force a FRESH AI opinion, not silently
+      // replay the cached one -- this is the exact #3702 bug: the checkbox did nothing without forceAiReview.
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "panel-retrigger-forces-fresh-review",
+        eventName: "issue_comment",
+        payload: {
+          action: "edited",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 90, title: "Clean PR awaiting retrigger", state: "open", user: { login: "contributor" }, pull_request: {} },
+          comment: { id: 777, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } },
+          sender: { login: "maintainer", type: "User" },
+        },
+      });
+
+      expect(aiCalls).toBe(baselineCalls * 2); // a genuinely fresh AI call was spent, not a replay
+      const bypassAudit = await env.DB.prepare("select outcome from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_force_bypass", "JSONbored/gittensory#90")
+        .first<{ outcome: string }>();
+      expect(bypassAudit?.outcome).toBe("completed");
+    });
+
     it("#freeze-owner-exemption (incident, confirmed live on PR #3476): the repo owner's OWN held PR is never frozen -- a new push gets a fresh AI review", async () => {
       // The owner pushing a genuine fix to their OWN held PR must not keep replaying the ORIGINAL, now-stale
       // verdict pass after pass -- confirmed live via github_app.ai_review_frozen_reuse firing on every one of

@@ -449,6 +449,10 @@ review:
   # finding_categories: false
   # When true, inline findings are tagged with a category label (requires inline_comments).
 
+  # Fix-handoff blocks (#2176). Bool | null. Default: null/false — byte-identical.
+  # Requires operator flag GITTENSORY_REVIEW_FIX_HANDOFF + cutover allowlist AND this toggle.
+  # fixHandoff: false
+
   # Boundary-safe test generation (#2189). Bool | null. Default: null/false — byte-identical.
   # Requires operator flag GITTENSORY_REVIEW_TEST_GENERATION AND this toggle.
   # test_generation: false

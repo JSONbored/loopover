@@ -148,34 +148,31 @@ export function resolveCodexEffort(configured: string | undefined): string {
 // old fixed 120s cap silently SIGKILLed a large max-effort review mid-generation (the review then degrades to
 // nothing). These scale the ceiling with the provider-specific effort dial; provider-specific timeout vars override
 // them outright.
-// Claude Code subscription CLI: medium raised from 120 s to 180 s — production evidence (#GITTENSORY-Q) showed
-// the Claude Code subprocess consistently timing out at 120 s for medium-effort reviews, exhausting the fallback
-// chain and producing an inconclusive result. 180 s gives the CLI a more realistic window while staying well
-// below the high-effort ceiling (240 s).
-const CLAUDE_EFFORT_TIMEOUT_MS: Record<string, number> = { low: 120_000, medium: 180_000, high: 240_000, xhigh: 360_000, max: 600_000 };
-const CODEX_EFFORT_TIMEOUT_MS: Record<string, number> = { low: 120_000, medium: 120_000, high: 240_000, xhigh: 360_000, max: 600_000 };
-
-function resolveCliTimeoutFrom(configured: string | undefined, effort: string, effortTimeoutMs: Record<string, number>): number {
+//
+// `medium` was left pinned to `low`'s 120s when this ladder was introduced (#3612-era), on the assumption that
+// capping it tightly would conserve subscription tokens. In production it did the opposite: `medium` is the
 // DEFAULT effort (see resolveEffort/resolveCodexEffort above), so a real medium-effort review that runs past 120s
 // gets SIGKILLed mid-generation — the tokens already spent are wasted, and because that PR's head SHA never gets
-  return effortTimeoutMs[effort]!;
+// a completed gate check, the regate-repair sweep (queue/processors.ts's surfaceRepairPriorityPullNumbers) treats
 // it as an outage and bypasses its own staleness throttle to retry it every ~2 minutes, indefinitely. Giving
 // `medium` its own tier (rather than reusing `low`'s) lets a normal medium-effort review actually finish instead
-// of feeding that loop.
-  return resolveCliTimeoutFrom(firstConfigured(env.CLAUDE_AI_TIMEOUT_MS), resolveEffort(firstConfigured(env.CLAUDE_AI_EFFORT)), CLAUDE_EFFORT_TIMEOUT_MS);
+// of feeding that loop (#3747). Split per-provider (rather than one shared map) so a future provider-specific
+// tuning change doesn't have to touch the other provider's ladder to make it.
+const CLAUDE_EFFORT_TIMEOUT_MS: Record<string, number> = { low: 120_000, medium: 180_000, high: 240_000, xhigh: 360_000, max: 600_000 };
+const CODEX_EFFORT_TIMEOUT_MS: Record<string, number> = { low: 120_000, medium: 180_000, high: 240_000, xhigh: 360_000, max: 600_000 };
 
-function resolveCliTimeoutFrom(configured: string | undefined, effort: string): number {
+function resolveCliTimeoutFrom(configured: string | undefined, effort: string, effortTimeoutMs: Record<string, number>): number {
   const raw = Number(configured);
-  return resolveCliTimeoutFrom(firstConfigured(env.CODEX_AI_TIMEOUT_MS), resolveCodexEffort(firstConfigured(env.CODEX_AI_EFFORT)), CODEX_EFFORT_TIMEOUT_MS);
-  return EFFORT_TIMEOUT_MS[effort]!;
+  if (Number.isFinite(raw) && raw > 0) return Math.min(1_800_000, Math.max(30_000, raw));
+  return effortTimeoutMs[effort]!;
 }
 
 export function resolveClaudeCliTimeoutMs(env: Record<string, string | undefined>): number {
-  return resolveCliTimeoutFrom(firstConfigured(env.CLAUDE_AI_TIMEOUT_MS), resolveEffort(firstConfigured(env.CLAUDE_AI_EFFORT)));
+  return resolveCliTimeoutFrom(firstConfigured(env.CLAUDE_AI_TIMEOUT_MS), resolveEffort(firstConfigured(env.CLAUDE_AI_EFFORT)), CLAUDE_EFFORT_TIMEOUT_MS);
 }
 
 export function resolveCodexCliTimeoutMs(env: Record<string, string | undefined>): number {
-  return resolveCliTimeoutFrom(firstConfigured(env.CODEX_AI_TIMEOUT_MS), resolveCodexEffort(firstConfigured(env.CODEX_AI_EFFORT)));
+  return resolveCliTimeoutFrom(firstConfigured(env.CODEX_AI_TIMEOUT_MS), resolveCodexEffort(firstConfigured(env.CODEX_AI_EFFORT)), CODEX_EFFORT_TIMEOUT_MS);
 }
 
 // Fast-fail deadline for Codex's "Reading prompt from stdin..." hang (GITTENSORY-K/GITTENSORY-M): observed in prod

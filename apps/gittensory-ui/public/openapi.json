@@ -16494,6 +16494,29 @@
           }
         ]
       }
+    },
+    "/v1/internal/jobs/generate-review-recap": {
+      "post": {
+        "responses": {
+          "202": {
+            "description": "Maintainer review recap digest queued (#1963)"
+          },
+          "400": {
+            "description": "Missing repoFullName"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
     }
   },
   "servers": [

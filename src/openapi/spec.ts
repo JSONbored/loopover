@@ -946,6 +946,15 @@ export function buildOpenApiSpec() {
       401: { description: "Invalid internal token" },
     },
   });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/internal/jobs/generate-review-recap",
+    responses: {
+      202: { description: "Maintainer review recap digest queued (#1963)" },
+      400: { description: "Missing repoFullName" },
+      401: { description: "Invalid internal token" },
+    },
+  });
   for (const path of [
     "/v1/internal/jobs/refresh-scoring-model",
     "/v1/internal/jobs/refresh-upstream-drift",

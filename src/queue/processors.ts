@@ -289,6 +289,7 @@ import {
 import { processSubmitDraft } from "../services/draft";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
 import { generateWeeklyValueReport } from "../services/weekly-value-report";
+import { generateAndSendReviewRecap } from "../services/review-recap";
 import {
   REPO_OUTCOME_PATTERNS_SIGNAL,
   computeRepoOutcomePatterns,
@@ -1022,6 +1023,9 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
         variant: message.variant ?? "operator",
         ...(message.days === undefined ? {} : { days: message.days }),
       });
+      return;
+    case "generate-review-recap":
+      await runReviewRecapJob(env, message.repoFullName, message.windowDays);
       return;
     case "agent-regate-sweep":
       if (!message.repoFullName && message.requestedBy !== "test") {
@@ -1853,6 +1857,21 @@ async function fanOutBacklogConvergenceSweepJobs(
     eventType: "agent.sweep.backlog_convergence.fanout",
     outcome: "queued",
     metadata: { repoCount: configured.length, requestedBy },
+  });
+}
+
+// Maintainer review recap digest (#1963): build the recap for one repo and post it to Discord, gated on
+// this repo's `.gittensory.yml reviewRecap.enabled` (default OFF, mirrors repoDocGeneration.enabled below) --
+// fail-safe: a repo with no `reviewRecap:` block, or a manifest load failure, never posts. Config-gated at
+// THIS single call site (not inside generateAndSendReviewRecap itself) because this PR has no fan-out sweep
+// yet; the eventual scheduled trigger will enumerate opted-in repos the same way fanOutRepoDocRefreshSweepJobs
+// does, and can call generateAndSendReviewRecap directly since the enumeration step already filtered on
+// `.enabled` -- this per-call gate is what keeps a MANUAL trigger against a non-opted-in repo a no-op too.
+async function runReviewRecapJob(env: Env, repoFullName: string, windowDays: number | undefined): Promise<void> {
+  const manifest = await loadRepoFocusManifest(env, repoFullName).catch(() => null);
+  if (!manifest?.reviewRecap.enabled) return;
+  await generateAndSendReviewRecap(env, repoFullName, {
+    windowDays: windowDays ?? manifest.reviewRecap.cadenceDays,
   });
 }
 

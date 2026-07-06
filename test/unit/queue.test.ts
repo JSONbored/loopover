@@ -400,6 +400,52 @@ describe("queue processors", () => {
     expect(auditCount?.count).toBe(2);
   });
 
+  it("runs the review recap job through the queue processor when reviewRecap.enabled is true (#1963)", async () => {
+    const env = Object.assign(createTestEnv(), { GITTENSORY_DISCORD_WEBHOOK: "https://discord.com/api/webhooks/123/abc" }) as Env;
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { reviewRecap: { enabled: true, cadenceDays: 3 } });
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 204 }));
+
+    await processJob(env, { type: "generate-review-recap", requestedBy: "test", repoFullName: "JSONbored/gittensory" });
+
+    const row = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by created_at desc limit 1").bind("review_recap_notification.discord").first();
+    expect(row).toMatchObject({ outcome: "completed", detail: "sent" });
+    vi.unstubAllGlobals();
+  });
+
+  it("uses the job message's explicit windowDays over the manifest's cadenceDays default (#1963, nullish fallback present side)", async () => {
+    const env = Object.assign(createTestEnv(), { GITTENSORY_DISCORD_WEBHOOK: "https://discord.com/api/webhooks/123/abc" }) as Env;
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { reviewRecap: { enabled: true, cadenceDays: 3 } });
+    let capturedBody: string | undefined;
+    vi.stubGlobal("fetch", async (_url: RequestInfo | URL, init?: RequestInit) => {
+      capturedBody = String(init?.body ?? "");
+      return new Response(null, { status: 204 });
+    });
+
+    await processJob(env, { type: "generate-review-recap", requestedBy: "test", repoFullName: "JSONbored/gittensory", windowDays: 21 });
+
+    expect(capturedBody).toContain("(21d)");
+    vi.unstubAllGlobals();
+  });
+
+  it("skips the review recap job as a no-op when reviewRecap is NOT enabled for the repo (default-off, #1963)", async () => {
+    const env = Object.assign(createTestEnv(), { GITTENSORY_DISCORD_WEBHOOK: "https://discord.com/api/webhooks/123/abc" }) as Env;
+    // Prime an explicit, present-but-disabled manifest so loadRepoFocusManifest hits the cache instead of
+    // falling through to a live GitHub fetch for this repo's .gittensory.yml (there is none in this test env).
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { wantedPaths: ["src/"] });
+    let fetchCalled = false;
+    vi.stubGlobal("fetch", async () => {
+      fetchCalled = true;
+      return new Response(null, { status: 204 });
+    });
+
+    await processJob(env, { type: "generate-review-recap", requestedBy: "test", repoFullName: "JSONbored/gittensory" });
+
+    expect(fetchCalled).toBe(false);
+    const row = await env.DB.prepare("select count(*) as count from audit_events where event_type = ?").bind("review_recap_notification.discord").first<{ count: number }>();
+    expect(row?.count).toBe(0);
+    vi.unstubAllGlobals();
+  });
+
   it("routes upstream drift jobs through queue processors", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

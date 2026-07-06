@@ -929,3 +929,13 @@ settings:
 #   allowOverwriteExisting: false  # Bool. Opt-in to propose overwriting a hand-maintained, non-generated
 #                                   # AGENTS.md/CLAUDE.md. Default: false (left alone if not recognizably generated).
 #   refreshIntervalDays: 7   # Positive integer. Minimum days between scheduled refresh attempts. Default: 7.
+
+# Maintainer review recap digest (#1963): opt-in only, off by default. Uncomment to let Gittensory build a
+# periodic summary of recent review activity (PRs merged/closed, gate merge precision) for this repo. Discord
+# delivery only for now (reuses the same per-repo webhook resolution as the per-PR notifier); Slack is a
+# follow-up. There is no DB-backed dashboard counterpart -- precedence is simply this manifest value, or
+# fully disabled when the block (or `enabled`) is absent. This PR ships the builder + a manually-triggerable
+# delivery only -- the scheduled cron trigger is a scoped follow-up.
+# reviewRecap:
+#   enabled: true    # Bool. Default: false (no recap is ever built or posted).
+#   cadenceDays: 7   # Positive integer. Days of activity each recap covers. Default: 7 (weekly).

@@ -35,6 +35,7 @@ import {
   resolveReviewVisualConfig,
   repoDocGenerationConfigToJson,
   reviewConfigToJson,
+  reviewRecapConfigToJson,
   settingsOverrideToJson,
   type FocusManifest,
   type FocusManifestContentLaneConfig,
@@ -42,6 +43,7 @@ import {
   type FocusManifestGateConfig,
   type FocusManifestRepoDocGenerationConfig,
   type FocusManifestReviewConfig,
+  type FocusManifestReviewRecapConfig,
   type FocusManifestSettings,
   type SelfHostAiModelConfig,
 } from "../../src/signals/focus-manifest";
@@ -411,6 +413,15 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
   it.each(Object.entries(REPO_DOC_GENERATION_FIELD_TOKENS))("documents repoDocGeneration.%s", (_field, token) => {
     expect(exampleContent).toContain(token);
   });
+
+  const REVIEW_RECAP_FIELD_TOKENS = {
+    enabled: "enabled:",
+    cadenceDays: "cadenceDays:",
+  } satisfies Record<Exclude<keyof FocusManifestReviewRecapConfig, "present">, string>;
+
+  it.each(Object.entries(REVIEW_RECAP_FIELD_TOKENS))("documents reviewRecap.%s", (_field, token) => {
+    expect(exampleContent).toContain(token);
+  });
 });
 
 describe("matchesManifestPath", () => {
@@ -774,6 +785,7 @@ describe("compileFocusManifestPolicy", () => {
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
       contentLane: { present: false, entryFileGlob: null, providerFileGlob: null, artifactGlob: null, collectionField: null, maxAppendedEntries: null, duplicateKeyFields: [], validatorId: null },
       repoDocGeneration: { present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 },
+      reviewRecap: { present: false, enabled: false, cadenceDays: 7 },
       warnings: [],
     });
     expect(policy.publicSafe.entryGuidance).toContain("Keep PRs focused.");
@@ -1627,6 +1639,65 @@ describe("parseFocusManifest gate config", () => {
 
     it("repoDocGenerationConfigToJson returns null for an absent config", () => {
       expect(repoDocGenerationConfigToJson(parseFocusManifest(null).repoDocGeneration)).toBeNull();
+    });
+  });
+
+  describe("reviewRecap: (#1963, maintainer review recap digest config-as-code surface)", () => {
+    it("defaults to fully disabled and absent when the key is omitted, and does not make the manifest present on its own", () => {
+      const m = parseFocusManifest({});
+      expect(m.reviewRecap).toEqual({ present: false, enabled: false, cadenceDays: 7 });
+      expect(m.present).toBe(false);
+    });
+
+    it("treats an explicit null the same as an omitted key", () => {
+      expect(parseFocusManifest({ reviewRecap: null }).reviewRecap).toEqual({ present: false, enabled: false, cadenceDays: 7 });
+    });
+
+    it("warns and falls back to the default when the value is a non-mapping type (string or array)", () => {
+      const asString = parseFocusManifest({ reviewRecap: "nope" as never });
+      expect(asString.reviewRecap.present).toBe(false);
+      expect(asString.warnings.some((w) => /"reviewRecap" must be a mapping/.test(w))).toBe(true);
+      const asArray = parseFocusManifest({ reviewRecap: ["nope"] as never });
+      expect(asArray.reviewRecap.present).toBe(false);
+      expect(asArray.warnings.some((w) => /"reviewRecap" must be a mapping/.test(w))).toBe(true);
+    });
+
+    it("parses enabled: true and defaults cadenceDays, making the manifest present", () => {
+      const m = parseFocusManifest({ reviewRecap: { enabled: true } });
+      expect(m.reviewRecap).toEqual({ present: true, enabled: true, cadenceDays: 7 });
+      expect(m.present).toBe(true);
+    });
+
+    it("warns and defaults to false when enabled is a non-boolean value", () => {
+      const m = parseFocusManifest({ reviewRecap: { enabled: "yes" as unknown as boolean } });
+      expect(m.reviewRecap.enabled).toBe(false);
+      expect(m.warnings.some((w) => /reviewRecap\.enabled/.test(w))).toBe(true);
+    });
+
+    it("parses a valid cadenceDays and defaults to 7 (weekly) when omitted", () => {
+      const m = parseFocusManifest({ reviewRecap: { enabled: true, cadenceDays: 14 } });
+      expect(m.reviewRecap.cadenceDays).toBe(14);
+      const defaulted = parseFocusManifest({ reviewRecap: { enabled: true } });
+      expect(defaulted.reviewRecap.cadenceDays).toBe(7);
+    });
+
+    it("warns and defaults cadenceDays to 7 when the value is not a positive whole number", () => {
+      const zero = parseFocusManifest({ reviewRecap: { enabled: true, cadenceDays: 0 } });
+      expect(zero.reviewRecap.cadenceDays).toBe(7);
+      expect(zero.warnings.some((w) => /reviewRecap\.cadenceDays/.test(w))).toBe(true);
+      const fractional = parseFocusManifest({ reviewRecap: { enabled: true, cadenceDays: 2.5 } });
+      expect(fractional.reviewRecap.cadenceDays).toBe(7);
+      const negative = parseFocusManifest({ reviewRecap: { enabled: true, cadenceDays: -1 } });
+      expect(negative.reviewRecap.cadenceDays).toBe(7);
+    });
+
+    it("round-trips through reviewRecapConfigToJson → parseFocusManifest unchanged", () => {
+      const m = parseFocusManifest({ reviewRecap: { enabled: true, cadenceDays: 3 } });
+      expect(parseFocusManifest({ reviewRecap: reviewRecapConfigToJson(m.reviewRecap) }).reviewRecap).toEqual(m.reviewRecap);
+    });
+
+    it("reviewRecapConfigToJson returns null for an absent config", () => {
+      expect(reviewRecapConfigToJson(parseFocusManifest(null).reviewRecap)).toBeNull();
     });
   });
 

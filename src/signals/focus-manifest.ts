@@ -180,6 +180,24 @@ export type FocusManifestRepoDocGenerationConfig = {
 };
 
 /**
+ * Per-repo opt-in for the periodic maintainer review-recap digest (#1963), declared as code under
+ * `reviewRecap:`. Mirrors `repoDocGeneration:` exactly: no DB-backed dashboard counterpart, so the parsed
+ * value (or the default below when unset) IS the effective value — there is no DB layer to overlay onto.
+ * Defaults to fully disabled: a repo with no `reviewRecap:` block, or an explicit `enabled: false`, never
+ * gets a recap posted. Discord delivery ONLY for now (reuses the SAME per-repo webhook resolution as the
+ * per-event notifier in notify-discord.ts, `resolveDiscordWebhook`) — Slack is a follow-up.
+ */
+export type FocusManifestReviewRecapConfig = {
+  present: boolean;
+  enabled: boolean;
+  /** How many days of review activity each recap covers, and (once the scheduler follow-up lands) how often
+   *  it is posted. Default 7 (weekly). A purely descriptive/rate-limiting knob today — this PR ships only
+   *  the manually-triggerable builder + delivery, so `cadenceDays` currently just sets the report WINDOW;
+   *  the scheduled cron trigger is a scoped follow-up (see the PR description). */
+  cadenceDays: number;
+};
+
+/**
  * Generic repository-settings override declared in `.gittensory.yml` under `settings:`. A partial of
  * {@link RepositorySettings} — every behaviour a maintainer can toggle in the dashboard can be set here
  * as code. Unset fields are omitted so the resolver layers it OVER the DB-backed settings
@@ -588,6 +606,7 @@ export type FocusManifest = {
   features: FocusManifestFeaturesConfig;
   contentLane: FocusManifestContentLaneConfig;
   repoDocGeneration: FocusManifestRepoDocGenerationConfig;
+  reviewRecap: FocusManifestReviewRecapConfig;
   warnings: string[];
 };
 
@@ -691,6 +710,14 @@ const EMPTY_REPO_DOC_GENERATION_CONFIG: FocusManifestRepoDocGenerationConfig = {
   refreshIntervalDays: DEFAULT_REPO_DOC_REFRESH_INTERVAL_DAYS,
 };
 
+const DEFAULT_REVIEW_RECAP_CADENCE_DAYS = 7;
+
+const EMPTY_REVIEW_RECAP_CONFIG: FocusManifestReviewRecapConfig = {
+  present: false,
+  enabled: false,
+  cadenceDays: DEFAULT_REVIEW_RECAP_CADENCE_DAYS,
+};
+
 const EMPTY_MANIFEST: FocusManifest = {
   present: false,
   source: "none",
@@ -707,6 +734,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   features: { ...EMPTY_FEATURES_CONFIG },
   contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
   repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
+  reviewRecap: { ...EMPTY_REVIEW_RECAP_CONFIG },
   warnings: [],
 };
 
@@ -737,6 +765,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     features: { ...EMPTY_FEATURES_CONFIG },
     contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
     repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
+    reviewRecap: { ...EMPTY_REVIEW_RECAP_CONFIG },
   };
 }
 
@@ -1266,6 +1295,29 @@ function parseRepoDocGenerationConfig(value: JsonValue | undefined, warnings: st
 export function repoDocGenerationConfigToJson(config: FocusManifestRepoDocGenerationConfig): JsonValue {
   if (!config.present) return null;
   return { enabled: config.enabled, scope: config.scope, allowOverwriteExisting: config.allowOverwriteExisting, refreshIntervalDays: config.refreshIntervalDays };
+}
+
+/**
+ * Parse the optional `reviewRecap:` mapping (#1963). Mirrors {@link parseRepoDocGenerationConfig}: every
+ * field has a concrete default (no DB layer to overlay onto), so the parsed value IS the effective value.
+ */
+function parseReviewRecapConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewRecapConfig {
+  if (value === undefined || value === null) return { ...EMPTY_REVIEW_RECAP_CONFIG };
+  if (typeof value !== "object" || Array.isArray(value)) {
+    warnings.push('Manifest field "reviewRecap" must be a mapping; ignoring it.');
+    return { ...EMPTY_REVIEW_RECAP_CONFIG };
+  }
+  const record = value as Record<string, JsonValue>;
+  const enabled = normalizeOptionalBoolean(record.enabled, "reviewRecap.enabled", warnings) ?? false;
+  const cadenceDays = normalizeOptionalPositiveInteger(record.cadenceDays, "reviewRecap.cadenceDays", warnings) ?? DEFAULT_REVIEW_RECAP_CADENCE_DAYS;
+  return { present: true, enabled, cadenceDays };
+}
+
+/** Serialize a reviewRecap config back into the parse-compatible shape so a cached snapshot round-trips
+ *  through {@link parseReviewRecapConfig} unchanged. Returns null when nothing is configured. */
+export function reviewRecapConfigToJson(config: FocusManifestReviewRecapConfig): JsonValue {
+  if (!config.present) return null;
+  return { enabled: config.enabled, cadenceDays: config.cadenceDays };
 }
 
 function normalizeOptionalEnum<T extends string>(value: JsonValue | undefined, field: string, allowed: readonly T[], warnings: string[]): T | null {
@@ -2801,6 +2853,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     features: parseFeaturesConfig(record.features, warnings),
     contentLane: parseContentLaneConfig(record.contentLane, warnings),
     repoDocGeneration: parseRepoDocGenerationConfig(record.repoDocGeneration, warnings),
+    reviewRecap: parseReviewRecapConfig(record.reviewRecap, warnings),
     warnings,
   };
   if (
@@ -2816,7 +2869,8 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     !manifest.review.present &&
     !manifest.features.present &&
     !manifest.contentLane.present &&
-    !manifest.repoDocGeneration.present
+    !manifest.repoDocGeneration.present &&
+    !manifest.reviewRecap.present
   ) {
     warnings.push("Manifest contained no recognized focus fields; falling back to deterministic signals.");
     manifest.present = false;

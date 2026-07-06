@@ -6,6 +6,7 @@ import { persistSignalSnapshot, upsertInstallation, upsertRepositoryFromGitHub }
 import { handleMcpRequest } from "../../src/mcp/server";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { createTestEnv } from "../helpers/d1";
 
 describe("api route guards and error branches", () => {
@@ -724,6 +725,8 @@ describe("api route guards and error branches", () => {
     expect((await app.request("/v1/internal/jobs/rollup-product-usage/run", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/jobs/generate-weekly-value-report", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/jobs/generate-weekly-value-report/run", { method: "POST" }, env)).status).toBe(401);
+    expect((await app.request("/v1/internal/jobs/generate-review-recap", { method: "POST" }, env)).status).toBe(401);
+    expect((await app.request("/v1/internal/jobs/generate-review-recap/run", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/bounties/import", { method: "POST" }, env)).status).toBe(401);
     expect(
       (
@@ -776,6 +779,59 @@ describe("api route guards and error branches", () => {
     );
     expect(immediateWeeklyReport.status).toBe(200);
     await expect(immediateWeeklyReport.json()).resolves.toMatchObject({ variant: "operator", period: expect.objectContaining({ days: 1 }) });
+
+    // Maintainer review recap digest (#1963): repoFullName is required on both routes.
+    const missingRepo = await app.request("/v1/internal/jobs/generate-review-recap", { method: "POST", headers: internalHeaders(env), body: "{}" }, env);
+    expect(missingRepo.status).toBe(400);
+    const missingRepoRun = await app.request("/v1/internal/jobs/generate-review-recap/run", { method: "POST", headers: internalHeaders(env), body: "{}" }, env);
+    expect(missingRepoRun.status).toBe(400);
+
+    const queuedRecap = await app.request(
+      "/v1/internal/jobs/generate-review-recap",
+      { method: "POST", headers: internalHeaders(env), body: JSON.stringify({ repoFullName: "JSONbored/gittensory", windowDays: 999 }) },
+      env,
+    );
+    expect(queuedRecap.status).toBe(202);
+    await expect(queuedRecap.json()).resolves.toMatchObject({ status: "queued", repoFullName: "JSONbored/gittensory", windowDays: 90 });
+    expect(queued).toEqual(expect.arrayContaining([expect.objectContaining({ type: "generate-review-recap", repoFullName: "JSONbored/gittensory", windowDays: 90 })]));
+
+    const queuedRecapDefaultWindow = await app.request(
+      "/v1/internal/jobs/generate-review-recap",
+      { method: "POST", headers: internalHeaders(env), body: JSON.stringify({ repoFullName: "JSONbored/gittensory" }) },
+      env,
+    );
+    expect(queuedRecapDefaultWindow.status).toBe(202);
+    const queuedRecapDefaultWindowBody = await queuedRecapDefaultWindow.json();
+    expect(queuedRecapDefaultWindowBody).toMatchObject({ status: "queued", repoFullName: "JSONbored/gittensory" });
+    expect(queuedRecapDefaultWindowBody).not.toHaveProperty("windowDays");
+    expect(queued).toEqual(expect.arrayContaining([expect.objectContaining({ type: "generate-review-recap", repoFullName: "JSONbored/gittensory" })]));
+
+    // /run respects reviewRecap.enabled even for an explicit maintainer-triggered call (default-off, fail-safe).
+    const skippedRecapRun = await app.request(
+      "/v1/internal/jobs/generate-review-recap/run",
+      { method: "POST", headers: internalHeaders(env), body: JSON.stringify({ repoFullName: "JSONbored/gittensory" }) },
+      env,
+    );
+    expect(skippedRecapRun.status).toBe(200);
+    await expect(skippedRecapRun.json()).resolves.toMatchObject({ ok: false, status: "skipped" });
+
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { reviewRecap: { enabled: true, cadenceDays: 3 } });
+    const immediateRecapRun = await app.request(
+      "/v1/internal/jobs/generate-review-recap/run",
+      { method: "POST", headers: internalHeaders(env), body: JSON.stringify({ repoFullName: "JSONbored/gittensory" }) },
+      env,
+    );
+    expect(immediateRecapRun.status).toBe(200);
+    await expect(immediateRecapRun.json()).resolves.toMatchObject({ ok: true, recap: expect.objectContaining({ repoFullName: "JSONbored/gittensory", windowDays: 3 }), delivery: expect.objectContaining({ sent: false }) });
+
+    // An explicit windowDays on /run overrides the manifest's cadenceDays default.
+    const immediateRecapRunExplicitWindow = await app.request(
+      "/v1/internal/jobs/generate-review-recap/run",
+      { method: "POST", headers: internalHeaders(env), body: JSON.stringify({ repoFullName: "JSONbored/gittensory", windowDays: 14 }) },
+      env,
+    );
+    expect(immediateRecapRunExplicitWindow.status).toBe(200);
+    await expect(immediateRecapRunExplicitWindow.json()).resolves.toMatchObject({ ok: true, recap: expect.objectContaining({ repoFullName: "JSONbored/gittensory", windowDays: 14 }) });
 
     expect(
       (

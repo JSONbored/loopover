@@ -195,6 +195,7 @@ import {
   generateWeeklyValueReport,
   loadWeeklyValueReport,
 } from "../services/weekly-value-report";
+import { generateAndSendReviewRecap } from "../services/review-recap";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
@@ -3588,6 +3589,19 @@ export function createApp() {
     return c.json({ ok: true, status: "queued", variant, days }, 202);
   });
 
+  // Maintainer review recap digest (#1963): manually-triggerable only in this PR (no scheduled cron trigger
+  // yet -- see the queue processor's "generate-review-recap" case). Config-gated on reviewRecap.enabled at
+  // the processor, so queuing a job for a repo that hasn't opted in is a documented no-op, not an error.
+  app.post("/v1/internal/jobs/generate-review-recap", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const repoFullName = typeof body?.repoFullName === "string" ? body.repoFullName : undefined;
+    if (!repoFullName) return c.json({ ok: false, error: "repoFullName is required" }, 400);
+    const windowDays = Number.isFinite(Number(body?.windowDays)) ? Math.max(1, Math.min(90, Math.round(Number(body.windowDays)))) : undefined;
+    const message: JobMessage = { type: "generate-review-recap", requestedBy: "api", repoFullName, ...(windowDays === undefined ? {} : { windowDays }) };
+    await c.env.JOBS.send(message);
+    return c.json({ ok: true, status: "queued", repoFullName, windowDays }, 202);
+  });
+
   app.post("/v1/internal/jobs/repair-data-fidelity", async (c) => {
     const message: JobMessage = { type: "repair-data-fidelity", requestedBy: "api" };
     await c.env.JOBS.send(message);
@@ -3613,6 +3627,22 @@ export function createApp() {
     const days = Number.isFinite(Number(body?.days)) ? Math.max(1, Math.min(31, Math.round(Number(body.days)))) : undefined;
     const variant = body?.variant === "public" ? "public" : "operator";
     return c.json(await generateWeeklyValueReport(c.env, { variant, ...(days === undefined ? {} : { days }) }));
+  });
+
+  // Same reviewRecap.enabled gate as the queued path above (#1963) -- an immediate "/run" still respects the
+  // per-repo opt-in, since (unlike generate-weekly-value-report/run) this has a real side effect: posting to
+  // the repo's configured Discord channel.
+  app.post("/v1/internal/jobs/generate-review-recap/run", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const repoFullName = typeof body?.repoFullName === "string" ? body.repoFullName : undefined;
+    if (!repoFullName) return c.json({ ok: false, error: "repoFullName is required" }, 400);
+    const windowDays = Number.isFinite(Number(body?.windowDays)) ? Math.max(1, Math.min(90, Math.round(Number(body.windowDays)))) : undefined;
+    const manifest = await loadRepoFocusManifest(c.env, repoFullName).catch(() => null);
+    if (!manifest?.reviewRecap.enabled) {
+      return c.json({ ok: false, status: "skipped", reason: "reviewRecap is not enabled for this repository (.gittensory.yml reviewRecap.enabled)" }, 200);
+    }
+    const { recap, delivery } = await generateAndSendReviewRecap(c.env, repoFullName, { windowDays: windowDays ?? manifest.reviewRecap.cadenceDays });
+    return c.json({ ok: true, recap, delivery });
   });
 
   app.post("/v1/internal/jobs/refresh-installation-health/run", async (c) => {

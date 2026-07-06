@@ -34,11 +34,13 @@ contentLane:
   collectionField: records
 repoDocGeneration:
   enabled: true
+reviewRecap:
+  enabled: true
 `);
 
     expect(result.ok).toBe(true);
     expect(result.warnings).toEqual([]);
-    expect(result.summary).toBe("Manifest parsed 13 recognized fields.");
+    expect(result.summary).toBe("Manifest parsed 14 recognized fields.");
     expect(result.recognizedFields).toEqual([
       "wantedPaths",
       "preferredLabels",
@@ -53,6 +55,7 @@ repoDocGeneration:
       "features",
       "contentLane",
       "repoDocGeneration",
+      "reviewRecap",
     ]);
     expect(JSON.stringify(result)).not.toContain("private maintainer note");
     expect(JSON.stringify(result)).not.toContain("operator-only");
@@ -67,6 +70,14 @@ repoDocGeneration:
     expect(result.ok).toBe(true);
     expect(result.warnings).toEqual([]);
     expect(result.recognizedFields).toEqual(["repoDocGeneration"]);
+  });
+
+  it("recognizes a standalone reviewRecap: block instead of flagging it as unknown (#1963)", () => {
+    const result = lintManifestText("reviewRecap:\n  enabled: true\n  cadenceDays: 14\n");
+
+    expect(result.ok).toBe(true);
+    expect(result.warnings).toEqual([]);
+    expect(result.recognizedFields).toEqual(["reviewRecap"]);
   });
 
   it("flags legacy blockedPaths with a migration-specific warning, not the generic unknown-field message", () => {

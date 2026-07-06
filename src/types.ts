@@ -144,6 +144,16 @@ export type JobMessage =
       days?: number;
     }
   | {
+      // Maintainer review recap digest (#1963): build the recap for one repo and post it to that repo's
+      // configured Discord webhook. Manually-triggerable only in this PR (`requestedBy: "api"`) -- the
+      // scheduled cron trigger ("schedule") is a scoped follow-up, listed here now so the union already
+      // documents the intended source without a later breaking change.
+      type: "generate-review-recap";
+      requestedBy: "schedule" | "api" | "test";
+      repoFullName: string;
+      windowDays?: number;
+    }
+  | {
       // Scheduled re-gate sweep (#777). No `repoFullName` = fan-out: enqueue one per agent-configured repo.
       // With `repoFullName` = recompute the gate verdict for that repo's stale open PRs (advisory/audit only).
       type: "agent-regate-sweep";
@@ -2174,4 +2184,22 @@ export type WeeklyValueReport = {
     }>;
     activation: ProductUsageActivationFunnel;
   };
+};
+
+/** One repo's periodic maintainer review-activity digest (#1963). Pure aggregate over already-computed
+ *  stats (pull-request outcomes + gate precision) — no new ledger, no raw trust/reward values. */
+export type ReviewRecap = {
+  repoFullName: string;
+  generatedAt: string;
+  windowDays: number;
+  /** Realized PR outcomes in the window, from the PR row's own state/mergedAt (ground truth, not a prediction). */
+  merged: number;
+  closed: number;
+  stillOpen: number;
+  /** Gate merge-precision for this repo over the SAME window, from {@link GateEvalRow.mergePrecision}.
+   *  null = no would-merge predictions with a known outcome yet (nothing to divide by). */
+  gatePrecision: number | null;
+  /** Total gate_decision predictions this report's precision rate was computed from (0 = no signal). */
+  gateDecided: number;
+  summary: string[];
 };

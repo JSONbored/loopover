@@ -52,6 +52,7 @@ export const MAINTENANCE_JOB_TYPES: ReadonlySet<string> = new Set([
   "rollup-product-usage",
   "prune-retention",
   "generate-weekly-value-report",
+  "generate-review-recap",
   "generate-signal-snapshots",
   "notify-evaluate",
   "notify-deliver",

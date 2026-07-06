@@ -65,6 +65,27 @@ export type ReviewInlineComment = { path: string; line: number; side: "RIGHT"; b
  *  wall (the model is also asked to be selective, and composeInlineFindings already caps at 10). */
 const MAX_INLINE_COMMENTS = 10;
 
+/** PURE (#2140): the subset of {@link rightSideLinesFromPatch} that are genuinely ADDED ("+") lines — GitHub
+ *  suggested-change blocks 422 unless the anchor is an added line; context (" ") lines may still take a plain
+ *  inline comment. */
+export function addedLinesFromPatch(patch: string): Set<number> {
+  const lines = new Set<number>();
+  let right = 0;
+  for (const raw of patch.split("\n")) {
+    const header = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
+    if (header?.[1]) {
+      right = Number.parseInt(header[1], 10);
+      continue;
+    }
+    if (right === 0) continue;
+    const marker = raw[0];
+    if (marker === undefined || marker === "-" || marker === "\\") continue;
+    if (marker === "+") lines.add(right);
+    right += 1;
+  }
+  return lines;
+}
+
 /** PURE: the set of NEW-file (RIGHT-side) line numbers a unified-diff patch makes commentable — every added
  *  ("+") and context (" ") line inside a hunk. GitHub 422s an inline comment whose line is NOT one of these, so
  *  {@link selectInlineComments} validates each finding against this set. Deleted ("-") lines are LEFT-side only
@@ -130,9 +151,13 @@ export function selectInlineComments(
   minFindingSeverity: ReviewFindingSeverity | null | undefined = null,
 ): ReviewInlineComment[] {
   const rightLinesByPath = new Map<string, Set<number>>();
+  const addedLinesByPath = new Map<string, Set<number>>();
   for (const file of files) {
     const patch = typeof file.payload?.patch === "string" ? file.payload.patch : "";
-    if (patch) rightLinesByPath.set(file.path, rightSideLinesFromPatch(patch));
+    if (patch) {
+      rightLinesByPath.set(file.path, rightSideLinesFromPatch(patch));
+      addedLinesByPath.set(file.path, addedLinesFromPatch(patch));
+    }
   }
   const out: ReviewInlineComment[] = [];
   const seen = new Set<string>();
@@ -144,7 +169,15 @@ export function selectInlineComments(
     const key = `${finding.path}:${finding.line}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ path: finding.path, line: finding.line, side: "RIGHT", body: formatInlineBody(finding, suggestionsEnabled, categoriesEnabled) });
+    const suggestionAnchorable = Boolean(
+      suggestionsEnabled && finding.suggestion && addedLinesByPath.get(finding.path)?.has(finding.line),
+    );
+    out.push({
+      path: finding.path,
+      line: finding.line,
+      side: "RIGHT",
+      body: formatInlineBody(finding, suggestionAnchorable, categoriesEnabled),
+    });
   }
   return out;
 }

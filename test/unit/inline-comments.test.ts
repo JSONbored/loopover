@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import type { InlineFinding } from "../../src/services/ai-review";
-import { isInlineCommentsEnabled, maybePostInlineComments, postInlineReviewComments, rightSideLinesFromPatch, selectInlineComments, shouldRenderFindingCategories, shouldRenderSuggestions, shouldRequestInlineFindings } from "../../src/review/inline-comments";
+import { isInlineCommentsEnabled, maybePostInlineComments, postInlineReviewComments, addedLinesFromPatch, rightSideLinesFromPatch, selectInlineComments, shouldRenderFindingCategories, shouldRenderSuggestions, shouldRequestInlineFindings } from "../../src/review/inline-comments";
 import { createTestEnv } from "../helpers/d1";
 
 function envWithKey() {
@@ -70,6 +70,13 @@ describe("rightSideLinesFromPatch (#inline-comments)", () => {
   it("does NOT add a spurious line for a trailing newline (regression — would 422 a finding anchored past the hunk)", () => {
     // The trailing "\n" makes split() emit a final "" element; it must be ignored, not counted as line 3.
     expect([...rightSideLinesFromPatch("@@ -1,1 +1,2 @@\n ctx\n+added2\n")].sort((a, b) => a - b)).toEqual([1, 2]);
+  });
+});
+
+describe("addedLinesFromPatch (#2140)", () => {
+  it("returns only ADDED (+) line numbers, excluding context lines", () => {
+    const patch = "@@ -1,3 +1,4 @@\n ctx1\n-removed\n+added2\n+added3\n ctx4\n\\ No newline at end of file";
+    expect([...addedLinesFromPatch(patch)].sort((a, b) => a - b)).toEqual([2, 3]);
   });
 });
 
@@ -150,6 +157,25 @@ describe("selectInlineComments (#inline-comments)", () => {
       const out = selectInlineComments([breaksFence], files, true);
       expect(out[0]?.body).toBe("**Blocker:** Fix this.");
       expect(out[0]?.body).not.toContain("escape attempt");
+    });
+
+    it("keeps a plain inline comment but strips an un-anchorable suggestion on a context line (#2140)", () => {
+      const contextPatch = "@@ -1,1 +1,2 @@\n ctx\n+added2";
+      const contextFiles = [fileWith("src/a.ts", contextPatch)];
+      const onContext: InlineFinding = { path: "src/a.ts", line: 1, severity: "nit", body: "Context note.", suggestion: "const x = 1;" };
+      const out = selectInlineComments([onContext], contextFiles, true);
+      expect(out).toEqual([{ path: "src/a.ts", line: 1, side: "RIGHT", body: "**Nit:** Context note." }]);
+      expect(out[0]?.body).not.toContain("```suggestion");
+    });
+
+    it("keeps both comment and suggestion when the anchor is an added line (#2140)", () => {
+      const out = selectInlineComments([withSuggestion], files, true);
+      expect(out[0]?.body).toContain("```suggestion");
+    });
+
+    it("never emits a suggestion on a file with no usable patch (#2140)", () => {
+      const out = selectInlineComments([withSuggestion], [{ path: "src/a.ts", payload: {} }], true);
+      expect(out).toEqual([]);
     });
   });
 

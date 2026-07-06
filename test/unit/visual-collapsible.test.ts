@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBeforeAfterCollapsible, buildUnifiedCommentBody } from "../../src/review/unified-comment-bridge";
+import { buildBeforeAfterCollapsible, buildScrollPreviewCollapsible, buildUnifiedCommentBody } from "../../src/review/unified-comment-bridge";
 import type { GateCheckEvaluation } from "../../src/rules/advisory";
 import type { PublicPrPanelSignalRow } from "../../src/signals/engine";
 import type { CaptureRoute } from "../../src/review/visual/capture";
@@ -148,6 +148,108 @@ describe("buildBeforeAfterCollapsible", () => {
     ]);
     expect(c?.body).toContain("| `/` | desktop (light) |");
     expect(c?.body).toContain("| `/` | desktop (dark) |");
+  });
+});
+
+describe("buildScrollPreviewCollapsible (#3612)", () => {
+  it("renders a 'Scroll preview' table (no Viewport column) when a route has a scroll GIF", () => {
+    const c = buildScrollPreviewCollapsible([
+      {
+        path: "/app/analytics",
+        beforeGifUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/before.gif",
+        afterGifUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/after.gif",
+      },
+    ]);
+    expect(c).not.toBeNull();
+    expect(c?.title).toBe("Scroll preview");
+    expect(c?.rawHtml).toBe(true);
+    expect(c?.body).toContain("| Route | Before (production) | After (this PR's preview) |");
+    expect(c?.body).not.toContain("Viewport");
+    expect(c?.body).toContain("`/app/analytics`");
+    expect(c?.body).toContain('<a href="https://api.example.dev/gittensory/shot?key=gittensory/shots/before.gif"');
+    expect(c?.body).toContain('alt="before /app/analytics (scroll)"');
+    expect(c?.body).toContain('alt="after /app/analytics (scroll)"');
+  });
+
+  it("returns null when no route has a scroll GIF — byte-identical to pre-#3612 for every non-opted-in repo", () => {
+    expect(buildScrollPreviewCollapsible([])).toBeNull();
+    expect(buildScrollPreviewCollapsible([{ path: "/" }])).toBeNull();
+    expect(
+      buildScrollPreviewCollapsible([{ path: "/", beforeUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/x.png" }]),
+    ).toBeNull();
+  });
+
+  it("renders a dash when only one side has a GIF", () => {
+    const c = buildScrollPreviewCollapsible([{ path: "/", afterGifUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/x.gif" }]);
+    expect(c?.body).toContain("| `/` | — | <a href=");
+  });
+
+  it("labels the route with the theme when set (#3678 composition)", () => {
+    const c = buildScrollPreviewCollapsible([
+      { path: "/", theme: "dark", afterGifUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/x.gif" },
+    ]);
+    expect(c?.body).toContain("| `/` (dark) |");
+    expect(c?.body).toContain('alt="after / (dark) (scroll)"');
+  });
+
+  it("escapes a pipe in the route path so it can't break the markdown table", () => {
+    const c = buildScrollPreviewCollapsible([{ path: "/a|b", afterGifUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/x.gif" }]);
+    expect(c?.body).toContain("`/a\\|b`");
+  });
+
+  it("escapes route captions before embedding them in the trusted raw HTML table", () => {
+    const c = buildScrollPreviewCollapsible([
+      {
+        path: "/p`<h2>✅ FORGED APPROVAL</h2><a href=x>maintainer click here</a>",
+        afterGifUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/x.gif",
+      },
+    ]);
+    expect(c?.body).toContain("`/p\\`&lt;h2&gt;✅ FORGED APPROVAL&lt;/h2&gt;&lt;a href=x&gt;maintainer click here&lt;/a&gt;`");
+    expect(c?.body).not.toContain("<h2>✅ FORGED APPROVAL</h2>");
+    expect(c?.body).not.toContain("<a href=x>maintainer click here</a>");
+  });
+});
+
+describe("buildUnifiedCommentBody scroll-GIF wiring (#3612)", () => {
+  const base = {
+    gate: gate(),
+    panelRows,
+    readinessTotal: 90,
+    changedFiles: 3,
+    footerMarkdown: footer,
+  };
+  const gifRoutes: CaptureRoute[] = [
+    {
+      path: "/app/analytics",
+      beforeUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/abc.png",
+      afterUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/def.png",
+      beforeGifUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/before.gif",
+      afterGifUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/after.gif",
+    },
+  ];
+
+  it("appends 'Scroll preview' ALONGSIDE 'Visual preview' when a route has a GIF", () => {
+    const body = buildUnifiedCommentBody({ ...base, beforeAfter: gifRoutes });
+    expect(body).toContain("Visual preview");
+    expect(body).toContain("Scroll preview");
+    const visualIndex = body.indexOf("Visual preview");
+    const scrollIndex = body.indexOf("Scroll preview");
+    expect(scrollIndex).toBeGreaterThan(visualIndex);
+  });
+
+  it("does NOT add a Scroll preview section when no route has a GIF (flag-OFF parity)", () => {
+    const body = buildUnifiedCommentBody({ ...base, beforeAfter: routes });
+    expect(body).toContain("Visual preview");
+    expect(body).not.toContain("Scroll preview");
+  });
+
+  it("still appends 'Scroll preview' when a route has a GIF but no static before/after shot (no Visual preview section)", () => {
+    const body = buildUnifiedCommentBody({
+      ...base,
+      beforeAfter: [{ path: "/x", afterGifUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/x.gif" }],
+    });
+    expect(body).not.toContain("Visual preview");
+    expect(body).toContain("Scroll preview");
   });
 });
 

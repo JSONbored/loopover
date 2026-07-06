@@ -390,6 +390,45 @@ export function buildBeforeAfterCollapsible(routes: CaptureRoute[]): UnifiedColl
   return { title: "Visual preview", body, rawHtml: true };
 }
 
+/**
+ * Build the "Scroll preview" collapsible from the same before/after capture routes (#3612) — rendered
+ * ALONGSIDE "Visual preview", never replacing it, since a scroll-through GIF is evidence for scroll-linked
+ * behavior (parallax, reveal-on-scroll, a sticky header) that a single static screenshot can't show, not a
+ * substitute for the static before/after comparison. Self-host only (`review.visual.gif`, off by default —
+ * see capture.ts's `gifWanted`) and desktop-viewport only in this first cut, so there is no Viewport column
+ * here (unlike "Visual preview"'s desktop/mobile rows). Same clickable-thumbnail markup and public-safety
+ * argument as `buildBeforeAfterCollapsible`. Returns null when no route has a GIF, so the section is omitted
+ * entirely for every repo that hasn't opted in — byte-identical to pre-#3612 for everyone else.
+ */
+export function buildScrollPreviewCollapsible(routes: CaptureRoute[]): UnifiedCollapsible | null {
+  const attr = (value: string): string =>
+    value.replace(/[&"<>]/g, (char) => ({ "&": "&amp;", '"': "&quot;", "<": "&lt;", ">": "&gt;" })[char] as string);
+  const markdownCode = (value: string): string =>
+    `\`${value
+      .replace(/\\/g, "\\\\")
+      .replace(/`/g, "\\`")
+      .replace(/\|/g, "\\|")
+      .replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;"))}\``;
+  const cell = (url: string | undefined, label: string): string =>
+    url ? `<a href="${attr(url)}" target="_blank" rel="noopener"><img width="360" alt="${attr(label)}" src="${attr(url)}"></a>` : "—";
+  const rows: string[] = [];
+  for (const route of routes) {
+    if (!route.beforeGifUrl && !route.afterGifUrl) continue;
+    const path = markdownCode(route.path);
+    const themeSuffix = route.theme ? ` (${route.theme})` : "";
+    rows.push(`| ${path}${themeSuffix} | ${cell(route.beforeGifUrl, `before ${route.path}${themeSuffix} (scroll)`)} | ${cell(route.afterGifUrl, `after ${route.path}${themeSuffix} (scroll)`)} |`);
+  }
+  if (rows.length === 0) return null;
+  const body = [
+    "| Route | Before (production) | After (this PR's preview) |",
+    "| --- | --- | --- |",
+    ...rows,
+    "",
+    "_A short scroll-through clip (desktop) — click either thumbnail to open the full animation. Evidence for scroll-linked behavior a single screenshot can't show._",
+  ].join("\n");
+  return { title: "Scroll preview", body, rawHtml: true };
+}
+
 /** A changed file's path + line deltas — everything `buildChangedFilesSummaryCollapsible` needs to group and
  *  total. Deliberately narrower than `PullRequestFileRecord` (path/additions/deletions only) so the bridge
  *  doesn't drag GitHub's full file-record shape into its pure-rendering surface. */
@@ -552,8 +591,11 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
   // Visual-capture port: when before/after routes are present, append a "Visual preview" collapsible to the
   // extra sections. Flag-OFF (the processor passes no beforeAfter) ⇒ extraCollapsibles is unchanged.
   const visualCollapsible = args.beforeAfter && args.beforeAfter.length > 0 ? buildBeforeAfterCollapsible(args.beforeAfter) : null;
-  const extraCollapsibles =
-    visualCollapsible !== null ? [...(withFindingCategories ?? []), visualCollapsible] : withFindingCategories;
+  const withVisual = visualCollapsible !== null ? [...(withFindingCategories ?? []), visualCollapsible] : withFindingCategories;
+  // #3612: "Scroll preview" renders ALONGSIDE "Visual preview" (never replacing it) — self-host + gif:true
+  // only, so this is null (no section, no behavior change) for every repo that hasn't opted in.
+  const scrollCollapsible = args.beforeAfter && args.beforeAfter.length > 0 ? buildScrollPreviewCollapsible(args.beforeAfter) : null;
+  const extraCollapsibles = scrollCollapsible !== null ? [...(withVisual ?? []), scrollCollapsible] : withVisual;
 
   const body = renderUnifiedReviewComment(input, {
     brand: args.brand ?? "Gittensory review",

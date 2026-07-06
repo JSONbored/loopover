@@ -472,6 +472,12 @@ export type VisualConfig = {
   preview: VisualPreviewConfig;
   routes: VisualRoutesConfig;
   themes: VisualTheme[];
+  /** `review.visual.gif`: capture a short scroll-through GIF (#3612) alongside the static before/after
+   *  screenshots — evidence for scroll-linked behavior (parallax, reveal-on-scroll, a sticky header) that a
+   *  single static shot can't show. Self-host only (see src/review/visual/scroll-gif.ts) and the heaviest
+   *  capture mode this pipeline has (up to 6 extra renders per side) — false (default, every existing
+   *  manifest) ⇒ byte-identical to today, no scroll frames captured at all. */
+  gif: boolean;
 };
 
 /** A `prefers-color-scheme` value the capture pipeline can emulate before rendering (#3678). */
@@ -508,6 +514,7 @@ export const EMPTY_VISUAL_CONFIG: VisualConfig = {
   preview: { urlTemplate: null },
   routes: { paths: [], maxRoutes: null },
   themes: [],
+  gif: false,
 };
 
 /** One `review.path_instructions[]` entry: a manifest path glob + the public-safe instructions to apply when a
@@ -1866,7 +1873,7 @@ function parseSelfHostAiModelConfig(value: JsonValue | undefined, warnings: stri
 }
 
 function visualConfigPresent(config: VisualConfig): boolean {
-  return config.preview.urlTemplate !== null || config.routes.paths.length > 0 || config.routes.maxRoutes !== null || config.themes.length > 0;
+  return config.preview.urlTemplate !== null || config.routes.paths.length > 0 || config.routes.maxRoutes !== null || config.themes.length > 0 || config.gif;
 }
 
 const VISUAL_THEME_VALUES: readonly VisualTheme[] = ["light", "dark"];
@@ -1946,8 +1953,9 @@ function parseVisualConfig(value: JsonValue | undefined, warnings: string[]): Vi
   const maxRoutes = routesRecord ? normalizeOptionalVisualMaxRoutes(routesRecord.max_routes, warnings) : null;
 
   const themes = parseVisualThemes(record.themes, warnings);
+  const gif = normalizeOptionalBoolean(record.gif, "review.visual.gif", warnings) === true;
 
-  return { preview: { urlTemplate }, routes: { paths, maxRoutes }, themes };
+  return { preview: { urlTemplate }, routes: { paths, maxRoutes }, themes, gif };
 }
 
 function parseAutoReviewTitleKeywords(value: JsonValue | undefined, warnings: string[]): string[] {
@@ -2242,6 +2250,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
       visual.routes = routes;
     }
     if (review.visual.themes.length > 0) visual.themes = [...review.visual.themes];
+    if (review.visual.gif) visual.gif = true;
     out.visual = visual;
   }
   if (review.linkedIssueSatisfaction !== null) out.linkedIssueSatisfaction = review.linkedIssueSatisfaction;

@@ -7,6 +7,7 @@ import {
 import { buildCapture, mapFilesToRoutes, resolvePreviewUrlTemplate, resolveVisualRoutes } from "../../src/review/visual/capture";
 import * as pixelDiffModule from "../../src/review/visual/pixel-diff";
 import * as previewUrlModule from "../../src/review/visual/preview-url";
+import * as scrollGifModule from "../../src/review/visual/scroll-gif";
 import * as shotModule from "../../src/review/visual/shot";
 import { sha256Hex } from "../../src/utils/crypto";
 import { createTestEnv } from "../helpers/d1";
@@ -15,10 +16,11 @@ import { createTestEnv } from "../helpers/d1";
  *  surface) — lets a test pre-seed a "cached" screenshot at the exact fingerprinted key capturePage derives,
  *  without needing a real browser binding to produce fresh bytes. `failPut: true` makes every put() reject,
  *  for testing the caller's own `.catch(() => undefined)` degrade-gracefully path. */
-function memoryReviewAudit(options: { failPut?: boolean } = {}): R2Bucket {
+function memoryReviewAudit(options: { failPut?: boolean; failGet?: boolean } = {}): R2Bucket {
   const store = new Map<string, Uint8Array>();
   return {
     async get(key: string) {
+      if (options.failGet) throw new Error("simulated storage read failure");
       const bytes = store.get(key);
       return bytes ? ({ body: new Response(bytes).body } as unknown as R2ObjectBody) : null;
     },
@@ -740,6 +742,336 @@ describe("buildCapture theme matrix (#3678)", () => {
     } finally {
       availableSpy.mockRestore();
       compareSpy.mockRestore();
+    }
+  });
+});
+
+describe("buildCapture scroll-GIF wiring (#3612)", () => {
+  it("never captures scroll frames when review.visual.gif is unset, even when isScrollGifAvailable is true", async () => {
+    const gifAvailableSpy = vi.spyOn(scrollGifModule, "isScrollGifAvailable").mockReturnValue(true);
+    const captureScrollSpy = vi.spyOn(shotModule, "captureScrollFrames");
+    try {
+      const result = await buildCapture(
+        createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com" }),
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 30, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      );
+      expect(captureScrollSpy).not.toHaveBeenCalled();
+      expect(result.routes[0]?.beforeGifUrl).toBeUndefined();
+      expect(result.routes[0]?.afterGifUrl).toBeUndefined();
+    } finally {
+      gifAvailableSpy.mockRestore();
+      captureScrollSpy.mockRestore();
+    }
+  });
+
+  it("never captures scroll frames when gif:true is configured but this build can't assemble GIFs (hosted mode)", async () => {
+    const gifAvailableSpy = vi.spyOn(scrollGifModule, "isScrollGifAvailable").mockReturnValue(false);
+    const captureScrollSpy = vi.spyOn(shotModule, "captureScrollFrames");
+    try {
+      const result = await buildCapture(
+        createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com" }),
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 31, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+        undefined,
+        { gif: true },
+      );
+      expect(captureScrollSpy).not.toHaveBeenCalled();
+      expect(result.routes[0]?.beforeGifUrl).toBeUndefined();
+      expect(result.routes[0]?.afterGifUrl).toBeUndefined();
+    } finally {
+      gifAvailableSpy.mockRestore();
+      captureScrollSpy.mockRestore();
+    }
+  });
+
+  it("captures + uploads both a before and after scroll GIF when gif:true and isScrollGifAvailable are both true", async () => {
+    const gifAvailableSpy = vi.spyOn(scrollGifModule, "isScrollGifAvailable").mockReturnValue(true);
+    const captureScrollSpy = vi.spyOn(shotModule, "captureScrollFrames").mockResolvedValue({
+      frames: [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])],
+      authWalled: false,
+    });
+    const encodeSpy = vi.spyOn(scrollGifModule, "encodeScrollGif").mockResolvedValue(new Uint8Array([7, 8, 9]));
+    try {
+      const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() });
+      const result = await buildCapture(
+        env,
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 32, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+        undefined,
+        { gif: true },
+      );
+      expect(captureScrollSpy).toHaveBeenCalledTimes(2); // before + after
+      expect(encodeSpy).toHaveBeenCalledTimes(2);
+      expect(result.routes[0]?.beforeGifUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.afterGifUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.beforeGifUrl).not.toBe(result.routes[0]?.afterGifUrl);
+    } finally {
+      gifAvailableSpy.mockRestore();
+      captureScrollSpy.mockRestore();
+      encodeSpy.mockRestore();
+    }
+  });
+
+  it("does not attempt an after-GIF when there is no preview URL yet (afterPage is empty)", async () => {
+    const gifAvailableSpy = vi.spyOn(scrollGifModule, "isScrollGifAvailable").mockReturnValue(true);
+    const captureScrollSpy = vi.spyOn(shotModule, "captureScrollFrames").mockResolvedValue({
+      frames: [new Uint8Array([1, 2, 3])],
+      authWalled: false,
+    });
+    const encodeSpy = vi.spyOn(scrollGifModule, "encodeScrollGif").mockResolvedValue(new Uint8Array([7, 8, 9]));
+    try {
+      const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() });
+      const result = await buildCapture(
+        env,
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 33 }, // no previewUrl -> afterPage is ""
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+        undefined,
+        { gif: true },
+      );
+      expect(captureScrollSpy).toHaveBeenCalledTimes(1); // before only
+      expect(result.routes[0]?.beforeGifUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.afterGifUrl).toBeUndefined();
+    } finally {
+      gifAvailableSpy.mockRestore();
+      captureScrollSpy.mockRestore();
+      encodeSpy.mockRestore();
+    }
+  });
+
+  it("reuses a cached scroll GIF without re-capturing frames on the next review of the same head", async () => {
+    const gifAvailableSpy = vi.spyOn(scrollGifModule, "isScrollGifAvailable").mockReturnValue(true);
+    const captureScrollSpy = vi.spyOn(shotModule, "captureScrollFrames").mockResolvedValue({
+      frames: [new Uint8Array([1, 2, 3])],
+      authWalled: false,
+    });
+    const encodeSpy = vi.spyOn(scrollGifModule, "encodeScrollGif").mockResolvedValue(new Uint8Array([7, 8, 9]));
+    try {
+      const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() });
+      const target = { repoFullName: "owner/repo", prNumber: 34, previewUrl: "https://preview.example.com" };
+      const files = ["apps/gittensory-ui/src/routes/app.index.tsx"];
+      const first = await buildCapture(env, "installation-token", target, files, undefined, { gif: true });
+      expect(captureScrollSpy).toHaveBeenCalledTimes(2);
+      const second = await buildCapture(env, "installation-token", target, files, undefined, { gif: true });
+      expect(captureScrollSpy).toHaveBeenCalledTimes(2); // no NEW calls — both slots served from cache
+      expect(second.routes[0]?.beforeGifUrl).toBe(first.routes[0]?.beforeGifUrl);
+      expect(second.routes[0]?.afterGifUrl).toBe(first.routes[0]?.afterGifUrl);
+    } finally {
+      gifAvailableSpy.mockRestore();
+      captureScrollSpy.mockRestore();
+      encodeSpy.mockRestore();
+    }
+  });
+
+  it("does not upload a GIF when the frames come back empty (auth-walled or render failure)", async () => {
+    const gifAvailableSpy = vi.spyOn(scrollGifModule, "isScrollGifAvailable").mockReturnValue(true);
+    const captureScrollSpy = vi.spyOn(shotModule, "captureScrollFrames").mockResolvedValue({ frames: [], authWalled: false });
+    const encodeSpy = vi.spyOn(scrollGifModule, "encodeScrollGif");
+    try {
+      const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() });
+      const result = await buildCapture(
+        env,
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 35, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+        undefined,
+        { gif: true },
+      );
+      expect(encodeSpy).not.toHaveBeenCalled();
+      expect(result.routes[0]?.beforeGifUrl).toBeUndefined();
+      expect(result.routes[0]?.afterGifUrl).toBeUndefined();
+    } finally {
+      gifAvailableSpy.mockRestore();
+      captureScrollSpy.mockRestore();
+      encodeSpy.mockRestore();
+    }
+  });
+
+  it("does not upload a GIF when the encoder degrades to null", async () => {
+    const gifAvailableSpy = vi.spyOn(scrollGifModule, "isScrollGifAvailable").mockReturnValue(true);
+    const captureScrollSpy = vi.spyOn(shotModule, "captureScrollFrames").mockResolvedValue({
+      frames: [new Uint8Array([1, 2, 3])],
+      authWalled: false,
+    });
+    const encodeSpy = vi.spyOn(scrollGifModule, "encodeScrollGif").mockResolvedValue(null);
+    try {
+      const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() });
+      const result = await buildCapture(
+        env,
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 36, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+        undefined,
+        { gif: true },
+      );
+      expect(result.routes[0]?.beforeGifUrl).toBeUndefined();
+      expect(result.routes[0]?.afterGifUrl).toBeUndefined();
+    } finally {
+      gifAvailableSpy.mockRestore();
+      captureScrollSpy.mockRestore();
+      encodeSpy.mockRestore();
+    }
+  });
+
+  it("does not attempt a before-GIF when there is no production URL configured (beforePage is empty)", async () => {
+    const gifAvailableSpy = vi.spyOn(scrollGifModule, "isScrollGifAvailable").mockReturnValue(true);
+    const captureScrollSpy = vi.spyOn(shotModule, "captureScrollFrames").mockResolvedValue({
+      frames: [new Uint8Array([1, 2, 3])],
+      authWalled: false,
+    });
+    const encodeSpy = vi.spyOn(scrollGifModule, "encodeScrollGif").mockResolvedValue(new Uint8Array([7, 8, 9]));
+    try {
+      const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "", REVIEW_AUDIT: memoryReviewAudit() });
+      const result = await buildCapture(
+        env,
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 37, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+        undefined,
+        { gif: true },
+      );
+      expect(captureScrollSpy).toHaveBeenCalledTimes(1); // after only — before has no page to capture
+      expect(result.routes[0]?.beforeGifUrl).toBeUndefined();
+      expect(result.routes[0]?.afterGifUrl).toContain("/gittensory/shot?key=");
+    } finally {
+      gifAvailableSpy.mockRestore();
+      captureScrollSpy.mockRestore();
+      encodeSpy.mockRestore();
+    }
+  });
+
+  it("does not capture scroll frames when there is no REVIEW_AUDIT storage, even with gif:true configured", async () => {
+    const gifAvailableSpy = vi.spyOn(scrollGifModule, "isScrollGifAvailable").mockReturnValue(true);
+    const captureScrollSpy = vi.spyOn(shotModule, "captureScrollFrames");
+    try {
+      const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com" }); // no REVIEW_AUDIT
+      const result = await buildCapture(
+        env,
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 38, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+        undefined,
+        { gif: true },
+      );
+      expect(captureScrollSpy).not.toHaveBeenCalled();
+      expect(result.routes[0]?.beforeGifUrl).toBeUndefined();
+      expect(result.routes[0]?.afterGifUrl).toBeUndefined();
+    } finally {
+      gifAvailableSpy.mockRestore();
+      captureScrollSpy.mockRestore();
+    }
+  });
+
+  it("threads the theme into the scroll-GIF fingerprint too, so a themed and untagged GIF never collide", async () => {
+    const gifAvailableSpy = vi.spyOn(scrollGifModule, "isScrollGifAvailable").mockReturnValue(true);
+    const captureScrollSpy = vi.spyOn(shotModule, "captureScrollFrames").mockResolvedValue({
+      frames: [new Uint8Array([1, 2, 3])],
+      authWalled: false,
+    });
+    const encodeSpy = vi.spyOn(scrollGifModule, "encodeScrollGif").mockResolvedValue(new Uint8Array([7, 8, 9]));
+    try {
+      const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() });
+      const result = await buildCapture(
+        env,
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 39, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+        undefined,
+        { gif: true, themes: ["dark"] },
+      );
+      expect(result.routes[0]?.theme).toBe("dark");
+      expect(result.routes[0]?.afterGifUrl).toContain("/gittensory/shot?key=");
+      const untaggedFingerprint = await sha256Hex(`39:scrollgif:after:desktop:https://preview.example.com/app`);
+      expect(result.routes[0]?.afterGifUrl).not.toContain(untaggedFingerprint.slice(0, 40));
+    } finally {
+      gifAvailableSpy.mockRestore();
+      captureScrollSpy.mockRestore();
+      encodeSpy.mockRestore();
+    }
+  });
+
+  it("degrades to a fresh capture (never throws) when the GIF cache lookup itself fails", async () => {
+    const gifAvailableSpy = vi.spyOn(scrollGifModule, "isScrollGifAvailable").mockReturnValue(true);
+    const captureScrollSpy = vi.spyOn(shotModule, "captureScrollFrames").mockResolvedValue({
+      frames: [new Uint8Array([1, 2, 3])],
+      authWalled: false,
+    });
+    const encodeSpy = vi.spyOn(scrollGifModule, "encodeScrollGif").mockResolvedValue(new Uint8Array([7, 8, 9]));
+    try {
+      const env = createTestEnv({
+        PUBLIC_API_ORIGIN: "https://worker.example",
+        PUBLIC_SITE_ORIGIN: "https://prod.example.com",
+        REVIEW_AUDIT: memoryReviewAudit({ failGet: true }),
+      });
+      const result = await buildCapture(
+        env,
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 40, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+        undefined,
+        { gif: true },
+      );
+      expect(captureScrollSpy).toHaveBeenCalled(); // cache lookup failed -> falls through to a fresh capture
+      expect(result.routes[0]?.beforeGifUrl).toContain("/gittensory/shot?key=");
+    } finally {
+      gifAvailableSpy.mockRestore();
+      captureScrollSpy.mockRestore();
+      encodeSpy.mockRestore();
+    }
+  });
+
+  it("degrades to no GIF (never throws) when captureScrollFrames itself rejects", async () => {
+    const gifAvailableSpy = vi.spyOn(scrollGifModule, "isScrollGifAvailable").mockReturnValue(true);
+    const captureScrollSpy = vi.spyOn(shotModule, "captureScrollFrames").mockRejectedValue(new Error("browser binding exhausted"));
+    try {
+      const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() });
+      const result = await buildCapture(
+        env,
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 41, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+        undefined,
+        { gif: true },
+      );
+      expect(result.routes[0]?.beforeGifUrl).toBeUndefined();
+      expect(result.routes[0]?.afterGifUrl).toBeUndefined();
+    } finally {
+      gifAvailableSpy.mockRestore();
+      captureScrollSpy.mockRestore();
+    }
+  });
+
+  it("still returns the GIF URL even when persisting it fails (fire-and-forget put, mirrors uploadDiffImage's own pattern)", async () => {
+    const gifAvailableSpy = vi.spyOn(scrollGifModule, "isScrollGifAvailable").mockReturnValue(true);
+    const captureScrollSpy = vi.spyOn(shotModule, "captureScrollFrames").mockResolvedValue({
+      frames: [new Uint8Array([1, 2, 3])],
+      authWalled: false,
+    });
+    const encodeSpy = vi.spyOn(scrollGifModule, "encodeScrollGif").mockResolvedValue(new Uint8Array([7, 8, 9]));
+    try {
+      const env = createTestEnv({
+        PUBLIC_API_ORIGIN: "https://worker.example",
+        PUBLIC_SITE_ORIGIN: "https://prod.example.com",
+        REVIEW_AUDIT: memoryReviewAudit({ failPut: true }),
+      });
+      const result = await buildCapture(
+        env,
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 42, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+        undefined,
+        { gif: true },
+      );
+      expect(result.routes[0]?.beforeGifUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.afterGifUrl).toContain("/gittensory/shot?key=");
+    } finally {
+      gifAvailableSpy.mockRestore();
+      captureScrollSpy.mockRestore();
+      encodeSpy.mockRestore();
     }
   });
 });

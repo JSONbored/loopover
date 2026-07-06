@@ -19,6 +19,7 @@ describe("review.visual wiring (#3609 / #3610)", () => {
       preview: { urlTemplate: "https://pr-{number}.preview.example.com" },
       routes: { paths: ["/pricing"], maxRoutes: 3 },
       themes: [],
+      gif: false,
     });
     expect(loadSpy).toHaveBeenCalledWith(expect.anything(), "acme/widgets");
     loadSpy.mockRestore();

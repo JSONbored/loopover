@@ -109,6 +109,7 @@
     "@types/pngjs": "^6.0.5",
     "@vitest/coverage-v8": "^4.1.9",
     "drizzle-kit": "^0.31.10",
+    "gifenc": "^1.0.3",
     "git-cliff": "^2.13.1",
     "github-actionlint": "^1.7.12",
     "node-addon-api": "^8.8.0",

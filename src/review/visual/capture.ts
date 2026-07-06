@@ -19,8 +19,9 @@ import {
   getPreviewBuildState,
   parseRepo,
 } from "./preview-url";
-import { captureShot, DESKTOP_VIEWPORT, MOBILE_VIEWPORT, type ShotTheme, type Viewport } from "./shot";
+import { captureScrollFrames, captureShot, DESKTOP_VIEWPORT, MOBILE_VIEWPORT, type ShotTheme, type Viewport } from "./shot";
 import { compareCapturedScreenshots, isVisualDiffAvailable, type VisualDiffOutcome } from "./pixel-diff";
+import { encodeScrollGif, isScrollGifAvailable } from "./scroll-gif";
 
 const NAMESPACE = "gittensory";
 const DEFAULT_ROUTES = ["/"];
@@ -34,7 +35,9 @@ const MAX_CONFIGURED_ROUTES = 5;
  *  per viewport (#3674) — self-host only (isVisualDiffAvailable), and only when the diff clears the visual-
  *  diff module's own noise threshold; undefined slot ⇒ a dash cell either way. `theme` is set only when
  *  `review.visual.themes` (#3678) configured more than the implicit single default capture — undefined means
- *  "the one, un-emulated default render", exactly like today. */
+ *  "the one, un-emulated default render", exactly like today. `beforeGifUrl`/`afterGifUrl` (#3612) are a
+ *  short scroll-through animation — self-host only (isScrollGifAvailable) and only when `review.visual.gif`
+ *  opts in; desktop viewport only in this first cut (see buildCapture's scoping note). */
 export interface CaptureRoute {
   path: string;
   theme?: ShotTheme | undefined;
@@ -44,6 +47,8 @@ export interface CaptureRoute {
   afterUrlMobile?: string | undefined;
   diffUrl?: string | undefined;
   diffUrlMobile?: string | undefined;
+  beforeGifUrl?: string | undefined;
+  afterGifUrl?: string | undefined;
 }
 
 /** The capture pipeline's result: the rendered routes, plus whether a preview build is still pending. */
@@ -214,10 +219,54 @@ async function uploadDiffImage(
   return `${shotBase}/${NAMESPACE}/shot?key=${encodeURIComponent(key)}`;
 }
 
-/** Per-repo `review.visual` config, as resolved by the caller from the manifest (#3609 / #3610 / #3678).
- *  Absent ⇒ byte-identical to today (GitHub-native discovery, automatic route inference, single default-
- *  theme capture, built-in route cap). */
-export type VisualCaptureConfig = { preview?: VisualPreviewInput | null | undefined; routes?: VisualRoutesInput | null | undefined; themes?: readonly ShotTheme[] | null | undefined };
+// How long each frame shows when the assembled GIF plays back (#3612) — a quick "evidence clip" pace: the
+// full MAX_SCROLL_STEPS (6, see shot.ts) loop takes ~3s, long enough to read, short enough to stay a glance.
+const GIF_FRAME_DELAY_MS = 500;
+
+/**
+ * Capture a scroll-through sequence for `page` and assemble it into a GIF (#3612), or undefined when there's
+ * no page, the render fails/auth-walls, storage is unavailable, or this build can't assemble GIFs at all
+ * (isScrollGifAvailable — hosted mode; see scroll-gif.ts). Caches on the same fingerprint scheme as
+ * `capturePage`/`uploadDiffImage` — a scroll capture is the most expensive thing this pipeline does (up to 6
+ * extra renders plus a full encode), so a re-review of the same head must never redo it.
+ */
+async function captureScrollGif(
+  env: Env,
+  target: CaptureTarget,
+  page: string,
+  slot: "before" | "after",
+  viewportName: "desktop" | "mobile",
+  viewport: Viewport,
+  theme?: ShotTheme | undefined,
+): Promise<string | undefined> {
+  if (!page) return undefined;
+  const shotBase = env.PUBLIC_API_ORIGIN;
+  if (!env.REVIEW_AUDIT || !shotBase) return undefined;
+  const fingerprint = await sha256Hex(`${target.headSha ?? target.prNumber}:scrollgif:${slot}:${viewportName}:${page}${theme ? `:${theme}` : ""}`);
+  const key = `${NAMESPACE}/shots/${fingerprint.slice(0, 40)}.gif`;
+  const url = `${shotBase}/${NAMESPACE}/shot?key=${encodeURIComponent(key)}`;
+  const cached = await env.REVIEW_AUDIT.get(key).catch(() => null);
+  if (cached) return url;
+  const { frames, authWalled } = await captureScrollFrames(env, page, viewport, theme ? { theme } : {}).catch(() => ({ frames: [] as Uint8Array[], authWalled: false }));
+  if (authWalled || frames.length === 0) return undefined;
+  const gifBytes = await encodeScrollGif(
+    frames.map((png) => ({ png })),
+    GIF_FRAME_DELAY_MS,
+  );
+  if (!gifBytes) return undefined;
+  await env.REVIEW_AUDIT.put(key, gifBytes, { httpMetadata: { contentType: "image/gif" } }).catch(() => undefined);
+  return url;
+}
+
+/** Per-repo `review.visual` config, as resolved by the caller from the manifest (#3609 / #3610 / #3678 /
+ *  #3612). Absent ⇒ byte-identical to today (GitHub-native discovery, automatic route inference, single
+ *  default-theme capture, built-in route cap, no scroll-GIF). */
+export type VisualCaptureConfig = {
+  preview?: VisualPreviewInput | null | undefined;
+  routes?: VisualRoutesInput | null | undefined;
+  themes?: readonly ShotTheme[] | null | undefined;
+  gif?: boolean | null | undefined;
+};
 
 /**
  * Build the before/after capture for a PR: resolve the preview URL, derive routes from the changed UI files,
@@ -278,6 +327,12 @@ export async function buildCapture(env: Env, token: string, target: CaptureTarge
   // #3674: resolved ONCE per call, not per route/viewport — false in every hosted build (see pixel-diff.ts),
   // so capturePage never pays the extra cached-bytes-read cost unless self-host's real diff module is active.
   const diffAvailable = isVisualDiffAvailable();
+  // #3612: gated on BOTH the opt-in config AND isScrollGifAvailable — hosted mode can never assemble a GIF
+  // (see scroll-gif.ts), so this must short-circuit before capturing a single scroll frame there, not just
+  // before encoding one. Desktop-viewport only in this first cut: a scroll-through GIF is already the
+  // heaviest capture mode (up to 6 extra renders per side), and doubling it for mobile is a narrower-scope
+  // call deferred to a follow-up rather than shipped speculatively (matches #3674's hosted-diff deferral).
+  const gifWanted = visualConfig?.gif === true && isScrollGifAvailable();
   const routes = resolveVisualRoutes(visualFiles, visualConfig?.routes);
   // #3678: an explicit, non-empty theme list captures the SAME routes once per theme, each tagged on its
   // CaptureRoute entry. [undefined] (the default, absent config) renders the single un-emulated default —
@@ -308,6 +363,12 @@ export async function buildCapture(env: Env, token: string, target: CaptureTarge
         uploadDiffImage(env, target, path, "desktop", desktopDiff, theme),
         uploadDiffImage(env, target, path, "mobile", mobileDiff, theme),
       ]);
+      const [beforeGifUrl, afterGifUrl] = gifWanted
+        ? await Promise.all([
+            captureScrollGif(env, target, beforePage, "before", "desktop", DESKTOP_VIEWPORT, theme),
+            afterPage ? captureScrollGif(env, target, afterPage, "after", "desktop", DESKTOP_VIEWPORT, theme) : Promise.resolve<string | undefined>(undefined),
+          ])
+        : [undefined, undefined];
       captureRoutes.push({
         path,
         ...(theme ? { theme } : {}),
@@ -317,6 +378,8 @@ export async function buildCapture(env: Env, token: string, target: CaptureTarge
         afterUrlMobile: afterMobileShot.url,
         ...(diffUrl ? { diffUrl } : {}),
         ...(diffUrlMobile ? { diffUrlMobile } : {}),
+        ...(beforeGifUrl ? { beforeGifUrl } : {}),
+        ...(afterGifUrl ? { afterGifUrl } : {}),
       });
     }
   }

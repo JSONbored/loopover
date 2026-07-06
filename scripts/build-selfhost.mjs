@@ -52,6 +52,8 @@ await esbuild.build({
         // importer, always as "./pixel-diff" (same-directory sibling) — the stub's own `import type` back to
         // the original is erased before bundling and never reaches this resolver.
         build.onResolve({ filter: /^\.\/pixel-diff$/ }, () => ({ path: resolve(root, "src/selfhost/stubs/pixel-diff.ts") }));
+        // Same pattern for scroll-through GIF assembly (#3612) — pngjs decode + gifenc encode need Node Buffer.
+        build.onResolve({ filter: /^\.\/scroll-gif$/ }, () => ({ path: resolve(root, "src/selfhost/stubs/scroll-gif.ts") }));
       },
     },
   ],

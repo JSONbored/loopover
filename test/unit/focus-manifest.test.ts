@@ -3351,6 +3351,7 @@ describe("review.visual (#3609 preview.url_template / #3610 routes)", () => {
       preview: { urlTemplate: "https://pr-{number}.preview.example.com" },
       routes: { paths: ["/pricing", "/docs"], maxRoutes: 3 },
       themes: [],
+      gif: false,
     });
     expect(m.review.present).toBe(true);
     expect(parseFocusManifest({ review: reviewConfigToJson(m.review) }).review.visual).toEqual(m.review.visual);
@@ -3446,7 +3447,7 @@ describe("review.visual (#3609 preview.url_template / #3610 routes)", () => {
   it("resolveReviewVisualConfig: null manifest yields empty defaults; a set manifest passes through", () => {
     expect(resolveReviewVisualConfig(null)).toEqual({ ...EMPTY_VISUAL_CONFIG });
     const manifest = parseFocusManifest({ review: { visual: { routes: { paths: ["/app"] } } } });
-    expect(resolveReviewVisualConfig(manifest)).toEqual({ preview: { urlTemplate: null }, routes: { paths: ["/app"], maxRoutes: null }, themes: [] });
+    expect(resolveReviewVisualConfig(manifest)).toEqual({ preview: { urlTemplate: null }, routes: { paths: ["/app"], maxRoutes: null }, themes: [], gif: false });
   });
 });
 
@@ -3496,6 +3497,48 @@ describe("review.visual.themes (#3678 dark-mode capture)", () => {
   it("resolveReviewVisualConfig passes a configured theme list through", () => {
     const manifest = parseFocusManifest({ review: { visual: { themes: ["dark"] } } });
     expect(resolveReviewVisualConfig(manifest).themes).toEqual(["dark"]);
+  });
+});
+
+describe("review.visual.gif (#3612 scroll-through GIF capture)", () => {
+  it("parses gif: true, marks present, and round-trips", () => {
+    const m = parseFocusManifest({ review: { visual: { gif: true } } });
+    expect(m.review.visual.gif).toBe(true);
+    expect(m.review.present).toBe(true);
+    expect(reviewConfigToJson(m.review)).toEqual({ visual: { gif: true } });
+  });
+
+  it("absent gif defaults to false and does not mark review present on its own", () => {
+    expect(parseFocusManifest({}).review.visual.gif).toBe(false);
+    expect(parseFocusManifest({ review: { visual: {} } }).review.present).toBe(false);
+  });
+
+  it("gif: false does not mark review present, so the whole review block round-trips to null", () => {
+    const m = parseFocusManifest({ review: { visual: { gif: false } } });
+    expect(m.review.visual.gif).toBe(false);
+    expect(reviewConfigToJson(m.review)).toBeNull();
+  });
+
+  it("warns and defaults to false when gif is not a boolean", () => {
+    const bad = parseFocusManifest({ review: { visual: { gif: "yes" } } });
+    expect(bad.review.visual.gif).toBe(false);
+    expect(bad.warnings.some((w) => /review\.visual\.gif.*must be a boolean/.test(w))).toBe(true);
+  });
+
+  it("marks present via gif alone (preview + routes + themes all empty)", () => {
+    const m = parseFocusManifest({ review: { visual: { gif: true } } });
+    expect(m.review.present).toBe(true);
+  });
+
+  it("composes with themes — both configured independently and both round-trip", () => {
+    const m = parseFocusManifest({ review: { visual: { gif: true, themes: ["dark"] } } });
+    expect(m.review.visual).toEqual({ preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: true });
+    expect(reviewConfigToJson(m.review)).toEqual({ visual: { themes: ["dark"], gif: true } });
+  });
+
+  it("resolveReviewVisualConfig passes a configured gif: true through", () => {
+    const manifest = parseFocusManifest({ review: { visual: { gif: true } } });
+    expect(resolveReviewVisualConfig(manifest).gif).toBe(true);
   });
 });
 

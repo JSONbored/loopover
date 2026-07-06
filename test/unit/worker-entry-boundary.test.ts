@@ -10,7 +10,7 @@ const WORKER_ENTRY = join(srcRoot, "index.ts");
 const MCP_BIN = join(root, "packages/gittensory-mcp/bin/gittensory-mcp.js");
 
 const FORBIDDEN_PATH = /(?:^|\/)visual-agent\//;
-const FORBIDDEN_IDENTIFIERS = /\b(?:pixelmatch|pngjs|visual-diff)\b/;
+const FORBIDDEN_IDENTIFIERS = /\b(?:pixelmatch|pngjs|visual-diff|gifenc)\b/;
 
 function resolveLocalImport(fromFile: string, specifier: string): string | null {
   if (!specifier.startsWith(".")) return null;
@@ -72,17 +72,17 @@ describe("worker entry boundary", () => {
     expect(forbidden, `worker entry must not reach agent-only modules: ${forbidden.join(", ")}`).toEqual([]);
   });
 
-  it("does not reference pixelmatch, pngjs, or visual-diff in worker-reachable source", () => {
+  it("does not reference pixelmatch, pngjs, visual-diff, or gifenc in worker-reachable source", () => {
     const hits = collectReachableSources(WORKER_ENTRY)
       .map((file) => {
         const content = readFileSync(file, "utf8");
         return FORBIDDEN_IDENTIFIERS.test(content) ? relativeToRoot(file) : null;
       })
       .filter((entry): entry is string => entry !== null);
-    expect(hits, `worker-reachable files must not mention Node-only visual diff deps: ${hits.join(", ")}`).toEqual([]);
+    expect(hits, `worker-reachable files must not mention Node-only visual diff/GIF deps: ${hits.join(", ")}`).toEqual([]);
   });
 
-  it("does not reference visual diff modules in the published MCP bin bundle", () => {
+  it("does not reference visual diff or GIF modules in the published MCP bin bundle", () => {
     const content = readFileSync(MCP_BIN, "utf8");
     expect(content).not.toMatch(FORBIDDEN_IDENTIFIERS);
     expect(content).not.toMatch(/visual-agent/);

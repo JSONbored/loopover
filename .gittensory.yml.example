@@ -831,6 +831,12 @@ settings:
 #     themes:
 #       - light
 #       - dark
+#     # Also capture a short scroll-through GIF per route (desktop only) — evidence for scroll-linked behavior
+#     # (parallax, reveal-on-scroll, a sticky header) that a static screenshot can't show (#3612). Rendered as
+#     # a separate "Scroll preview" section alongside the static before/after table, never replacing it.
+#     # SELF-HOST ONLY (no effect on the hosted service) and the heaviest capture mode here — up to 6 extra
+#     # renders per side, ~4s wall-clock per side measured in practice. Bool. Default: false (no scroll capture).
+#     gif: false
 #   # Maintainer overrides for the public review-panel CONTENT (not what gittensory measures). The
 #   # Gittensor attribution + register link is always appended to the footer regardless; maintainer text
 #   # failing the public-safe filter is dropped, never published.

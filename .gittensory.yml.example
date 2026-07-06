@@ -397,6 +397,10 @@ review:
   # effort_score: false
   # When true, the unified review comment gains a compact "review effort: N/5 (~M min)" chip.
 
+  # Display-only floor for inline AI findings (`critical` | `major` | `minor` | `nitpick`). Findings below the
+  # configured level are suppressed from inline comments — never from gate blockers. Default: null (show all).
+  # min_finding_severity: major
+
   # Deterministic label suggestions (#2045). Each rule SUGGESTS a non-scoring label when a PR matches ALL of the
   # `when` criteria it sets (at least one is required): when_paths (any changed path matches a glob), title_contains,
   # description_contains (both case-insensitive). Suggestions are advisory; they are auto-applied only when the repo's

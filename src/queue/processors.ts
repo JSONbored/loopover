@@ -373,6 +373,7 @@ import {
   type FocusManifest,
   type ReviewPathInstruction,
   type ReviewProfile,
+  type ReviewFindingSeverity,
   type SelfHostAiModelConfig,
   type VisualConfig,
 } from "../signals/focus-manifest";
@@ -7684,6 +7685,7 @@ async function maybePublishPrPublicSurface(
   let changedFilesSummaryEnabledForReview = false;
   let effortScoreEnabledForReview = false;
   let findingCategoriesEnabledForReview = false;
+  let minFindingSeverityForReview: ReviewFindingSeverity | null = null;
   let aiReviewExpected = false;
   let aiReviewWasReused = false;
   let gateFinalized = false;
@@ -8187,6 +8189,7 @@ async function maybePublishPrPublicSurface(
     const deterministicReviewOverrides = resolveReviewPromptOverrides(reviewManifestForAutoReview);
     changedFilesSummaryEnabledForReview = deterministicReviewOverrides.changedFilesSummary;
     effortScoreEnabledForReview = deterministicReviewOverrides.effortScore;
+    minFindingSeverityForReview = deterministicReviewOverrides.minFindingSeverity;
     const aiReviewWillRun =
       !authorBlacklisted &&
       !isFrozenForManualReview &&
@@ -9481,6 +9484,7 @@ async function maybePublishPrPublicSurface(
       inlineCommentsEnabled: inlineCommentsEnabledForReview,
       suggestionsEnabled: suggestionsEnabledForReview,
       categoriesEnabled: findingCategoriesEnabledForReview,
+      minFindingSeverity: minFindingSeverityForReview,
     });
   }
   if (decision.willLabel) {

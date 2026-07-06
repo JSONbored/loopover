@@ -11,7 +11,9 @@
 import { createPullRequestReviewComments } from "../github/pr-actions";
 import { isConvergenceRepoAllowed } from "./cutover-gate";
 import { classifyFindingCategory } from "./finding-category-classify";
+import { shouldShowInlineFinding } from "./finding-severity-filter";
 import type { InlineFinding } from "../services/ai-review";
+import type { ReviewFindingSeverity } from "../signals/focus-manifest";
 import type { AgentActionMode } from "../settings/agent-execution";
 import type { PullRequestFileRecord } from "../types";
 import { errorMessage } from "../utils/json";
@@ -120,7 +122,13 @@ function formatInlineBody(finding: InlineFinding, suggestionsEnabled: boolean, c
  *  suggested-change block — a suggestion is anchored to the SAME single line as its parent finding, so the
  *  existing line-validity check above already covers "drop it if the range can't be anchored". `categoriesEnabled`
  *  (#1958) gates whether the label carries a category tag. */
-export function selectInlineComments(findings: InlineFinding[], files: Pick<PullRequestFileRecord, "path" | "payload">[], suggestionsEnabled = false, categoriesEnabled = false): ReviewInlineComment[] {
+export function selectInlineComments(
+  findings: InlineFinding[],
+  files: Pick<PullRequestFileRecord, "path" | "payload">[],
+  suggestionsEnabled = false,
+  categoriesEnabled = false,
+  minFindingSeverity: ReviewFindingSeverity | null | undefined = null,
+): ReviewInlineComment[] {
   const rightLinesByPath = new Map<string, Set<number>>();
   for (const file of files) {
     const patch = typeof file.payload?.patch === "string" ? file.payload.patch : "";
@@ -129,6 +137,7 @@ export function selectInlineComments(findings: InlineFinding[], files: Pick<Pull
   const out: ReviewInlineComment[] = [];
   const seen = new Set<string>();
   for (const finding of findings) {
+    if (!shouldShowInlineFinding(finding.severity, minFindingSeverity)) continue;
     if (out.length >= MAX_INLINE_COMMENTS) break;
     const validLines = rightLinesByPath.get(finding.path);
     if (!validLines || !validLines.has(finding.line)) continue; // not a commentable diff line → drop (no 422)
@@ -156,9 +165,16 @@ export async function postInlineReviewComments(
     mode: AgentActionMode;
     suggestionsEnabled?: boolean | undefined;
     categoriesEnabled?: boolean | undefined;
+    minFindingSeverity?: ReviewFindingSeverity | null | undefined;
   },
 ): Promise<{ posted: number }> {
-  const comments = selectInlineComments(args.findings, args.files, args.suggestionsEnabled, args.categoriesEnabled);
+  const comments = selectInlineComments(
+    args.findings,
+    args.files,
+    args.suggestionsEnabled,
+    args.categoriesEnabled,
+    args.minFindingSeverity,
+  );
   if (comments.length === 0 || !args.commitId) return { posted: 0 };
   try {
     await createPullRequestReviewComments(env, args.installationId, args.repoFullName, args.pullNumber, args.commitId, comments, args.mode);
@@ -188,6 +204,7 @@ export async function maybePostInlineComments(
     inlineCommentsEnabled: boolean;
     suggestionsEnabled?: boolean | undefined;
     categoriesEnabled?: boolean | undefined;
+    minFindingSeverity?: ReviewFindingSeverity | null | undefined;
   },
 ): Promise<void> {
   if (!args.inlineCommentsEnabled) return;
@@ -203,5 +220,6 @@ export async function maybePostInlineComments(
     mode: args.mode,
     suggestionsEnabled: args.suggestionsEnabled,
     categoriesEnabled: args.categoriesEnabled,
+    minFindingSeverity: args.minFindingSeverity,
   });
 }

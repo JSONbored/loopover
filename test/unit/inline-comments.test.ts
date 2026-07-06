@@ -100,6 +100,20 @@ describe("selectInlineComments (#inline-comments)", () => {
     expect(out).toEqual([{ path: "src/a.ts", line: 1, side: "RIGHT", body: "**Nit:** First." }]);
   });
 
+  it("drops inline nits below review.min_finding_severity while keeping blockers (#2048)", () => {
+    const out = selectInlineComments(
+      [
+        { path: "src/a.ts", line: 2, severity: "blocker", body: "Must fix." },
+        { path: "src/a.ts", line: 2, severity: "nit", body: "Style only." },
+      ],
+      files,
+      false,
+      false,
+      "major",
+    );
+    expect(out).toEqual([{ path: "src/a.ts", line: 2, side: "RIGHT", body: "**Blocker:** Must fix." }]);
+  });
+
   it("caps the output at 10 comments", () => {
     const bigPatch = "@@ -1,0 +1,12 @@\n" + Array.from({ length: 12 }, (_, i) => `+line${i + 1}`).join("\n");
     const bigFiles = [{ path: "src/big.ts", payload: { patch: bigPatch } }];

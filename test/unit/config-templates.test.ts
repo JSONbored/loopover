@@ -58,7 +58,7 @@ describe("config/examples review templates (#1682)", () => {
 
   it("documents shipped unified-comment display toggles in gittensory.full.yml (#2069)", () => {
     const full = readConfigExample("gittensory.full.yml");
-    for (const field of ["changed_files_summary", "effort_score"]) {
+    for (const field of ["changed_files_summary", "effort_score", "min_finding_severity"]) {
       expect(full, `missing review field ${field}`).toMatch(new RegExp(`# ${field}:`));
     }
     expect(full).not.toMatch(/Planned display toggle/);

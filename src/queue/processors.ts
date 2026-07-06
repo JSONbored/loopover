@@ -7684,6 +7684,7 @@ async function maybePublishPrPublicSurface(
   let suggestionsEnabledForReview = false;
   let changedFilesSummaryEnabledForReview = false;
   let effortScoreEnabledForReview = false;
+  let autoMergeSummaryEnabledForReview = false;
   let findingCategoriesEnabledForReview = false;
   let minFindingSeverityForReview: ReviewFindingSeverity | null = null;
   let aiReviewExpected = false;
@@ -8190,6 +8191,7 @@ async function maybePublishPrPublicSurface(
     changedFilesSummaryEnabledForReview = deterministicReviewOverrides.changedFilesSummary;
     effortScoreEnabledForReview = deterministicReviewOverrides.effortScore;
     minFindingSeverityForReview = deterministicReviewOverrides.minFindingSeverity;
+    autoMergeSummaryEnabledForReview = deterministicReviewOverrides.autoMergeSummary;
     const aiReviewWillRun =
       !authorBlacklisted &&
       !isFrozenForManualReview &&
@@ -9425,6 +9427,7 @@ async function maybePublishPrPublicSurface(
               ),
             }
           : {}),
+        ...(autoMergeSummaryEnabledForReview ? { autoMergeSummary: true } : {}),
         ...(findingCategoriesEnabledForReview && aiReview?.inlineFindings?.length
           ? { findingCategories: aiReview.inlineFindings }
           : {}),

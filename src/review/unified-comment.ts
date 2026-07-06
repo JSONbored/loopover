@@ -222,6 +222,33 @@ export interface UnifiedCommentContext {
   reviewedAt?: string | number | Date | undefined;
 }
 
+/** One read-only auto-merge condition row — pre-computed by the bridge from already-resolved readiness
+ *  signals; this renderer only formats them, never re-derives a merge/close decision. (#2051) */
+export type AutoMergeConditionRow = {
+  condition: string;
+  state: UnifiedSignalRow["state"];
+  evidence: string;
+};
+
+/** Build the "Auto-merge conditions" collapsible from pre-computed condition rows. Pure + display-only —
+ * does NOT call `deriveUnifiedStatus` or any merge/close decision path. Returns null when empty. (#2051) */
+export function buildAutoMergeSummaryCollapsible(conditions: AutoMergeConditionRow[]): UnifiedCollapsible | null {
+  if (conditions.length === 0) return null;
+  const lines = conditions.map((row) => {
+    const label = escapePublicHtmlAngles(row.condition);
+    const evidence = escapePublicHtmlAngles(row.evidence);
+    return `| ${label} | ${SIGNAL_ICON[row.state]} | ${evidence} |`;
+  });
+  const body = [
+    "| Condition | Status | Evidence |",
+    "|---|---|---|",
+    ...lines,
+    "",
+    "_Read-only summary of conditions that must pass before auto-merge. Does not change the merge decision._",
+  ].join("\n");
+  return { title: "Auto-merge conditions", body };
+}
+
 const STATUS_META: Record<UnifiedCommentStatus, { alert: string; square: string; icon: string }> = {
   ready: { alert: "TIP", square: "🟩", icon: "✅" },
   advisory: { alert: "NOTE", square: "🟦", icon: "💡" },

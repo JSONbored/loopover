@@ -37,29 +37,33 @@ export function collectSelfHostEnvVars({
   for (const file of sourceFiles(rootDir, sourceRoots)) {
     const abs = resolve(rootDir, file);
     for (const read of collectEnvReads(readFileSync(abs, "utf8"), file)) {
-      if (!rows.has(read.name)) rows.set(read.name, { name: read.name, firstReference: `${file}:${read.line}` });
+      if (!rows.has(read.name)) rows.set(read.name, { name: read.name, firstReference: file });
     }
   }
   return [...rows.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// Deliberately file-only, not `file:line` (#env-reference-churn) -- a line number makes the generated output
+// change whenever ANYTHING above an existing read shifts, so two unrelated PRs touching the same source file
+// produce two different regenerated rows and collide on rebase. The file path only changes when a read is
+// actually added/removed/moved to a different file, which is the only case that should ever require
+// regenerating this doc.
 function collectEnvReads(source, fileName) {
   const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, scriptKindFor(fileName));
   const reads = [];
-  const addRead = (name, node) => {
+  const addRead = (name) => {
     if (!ENV_NAME_RE.test(name) || INJECTED_BINDING_NAMES.has(name)) return;
-    const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
-    reads.push({ name, line: line + 1 });
+    reads.push({ name });
   };
   const visit = (node) => {
     if (ts.isPropertyAccessExpression(node) && isEnvContainer(node.expression)) {
-      addRead(node.name.text, node.name);
+      addRead(node.name.text);
     } else if (
       ts.isElementAccessExpression(node) &&
       isEnvContainer(node.expression) &&
       ts.isStringLiteralLike(node.argumentExpression)
     ) {
-      addRead(node.argumentExpression.text, node.argumentExpression);
+      addRead(node.argumentExpression.text);
     } else if (
       ts.isVariableDeclaration(node) &&
       ts.isObjectBindingPattern(node.name) &&
@@ -68,12 +72,12 @@ function collectEnvReads(source, fileName) {
     ) {
       for (const element of node.name.elements) {
         const name = bindingElementName(element);
-        if (name) addRead(name, element.propertyName ?? element.name);
+        if (name) addRead(name);
       }
     } else if (ts.isCallExpression(node) && isStaticEnvHelperCall(node)) {
-      addRead(node.arguments[1].text, node.arguments[1]);
+      addRead(node.arguments[1].text);
     } else if (ts.isCallExpression(node) && isProcessEnvNameHelperCall(node)) {
-      addRead(node.arguments[0].text, node.arguments[0]);
+      addRead(node.arguments[0].text);
     }
     ts.forEachChild(node, visit);
   };

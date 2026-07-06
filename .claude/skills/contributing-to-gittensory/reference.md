@@ -28,7 +28,7 @@ path filter matched; on push to `main`, everything runs.
 | lint → migrations | migration guard | `npm run db:migrations:check` | duplicate/gap/misnamed migration number |
 | lint → cf-typegen | worker types drift | `npm run cf-typegen:check` | committed `worker-configuration.d.ts` is stale (run `npm run cf-typegen`) |
 | lint → schema-drift | `src/db/schema.ts` vs `migrations/` | `npm run db:schema-drift:check` | a Drizzle table's schema doesn't match the migration history |
-| lint → selfhost-env-reference | self-host env-var doc drift | `npm run selfhost:env-reference:check` | committed `apps/gittensory-ui/src/lib/selfhost-env-reference.ts` is stale (run `npm run selfhost:env-reference`) — triggers on ANY edit to `src/selfhost/**` (+ a few other scanned files) that adds/removes an env var read OR just shifts line numbers of an existing one, since the doc embeds `file:line` citations |
+| lint → selfhost-env-reference | self-host env-var doc drift | `npm run selfhost:env-reference:check` | committed `apps/gittensory-ui/src/lib/selfhost-env-reference.ts` is stale (run `npm run selfhost:env-reference`) — triggers when `src/selfhost/**` (+ a few other scanned files) adds/removes an env var read; a pure line shift of an existing read does NOT trigger it, since the doc cites the file only, not `file:line` (#env-reference-churn) |
 | lint → observability | Grafana/Prometheus/alert config validation | `npm run selfhost:validate-observability` | a self-host observability config (dashboard/rule/datasource) is malformed |
 | lint → typecheck | `tsc --noEmit` | `npm run typecheck` | any backend type error |
 | test (1/2) | sharded vitest + coverage | `npm run test:coverage` (unsharded) | any failing `test/**/*.test.ts` (excl. `test/workers/**`) |

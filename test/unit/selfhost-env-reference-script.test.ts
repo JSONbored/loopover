@@ -62,24 +62,42 @@ function fixtureRoot(): string {
 describe("gen-selfhost-env-reference (#2081)", () => {
   it("extracts static env reads and keeps the first source reference", () => {
     expect(collectSelfHostEnvVars({ rootDir: fixtureRoot() })).toEqual([
-      { name: "ALIASED_ENV", firstReference: "src/selfhost/a.ts:5" },
-      { name: "BRACKET_ONLY", firstReference: "src/selfhost/a.ts:4" },
-      { name: "CASTED_ONLY", firstReference: "src/services/notify-discord.ts:3" },
-      { name: "CTX_ONLY", firstReference: "src/selfhost/a.ts:10" },
-      { name: "DEFAULTED_ENV", firstReference: "src/selfhost/a.ts:5" },
-      { name: "DESTRUCTURED", firstReference: "src/selfhost/a.ts:5" },
-      { name: "FIRST", firstReference: "src/selfhost/a.ts:3" },
-      { name: "HELPER_ONLY", firstReference: "src/selfhost/a.ts:6" },
-      { name: "NESTED_ONLY", firstReference: "src/selfhost/nested/b.ts:2" },
-      { name: "OBJECT_ALIASED", firstReference: "src/selfhost/a.ts:9" },
-      { name: "OBJECT_BRACKET", firstReference: "src/selfhost/a.ts:8" },
-      { name: "OBJECT_DESTRUCTURED", firstReference: "src/selfhost/a.ts:9" },
-      { name: "PARSED_INT_ONLY", firstReference: "src/services/notify-discord.ts:4" },
-      { name: "SECOND", firstReference: "src/selfhost/a.ts:2" },
-      { name: "SERVER_ONLY", firstReference: "src/server.ts:1" },
-      { name: "SERVICE_HELPER_ONLY", firstReference: "src/services/notify-discord.ts:2" },
-      { name: "SERVICE_ONLY", firstReference: "src/services/notify-discord.ts:1" },
+      { name: "ALIASED_ENV", firstReference: "src/selfhost/a.ts" },
+      { name: "BRACKET_ONLY", firstReference: "src/selfhost/a.ts" },
+      { name: "CASTED_ONLY", firstReference: "src/services/notify-discord.ts" },
+      { name: "CTX_ONLY", firstReference: "src/selfhost/a.ts" },
+      { name: "DEFAULTED_ENV", firstReference: "src/selfhost/a.ts" },
+      { name: "DESTRUCTURED", firstReference: "src/selfhost/a.ts" },
+      { name: "FIRST", firstReference: "src/selfhost/a.ts" },
+      { name: "HELPER_ONLY", firstReference: "src/selfhost/a.ts" },
+      { name: "NESTED_ONLY", firstReference: "src/selfhost/nested/b.ts" },
+      { name: "OBJECT_ALIASED", firstReference: "src/selfhost/a.ts" },
+      { name: "OBJECT_BRACKET", firstReference: "src/selfhost/a.ts" },
+      { name: "OBJECT_DESTRUCTURED", firstReference: "src/selfhost/a.ts" },
+      { name: "PARSED_INT_ONLY", firstReference: "src/services/notify-discord.ts" },
+      { name: "SECOND", firstReference: "src/selfhost/a.ts" },
+      { name: "SERVER_ONLY", firstReference: "src/server.ts" },
+      { name: "SERVICE_HELPER_ONLY", firstReference: "src/services/notify-discord.ts" },
+      { name: "SERVICE_ONLY", firstReference: "src/services/notify-discord.ts" },
     ]);
+  });
+
+  it("REGRESSION (#env-reference-churn): firstReference is immune to line shifts elsewhere in the file", () => {
+    const root = mkdtempSync(join(tmpdir(), "gt-env-reference-lineshift-"));
+    mkdirSync(join(root, "src", "selfhost"), { recursive: true });
+    const filePath = join(root, "src", "selfhost", "a.ts");
+    const read = "const value = process.env.STABLE_VAR;\n";
+
+    writeFileSync(filePath, read);
+    const before = collectSelfHostEnvVars({ rootDir: root });
+    expect(before).toEqual([{ name: "STABLE_VAR", firstReference: "src/selfhost/a.ts" }]);
+
+    // Ten unrelated lines added ABOVE the same read -- a real PR touching this file for an unrelated reason
+    // would shift STABLE_VAR from line 1 to line 11 under the old file:line format, changing the generated
+    // output and colliding with any other PR that regenerated it from a different line count.
+    writeFileSync(filePath, "// unrelated change\n".repeat(10) + read);
+    const after = collectSelfHostEnvVars({ rootDir: root });
+    expect(after).toEqual(before);
   });
 
   it("scans configured JavaScript roots and rejects file-shaped directories", () => {
@@ -90,7 +108,7 @@ describe("gen-selfhost-env-reference (#2081)", () => {
         rootDir: root,
         sourceRoots: ["scripts/selfhost-smoke.mjs"],
       }),
-    ).toEqual([{ name: "SCRIPT_ONLY", firstReference: "scripts/selfhost-smoke.mjs:1" }]);
+    ).toEqual([{ name: "SCRIPT_ONLY", firstReference: "scripts/selfhost-smoke.mjs" }]);
 
     mkdirSync(join(root, "src", "selfhost", "bad.ts"));
     expect(() =>
@@ -104,15 +122,15 @@ describe("gen-selfhost-env-reference (#2081)", () => {
   it("renders a deterministic Markdown table with names and references only", () => {
     expect(
       renderSelfHostEnvReferenceMarkdown([
-        { name: "FIRST", firstReference: "src/selfhost/a.ts:3" },
-        { name: "SECOND", firstReference: "src/selfhost/a.ts:2" },
+        { name: "FIRST", firstReference: "src/selfhost/a.ts" },
+        { name: "SECOND", firstReference: "src/server.ts" },
       ]),
     ).toBe(
       [
         "| Name | First reference |",
         "| --- | --- |",
-        "| `FIRST` | `src/selfhost/a.ts:3` |",
-        "| `SECOND` | `src/selfhost/a.ts:2` |",
+        "| `FIRST` | `src/selfhost/a.ts` |",
+        "| `SECOND` | `src/server.ts` |",
       ].join("\n"),
     );
   });
@@ -127,7 +145,7 @@ describe("gen-selfhost-env-reference (#2081)", () => {
     expect(existsSync(outputAbs)).toBe(true);
     const generated = readFileSync(outputAbs, "utf8");
     expect(generated).toContain("SELFHOST_ENV_REFERENCE_MARKDOWN");
-    expect(generated).toContain("src/selfhost/a.ts:3");
+    expect(generated).toContain("src/selfhost/a.ts");
 
     expect(writeSelfHostEnvReference({ rootDir: root, outputPath, check: true }).changed).toBe(false);
 

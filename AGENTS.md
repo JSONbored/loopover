@@ -26,7 +26,7 @@ process evolves — edits to those files improve both Claude Code and Codex.
    under-reports).
 4. **Regenerate and commit generated artifacts:** `npm run ui:openapi` (API/schema changes),
    `npm run cf-typegen` (wrangler binding/var changes), `npm run selfhost:env-reference` (any
-   `env.SOMETHING` read added/removed/line-shifted under `src/selfhost/**`), and a contiguous
+   `env.SOMETHING` read added/removed under `src/selfhost/**`), and a contiguous
    `migrations/NNNN_*.sql` (DB changes). Stale generated files fail CI (see `reference.md`'s full
    check table for the complete list — `test:ci` runs more drift checks than these three).
 5. **House rules:** Conventional Commits, **no AI/Claude/agent attribution** in commits or PR text;

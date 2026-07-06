@@ -128,15 +128,51 @@ export function importBindsSymbol(body: string, symbol: string): boolean {
  *  same-named import from a third-party package). Conservative by design: a caller reaching the symbol only
  *  through a barrel re-export, a namespace member access, or a bare package path is not matched — a false
  *  NEGATIVE only suppresses a finding, which is always fail-safe. Pure. */
+const MAX_IMPORT_STATEMENT_CHARS = 8192;
+
+function isStatementBoundary(source: string, index: number): boolean {
+  let cursor = index - 1;
+  while (cursor >= 0) {
+    const prev = source.charCodeAt(cursor);
+    if (prev !== 9 && prev !== 32) return prev === 10 || prev === 59; // newline or ;
+    cursor -= 1;
+  }
+  return true;
+}
+
+function findStatementEnd(source: string, start: number): number {
+  const limit = Math.min(source.length, start + MAX_IMPORT_STATEMENT_CHARS);
+  let braceDepth = 0;
+  for (let index = start; index < limit; index += 1) {
+    const code = source.charCodeAt(index);
+    if (code === 123) braceDepth += 1; // {
+    else if (code === 125 && braceDepth > 0) braceDepth -= 1; // }
+    else if (code === 59 || (code === 10 && braceDepth === 0)) return index; // ; or statement-ending newline
+  }
+  return limit;
+}
+
+function parseImportFromStatement(statement: string): { body: string; modulePath: string } | null {
+  const from = /\bfrom[ \t]*(['"])([^'"]+)\1/.exec(statement);
+  if (!from?.index) return null;
+  const modulePath = from[2] ?? "";
+  return { body: statement.slice(0, from.index), modulePath };
+}
+
 export function fileImportsSymbol(source: string, symbol: string): boolean {
   if (!source.includes(symbol)) return false;
-  const stmtRe = /(?:^|[\n;])[ \t]*(?:import|export)\b([\s\S]*?)\bfrom[ \t]*(['"])([^'"]+)\2/g;
-  let match: RegExpExecArray | null;
-  while ((match = stmtRe.exec(source)) !== null) {
-    const body = match[1] ?? "";
-    const modulePath = match[3] ?? "";
-    if (!isInternalModulePath(modulePath)) continue;
-    if (importBindsSymbol(body, symbol)) return true;
+  for (const keyword of ["import", "export"] as const) {
+    let cursor = 0;
+    while (cursor < source.length) {
+      const found = source.indexOf(keyword, cursor);
+      if (found === -1) break;
+      cursor = found + keyword.length;
+      const after = source.charCodeAt(cursor);
+      if (!isStatementBoundary(source, found) || !/\s/.test(String.fromCharCode(after))) continue;
+      const parsed = parseImportFromStatement(source.slice(cursor, findStatementEnd(source, cursor)));
+      if (!parsed || !isInternalModulePath(parsed.modulePath)) continue;
+      if (importBindsSymbol(parsed.body, symbol)) return true;
+    }
   }
   return false;
 }

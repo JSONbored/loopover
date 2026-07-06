@@ -91,13 +91,19 @@ test("importBindsSymbol: named (incl. alias), default, and namespace bindings", 
 
 test("fileImportsSymbol: only a real internal import counts; text/property/bare-pkg do not", () => {
   assert.equal(fileImportsSymbol(`import { foo } from "./m";\nfoo();`, "foo"), true);
-  assert.equal(fileImportsSymbol(`import { foo as f } from "../m";`, "foo"), true);
+  assert.equal(fileImportsSymbol(`  import { foo as f } from "../m";`, "foo"), true);
   assert.equal(fileImportsSymbol(`export { foo } from "@/m";`, "foo"), true);
   assert.equal(fileImportsSymbol(`import foo from "#internal";`, "foo"), true);
+  assert.equal(fileImportsSymbol(`import {\n  foo,\n} from "~/m";`, "foo"), true);
   assert.equal(fileImportsSymbol(`import { foo } from "third-party";`, "foo"), false); // bare package
   assert.equal(fileImportsSymbol(`// foo is used elsewhere\nconst x = obj.foo;`, "foo"), false); // comment/property
   assert.equal(fileImportsSymbol(`const foo = 1;`, "foo"), false); // local declaration
   assert.equal(fileImportsSymbol(`import { bar } from "./m";`, "foo"), false);
+});
+
+test("fileImportsSymbol: pathological import-like text is scanned in linear time", () => {
+  const source = `${"; import anything\n".repeat(55_000)}Victim`;
+  assert.equal(fileImportsSymbol(source, "Victim"), false);
 });
 
 test("collectRemovedExports: removed export keyed to old-file line", () => {

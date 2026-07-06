@@ -90,6 +90,12 @@
     // sufficient. Default OFF — flag-OFF performs no symbol extraction, no RAG query, and adds no prompt/comment
     // section, byte-identical to today.
     "GITTENSORY_REVIEW_IMPACT_MAP": "false",
+    // Repo quality-culture profile (#2995): at review time, append an ADDITIVE "REPO QUALITY-CULTURE PROFILE"
+    // reference block — typical merged-PR size + common accepted labels, derived deterministically from this
+    // repo's OWN recent_merged_pull_requests history. Reference-only grounding, exactly like RAG; never a
+    // gate/scoring input. Also requires the per-repo `.gittensory.yml` review.culture_profile: true opt-in.
+    // Default OFF — flag-OFF performs no extra D1 read and keeps the reviewer prompt byte-identical.
+    "GITTENSORY_REVIEW_CULTURE_PROFILE": "false",
     // Convergence (content/registry SURFACE LANE): when truthy AND the repo is in GITTENSORY_REVIEW_REPOS, the
     // deterministic, AI-FREE surface review drives the gate for registry-submission PRs (metagraphed). Default
     // OFF (false): the processor takes no new branch + resolves no files, so the gate disposition is byte-

@@ -334,7 +334,7 @@ import {
   PR_PANEL_RETRIGGER_MARKER,
   type ContributorProfile,
 } from "../signals/engine";
-import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
+import { isDuplicateClusterWinnerByClaim, resolveDuplicateClusterWinnerNumber } from "../signals/duplicate-winner";
 import { buildUnifiedReviewDiff, totalAddedLineCount } from "../review/review-diff";
 import { estimateReviewEffort } from "../review/review-effort";
 import { buildUnifiedCommentBody } from "../review/unified-comment-bridge";
@@ -434,6 +434,10 @@ import { createReviewAdapters } from "../review/adapters";
 import { extractChangedSymbols } from "../review/impact-symbols";
 import { computeImpactMap } from "../review/impact-map";
 import { formatImpactMapPromptSection, shouldComputeImpactMap } from "../review/impact-map-wire";
+import {
+  buildRepoCultureProfileContext,
+  isRepoCultureProfileEnabled,
+} from "../review/repo-culture-profile-wire";
 import {
   buildReviewEnrichment,
   isEnrichmentEnabled,
@@ -2768,6 +2772,8 @@ async function runAgentMaintenancePlanAndExecute(
   const approvalsSatisfied =
     autoMaintain.requireApprovals === 0 ||
     (liveReviewDecision ?? pr.reviewDecision) === "APPROVED";
+  const duplicateWinnerEnabled = env.GITTENSORY_DUPLICATE_WINNER === "true";
+  const openDuplicateSiblings = linkedIssueDuplicatePullRequestRecordsForGate(pr, otherOpenPullRequests);
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
     blockerTitles: gate.blockers.map((blocker) => blocker.title),
@@ -2822,10 +2828,21 @@ async function runAgentMaintenancePlanAndExecute(
       // (it can still close on its own merits — CI/conflict/blockers). Flag-OFF short-circuits ⇒ the real
       // count is used (byte-identical). Sparse legacy rows fail closed so duplicate evidence remains visible.
       linkedDuplicateCount: dupWinnerLinkedDuplicateCount(
-        linkedIssueDuplicatePullRequestRecordsForGate(pr, otherOpenPullRequests),
+        openDuplicateSiblings,
         pr.number,
         pr.linkedIssueClaimedAt,
-        env.GITTENSORY_DUPLICATE_WINNER === "true",
+        duplicateWinnerEnabled,
+        pr.createdAt,
+      ),
+      // #dup-winner-credit: name the cluster's actual winner in a loser's close comment instead of a generic
+      // "duplicate of another open PR". `null` (flag off, this PR IS the winner, or an ambiguous election)
+      // falls back to the pre-existing generic wording in agent-actions.ts, byte-identical to before this existed.
+      linkedDuplicateWinnerNumber: dupWinnerLinkedDuplicateWinnerNumber(
+        openDuplicateSiblings,
+        pr.number,
+        pr.linkedIssueClaimedAt,
+        duplicateWinnerEnabled,
+        pr.createdAt,
       ),
       headSha: pr.headSha,
       mergeBlockedSha: pr.mergeBlockedSha,
@@ -6669,6 +6686,11 @@ export async function runAiReviewForAdvisory(
     // compute the deterministic impact map and splice it into the reviewer prompt as additive reference
     // context. Absent/false ⇒ byte-identical reviewer prompt (no impact-map computation, no RAG query for it).
     reviewImpactMap?: boolean | undefined;
+    // `.gittensory.yml` review.culture_profile (#2995), resolved by the caller from the cached manifest. ANDed
+    // here with the GITTENSORY_REVIEW_CULTURE_PROFILE global flag to decide whether to append the repo's
+    // quality-culture reference block (typical merged-PR size + common labels) to the reviewer prompt. Absent/
+    // false ⇒ byte-identical (no section, no extra D1 read).
+    reviewCultureProfile?: boolean | undefined;
     // The inbound webhook delivery id that triggered this review (#codex-timeout-fields) — forwarded to a
     // self-host provider's failure log purely for operator correlation; never read by any review logic. Absent
     // (e.g. a sweep/repair fan-out with no single originating delivery, or a unit test) ⇒ the log line omits it.
@@ -6874,6 +6896,15 @@ export async function runAiReviewForAdvisory(
       });
       impactMapContext = formatImpactMapPromptSection(impactMap);
     }
+    // Repo quality-culture profile (#2995, flag-gated by GITTENSORY_REVIEW_CULTURE_PROFILE AND the per-repo
+    // `review.culture_profile` opt-in). Derives a compact reference block from the repo's OWN merge history
+    // (typical PR size, common accepted labels) and appends it as additive grounding — exactly like RAG. Both
+    // gates OFF (default) → NO new branch: no D1 read, and `cultureProfileContext` is left undefined so the
+    // prompt is byte-identical to today. Fully fail-safe (any error/insufficient-history degrades to "").
+    const cultureProfileContext =
+      isRepoCultureProfileEnabled(env) && args.reviewCultureProfile === true
+        ? await buildRepoCultureProfileContext(env, args.repoFullName)
+        : undefined;
     // Review-enrichment (#1472, flag-gated by GITTENSORY_REVIEW_ENRICHMENT + REES_URL). POST the PR to the external
     // REES for the heavy/external analysis the reviewer can't run (dependency CVEs, secrets, license/EOL/supply-chain);
     // its public-safe brief splices into the prompt next to grounding + RAG. Flag-OFF (default) → no call, no branch,
@@ -6933,6 +6964,7 @@ export async function runAiReviewForAdvisory(
       providerKey,
       grounding,
       ragContext: ragContextResult?.text,
+      cultureProfileContext,
       observability: { rag: ragTelemetry },
       impactMapContext,
       enrichment,
@@ -7322,17 +7354,37 @@ export async function runAiSlopForAdvisory(
  * when count > 0). Flag-OFF (default) returns the real sibling count — byte-identical to today.
  */
 export function dupWinnerLinkedDuplicateCount(
-  openSiblings: Pick<PullRequestRecord, "number" | "linkedIssueClaimedAt">[],
+  openSiblings: Pick<PullRequestRecord, "number" | "linkedIssueClaimedAt" | "createdAt">[],
   prNumber: number,
   linkedIssueClaimedAt: string | null | undefined,
   duplicateWinnerEnabled: boolean,
+  createdAt?: string | null | undefined,
 ): number {
   if (
     duplicateWinnerEnabled &&
-    isDuplicateClusterWinnerByClaim({ number: prNumber, linkedIssueClaimedAt }, openSiblings)
+    isDuplicateClusterWinnerByClaim({ number: prNumber, linkedIssueClaimedAt, createdAt }, openSiblings)
   )
     return 0;
   return openSiblings.length;
+}
+
+/**
+ * Duplicate-winner adjudication (#dup-winner-credit) seam for naming the cluster's actual winner in a loser's
+ * close comment. Returns `null` (generic "duplicate of another open PR" wording, byte-identical to before this
+ * existed) when the flag is off, this PR IS the winner (nothing to name — its close reason omits the cause
+ * entirely via {@link dupWinnerLinkedDuplicateCount}), or the election is too ambiguous to name a specific
+ * winner ({@link resolveDuplicateClusterWinnerNumber}'s fail-closed `null`).
+ */
+export function dupWinnerLinkedDuplicateWinnerNumber(
+  openSiblings: Pick<PullRequestRecord, "number" | "linkedIssueClaimedAt" | "createdAt">[],
+  prNumber: number,
+  linkedIssueClaimedAt: string | null | undefined,
+  duplicateWinnerEnabled: boolean,
+  createdAt?: string | null | undefined,
+): number | null {
+  if (!duplicateWinnerEnabled) return null;
+  const winner = resolveDuplicateClusterWinnerNumber({ number: prNumber, linkedIssueClaimedAt, createdAt }, openSiblings);
+  return winner === null || winner === prNumber ? null : winner;
 }
 
 /**
@@ -8554,6 +8606,7 @@ async function maybePublishPrPublicSurface(
             pathFilters: reviewPathFilters,
             selfHostAiModel: reviewSelfHostAiModel,
             impactMap: reviewImpactMap,
+            cultureProfile: reviewCultureProfile,
           } = resolveReviewPromptOverrides(reviewManifest);
           inlineCommentsEnabledForReview = shouldRequestInlineFindings(
             env,
@@ -8603,12 +8656,18 @@ async function maybePublishPrPublicSurface(
               "reputation",
               repoFullName,
             ),
+            // Repo quality-culture profile (#2995): its own cache (signal_snapshots, TTL + merged-PR-count
+            // invalidation) can refresh independently of this PR's head SHA, exactly like RAG's vector index —
+            // so a repo with it active also bypasses the AI-review result cache rather than fingerprinting a
+            // value that can't prove freshness.
+            cultureProfile: isRepoCultureProfileEnabled(env) && reviewCultureProfile === true,
           };
           const dynamicReviewContextActive =
             dynamicReviewFeatures.grounding ||
             dynamicReviewFeatures.rag ||
             dynamicReviewFeatures.enrichment ||
-            dynamicReviewFeatures.reputation;
+            dynamicReviewFeatures.reputation ||
+            dynamicReviewFeatures.cultureProfile;
           const inputFingerprint = await aiReviewCacheInputFingerprint({
             title: pr.title,
             mode: settings.aiReviewMode,
@@ -8761,6 +8820,7 @@ async function maybePublishPrPublicSurface(
               reviewFindingCategories,
               reviewSelfHostAiModel,
               reviewImpactMap,
+              reviewCultureProfile,
               deliveryId: webhook.deliveryId,
             });
             // `persistable === false` (only the lock-contention placeholder — see runAiReviewForAdvisory's return

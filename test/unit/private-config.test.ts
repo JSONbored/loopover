@@ -44,6 +44,17 @@ describe("localConfigCandidates (container-private config paths)", () => {
       join("_shared", ".gittensory.json"),
     ]);
   });
+
+  it("reserves the shared-base folder instead of treating it as the bare folder for a repo named _shared", () => {
+    expect(localConfigCandidates("owner/_shared")).toEqual([
+      join("owner___shared", ".gittensory.yml"),
+      join("owner___shared", ".gittensory.yaml"),
+      join("owner___shared", ".gittensory.json"),
+      "owner___shared.yml",
+      "owner___shared.yaml",
+      "owner___shared.json",
+    ]);
+  });
 });
 
 describe("mergeConfigOverlay (generic recursive deep-merge, no manifest-field-specific code)", () => {
@@ -325,6 +336,28 @@ describe("makeLocalManifestReader — shared base layer (#1959)", () => {
     writeFileSync(join(dir, "_shared", ".gittensory.json"), '{"gate":{"enabled":false}}');
     const reader = makeLocalManifestReader(dir);
     expect(await reader!("owner/repo")).toBe("gate:\n  enabled: true\n"); // .yaml found before .json is tried
+  });
+
+  it("keeps global precedence over the shared base for a repo named _shared", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
+    mkdirSync(join(dir, "_shared"));
+    writeFileSync(join(dir, "_shared", ".gittensory.yml"), "gate:\n  enabled: true\nwantedPaths:\n  - '**/*'\n");
+    writeFileSync(join(dir, ".gittensory.yml"), "gate:\n  enabled: false\nwantedPaths:\n  - src/safe/**\n");
+    const reader = makeLocalManifestReader(dir);
+    const manifest = parseFocusManifestContent(await reader!("owner/_shared"));
+    expect(manifest.gate.enabled).toBe(false); // global still overlays the reserved shared-base folder
+    expect(manifest.wantedPaths).toEqual(["src/safe/**"]);
+  });
+
+  it("still supports owner-qualified config for a repo named _shared", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
+    mkdirSync(join(dir, "_shared"));
+    writeFileSync(join(dir, "_shared", ".gittensory.yml"), "gate:\n  enabled: false\n");
+    mkdirSync(join(dir, "owner___shared"));
+    writeFileSync(join(dir, "owner___shared", ".gittensory.yml"), "gate:\n  enabled: true\n");
+    const reader = makeLocalManifestReader(dir);
+    const manifest = parseFocusManifestContent(await reader!("owner/_shared"));
+    expect(manifest.gate.enabled).toBe(true); // explicit owner-qualified per-repo file remains highest priority
   });
 
   it("does NOT serve the shared base to an invalid repo full name (no per-repo candidates)", async () => {

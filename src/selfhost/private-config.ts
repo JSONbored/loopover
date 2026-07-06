@@ -29,11 +29,8 @@
 // set degrades exactly like a single malformed manifest always has. The slug is lowercased (GitHub repo full-names
 // are case-insensitive; #1390 already lowercased).
 //
-// Known limitation (#1959): the shared-base folder name `_shared` could collide with a bare repo-name folder
-// (layer 2) for a real GitHub repo literally named `_shared` — `isSafeRepoSegment` permits `_` as an interior
-// character, so that repo name is technically valid. This is a deliberately accepted edge case; an operator
-// hosting a repo named exactly `_shared` should rename this folder via a private, documented convention rather
-// than relying on any automatic disambiguation.
+// The reserved shared-base folder `_shared` is never treated as a bare repo-name config folder for a real GitHub
+// repo named `_shared`; use the owner-qualified or flat owner__repo candidates for that repository instead.
 import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -65,6 +62,7 @@ export const GLOBAL_CONFIG_CANDIDATES: string[] = [...CONFIG_BASENAMES];
  *  lowest-priority layer: a cross-repo "house policy" an operator running many repos writes once, deep-merged
  *  UNDER both the global default and any per-repo file (or applied alone, when neither of those exists). */
 export const SHARED_BASE_CONFIG_CANDIDATES: string[] = CONFIG_BASENAMES.map((base) => join("_shared", base));
+const SHARED_BASE_CONFIG_CANDIDATE_SET = new Set(SHARED_BASE_CONFIG_CANDIDATES);
 
 /** Per-repo private-config candidate paths (relative to GITTENSORY_REPO_CONFIG_DIR), in priority order:
  *  owner-qualified folder → bare repo-name folder → flat `owner__repo` file (the #1390 back-compat form). The slug
@@ -81,7 +79,9 @@ export function localConfigCandidates(repoFullName: string): string[] {
     // 1. owner-qualified folder — `{owner}__{repo}/.gittensory.{yml,yaml,json}`
     ...CONFIG_BASENAMES.map((base) => join(slug, base)),
     // 2. bare repo-name folder — `{repo}/.gittensory.{yml,yaml,json}`
-    ...CONFIG_BASENAMES.map((base) => join(repo, base)),
+    ...CONFIG_BASENAMES.map((base) => join(repo, base)).filter(
+      (candidate) => !SHARED_BASE_CONFIG_CANDIDATE_SET.has(candidate),
+    ),
     // 3. flat owner__repo file (#1390) — `{owner}__{repo}.{yml,yaml,json}`
     ...CONFIG_BASENAMES.map((base) => `${slug}${base.slice(".gittensory".length)}`),
   ];

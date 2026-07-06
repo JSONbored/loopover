@@ -359,6 +359,19 @@ describe("planAgentMaintenanceActions (#778)", () => {
     expect(winnerClose.reason).not.toContain("duplicate of another open PR");
   });
 
+  it("#dup-winner-credit: names the actual winning PR in the close reason when the election is confident enough", () => {
+    const named = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], pr: { labels: [], linkedDuplicateCount: 1, linkedDuplicateWinnerNumber: 99 } }));
+    const namedClose = named.find((a) => a.actionClass === "close")!;
+    expect(namedClose.reason).toContain("duplicate of open PR #99");
+    expect(namedClose.reason).not.toContain("duplicate of another open PR");
+  });
+
+  it("#dup-winner-credit: falls back to the generic wording when no winner number is known (null, the nullish arm)", () => {
+    const generic = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], pr: { labels: [], linkedDuplicateCount: 1, linkedDuplicateWinnerNumber: null } }));
+    const genericClose = generic.find((a) => a.actionClass === "close")!;
+    expect(genericClose.reason).toContain("duplicate of another open PR");
+  });
+
   it("keeps every close cause as a structured closeReasons list for historical audit accuracy", () => {
     const plan = planAgentMaintenanceActions(
       input({

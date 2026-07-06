@@ -33,6 +33,7 @@ const baseFingerprintInput = (): AiReviewCacheInput => ({
     rag: false,
     enrichment: false,
     reputation: false,
+    cultureProfile: false,
   },
 });
 

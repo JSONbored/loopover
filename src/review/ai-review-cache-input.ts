@@ -5,7 +5,10 @@ import type {
 } from "../signals/focus-manifest";
 import { sha256Hex } from "../utils/crypto";
 
-export const AI_REVIEW_CACHE_INPUT_VERSION = "ai-review-input:v1";
+// Bumped v1→v2 (#2995): `features` gained a `cultureProfile` member. Every prior cached review's fingerprint was
+// computed without that key, so bumping the version guarantees a clean cache miss on the first review after
+// upgrade rather than silently reusing a hash computed under a different payload shape.
+export const AI_REVIEW_CACHE_INPUT_VERSION = "ai-review-input:v2";
 
 // #regate-churn (root cause, confirmed in production): this fingerprint USED to also hash the PR's live
 // `baseSha`, on the theory that a rebase/retarget can change the diff GitHub reports for an otherwise-unchanged
@@ -95,15 +98,19 @@ export type AiReviewCacheInput = {
     additions: number;
     deletions: number;
   }[];
-  // grounding/rag/enrichment/reputation each pull TIME-VARYING external context that can change for an
-  // unchanged head SHA without any of these booleans flipping (live CI checks, the vector index, REES/CVE data,
-  // the submitter's evolving reputation) -- a boolean can't detect that drift, so the caller bypasses the cache
-  // entirely whenever any of these is true rather than relying on this fingerprint to catch a content change.
+  // grounding/rag/enrichment/reputation/cultureProfile each pull TIME-VARYING external context that can change
+  // for an unchanged head SHA without any of these booleans flipping (live CI checks, the vector index,
+  // REES/CVE data, the submitter's evolving reputation, the repo's own merge-history cache) -- a boolean can't
+  // detect that drift, so the caller bypasses the cache entirely whenever any of these is true rather than
+  // relying on this fingerprint to catch a content change.
   features: {
     grounding: boolean;
     rag: boolean;
     enrichment: boolean;
     reputation: boolean;
+    // #2995: added alongside the repo quality-culture profile. Explicitly enumerated below (not passed through
+    // raw) so a FUTURE new feature key can't silently change every existing cache entry's fingerprint again.
+    cultureProfile: boolean;
   };
 };
 
@@ -184,7 +191,13 @@ export async function aiReviewCacheInputFingerprint(input: AiReviewCacheInput): 
         deletions: file.deletions,
       }))
       .sort((left, right) => left.path.localeCompare(right.path)),
-    features: input.features,
+    features: {
+      grounding: input.features.grounding,
+      rag: input.features.rag,
+      enrichment: input.features.enrichment,
+      reputation: input.features.reputation,
+      cultureProfile: input.features.cultureProfile,
+    },
   };
   return `${AI_REVIEW_CACHE_INPUT_VERSION}:${await sha256Hex(stableStringify(payload))}`;
 }

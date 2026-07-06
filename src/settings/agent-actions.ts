@@ -328,6 +328,10 @@ export type AgentActionPlanInput = {
     slopRisk?: number | null | undefined;
     labels: string[];
     linkedDuplicateCount?: number | undefined;
+    // #dup-winner-credit: the elected winner's PR number, when the election is confident enough to name one (see
+    // dupWinnerLinkedDuplicateWinnerNumber). Only read below when linkedDuplicateCount > 0; null/absent falls
+    // back to the pre-existing generic "duplicate of another open PR" wording.
+    linkedDuplicateWinnerNumber?: number | null | undefined;
     // RC3 terminal-fail merges: the live head SHA + the SHA at which a prior merge was terminally blocked
     // (perms/required-check/conflict). When they match, the merge can't complete for this commit → suppress it.
     headSha?: string | null | undefined;
@@ -1085,7 +1089,12 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     if (isConflict) closeReasons.push("conflicts with the base branch — resolve and open a fresh PR");
     for (const blockerTitle of input.blockerTitles) closeReasons.push(blockerTitle);
     if (input.pr.slopRisk != null && input.pr.slopRisk >= slopGateMinScore) closeReasons.push(`slop score ${input.pr.slopRisk} ≥ ${slopGateMinScore}`);
-    if ((input.pr.linkedDuplicateCount ?? 0) > 0) closeReasons.push("duplicate of another open PR");
+    if ((input.pr.linkedDuplicateCount ?? 0) > 0)
+      closeReasons.push(
+        input.pr.linkedDuplicateWinnerNumber != null
+          ? `duplicate of open PR #${input.pr.linkedDuplicateWinnerNumber}`
+          : "duplicate of another open PR",
+      );
     if (closeReasons.length === 0) closeReasons.push("the review gate is not satisfied");
     // Tagged "heuristic": a verdict-driven close (gate-verdict / duplicate / slop / CI). The close-precision
     // breaker downgrades this to a hold when close precision has dropped — UNLESS it is also backed by concrete,

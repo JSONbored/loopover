@@ -248,6 +248,14 @@ declare global {
      *  shouldComputeImpactMap). Default OFF — unset/false performs NO symbol extraction, NO RAG query, and adds
      *  NO comment/prompt section, byte-identical to today. */
     GITTENSORY_REVIEW_IMPACT_MAP?: string;
+    /** Repo quality-culture profile (#2995): when truthy, the AI reviewer prompt gains an ADDITIVE "REPO
+     *  QUALITY-CULTURE PROFILE" reference block — typical merged-PR size + common accepted labels, derived
+     *  deterministically from this repo's OWN `recent_merged_pull_requests` history (see
+     *  review/repo-culture-profile.ts + repo-culture-profile-wire.ts). Also requires the per-repo
+     *  `.gittensory.yml` `review.culture_profile: true` opt-in — this is the global kill-switch only. Default
+     *  OFF — unset/false performs NO extra D1 read and keeps the reviewer prompt byte-identical (the new branch
+     *  is unreachable when off). ADVISORY GROUNDING ONLY: never a gate/scoring input. */
+    GITTENSORY_REVIEW_CULTURE_PROFILE?: string;
     /** Review-enrichment service (REES): when truthy, the self-host review engine POSTs the PR diff/files to
      *  REES and splices any public-safe brief into the AI reviewer prompt. Requires REES_URL and the repo in
      *  GITTENSORY_REVIEW_REPOS. REES_ANALYZERS is an optional exact comma-list; unset/"all"/"*" lets REES run its

@@ -233,6 +233,15 @@ export type GittensoryAiReviewInput = {
    * never affected (reference context only, never a new blocker/nit rule by itself).
    */
   impactMapContext?: string | null | undefined;
+  /**
+   * Repo quality-culture profile (#2995, flag-gated by GITTENSORY_REVIEW_CULTURE_PROFILE AND `.gittensory.yml`
+   * `review.culture_profile`). The caller builds this by deriving a compact profile from the repo's OWN merge
+   * history — typical PR size, common accepted labels (see `review/repo-culture-profile-wire`) — and it is
+   * appended to the USER prompt as additive reference context, exactly like `ragContext`. ADVISORY GROUNDING
+   * ONLY: it never becomes a gate/scoring input. When ABSENT (the default, flag-OFF) or an empty string, the
+   * user prompt is byte-identical to today — no section is appended.
+   */
+  cultureProfileContext?: string | null | undefined;
   /** Internal review observability metadata, stored with usage events. The caller must pass only public-safe,
    *  non-secret counters/paths; provider keys and raw prompt text never belong here. */
   observability?: Record<string, unknown> | null | undefined;
@@ -691,6 +700,11 @@ function buildUserPrompt(input: GittensoryAiReviewInput): string {
   // least one affected module). Absent/empty (the default) → the prompt is byte-identical to today.
   const impactMapSection = input.impactMapContext;
   if (impactMapSection) lines.push("", impactMapSection);
+  // Repo quality-culture profile (#2995): append the ADDITIVE "REPO QUALITY-CULTURE PROFILE" reference block
+  // when the caller supplied one (flag GITTENSORY_REVIEW_CULTURE_PROFILE + review.culture_profile both on).
+  // Absent/empty (the default) → the prompt is byte-identical. Reference-only grounding, never a gate input.
+  const cultureProfileSection = input.cultureProfileContext;
+  if (cultureProfileSection) lines.push("", cultureProfileSection);
   // Review-enrichment brief (#1472): append the external REES analysis block when the caller supplied one (flag
   // GITTENSORY_REVIEW_ENRICHMENT on AND REES_URL set). Absent/empty (the default) → the prompt is byte-identical.
   const enrichmentSection = input.enrichment?.promptSection;

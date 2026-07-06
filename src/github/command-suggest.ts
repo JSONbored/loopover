@@ -41,8 +41,7 @@ export function isKnownGittensoryCommandVerb(rawVerb: string, catalog: CommandSu
   const canonical = catalog.actionAliases[verb] ?? verb;
   return (
     catalog.mentionCommands.includes(canonical) ||
-    catalog.actionCommands.includes(canonical as (typeof catalog.actionCommands)[number]) ||
-    Object.prototype.hasOwnProperty.call(catalog.actionAliases, verb)
+    catalog.actionCommands.includes(canonical as (typeof catalog.actionCommands)[number])
   );
 }
 
@@ -64,4 +63,14 @@ export function suggestCommand(rawVerb: string, catalog: CommandSuggestCatalog):
 
 export function formatDidYouMeanLine(suggestion: string): string {
   return `- Did you mean \`@gittensory ${suggestion}\`?`;
+}
+
+/** Help-card prefix lines for an unrecognized verb, or empty when no close match exists. */
+export function buildDidYouMeanSections(
+  rawVerb: string | undefined,
+  suggest: (verb: string) => string | null,
+): string[] {
+  if (!rawVerb) return [];
+  const suggestion = suggest(rawVerb);
+  return suggestion !== null ? [formatDidYouMeanLine(suggestion), ""] : [];
 }

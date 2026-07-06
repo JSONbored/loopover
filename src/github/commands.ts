@@ -1,6 +1,6 @@
 import { AGENT_COMMAND_COMMENT_MARKER } from "./comments";
 import {
-  formatDidYouMeanLine,
+  buildDidYouMeanSections,
   suggestCommand as suggestCommandFromCatalog,
   type CommandSuggestCatalog,
 } from "./command-suggest";
@@ -692,12 +692,10 @@ function commandSections(
 }
 
 function helpSections(unknownVerb?: string | undefined): string[] {
-  const suggestion = unknownVerb ? suggestCommand(unknownVerb) : null;
-  const didYouMean = suggestion !== null ? [formatDidYouMeanLine(suggestion), ""] : [];
   return [
     "**Commands**",
     "",
-    ...didYouMean,
+    ...buildDidYouMeanSections(unknownVerb, suggestCommand),
     "- `@gittensory help` shows this command list.",
     "- `@gittensory ask <question>` answers contribution-quality Q&A with source citations and freshness.",
     "- `@gittensory preflight` summarizes public PR hygiene.",
@@ -1623,4 +1621,5 @@ export const githubCommandsInternals = {
   snapshotFreshnessFromWarnings,
   refreshSections,
   askSections,
+  helpSections,
 };

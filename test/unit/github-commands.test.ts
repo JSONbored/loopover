@@ -138,6 +138,16 @@ describe("GitHub mention commands", () => {
     expect(bareHelpBody).toContain("`@gittensory help` shows this command list.");
   });
 
+  it("helpSections renders did-you-mean only for close unknown verbs (#2170)", () => {
+    const typo = githubCommandsInternals.helpSections("reveiw");
+    expect(typo.join("\n")).toContain("Did you mean `@gittensory review`?");
+    const far = githubCommandsInternals.helpSections("zzzz");
+    expect(far.join("\n")).not.toContain("Did you mean");
+    const bare = githubCommandsInternals.helpSections();
+    expect(bare.join("\n")).not.toContain("Did you mean");
+    expect(bare.join("\n")).toContain("**Commands**");
+  });
+
   it("authorizes maintainers and confirmed miner PR authors only", () => {
     expect(isAuthorizedCommandActor({ commenterLogin: "reviewer", commenterAssociation: "OWNER" })).toMatchObject({
       authorized: true,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   COMMAND_SUGGEST_MAX_DISTANCE,
+  buildDidYouMeanSections,
   formatDidYouMeanLine,
   isKnownGittensoryCommandVerb,
   levenshteinDistance,
@@ -55,6 +56,10 @@ describe("suggestCommand", () => {
     expect(suggestCommand("xyzzyqwerty", catalog)).toBeNull();
   });
 
+  it("recognizes alias keys via their canonical target", () => {
+    expect(isKnownGittensoryCommandVerb("re-review", catalog)).toBe(true);
+  });
+
   it("keeps the first equally-close catalog entry when later targets are farther", () => {
     expect(suggestCommand("hel", catalog)).toBe("help");
   });
@@ -63,5 +68,18 @@ describe("suggestCommand", () => {
 describe("formatDidYouMeanLine", () => {
   it("renders a public-safe markdown hint", () => {
     expect(formatDidYouMeanLine("preflight")).toBe("- Did you mean `@gittensory preflight`?");
+  });
+});
+
+describe("buildDidYouMeanSections", () => {
+  const suggest = (verb: string) => suggestCommand(verb, catalog);
+
+  it("renders a hint for close typos and empty arrays otherwise", () => {
+    expect(buildDidYouMeanSections("reveiw", suggest)).toEqual([
+      "- Did you mean `@gittensory review`?",
+      "",
+    ]);
+    expect(buildDidYouMeanSections(undefined, suggest)).toEqual([]);
+    expect(buildDidYouMeanSections("zzzz", suggest)).toEqual([]);
   });
 });

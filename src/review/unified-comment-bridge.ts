@@ -321,6 +321,12 @@ export type UnifiedCommentBridgeArgs = {
   reviewEffort?: { band: 1 | 2 | 3 | 4 | 5; minutes: number } | undefined;
   /** Display-only caps from `review.max_findings` (#2049). */
   maxFindingsCaps?: { blockers: number | null; nits: number | null } | undefined;
+  /** `review.comment_verbosity` port (#2047): how much collapsible detail renders — `quiet` drops the Nits
+   *  and every extra collapsible section (blockers/gate result/signals are unaffected); `detailed` renders
+   *  every collapsible pre-expanded. Passed straight through to `renderUnifiedReviewComment`'s ctx. Default
+   *  OFF (the processor passes this only when the manifest opts in — see `resolveReviewPromptOverrides`'s
+   *  `commentVerbosity`). */
+  commentVerbosity?: "quiet" | "normal" | "detailed" | null | undefined;
   /** Line-anchored AI findings, one entry per inline finding (review.finding_categories port). When present +
    *  non-empty, a "Finding categories" collapsible (a count per security/correctness/performance/maintainability/
    *  tests/style category) is appended. A finding missing its own `category` falls back to
@@ -611,6 +617,7 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
     ...(args.heldForReview ? { heldForReview: true } : {}),
     ...(args.neverClosed ? { neverClosed: true } : {}),
     ...(args.preflightHeld ? { preflightHeld: true } : {}),
+    commentVerbosity: args.commentVerbosity,
   });
 
   // Prepend the marker verbatim (matching the legacy body, which leads with the marker then a blank line)

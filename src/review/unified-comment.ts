@@ -223,6 +223,12 @@ export interface UnifiedCommentContext {
   preflightHeld?: boolean;
   /** Public freshness marker for the posted/updated review comment. Rendered as UTC when provided. */
   reviewedAt?: string | number | Date | undefined;
+  /** `review.comment_verbosity`: how much of the comment's collapsible detail renders. `quiet` drops the
+   *  Nits collapsible and every `extraCollapsibles` section entirely (blockers/gate result/signals always
+   *  stay — this only trims decorative detail, never the merge/close-relevant signal); `detailed` renders
+   *  every collapsible pre-expanded (`<details open>`) instead of collapsed. `normal`/undefined (default) ⇒
+   *  byte-identical to today. (#2047) */
+  commentVerbosity?: "quiet" | "normal" | "detailed" | null | undefined;
 }
 
 const STATUS_META: Record<UnifiedCommentStatus, { alert: string; square: string; icon: string }> = {
@@ -479,17 +485,19 @@ function signalTable(input: UnifiedReviewInput, ctx: UnifiedCommentContext): str
   return ["| Signal | Result | Evidence |", "|---|---|---|", ...lines].join("\n");
 }
 
-function details(title: string, body: string, sub?: string): string {
+/** `open`: render pre-expanded (`<details open>`) — used by `review.comment_verbosity: detailed` (#2047).
+ *  Default collapsed, matching today's byte-identical behavior. */
+function details(title: string, body: string, sub?: string, open = false): string {
   const safeTitle = escapePublicHtmlAngles(title);
   const safeSub = sub ? ` — ${escapePublicHtmlAngles(sub)}` : "";
-  return `<details><summary><b>${safeTitle}</b>${safeSub}</summary>\n\n${escapePublicHtmlAngles(body)}\n</details>`;
+  return `<details${open ? " open" : ""}><summary><b>${safeTitle}</b>${safeSub}</summary>\n\n${escapePublicHtmlAngles(body)}\n</details>`;
 }
 
 /** Like details(), but the body is TRUSTED raw HTML and is NOT angle-escaped. Used only for the visual
  *  before/after table, whose body is built solely from first-party minted shot URLs + route paths (see
  *  buildBeforeAfterCollapsible). The title is still escaped. */
-function detailsRaw(title: string, body: string): string {
-  return `<details><summary><b>${escapePublicHtmlAngles(title)}</b></summary>\n\n${body}\n</details>`;
+function detailsRaw(title: string, body: string, open = false): string {
+  return `<details${open ? " open" : ""}><summary><b>${escapePublicHtmlAngles(title)}</b></summary>\n\n${body}\n</details>`;
 }
 
 /** Wrap the assembled body in a GitHub alert blockquote — this is the full-comment colored sidebar. */
@@ -511,6 +519,11 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
   const meta = STATUS_META[status];
   const brand = escapePublicHtmlAngles(ctx.brand ?? "Gittensory review");
   const reviewTimestamp = formatReviewTimestamp(ctx.reviewedAt);
+  // review.comment_verbosity (#2047): quiet drops every collapsible (Nits + extraCollapsibles) — blockers,
+  // the gate result, and the signal table are never gated by verbosity, only decorative detail is. detailed
+  // renders every collapsible pre-expanded. normal/unset ⇒ byte-identical to today.
+  const verbosity = ctx.commentVerbosity ?? "normal";
+  const collapsiblesOpen = verbosity === "detailed";
 
   const blocks: string[] = [
     meta.square.repeat(12),
@@ -524,11 +537,11 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
 
   const nitsAll = dedupeLines(input.nits ?? []);
   const nitsTrunc = truncateFindingsForDisplay(nitsAll, input.maxFindingsCaps?.nits);
-  if (nitsAll.length) {
+  if (nitsAll.length && verbosity !== "quiet") {
     const nitsBody = nitsTrunc.shown.length
       ? appendMoreFooter(taskList(nitsTrunc.shown), nitsTrunc.hiddenCount)
       : `_+${nitsTrunc.hiddenCount} more_`;
-    blocks.push(details("Nits", nitsBody, `${nitsAll.length} non-blocking`));
+    blocks.push(details("Nits", nitsBody, `${nitsAll.length} non-blocking`, collapsiblesOpen));
   }
 
   const blockersAll = dedupeLines(input.blockers ?? []);
@@ -548,8 +561,12 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
   if (failingChecks) blocks.push(`**CI checks failing**\n${failingChecks}`);
 
   blocks.push(signalTable(input, ctx));
-  for (const c of ctx.extraCollapsibles ?? []) {
-    if (c.body.trim()) blocks.push(c.rawHtml ? detailsRaw(c.title, c.body.trim()) : details(c.title, c.body.trim()));
+  if (verbosity !== "quiet") {
+    for (const c of ctx.extraCollapsibles ?? []) {
+      if (c.body.trim()) {
+        blocks.push(c.rawHtml ? detailsRaw(c.title, c.body.trim(), collapsiblesOpen) : details(c.title, c.body.trim(), undefined, collapsiblesOpen));
+      }
+    }
   }
 
   // Color-coded status legend (key) — a quiet footer mapping each headline color/icon to its meaning, so a

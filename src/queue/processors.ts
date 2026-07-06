@@ -9624,6 +9624,7 @@ async function maybePublishPrPublicSurface(
           ? { findingCategories: aiReview.inlineFindings }
           : {}),
         maxFindingsCaps: reviewConfig.maxFindings,
+        commentVerbosity: reviewConfig.commentVerbosity,
       });
     } else {
       deterministicBody = buildPublicPrIntelligenceComment(commentArgs);

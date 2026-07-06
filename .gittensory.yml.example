@@ -414,6 +414,12 @@ review:
   #   blockers: 5
   #   nits: 8
 
+  # How much of the unified review comment's collapsible detail renders (#2047). `quiet` drops the Nits
+  # collapsible and every extra collapsible section (blockers/gate result/signals are unaffected — this only
+  # trims decorative detail); `detailed` renders every collapsible pre-expanded instead of collapsed.
+  # quiet | normal | detailed. Default: null/normal (byte-identical).
+  # comment_verbosity: normal
+
   # Inline-comment layer toggles (#1956 / #1958). Bool | null. Default: null/false — byte-identical.
   # Requires operator flag GITTENSORY_REVIEW_INLINE_COMMENTS + cutover allowlist + review.inline_comments: true.
   # inline_comments: false

@@ -601,6 +601,51 @@ describe("review.max_findings display caps (#2049)", () => {
   });
 });
 
+describe("review.comment_verbosity (#2047)", () => {
+  const input: UnifiedReviewInput = {
+    ...base,
+    decision: "close",
+    blockers: ["a real blocker"],
+    nits: ["a nit"],
+  };
+  const extraCtx: UnifiedCommentContext = { extraCollapsibles: [{ title: "Changed files", body: "src/a.ts +5" }] };
+
+  it("quiet drops the Nits collapsible and every extra collapsible, but keeps blockers/signal table", () => {
+    const md = renderUnifiedReviewComment(input, { ...extraCtx, commentVerbosity: "quiet" });
+    expect(md).not.toContain("<summary><b>Nits</b>");
+    expect(md).not.toContain("Changed files");
+    expect(md).toContain("a real blocker");
+    expect(md).toContain("**Code review**"); // signal table row always present
+  });
+
+  it("detailed renders every collapsible pre-expanded (<details open>), including a rawHtml collapsible", () => {
+    const rawCtx: UnifiedCommentContext = { extraCollapsibles: [{ title: "Visual preview", body: "<table></table>", rawHtml: true }] };
+    const md = renderUnifiedReviewComment(input, { ...extraCtx, commentVerbosity: "detailed" });
+    expect(md).toContain("<details open><summary><b>Nits</b>");
+    expect(md).toContain("<details open><summary><b>Changed files</b>");
+    const rawMd = renderUnifiedReviewComment(input, { ...rawCtx, commentVerbosity: "detailed" });
+    expect(rawMd).toContain("<details open><summary><b>Visual preview</b>");
+    // Normal/unset verbosity leaves a rawHtml collapsible collapsed too (no "open" attribute).
+    const rawMdNormal = renderUnifiedReviewComment(input, rawCtx);
+    expect(rawMdNormal).toContain("<details><summary><b>Visual preview</b>");
+    expect(rawMdNormal).not.toContain("<details open>");
+  });
+
+  it("normal is byte-identical to today (collapsed, all sections present)", () => {
+    const withNormal = renderUnifiedReviewComment(input, { ...extraCtx, commentVerbosity: "normal" });
+    const withoutField = renderUnifiedReviewComment(input, extraCtx);
+    expect(withNormal).toBe(withoutField);
+    expect(withNormal).toContain("<details><summary><b>Nits</b>");
+    expect(withNormal).toContain("<details><summary><b>Changed files</b>");
+  });
+
+  it("an unset (null) verbosity resolves to normal, same as omitting the field", () => {
+    const withNull = renderUnifiedReviewComment(input, { ...extraCtx, commentVerbosity: null });
+    const withoutField = renderUnifiedReviewComment(input, extraCtx);
+    expect(withNull).toBe(withoutField);
+  });
+});
+
 describe("shouldPostReviewingPlaceholder", () => {
   it("returns true when a live review refresh will post a comment", () => {
     expect(shouldPostReviewingPlaceholder({ reviewWillRun: true, mode: "live", willComment: true })).toBe(true);

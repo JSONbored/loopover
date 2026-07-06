@@ -132,13 +132,27 @@ describe("review.auto_review wiring (#1954)", () => {
         authorBlacklisted: false,
         isFrozenForManualReview: false,
         repoFullName: "acme/widgets",
-        pr: { number: 3, title: "WIP", baseRef: "main", isDraft: true },
+        pr: { number: 3, title: "WIP", baseRef: "main", isDraft: true, labels: [] },
         author: "alice",
         deliveryId: "d3",
         headSha: "sha3",
       }),
     ).resolves.toEqual({ skipReason: "review skipped (draft)", reviewManifest: manifest });
     expect(auditSpy).toHaveBeenCalled();
+
+    const labelManifest = parseFocusManifest({ review: { auto_review: { skip_labels: ["do-not-review"] } } });
+    loadSpy.mockResolvedValueOnce(labelManifest);
+    await expect(
+      resolveAutoReviewSkipForPullRequest({} as Env, {
+        authorBlacklisted: false,
+        isFrozenForManualReview: false,
+        repoFullName: "acme/widgets",
+        pr: { number: 6, title: "feat", baseRef: "main", isDraft: false, labels: ["Do-Not-Review"] },
+        author: "alice",
+        deliveryId: "d6",
+        headSha: "sha6",
+      }),
+    ).resolves.toEqual({ skipReason: "review skipped (label)", reviewManifest: labelManifest });
 
     loadSpy.mockRejectedValueOnce(new Error("manifest unavailable"));
     await expect(

@@ -3183,6 +3183,8 @@ describe("review.auto_review (#1954 / #2038–#2041)", () => {
     expect(reviewConfigToJson(authorsOnly.review)).toEqual({ auto_review: { ignore_authors: ["*[bot]"] } });
     const keywordsOnly = parseFocusManifest({ review: { auto_review: { ignore_title_keywords: ["DRAFT"] } } });
     expect(reviewConfigToJson(keywordsOnly.review)).toEqual({ auto_review: { ignore_title_keywords: ["DRAFT"] } });
+    const labelsOnly = parseFocusManifest({ review: { auto_review: { skip_labels: ["do-not-review"] } } });
+    expect(reviewConfigToJson(labelsOnly.review)).toEqual({ auto_review: { skip_labels: ["do-not-review"] } });
     const basesOnly = parseFocusManifest({ review: { auto_review: { base_branches: ["main"] } } });
     expect(reviewConfigToJson(basesOnly.review)).toEqual({ auto_review: { base_branches: ["main"] } });
   });
@@ -3194,6 +3196,9 @@ describe("review.auto_review (#1954 / #2038–#2041)", () => {
     const deduped = parseFocusManifest({ review: { auto_review: { skip_labels: ["WIP", "wip", ""] } } });
     expect(deduped.review.autoReview.skipLabels).toEqual(["wip"]);
     expect(deduped.warnings.some((w) => /skip_labels\[2\]/.test(w))).toBe(true);
+    const unsafe = parseFocusManifest({ review: { auto_review: { skip_labels: ["wip", "reward payout"] } } });
+    expect(unsafe.review.autoReview.skipLabels).toEqual(["wip"]);
+    expect(unsafe.warnings.some((w) => /skip_labels\[1\]/.test(w))).toBe(true);
     const many = parseFocusManifest({
       review: { auto_review: { skip_labels: Array.from({ length: 60 }, (_, i) => `label${i}`) } },
     });

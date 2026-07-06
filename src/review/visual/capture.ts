@@ -19,7 +19,7 @@ import {
   getPreviewBuildState,
   parseRepo,
 } from "./preview-url";
-import { captureShot, DESKTOP_VIEWPORT, MOBILE_VIEWPORT, type Viewport } from "./shot";
+import { captureShot, DESKTOP_VIEWPORT, MOBILE_VIEWPORT, type ShotTheme, type Viewport } from "./shot";
 import { compareCapturedScreenshots, isVisualDiffAvailable, type VisualDiffOutcome } from "./pixel-diff";
 
 const NAMESPACE = "gittensory";
@@ -31,9 +31,12 @@ const MAX_ROUTES = 2;
 
 /** A single captured route's before/after shot URLs (desktop + mobile), plus an optional pixel-diff overlay
  *  per viewport (#3674) — self-host only (isVisualDiffAvailable), and only when the diff clears the visual-
- *  diff module's own noise threshold; undefined slot ⇒ a dash cell either way. */
+ *  diff module's own noise threshold; undefined slot ⇒ a dash cell either way. `theme` is set only when
+ *  `review.visual.themes` (#3678) configured more than the implicit single default capture — undefined means
+ *  "the one, un-emulated default render", exactly like today. */
 export interface CaptureRoute {
   path: string;
+  theme?: ShotTheme | undefined;
   beforeUrl?: string | undefined;
   beforeUrlMobile?: string | undefined;
   afterUrl?: string | undefined;
@@ -153,14 +156,21 @@ async function capturePage(
   // shot is reused across many PR reviews). Costs one extra read on a cache hit; false (every existing
   // caller) skips it entirely, so this is zero-cost unless a caller opts in.
   includeBytes = false,
+  // #3678: emulate prefers-color-scheme before rendering. Undefined (every pre-#3678 caller) ⇒ no emulation
+  // call and an UNCHANGED cache key — byte-identical to today.
+  theme?: ShotTheme | undefined,
 ): Promise<{ url?: string | undefined; png?: Uint8Array | undefined }> {
   if (!page) return {};
   const shotBase = env.PUBLIC_API_ORIGIN; // this worker's public origin (serves /gittensory/shot)
-  const onDemand = shotBase ? `${shotBase}/${NAMESPACE}/shot?url=${encodeURIComponent(page)}&w=${viewport.width}&h=${viewport.height}` : page;
+  // Carries the theme (#3678) so a LATER on-demand fetch of this exact URL (e.g. a failed/never-persisted
+  // render retried by GitHub's image proxy) still requests the matching prefers-color-scheme, not the
+  // default — handleShot's Mode B reads this same &theme= param. Omitted when unset, unchanged from today.
+  const onDemand = shotBase ? `${shotBase}/${NAMESPACE}/shot?url=${encodeURIComponent(page)}&w=${viewport.width}&h=${viewport.height}${theme ? `&theme=${theme}` : ""}` : page;
 
   if (env.REVIEW_AUDIT) {
-    // Key includes the viewport so desktop + mobile of the same page don't collide in R2.
-    const fingerprint = await sha256Hex(`${target.headSha ?? target.prNumber}:${slot}:${viewportName}:${page}`);
+    // Key includes the viewport (and, when set, the theme) so desktop/mobile and light/dark shots of the
+    // same page don't collide in R2.
+    const fingerprint = await sha256Hex(`${target.headSha ?? target.prNumber}:${slot}:${viewportName}:${page}${theme ? `:${theme}` : ""}`);
     const key = `${NAMESPACE}/shots/${fingerprint.slice(0, 40)}.png`;
     const url = shotBase ? `${shotBase}/${NAMESPACE}/shot?key=${encodeURIComponent(key)}` : onDemand;
     const cached = await env.REVIEW_AUDIT.get(key).catch(() => null);
@@ -169,7 +179,7 @@ async function capturePage(
       const bytes = await new Response(cached.body).arrayBuffer().then((buf) => new Uint8Array(buf)).catch(() => undefined);
       return { url, ...(bytes ? { png: bytes } : {}) };
     }
-    const { png, authWalled } = await captureShot(env, page, viewport).catch(() => ({ png: null, authWalled: false }));
+    const { png, authWalled } = await captureShot(env, page, viewport, theme ? { theme } : {}).catch(() => ({ png: null, authWalled: false }));
     // A protected route that redirected to a sign-in wall: show an honest "requires authentication"
     // placeholder rather than caching/serving a screenshot of the login screen.
     if (authWalled) {
@@ -192,19 +202,21 @@ async function uploadDiffImage(
   path: string,
   viewportName: "desktop" | "mobile",
   diff: VisualDiffOutcome | null,
+  theme?: ShotTheme | undefined,
 ): Promise<string | undefined> {
   if (!diff?.diffImagePng) return undefined;
   const shotBase = env.PUBLIC_API_ORIGIN;
   if (!env.REVIEW_AUDIT || !shotBase) return undefined;
-  const fingerprint = await sha256Hex(`${target.headSha ?? target.prNumber}:diff:${viewportName}:${path}`);
+  const fingerprint = await sha256Hex(`${target.headSha ?? target.prNumber}:diff:${viewportName}:${path}${theme ? `:${theme}` : ""}`);
   const key = `${NAMESPACE}/shots/${fingerprint.slice(0, 40)}-diff.png`;
   await env.REVIEW_AUDIT.put(key, diff.diffImagePng, { httpMetadata: { contentType: "image/png" } }).catch(() => undefined);
   return `${shotBase}/${NAMESPACE}/shot?key=${encodeURIComponent(key)}`;
 }
 
-/** Per-repo `review.visual` config, as resolved by the caller from the manifest (#3609 / #3610). Absent ⇒
- *  byte-identical to today (GitHub-native discovery, automatic route inference, built-in route cap). */
-export type VisualCaptureConfig = { preview?: VisualPreviewInput | null | undefined; routes?: VisualRoutesInput | null | undefined };
+/** Per-repo `review.visual` config, as resolved by the caller from the manifest (#3609 / #3610 / #3678).
+ *  Absent ⇒ byte-identical to today (GitHub-native discovery, automatic route inference, single default-
+ *  theme capture, built-in route cap). */
+export type VisualCaptureConfig = { preview?: VisualPreviewInput | null | undefined; routes?: VisualRoutesInput | null | undefined; themes?: readonly ShotTheme[] | null | undefined };
 
 /**
  * Build the before/after capture for a PR: resolve the preview URL, derive routes from the changed UI files,
@@ -266,38 +278,46 @@ export async function buildCapture(env: Env, token: string, target: CaptureTarge
   // so capturePage never pays the extra cached-bytes-read cost unless self-host's real diff module is active.
   const diffAvailable = isVisualDiffAvailable();
   const routes = resolveVisualRoutes(visualFiles, visualConfig?.routes);
+  // #3678: an explicit, non-empty theme list captures the SAME routes once per theme, each tagged on its
+  // CaptureRoute entry. [undefined] (the default, absent config) renders the single un-emulated default —
+  // capturePage/captureShot already treat an undefined theme as "no emulation call at all", so this one
+  // iteration is byte-identical to every pre-#3678 call.
+  const themes: readonly (ShotTheme | undefined)[] = visualConfig?.themes && visualConfig.themes.length > 0 ? visualConfig.themes : [undefined];
   const captureRoutes: CaptureRoute[] = [];
-  for (const path of routes) {
-    const beforePage = prodBase ? joinUrl(prodBase, path) : "";
-    const afterPage = previewBase ? joinUrl(previewBase, path) : "";
-    // Render desktop + mobile for each slot in parallel (4 PNGs/route) to bound wall-clock.
-    const [beforeShot, beforeMobileShot, afterShot, afterMobileShot] = await Promise.all([
-      capturePage(env, target, beforePage, "before", "desktop", DESKTOP_VIEWPORT, diffAvailable),
-      capturePage(env, target, beforePage, "before", "mobile", MOBILE_VIEWPORT, diffAvailable),
-      afterPage ? capturePage(env, target, afterPage, "after", "desktop", DESKTOP_VIEWPORT, diffAvailable) : Promise.resolve<{ url?: string | undefined; png?: Uint8Array | undefined }>({ url: afterPlaceholder }),
-      afterPage ? capturePage(env, target, afterPage, "after", "mobile", MOBILE_VIEWPORT, diffAvailable) : Promise.resolve<{ url?: string | undefined; png?: Uint8Array | undefined }>({ url: afterPlaceholder }),
-    ]);
-    // A diff needs BOTH sides' real bytes — a placeholder/dash slot (no preview yet, auth-walled, render
-    // failure) has no `png`, so compareCapturedScreenshots degrades to null exactly like a missing shot does.
-    const [desktopDiff, mobileDiff] = diffAvailable
-      ? await Promise.all([
-          compareCapturedScreenshots(beforeShot.png, afterShot.png),
-          compareCapturedScreenshots(beforeMobileShot.png, afterMobileShot.png),
-        ])
-      : [null, null];
-    const [diffUrl, diffUrlMobile] = await Promise.all([
-      uploadDiffImage(env, target, path, "desktop", desktopDiff),
-      uploadDiffImage(env, target, path, "mobile", mobileDiff),
-    ]);
-    captureRoutes.push({
-      path,
-      beforeUrl: beforeShot.url,
-      beforeUrlMobile: beforeMobileShot.url,
-      afterUrl: afterShot.url,
-      afterUrlMobile: afterMobileShot.url,
-      ...(diffUrl ? { diffUrl } : {}),
-      ...(diffUrlMobile ? { diffUrlMobile } : {}),
-    });
+  for (const theme of themes) {
+    for (const path of routes) {
+      const beforePage = prodBase ? joinUrl(prodBase, path) : "";
+      const afterPage = previewBase ? joinUrl(previewBase, path) : "";
+      // Render desktop + mobile for each slot in parallel (4 PNGs/route) to bound wall-clock.
+      const [beforeShot, beforeMobileShot, afterShot, afterMobileShot] = await Promise.all([
+        capturePage(env, target, beforePage, "before", "desktop", DESKTOP_VIEWPORT, diffAvailable, theme),
+        capturePage(env, target, beforePage, "before", "mobile", MOBILE_VIEWPORT, diffAvailable, theme),
+        afterPage ? capturePage(env, target, afterPage, "after", "desktop", DESKTOP_VIEWPORT, diffAvailable, theme) : Promise.resolve<{ url?: string | undefined; png?: Uint8Array | undefined }>({ url: afterPlaceholder }),
+        afterPage ? capturePage(env, target, afterPage, "after", "mobile", MOBILE_VIEWPORT, diffAvailable, theme) : Promise.resolve<{ url?: string | undefined; png?: Uint8Array | undefined }>({ url: afterPlaceholder }),
+      ]);
+      // A diff needs BOTH sides' real bytes — a placeholder/dash slot (no preview yet, auth-walled, render
+      // failure) has no `png`, so compareCapturedScreenshots degrades to null exactly like a missing shot does.
+      const [desktopDiff, mobileDiff] = diffAvailable
+        ? await Promise.all([
+            compareCapturedScreenshots(beforeShot.png, afterShot.png),
+            compareCapturedScreenshots(beforeMobileShot.png, afterMobileShot.png),
+          ])
+        : [null, null];
+      const [diffUrl, diffUrlMobile] = await Promise.all([
+        uploadDiffImage(env, target, path, "desktop", desktopDiff, theme),
+        uploadDiffImage(env, target, path, "mobile", mobileDiff, theme),
+      ]);
+      captureRoutes.push({
+        path,
+        ...(theme ? { theme } : {}),
+        beforeUrl: beforeShot.url,
+        beforeUrlMobile: beforeMobileShot.url,
+        afterUrl: afterShot.url,
+        afterUrlMobile: afterMobileShot.url,
+        ...(diffUrl ? { diffUrl } : {}),
+        ...(diffUrlMobile ? { diffUrlMobile } : {}),
+      });
+    }
   }
   return { routes: captureRoutes, previewPending };
 }

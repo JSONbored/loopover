@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   continue: vi.fn(async () => undefined),
   close: vi.fn(async () => undefined),
   launch: vi.fn(),
+  emulateMediaFeatures: vi.fn(async () => undefined),
 }));
 
 vi.mock("@cloudflare/puppeteer", () => ({
@@ -60,6 +61,7 @@ describe("visual screenshot on-demand SSRF guard", () => {
             if (event === "request") onRequest = callback;
           }),
           setViewport: vi.fn(async () => undefined),
+          emulateMediaFeatures: mocks.emulateMediaFeatures,
           goto: vi.fn(async (url: string) => {
             onRequest?.(makeRequest(url));
             if (mocks.finalUrl !== url) onRequest?.(makeRequest(mocks.finalUrl));
@@ -118,6 +120,39 @@ describe("visual screenshot on-demand SSRF guard", () => {
     await handleShot(request("https://preview.pages.dev/page"), env());
 
     expect(mocks.screenshot).toHaveBeenCalledWith({ type: "png", fullPage: true });
+  });
+
+  it("never emulates a color scheme when no theme is requested — every existing caller, byte-identical to today", async () => {
+    mocks.finalUrl = "https://preview.pages.dev/page";
+    await captureShot(env(), "https://preview.pages.dev/page");
+    expect(mocks.emulateMediaFeatures).not.toHaveBeenCalled();
+  });
+
+  it("emulates prefers-color-scheme when a theme is requested (#3678)", async () => {
+    mocks.finalUrl = "https://preview.pages.dev/page";
+    await captureShot(env(), "https://preview.pages.dev/page", undefined, { theme: "dark" });
+    expect(mocks.emulateMediaFeatures).toHaveBeenCalledWith([{ name: "prefers-color-scheme", value: "dark" }]);
+  });
+
+  it("handleShot's on-demand render reads &theme= and emulates it (#3678)", async () => {
+    mocks.finalUrl = "https://preview.pages.dev/page";
+    const response = await handleShot(shotRequest(`url=${encodeURIComponent("https://preview.pages.dev/page")}&theme=dark`), env());
+    expect(response.status).toBe(200);
+    expect(mocks.emulateMediaFeatures).toHaveBeenCalledWith([{ name: "prefers-color-scheme", value: "dark" }]);
+  });
+
+  it("handleShot ignores an unrecognized &theme= value instead of rejecting the request", async () => {
+    mocks.finalUrl = "https://preview.pages.dev/page";
+    const response = await handleShot(shotRequest(`url=${encodeURIComponent("https://preview.pages.dev/page")}&theme=sepia`), env());
+    expect(response.status).toBe(200);
+    expect(mocks.emulateMediaFeatures).not.toHaveBeenCalled();
+  });
+
+  it("handleShot never emulates a color scheme when &theme= is absent — byte-identical to pre-#3678", async () => {
+    mocks.finalUrl = "https://preview.pages.dev/page";
+    const response = await handleShot(request("https://preview.pages.dev/page"), env());
+    expect(response.status).toBe(200);
+    expect(mocks.emulateMediaFeatures).not.toHaveBeenCalled();
   });
 
   it("captureShot rejects an unsafe target before launching the browser (defense-in-depth)", async () => {

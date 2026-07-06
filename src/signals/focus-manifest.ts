@@ -457,7 +457,11 @@ export const EMPTY_SELF_HOST_AI_MODEL_CONFIG: SelfHostAiModelConfig = {
 export type VisualConfig = {
   preview: VisualPreviewConfig;
   routes: VisualRoutesConfig;
+  themes: VisualTheme[];
 };
+
+/** A `prefers-color-scheme` value the capture pipeline can emulate before rendering (#3678). */
+export type VisualTheme = "light" | "dark";
 
 export type VisualPreviewConfig = {
   /** `review.visual.preview.url_template`: the repo's "after" preview URL, with `{number}` (PR number),
@@ -489,6 +493,7 @@ export type VisualRoutesConfig = {
 export const EMPTY_VISUAL_CONFIG: VisualConfig = {
   preview: { urlTemplate: null },
   routes: { paths: [], maxRoutes: null },
+  themes: [],
 };
 
 /** One `review.path_instructions[]` entry: a manifest path glob + the public-safe instructions to apply when a
@@ -1819,7 +1824,31 @@ function parseSelfHostAiModelConfig(value: JsonValue | undefined, warnings: stri
 }
 
 function visualConfigPresent(config: VisualConfig): boolean {
-  return config.preview.urlTemplate !== null || config.routes.paths.length > 0 || config.routes.maxRoutes !== null;
+  return config.preview.urlTemplate !== null || config.routes.paths.length > 0 || config.routes.maxRoutes !== null || config.themes.length > 0;
+}
+
+const VISUAL_THEME_VALUES: readonly VisualTheme[] = ["light", "dark"];
+
+/** Parse `review.visual.themes` — which `prefers-color-scheme` variants to capture (#3678). Empty/default ⇒
+ *  the capture pipeline falls back to a single light-theme render, byte-identical to today. Unlike
+ *  `routes.paths` (an open-ended glob list), this is a closed 2-value enum, so entries are validated against
+ *  it directly rather than reusing the generic glob-list parser. */
+function parseVisualThemes(value: JsonValue | undefined, warnings: string[]): VisualTheme[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    warnings.push(`Manifest "review.visual.themes" must be a list of "light"/"dark"; ignoring it.`);
+    return [];
+  }
+  const out: VisualTheme[] = [];
+  for (const [index, entry] of value.entries()) {
+    const theme = typeof entry === "string" ? (entry.trim().toLowerCase() as VisualTheme) : undefined;
+    if (!theme || !VISUAL_THEME_VALUES.includes(theme)) {
+      warnings.push(`Manifest "review.visual.themes[${index}]" must be "light" or "dark"; ignoring it.`);
+      continue;
+    }
+    if (!out.includes(theme)) out.push(theme);
+  }
+  return out;
 }
 
 // `{number}`/`{head_sha}`/`{head_sha_short}` are GitHub-controlled facts about the PR (never attacker-supplied
@@ -1851,12 +1880,13 @@ function parseVisualUrlTemplate(value: JsonValue | undefined, warnings: string[]
   return template;
 }
 
-/** Parse `review.visual` — per-repo before/after screenshot-capture config (#3609 preview / #3610 routes). */
+/** Parse `review.visual` — per-repo before/after screenshot-capture config (#3609 preview / #3610 routes /
+ *  #3678 themes). */
 function parseVisualConfig(value: JsonValue | undefined, warnings: string[]): VisualConfig {
-  if (value === undefined || value === null) return { preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null } };
+  if (value === undefined || value === null) return { ...EMPTY_VISUAL_CONFIG };
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "review.visual" must be a mapping; ignoring it.`);
-    return { preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null } };
+    return { ...EMPTY_VISUAL_CONFIG };
   }
   const record = value as Record<string, JsonValue>;
 
@@ -1873,7 +1903,9 @@ function parseVisualConfig(value: JsonValue | undefined, warnings: string[]): Vi
   const paths = routesRecord ? parseManifestGlobList(routesRecord.paths, "review.visual.routes.paths", warnings) : [];
   const maxRoutes = routesRecord ? normalizeOptionalPositiveInteger(routesRecord.max_routes, "review.visual.routes.max_routes", warnings) : null;
 
-  return { preview: { urlTemplate }, routes: { paths, maxRoutes } };
+  const themes = parseVisualThemes(record.themes, warnings);
+
+  return { preview: { urlTemplate }, routes: { paths, maxRoutes }, themes };
 }
 
 function parseAutoReviewTitleKeywords(value: JsonValue | undefined, warnings: string[]): string[] {
@@ -2135,6 +2167,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
       if (review.visual.routes.maxRoutes !== null) routes.max_routes = review.visual.routes.maxRoutes;
       visual.routes = routes;
     }
+    if (review.visual.themes.length > 0) visual.themes = [...review.visual.themes];
     out.visual = visual;
   }
   if (review.linkedIssueSatisfaction !== null) out.linkedIssueSatisfaction = review.linkedIssueSatisfaction;

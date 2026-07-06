@@ -824,6 +824,11 @@ settings:
 #       # Overrides the built-in cap (2) on how many routes get screenshotted per PR, whether they come from
 #       # `paths` above or automatic inference. Positive integer or null. Default: null (built-in default).
 #       max_routes: 3
+#     # Which `prefers-color-scheme` variants to capture (#3678). List of "light"/"dark", each rendered as a
+#     # separate before/after row. Empty/default ⇒ a single light-theme capture, byte-identical to today.
+#     themes:
+#       - light
+#       - dark
 #   # Maintainer overrides for the public review-panel CONTENT (not what gittensory measures). The
 #   # Gittensor attribution + register link is always appended to the footer regardless; maintainer text
 #   # failing the public-safe filter is dropped, never published.

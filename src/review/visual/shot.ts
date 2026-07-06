@@ -20,8 +20,13 @@ import puppeteer from "@cloudflare/puppeteer";
 import { isSafeHttpUrl } from "../content-lane/safe-url";
 
 export type Viewport = { width: number; height: number };
+/** A `prefers-color-scheme` value the renderer can emulate before capture (#3678). */
+export type ShotTheme = "light" | "dark";
 export interface CaptureShotOptions {
   isAllowedUrl?: (targetUrl: string) => boolean;
+  /** Emulate `prefers-color-scheme: <theme>` before navigation (#3678). Omitted (every existing caller) ⇒
+   *  no emulation call at all — Chromium's own unconfigured default, byte-identical to today. */
+  theme?: ShotTheme;
 }
 type ScreenshotRequest = {
   url(): string;
@@ -149,6 +154,7 @@ export async function captureShot(env: Env, url: string, viewport: Viewport = VI
       request.continue().catch(() => undefined);
     });
     await page.setViewport(viewport);
+    if (opts.theme) await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: opts.theme }]);
     await page.goto(url, { waitUntil: "networkidle0", timeout: 20000 });
     if (!isSafeHttpUrl(page.url()) || (opts.isAllowedUrl && !opts.isAllowedUrl(page.url()))) {
       console.log(JSON.stringify({ ev: "render_screenshot_redirect_blocked", url, final: page.url().slice(0, 200) }));
@@ -212,14 +218,18 @@ export async function handleShot(request: Request, env: Env, opts: ShotOptions =
     });
   }
 
-  // Mode B: render on demand (host-allowlisted + SSRF-guarded). Optional &w=&h= selects the viewport.
+  // Mode B: render on demand (host-allowlisted + SSRF-guarded). Optional &w=&h= selects the viewport;
+  // optional &theme= (#3678) emulates prefers-color-scheme — an unrecognized value is ignored (falls back to
+  // no emulation) rather than rejecting the whole request over a cosmetic param.
   const target = params.get("url");
   if (!target || !isSafeHttpUrl(target)) return new Response("bad url", { status: 400 });
   if (!isAllowedHost(target, env, opts.productionUrl)) return new Response("forbidden host", { status: 403 });
   const w = Number(params.get("w"));
   const h = Number(params.get("h"));
   const viewport: Viewport = Number.isFinite(w) && w > 0 && Number.isFinite(h) && h > 0 ? { width: Math.min(w, 2560), height: Math.min(h, 2560) } : DESKTOP_VIEWPORT;
-  const png = await renderScreenshot(env, target, viewport, { isAllowedUrl: (candidate) => isAllowedHost(candidate, env, opts.productionUrl) });
+  const requestedTheme = params.get("theme");
+  const theme: ShotTheme | undefined = requestedTheme === "light" || requestedTheme === "dark" ? requestedTheme : undefined;
+  const png = await renderScreenshot(env, target, viewport, { isAllowedUrl: (candidate) => isAllowedHost(candidate, env, opts.productionUrl), ...(theme ? { theme } : {}) });
   if (!png) return new Response("screenshot unavailable", { status: 502 });
   return new Response(png, {
     headers: { "content-type": "image/png", "cache-control": "public, max-age=300" },

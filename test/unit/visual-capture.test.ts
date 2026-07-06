@@ -616,3 +616,113 @@ describe("buildCapture pixel-diff wiring (#3674)", () => {
     }
   });
 });
+
+describe("buildCapture theme matrix (#3678)", () => {
+  it("produces exactly one untagged route per path when no themes are configured — byte-identical to pre-#3678", async () => {
+    const result = await buildCapture(
+      createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com" }),
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 20, previewUrl: "https://preview.example.com" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+    );
+    expect(result.routes).toHaveLength(1);
+    expect(result.routes[0]?.theme).toBeUndefined();
+  });
+
+  it("produces one tagged route per (path, theme) pair when themes are configured, with distinct shot URLs per theme", async () => {
+    const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() });
+    const result = await buildCapture(
+      env,
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 21, previewUrl: "https://preview.example.com" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      undefined,
+      { themes: ["light", "dark"] },
+    );
+    expect(result.routes).toHaveLength(2);
+    expect(result.routes.map((r) => r.theme)).toEqual(["light", "dark"]);
+    expect(result.routes[0]?.path).toBe(result.routes[1]?.path);
+    // Different themes must never collide on the same cache key/URL.
+    expect(result.routes[0]?.beforeUrl).not.toBe(result.routes[1]?.beforeUrl);
+  });
+
+  it("tags the single route with its theme even when only one theme is explicitly configured", async () => {
+    const result = await buildCapture(
+      createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com" }),
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 22, previewUrl: "https://preview.example.com" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      undefined,
+      { themes: ["dark"] },
+    );
+    expect(result.routes).toHaveLength(1);
+    expect(result.routes[0]?.theme).toBe("dark");
+  });
+
+  it("passes the configured theme through to captureShot's render options", async () => {
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: null, authWalled: false });
+    try {
+      await buildCapture(
+        createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() }),
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 23, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+        undefined,
+        { themes: ["dark"] },
+      );
+      expect(captureShotSpy).toHaveBeenCalled();
+      const themedCall = captureShotSpy.mock.calls.find(([, , , opts]) => opts?.theme === "dark");
+      expect(themedCall).toBeDefined();
+    } finally {
+      captureShotSpy.mockRestore();
+    }
+  });
+
+  it("never passes a theme option to captureShot when no themes are configured", async () => {
+    const captureShotSpy = vi.spyOn(shotModule, "captureShot").mockResolvedValue({ png: null, authWalled: false });
+    try {
+      await buildCapture(
+        createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com", REVIEW_AUDIT: memoryReviewAudit() }),
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 24, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      );
+      expect(captureShotSpy).toHaveBeenCalled();
+      expect(captureShotSpy.mock.calls.every(([, , , opts]) => !opts?.theme)).toBe(true);
+    } finally {
+      captureShotSpy.mockRestore();
+    }
+  });
+
+  it("threads the theme into the diff-image fingerprint too, so a themed and untagged diff never collide", async () => {
+    const availableSpy = vi.spyOn(pixelDiffModule, "isVisualDiffAvailable").mockReturnValue(true);
+    const compareSpy = vi.spyOn(pixelDiffModule, "compareCapturedScreenshots").mockResolvedValue({
+      status: "changed",
+      changedPixelPercent: 12.5,
+      diffImagePng: new Uint8Array([1, 2, 3, 4]),
+    });
+    try {
+      const env = createTestEnv({
+        PUBLIC_API_ORIGIN: "https://worker.example",
+        PUBLIC_SITE_ORIGIN: "https://prod.example.com",
+        REVIEW_AUDIT: memoryReviewAudit(),
+      });
+      const result = await buildCapture(
+        env,
+        "installation-token",
+        { repoFullName: "owner/repo", prNumber: 25, previewUrl: "https://preview.example.com" },
+        ["apps/gittensory-ui/src/routes/app.index.tsx"],
+        undefined,
+        { themes: ["dark"] },
+      );
+      expect(result.routes[0]?.theme).toBe("dark");
+      expect(result.routes[0]?.diffUrl).toContain("/gittensory/shot?key=");
+      // Same path/PR, but tagged "dark" — must not reuse the untagged diff's fingerprint (theme is part of the key).
+      const untaggedFingerprint = await sha256Hex(`25:diff:desktop:/app`);
+      expect(result.routes[0]?.diffUrl).not.toContain(untaggedFingerprint.slice(0, 40));
+    } finally {
+      availableSpy.mockRestore();
+      compareSpy.mockRestore();
+    }
+  });
+});

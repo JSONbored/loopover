@@ -342,14 +342,15 @@ export type UnifiedCommentBridgeArgs = {
  * Build the "Visual preview" collapsible from the before/after capture routes — a clean table whose cells are
  * CLICKABLE THUMBNAILS: a small `<img>` (GitHub caps it to the column width) wrapped in an `<a href>` to the
  * SAME full-resolution shot, so a click opens the screenshot full-size. One row per route per viewport
- * (desktop / mobile), with the route path as the caption and a before (production) vs after (this PR's preview)
- * column, plus a Diff column (#3674, self-host only) highlighting exactly what changed when a pixel-diff
- * provider is available and finds a real visual difference — absent on hosted builds and any unchanged/no-diff
- * cell, which render as a dash like every other missing shot. Emitted as TRUSTED raw HTML (`rawHtml: true`) so
- * the `<a>/<img>` survive — public-safe by construction: every value is a first-party minted /gittensory/shot
- * URL or a route path (no private rubric / scoring terms), and a stray `"` in a URL is neutralized so it can't
- * break out of the attribute. Returns null when nothing is renderable (no route has any shot URL), so the
- * section is omitted rather than shown empty.
+ * (desktop / mobile) per captured theme (#3678, e.g. "desktop (dark)" — unlabeled when a route has no theme,
+ * exactly like today), with the route path as the caption and a before (production) vs after (this PR's
+ * preview) column, plus a Diff column (#3674, self-host only) highlighting exactly what changed when a
+ * pixel-diff provider is available and finds a real visual difference — absent on hosted builds and any
+ * unchanged/no-diff cell, which render as a dash like every other missing shot. Emitted as TRUSTED raw HTML
+ * (`rawHtml: true`) so the `<a>/<img>` survive — public-safe by construction: every value is a first-party
+ * minted /gittensory/shot URL or a route path (no private rubric / scoring terms), and a stray `"` in a URL
+ * is neutralized so it can't break out of the attribute. Returns null when nothing is renderable (no route
+ * has any shot URL), so the section is omitted rather than shown empty.
  */
 export function buildBeforeAfterCollapsible(routes: CaptureRoute[]): UnifiedCollapsible | null {
   const attr = (value: string): string =>
@@ -366,13 +367,14 @@ export function buildBeforeAfterCollapsible(routes: CaptureRoute[]): UnifiedColl
   let hasAnyDiff = false;
   for (const route of routes) {
     const path = markdownCode(route.path);
+    const themeSuffix = route.theme ? ` (${route.theme})` : "";
     if (route.beforeUrl || route.afterUrl) {
       if (route.diffUrl) hasAnyDiff = true;
-      rows.push(`| ${path} | desktop | ${cell(route.beforeUrl, `before ${route.path}`)} | ${cell(route.afterUrl, `after ${route.path}`)} | ${cell(route.diffUrl, `diff ${route.path}`)} |`);
+      rows.push(`| ${path} | desktop${themeSuffix} | ${cell(route.beforeUrl, `before ${route.path}${themeSuffix}`)} | ${cell(route.afterUrl, `after ${route.path}${themeSuffix}`)} | ${cell(route.diffUrl, `diff ${route.path}${themeSuffix}`)} |`);
     }
     if (route.beforeUrlMobile || route.afterUrlMobile) {
       if (route.diffUrlMobile) hasAnyDiff = true;
-      rows.push(`| ${path} | mobile | ${cell(route.beforeUrlMobile, `before ${route.path} (mobile)`)} | ${cell(route.afterUrlMobile, `after ${route.path} (mobile)`)} | ${cell(route.diffUrlMobile, `diff ${route.path} (mobile)`)} |`);
+      rows.push(`| ${path} | mobile${themeSuffix} | ${cell(route.beforeUrlMobile, `before ${route.path} (mobile)${themeSuffix}`)} | ${cell(route.afterUrlMobile, `after ${route.path} (mobile)${themeSuffix}`)} | ${cell(route.diffUrlMobile, `diff ${route.path} (mobile)${themeSuffix}`)} |`);
     }
   }
   if (rows.length === 0) return null;

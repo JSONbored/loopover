@@ -3270,6 +3270,7 @@ describe("review.visual (#3609 preview.url_template / #3610 routes)", () => {
     expect(m.review.visual).toEqual({
       preview: { urlTemplate: "https://pr-{number}.preview.example.com" },
       routes: { paths: ["/pricing", "/docs"], maxRoutes: 3 },
+      themes: [],
     });
     expect(m.review.present).toBe(true);
     expect(parseFocusManifest({ review: reviewConfigToJson(m.review) }).review.visual).toEqual(m.review.visual);
@@ -3358,7 +3359,56 @@ describe("review.visual (#3609 preview.url_template / #3610 routes)", () => {
   it("resolveReviewVisualConfig: null manifest yields empty defaults; a set manifest passes through", () => {
     expect(resolveReviewVisualConfig(null)).toEqual({ ...EMPTY_VISUAL_CONFIG });
     const manifest = parseFocusManifest({ review: { visual: { routes: { paths: ["/app"] } } } });
-    expect(resolveReviewVisualConfig(manifest)).toEqual({ preview: { urlTemplate: null }, routes: { paths: ["/app"], maxRoutes: null } });
+    expect(resolveReviewVisualConfig(manifest)).toEqual({ preview: { urlTemplate: null }, routes: { paths: ["/app"], maxRoutes: null }, themes: [] });
+  });
+});
+
+describe("review.visual.themes (#3678 dark-mode capture)", () => {
+  it("parses a light+dark list, marks present, and round-trips", () => {
+    const m = parseFocusManifest({ review: { visual: { themes: ["light", "dark"] } } });
+    expect(m.review.visual.themes).toEqual(["light", "dark"]);
+    expect(m.review.present).toBe(true);
+    expect(reviewConfigToJson(m.review)).toEqual({ visual: { themes: ["light", "dark"] } });
+  });
+
+  it("absent/empty themes yields [] and does not mark review present on its own", () => {
+    expect(parseFocusManifest({}).review.visual.themes).toEqual([]);
+    expect(parseFocusManifest({ review: { visual: { themes: [] } } }).review.visual.themes).toEqual([]);
+    expect(parseFocusManifest({ review: { visual: {} } }).review.present).toBe(false);
+  });
+
+  it("lowercases + dedupes entries, preserving first-seen order", () => {
+    const m = parseFocusManifest({ review: { visual: { themes: ["DARK", "light", "dark", "Light"] } } });
+    expect(m.review.visual.themes).toEqual(["dark", "light"]);
+  });
+
+  it("drops an unrecognized theme value with a warning but keeps the valid ones", () => {
+    const bad = parseFocusManifest({ review: { visual: { themes: ["light", "sepia", "dark"] } } });
+    expect(bad.review.visual.themes).toEqual(["light", "dark"]);
+    expect(bad.warnings.some((w) => /review\.visual\.themes\[1\].*"light" or "dark"/.test(w))).toBe(true);
+  });
+
+  it("warns and drops the whole list when it's not an array", () => {
+    const bad = parseFocusManifest({ review: { visual: { themes: "dark" } } });
+    expect(bad.review.visual.themes).toEqual([]);
+    expect(bad.warnings.some((w) => /review\.visual\.themes.*must be a list/.test(w))).toBe(true);
+  });
+
+  it("drops a non-string entry with a warning naming its index", () => {
+    const bad = parseFocusManifest({ review: { visual: { themes: ["light", 42, "dark"] } } });
+    expect(bad.review.visual.themes).toEqual(["light", "dark"]);
+    expect(bad.warnings.some((w) => /review\.visual\.themes\[1\]/.test(w))).toBe(true);
+  });
+
+  it("marks present via themes alone (preview + routes both empty)", () => {
+    const m = parseFocusManifest({ review: { visual: { themes: ["dark"] } } });
+    expect(m.review.present).toBe(true);
+    expect(reviewConfigToJson(m.review)).toEqual({ visual: { themes: ["dark"] } });
+  });
+
+  it("resolveReviewVisualConfig passes a configured theme list through", () => {
+    const manifest = parseFocusManifest({ review: { visual: { themes: ["dark"] } } });
+    expect(resolveReviewVisualConfig(manifest).themes).toEqual(["dark"]);
   });
 });
 

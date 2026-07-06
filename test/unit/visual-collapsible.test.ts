@@ -107,6 +107,48 @@ describe("buildBeforeAfterCollapsible", () => {
     expect(c?.body).toContain('<a href="https://api.example.dev/gittensory/shot?key=gittensory/shots/abc-diff-m.png"');
     expect(c?.body).toContain('alt="diff /app/analytics (mobile)"');
   });
+
+  it("labels the viewport column with the theme when a route has one (#3678)", () => {
+    const c = buildBeforeAfterCollapsible([
+      {
+        path: "/app/analytics",
+        theme: "dark",
+        beforeUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/abc.png",
+        afterUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/def.png",
+      },
+    ]);
+    expect(c?.body).toContain("| `/app/analytics` | desktop (dark) |");
+    expect(c?.body).toContain('alt="before /app/analytics (dark)"');
+    expect(c?.body).toContain('alt="after /app/analytics (dark)"');
+  });
+
+  it("leaves the viewport column unlabeled when a route has no theme — byte-identical to pre-#3678", () => {
+    const c = buildBeforeAfterCollapsible(routes);
+    expect(c?.body).toContain("| `/app/analytics` | desktop |");
+    expect(c?.body).not.toContain("desktop (");
+  });
+
+  it("combines the theme and mobile labels on the mobile row", () => {
+    const c = buildBeforeAfterCollapsible([
+      {
+        path: "/app/analytics",
+        theme: "dark",
+        beforeUrlMobile: "https://api.example.dev/gittensory/shot?key=gittensory/shots/abc-m.png",
+        afterUrlMobile: "https://api.example.dev/gittensory/shot?key=gittensory/shots/def-m.png",
+      },
+    ]);
+    expect(c?.body).toContain("| `/app/analytics` | mobile (dark) |");
+    expect(c?.body).toContain('alt="before /app/analytics (mobile) (dark)"');
+  });
+
+  it("renders one row set per theme when the same route appears twice with different themes", () => {
+    const c = buildBeforeAfterCollapsible([
+      { path: "/", theme: "light", beforeUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/light.png" },
+      { path: "/", theme: "dark", beforeUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/dark.png" },
+    ]);
+    expect(c?.body).toContain("| `/` | desktop (light) |");
+    expect(c?.body).toContain("| `/` | desktop (dark) |");
+  });
 });
 
 describe("buildUnifiedCommentBody beforeAfter wiring", () => {

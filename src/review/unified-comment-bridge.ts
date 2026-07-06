@@ -31,7 +31,9 @@ import { classifyChangedFile, type ReviewFileClass } from "./changed-files-class
 import { classifyFindingCategory, FINDING_CATEGORIES, type FindingCategory } from "./finding-category-classify";
 import {
   buildUnifiedReviewInput,
+  buildAutoMergeSummaryCollapsible,
   renderUnifiedReviewComment,
+  type AutoMergeConditionRow,
   type DualReviewNote,
   type MergeReadiness,
   type ReviewNotes,
@@ -325,6 +327,11 @@ export type UnifiedCommentBridgeArgs = {
    *  `classifyFindingCategory` — never omitted from the count. Default OFF (the processor passes this only when
    *  the manifest opts in — see `resolveReviewPromptOverrides`'s `findingCategories`). (#1958) */
   findingCategories?: FindingCategoryInput[] | undefined;
+  /** When true, append a read-only "Auto-merge conditions" collapsible built from the ALREADY-computed gate,
+   *  merge-readiness, and panel signal rows passed into this call. Display-only — does NOT change the merge/close
+   *  decision. Default OFF (the processor passes this only when the manifest opts in — see
+   *  `resolveReviewPromptOverrides`'s `autoMergeSummary`). (#2051) */
+  autoMergeSummary?: boolean | undefined;
   /** The disposition holds this PR for owner review because its diff touches a hard-guardrail path — so an
    *  otherwise-ready comment renders "held for review" instead of "safe to merge". (#guarded-hold-comment) */
   heldForReview?: boolean | undefined;
@@ -476,6 +483,99 @@ export function buildFindingCategoryCollapsible(findings: FindingCategoryInput[]
   return { title: "Finding categories", body };
 }
 
+/** Map a legacy panel result cell's leading status icon (✅/⚠️/❌) → an auto-merge condition state. */
+function panelResultToConditionState(resultCell: string): AutoMergeConditionRow["state"] {
+  return rowState(resultCell);
+}
+
+/** Strip the leading status icon from a panel result cell for human-readable evidence text. */
+function panelResultEvidence(resultCell: string, detailCell: string): string {
+  const detail = detailCell.trim();
+  const result = rowResultText(resultCell);
+  if (detail && result) return `${result} — ${detail}`;
+  return detail || result || "No details.";
+}
+
+/**
+ * Derive the four standard auto-merge condition rows from ALREADY-computed readiness signals — the gate
+ * evaluation, merge-readiness facts, and legacy panel rows the caller already resolved. Pure + read-only:
+ * does NOT call `deriveUnifiedStatus` or any merge/close decision path. (#2051)
+ */
+export function deriveAutoMergeConditionsFromSignals(args: {
+  gate: GateCheckEvaluation;
+  mergeReadiness?: MergeReadiness | undefined;
+  panelRows: PublicPrPanelSignalRow[];
+}): AutoMergeConditionRow[] {
+  const linkedIssueRow = args.panelRows.find((row) => row.key === "linkedIssue");
+  const gateResultRow = args.panelRows.find((row) => row.key === "gateResult");
+
+  const ciState = args.mergeReadiness?.ciState;
+  const ciRow: AutoMergeConditionRow = {
+    condition: "CI green",
+    state: ciState === "passed" ? "ok" : ciState === "failed" ? "fail" : "warn",
+    evidence:
+      ciState === "passed"
+        ? "All required CI checks are green."
+        : ciState === "failed"
+          ? args.mergeReadiness?.failingChecks?.length
+            ? `Failing: ${args.mergeReadiness.failingChecks.join(", ")}.`
+            : "CI checks are failing."
+          : ciState === "unverified"
+            ? "CI is pending or unverified."
+            : "CI state was not resolved.",
+  };
+
+  const gateEnabled = args.gate.enabled;
+  const gateConclusion = args.gate.conclusion;
+  const gateRow: AutoMergeConditionRow = gateResultRow
+    ? {
+        condition: "Gate passing",
+        state: panelResultToConditionState(gateResultRow.cells[1] ?? ""),
+        evidence: panelResultEvidence(gateResultRow.cells[1] ?? "", gateResultRow.cells[2] ?? ""),
+      }
+    : {
+        condition: "Gate passing",
+        state: !gateEnabled ? "warn" : gateConclusion === "success" ? "ok" : gateConclusion === "failure" ? "fail" : "warn",
+        evidence: !gateEnabled
+          ? "Gate is advisory-only (not enforcing)."
+          : gateConclusion === "success"
+            ? "No configured hard blocker found."
+            : gateConclusion === "failure"
+              ? "Repo-configured hard blocker found."
+              : gateConclusion === "action_required"
+                ? "Install/config needs attention."
+                : "Gate is not blocking this PR.",
+      };
+
+  const mergeState = args.mergeReadiness?.mergeStateLabel?.trim().toLowerCase();
+  const mergeRow: AutoMergeConditionRow = {
+    condition: "Mergeable / clean",
+    state:
+      mergeState === "dirty" || mergeState === "behind"
+        ? "fail"
+        : mergeState
+          ? "ok"
+          : "warn",
+    evidence: mergeState
+      ? `GitHub merge state: ${args.mergeReadiness?.mergeStateLabel}.`
+      : "Merge state was not resolved.",
+  };
+
+  const linkedIssueRowResult: AutoMergeConditionRow = linkedIssueRow
+    ? {
+        condition: "Valid linked issue",
+        state: panelResultToConditionState(linkedIssueRow.cells[1] ?? ""),
+        evidence: panelResultEvidence(linkedIssueRow.cells[1] ?? "", linkedIssueRow.cells[2] ?? ""),
+      }
+    : {
+        condition: "Valid linked issue",
+        state: "warn",
+        evidence: "Linked issue signal was not resolved.",
+      };
+
+  return [ciRow, gateRow, mergeRow, linkedIssueRowResult];
+}
+
 /**
  * Build the unified PR-review comment body from gittensory's live data. Returns a string that STARTS with
  * the panel marker (so the existing upsert updates in place) followed by the rendered unified comment.
@@ -530,6 +630,19 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
   const visibleRows = args.panelRows.filter((row) => args.reviewFields?.[row.key] !== false);
   const signals = panelRowsToSignalRows(visibleRows);
 
+  // review.auto_merge_summary (#2051): read-only conditions table from signals the caller already computed.
+  const autoMergeCollapsible = args.autoMergeSummary
+    ? buildAutoMergeSummaryCollapsible(
+        deriveAutoMergeConditionsFromSignals({
+          gate: args.gate,
+          mergeReadiness: args.mergeReadiness,
+          panelRows: args.panelRows,
+        }),
+      )
+    : null;
+  const withAutoMerge =
+    autoMergeCollapsible !== null ? [autoMergeCollapsible, ...(args.extraCollapsibles ?? [])] : args.extraCollapsibles;
+
   // review.changed_files_summary port: when the manifest opts in, the processor hands us every changed file's
   // path + deltas here; append the grouped "Changed files" collapsible ahead of the visual preview (structure
   // before pixels). Flag-OFF (the processor passes undefined) ⇒ extraCollapsibles is unchanged. (#1957)
@@ -538,7 +651,7 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
       ? buildChangedFilesSummaryCollapsible(args.changedFilesSummary)
       : null;
   const withChangedFiles =
-    changedFilesCollapsible !== null ? [...(args.extraCollapsibles ?? []), changedFilesCollapsible] : args.extraCollapsibles;
+    changedFilesCollapsible !== null ? [...(withAutoMerge ?? []), changedFilesCollapsible] : withAutoMerge;
   // review.finding_categories port: when the manifest opts in, the processor hands us this review's line-anchored
   // AI findings here; append the "Finding categories" collapsible right after Changed files (both are structural
   // review-shape summaries, ahead of the visual preview). Flag-OFF (the processor passes undefined) ⇒

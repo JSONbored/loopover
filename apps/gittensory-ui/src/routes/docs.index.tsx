@@ -74,6 +74,7 @@ const AUDIENCES: Audience[] = [
       { to: "/docs/maintainer-install-trust", label: "Install & trust guide" },
       { to: "/docs/github-app", label: "GitHub App configuration" },
       { to: "/docs/maintainer-workflow", label: "Maintainer workflow" },
+      { to: "/docs/gittensory-commands", label: "@gittensory commands" },
       { to: "/docs/self-hosting-rees-analyzers", label: "REES analyzers" },
       { to: "/docs/upstream-drift", label: "Upstream drift" },
       { to: "/docs/ai-summaries", label: "AI summaries policy" },

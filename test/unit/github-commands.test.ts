@@ -174,6 +174,12 @@ describe("GitHub mention commands", () => {
     expect(helpCard).toContain("Additional safe details");
   });
 
+  it("helpSections links to the public command reference doc (#2171)", () => {
+    const body = githubCommandsInternals.helpSections().join("\n");
+    expect(body).toContain("https://gittensory.aethereal.dev/docs/gittensory-commands");
+    expect(body).toContain("Full command reference");
+  });
+
   it("isGittensoryActionCommand distinguishes action verbs from Q&A commands", () => {
     for (const action of ["gate-override", "review", "pause", "resume", "resolve", "configuration", "explain"] as const) {
       expect(isGittensoryActionCommand(action)).toBe(true);

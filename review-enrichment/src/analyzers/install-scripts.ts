@@ -18,7 +18,9 @@ const NPM_PACKAGE_RE =
 const SEMVER_RE =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const MAX_VERSION_LOOKUPS = 25;
-const MAX_VERSION_JSON_BYTES = 256 * 1024;
+// npm version-specific endpoint responses are typically small (< 50 KB); 128 KB gives enough headroom
+// while rejecting unexpectedly large responses quickly before they consume timeout budget.
+const MAX_VERSION_JSON_BYTES = 128 * 1024;
 
 interface ScanOptions {
   signal?: AbortSignal;

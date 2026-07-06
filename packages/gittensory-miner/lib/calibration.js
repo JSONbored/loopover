@@ -3,4 +3,4 @@ export {
   isCalibrationRow,
   isObservedOutcomeRecord,
   isPredictedVerdictRecord,
-} from "./types.js";
+} from "./calibration-types.js";

@@ -4,13 +4,13 @@ import {
   isCalibrationRow,
   isObservedOutcomeRecord,
   isPredictedVerdictRecord,
-} from "../../packages/gittensory-miner/lib/calibration/index.js";
+} from "../../packages/gittensory-miner/lib/calibration.js";
 import type {
   CalibrationReport,
   CalibrationRow,
   ObservedOutcomeRecord,
   PredictedVerdictRecord,
-} from "../../packages/gittensory-miner/lib/calibration/index.js";
+} from "../../packages/gittensory-miner/lib/calibration.js";
 
 describe("gittensory-miner calibration types scaffold (#2332)", () => {
   const predicted: PredictedVerdictRecord = {

@@ -3,11 +3,11 @@ export type {
   CalibrationRow,
   ObservedOutcomeRecord,
   PredictedVerdictRecord,
-} from "./types.js";
+} from "./calibration-types.js";
 
 export {
   isCalibrationReport,
   isCalibrationRow,
   isObservedOutcomeRecord,
   isPredictedVerdictRecord,
-} from "./types.js";
+} from "./calibration-types.js";

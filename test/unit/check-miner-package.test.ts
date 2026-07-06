@@ -47,6 +47,33 @@ describe("check-miner-package script", () => {
     expect(result.out).toContain("Unexpected file in miner package: scripts/extra.mjs");
   });
 
+  it("REGRESSION (main was red after #3704): accepts a lib module split into a one-level subdirectory", () => {
+    const result = runChecker({
+      CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
+        "package.json",
+        "bin/gittensory-miner.js",
+        "lib/calibration/index.js",
+        "lib/calibration/index.d.ts",
+      ]),
+      CHECK_MINER_PACK_TEST_CONTENT: "{}",
+    });
+    expect(result.status).toBe(0);
+    expect(result.out).toContain("lib/calibration/index.js");
+  });
+
+  it("still rejects a file nested two levels deep under lib/", () => {
+    const result = runChecker({
+      CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
+        "package.json",
+        "bin/gittensory-miner.js",
+        "lib/cli.js",
+        "lib/calibration/nested/index.js",
+      ]),
+    });
+    expect(result.status).toBe(1);
+    expect(result.out).toContain("Unexpected file in miner package: lib/calibration/nested/index.js");
+  });
+
   it("rejects a package missing the CLI bin", () => {
     const result = runChecker({
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify(["package.json", "lib/cli.js"]),

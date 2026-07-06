@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url";
 
 const ALLOWED = [
   /^bin\/gittensory-miner\.js$/,
-  /^lib\/(?:[a-z0-9-]+\/)*[a-z0-9-]+\.(js|d\.ts)$/,
+  // One optional level of subdirectory (e.g. lib/calibration/index.js, #2332) alongside the original flat
+  // lib/<name>.js layout -- both forms ship real runtime/type files, never build tooling or config.
+  /^lib\/([a-z0-9-]+\/)?[a-z0-9-]+\.(js|d\.ts)$/,
   /^package\.json$/,
   /^README\.md$/,
 ];
@@ -26,7 +28,7 @@ export function validateMinerPackFileList(files, readContent) {
   for (const required of REQUIRED) {
     if (!paths.includes(required)) throw new Error(`Miner package is missing required file: ${required}`);
   }
-  if (!paths.some((file) => /^lib\/(?:[a-z0-9-]+\/)*[a-z0-9-]+\.js$/.test(file))) {
+  if (!paths.some((file) => /^lib\/([a-z0-9-]+\/)?[a-z0-9-]+\.js$/.test(file))) {
     throw new Error("Miner package is missing lib/*.js artifacts");
   }
   return paths;

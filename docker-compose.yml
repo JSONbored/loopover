@@ -16,6 +16,7 @@
 #   --profile qdrant        Qdrant vector database for RAG
 #   --profile ollama        Local Ollama AI backend
 #   --profile visual-review Headless Chromium (browserless) for before/after PR screenshot capture
+#   --profile rees          Review-enrichment service (REES) for heavier PR analysis, in-network only
 #   --profile litestream    Continuous SQLite backup to S3/B2/R2 via Litestream
 #   --profile caddy         Caddy HTTPS terminator with auto-TLS (set DOMAIN= in .env)
 #   --profile observability Prometheus + Alertmanager + Loki + Promtail + Grafana (pre-wired)
@@ -27,6 +28,7 @@
 #   docker compose up --build                                    # SQLite + Redis, build from source
 #   docker compose --profile postgres --profile caddy up -d     # Postgres + HTTPS
 #   docker compose --profile observability up -d                 # metrics + logs + dashboards
+#   docker compose --profile rees up -d                           # local REES review enrichment
 #   docker compose --profile tailscale --profile runners up -d   # tailnet + CI runners
 
 # Bounded container logging (#audit-rate-headroom): every service below defaults to Docker's
@@ -146,6 +148,13 @@ services:
       # (a network error just degrades to a placeholder, never a thrown error). This dependency exists
       # purely so `docker compose --profile visual-review up` starts services in a sensible order.
       browserless:
+        condition: service_healthy
+        required: false
+      # Same "start-order convenience only, not a crash-loop guard" reasoning as browserless above: REES
+      # enrichment runs per-PR-review, long after boot, and is already fully fail-safe end to end (any
+      # timeout/error just means the review proceeds without the brief -- src/review/enrichment-wire.ts).
+      # required:false keeps every deployment not using --profile rees unaffected.
+      rees:
         condition: service_healthy
         required: false
     # Sane defaults so a runaway optional service (below) can't OOM-kill or starve the core review pipeline;
@@ -376,6 +385,58 @@ services:
       timeout: 5s
       start_period: 15s
       retries: 5
+
+  # ── REES / review-enrichment (--profile rees) ──────────────────────────────
+  # Self-hosted alternative to pointing REES_URL at a managed/external instance (see the self-hosting docs).
+  # REES runs the heavier PR analysis (dependency CVEs, secret scan, license, EOL runtime, lockfile drift, IaC
+  # misconfig, ...) that the no-checkout `claude --print` reviewer can't do inline; the engine splices its
+  # brief into the AI review prompt and treats any REES timeout/error as "no brief" and proceeds regardless
+  # (src/review/enrichment-wire.ts) -- this whole service is optional end to end, same as browserless above.
+  # After `docker compose --profile rees up -d`, set in .env: GITTENSORY_REVIEW_ENRICHMENT=true,
+  # REES_URL=http://rees:8080, and a freshly generated REES_SHARED_SECRET -- do not reuse a secret from any
+  # other REES instance (e.g. a managed Railway deployment) you also point at (#1667).
+  rees:
+    build:
+      context: review-enrichment
+    restart: unless-stopped
+    <<: *default-logging
+    profiles: ["rees"]
+    # Deliberately NOT `env_file: .env` like the gittensory service above: that would also hand this
+    # analyzer service every unrelated secret in .env, and REES reads the same SENTRY_DSN key name the main
+    # app uses (src/selfhost/sentry.ts) -- blanket-forwarding .env would silently point REES's error reporting
+    # at the main app's Sentry project instead of a dedicated one. Add REES-specific Sentry vars via
+    # docker-compose.override.yml if you want REES error reporting (see review-enrichment/README.md).
+    environment:
+      PORT: "8080"
+      # Soft default, not ":?required" -- compose interpolates every service's env vars for the whole file
+      # even when --profile rees isn't active, so a hard-required var here would break `docker compose up`
+      # for every self-hoster not using this profile (same reasoning as BROWSERLESS_TOKEN below). Unset means
+      # REES fails closed (503) on every /v1/enrich call instead of running unauthenticated.
+      REES_SHARED_SECRET: ${REES_SHARED_SECRET:-}
+    # Never published to the host -- reached only over the internal docker network at http://rees:8080, same
+    # in-network-only posture as postgres/redis/qdrant/browserless.
+    expose:
+      - "8080"
+    deploy:
+      resources:
+        limits:
+          memory: "${REES_MEM_LIMIT:-512m}"
+    # /health and /ready are both unconditional no-ops (REES has no DB/queue to probe), so unlike the
+    # gittensory service above there's no deeper readiness signal to prefer here; /health also matches
+    # Railway's own healthcheckPath for this service. `node -e fetch(...)` avoids assuming curl/wget exist --
+    # review-enrichment/Dockerfile's runtime stage is node:22-slim, which installs neither.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
 
   # ── Litestream (--profile litestream) ─────────────────────────────────────
   # Continuous WAL backup of the SQLite DB to S3/B2/R2. Copy litestream.yml.example

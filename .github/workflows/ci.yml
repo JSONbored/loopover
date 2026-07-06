@@ -35,6 +35,7 @@ jobs:
       mcpCliHarness: ${{ steps.filter.outputs.mcpCliHarness }}
       engine: ${{ steps.filter.outputs.engine }}
       miner: ${{ steps.filter.outputs.miner }}
+      minerTestHarness: ${{ steps.filter.outputs.minerTestHarness }}
       rees: ${{ steps.filter.outputs.rees }}
       observability: ${{ steps.filter.outputs.observability }}
     steps:
@@ -127,6 +128,24 @@ jobs:
             rees:
               - 'review-enrichment/**'
               - '.github/workflows/ci.yml'
+            # Both miner-package test files are self-contained w.r.t. root src/**, the same trust boundary as
+            # mcpCliHarness above: check-miner-package.test.ts only spawns scripts/check-miner-package.mjs as a
+            # real subprocess (node:child_process + vitest, nothing else), and miner-calibration-types.test.ts
+            # only imports the scaffolded packages/gittensory-miner/lib/calibration.js -- neither ever loads
+            # root src/ in-process. Mirrors mcpCliHarness's filter shape for the same reason (tooling/config
+            # changes that could plausibly affect how these tests run, plus the miner package + the test files
+            # themselves), swapping in the miner-specific package and test files.
+            minerTestHarness:
+              - 'vitest*.config.ts'
+              - 'tsconfig*.json'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'scripts/**'
+              - 'migrations/**'
+              - '.github/workflows/**'
+              - 'packages/gittensory-miner/**'
+              - 'test/unit/check-miner-package.test.ts'
+              - 'test/unit/miner-calibration-types.test.ts'
 
   # Path-aware validation. Keep this as one job so a PR uses one dependency
   # install and one coverage upload. Run on GitHub-hosted runners while the
@@ -162,7 +181,7 @@ jobs:
       # actually be written; trusted PRs keep their reusable cache without crossing trust boundaries.
       - name: Restore node_modules cache
         id: node-modules-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             node_modules
@@ -190,7 +209,7 @@ jobs:
       # broken/partial node_modules can never get written to the cache for a future run to inherit.
       - name: Save node_modules cache
         if: ${{ steps.node-modules-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             node_modules
@@ -259,15 +278,29 @@ jobs:
           # above) didn't change. mcp-output-schemas.test.ts is never in the exclude list -- see that filter's
           # comment for why it can't be safely narrowed.
           SKIP_MCP_CLI_HARNESS: ${{ github.event_name == 'pull_request' && needs.changes.outputs.mcpCliHarness != 'true' }}
+          # Same self-contained-test-file narrowing as SKIP_MCP_CLI_HARNESS above, for the miner-package tests
+          # (minerTestHarness filter). Before this, both miner test files ran on every PR that touched ANY
+          # backend path (virtually all of them, since test/** alone qualifies) even though neither depends on
+          # root src/** -- so an unrelated PR paid for a real `npm pack --dry-run` of packages/gittensory-miner
+          # every time, and a miner-only breakage (e.g. #3704's nested lib/calibration/ directory) blocked every
+          # subsequent unrelated PR's CI instead of staying contained to PRs that actually touch the package.
+          SKIP_MINER_TEST_HARNESS: ${{ github.event_name == 'pull_request' && needs.changes.outputs.minerTestHarness != 'true' }}
         # Pinned to the standard GitHub-hosted runner's effective CPU budget; keeping this explicit avoids
         # accidental worker-pool thrash if os.cpus() reports a larger host in a future runner image.
         run: |
           EXCLUDE_ARGS=()
           if [ "$SKIP_MCP_CLI_HARNESS" = "true" ]; then
             echo "Skipping the self-contained MCP CLI-harness tests (no packages/gittensory-mcp-relevant paths changed)."
-            EXCLUDE_ARGS=(
+            EXCLUDE_ARGS+=(
               --exclude "test/unit/mcp-cli-*.test.ts"
               --exclude "test/unit/mcp-discovery.test.ts"
+            )
+          fi
+          if [ "$SKIP_MINER_TEST_HARNESS" = "true" ]; then
+            echo "Skipping the self-contained miner-package tests (no packages/gittensory-miner-relevant paths changed)."
+            EXCLUDE_ARGS+=(
+              --exclude "test/unit/check-miner-package.test.ts"
+              --exclude "test/unit/miner-calibration-types.test.ts"
             )
           fi
           npm run test:coverage -- --maxWorkers=4 "${EXCLUDE_ARGS[@]}"
@@ -374,7 +407,7 @@ jobs:
       - name: Restore review-enrichment node_modules cache
         id: rees-node-modules-cache
         if: ${{ github.event_name == 'push' || needs.changes.outputs.rees == 'true' }}
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: review-enrichment/node_modules
           # Same Node-version and manifest guards as the root cache key above -- REES runs on the same
@@ -385,7 +418,7 @@ jobs:
         run: npm run rees:install
       - name: Save review-enrichment node_modules cache
         if: ${{ (github.event_name == 'push' || needs.changes.outputs.rees == 'true') && steps.rees-node-modules-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: review-enrichment/node_modules
           key: ${{ steps.rees-node-modules-cache.outputs.cache-primary-key }}

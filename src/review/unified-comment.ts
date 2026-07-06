@@ -182,6 +182,11 @@ export interface UnifiedReviewInput {
    *  (default; the host only resolves this when `review.linkedIssueSatisfaction` is on) ⇒ no section is
    *  rendered, byte-identical to today. */
   linkedIssueSatisfaction?: { status: "addressed" | "partial" | "unaddressed"; rationale: string };
+  /** The review's line-anchored inline findings (only their `category` is read), used ONLY to render a compact
+   *  category-tally line (#2150). Structural shape so an `InlineFinding[]` is assignable without importing it —
+   *  this renderer stays self-contained. Absent/empty (default; the host passes them only when it produced
+   *  categorized inline findings) ⇒ no tally line, byte-identical. Presentation only — never affects the verdict. */
+  inlineFindings?: ReadonlyArray<{ category?: UnifiedFindingCategory | undefined }>;
 }
 
 /** One row of the readiness signal table (gittensory side, host-provided; the engine adds Code review). */
@@ -573,6 +578,25 @@ function asAlert(alert: string, inner: string): string {
  * (it only emits the fields passed in; no guardrail paths / thresholds / rubric). The host applies
  * its redactor to the result before posting, exactly as the runtime does for the legacy comment.
  */
+/** The finding-category names (#1958 / #2150) — mirrors the fixed enum in finding-category-classify.ts, inlined
+ *  here to keep this renderer self-contained (no cross-module imports). */
+export type UnifiedFindingCategory = "security" | "correctness" | "performance" | "maintainability" | "tests" | "style";
+
+/** Tally CATEGORIZED inline findings by category (#2150). Uncategorized findings are ignored; ordered by count
+ *  desc, then category name asc, so the rendered line is deterministic. Pure — no IO, no gate impact. */
+export function tallyFindingCategories(
+  findings: ReadonlyArray<{ category?: UnifiedFindingCategory | undefined }>,
+): Array<{ category: UnifiedFindingCategory; count: number }> {
+  const counts = new Map<UnifiedFindingCategory, number>();
+  for (const finding of findings) {
+    if (!finding.category) continue;
+    counts.set(finding.category, (counts.get(finding.category) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([category, count]) => ({ category, count }))
+    .sort((a, b) => b.count - a.count || a.category.localeCompare(b.category));
+}
+
 export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: UnifiedCommentContext = {}): string {
   const status = deriveUnifiedStatus(input, ctx);
   const meta = STATUS_META[status];
@@ -611,6 +635,14 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
       ? appendMoreFooter(bullets(blockersTrunc.shown), blockersTrunc.hiddenCount)
       : `_+${blockersTrunc.hiddenCount} more_`;
     blocks.push(`**${heading}**\n${blockersBody}`);
+  }
+
+  // Category breakdown (#2150): a compact, deterministic one-liner of the finding mix (e.g. "2 correctness ·
+  // 1 security"). Omitted entirely when no finding carries a category (default) ⇒ byte-identical. Pure tally, no
+  // AI, no gate impact.
+  const categoryTally = tallyFindingCategories(input.inlineFindings ?? []);
+  if (categoryTally.length) {
+    blocks.push(`**Findings by category:** ${categoryTally.map(({ category, count }) => `${count} ${category}`).join(" · ")}`);
   }
 
   // Failing CI checks — list WHICH checks failed and WHY (codecov %/test/lint reason) under the "CI failing"

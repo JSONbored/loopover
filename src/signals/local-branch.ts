@@ -26,7 +26,7 @@ import { deriveEligibilityPlan } from "../services/eligibility-plan";
 import { scenarioInputFromLocalBranchMetadata } from "../scenarios/input-model";
 import { renderPublicScenarioSummary, type PublicScenarioSummary, type ScenarioSummaryInput } from "../scenarios/scenario-summary";
 import { simulateOpenPrPressure } from "../services/open-pr-pressure-scenarios";
-import { isTestPath } from "./test-evidence";
+import { isCodeFile, isTestFile } from "./path-matchers";
 
 export type LocalBranchChangedFile = {
   path: string;
@@ -1261,26 +1261,12 @@ function safeRepoPath(path: string): string {
   return PUBLIC_LOCAL_PATH_PREFIX_PATTERN.test(String(path).replace(/\\/g, "/")) ? "[local path hidden]" : String(path || "(unknown path)").replace(/\\/g, "/");
 }
 
-export function isTestFile(file: string): boolean {
-  // Keep local scoring aligned with slop/test-evidence matchers (#561 / #1046).
-  return isTestPath(file);
-}
-
-export function isCodeFile(file: string): boolean {
-  // cs/swift/groovy/php plus C/C++/Objective-C round out the native/JVM/.NET/Swift/PHP set: isTestPath already
-  // recognizes their `SomethingTest(s)`/`Spec` test files, so their source must
-  // count as code too — otherwise a C#/Swift/Groovy/PHP/native source file is neither test
-  // nor code in the local scorer. vue/svelte/astro align with review/rag.ts CODE_EXT_RE,
-  // review/visual/paths.ts, and rules/advisory.ts isCodePath so every classifier agrees.
-  // cc/hpp round out the C++ set alongside cpp/c/h (rag.ts already indexes all four).
-  // dart aligns with rag.ts and test-evidence's *_test.dart convention (hand-authored
-  // .dart is source; generated .g.dart/.freezed.dart stay non-code via isGeneratedFile).
-  return (
-    /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs|kt|scala|java|go|sql|cs|swift|groovy|php|cpp|cc|c|h|hpp|m|vue|svelte|astro|dart)$/i.test(
-      file,
-    ) && !isTestFile(file)
-  );
-}
+// isTestFile/isCodeFile now live in path-matchers.ts (#3690-followup: path-matchers.ts must never import
+// FROM local-branch.ts -- it is reachable from apps/gittensory-ui/src/lib/registration-workspace.ts via
+// focus-manifest.ts, and local-branch.ts pulls in the whole review-scoring/Gittensor-API subsystem, which
+// breaks `ui:typecheck` under the UI's tsconfig (no Workers ambient types there). Re-exported here so this
+// file's own many existing importers of isTestFile/isCodeFile don't need to change their import path.
+export { isCodeFile, isTestFile };
 
 function sameRepo(left: string, right: string): boolean {
   return left.toLowerCase() === right.toLowerCase();

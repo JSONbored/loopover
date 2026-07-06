@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   classifyChangedFile,
@@ -10,6 +13,18 @@ import {
   isNonSubstantivePaddingFile,
   isVendoredFile,
 } from "../../src/signals/path-matchers";
+
+// Structural guard (#3690-followup): this file is reachable from apps/gittensory-ui/src/lib/
+// registration-workspace.ts via focus-manifest.ts's classifyChangedFile import. local-branch.ts pulls in
+// the whole review-scoring/Gittensor-API subsystem, so an import from it here breaks `ui:typecheck` under
+// the UI's tsconfig (no Workers ambient types there) -- confirmed by a real ~35-file "Cannot find name
+// Env/D1Database" break when path-matchers.ts briefly imported isCodeFile/isTestFile from local-branch.ts.
+describe("path-matchers.ts never imports from local-branch.ts", () => {
+  it("has no import statement referencing ./local-branch", () => {
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../src/signals/path-matchers.ts"), "utf8");
+    expect(source).not.toMatch(/from\s+["']\.\/local-branch["']/);
+  });
+});
 
 describe("isGeneratedFile", () => {
   it("matches generated output by directory, suffix, codegen, and source maps", () => {

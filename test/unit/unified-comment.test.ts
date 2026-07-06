@@ -5,6 +5,7 @@ import {
   type DualReviewNote,
   renderReviewingPlaceholder,
   renderUnifiedReviewComment,
+  truncateFindingsForDisplay,
   type ReviewNotes,
   type ReviewRecommendation,
   shouldPostReviewingPlaceholder,
@@ -531,6 +532,36 @@ describe("renderReviewingPlaceholder", () => {
     expect(body).toContain("🟦");
     expect(body).toContain("🟨");
     expect(body).toContain("🟥");
+  });
+});
+
+describe("review.max_findings display caps (#2049)", () => {
+  it("truncates blockers and nits with a +N more footer while keeping the full blocker chip count", () => {
+    const capped = renderUnifiedReviewComment({
+      ...base,
+      recommendations: ["request_changes"],
+      blockers: ["alpha blocker", "beta blocker", "gamma blocker"],
+      nits: ["nit one", "nit two"],
+      maxFindingsCaps: { blockers: 1, nits: 1 },
+    });
+    expect(capped).toContain("- alpha blocker");
+    expect(capped).not.toContain("- beta blocker");
+    expect(capped).toContain("+2 more");
+    expect(capped).toContain("`3 blockers`");
+    expect(capped).toContain("+1 more");
+  });
+
+  it("is byte-identical when caps are unset", () => {
+    const input = { ...base, nits: ["hint"], blockers: ["must fix"] };
+    expect(renderUnifiedReviewComment(input)).toBe(
+      renderUnifiedReviewComment({ ...input, maxFindingsCaps: { blockers: null, nits: null } }),
+    );
+  });
+
+  it("truncateFindingsForDisplay handles nullish and zero caps", () => {
+    expect(truncateFindingsForDisplay(["a", "b"], null)).toEqual({ shown: ["a", "b"], hiddenCount: 0 });
+    expect(truncateFindingsForDisplay(["a", "b"], 1)).toEqual({ shown: ["a"], hiddenCount: 1 });
+    expect(truncateFindingsForDisplay(["a", "b"], 0)).toEqual({ shown: [], hiddenCount: 2 });
   });
 });
 

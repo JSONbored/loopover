@@ -166,6 +166,9 @@ export interface UnifiedReviewInput {
   consensusBlocker?: boolean;
   /** Reviewers that produced no parseable verdict (a partial review → held, not ready). */
   failedCount?: number;
+  /** Display-only caps from `review.max_findings` — truncate rendered blocker/nit lists with a "+N more" footer.
+   *  Never affects gate logic. Absent/null sub-fields ⇒ byte-identical. (#2049) */
+  maxFindingsCaps?: { blockers: number | null; nits: number | null };
   /** Deterministic per-PR review-effort estimate (`estimateReviewEffort`, `src/review/review-effort.ts`) — a
    *  1-5 complexity band + a minutes estimate from the changed files' added-line volume and file-type mix. No
    *  AI. Rendered as a compact `review effort: N/5 (~M min)` chip only when the host passes this (gated by
@@ -377,6 +380,21 @@ function dedupeLines(items: string[], cap = 12): string[] {
   return out;
 }
 
+/** Truncate a findings list for display-only rendering. Null/undefined cap ⇒ unchanged. */
+export function truncateFindingsForDisplay(
+  items: string[],
+  cap: number | null | undefined,
+): { shown: string[]; hiddenCount: number } {
+  if (cap === null || cap === undefined) return { shown: items, hiddenCount: 0 };
+  if (cap <= 0) return { shown: [], hiddenCount: items.length };
+  if (items.length <= cap) return { shown: items, hiddenCount: 0 };
+  return { shown: items.slice(0, cap), hiddenCount: items.length - cap };
+}
+
+function appendMoreFooter(lines: string, hiddenCount: number): string {
+  return hiddenCount > 0 ? `${lines}\n- _+${hiddenCount} more_` : lines;
+}
+
 /** Escape angle brackets in caller-provided public text so raw HTML, HTML comments,
  *  or stray closing tags cannot change the GitHub comment structure. */
 function escapePublicHtmlAngles(text: string): string {
@@ -504,13 +522,23 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
 
   if (input.summary.trim()) blocks.push(`**Review summary**\n${escapePublicHtmlAngles(input.summary.trim())}`);
 
-  const nits = dedupeLines(input.nits ?? []);
-  if (nits.length) blocks.push(details("Nits", taskList(nits), `${nits.length} non-blocking`));
+  const nitsAll = dedupeLines(input.nits ?? []);
+  const nitsTrunc = truncateFindingsForDisplay(nitsAll, input.maxFindingsCaps?.nits);
+  if (nitsAll.length) {
+    const nitsBody = nitsTrunc.shown.length
+      ? appendMoreFooter(taskList(nitsTrunc.shown), nitsTrunc.hiddenCount)
+      : `_+${nitsTrunc.hiddenCount} more_`;
+    blocks.push(details("Nits", nitsBody, `${nitsAll.length} non-blocking`));
+  }
 
-  const blockers = dedupeLines(input.blockers ?? []);
-  if (blockers.length) {
+  const blockersAll = dedupeLines(input.blockers ?? []);
+  const blockersTrunc = truncateFindingsForDisplay(blockersAll, input.maxFindingsCaps?.blockers);
+  if (blockersAll.length) {
     const heading = status === "blocked" ? "Why this is blocked" : "Concerns raised — review before merging";
-    blocks.push(`**${heading}**\n${bullets(blockers)}`);
+    const blockersBody = blockersTrunc.shown.length
+      ? appendMoreFooter(bullets(blockersTrunc.shown), blockersTrunc.hiddenCount)
+      : `_+${blockersTrunc.hiddenCount} more_`;
+    blocks.push(`**${heading}**\n${blockersBody}`);
   }
 
   // Failing CI checks — list WHICH checks failed and WHY (codecov %/test/lint reason) under the "CI failing"
@@ -554,6 +582,7 @@ export function buildUnifiedReviewInput(opts: {
   merged?: boolean;
   verdictReason?: string;
   reviewEffort?: { band: 1 | 2 | 3 | 4 | 5; minutes: number };
+  maxFindingsCaps?: { blockers: number | null; nits: number | null };
 }): UnifiedReviewInput {
   const ex = extractReviewSummary(opts.reviews);
   const changedFiles = typeof opts.changedFiles === "number" ? opts.changedFiles : opts.changedFiles.length;
@@ -571,6 +600,7 @@ export function buildUnifiedReviewInput(opts: {
     ...(opts.merged !== undefined ? { merged: opts.merged } : {}),
     ...(opts.verdictReason !== undefined ? { verdictReason: opts.verdictReason } : {}),
     ...(opts.reviewEffort !== undefined ? { reviewEffort: opts.reviewEffort } : {}),
+    ...(opts.maxFindingsCaps !== undefined ? { maxFindingsCaps: opts.maxFindingsCaps } : {}),
   };
 }
 

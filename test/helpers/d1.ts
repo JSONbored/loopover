@@ -3,6 +3,20 @@ import { DatabaseSync } from "node:sqlite";
 
 type BoundValue = string | number | null | Uint8Array;
 
+/** D1 uses `?1`, `?2`, … numbered placeholders (and may repeat an index). Node 22's experimental
+ *  `node:sqlite` only accepts anonymous `?` markers, so expand numbered placeholders to anonymous ones
+ *  and remap `.bind(a, b, …)` to the per-`?` argument order SQLite expects. */
+function normalizeD1SqlForNodeSqlite(sql: string): { sql: string; placeholderArgIndexes: number[] | null } {
+  const placeholderArgIndexes: number[] = [];
+  let sawNumbered = false;
+  const normalized = sql.replace(/\?(\d+)/g, (_, digits: string) => {
+    sawNumbered = true;
+    placeholderArgIndexes.push(Number(digits) - 1);
+    return "?";
+  });
+  return { sql: normalized, placeholderArgIndexes: sawNumbered ? placeholderArgIndexes : null };
+}
+
 // Listing + reading migrations/*.sql (~90 files) on every TestD1Database construction (~1500 call sites
 // across the suite) is pure overhead: the file list and contents never change within a worker process's
 // lifetime. Cache the concatenated SQL once per process instead of re-reading it every call.
@@ -33,11 +47,15 @@ export class TestD1Database {
 
   prepare(sql: string) {
     const database = this.db;
-    const statement = database.prepare(sql);
+    const { sql: normalizedSql, placeholderArgIndexes } = normalizeD1SqlForNodeSqlite(sql);
+    const statement = database.prepare(normalizedSql);
     let bound: BoundValue[] = [];
     const api = {
       bind(...values: BoundValue[]) {
-        bound = values;
+        bound =
+          placeholderArgIndexes === null
+            ? values
+            : placeholderArgIndexes.map((index) => values[index] as BoundValue);
         return api;
       },
       async first<T = unknown>() {

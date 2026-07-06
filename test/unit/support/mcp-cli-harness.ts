@@ -110,6 +110,8 @@ export async function startFixtureServer(
     repoDecisionErrorContentType?: string;
     packetMarkdown?: string;
     localBranchAnalysis?: unknown;
+    slopRiskStatus?: number;
+    prTextLintStatus?: number;
     onPacketRequest?: (body: unknown) => void;
     onApiRequest?: (request: IncomingMessage) => void;
   } = {},
@@ -230,11 +232,23 @@ export async function startFixtureServer(
       return;
     }
     if (request.url === "/v1/lint/pr-text" && request.method === "POST") {
+      if (options.prTextLintStatus && options.prTextLintStatus >= 400) {
+        await readJsonRequest(request);
+        response.statusCode = options.prTextLintStatus;
+        response.end(JSON.stringify({ error: "pr_text_lint_unavailable" }));
+        return;
+      }
       const body = (await readJsonRequest(request)) as { commitMessages?: string[]; prBody?: string; linkedIssue?: number };
       response.end(JSON.stringify(lintPrTextFixture(body)));
       return;
     }
     if (request.url === "/v1/lint/slop-risk" && request.method === "POST") {
+      if (options.slopRiskStatus && options.slopRiskStatus >= 400) {
+        await readJsonRequest(request);
+        response.statusCode = options.slopRiskStatus;
+        response.end(JSON.stringify({ error: "slop_risk_unavailable" }));
+        return;
+      }
       const body = (await readJsonRequest(request)) as {
         changedFiles?: Array<{ path: string; additions?: number; deletions?: number }>;
         description?: string;

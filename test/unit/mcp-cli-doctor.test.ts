@@ -86,11 +86,11 @@ describe("gittensory-mcp CLI — doctor", () => {
     };
 
     const payload = JSON.parse(await runAsync(["doctor", "--cwd", tempDir, "--json"], env)) as { nextCommand: { command: string } };
-    expect(payload.nextCommand.command).toBe("gittensory-mcp preflight --login JSONbored --repo 'owner/repo$(touch /tmp/av_pwned)' --json");
+    expect(payload.nextCommand.command).toBe("gittensory-mcp review-pr --login JSONbored --repo 'owner/repo$(touch /tmp/av_pwned)' --json");
     expect(payload.nextCommand.command).not.toContain("--repo owner/repo$(");
 
     const humanOutput = await runAsync(["doctor", "--cwd", tempDir], env);
-    expect(humanOutput).toContain("gittensory-mcp preflight --login JSONbored --repo 'owner/repo$(touch /tmp/av_pwned)' --json");
+    expect(humanOutput).toContain("gittensory-mcp review-pr --login JSONbored --repo 'owner/repo$(touch /tmp/av_pwned)' --json");
     expect(humanOutput).not.toContain("--repo owner/repo$(");
   });
 

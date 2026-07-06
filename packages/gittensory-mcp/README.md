@@ -57,6 +57,7 @@ gittensory-mcp decision-pack --login jsonbored --json
 gittensory-mcp repo-decision --login jsonbored --repo we-promise/sure --json
 gittensory-mcp analyze-branch --login jsonbored --json
 gittensory-mcp preflight --login jsonbored --json
+gittensory-mcp review-pr --login jsonbored --commit "feat(mcp): add doctor grouping" --body "Fixes #160. Validated with npm test." --linked-issue 160 --json
 gittensory-mcp lint-pr-text --commit "feat(mcp): add doctor grouping" --body "Fixes #160. Validated with npm test." --linked-issue 160 --json
 gittensory-mcp slop-risk --changed-file src/widget.ts:80:2 --description "Adds retry handling." --test-file test/unit/widget.test.ts --json
 gittensory-mcp issue-slop --title "Add retry handling" --body "Widget reconnects fail without bounded retries." --json
@@ -114,6 +115,29 @@ gittensory-mcp analyze-branch --login jsonbored \
   --scenario-note "approved PRs expected to merge" \
   --json
 ```
+
+## Review your PR locally before you push
+
+`gittensory-mcp review-pr` composes the existing preflight, slop-risk, and PR-text-lint checks into
+ONE report, so your own local agent (Claude Code, Codex, etc.) can see everything the gittensory gate
+would flag before you ever open a PR. It is a thin composition layer — it calls the same checks
+`preflight`, `slop-risk`, and `lint-pr-text` already run and merges their output; it does not
+reimplement any of them.
+
+```sh
+gittensory-mcp review-pr --login jsonbored \
+  --commit "feat(mcp): add review-pr" \
+  --body "Composes preflight + slop-risk + lint-pr-text. Validated with npm test." \
+  --linked-issue 1968 \
+  --json
+```
+
+The report has an `overallStatus` (`pass`/`warn`/`fail`) and a `sections` array covering
+`preflight`, `slop_risk`, and `pr_text_lint`. If one underlying check's API call fails, that section
+degrades to `fail` with a public-safe `slopRiskError`/`prTextLintError` reason instead of aborting the
+whole report — the other sections still return.
+
+The same composed check is exposed to MCP clients as `gittensory_review_pr_before_push`.
 
 ## Auth
 

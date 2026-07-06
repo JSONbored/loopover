@@ -40,6 +40,7 @@ const CLI_COMMAND_SPEC = {
   "repo-decision": [],
   "analyze-branch": [],
   preflight: [],
+  "review-pr": [],
   "lint-pr-text": [],
   "slop-risk": [],
   "issue-slop": [],
@@ -633,6 +634,16 @@ server.registerTool(
       workspaceIntelligence: publicSafeWorkspaceIntelligence(result.analysis.workspaceIntelligence),
     });
   },
+);
+
+server.registerTool(
+  "gittensory_review_pr_before_push",
+  {
+    description:
+      "Run a single composed pre-PR review of the current branch: preflight (lane/duplicate/linked-issue/test/queue fit), slop-risk, and PR-text lint, merged into one report with an overall pass/warn/fail status. Thin composition of the existing checks — does not reimplement any of them. Sends metadata only, no source upload.",
+    inputSchema: currentBranchShape,
+  },
+  async (input) => toolResult("Gittensory pre-PR review.", await reviewLocalPr(await withClientWorkspaceRoots(input))),
 );
 
 server.registerTool(
@@ -1449,6 +1460,7 @@ async function runCli(args) {
   if (command === "issue-slop") return issueSlopCli(args.slice(1));
   if (command === "decision-pack") return decisionPackCli(options);
   if (command === "repo-decision") return repoDecisionCli(options);
+  if (command === "review-pr") return reviewPrCli(options);
   if (command !== "analyze-branch" && command !== "preflight") {
     const suggestion = suggestCommand(command);
     throw new Error(`Unknown command: ${command}.${suggestion ? ` Did you mean \`${suggestion}\`?` : ""} Run \`gittensory-mcp --help\` to list commands.`);
@@ -1483,6 +1495,52 @@ async function runCli(args) {
     return;
   }
   writeBranchAnalysisCli(result, command);
+}
+
+function printReviewPrHelp() {
+  process.stdout.write(
+    [
+      "Usage: gittensory-mcp review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]",
+      "",
+      "Compose the existing preflight + slop-risk + PR-text-lint checks into ONE pre-PR review report,",
+      "so a contributor's own local agent can see everything the gittensory gate would flag before ever opening a PR.",
+      "Mirrors the gittensory_review_pr_before_push MCP tool. Thin composition only — does not reimplement any check. No source upload.",
+      "",
+      "Pass --json for machine-readable output.",
+    ].join("\n") + "\n",
+  );
+}
+
+async function reviewPrCli(options) {
+  if (options.help === true) return printReviewPrHelp();
+  const contributorLogin = options.login ?? process.env.GITTENSORY_LOGIN ?? process.env.GITHUB_LOGIN;
+  if (!contributorLogin) throw new Error("Pass --login <github-login> or set GITTENSORY_LOGIN.");
+  let prBody = options.body;
+  if (options.bodyFile) prBody = readCliTextFile(options.bodyFile, "Body");
+  const commitMessages = Array.isArray(options.commit) ? options.commit : options.commit ? [options.commit] : undefined;
+  const linkedIssue = parsePositiveIntegerOption(options.linkedIssue, "--linked-issue");
+  const payload = await reviewLocalPr({
+    login: contributorLogin,
+    cwd: options.cwd,
+    repoFullName: options.repo,
+    baseRef: options.base,
+    title: options.title,
+    body: prBody,
+    labels: options.label,
+    commitMessages,
+    linkedIssues: linkedIssue !== undefined ? [linkedIssue] : options.issue?.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0),
+  });
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`Pre-PR review: ${payload.overallStatus}\n`);
+  for (const section of payload.sections) process.stdout.write(`- ${section.name}: ${section.status}\n`);
+  process.stdout.write(`Preflight: ${payload.preflight.status}\n`);
+  if (payload.slopRisk) process.stdout.write(`Slop risk: ${payload.slopRisk.slopRisk} (${payload.slopRisk.band})\n`);
+  else if (payload.slopRiskError) process.stdout.write(`Slop risk: unavailable (${payload.slopRiskError})\n`);
+  if (payload.prTextLint) process.stdout.write(`PR text lint: ${payload.prTextLint.verdict} (score ${payload.prTextLint.score})\n`);
+  else if (payload.prTextLintError) process.stdout.write(`PR text lint: unavailable (${payload.prTextLintError})\n`);
 }
 
 // Opens, type-checks, and reads the file through ONE file descriptor rather than a separate
@@ -2036,6 +2094,7 @@ function printHelp() {
   gittensory-mcp repo-decision --login <github-login> --repo owner/repo [--json]
   gittensory-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--json]
   gittensory-mcp preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--validation "passed|npm test|summary"] [--json]
+  gittensory-mcp review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
   gittensory-mcp lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
   gittensory-mcp slop-risk [--description <text>] [--description-file <path>] [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--json]
   gittensory-mcp issue-slop [--title <text>] [--body <text>] [--body-file <path>] [--json]
@@ -2562,8 +2621,8 @@ function doctorNextCommand(byName, context) {
     };
   }
   return {
-    command: `gittensory-mcp preflight --login ${shellArg(context.login ?? "<github-login>")} --repo ${shellArg(context.repoFullName ?? "owner/repo")} --json`,
-    reason: "Run branch preflight next; source upload remains disabled.",
+    command: `gittensory-mcp review-pr --login ${shellArg(context.login ?? "<github-login>")} --repo ${shellArg(context.repoFullName ?? "owner/repo")} --json`,
+    reason: "Run the composed pre-PR review (preflight + slop-risk + PR-text lint) next; source upload remains disabled.",
   };
 }
 
@@ -3641,6 +3700,79 @@ async function agentPreparePrPacket(input) {
   const payload = buildBranchAnalysisPayload({ ...input, cwd: workspace.cwd });
   const { localScorerStatus: _localScorerStatus, ...body } = payload;
   return apiPost("/v1/agent/prepare-pr-packet", body);
+}
+
+// #1968 review-pr: a thin composition of the existing preflight + slop-risk + lint-pr-text checks
+// into one report, so a contributor's own local agent can see everything the gate would flag before
+// ever opening a PR. Reuses analyzeCurrentBranch (preflight) and collectLocalDiff (the same diff
+// metadata previewLocalScore already sends) rather than reimplementing any check. Each sub-check is
+// isolated with its own try/catch: one flaky endpoint degrades that section to a `failed` status with
+// a public-safe reason instead of hiding the sections that did succeed.
+async function reviewLocalPr(input) {
+  const result = await analyzeCurrentBranch(input);
+  const workspace = resolveWorkspaceCwd(input);
+  const diff = collectLocalDiff(workspace.cwd, input.baseRef, input.workspaceRoots);
+  const commitMessages = input.commitMessages?.length ? input.commitMessages : undefined;
+  const prBody = input.body;
+  const linkedIssue = input.linkedIssues?.[0];
+
+  const slopRisk = await runReviewCheck(() =>
+    apiPost("/v1/lint/slop-risk", {
+      changedFiles: diff.changedFiles.map((path) => ({ path })),
+      description: prBody,
+      testFiles: diff.testFiles,
+    }),
+  );
+  const prTextLint = await runReviewCheck(() =>
+    apiPost("/v1/lint/pr-text", {
+      ...(commitMessages ? { commitMessages } : {}),
+      ...(prBody !== undefined ? { prBody } : {}),
+      ...(linkedIssue !== undefined ? { linkedIssue } : {}),
+    }),
+  );
+
+  const sections = [
+    { name: "preflight", status: result.analysis.preflight?.status === "fail" ? "fail" : result.analysis.preflight?.status === "warn" ? "warn" : "pass" },
+    { name: "slop_risk", status: slopRisk.ok ? slopRiskSectionStatus(slopRisk.value) : "fail" },
+    { name: "pr_text_lint", status: prTextLint.ok ? prTextLintSectionStatus(prTextLint.value) : "fail" },
+  ];
+
+  return {
+    local: result.local,
+    preflight: result.analysis.preflight,
+    prPacket: result.analysis.prPacket,
+    workspaceIntelligence: publicSafeWorkspaceIntelligence(result.analysis.workspaceIntelligence),
+    slopRisk: slopRisk.ok ? slopRisk.value : undefined,
+    slopRiskError: slopRisk.ok ? undefined : slopRisk.reason,
+    prTextLint: prTextLint.ok ? prTextLint.value : undefined,
+    prTextLintError: prTextLint.ok ? undefined : prTextLint.reason,
+    overallStatus: reviewOverallStatus(sections),
+    sections,
+  };
+}
+
+async function runReviewCheck(run) {
+  try {
+    return { ok: true, value: await run() };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : "review_check_failed" };
+  }
+}
+
+function slopRiskSectionStatus(value) {
+  if (value?.band === "high" || value?.band === "elevated") return "warn";
+  return "pass";
+}
+
+function prTextLintSectionStatus(value) {
+  if (value?.verdict === "weak") return "warn";
+  return "pass";
+}
+
+function reviewOverallStatus(sections) {
+  if (sections.some((section) => section.status === "fail")) return "fail";
+  if (sections.some((section) => section.status === "warn")) return "warn";
+  return "pass";
 }
 
 async function previewLocalScore(input) {

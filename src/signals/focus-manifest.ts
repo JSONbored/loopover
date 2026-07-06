@@ -378,7 +378,16 @@ export type FocusManifestReviewConfig = {
    *  GITTENSORY_REVIEW_SCREENSHOTS + the repo cutover allowlist — this config narrows/redirects that
    *  feature, it never turns it on by itself. */
   visual: VisualConfig;
+  /** `review.linkedIssueSatisfaction`: how strictly a linked issue must actually be SATISFIED by the PR — `off`
+   *  (default; not evaluated), `advisory` (surface a finding), or `block` (can become a hard blocker). CONFIG SLICE
+   *  ONLY (#2173, for #1961): parsed + normalized here; the merge/close decision that reads this mode is a separate
+   *  maintainer-only slice. null (default, absent) ⇒ byte-identical to today. */
+  linkedIssueSatisfaction: LinkedIssueSatisfactionMode | null;
 };
+
+/** `review.linkedIssueSatisfaction` modes (#2173). `off` = not evaluated (same as unset). */
+export const LINKED_ISSUE_SATISFACTION_MODES = ["off", "advisory", "block"] as const;
+export type LinkedIssueSatisfactionMode = (typeof LINKED_ISSUE_SATISFACTION_MODES)[number];
 
 /** One `review.labeling_rules[]` entry: a non-reserved `label` plus the deterministic `when` criteria that must ALL
  *  match for it to fire. A rule always has at least one criterion (enforced at parse). */
@@ -633,7 +642,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   publicNotes: [],
   gate: { ...EMPTY_GATE_CONFIG },
   settings: {},
-  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, findingCategories: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG } },
+  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, findingCategories: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null },
   features: { ...EMPTY_FEATURES_CONFIG },
   contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
   repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -663,7 +672,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     warnings,
     gate: { ...EMPTY_GATE_CONFIG },
     settings: {},
-    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, findingCategories: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG } },
+    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, findingCategories: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null },
     features: { ...EMPTY_FEATURES_CONFIG },
     contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
     repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -1594,7 +1603,7 @@ function parsePublicSafeText(value: JsonValue | undefined, field: string, warnin
  * throws; invalid/unsafe values are dropped with warnings.
  */
 function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewConfig {
-  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, findingCategories: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG } };
+  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, findingCategories: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null };
   if (value === undefined || value === null) return empty;
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "review" must be a mapping; ignoring it.`);
@@ -1643,6 +1652,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
   const labelingRules = parseReviewLabelingRules(r.labeling_rules, warnings);
   const aiModel = parseSelfHostAiModelConfig(r.ai_model, warnings);
   const visual = parseVisualConfig(r.visual, warnings);
+  const linkedIssueSatisfaction = normalizeOptionalEnum(r.linkedIssueSatisfaction, "review.linkedIssueSatisfaction", LINKED_ISSUE_SATISFACTION_MODES, warnings);
   return {
     present:
       footerText !== null ||
@@ -1663,6 +1673,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
       labelingRules.length > 0 ||
       selfHostAiModelPresent(aiModel) ||
       visualConfigPresent(visual) ||
+      linkedIssueSatisfaction !== null ||
       Object.keys(fields).length > 0 ||
       Object.keys(enrichmentAnalyzers).length > 0,
     footerText,
@@ -1671,6 +1682,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
     autoReview,
     aiModel,
     visual,
+    linkedIssueSatisfaction,
     enrichmentAnalyzers,
     profile,
     tone,
@@ -2113,6 +2125,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
     }
     out.visual = visual;
   }
+  if (review.linkedIssueSatisfaction !== null) out.linkedIssueSatisfaction = review.linkedIssueSatisfaction;
   return out;
 }
 

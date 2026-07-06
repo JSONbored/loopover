@@ -167,7 +167,8 @@ describe("worker entrypoint", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
     const env = createTestEnv();
-    await recordGitHubRateLimitObservation(env, { repoFullName: "owner/repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 120, resetAt: "2026-06-24T12:10:00.000Z", observedAt: "2026-06-24T12:00:00.000Z" });
+    // Scoped to this job's own installation bucket (#audit-rate-scoping) — installationId 123 below.
+    await recordGitHubRateLimitObservation(env, { repoFullName: "owner/repo", admissionKey: "installation:123", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 120, resetAt: "2026-06-24T12:10:00.000Z", observedAt: "2026-06-24T12:00:00.000Z" });
     const acked: string[] = [];
     const retries: Array<{ delaySeconds?: number } | undefined> = [];
     const requeued: Array<{ message: import("../../src/types").JobMessage; delaySeconds?: number }> = [];

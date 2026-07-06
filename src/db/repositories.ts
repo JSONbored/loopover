@@ -1279,9 +1279,17 @@ export async function recordGitHubRateLimitObservation(env: Env, observation: Gi
   });
 }
 
-export async function listLatestGitHubRateLimitObservations(env: Env, limit = 50): Promise<GitHubRateLimitObservationRecord[]> {
+/**
+ * Latest observations, newest first. When `admissionKey` is given, scoped to ONLY that bucket (#audit-rate-scoping)
+ * — every managed installation and the separate shared public/registry token draw from DIFFERENT GitHub-side REST
+ * buckets, so an unscoped read can return the wrong bucket's row (e.g. a fresh public-token observation masking an
+ * exhausted installation bucket, or vice versa) purely because it happened to be the most recently written.
+ */
+export async function listLatestGitHubRateLimitObservations(env: Env, limit = 50, admissionKey?: string): Promise<GitHubRateLimitObservationRecord[]> {
   const db = getDb(env.DB);
-  const rows = await db.select().from(githubRateLimitObservations).orderBy(desc(githubRateLimitObservations.observedAt)).limit(limit);
+  const rows = await (admissionKey !== undefined
+    ? db.select().from(githubRateLimitObservations).where(eq(githubRateLimitObservations.admissionKey, admissionKey)).orderBy(desc(githubRateLimitObservations.observedAt)).limit(limit)
+    : db.select().from(githubRateLimitObservations).orderBy(desc(githubRateLimitObservations.observedAt)).limit(limit));
   return rows.map(toGitHubRateLimitObservationRecord);
 }
 

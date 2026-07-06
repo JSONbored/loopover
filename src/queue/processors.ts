@@ -1685,9 +1685,12 @@ async function sweepRepoRegate(
   // Reserve installation rate-limit headroom for real webhook traffic (#audit-rate-headroom): with the shared REST
   // budget at/below the maintenance floor, defer the WHOLE sweep until the reset rather than fanning out per-PR
   // jobs that would each have to defer. Webhooks never pre-yield, so this hands the remaining budget to them.
+  // Scoped to THIS repo's own installation bucket (#audit-rate-scoping) — an unrelated installation's or the
+  // shared public token's budget must never defer (or wrongly clear) this repo's own sweep.
   const sweepRateResetAt = await shouldWaitForGitHubRateLimit(
     env,
     MAINTENANCE_RESERVED_HEADROOM,
+    typeof repo?.installationId === "number" ? githubRateLimitAdmissionKeyForInstallation(repo.installationId) : undefined,
   );
   if (sweepRateResetAt) {
     await env.JOBS.send(
@@ -2024,9 +2027,12 @@ async function regatePullRequest(
   // repair enqueue) is current-HEAD contributor-PR-review work and gets the SAME low floor a fresh webhook
   // gets — it must never be treated as background maintenance and parked behind it. Mirrors the SAME
   // reclassification githubRateLimitAdmissionTargetForJob applies at the queue-admission layer.
+  // Scoped to THIS installation's own bucket (#audit-rate-scoping) — an unrelated installation's or the shared
+  // public token's budget must never defer (or wrongly clear) this PR's own re-gate.
   const rateResetAt = await shouldWaitForGitHubRateLimit(
     env,
     isScheduledRegateSweepJob(deliveryId) ? MAINTENANCE_RESERVED_HEADROOM : LOW_REST_RATE_LIMIT_REMAINING,
+    githubRateLimitAdmissionKeyForInstallation(installationId),
   );
   if (rateResetAt) {
     await env.JOBS.send(

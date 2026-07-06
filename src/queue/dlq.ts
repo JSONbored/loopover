@@ -1,6 +1,7 @@
 import { getWebhookEvent, recordAuditEvent } from "../db/repositories";
-import { delayUntil, shouldWaitForGitHubRateLimit } from "../github/rate-limit";
+import { delayUntil, LOW_REST_RATE_LIMIT_REMAINING, shouldWaitForGitHubRateLimit } from "../github/rate-limit";
 import { incr } from "../selfhost/metrics";
+import { githubRateLimitAdmissionKeyForJob } from "../selfhost/queue-common";
 import type { JobMessage, JsonValue } from "../types";
 
 const DLQ_DEAD_LETTERED_METRIC = "gittensory_dlq_dead_lettered_total";
@@ -49,8 +50,10 @@ export async function processDlqBatch(batch: MessageBatch<JobMessage>, env: Env,
       const event = await getWebhookEvent(env, webhook.deliveryId).catch(() => null);
       if (event?.status !== "processed") {
         // If the webhook dead-lettered because the shared GitHub REST budget was exhausted, re-drive it AFTER the
-        // reset (retry-until-recovered) rather than immediately re-failing it. (#audit-rate-headroom)
-        const resetAt = await shouldWaitForGitHubRateLimit(env).catch(() => undefined);
+        // reset (retry-until-recovered) rather than immediately re-failing it. (#audit-rate-headroom) Scoped to
+        // THIS webhook's own installation bucket (#audit-rate-scoping) so an unrelated installation's exhaustion
+        // never delays this re-drive.
+        const resetAt = await shouldWaitForGitHubRateLimit(env, LOW_REST_RATE_LIMIT_REMAINING, githubRateLimitAdmissionKeyForJob(webhook) ?? undefined).catch(() => undefined);
         const options = resetAt ? { delaySeconds: delayUntil(resetAt) } : undefined;
         const queue = env.WEBHOOKS;
         if (queue) {

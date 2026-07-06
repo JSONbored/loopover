@@ -7,8 +7,18 @@ const NOW = "2026-06-24T12:00:00.000Z";
 const nowMs = Date.parse(NOW);
 const inIso = (ms: number): string => new Date(nowMs + ms).toISOString();
 
-async function seedRest(env: ReturnType<typeof createTestEnv>, remaining: number | null, resetAt: string | null): Promise<void> {
-  await recordGitHubRateLimitObservation(env, { repoFullName: "owner/repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining, resetAt, observedAt: NOW });
+async function seedRest(env: ReturnType<typeof createTestEnv>, remaining: number | null, resetAt: string | null, options: { admissionKey?: string; observedAt?: string } = {}): Promise<void> {
+  await recordGitHubRateLimitObservation(env, {
+    repoFullName: "owner/repo",
+    admissionKey: options.admissionKey,
+    resource: "rest",
+    path: "/x",
+    statusCode: 200,
+    limitValue: 5000,
+    remaining,
+    resetAt,
+    observedAt: options.observedAt ?? NOW,
+  });
 }
 
 describe("rate-limit headroom (#audit-rate-headroom)", () => {
@@ -63,6 +73,49 @@ describe("rate-limit headroom (#audit-rate-headroom)", () => {
       await seedRest(env, 120, resetAt);
       expect(await shouldWaitForGitHubRateLimit(env, MAINTENANCE_RESERVED_HEADROOM)).toBe(resetAt); // 120 <= 150 → wait
       expect(await shouldWaitForGitHubRateLimit(env)).toBeUndefined(); // 120 > 75 default → headroom
+    });
+
+    describe("admissionKey scoping (#audit-rate-scoping)", () => {
+      it("REGRESSION: an exhausted OTHER bucket's more-recent observation no longer throttles a caller scoped to a healthy bucket", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(NOW));
+        const env = createTestEnv();
+        // installation:2 exhausted, observed AFTER (so it would win an unscoped "globally newest" read).
+        await seedRest(env, 10, inIso(3_600_000), { admissionKey: "installation:2", observedAt: inIso(1_000) });
+        // installation:1 healthy, observed earlier.
+        await seedRest(env, 500, inIso(3_600_000), { admissionKey: "installation:1", observedAt: NOW });
+        expect(await shouldWaitForGitHubRateLimit(env, LOW_REST_RATE_LIMIT_REMAINING, "installation:1")).toBeUndefined();
+      });
+
+      it("REGRESSION: a healthy OTHER bucket's more-recent observation no longer masks this caller's own exhausted bucket", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(NOW));
+        const env = createTestEnv();
+        const resetAt = inIso(3_600_000);
+        // installation:1 exhausted, observed earlier.
+        await seedRest(env, 10, resetAt, { admissionKey: "installation:1", observedAt: NOW });
+        // installation:2 healthy, observed AFTER (would win an unscoped "globally newest" read and mask installation:1's exhaustion).
+        await seedRest(env, 500, resetAt, { admissionKey: "installation:2", observedAt: inIso(1_000) });
+        expect(await shouldWaitForGitHubRateLimit(env, LOW_REST_RATE_LIMIT_REMAINING, "installation:1")).toBe(resetAt);
+      });
+
+      it("a bucket with no observations of its own returns undefined (headroom) even when another bucket is exhausted", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(NOW));
+        const env = createTestEnv();
+        await seedRest(env, 10, inIso(3_600_000), { admissionKey: "installation:1" });
+        expect(await shouldWaitForGitHubRateLimit(env, LOW_REST_RATE_LIMIT_REMAINING, "public-token")).toBeUndefined();
+      });
+
+      it("omitting admissionKey preserves the prior globally-newest-observation behavior unchanged (byte-identical fallback)", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(NOW));
+        const env = createTestEnv();
+        await seedRest(env, 500, inIso(3_600_000), { admissionKey: "installation:1", observedAt: NOW });
+        const resetAt = inIso(3_600_000);
+        await seedRest(env, 10, resetAt, { admissionKey: "installation:2", observedAt: inIso(1_000) });
+        expect(await shouldWaitForGitHubRateLimit(env)).toBe(resetAt); // picks the globally newest row (installation:2), same as before scoping existed
+      });
     });
   });
 

@@ -22,9 +22,15 @@ export const HISTORICAL_BACKFILL_RESERVED_HEADROOM = 300;
 
 /** The REST rate-limit reset time to wait until when the latest recorded REST budget is at/below `floor`, or
  *  undefined when there is headroom, no usable observation, or the reset is already in the past. Reads the latest
- *  recorded observation (recordGitHubRateLimitObservation writes one per GitHub call) — no live GitHub call. */
-export async function shouldWaitForGitHubRateLimit(env: Env, floor: number = LOW_REST_RATE_LIMIT_REMAINING): Promise<string | undefined> {
-  const observations = await listLatestGitHubRateLimitObservations(env, 10);
+ *  recorded observation (recordGitHubRateLimitObservation writes one per GitHub call) — no live GitHub call.
+ *
+ *  `admissionKey`, when given, scopes the read to that bucket ONLY (#audit-rate-scoping) — every installation and
+ *  the shared public/registry token draw from DIFFERENT GitHub-side REST buckets, so checking the caller's own
+ *  bucket instead of "whichever bucket was most recently observed" avoids one bucket's health masking or falsely
+ *  throttling an unrelated one. Omitted (as at a few call sites with no natural single bucket to check, e.g. a
+ *  pre-dispatch scheduler tick) preserves the prior globally-newest-observation behavior unchanged. */
+export async function shouldWaitForGitHubRateLimit(env: Env, floor: number = LOW_REST_RATE_LIMIT_REMAINING, admissionKey?: string): Promise<string | undefined> {
+  const observations = await listLatestGitHubRateLimitObservations(env, 10, admissionKey);
   // Type-guard the find so `remaining` narrows to a number — null/undefined observations are excluded here, so the
   // headroom check below needs no further nullish guard.
   const rest = observations.find((observation): observation is typeof observation & { remaining: number } => observation.resource === "rest" && observation.remaining !== null && observation.remaining !== undefined);

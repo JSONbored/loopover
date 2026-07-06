@@ -326,8 +326,11 @@ describe("GitHub PR file hydration scoping (#audit-rate-headroom)", () => {
     // Below HISTORICAL_BACKFILL_RESERVED_HEADROOM (300) but above MAINTENANCE_RESERVED_HEADROOM (150) and
     // LOW_REST_RATE_LIMIT_REMAINING (75) — healthy enough for the segment's own entry check and for current-PR
     // convergence, but not for the least-urgent historical hydration path.
+    // Registry-only repo (no installation), so tokenForRepo resolves to the shared public token and
+    // repoAdmissionKeyForToken scopes to that bucket (#audit-rate-scoping).
     await recordGitHubRateLimitObservation(env, {
       repoFullName: "JSONbored/gittensory",
+      admissionKey: "public-token",
       resource: "rest",
       path: "/pulls",
       statusCode: 200,

@@ -1,6 +1,6 @@
 import { createApp } from "./api/routes";
 import { RateLimiter } from "./auth/rate-limit";
-import { delayUntil, shouldWaitForGitHubRateLimit, MAINTENANCE_RESERVED_HEADROOM } from "./github/rate-limit";
+import { delayUntil, shouldWaitForGitHubRateLimit, LOW_REST_RATE_LIMIT_REMAINING, MAINTENANCE_RESERVED_HEADROOM } from "./github/rate-limit";
 import { processDlqBatch } from "./queue/dlq";
 import { processJob } from "./queue/processors";
 import { isOrbBrokerEnabled } from "./orb/broker";
@@ -8,6 +8,7 @@ import { isOpsEnabled } from "./review/ops-wire";
 import { isRagEnabled } from "./review/rag-wire";
 import { isSelfTuneEnabled } from "./review/selftune-wire";
 import {
+  githubRateLimitAdmissionKeyForJob,
   isGitHubBudgetBackgroundJob,
   queueSnapshotBacklog,
   queueSnapshotFromBinding,
@@ -54,7 +55,9 @@ export default {
           continue;
         }
         if (isGitHubBudgetBackgroundJob(message.body)) {
-          const resetAt = await shouldWaitForGitHubRateLimit(env, MAINTENANCE_RESERVED_HEADROOM).catch(() => undefined);
+          // Scoped to THIS job's own installation bucket (#audit-rate-scoping) — an unrelated installation's or
+          // the shared public token's budget must never defer (or wrongly clear) this job.
+          const resetAt = await shouldWaitForGitHubRateLimit(env, MAINTENANCE_RESERVED_HEADROOM, githubRateLimitAdmissionKeyForJob(message.body) ?? undefined).catch(() => undefined);
           if (resetAt) {
             console.log(
               JSON.stringify({
@@ -83,8 +86,9 @@ export default {
         );
         // If the shared GitHub REST budget is exhausted, this failure is most likely a rate-limit — retry AFTER the
         // reset so a real webhook OUTLASTS a transient rate-limit window instead of burning its retries immediately
-        // and being dead-lettered (the surviving event-loss path). (#audit-rate-headroom)
-        const resetAt = await shouldWaitForGitHubRateLimit(env).catch(() => undefined);
+        // and being dead-lettered (the surviving event-loss path). (#audit-rate-headroom) Scoped to THIS job's own
+        // bucket (#audit-rate-scoping) so an unrelated installation's exhaustion never delays this job's retry.
+        const resetAt = await shouldWaitForGitHubRateLimit(env, LOW_REST_RATE_LIMIT_REMAINING, githubRateLimitAdmissionKeyForJob(message.body) ?? undefined).catch(() => undefined);
         if (resetAt) message.retry({ delaySeconds: delayUntil(resetAt) });
         else message.retry();
       }

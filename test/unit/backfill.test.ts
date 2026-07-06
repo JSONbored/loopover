@@ -3039,6 +3039,9 @@ describe("GitHub backfill", () => {
     });
     await recordGitHubRateLimitObservation(env, {
       repoFullName: "JSONbored/gittensory",
+      // Registry-only repo (no installation), so tokenForRepo resolves to the shared public token and
+      // repoAdmissionKeyForToken scopes to that bucket (#audit-rate-scoping).
+      admissionKey: "public-token",
       resource: "rest",
       path: "/issues",
       statusCode: 200,
@@ -3700,6 +3703,9 @@ describe("GitHub backfill", () => {
     });
     await recordGitHubRateLimitObservation(env, {
       repoFullName: "JSONbored/gittensory",
+      // Registry-only repo (no installation), so tokenForRepo resolves to the shared public token and
+      // repoAdmissionKeyForToken scopes to that bucket (#audit-rate-scoping).
+      admissionKey: "public-token",
       resource: "rest",
       path: "/labels",
       statusCode: 200,
@@ -3733,6 +3739,9 @@ describe("GitHub backfill", () => {
     await seedRegisteredRepo(freshWaitEnv);
     await recordGitHubRateLimitObservation(freshWaitEnv, {
       repoFullName: "JSONbored/gittensory",
+      // Registry-only repo (no installation), so tokenForRepo resolves to the shared public token and
+      // repoAdmissionKeyForToken scopes to that bucket (#audit-rate-scoping).
+      admissionKey: "public-token",
       resource: "rest",
       path: "/labels",
       statusCode: 200,
@@ -3802,6 +3811,9 @@ describe("GitHub backfill", () => {
     await seedRegisteredRepo(env);
     await recordGitHubRateLimitObservation(env, {
       repoFullName: "JSONbored/gittensory",
+      // Registry-only repo (no installation), so tokenForRepo resolves to the shared public token and
+      // repoAdmissionKeyForToken scopes to that bucket (#audit-rate-scoping).
+      admissionKey: "public-token",
       resource: "rest",
       path: "/pulls/1/files",
       statusCode: 200,
@@ -3831,6 +3843,9 @@ describe("GitHub backfill", () => {
     await seedRegisteredRepo(env);
     await recordGitHubRateLimitObservation(env, {
       repoFullName: "JSONbored/gittensory",
+      // Registry-only repo (no installation), so tokenForRepo resolves to the shared public token and
+      // repoAdmissionKeyForToken scopes to that bucket (#audit-rate-scoping).
+      admissionKey: "public-token",
       resource: "rest",
       path: "/pulls",
       statusCode: 200,

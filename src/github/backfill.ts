@@ -71,7 +71,7 @@ import {
   shouldPublishReviewCheck,
 } from "../review/check-names";
 import { buildReviewThreadBlocker, type ReviewThreadBlocker } from "../review/review-thread-findings";
-import { delayUntil, HISTORICAL_BACKFILL_RESERVED_HEADROOM, shouldWaitForGitHubRateLimit } from "./rate-limit";
+import { delayUntil, HISTORICAL_BACKFILL_RESERVED_HEADROOM, LOW_REST_RATE_LIMIT_REMAINING, shouldWaitForGitHubRateLimit } from "./rate-limit";
 import {
   githubRateLimitAdmissionKeyForPublicToken,
   githubRateLimitAdmissionKeyForToken,
@@ -507,7 +507,9 @@ export async function backfillRepositorySegment(
   const mode = options.mode ?? "light";
   const token = await tokenForRepo(env, repo);
   const sourceKind: RepoSyncSegmentRecord["sourceKind"] = repo.installationId && token !== env.GITHUB_PUBLIC_TOKEN ? "installation" : "github";
-  const resetAt = await shouldWaitForGitHubRateLimit(env);
+  // Scoped to the bucket this segment's OWN reads actually draw from (#audit-rate-scoping), not whichever bucket
+  // was most recently observed across every installation and the shared public token.
+  const resetAt = await shouldWaitForGitHubRateLimit(env, LOW_REST_RATE_LIMIT_REMAINING, repoAdmissionKeyForToken(env, repo, token));
   if (resetAt) {
     const previous = await getRepoSyncSegment(env, repo.fullName, options.segment);
     const segment = await completeSegment(env, repo, options.segment, sourceKind, mode, nowIso(), {
@@ -607,7 +609,9 @@ export async function backfillOpenPullRequestDetails(
   const mode = options.mode ?? "light";
   const token = await tokenForRepo(env, repo);
   const sourceKind: RepoSyncSegmentRecord["sourceKind"] = repo.installationId && token !== env.GITHUB_PUBLIC_TOKEN ? "installation" : "github";
-  const resetAt = await shouldWaitForGitHubRateLimit(env);
+  // Scoped to the bucket this segment's OWN reads actually draw from (#audit-rate-scoping), not whichever bucket
+  // was most recently observed across every installation and the shared public token.
+  const resetAt = await shouldWaitForGitHubRateLimit(env, LOW_REST_RATE_LIMIT_REMAINING, repoAdmissionKeyForToken(env, repo, token));
   if (resetAt) {
     const previous = await getRepoSyncSegment(env, repo.fullName, "pull_request_files");
     await env.JOBS.send({ type: "backfill-pr-details", requestedBy: "api", repoFullName: repo.fullName, ...repoInstallationPayload(repo), mode, cursor: options.cursor ?? 0 }, { delaySeconds: delayUntil(resetAt) });
@@ -1526,7 +1530,10 @@ async function hydrateMergedPullRequestFiles(
       .map((record) => record.number),
   );
   const pending = merged.filter((pr) => !alreadyHydrated.has(pr.number));
-  const resetAt = pending.length > 0 ? await shouldWaitForGitHubRateLimit(env, HISTORICAL_BACKFILL_RESERVED_HEADROOM) : undefined;
+  // #audit-rate-scoping: this function already receives (and forwards to its own GitHub reads below) the caller's
+  // admissionKey — thread it into the budget check too instead of checking whichever bucket was most recently
+  // observed across every installation and the shared public token.
+  const resetAt = pending.length > 0 ? await shouldWaitForGitHubRateLimit(env, HISTORICAL_BACKFILL_RESERVED_HEADROOM, admissionKey) : undefined;
   if (resetAt) warnings.push(`Historical merged PR file hydration deferred for ${pending.length} pull request(s): GitHub REST budget below the historical-backfill headroom floor (retry after ${resetAt}).`);
   const budgeted = resetAt ? new Set<number>() : new Set(pending.slice(0, MERGED_PR_FILE_HYDRATION_BATCH_SIZE[mode]).map((pr) => pr.number));
   await mapWithConcurrency(merged, concurrency, async (pr) => {

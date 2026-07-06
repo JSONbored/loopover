@@ -1,5 +1,5 @@
 import { githubRateLimitAdmissionKeyForPublicToken, timeoutFetch } from "../github/client";
-import { shouldWaitForGitHubRateLimit } from "../github/rate-limit";
+import { LOW_REST_RATE_LIMIT_REMAINING, shouldWaitForGitHubRateLimit } from "../github/rate-limit";
 
 function upstreamCommitHeaders(token: string | undefined): Record<string, string> {
   return {
@@ -37,7 +37,9 @@ export async function resolveUpstreamCommitSha(
         // Budget-gate the NETWORK read only: a cached resolve is still served for free even under pressure; a fresh
         // read is skipped (→ synthetic non-OK → null → caller falls back to the mutable ref) when the REST budget is
         // at/below the low-water floor. This callback runs ONLY on a cache miss, so it never suppresses a cache hit.
-        githubSkipNetworkWhen: () => shouldWaitForGitHubRateLimit(env).then(Boolean),
+        // Scoped to the public-token bucket (#audit-rate-scoping) — the same bucket the read below actually draws
+        // from — so an installation's unrelated budget can never mask or falsely trip this gate.
+        githubSkipNetworkWhen: () => shouldWaitForGitHubRateLimit(env, LOW_REST_RATE_LIMIT_REMAINING, githubRateLimitAdmissionKeyForPublicToken()).then(Boolean),
         // Give this bare-commit read the same stable, distinctly-scoped cache-key identity every installation-token
         // read gets, so the shared public token rotating doesn't reset this cacheable "commit" class either (#2538).
         githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForPublicToken(),

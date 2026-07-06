@@ -7502,8 +7502,9 @@ describe("queue processors", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" } });
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "PR7", state: "open", user: { login: "c" }, head: { sha: "a7" }, labels: [], body: "" });
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
-    // Low REST budget (10 ≤ 150 maintenance floor) with a future reset → maintenance must yield.
-    await repositoriesModule.recordGitHubRateLimitObservation(env, { repoFullName: "owner/agent-repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 10, resetAt: "2026-05-28T02:30:00.000Z", observedAt: "2026-05-28T02:00:00.000Z" });
+    // Low REST budget (10 ≤ 150 maintenance floor) with a future reset → maintenance must yield. Scoped to this
+    // repo's own installation bucket (#audit-rate-scoping) — the sweep now checks that bucket specifically.
+    await repositoriesModule.recordGitHubRateLimitObservation(env, { repoFullName: "owner/agent-repo", admissionKey: "installation:9200", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 10, resetAt: "2026-05-28T02:30:00.000Z", observedAt: "2026-05-28T02:00:00.000Z" });
 
     await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
 
@@ -7629,7 +7630,8 @@ describe("queue processors", () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
-    await repositoriesModule.recordGitHubRateLimitObservation(env, { repoFullName: "owner/agent-repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 10, resetAt: "2026-05-28T02:30:00.000Z", observedAt: "2026-05-28T02:00:00.000Z" });
+    // Scoped to this job's own installation bucket (#audit-rate-scoping) — installationId 9200 below.
+    await repositoriesModule.recordGitHubRateLimitObservation(env, { repoFullName: "owner/agent-repo", admissionKey: "installation:9200", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 10, resetAt: "2026-05-28T02:30:00.000Z", observedAt: "2026-05-28T02:00:00.000Z" });
     const stamp = vi.spyOn(repositoriesModule, "markPullRequestsRegated");
 
     await processJob(env, { type: "agent-regate-pr", deliveryId: "regate-sweep:owner/agent-repo#7", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9200 });
@@ -7644,8 +7646,9 @@ describe("queue processors", () => {
     const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
     // 100 remaining sits BELOW the 150 maintenance floor but ABOVE the 75 live floor -- isScheduledRegateSweepJob
-    // must route this "regate-sweep:"-prefixed job to the higher (150) floor, so it still defers here.
-    await repositoriesModule.recordGitHubRateLimitObservation(env, { repoFullName: "owner/agent-repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 100, resetAt: "2026-05-28T02:30:00.000Z", observedAt: "2026-05-28T02:00:00.000Z" });
+    // must route this "regate-sweep:"-prefixed job to the higher (150) floor, so it still defers here. Scoped to
+    // this job's own installation bucket (#audit-rate-scoping) — installationId 9200 below.
+    await repositoriesModule.recordGitHubRateLimitObservation(env, { repoFullName: "owner/agent-repo", admissionKey: "installation:9200", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 100, resetAt: "2026-05-28T02:30:00.000Z", observedAt: "2026-05-28T02:00:00.000Z" });
     const stamp = vi.spyOn(repositoriesModule, "markPullRequestsRegated");
 
     await processJob(env, { type: "agent-regate-pr", deliveryId: "regate-sweep:owner/agent-repo#7", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9200 });
@@ -7659,11 +7662,12 @@ describe("queue processors", () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
-    // Same 100-remaining observation as the sibling "regate-sweep:" test above, but this deliveryId does NOT carry
-    // the "regate-sweep:" prefix (e.g. a repair-priority fan-out, or a real webhook-triggered re-review), so
-    // isScheduledRegateSweepJob is false and shouldWaitForGitHubRateLimit is called with the lower 75 floor:
-    // 100 > 75, so this job proceeds instead of deferring.
-    await repositoriesModule.recordGitHubRateLimitObservation(env, { repoFullName: "owner/agent-repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 100, resetAt: "2026-05-28T02:30:00.000Z", observedAt: "2026-05-28T02:00:00.000Z" });
+    // Same 100-remaining observation as the sibling "regate-sweep:" test above (scoped to this job's own
+    // installation:9200 bucket, #audit-rate-scoping), but this deliveryId does NOT carry the "regate-sweep:"
+    // prefix (e.g. a repair-priority fan-out, or a real webhook-triggered re-review), so isScheduledRegateSweepJob
+    // is false and shouldWaitForGitHubRateLimit is called with the lower 75 floor: 100 > 75, so this job proceeds
+    // instead of deferring.
+    await repositoriesModule.recordGitHubRateLimitObservation(env, { repoFullName: "owner/agent-repo", admissionKey: "installation:9200", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 100, resetAt: "2026-05-28T02:30:00.000Z", observedAt: "2026-05-28T02:00:00.000Z" });
 
     // No stored PR row for prNumber 7 -- reReviewStoredPullRequest reaches its `getPullRequest` read (proving the
     // rate-limit gate did not short-circuit it) and then returns immediately with no re-enqueue, since there is

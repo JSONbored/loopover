@@ -112,6 +112,22 @@ describe("review-memory suppression store (#2178)", () => {
     expect(await rawCount(env, "owner/repo")).toBe(3);
   });
 
+  it("REGRESSION: a prune-query failure is swallowed -- recordReviewSuppression still returns the newly recorded row instead of throwing", async () => {
+    const env = createTestEnv();
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = ((sql: string) => {
+      // Only the prune-cap query selects a bare `id` ordered by created_at -- the read-back select() in
+      // recordReviewSuppression itself selects the full row with no ORDER BY, so this pattern isolates the
+      // cap-eviction query without breaking the insert/read-back this same call also performs.
+      if (/select\s+"id"\s+from\s+"review_suppression".*order by.*created_at.*desc/i.test(sql)) {
+        throw new Error("d1 down");
+      }
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+    const record = await recordReviewSuppression(env, { repoFullName: "owner/repo", category: "ai_review_split", patternHash: "hash-1" });
+    expect(record).toMatchObject({ repoFullName: "owner/repo", patternHash: "hash-1" });
+  });
+
   it("listReviewSuppressions clamps an out-of-range limit into [1, MAX_REVIEW_SUPPRESSIONS_PER_REPO]", async () => {
     const env = createTestEnv();
     await recordReviewSuppression(env, { repoFullName: "owner/repo", category: "ai_review_split", patternHash: "hash-1" });

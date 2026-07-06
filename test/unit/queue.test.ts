@@ -6737,6 +6737,54 @@ describe("queue processors", () => {
     warn.mockRestore();
   });
 
+  it("REGRESSION (#sweep-uninstalled-budget-waste): a scheduled sweep never refreshes open PRs (via the shared GITHUB_PUBLIC_TOKEN) for a registered-but-uninstalled repo, since no per-PR fan-out will ever follow", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(m: import("../../src/types").JobMessage) {
+          sent.push(m);
+        },
+      } as unknown as Queue,
+    });
+    // Registered (e.g. via the subnet registry sync) but NOT installed — no installationId.
+    await upsertRepositoryFromGitHub(env, { name: "no-install", full_name: "owner/no-install", private: false, owner: { login: "owner" } });
+    await upsertRepositorySettings(env, { repoFullName: "owner/no-install", autonomy: { merge: "auto" } });
+    const segmentSpy = vi.spyOn(repositoriesModule, "getRepoSyncSegment");
+    const backfillSpy = vi.spyOn(backfillModule, "backfillRepositorySegment");
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule", repoFullName: "owner/no-install" });
+
+    expect(segmentSpy).not.toHaveBeenCalled();
+    expect(backfillSpy).not.toHaveBeenCalled();
+    expect(sent.filter((job) => job.type === "agent-regate-pr")).toEqual([]);
+    segmentSpy.mockRestore();
+    backfillSpy.mockRestore();
+  });
+
+  it("scheduled sweeps DO still refresh open PRs for an installed repo even when GITHUB_PUBLIC_TOKEN is also configured (installation presence gates the skip, not credential kind)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(m: import("../../src/types").JobMessage) {
+          sent.push(m);
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9405, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9405);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gateCheckMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    const backfillSpy = vi.spyOn(backfillModule, "backfillRepositorySegment").mockResolvedValueOnce(undefined as never);
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule", repoFullName: "owner/agent-repo" });
+
+    expect(backfillSpy).toHaveBeenCalledWith(env, expect.objectContaining({ segment: "open_pull_requests", mode: "light", force: true }));
+    backfillSpy.mockRestore();
+  });
+
   it("scheduled sweeps refresh incomplete open-PR sync segments", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({

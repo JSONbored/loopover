@@ -1332,7 +1332,14 @@ async function refreshOpenPullRequestsForScheduledSweep(
   requestedBy: "schedule" | "api" | "test",
 ): Promise<void> {
   if (requestedBy !== "schedule") return;
-  if (!repo || !sweepOpenPullRequestSyncCredentialAvailable(env, repo)) return;
+  // No installation -> no per-PR regate fan-out will ever happen for this repo (the candidate-selection
+  // gate below only dispatches agent-regate-pr jobs for installed repos), so refreshing its open-PR list
+  // here only spends the shared GITHUB_PUBLIC_TOKEN budget on data nothing in THIS sweep will use. A
+  // registry-only repo (registry/sync.ts, isRegistered) still gets its own data kept fresh by the
+  // dedicated backfill-registered-repos/refresh-registry jobs, so skipping here is pure waste removal,
+  // not a functionality gap (#audit-rate-headroom, #sweep-uninstalled-budget-waste).
+  if (!repo?.installationId) return;
+  if (!sweepOpenPullRequestSyncCredentialAvailable(env, repo)) return;
   const segment = await getRepoSyncSegment(
     env,
     repo.fullName,

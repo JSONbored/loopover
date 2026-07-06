@@ -22,36 +22,47 @@ const jsonResponse = (body, code = 200) => new Response(JSON.stringify(body), { 
 const PR_PATCH = "@@ -10,3 +10,5 @@\n ctx1\n+add11\n keepctx\n+add13\n+add14\n ctx2";
 const LCOV = "SF:src/a.ts\nDA:11,0\nDA:13,5\nDA:14,0\nend_of_record\n";
 
-// Build a single-entry ZIP (central directory + EOCD) around `data` under `name`, deflated (method 8).
-function buildZip(name, data, { store = false } = {}) {
-  const nameBuf = Buffer.from(name, "utf8");
-  const raw = Buffer.from(data, "utf8");
-  const body = store ? raw : deflateRawSync(raw);
-  const method = store ? 0 : 8;
-  const local = Buffer.alloc(30);
-  local.writeUInt32LE(0x04034b50, 0);
-  local.writeUInt16LE(method, 8);
-  local.writeUInt32LE(body.length, 18);
-  local.writeUInt32LE(raw.length, 22);
-  local.writeUInt16LE(nameBuf.length, 26);
-  const localOffset = 0;
-  const localRecord = Buffer.concat([local, nameBuf, body]);
-  const central = Buffer.alloc(46);
-  central.writeUInt32LE(0x02014b50, 0);
-  central.writeUInt16LE(method, 10);
-  central.writeUInt32LE(body.length, 20);
-  central.writeUInt32LE(raw.length, 24);
-  central.writeUInt16LE(nameBuf.length, 28);
-  central.writeUInt32LE(localOffset, 42);
-  const centralRecord = Buffer.concat([central, nameBuf]);
-  const cdStart = localRecord.length;
+// Build a ZIP (central directory + EOCD) around entries, deflated (method 8) by default.
+function buildZipEntries(entries) {
+  const localRecords = [];
+  const centralRecords = [];
+  let offset = 0;
+  for (const { name, data, store = false } of entries) {
+    const nameBuf = Buffer.from(name, "utf8");
+    const raw = Buffer.from(data, "utf8");
+    const body = store ? raw : deflateRawSync(raw);
+    const method = store ? 0 : 8;
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(method, 8);
+    local.writeUInt32LE(body.length, 18);
+    local.writeUInt32LE(raw.length, 22);
+    local.writeUInt16LE(nameBuf.length, 26);
+    const localRecord = Buffer.concat([local, nameBuf, body]);
+    localRecords.push(localRecord);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(method, 10);
+    central.writeUInt32LE(body.length, 20);
+    central.writeUInt32LE(raw.length, 24);
+    central.writeUInt16LE(nameBuf.length, 28);
+    central.writeUInt32LE(offset, 42);
+    centralRecords.push(Buffer.concat([central, nameBuf]));
+    offset += localRecord.length;
+  }
+  const centralDirectory = Buffer.concat(centralRecords);
   const eocd = Buffer.alloc(22);
   eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(1, 8);
-  eocd.writeUInt16LE(1, 10);
-  eocd.writeUInt32LE(centralRecord.length, 12);
-  eocd.writeUInt32LE(cdStart, 16);
-  return Buffer.concat([localRecord, centralRecord, eocd]);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(centralDirectory.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...localRecords, centralDirectory, eocd]);
+}
+
+// Build a single-entry ZIP around `data` under `name`.
+function buildZip(name, data, { store = false } = {}) {
+  return buildZipEntries([{ name, data, store }]);
 }
 
 const req = (files, over = {}) => ({
@@ -128,6 +139,20 @@ test("readZipEntries: reads a deflated and a stored entry; rejects a non-zip buf
   assert.equal(stored[0]?.data.toString("utf8"), LCOV);
   assert.deepEqual(readZipEntries(Buffer.from("not a zip file at all")), []);
   assert.deepEqual(readZipEntries(Buffer.alloc(4)), []); // shorter than the EOCD record
+});
+
+test("readZipEntries: skips non-coverage entries before inflation and bounds inspected entries", () => {
+  const junk = "x".repeat(1024 * 1024);
+  const manyJunkEntries = Array.from({ length: 70 }, (_, index) => ({ name: `junk-${index}.txt`, data: junk }));
+  assert.deepEqual(readZipEntries(buildZipEntries(manyJunkEntries)), []);
+
+  const entries = readZipEntries(
+    buildZipEntries([
+      ...manyJunkEntries.slice(0, 64),
+      { name: "lcov.info", data: LCOV },
+    ]),
+  );
+  assert.deepEqual(entries, []);
 });
 
 test("coverageFileKind: recognizes lcov / istanbul / cobertura names, else null", () => {

@@ -21,6 +21,8 @@ const SLUG_RE = /^[A-Za-z0-9._-]+$/;
 const MAX_RUNS_PROBED = 5; // recent successful runs to search for a coverage artifact
 const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024; // skip an artifact zip larger than this (bounded download)
 const MAX_ENTRY_BYTES = 4 * 1024 * 1024; // skip a single uncompressed zip entry larger than this
+const MAX_ZIP_ENTRIES = 64; // cap central-directory entries inspected from untrusted artifacts
+const MAX_TOTAL_ENTRY_BYTES = 8 * 1024 * 1024; // cap retained decompressed coverage-report bytes per artifact
 const MAX_FILES_REPORTED = 15; // cap findings so the brief stays bounded
 const MAX_LINES_PER_FILE = 20; // cap reported uncovered lines per file
 // Artifact names that plausibly hold a coverage report; matched case-insensitively against the artifact name.
@@ -184,7 +186,10 @@ export function readZipEntries(buf: Buffer): ZipEntry[] {
   const cdStart = buf.readUInt32LE(eocd + 16);
   if (cdStart + cdSize > buf.length) return entries;
   let pos = cdStart;
-  while (pos + 46 <= cdStart + cdSize) {
+  let inspected = 0;
+  let retainedBytes = 0;
+  while (pos + 46 <= cdStart + cdSize && inspected < MAX_ZIP_ENTRIES) {
+    inspected += 1;
     if (buf.readUInt32LE(pos) !== 0x02014b50) break; // central-directory file header
     const method = buf.readUInt16LE(pos + 10);
     const compressedSize = buf.readUInt32LE(pos + 20);
@@ -194,6 +199,7 @@ export function readZipEntries(buf: Buffer): ZipEntry[] {
     const localOffset = buf.readUInt32LE(pos + 42);
     const name = buf.toString("utf8", pos + 46, pos + 46 + nameLen);
     pos += 46 + nameLen + extraLen + commentLen;
+    if (!coverageFileKind(name)) continue;
     if (localOffset + 30 > buf.length) continue;
     const localNameLen = buf.readUInt16LE(localOffset + 26);
     const localExtraLen = buf.readUInt16LE(localOffset + 28);
@@ -201,13 +207,16 @@ export function readZipEntries(buf: Buffer): ZipEntry[] {
     if (dataStart + compressedSize > buf.length) continue;
     const chunk = buf.subarray(dataStart, dataStart + compressedSize);
     if (method === 0) {
-      if (chunk.length > MAX_ENTRY_BYTES) continue;
+      if (chunk.length > MAX_ENTRY_BYTES || retainedBytes + chunk.length > MAX_TOTAL_ENTRY_BYTES) continue;
       entries.push({ name, data: chunk });
+      retainedBytes += chunk.length;
     } else if (method === 8) {
       try {
-        entries.push({ name, data: inflateRawSync(chunk, { maxOutputLength: MAX_ENTRY_BYTES }) });
+        const data = inflateRawSync(chunk, { maxOutputLength: Math.min(MAX_ENTRY_BYTES, MAX_TOTAL_ENTRY_BYTES - retainedBytes) });
+        entries.push({ name, data });
+        retainedBytes += data.length;
       } catch {
-        continue; // corrupt deflate stream or output over the cap -> skip this entry
+        continue; // corrupt deflate stream or output over the remaining cap -> skip this entry
       }
     }
   }

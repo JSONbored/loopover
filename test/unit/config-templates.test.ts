@@ -48,6 +48,14 @@ describe("config/examples review templates (#1682)", () => {
     expect(manifest.features.rag).toBeNull();
   });
 
+  it("documents every shipped review.auto_review eligibility knob in gittensory.full.yml (#2055)", () => {
+    const full = readConfigExample("gittensory.full.yml");
+    for (const field of ["skip_labels", "skip_docs_only", "max_added_lines", "max_files"]) {
+      expect(full, `missing auto_review field ${field}`).toMatch(new RegExp(`# ${field}:`));
+    }
+    expect(full).not.toMatch(/not parsed yet/);
+  });
+
   it("parses gittensory.minimal.yml with zero warnings and enables no agent actions", () => {
     const manifest = parseFocusManifestContent(readConfigExample("gittensory.minimal.yml"), "repo_file");
     expect(manifest.warnings).toEqual([]);

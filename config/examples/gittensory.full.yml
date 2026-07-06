@@ -350,7 +350,7 @@ gate:
 # deterministic gate policy above. Omit the block to keep the byte-identical
 # defaults.
 review:
-  # Deterministic AI review eligibility filters (`review.auto_review`, #1954 / #2038–#2041). Each knob quietly
+  # Deterministic AI review eligibility filters (`review.auto_review`, #1954 / #2038–#2065). Each knob quietly
   # skips the advisory AI review for matching PRs — never a gate failure. When the Orb review check is enabled,
   # skipped PRs complete as "skipped" with a human-readable reason (see `evaluateAutoReviewSkipReason` in
   # `src/signals/focus-manifest.ts` and the public-surface `SKIP_SUMMARY.ignored_author` mapping in
@@ -385,8 +385,23 @@ review:
     # Default: null / 0 (re-review every sync, byte-identical).
     # auto_pause_after_reviewed_commits: 3
 
-  # Planned eligibility knobs (tracked separately — not parsed yet; omit until shipped):
-  #   skip_labels, skip_docs_only, max_added_lines, max_files (#2062–#2065).
+    # Case-insensitive PR label names that skip AI review (e.g. maintenance or do-not-review markers).
+    # Default: [] (no label-based skip). (#2062)
+    # skip_labels:
+    #   - do-not-review
+    #   - wip
+
+    # Bool | null. Default: null (docs-only PRs are reviewed as today). When true, PRs whose every
+    # changed file classifies as documentation skip AI review. Empty changed-file list is NOT docs-only. (#2063)
+    # skip_docs_only: true
+
+    # Non-negative integer. Skip AI review when total added lines across the PR diff exceed this cap.
+    # Default: 0 (no cap — reviewed regardless of size). (#2065)
+    # max_added_lines: 500
+
+    # Non-negative integer. Skip AI review when changed-file count exceeds this cap.
+    # Default: 0 (no cap). (#2065)
+    # max_files: 25
 
   # Planned display toggle (#2069): when enabled, the unified review comment includes a
   # `review effort: N/5 (~M min)` line derived from the per-PR effort estimate.

@@ -4954,7 +4954,11 @@ export async function recordWebhookEvent(
     installationId?: number | undefined;
     repositoryFullName?: string | undefined;
     payloadHash: string;
-    status: "queued" | "processed" | "error";
+    // "superseded": a coalescable delivery (e.g. a pr-refresh) whose queue row was overwritten by a later
+    // redelivery sharing the same job_key before either was claimed — written directly by the self-host queue
+    // backends (pg-queue.ts / sqlite-queue.ts) at coalesce time, not through this function, but included here so
+    // the full set of terminal statuses this column can hold is documented in one place (#audit-webhook-supersede-trace).
+    status: "queued" | "processed" | "error" | "superseded";
     errorSummary?: string;
   },
 ): Promise<void> {

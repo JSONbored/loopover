@@ -483,6 +483,38 @@ export function createSqliteQueue(
     }
   }
 
+  // #audit-webhook-supersede-trace: best-effort, never blocks a coalesce on a write hiccup -- the row it marks
+  // is purely an audit trace (webhook_events), not the actual job data, so a failure here must not resurrect the
+  // "abort the whole enqueue" class of bug this whole issue exists to close. `oldPayload` is the row's payload
+  // BEFORE it gets overwritten by the coalesce; `incomingMessage` is what it's about to become. Only a
+  // github-webhook delivery has a webhook_events row at all (rag-index-repo etc. never do), and only when the
+  // superseded id genuinely differs from the surviving one (defense-in-depth against a same-id no-op).
+  function markSupersededWebhookEvent(oldPayload: string, incomingMessage: JobMessage): void {
+    let old: { type?: unknown; deliveryId?: unknown } | null;
+    try {
+      old = JSON.parse(oldPayload) as { type?: unknown; deliveryId?: unknown };
+    } catch {
+      return;
+    }
+    if (old?.type !== "github-webhook" || typeof old.deliveryId !== "string") return;
+    /* v8 ignore next -- defensive: jobCoalesceKey partitions its key format strictly by message.type, so a
+     * github-webhook job_key can only ever be matched by another github-webhook message; the non-webhook arm
+     * is unreachable through this call site, not load-bearing. */
+    const incomingDeliveryId = incomingMessage.type === "github-webhook" ? incomingMessage.deliveryId : undefined;
+    if (old.deliveryId === incomingDeliveryId) return;
+    try {
+      driver.query(`UPDATE webhook_events SET status='superseded', processed_at=? WHERE delivery_id=? AND status='queued'`, [new Date().toISOString(), old.deliveryId]);
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "webhook_supersede_mark_failed",
+          error: errorMessageWithCause(error),
+        }),
+      );
+    }
+  }
+
   function enqueue(message: JobMessage, delaySeconds: number): void {
     const now = Date.now();
     const payload = JSON.stringify(message);
@@ -572,10 +604,16 @@ export function createSqliteQueue(
     }
     if (key) {
       const existing = driver.query(
-        `SELECT id FROM ${TABLE} WHERE status='pending' AND job_key=? ORDER BY priority DESC, run_after DESC, id LIMIT 1`,
+        `SELECT id, payload FROM ${TABLE} WHERE status='pending' AND job_key=? ORDER BY priority DESC, run_after DESC, id LIMIT 1`,
         [key],
-      ).rows[0] as { id: number } | undefined;
+      ).rows[0] as { id: number; payload: string } | undefined;
       if (existing) {
+        // #audit-webhook-supersede-trace: the row about to be overwritten below may itself be a github-webhook
+        // delivery (e.g. a "PR opened" pr-refresh coalesce) whose own webhook_events row was written as 'queued'
+        // BEFORE it ever reached this coalesce -- overwriting the payload here discards that delivery's id
+        // forever, so nothing would ever advance its webhook_events row past 'queued'. Mark it superseded FIRST,
+        // while the OLD payload (and its deliveryId) is still readable.
+        markSupersededWebhookEvent(existing.payload, message);
         // See the supersededKeyPrefix branch above: created_at is preserved across a coalesced re-enqueue so the
         // maintenance trickle clock reflects genuine wait time, not the most recent re-request.
         driver.query(

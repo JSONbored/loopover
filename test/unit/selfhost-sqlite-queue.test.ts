@@ -871,6 +871,94 @@ describe("createSqliteQueue (durable #980)", () => {
     });
   });
 
+  it("REGRESSION (#audit-webhook-supersede-trace): marks a superseded pr-refresh delivery's webhook_events row instead of leaving it stuck at 'queued' forever", async () => {
+    const driver = makeDriver();
+    driver.exec(`
+      CREATE TABLE webhook_events (
+        delivery_id TEXT PRIMARY KEY,
+        event_name TEXT NOT NULL,
+        action TEXT,
+        installation_id INTEGER,
+        repository_full_name TEXT,
+        payload_hash TEXT NOT NULL,
+        status TEXT NOT NULL,
+        error_summary TEXT,
+        received_at TEXT NOT NULL,
+        processed_at TEXT
+      );
+    `);
+    driver.query(
+      "INSERT INTO webhook_events (delivery_id, event_name, payload_hash, status, received_at) VALUES (?, 'pull_request', 'hash-1', 'queued', '2026-07-06T00:00:00.000Z')",
+      ["pr-1"],
+    );
+    const q = createSqliteQueue(driver, async () => undefined);
+
+    await q.binding.send(prWebhook("pr-1"), { delaySeconds: 60 });
+    await q.binding.send(prWebhook("pr-2"), { delaySeconds: 1 }); // coalesces into pr-1's row, overwriting its payload
+
+    const rows = driver.query("SELECT payload FROM _selfhost_jobs ORDER BY id", []).rows as Array<{ payload: string }>;
+    expect(rows).toHaveLength(1); // coalesced into one row
+    expect(JSON.parse(rows[0]!.payload).deliveryId).toBe("pr-2"); // pr-2's payload survives -- pr-1's is gone from the queue
+    const event = driver.query("SELECT status FROM webhook_events WHERE delivery_id = ?", ["pr-1"]).rows[0] as { status: string } | undefined;
+    expect(event?.status).toBe("superseded"); // pr-1's trace row is marked, not left stuck at 'queued' forever
+  });
+
+  it("fails safe when the webhook_events table itself errors: the coalesce still completes and only logs a warning", async () => {
+    const driver = makeDriver();
+    // No webhook_events table -- the UPDATE inside markSupersededWebhookEvent will throw "no such table", which
+    // must be caught and logged, never allowed to abort the coalesce/enqueue itself.
+    const q = createSqliteQueue(driver, async () => undefined);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await q.binding.send(prWebhook("pr-1"), { delaySeconds: 60 });
+    await q.binding.send(prWebhook("pr-2"), { delaySeconds: 1 });
+
+    const rows = driver.query("SELECT payload FROM _selfhost_jobs ORDER BY id", []).rows as Array<{ payload: string }>;
+    expect(rows).toHaveLength(1); // the coalesce itself still completed despite the missing table
+    expect(JSON.parse(rows[0]!.payload).deliveryId).toBe("pr-2");
+    expect(errors.mock.calls.some((call) => String(call[0]).includes("webhook_supersede_mark_failed"))).toBe(true);
+    errors.mockRestore();
+  });
+
+  it("does not mark superseded (no-op) when the coalesce is against the SAME deliveryId (defense-in-depth)", async () => {
+    const driver = makeDriver();
+    driver.exec(`
+      CREATE TABLE webhook_events (
+        delivery_id TEXT PRIMARY KEY,
+        event_name TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+        status TEXT NOT NULL,
+        received_at TEXT NOT NULL
+      );
+    `);
+    driver.query(
+      "INSERT INTO webhook_events (delivery_id, event_name, payload_hash, status, received_at) VALUES (?, 'pull_request', 'hash-1', 'queued', '2026-07-06T00:00:00.000Z')",
+      ["same-id"],
+    );
+    const q = createSqliteQueue(driver, async () => undefined);
+
+    await q.binding.send(prWebhook("same-id"), { delaySeconds: 60 });
+    await q.binding.send(prWebhook("same-id"), { delaySeconds: 1 }); // re-coalesces against its own delivery id
+
+    const event = driver.query("SELECT status FROM webhook_events WHERE delivery_id = ?", ["same-id"]).rows[0] as { status: string } | undefined;
+    expect(event?.status).toBe("queued"); // untouched -- there is nothing genuinely superseded here
+  });
+
+  it("tolerates an unparseable existing payload (a corrupted row) without throwing", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => undefined);
+    driver.query(
+      `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key) VALUES (?, 'pending', 0, ?, ?, 5, ?)`,
+      ["not valid json{", Date.now() + 60_000, Date.now(), `github-webhook:pr-refresh:jsonbored/gittensory#1629@${"a".repeat(40)}`],
+    );
+
+    await expect(q.binding.send(prWebhook("pr-2"), { delaySeconds: 1 })).resolves.toBeUndefined();
+
+    const rows = driver.query("SELECT payload FROM _selfhost_jobs ORDER BY id", []).rows as Array<{ payload: string }>;
+    expect(rows).toHaveLength(1); // still coalesced into one row despite the corrupted existing payload
+    expect(JSON.parse(rows[0]!.payload).deliveryId).toBe("pr-2");
+  });
+
   it("lets a pending full RAG index absorb later repo incrementals", async () => {
     const driver = makeDriver();
     const q = createSqliteQueue(driver, async () => undefined);

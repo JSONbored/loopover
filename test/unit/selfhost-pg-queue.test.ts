@@ -558,6 +558,31 @@ describe("createPgQueue (durable #977)", () => {
     );
   });
 
+  it("REGRESSION (#audit-webhook-supersede-trace): marks the superseded delivery's webhook_events row instead of leaving it stuck at 'queued' forever", async () => {
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    m.fn.mockResolvedValueOnce({ rows: [{ id: "existing", payload: JSON.stringify(ciWebhook("ci-1", "check_run")) }], rowCount: 1 });
+
+    await q.binding.send(ciWebhook("ci-2", "check_run"), { delaySeconds: 1 });
+
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE webhook_events SET status='superseded'"),
+      ["ci-1", expect.any(String)],
+    );
+  });
+
+  it("does NOT mark superseded when the coalesced-away job was not a github-webhook delivery (e.g. a scheduled sweep re-arm)", async () => {
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    m.fn.mockResolvedValueOnce({ rows: [{ id: "existing", payload: JSON.stringify({ type: "refresh-registry", requestedBy: "schedule" }) }], rowCount: 1 });
+
+    await q.binding.send(msg("refresh-registry"));
+
+    expect(m.pool.query).not.toHaveBeenCalledWith(expect.stringContaining("UPDATE webhook_events SET status='superseded'"), expect.anything());
+  });
+
   it("does not reset created_at when coalescing a re-enqueue into an existing pending row (regression for #selfhost-runtime-drift)", async () => {
     // created_at anchors the maintenance trickle's age clock (maintenance-admission.ts). If a coalesced
     // re-enqueue reset it, a periodic scheduler re-requesting the same still-pending maintenance job faster

@@ -90,6 +90,16 @@ function composeFollowUpIssueBody(input: { finding: DeferredReviewFinding; pullN
   return boundFollowUpBody(lines.join("\n"), FOLLOW_UP_ISSUE_BODY_MAX);
 }
 
+function sanitizeFollowUpFinding(finding: DeferredReviewFinding): Record<string, string> {
+  const sanitized: Record<string, string> = {
+    title: stripFollowUpMarkers(finding.title),
+    detail: stripFollowUpMarkers(finding.detail),
+  };
+  if (finding.path) sanitized.path = finding.path;
+  if (finding.action) sanitized.action = stripFollowUpMarkers(finding.action);
+  return sanitized;
+}
+
 /** File a follow-up issue for a deferred review finding (#2177, #1962 slice). */
 export function buildFollowUpIssueSpec(input: {
   repoFullName: string;
@@ -97,6 +107,7 @@ export function buildFollowUpIssueSpec(input: {
   labels?: string[] | undefined;
   pullNumber?: number | undefined;
 }): LocalWriteActionSpec {
+  const sanitizedFinding = sanitizeFollowUpFinding(input.finding);
   const title = composeFollowUpIssueTitle(input.finding);
   const body = composeFollowUpIssueBody({ finding: input.finding, pullNumber: input.pullNumber });
   const fileSpec = buildFileIssueSpec({
@@ -111,12 +122,7 @@ export function buildFollowUpIssueSpec(input: {
     description: `File a follow-up issue for a deferred review finding: ${title}`,
     inputs: {
       ...fileSpec.inputs,
-      finding: {
-        title: input.finding.title,
-        detail: input.finding.detail,
-        ...(input.finding.path ? { path: input.finding.path } : {}),
-        ...(input.finding.action ? { action: input.finding.action } : {}),
-      },
+      finding: sanitizedFinding,
       ...(input.pullNumber !== undefined ? { pullNumber: input.pullNumber } : {}),
     },
   };

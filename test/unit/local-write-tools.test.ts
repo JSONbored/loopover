@@ -115,7 +115,7 @@ describe("buildFollowUpIssueSpec (#2177)", () => {
       "gh issue create --repo 'o/r' --title 'Follow-up: Handle null branch in widget loader' --body 'Deferred from review on PR #42.\nFile: `src/widget.ts`\n\nThe loader never guards a null response.\n\n**Suggested next step**\nAdd a regression test for the null path.\n\n_Filed locally from a deferred review finding — gittensory supplies content only._' --label 'gittensor:bug'",
     );
     expect(s.inputs).toMatchObject({ labels: ["gittensor:bug"], pullNumber: 42 });
-    expect(s.inputs.finding).toMatchObject({
+    expect(s.inputs.finding).toEqual({
       title: "Handle null branch in widget loader",
       detail: "The loader never guards a null response.",
       path: "src/widget.ts",
@@ -135,6 +135,7 @@ describe("buildFollowUpIssueSpec (#2177)", () => {
     expect(s.command).not.toContain("<!--");
     expect(s.command).not.toContain("--label");
     expect(s.inputs).toMatchObject({ labels: [] });
+    expect(s.inputs.finding).toEqual({ title: "Follow-up: it's noisy", detail: "Detail  stays public-safe." });
     expect(s.inputs).not.toHaveProperty("pullNumber");
     expect(s.description).toContain("Follow-up: it's noisy");
   });

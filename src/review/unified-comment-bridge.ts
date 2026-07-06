@@ -590,10 +590,10 @@ export function deriveAutoMergeConditionsFromSignals(args: {
   const mergeRow: AutoMergeConditionRow = {
     condition: "Mergeable / clean",
     state:
-      mergeState === "dirty" || mergeState === "behind"
-        ? "fail"
-        : mergeState
-          ? "ok"
+      mergeState === "clean"
+        ? "ok"
+        : mergeState === "dirty" || mergeState === "behind"
+          ? "fail"
           : "warn",
     evidence: mergeState
       ? `GitHub merge state: ${args.mergeReadiness?.mergeStateLabel}.`

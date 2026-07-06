@@ -80,6 +80,29 @@ describe("deriveAutoMergeConditionsFromSignals", () => {
     expect(rows.find((row) => row.condition === "Valid linked issue")?.state).toBe("warn");
   });
 
+  it("marks only an explicit clean merge state as ok — blocked/unstable/draft stay warn (#2051)", () => {
+    for (const label of ["blocked", "unstable", "unmergeable", "draft", "unknown"]) {
+      const rows = deriveAutoMergeConditionsFromSignals({
+        gate: gate(),
+        mergeReadiness: { ciState: "passed", mergeStateLabel: label },
+        panelRows: panelRowsPassing,
+      });
+      expect(rows.find((row) => row.condition === "Mergeable / clean")?.state).toBe("warn");
+    }
+    const clean = deriveAutoMergeConditionsFromSignals({
+      gate: gate(),
+      mergeReadiness: { ciState: "passed", mergeStateLabel: "clean" },
+      panelRows: panelRowsPassing,
+    });
+    expect(clean.find((row) => row.condition === "Mergeable / clean")?.state).toBe("ok");
+    const dirty = deriveAutoMergeConditionsFromSignals({
+      gate: gate(),
+      mergeReadiness: { ciState: "passed", mergeStateLabel: "dirty" },
+      panelRows: panelRowsPassing,
+    });
+    expect(dirty.find((row) => row.condition === "Mergeable / clean")?.state).toBe("fail");
+  });
+
   it("does not invoke deriveUnifiedStatus — display-only derivation from pre-computed signals (#2051)", () => {
     const spy = vi.spyOn(unifiedComment, "deriveUnifiedStatus");
     deriveAutoMergeConditionsFromSignals({

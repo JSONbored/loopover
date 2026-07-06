@@ -180,6 +180,12 @@ describe("isGeneratedFile", () => {
     expect(classifyChangedFile("lib/foo.pbgrpc.dart")).toBe("generated");
   });
 
+  it("matches Java protobuf message stubs alongside the other protoc plugins", () => {
+    expect(isGeneratedFile("proto/messages.pb.java")).toBe(true);
+    expect(isGeneratedFile("src/Main.java")).toBe(false);
+    expect(classifyChangedFile("proto/messages.pb.java")).toBe("generated");
+  });
+
   it("matches Java gRPC service stubs alongside the other protoc plugins", () => {
     expect(isGeneratedFile("gen/GreeterGrpc.java")).toBe(true);
     expect(isGeneratedFile("src/Greeter.java")).toBe(false);
@@ -533,6 +539,7 @@ describe("classifyChangedFile", () => {
       ["proto/messages.pb.scala", "generated"],
       ["gen/GreeterGrpcKt.kt", "generated"],
       ["gen/GreeterGrpc.java", "generated"],
+      ["proto/messages.pb.java", "generated"],
       ["gen/GreeterGrpc.cs", "generated"],
       ["lib/foo.pbgrpc.dart", "generated"],
       ["gen/service_grpc_pb.js", "generated"],

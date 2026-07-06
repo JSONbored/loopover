@@ -76,7 +76,7 @@ function isGeneratedFileFrom(parts: NormalizedPath): boolean {
     /\.(generated|gen)\.[^/]+$/.test(norm) ||
     // protoc output: Go/TS/JS plugins emit `.pb.{go,ts,js}`, the reference C++ plugin emits
     // `.pb.cc` / `.pb.h`, the Swift plugin emits `.pb.swift`, the Dart plugin emits `.pb.dart`,
-    // the Kotlin plugin emits `.pb.kt`, the C# plugin emits `.pb.cs`, the Rust plugin emits `.pb.rs`,
+    // the Kotlin plugin emits `.pb.kt`, the Java plugin emits `.pb.java`, the C# plugin emits `.pb.cs`, the Rust plugin emits `.pb.rs`,
     // the Elixir plugin emits `.pb.ex`, the Erlang gpb plugin emits `.pb.erl` / `.pb.hrl`, the Crystal
     // plugin emits `.pb.cr`, the Haskell plugin emits `.pb.hs`, the Scala plugin emits `.pb.scala`, and the Objective-C plugin emits
     // `.pbobjc.{h,m}` plus gRPC `.pbrpc.{h,m}` service stubs. Swift gRPC emits sibling `.grpc.swift`
@@ -84,7 +84,7 @@ function isGeneratedFileFrom(parts: NormalizedPath): boolean {
     // sibling `*Grpc.java` service stubs; grpc-dotnet emits sibling `*Grpc.cs` service stubs; the Dart
     // gRPC plugin emits sibling `.pbgrpc.dart` service stubs.
     // `.pb.dart`/`.pb.kt`/`.pb.cs` (the `.pb` infix keeps hand-written sources from matching).
-    /\.pb\.(go|ts|js|cc|h|swift|dart|kt|cs|rs|ex|erl|hrl|cr|hs|scala)$/.test(norm) ||
+    /\.pb\.(go|ts|js|cc|h|swift|dart|kt|cs|rs|ex|erl|hrl|cr|hs|scala|java)$/.test(norm) ||
     /\.grpc\.swift$/.test(norm) ||
     /grpckt\.kt$/.test(norm) ||
     /grpc\.java$/.test(norm) ||

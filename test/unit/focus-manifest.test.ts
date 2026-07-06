@@ -19,7 +19,6 @@ import {
   resolveReviewPathInstructions,
   resolveReviewAutoReviewConfig,
   resolveReviewPreMergeChecks,
-  resolveTestGenerationEnabled,
   composeRepoReviewContext,
   evaluateAutoReviewSkipReason,
   resolveAutoReviewSkipSummary,
@@ -34,6 +33,7 @@ import {
   resolveReviewSelfHostAiModel,
   resolveReviewVisualConfig,
   repoDocGenerationConfigToJson,
+  resolveTestGenerationManifestToggle,
   reviewConfigToJson,
   reviewRecapConfigToJson,
   settingsOverrideToJson,
@@ -359,9 +359,11 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     changedFilesSummary: "changed_files_summary:",
     effortScore: "effort_score:",
     testGeneration: "test_generation:",
+    impactMap: "impact_map:",
     findingCategories: "finding_categories:",
     minFindingSeverity: "min_finding_severity:",
     maxFindings: "max_findings:",
+    commentVerbosity: "comment_verbosity:",
     pathInstructions: "path_instructions:",
     instructions: "instructions:",
     excludePaths: "exclude_paths:",
@@ -781,7 +783,7 @@ describe("compileFocusManifestPolicy", () => {
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
       gate: { present: false, enabled: null, checkMode: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null },
       settings: {},
-      review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, effortScore: null, testGeneration: null, findingCategories: null, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null },
+      review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, effortScore: null, testGeneration: null, impactMap: null, findingCategories: null, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
       contentLane: { present: false, entryFileGlob: null, providerFileGlob: null, artifactGlob: null, collectionField: null, maxAppendedEntries: null, duplicateKeyFields: [], validatorId: null },
       repoDocGeneration: { present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 },
@@ -2945,10 +2947,10 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
   });
 
   it("resolveReviewPromptOverrides: non-null manifest passes the config through; null manifest → defaults", () => {
-    const manifest = parseFocusManifest({ review: { profile: "chill", security_focus: true, inline_comments: true, suggestions: true, changed_files_summary: true, effort_score: true, finding_categories: true, path_instructions: [{ path: "src/**", instructions: "be strict" }], instructions: "Follow our async-error conventions.", exclude_paths: ["**/*.lock"], path_filters: ["src/**", "!src/generated/**"] } });
-    expect(resolveReviewPromptOverrides(manifest)).toEqual({ profile: "chill", tone: null, securityFocus: true, inlineComments: true, suggestions: true, changedFilesSummary: true, effortScore: true, findingCategories: true, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, pathInstructions: [{ path: "src/**", instructions: "be strict" }], instructions: "Follow our async-error conventions.", excludePaths: ["**/*.lock"], pathFilters: ["src/**", "!src/generated/**"], selfHostAiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG } });
-    // A null manifest (load failure) yields the byte-identical defaults; inline comments + suggestions + changed-files summary + effort score + finding categories + security focus default OFF.
-    expect(resolveReviewPromptOverrides(null)).toEqual({ profile: null, tone: null, securityFocus: false, inlineComments: false, suggestions: false, changedFilesSummary: false, effortScore: false, findingCategories: false, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], selfHostAiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG } });
+    const manifest = parseFocusManifest({ review: { profile: "chill", security_focus: true, inline_comments: true, suggestions: true, changed_files_summary: true, effort_score: true, impact_map: true, finding_categories: true, comment_verbosity: "detailed", path_instructions: [{ path: "src/**", instructions: "be strict" }], instructions: "Follow our async-error conventions.", exclude_paths: ["**/*.lock"], path_filters: ["src/**", "!src/generated/**"] } });
+    expect(resolveReviewPromptOverrides(manifest)).toEqual({ profile: "chill", tone: null, securityFocus: true, inlineComments: true, suggestions: true, changedFilesSummary: true, effortScore: true, impactMap: true, findingCategories: true, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: "detailed", pathInstructions: [{ path: "src/**", instructions: "be strict" }], instructions: "Follow our async-error conventions.", excludePaths: ["**/*.lock"], pathFilters: ["src/**", "!src/generated/**"], selfHostAiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG } });
+    // A null manifest (load failure) yields the byte-identical defaults; inline comments + suggestions + changed-files summary + effort score + impact map + finding categories + security focus default OFF.
+    expect(resolveReviewPromptOverrides(null)).toEqual({ profile: null, tone: null, securityFocus: false, inlineComments: false, suggestions: false, changedFilesSummary: false, effortScore: false, impactMap: false, findingCategories: false, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], selfHostAiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG } });
     // An explicit false / absent toggle both resolve to the strict-boolean false.
     expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { inline_comments: false } })).inlineComments).toBe(false);
     expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { profile: "chill" } })).inlineComments).toBe(false);
@@ -2958,6 +2960,8 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
     expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { profile: "chill" } })).changedFilesSummary).toBe(false);
     expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { effort_score: false } })).effortScore).toBe(false);
     expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { profile: "chill" } })).effortScore).toBe(false);
+    expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { impact_map: false } })).impactMap).toBe(false);
+    expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { profile: "chill" } })).impactMap).toBe(false);
     expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { finding_categories: false } })).findingCategories).toBe(false);
     expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { profile: "chill" } })).findingCategories).toBe(false);
     expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { security_focus: false } })).securityFocus).toBe(false);
@@ -3049,6 +3053,23 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
     expect(bad.warnings.some((w) => /review\.test_generation.*must be a boolean/.test(w))).toBe(true);
   });
 
+  it("parses review.impact_map (default OFF), marks present, round-trips, and warns on a non-boolean (#2184)", () => {
+    expect(parseFocusManifest({ review: { impact_map: true } }).review.impactMap).toBe(true);
+    const on = parseFocusManifest({ review: { impact_map: true } });
+    expect(on.review.present).toBe(true); // an impact-map-only manifest IS present
+    expect(parseFocusManifest({ review: reviewConfigToJson(on.review) }).review).toEqual(on.review); // survives round-trip
+    // Explicit false is retained (and marks present, since the maintainer set it).
+    const off = parseFocusManifest({ review: { impact_map: false } });
+    expect(off.review.impactMap).toBe(false);
+    expect(off.review.present).toBe(true);
+    // Absent ⇒ null (the byte-identical default), config not present.
+    expect(parseFocusManifest({ review: {} }).review.impactMap).toBeNull();
+    // A non-boolean is ignored with a warning.
+    const bad = parseFocusManifest({ review: { impact_map: "yes" } });
+    expect(bad.review.impactMap).toBeNull();
+    expect(bad.warnings.some((w) => /review\.impact_map.*must be a boolean/.test(w))).toBe(true);
+  });
+
   it("parses review.finding_categories (default OFF), marks present, round-trips, and warns on a non-boolean (#1958)", () => {
     expect(parseFocusManifest({ review: { finding_categories: true } }).review.findingCategories).toBe(true);
     const on = parseFocusManifest({ review: { finding_categories: true } });
@@ -3064,6 +3085,13 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
     const bad = parseFocusManifest({ review: { finding_categories: "yes" } });
     expect(bad.review.findingCategories).toBeNull();
     expect(bad.warnings.some((w) => /review\.finding_categories.*must be a boolean/.test(w))).toBe(true);
+  });
+
+  it("resolves review.test_generation's manifest toggle to a strict boolean (#2189)", () => {
+    expect(resolveTestGenerationManifestToggle(null)).toBe(false); // null manifest (load failure) ⇒ false
+    expect(resolveTestGenerationManifestToggle(parseFocusManifest({}))).toBe(false); // absent ⇒ false
+    expect(resolveTestGenerationManifestToggle(parseFocusManifest({ review: { test_generation: false } }))).toBe(false);
+    expect(resolveTestGenerationManifestToggle(parseFocusManifest({ review: { test_generation: true } }))).toBe(true);
   });
 
   it("parses review.min_finding_severity, round-trips, and warns on invalid values (#2048)", () => {
@@ -3103,6 +3131,24 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
     expect(parseFocusManifest({ review: reviewConfigToJson(nitsOnly.review) }).review.maxFindings).toEqual(
       nitsOnly.review.maxFindings,
     );
+  });
+
+  it("parses review.comment_verbosity (each level), marks present, round-trips, warns on invalid, and resolves through the overrides (#2047)", () => {
+    for (const level of ["quiet", "normal", "detailed"] as const) {
+      const manifest = parseFocusManifest({ review: { comment_verbosity: level } });
+      expect(manifest.review.commentVerbosity).toBe(level);
+      expect(manifest.review.present).toBe(true);
+      expect(parseFocusManifest({ review: reviewConfigToJson(manifest.review) }).review.commentVerbosity).toBe(level);
+      expect(resolveReviewPromptOverrides(manifest).commentVerbosity).toBe(level);
+    }
+
+    expect(parseFocusManifest({ review: {} }).review.commentVerbosity).toBeNull();
+    expect(resolveReviewPromptOverrides(null).commentVerbosity).toBeNull();
+    expect(reviewConfigToJson(parseFocusManifest({ review: {} }).review)).toEqual(null);
+
+    const invalid = parseFocusManifest({ review: { comment_verbosity: "loud" } });
+    expect(invalid.review.commentVerbosity).toBeNull();
+    expect(invalid.warnings.some((w) => /comment_verbosity/.test(w))).toBe(true);
   });
 });
 
@@ -3737,13 +3783,6 @@ describe("review.pre_merge_checks (#review-pre-merge-checks)", () => {
     const manifest = parseFocusManifest({ review: { pre_merge_checks: [{ name: "c", require_label: "l" }] } });
     expect(resolveReviewPreMergeChecks(manifest)).toEqual(manifest.review.preMergeChecks);
     expect(resolveReviewPreMergeChecks(null)).toEqual([]);
-  });
-
-  it("resolveTestGenerationEnabled: true only when the manifest explicitly set review.test_generation: true (#1972)", () => {
-    expect(resolveTestGenerationEnabled(parseFocusManifest({ review: { test_generation: true } }))).toBe(true);
-    expect(resolveTestGenerationEnabled(parseFocusManifest({ review: { test_generation: false } }))).toBe(false);
-    expect(resolveTestGenerationEnabled(parseFocusManifest({ review: {} }))).toBe(false);
-    expect(resolveTestGenerationEnabled(null)).toBe(false);
   });
 });
 

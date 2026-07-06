@@ -222,6 +222,17 @@ export type GittensoryAiReviewInput = {
    * to today — no section is appended.
    */
   ragContext?: string | null | undefined;
+  /**
+   * Deterministic impact map (#2186, additive grounding slice of #1971), flag-gated by BOTH the operator's
+   * GITTENSORY_REVIEW_IMPACT_MAP env flag AND the per-repo `.gittensory.yml review.impact_map` opt-in (see
+   * `shouldComputeImpactMap`, `src/review/impact-map-wire.ts`). The caller pre-formats
+   * `computeImpactMap`'s (`src/review/impact-map.ts`) output into an "IMPACT MAP" block — which OTHER repo
+   * files plausibly need re-checking given the PR's changed symbols — and appends it to the USER prompt as
+   * additive reference context, exactly like `ragContext`. When ABSENT (the default, flag-OFF) or an empty
+   * string, the user prompt is byte-identical to today — no section is appended, and the gate verdict is
+   * never affected (reference context only, never a new blocker/nit rule by itself).
+   */
+  impactMapContext?: string | null | undefined;
   /** Internal review observability metadata, stored with usage events. The caller must pass only public-safe,
    *  non-secret counters/paths; provider keys and raw prompt text never belong here. */
   observability?: Record<string, unknown> | null | undefined;
@@ -675,6 +686,11 @@ function buildUserPrompt(input: GittensoryAiReviewInput): string {
   // supplied one (flag GITTENSORY_REVIEW_RAG on AND an index exists). Absent/empty (the default) → byte-identical.
   const ragSection = input.ragContext;
   if (ragSection) lines.push("", ragSection);
+  // Deterministic impact map (#2186): append the "IMPACT MAP" block when the caller supplied one (BOTH
+  // GITTENSORY_REVIEW_IMPACT_MAP AND the per-repo review.impact_map opt-in on, AND the computation found at
+  // least one affected module). Absent/empty (the default) → the prompt is byte-identical to today.
+  const impactMapSection = input.impactMapContext;
+  if (impactMapSection) lines.push("", impactMapSection);
   // Review-enrichment brief (#1472): append the external REES analysis block when the caller supplied one (flag
   // GITTENSORY_REVIEW_ENRICHMENT on AND REES_URL set). Absent/empty (the default) → the prompt is byte-identical.
   const enrichmentSection = input.enrichment?.promptSection;

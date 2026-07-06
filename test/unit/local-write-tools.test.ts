@@ -7,6 +7,7 @@ import {
   buildFileIssueSpec,
   buildOpenPrSpec,
   buildPostEligibilityCommentSpec,
+  buildTestGenSpec,
 } from "../../src/mcp/local-write-tools";
 
 describe("local write-tool specs (#780)", () => {
@@ -49,5 +50,45 @@ describe("local write-tool specs (#780)", () => {
   it("delete_branch is local-only by default, remote-deleting when asked", () => {
     expect(buildDeleteBranchSpec({ branch: "feat/x" }).command).toBe("git branch -D 'feat/x'");
     expect(buildDeleteBranchSpec({ branch: "feat/x", remote: true }).command).toBe("git branch -D 'feat/x' && git push origin --delete 'feat/x'");
+  });
+});
+
+// #2188 (boundary-safe test-generation slice of #1972).
+describe("buildTestGenSpec (#2188)", () => {
+  it("returns a generate_tests spec naming the target files, framework, testDir, and criteria", () => {
+    const s = buildTestGenSpec({
+      repoFullName: "o/r",
+      targetFiles: ["src/widget.ts"],
+      framework: "vitest",
+      testDir: "test/unit/",
+      criteria: ["cover the null branch"],
+    });
+    expect(s.action).toBe("generate_tests");
+    expect(s.boundary).toBe(LOCAL_WRITE_BOUNDARY);
+    expect(s.description).toContain("vitest");
+    expect(s.description).toContain("src/widget.ts");
+    expect(s.description).toContain("under test/unit/");
+    expect(s.description).toContain("cover the null branch");
+    expect(s.inputs).toEqual({
+      repoFullName: "o/r",
+      targetFiles: ["src/widget.ts"],
+      framework: "vitest",
+      testDir: "test/unit/",
+      criteria: ["cover the null branch"],
+    });
+    expect(s.command).toBe(`echo '${s.description}'`);
+  });
+
+  it("omits testDir language and defaults criteria to empty when neither is supplied (co-located convention)", () => {
+    const s = buildTestGenSpec({ repoFullName: "o/r", targetFiles: ["pkg/foo.go"], framework: "go-test" });
+    expect(s.description).toContain("co-located with the source it covers");
+    expect(s.description).not.toContain("Boundary-safe criteria");
+    expect(s.inputs).toEqual({ repoFullName: "o/r", targetFiles: ["pkg/foo.go"], framework: "go-test", testDir: null, criteria: [] });
+  });
+
+  it("lists multiple target files and POSIX-escapes an embedded single quote in the command", () => {
+    const s = buildTestGenSpec({ repoFullName: "o/r", targetFiles: ["src/a.ts", "src/b.ts"], framework: "vitest", criteria: ["handle it's edge case"] });
+    expect(s.description).toContain("src/a.ts, src/b.ts");
+    expect(s.command).toContain("it'\\''s edge case");
   });
 });

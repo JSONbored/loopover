@@ -68,3 +68,31 @@ export function buildDeleteBranchSpec(input: { branch: string; remote?: boolean 
   const command = input.remote === true ? `${local} && git push origin --delete ${sq(input.branch)}` : local;
   return spec("delete_branch", "Delete a branch (locally, and optionally on origin).", { branch: input.branch, remote: input.remote === true }, command);
 }
+
+// #2188 (boundary-safe test-generation slice of #1972). Unlike the write-tools above, there is no single CLI
+// verb that "scaffolds a test file" across vitest/jest/pytest/go test/rspec/cargo test — so `command` here is a
+// safe, informative `echo` of the plan (target files + boundary criteria) rather than a real write, and the
+// actual scaffolding is left to the contributor's OWN agent reading the structured `inputs`. This keeps the same
+// no-cloud-write guarantee as every other spec in this file: gittensory supplies WHAT test cases should exist at
+// which boundaries, never the test file content or its execution.
+export function buildTestGenSpec(input: {
+  repoFullName: string;
+  targetFiles: string[];
+  framework: string;
+  testDir?: string | null | undefined;
+  criteria?: string[] | undefined;
+}): LocalWriteActionSpec {
+  const criteria = input.criteria ?? [];
+  const testDir = input.testDir ?? null;
+  const targetList = input.targetFiles.join(", ");
+  const criteriaList = criteria.length > 0 ? ` Boundary-safe criteria: ${criteria.join("; ")}.` : "";
+  const location = testDir ? ` under ${testDir}` : " co-located with the source it covers";
+  const description = `Scaffold ${input.framework} tests${location} for: ${targetList}.${criteriaList}`;
+  const command = `echo ${sq(description)}`;
+  return spec(
+    "generate_tests",
+    description,
+    { repoFullName: input.repoFullName, targetFiles: input.targetFiles, framework: input.framework, testDir, criteria },
+    command,
+  );
+}

@@ -12,6 +12,9 @@ const DEFAULT_BROKER_URL = "https://gittensory-api.aethereal.dev";
 // The broker's cold token mint can take many seconds when GitHub is throttling the App; allow headroom so the one
 // uncached mint completes and populates the broker-side cache (steady-state cache hits return in well under a second).
 const BROKER_TIMEOUT_MS = 25_000;
+// Relay registration hits the same broker under the same load conditions as token minting; mirror BROKER_TIMEOUT_MS
+// so a loaded broker (e.g. at boot time with concurrent token-mint demand) doesn't abort registration prematurely.
+const ORB_RELAY_REGISTER_TIMEOUT_MS = 25_000;
 
 function isLocalBrokerHost(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || (hostname === "::1" || hostname === "[::1]");
@@ -159,7 +162,7 @@ export async function registerOrbRelayTarget(
       method: "POST",
       headers: { authorization: `Bearer ${env.ORB_ENROLLMENT_SECRET}`, "content-type": "application/json" }, // present — isOrbBrokerMode required it
       body: JSON.stringify({ relayUrl, mode }),
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(ORB_RELAY_REGISTER_TIMEOUT_MS),
     });
     if (res.ok) return { status: "registered" };
     // Carry WHY it failed (HTTP status + an optional sanitized hint) so the caller's log — and Sentry — show a

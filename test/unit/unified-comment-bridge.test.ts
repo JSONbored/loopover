@@ -319,6 +319,23 @@ describe("buildUnifiedCommentBody", () => {
     expect(body).toContain("+1 more");
   });
 
+  it("forwards review.comment_verbosity through to gate the rendered collapsibles (#2047)", () => {
+    const buildArgs = {
+      gate: gate(),
+      aiReview: { notes: "Clean change.\n\n**Nits (1)**\n- a nit" },
+      panelRows,
+      readinessTotal: 88,
+      changedFiles: 3,
+      footerMarkdown: footer,
+    };
+    const quiet = buildUnifiedCommentBody({ ...buildArgs, commentVerbosity: "quiet" });
+    expect(quiet).not.toContain("<summary><b>Nits</b>");
+    const detailed = buildUnifiedCommentBody({ ...buildArgs, commentVerbosity: "detailed" });
+    expect(detailed).toContain("<details open><summary><b>Nits</b>");
+    const withoutVerbosity = buildUnifiedCommentBody(buildArgs);
+    expect(withoutVerbosity).toContain("<details><summary><b>Nits</b>");
+  });
+
   it("passes a public review update timestamp into the unified comment", () => {
     const body = buildUnifiedCommentBody({
       gate: gate(),

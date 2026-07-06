@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyTestCoverage, hasLocalTestEvidence, hasValidationNote, isTestPath } from "../../src/signals/test-evidence";
+import { classifyTestCoverage, detectTestConvention, hasLocalTestEvidence, hasValidationNote, isTestPath } from "../../src/signals/test-evidence";
 
 describe("test evidence helpers", () => {
   it("detects common test path conventions", () => {
@@ -189,5 +189,64 @@ describe("classifyTestCoverage", () => {
     // 9 source + 1 test ≈ 10%
     const sources = Array.from({ length: 9 }, (_, i) => `src/file${i}.ts`);
     expect(classifyTestCoverage([...sources, "test/single.test.ts"])).toBe("weak");
+  });
+});
+
+// #2187 (foundational slice of #1972): a bounded, deterministic framework/convention detector feeding the
+// boundary-safe test-gen action spec (#2188).
+describe("detectTestConvention", () => {
+  it("detects vitest from its config marker, taking precedence over a stale jest config", () => {
+    expect(detectTestConvention([], ["vitest.config.ts"])).toEqual({ framework: "vitest", testDir: "test/", namingPattern: "*.test.ts" });
+    expect(detectTestConvention([], ["vitest.workspace.mts"])).toEqual({ framework: "vitest", testDir: "test/", namingPattern: "*.test.ts" });
+    // A repo migrating off Jest keeps the old config around; vitest's own marker must still win (checked first).
+    expect(detectTestConvention([], ["vitest.config.js", "jest.config.js"])).toEqual({ framework: "vitest", testDir: "test/", namingPattern: "*.test.ts" });
+  });
+
+  it("detects jest from its config marker", () => {
+    expect(detectTestConvention([], ["jest.config.ts"])).toEqual({ framework: "jest", testDir: "__tests__/", namingPattern: "*.test.js" });
+    expect(detectTestConvention([], ["jest.config.json"])).toEqual({ framework: "jest", testDir: "__tests__/", namingPattern: "*.test.js" });
+  });
+
+  it("detects pytest from pytest.ini or pyproject.toml", () => {
+    expect(detectTestConvention([], ["pytest.ini"])).toEqual({ framework: "pytest", testDir: null, namingPattern: "test_*.py" });
+    expect(detectTestConvention([], ["pyproject.toml"])).toEqual({ framework: "pytest", testDir: null, namingPattern: "test_*.py" });
+  });
+
+  it("detects go test from go.mod", () => {
+    expect(detectTestConvention([], ["go.mod"])).toEqual({ framework: "go-test", testDir: null, namingPattern: "*_test.go" });
+  });
+
+  it("detects rspec from .rspec", () => {
+    expect(detectTestConvention([], [".rspec"])).toEqual({ framework: "rspec", testDir: "spec/", namingPattern: "*_spec.rb" });
+  });
+
+  it("detects cargo test from Cargo.toml", () => {
+    expect(detectTestConvention([], ["Cargo.toml"])).toEqual({ framework: "cargo-test", testDir: null, namingPattern: "#[cfg(test)] mod tests" });
+  });
+
+  it("matches a marker found in the changed paths, not only the markers list", () => {
+    expect(detectTestConvention(["backend/go.mod", "backend/main.go"], [])).toEqual({ framework: "go-test", testDir: null, namingPattern: "*_test.go" });
+  });
+
+  it("falls back to inferring from an existing test file's naming when no marker is present", () => {
+    expect(detectTestConvention(["test/unit/widget.test.ts"], [])).toEqual({ framework: "vitest", testDir: "test/", namingPattern: "*.test.ts" });
+    expect(detectTestConvention(["__tests__/widget.test.js"], [])).toEqual({ framework: "jest", testDir: "__tests__/", namingPattern: "*.test.js" });
+    expect(detectTestConvention(["mypackage/test_utils.py"], [])).toEqual({ framework: "pytest", testDir: null, namingPattern: "test_*.py" });
+    expect(detectTestConvention(["pkg/foo_test.go"], [])).toEqual({ framework: "go-test", testDir: null, namingPattern: "*_test.go" });
+    expect(detectTestConvention(["spec/models/widget_spec.rb"], [])).toEqual({ framework: "rspec", testDir: "spec/", namingPattern: "*_spec.rb" });
+  });
+
+  it("prefers a marker over an existing test file's naming when both are present", () => {
+    // go.mod marker present alongside a Ruby-looking spec path (an unusual but possible polyglot repo) — the
+    // marker is checked first and wins deterministically.
+    expect(detectTestConvention(["spec/widget_spec.rb"], ["go.mod"])).toEqual({ framework: "go-test", testDir: null, namingPattern: "*_test.go" });
+  });
+
+  it("returns null for an unknown/empty layout (fail-safe)", () => {
+    expect(detectTestConvention([], [])).toBeNull();
+    expect(detectTestConvention(["src/widget.rs"], ["Makefile"])).toBeNull();
+    // A path that merely LOOKS like a test file per isTestPath's directory rule, but whose extension isn't in
+    // any known convention pattern (e.g. a bare snapshot), does not resolve to a framework.
+    expect(detectTestConvention(["components/__snapshots__/Card.tsx.snap"], [])).toBeNull();
   });
 });

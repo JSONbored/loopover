@@ -112,8 +112,10 @@ import {
   buildFileIssueSpec,
   buildOpenPrSpec,
   buildPostEligibilityCommentSpec,
+  buildTestGenSpec,
   type LocalWriteActionSpec,
 } from "./local-write-tools";
+import { TEST_FRAMEWORKS } from "../signals/test-evidence";
 import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePlanDag, type PlanDag } from "../services/plan-dag";
 import { isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
 import { AGENT_ACTION_CLASSES, isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
@@ -313,6 +315,16 @@ const postEligibilityCommentShape = {
 };
 const createBranchShape = { branch: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX), base: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX).optional() };
 const deleteBranchShape = { branch: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX), remote: z.boolean().optional() };
+// #2188: the framework list mirrors detectTestConvention's TEST_FRAMEWORKS (#2187) so a caller cannot request a
+// spec for a framework the detector could never have produced.
+const WRITE_TOOL_TARGET_FILES_MAX = 50;
+const testGenShape = {
+  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
+  targetFiles: z.array(z.string().min(1).max(500)).min(1).max(WRITE_TOOL_TARGET_FILES_MAX),
+  framework: z.enum(TEST_FRAMEWORKS),
+  testDir: z.string().min(1).max(255).optional(),
+  criteria: z.array(z.string().min(1).max(300)).max(20).optional(),
+};
 const localWriteActionOutputSchema = {
   action: z.string(),
   description: z.string(),
@@ -1461,6 +1473,16 @@ export class GittensoryMcp {
       "gittensory_delete_branch",
       { description: "Build a LOCAL-execution spec to delete a branch (run it locally; gittensory never performs the write).", inputSchema: deleteBranchShape, outputSchema: localWriteActionOutputSchema },
       async (input) => this.toolResult(this.localWriteSpec(buildDeleteBranchSpec(input))),
+    );
+    server.registerTool(
+      "gittensory_generate_tests",
+      {
+        description:
+          "Build a LOCAL-execution spec describing WHAT boundary-safe test cases should exist for the given target files, using the repo's detected framework/convention (see gittensory's test-evidence signal). Gittensory supplies the criteria; your OWN agent scaffolds and runs the actual test files locally — no source code is uploaded and gittensory never performs the write.",
+        inputSchema: testGenShape,
+        outputSchema: localWriteActionOutputSchema,
+      },
+      async (input) => this.toolResult(this.localWriteSpec(buildTestGenSpec(input))),
     );
 
     // #783 multi-step plan DAG — stateless: pass the plan back each call.

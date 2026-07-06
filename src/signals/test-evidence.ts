@@ -92,3 +92,67 @@ export function classifyTestCoverage(changedPaths: string[]): TestCoverageClassi
   if (ratio >= 0.2) return "adequate";
   return "weak";
 }
+
+// #2187 (foundational slice of #1972 — boundary-safe test generation): a small, precise framework list, each
+// tied to an unambiguous marker file/pattern and an existing isTestPath naming family. Deliberately narrow —
+// a longer list of guessable-but-ambiguous frameworks would make detectTestConvention's output less trustworthy
+// as a test-gen input than returning null (see the "unknown => null" fail-safe below).
+export const TEST_FRAMEWORKS = ["vitest", "jest", "pytest", "go-test", "rspec", "cargo-test"] as const;
+export type TestFramework = (typeof TEST_FRAMEWORKS)[number];
+
+/** Deterministic detection result: which framework, where tests live, and the file-naming convention to
+ *  follow when scaffolding a new one. `testDir` is `null` for a co-located convention (e.g. Go/Rust/Dart's
+ *  `_test`/`#[cfg(test)]` siblings), matching how those ecosystems actually lay out tests. */
+export type TestConvention = {
+  framework: TestFramework;
+  testDir: string | null;
+  namingPattern: string;
+};
+
+// One marker file per framework, checked against the basename of each changed/known path. Ordered by
+// specificity where two frameworks could share an ecosystem (vitest before jest: a repo migrating from Jest to
+// Vitest keeps `jest.config.js` around far more often than the reverse, so vitest's own config marker — when
+// present — must win).
+const FRAMEWORK_MARKERS: ReadonlyArray<{ framework: TestFramework; pattern: RegExp; testDir: string | null; namingPattern: string }> = [
+  { framework: "vitest", pattern: /(^|\/)vitest\.config\.(ts|mts|cts|js|mjs|cjs)$/i, testDir: "test/", namingPattern: "*.test.ts" },
+  { framework: "vitest", pattern: /(^|\/)vitest\.workspace\.(ts|mts|cts|js|mjs|cjs)$/i, testDir: "test/", namingPattern: "*.test.ts" },
+  { framework: "jest", pattern: /(^|\/)jest\.config\.(ts|js|mjs|cjs|json)$/i, testDir: "__tests__/", namingPattern: "*.test.js" },
+  { framework: "pytest", pattern: /(^|\/)pytest\.ini$/i, testDir: null, namingPattern: "test_*.py" },
+  { framework: "pytest", pattern: /(^|\/)pyproject\.toml$/i, testDir: null, namingPattern: "test_*.py" },
+  { framework: "go-test", pattern: /(^|\/)go\.mod$/i, testDir: null, namingPattern: "*_test.go" },
+  { framework: "rspec", pattern: /(^|\/)\.rspec$/i, testDir: "spec/", namingPattern: "*_spec.rb" },
+  { framework: "cargo-test", pattern: /(^|\/)Cargo\.toml$/i, testDir: null, namingPattern: "#[cfg(test)] mod tests" },
+];
+
+// Fallback inference from an EXISTING test file's own naming, when no marker is present (e.g. a marker file
+// wasn't part of the changed/known set passed in, but the repo already has real test files to imitate).
+const CONVENTION_FROM_EXISTING_TEST: ReadonlyArray<{ framework: TestFramework; pattern: RegExp; testDir: string | null; namingPattern: string }> = [
+  { framework: "vitest", pattern: /\.(test|spec)\.(ts|tsx|mts|cts)$/i, testDir: "test/", namingPattern: "*.test.ts" },
+  { framework: "jest", pattern: /\.(test|spec)\.(js|jsx|mjs|cjs)$/i, testDir: "__tests__/", namingPattern: "*.test.js" },
+  { framework: "pytest", pattern: /(^|\/)test_[^/]*\.py$|[^/]+_test\.py$/i, testDir: null, namingPattern: "test_*.py" },
+  { framework: "go-test", pattern: /[^/]+_test\.go$/i, testDir: null, namingPattern: "*_test.go" },
+  { framework: "rspec", pattern: /[^/]+_spec\.rb$/i, testDir: "spec/", namingPattern: "*_spec.rb" },
+];
+
+/**
+ * Detect a repo's test framework + convention from a bounded set of changed paths and known marker filenames
+ * (e.g. `package.json`, `pyproject.toml`, `go.mod` — paths the caller already has, never fetched by this
+ * function). Deterministic and pure: markers win over inferring from existing test-file naming (a config file
+ * is a stronger, unambiguous signal than a naming guess), and the marker list is checked in a fixed order so a
+ * repo with more than one marker present always resolves to the same framework. Returns `null` when nothing in
+ * `paths`/`markers` matches any known convention — an unrecognized layout is left alone (fail-safe) rather than
+ * guessing, since a wrong framework guess would make the downstream test-gen spec actively misleading.
+ */
+export function detectTestConvention(paths: string[], markers: string[]): TestConvention | null {
+  for (const marker of FRAMEWORK_MARKERS) {
+    if (markers.some((path) => marker.pattern.test(path)) || paths.some((path) => marker.pattern.test(path))) {
+      return { framework: marker.framework, testDir: marker.testDir, namingPattern: marker.namingPattern };
+    }
+  }
+  for (const convention of CONVENTION_FROM_EXISTING_TEST) {
+    if (paths.some((path) => isTestPath(path) && convention.pattern.test(path))) {
+      return { framework: convention.framework, testDir: convention.testDir, namingPattern: convention.namingPattern };
+    }
+  }
+  return null;
+}

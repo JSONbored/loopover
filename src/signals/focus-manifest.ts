@@ -360,14 +360,25 @@ export type FocusManifestReviewConfig = {
    *  source, same display-only (never touches the AI prompt) shape. null/false (default, absent) = no chip =
    *  byte-identical behavior. (#1955) */
   effortScore: boolean | null;
-  /** `review.test_generation` (#1972): when true, a diff that touches a small, precise set of boundary-condition
-   *  patterns (off-by-one array/index bounds, null/undefined branches, empty-collection checks — see
-   *  `src/signals/boundary-test-generation.ts`) with NO test evidence anywhere in the PR gets an additional
-   *  advisory finding plus a boundary-safe LOCAL-execution test-generation action spec (criteria/hints only,
-   *  never generated test code — mirrors the `src/mcp/local-write-tools.ts` no-cloud-write boundary). Purely
-   *  additive and deterministic; it never changes what `missingTestEvidence` already does. null/false (default,
-   *  absent) ⇒ byte-identical behavior — no boundary scan runs at all. */
+  /** `review.test_generation` (#1972, kill-switch config slice #2189): when true, a diff that touches a small,
+   *  precise set of boundary-condition patterns (off-by-one array/index bounds, null/undefined branches,
+   *  empty-collection checks — see `src/signals/boundary-test-generation.ts`) with NO test evidence anywhere in
+   *  the PR gets an additional advisory finding plus a boundary-safe LOCAL-execution
+   *  `gittensory_generate_tests` action spec (criteria/hints only, never generated test code — see
+   *  `src/mcp/local-write-tools.ts`'s `buildTestGenSpec`). Also gated by the operator's
+   *  `GITTENSORY_REVIEW_TEST_GENERATION` kill-switch (`src/review/test-generation.ts`'s
+   *  `isTestGenerationEnabled`) — the caller ANDs both. Purely additive and deterministic; it never changes what
+   *  `missingTestEvidence` already does. null/false (default, absent) ⇒ byte-identical behavior — no boundary
+   *  scan runs and no spec is ever built. */
   testGeneration: boolean | null;
+  /** `review.impact_map` (#2184, config slice of #1971): when true, gates BOTH the deterministic impact-map
+   *  computation (`computeImpactMap`, `src/review/impact-map.ts`) and its rendering as a compact section in
+   *  the unified review comment (#2185) / additive AI-review grounding context (#2186). Deterministic/display
+   *  + reference-context only — never touches the gate verdict. ALSO requires the global env kill-switch
+   *  (`isImpactMapEnabled`, mirroring `isRagEnabled` in `src/review/rag-wire.ts:27`) to be on; the manifest
+   *  flag alone cannot enable it for a self-host operator who hasn't opted in globally. null/false (default,
+   *  absent) ⇒ no impact-map computation at all = byte-identical behavior. (#2184) */
+  impactMap: boolean | null;
   /** `review.finding_categories`: when true, an inline finding is ALSO tagged with a category (security/
    *  correctness/performance/maintainability/tests/style) — the AI reviewer is asked to self-categorize, with a
    *  deterministic path/keyword fallback (`classifyFindingCategory`) covering whatever it omits. Only takes
@@ -383,6 +394,12 @@ export type FocusManifestReviewConfig = {
    *  Display-only — never removes a blocker from the gate decision. null sub-fields ⇒ no cap for that list.
    *  Default { blockers: null, nits: null } ⇒ byte-identical. (#2049) */
   maxFindings: MaxFindingsConfig;
+  /** `review.comment_verbosity`: how much of the unified review comment's collapsible detail renders. `quiet`
+   *  drops the Nits collapsible and every extra collapsible section (blockers/gate result/signals are never
+   *  gated by this — only decorative detail is); `detailed` renders every collapsible pre-expanded. null/normal
+   *  (default, absent) ⇒ byte-identical to today. Net-new vs the changed-files-summary (#1957) and effort-score
+   *  (#1955) knobs. (#2047) */
+  commentVerbosity: CommentVerbosity | null;
   /** `review.path_instructions`: per-path natural-language guidance handed to the AI reviewer when the PR's
    *  changed files match the glob. Empty (default) ⇒ byte-identical reviewer prompt. (#review-path-instructions) */
   pathInstructions: ReviewPathInstruction[];
@@ -435,6 +452,10 @@ export type FocusManifestReviewConfig = {
 /** `review.linkedIssueSatisfaction` modes (#2173). `off` = not evaluated (same as unset). */
 export const LINKED_ISSUE_SATISFACTION_MODES = ["off", "advisory", "block"] as const;
 export type LinkedIssueSatisfactionMode = (typeof LINKED_ISSUE_SATISFACTION_MODES)[number];
+
+/** `review.comment_verbosity` levels (#2047). `normal` = today's behavior (same as unset). */
+export const COMMENT_VERBOSITY_LEVELS = ["quiet", "normal", "detailed"] as const;
+export type CommentVerbosity = (typeof COMMENT_VERBOSITY_LEVELS)[number];
 
 /** One `review.labeling_rules[]` entry: a non-reserved `label` plus the deterministic `when` criteria that must ALL
  *  match for it to fire. A rule always has at least one criterion (enforced at parse). */
@@ -730,7 +751,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   publicNotes: [],
   gate: { ...EMPTY_GATE_CONFIG },
   settings: {},
-  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, effortScore: null, testGeneration: null, findingCategories: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null },
+  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, effortScore: null, testGeneration: null, impactMap: null, findingCategories: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null },
   features: { ...EMPTY_FEATURES_CONFIG },
   contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
   repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -761,7 +782,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     warnings,
     gate: { ...EMPTY_GATE_CONFIG },
     settings: {},
-    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, effortScore: null, testGeneration: null, findingCategories: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null },
+    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, effortScore: null, testGeneration: null, impactMap: null, findingCategories: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null },
     features: { ...EMPTY_FEATURES_CONFIG },
     contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
     repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -1736,7 +1757,7 @@ function parsePublicSafeText(value: JsonValue | undefined, field: string, warnin
  * throws; invalid/unsafe values are dropped with warnings.
  */
 function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewConfig {
-  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, effortScore: null, testGeneration: null, findingCategories: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null };
+  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, suggestions: null, changedFilesSummary: null, effortScore: null, testGeneration: null, impactMap: null, findingCategories: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null };
   if (value === undefined || value === null) return empty;
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "review" must be a mapping; ignoring it.`);
@@ -1777,6 +1798,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
   const changedFilesSummary = normalizeOptionalBoolean(r.changed_files_summary, "review.changed_files_summary", warnings);
   const effortScore = normalizeOptionalBoolean(r.effort_score, "review.effort_score", warnings);
   const testGeneration = normalizeOptionalBoolean(r.test_generation, "review.test_generation", warnings);
+  const impactMap = normalizeOptionalBoolean(r.impact_map, "review.impact_map", warnings);
   const findingCategories = normalizeOptionalBoolean(r.finding_categories, "review.finding_categories", warnings);
   const minFindingSeverity = normalizeOptionalEnum(
     r.min_finding_severity,
@@ -1785,6 +1807,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
     warnings,
   );
   const maxFindings = parseMaxFindingsConfig(r.max_findings, warnings);
+  const commentVerbosity = normalizeOptionalEnum(r.comment_verbosity, "review.comment_verbosity", COMMENT_VERBOSITY_LEVELS, warnings);
   const pathInstructions = parseReviewPathInstructions(r.path_instructions, warnings);
   const instructions = parsePublicSafeText(r.instructions, "review.instructions", warnings);
   const excludePaths = parseReviewExcludePaths(r.exclude_paths, warnings);
@@ -1807,9 +1830,11 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
       changedFilesSummary !== null ||
       effortScore !== null ||
       testGeneration !== null ||
+      impactMap !== null ||
       findingCategories !== null ||
       minFindingSeverity !== null ||
       maxFindingsPresent(maxFindings) ||
+      commentVerbosity !== null ||
       pathInstructions.length > 0 ||
       instructions !== null ||
       excludePaths.length > 0 ||
@@ -1829,6 +1854,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
     aiModel,
     visual,
     linkedIssueSatisfaction,
+    testGeneration,
     enrichmentAnalyzers,
     profile,
     tone,
@@ -1837,10 +1863,11 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
     suggestions,
     changedFilesSummary,
     effortScore,
-    testGeneration,
+    impactMap,
     findingCategories,
     minFindingSeverity,
     maxFindings,
+    commentVerbosity,
     pathInstructions,
     instructions,
     excludePaths,
@@ -2298,6 +2325,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   if (review.changedFilesSummary !== null) out.changed_files_summary = review.changedFilesSummary;
   if (review.effortScore !== null) out.effort_score = review.effortScore;
   if (review.testGeneration !== null) out.test_generation = review.testGeneration;
+  if (review.impactMap !== null) out.impact_map = review.impactMap;
   if (review.findingCategories !== null) out.finding_categories = review.findingCategories;
   if (review.minFindingSeverity !== null) out.min_finding_severity = review.minFindingSeverity;
   if (maxFindingsPresent(review.maxFindings)) {
@@ -2306,6 +2334,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
     if (review.maxFindings.nits !== null) maxFindings.nits = review.maxFindings.nits;
     out.max_findings = maxFindings;
   }
+  if (review.commentVerbosity !== null) out.comment_verbosity = review.commentVerbosity;
   if (review.instructions !== null) out.instructions = review.instructions;
   if (review.pathInstructions.length > 0) out.path_instructions = review.pathInstructions.map((entry) => ({ path: entry.path, instructions: entry.instructions }));
   if (review.excludePaths.length > 0) out.exclude_paths = [...review.excludePaths];
@@ -2525,7 +2554,7 @@ export function composeManifestReviewInstructions(instructions: string | null, t
  *  failure). A null manifest yields the byte-identical defaults. Centralized so the AI-review caller threads them
  *  in one place with the null-manifest branch covered here (unit-tested) rather than inline in the processor.
  *  (#review-profile / #review-tone / #review-security-focus / #review-path-instructions / #review-exclude-paths / #2043 / #selfhost-ai-model-override / #1956) */
-export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { profile: ReviewProfile | null; tone: string | null; securityFocus: boolean; inlineComments: boolean; suggestions: boolean; changedFilesSummary: boolean; effortScore: boolean; findingCategories: boolean; minFindingSeverity: ReviewFindingSeverity | null; maxFindings: MaxFindingsConfig; pathInstructions: ReviewPathInstruction[]; instructions: string | null; excludePaths: string[]; pathFilters: string[]; selfHostAiModel: SelfHostAiModelConfig } {
+export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { profile: ReviewProfile | null; tone: string | null; securityFocus: boolean; inlineComments: boolean; suggestions: boolean; changedFilesSummary: boolean; effortScore: boolean; impactMap: boolean; findingCategories: boolean; minFindingSeverity: ReviewFindingSeverity | null; maxFindings: MaxFindingsConfig; commentVerbosity: CommentVerbosity | null; pathInstructions: ReviewPathInstruction[]; instructions: string | null; excludePaths: string[]; pathFilters: string[]; selfHostAiModel: SelfHostAiModelConfig } {
   // inlineComments resolves to a strict boolean — true ONLY when the manifest explicitly set review.inline_comments:
   // true; null/false/absent ⇒ false. The caller ANDs this per-repo toggle with the operator flag + cutover allowlist.
   // securityFocus resolves the same way — true ONLY when the manifest explicitly set review.security_focus: true.
@@ -2535,9 +2564,24 @@ export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { 
   // needs the unified-comment convergence feature itself to be on (the caller's own outer gate).
   // effortScore resolves the same way (#1955) — like changedFilesSummary, it is deterministic/display-only
   // (never touches the AI prompt) and only needs the unified-comment convergence feature to be on.
+  // impactMap resolves the same way (#2184) — true ONLY when the manifest explicitly set review.impact_map:
+  // true. The caller ADDITIONALLY ANDs this with the global env kill-switch (isImpactMapEnabled), mirroring
+  // how isRagEnabled gates review.rag-equivalent features — this manifest flag alone is necessary but not
+  // sufficient to activate impact-map computation for a repo.
   // findingCategories resolves the same way (#1958) — like suggestions, the caller further ANDs it with the
   // already-resolved inlineComments gate, since a category has nothing to categorize without an inline finding.
-  return { profile: manifest?.review.profile ?? null, tone: manifest?.review.tone ?? null, securityFocus: manifest?.review.securityFocus === true, inlineComments: manifest?.review.inlineComments === true, suggestions: manifest?.review.suggestions === true, changedFilesSummary: manifest?.review.changedFilesSummary === true, effortScore: manifest?.review.effortScore === true, findingCategories: manifest?.review.findingCategories === true, minFindingSeverity: manifest?.review.minFindingSeverity ?? null, maxFindings: manifest?.review.maxFindings ?? { ...EMPTY_MAX_FINDINGS_CONFIG }, pathInstructions: manifest?.review.pathInstructions ?? [], instructions: manifest?.review.instructions ?? null, excludePaths: manifest?.review.excludePaths ?? [], pathFilters: manifest?.review.pathFilters ?? [], selfHostAiModel: resolveReviewSelfHostAiModel(manifest) };
+  // commentVerbosity resolves the same way (#2047) — deterministic/display-only, independent of every other
+  // knob here; absent (null) ⇒ the caller applies "normal" (byte-identical).
+  return { profile: manifest?.review.profile ?? null, tone: manifest?.review.tone ?? null, securityFocus: manifest?.review.securityFocus === true, inlineComments: manifest?.review.inlineComments === true, suggestions: manifest?.review.suggestions === true, changedFilesSummary: manifest?.review.changedFilesSummary === true, effortScore: manifest?.review.effortScore === true, impactMap: manifest?.review.impactMap === true, findingCategories: manifest?.review.findingCategories === true, minFindingSeverity: manifest?.review.minFindingSeverity ?? null, maxFindings: manifest?.review.maxFindings ?? { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: manifest?.review.commentVerbosity ?? null, pathInstructions: manifest?.review.pathInstructions ?? [], instructions: manifest?.review.instructions ?? null, excludePaths: manifest?.review.excludePaths ?? [], pathFilters: manifest?.review.pathFilters ?? [], selfHostAiModel: resolveReviewSelfHostAiModel(manifest) };
+}
+
+/** Resolve `review.test_generation` (#2189, config slice of #1972) from a possibly-null manifest (null = load
+ *  failure ⇒ manifest toggle reads as unset/false). Mirrors resolveReviewPromptOverrides's inlineComments
+ *  resolution — true ONLY when the manifest explicitly set review.test_generation: true; null/false/absent ⇒
+ *  false. The caller further ANDs this with the operator's GITTENSORY_REVIEW_TEST_GENERATION kill-switch via
+ *  shouldOfferTestGenerationSpec (src/review/test-generation.ts) before ever building a test-gen spec. */
+export function resolveTestGenerationManifestToggle(manifest: FocusManifest | null): boolean {
+  return manifest?.review.testGeneration === true;
 }
 
 /** Resolve `review.pre_merge_checks` from a possibly-null manifest (null = load failure ⇒ no checks). Centralized
@@ -2545,15 +2589,6 @@ export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { 
  *  than inline in the processor. (#review-pre-merge-checks) */
 export function resolveReviewPreMergeChecks(manifest: FocusManifest | null): PreMergeCheck[] {
   return manifest?.review.preMergeChecks ?? [];
-}
-
-/** Resolve `review.test_generation` (#1972) from a possibly-null manifest (null = load failure ⇒ off). Deterministic/
- *  display-only like `resolveReviewPreMergeChecks` — this never touches the AI reviewer prompt, only whether the
- *  boundary-test-generation finding/spec (`src/signals/boundary-test-generation.ts`) is computed at all. Resolves to
- *  a strict boolean — true ONLY when the manifest explicitly set `review.test_generation: true`; null/false/absent ⇒
- *  false (byte-identical to today, no boundary scan runs). */
-export function resolveTestGenerationEnabled(manifest: FocusManifest | null): boolean {
-  return manifest?.review.testGeneration === true;
 }
 
 /** Resolve `review.enrichment` analyzer toggles from a possibly-null manifest (null = load failure ⇒ no toggles ⇒

@@ -430,6 +430,10 @@ import {
   emptyReviewRagTelemetry,
   isRagEnabled,
 } from "../review/rag-wire";
+import { createReviewAdapters } from "../review/adapters";
+import { extractChangedSymbols } from "../review/impact-symbols";
+import { computeImpactMap } from "../review/impact-map";
+import { formatImpactMapPromptSection, shouldComputeImpactMap } from "../review/impact-map-wire";
 import {
   buildReviewEnrichment,
   isEnrichmentEnabled,
@@ -6660,6 +6664,11 @@ export async function runAiReviewForAdvisory(
     // manifest. Self-host only — overrides that repo's claude-code/codex model+effort, taking priority over the
     // operator's global env vars. Absent/all-null ⇒ byte-identical (global env var, then provider default).
     reviewSelfHostAiModel?: SelfHostAiModelConfig | undefined;
+    // `.gittensory.yml` review.impact_map (#2184/#2186), resolved by the caller from the cached manifest. ANDed
+    // here with the operator's GITTENSORY_REVIEW_IMPACT_MAP flag (shouldComputeImpactMap) to decide whether to
+    // compute the deterministic impact map and splice it into the reviewer prompt as additive reference
+    // context. Absent/false ⇒ byte-identical reviewer prompt (no impact-map computation, no RAG query for it).
+    reviewImpactMap?: boolean | undefined;
     // The inbound webhook delivery id that triggered this review (#codex-timeout-fields) — forwarded to a
     // self-host provider's failure log purely for operator correlation; never read by any review logic. Absent
     // (e.g. a sweep/repair fan-out with no single originating delivery, or a unit test) ⇒ the log line omits it.
@@ -6844,6 +6853,27 @@ export async function runAiReviewForAdvisory(
       : undefined;
     const ragTelemetry =
       ragContextResult?.telemetry ?? emptyReviewRagTelemetry(false);
+    // Deterministic impact map (#2184/#2186), ANDed operator env flag + per-repo review.impact_map opt-in
+    // (shouldComputeImpactMap). Reuses the SAME changed files this pass already resolved — no extra fetch.
+    // Flag-OFF (default) → NO new branch: no symbol extraction, no RAG query, and `impactMapContext` is left
+    // undefined so the prompt is byte-identical to today. Fully fail-safe (computeImpactMap never throws; a
+    // missing/cold RAG index degrades to an empty impact map, which formats to "" and appends nothing).
+    let impactMapContext: string | undefined;
+    if (shouldComputeImpactMap(env, args.reviewImpactMap === true)) {
+      const [impactMapProject, impactMapRepo] = splitRepoForRag(args.repoFullName);
+      const changedSymbols = extractChangedSymbols(
+        files.map((file) => ({
+          path: file.path,
+          patch: typeof file.payload?.patch === "string" ? file.payload.patch : undefined,
+        })),
+      );
+      const impactMap = await computeImpactMap(changedSymbols, {
+        infra: createReviewAdapters(env),
+        project: impactMapProject,
+        repo: impactMapRepo,
+      });
+      impactMapContext = formatImpactMapPromptSection(impactMap);
+    }
     // Review-enrichment (#1472, flag-gated by GITTENSORY_REVIEW_ENRICHMENT + REES_URL). POST the PR to the external
     // REES for the heavy/external analysis the reviewer can't run (dependency CVEs, secrets, license/EOL/supply-chain);
     // its public-safe brief splices into the prompt next to grounding + RAG. Flag-OFF (default) → no call, no branch,
@@ -6904,6 +6934,7 @@ export async function runAiReviewForAdvisory(
       grounding,
       ragContext: ragContextResult?.text,
       observability: { rag: ragTelemetry },
+      impactMapContext,
       enrichment,
       profile: args.reviewProfile ?? null,
       // Per-repo dual-AI combine/onMerge/reviewers overrides (#2567), resolved by resolveEffectiveSettings from
@@ -8522,6 +8553,7 @@ async function maybePublishPrPublicSurface(
             excludePaths: reviewExcludePaths,
             pathFilters: reviewPathFilters,
             selfHostAiModel: reviewSelfHostAiModel,
+            impactMap: reviewImpactMap,
           } = resolveReviewPromptOverrides(reviewManifest);
           inlineCommentsEnabledForReview = shouldRequestInlineFindings(
             env,
@@ -8728,6 +8760,7 @@ async function maybePublishPrPublicSurface(
               reviewInlineComments,
               reviewFindingCategories,
               reviewSelfHostAiModel,
+              reviewImpactMap,
               deliveryId: webhook.deliveryId,
             });
             // `persistable === false` (only the lock-contention placeholder — see runAiReviewForAdvisory's return
@@ -9624,6 +9657,7 @@ async function maybePublishPrPublicSurface(
           ? { findingCategories: aiReview.inlineFindings }
           : {}),
         maxFindingsCaps: reviewConfig.maxFindings,
+        commentVerbosity: reviewConfig.commentVerbosity,
       });
     } else {
       deterministicBody = buildPublicPrIntelligenceComment(commentArgs);

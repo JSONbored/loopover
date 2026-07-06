@@ -404,6 +404,13 @@ review:
   # (criteria/hints for your OWN agent to scaffold tests with -- gittensory never writes or runs test code).
   # test_generation: false
 
+  # Bool | null. Default: null/false — byte-identical (#2184, part of #1971). Also requires the operator's
+  # GITTENSORY_REVIEW_IMPACT_MAP env flag to be on — this manifest field alone cannot enable it. When both are
+  # on, a deterministic impact map (which other repo files plausibly need re-checking, from the RAG index +
+  # changed symbols) is computed, rendered as a compact section in the unified review comment, and fed to the
+  # AI reviewer as additive reference context.
+  # impact_map: false
+
   # Display-only floor for inline AI findings (`critical` | `major` | `minor` | `nitpick`). Findings below the
   # configured level are suppressed from inline comments — never from gate blockers. Default: null (show all).
   # min_finding_severity: major
@@ -414,6 +421,12 @@ review:
   #   blockers: 5
   #   nits: 8
 
+  # How much of the unified review comment's collapsible detail renders (#2047). `quiet` drops the Nits
+  # collapsible and every extra collapsible section (blockers/gate result/signals are unaffected — this only
+  # trims decorative detail); `detailed` renders every collapsible pre-expanded instead of collapsed.
+  # quiet | normal | detailed. Default: null/normal (byte-identical).
+  # comment_verbosity: normal
+
   # Inline-comment layer toggles (#1956 / #1958). Bool | null. Default: null/false — byte-identical.
   # Requires operator flag GITTENSORY_REVIEW_INLINE_COMMENTS + cutover allowlist + review.inline_comments: true.
   # inline_comments: false
@@ -422,6 +435,12 @@ review:
   # When true, inline findings with precise fixes render as one-click suggestion blocks (requires inline_comments).
   # finding_categories: false
   # When true, inline findings are tagged with a category label (requires inline_comments).
+
+  # Boundary-safe test generation (#2189). Bool | null. Default: null/false — byte-identical.
+  # Requires operator flag GITTENSORY_REVIEW_TEST_GENERATION AND this toggle.
+  # test_generation: false
+  # When true, a missing-test-evidence finding is ALSO accompanied by a local-write action spec (criteria
+  # supplied by gittensory; execution stays on the contributor's own machine — no source upload, no server write).
 
   # Deterministic label suggestions (#2045). Each rule SUGGESTS a non-scoring label when a PR matches ALL of the
   # `when` criteria it sets (at least one is required): when_paths (any changed path matches a glob), title_contains,
@@ -801,11 +820,21 @@ settings:
 #   # advisory finding plus a LOCAL-execution test-generation action spec (criteria/hints only -- never
 #   # generated test code; your own agent scaffolds it). Bool or null. Default: null/false.
 #   test_generation: false
+#   # When true (AND the operator's GITTENSORY_REVIEW_IMPACT_MAP env flag is also on), a deterministic
+#   # impact map -- which other repo files plausibly need re-checking, from the RAG index + changed
+#   # symbols -- is computed, rendered as a compact unified-comment section, and fed to the AI reviewer
+#   # as additive reference context. Bool or null. Default: null/false (#2184, part of #1971).
+#   impact_map: false
 #   # When true, an inline finding is ALSO tagged with a category (security/correctness/performance/
 #   # maintainability/tests/style) -- the AI reviewer self-categorizes, with a deterministic path/keyword
 #   # fallback for whatever it omits. Only takes effect when inline_comments is already on. Bool or null.
 #   # Default: null/false.
 #   finding_categories: false
+#   # When true, a missing-test-evidence finding is ALSO accompanied by a local-write action spec describing
+#   # WHAT boundary-safe test cases should exist -- criteria/content supplied by gittensory, execution stays
+#   # on the contributor's own machine (no source upload, no server-side write). Also requires the operator
+#   # flag GITTENSORY_REVIEW_TEST_GENERATION. Bool or null. Default: null/false (byte-identical).
+#   test_generation: false
 #   # How strictly a linked issue must actually be SATISFIED by the PR (distinct from linkedIssuePolicy,
 #   # which only checks a link EXISTS). off = not evaluated; advisory = surface a finding; block = can
 #   # become a hard blocker (confirmed-contributor-gated). This is the config knob only — parsed and

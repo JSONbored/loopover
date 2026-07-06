@@ -192,6 +192,12 @@ declare global {
      *  inline comments on specific changed lines, layered on top of the decision summary. Default OFF —
      *  unset/false keeps the review path byte-identical (the model is never asked for inline findings). */
     GITTENSORY_REVIEW_INLINE_COMMENTS?: string;
+    /** Boundary-safe test generation (#2189, config slice of #1972): when truthy (AND the repo's `.gittensory.yml`
+     *  sets `review.test_generation: true`), a missing-test-evidence finding is ALSO accompanied by a
+     *  `gittensory_generate_tests` local-write action spec — criteria/content supplied by gittensory, execution
+     *  on the contributor's own machine (no source upload, no server-side write). Default OFF — unset/false
+     *  keeps the review path byte-identical (no spec is ever built). */
+    GITTENSORY_REVIEW_TEST_GENERATION?: string;
     /** Convergence (safety): when truthy, the ported safety scan runs in the review path — (1) untrusted PR
      *  title/body/diff is defanged (prompt-injection neutralized) before it reaches the AI reviewer, and (2)
      *  the PR diff is scanned for leaked secrets, surfacing a `secret_leak` blocker. Default OFF —
@@ -237,6 +243,11 @@ declare global {
      *  unreachable when off). Even when ON, retrieval is INERT until the self-host vector index is populated for
      *  the repo (a cold/missing index degrades to no context). */
     GITTENSORY_REVIEW_RAG?: string;
+    /** Deterministic impact map (#2184, part of #1971): operator-level kill-switch, ANDed with the per-repo
+     *  `.gittensory.yml review.impact_map` opt-in (see review/impact-map-wire's isImpactMapEnabled /
+     *  shouldComputeImpactMap). Default OFF — unset/false performs NO symbol extraction, NO RAG query, and adds
+     *  NO comment/prompt section, byte-identical to today. */
+    GITTENSORY_REVIEW_IMPACT_MAP?: string;
     /** Review-enrichment service (REES): when truthy, the self-host review engine POSTs the PR diff/files to
      *  REES and splices any public-safe brief into the AI reviewer prompt. Requires REES_URL and the repo in
      *  GITTENSORY_REVIEW_REPOS. REES_ANALYZERS is an optional exact comma-list; unset/"all"/"*" lets REES run its

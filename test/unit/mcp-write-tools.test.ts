@@ -13,7 +13,7 @@ async function connect() {
   return client;
 }
 
-type Spec = { action: string; command: string; boundary: string; inputs: Record<string, unknown> };
+type Spec = { action: string; description: string; command: string; boundary: string; inputs: Record<string, unknown> };
 
 describe("MCP miner write-tools (#780)", () => {
   it("open_pr returns a local-execution spec; gittensory performs no write", async () => {
@@ -44,5 +44,31 @@ describe("MCP miner write-tools (#780)", () => {
       expect(result.isError, testCase.name).toBeFalsy();
       expect((result.structuredContent as Spec).command, testCase.name).toBe(testCase.expect);
     }
+  });
+
+  // #2188 (boundary-safe test-generation slice of #1972).
+  it("generate_tests returns a local-execution spec naming the framework and target files; gittensory performs no write", async () => {
+    const client = await connect();
+    const result = await client.callTool({
+      name: "gittensory_generate_tests",
+      arguments: { repoFullName: "o/r", targetFiles: ["src/widget.ts"], framework: "vitest", testDir: "test/unit/", criteria: ["cover the nullish branch"] },
+    });
+    expect(result.isError).toBeFalsy();
+    const spec = result.structuredContent as Spec;
+    expect(spec.action).toBe("generate_tests");
+    expect(spec.description).toContain("vitest");
+    expect(spec.description).toContain("src/widget.ts");
+    expect(spec.boundary).toMatch(/your OWN GitHub credentials/i);
+    expect(spec.boundary).toMatch(/never performs the write/i);
+    expect(spec.inputs).toMatchObject({ repoFullName: "o/r", framework: "vitest", testDir: "test/unit/" });
+  });
+
+  it("generate_tests rejects a framework outside the detector's known set", async () => {
+    const client = await connect();
+    const result = await client.callTool({
+      name: "gittensory_generate_tests",
+      arguments: { repoFullName: "o/r", targetFiles: ["src/widget.ts"], framework: "not-a-real-framework" },
+    });
+    expect(result.isError).toBeTruthy();
   });
 });

@@ -403,9 +403,12 @@ review:
     # Default: 0 (no cap). (#2065)
     # max_files: 25
 
-  # Planned display toggle (#2069): when enabled, the unified review comment includes a
-  # `review effort: N/5 (~M min)` line derived from the per-PR effort estimate.
+  # Unified-comment display toggles (#1957 / #1955 / #2069). Bool | null. Default: null/false — byte-identical.
+  # Only take effect when the `features.unifiedComment` feature is enabled.
+  # changed_files_summary: false
+  # When true, the unified review comment gains a deterministic "Changed files" summary table.
   # effort_score: false
+  # When true, the unified review comment gains a compact "review effort: N/5 (~M min)" chip.
 
   # Deterministic label suggestions (#2045). Each rule SUGGESTS a non-scoring label when a PR matches ALL of the
   # `when` criteria it sets (at least one is required): when_paths (any changed path matches a glob), title_contains,

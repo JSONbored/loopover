@@ -101,6 +101,20 @@ describe("config/examples review templates (#1682)", () => {
     expect(resolveReviewPromptOverrides(off).effortScore).toBe(false);
   });
 
+  it("locks in review.impact_map via manifest parse + JSON round-trip and documents it in gittensory.full.yml (part of #1971)", () => {
+    // impact_map gates the deterministic impact-map computation/render (not a prompt override), so it is
+    // exercised through the manifest parse + reviewConfigToJson round-trip rather than resolveReviewPromptOverrides.
+    const full = readConfigExample("gittensory.full.yml");
+    expect(full).toMatch(/# impact_map:/);
+    expect(parseFocusManifest({}).review.impactMap).toBeNull();
+    const on = parseFocusManifest({ review: { impact_map: true } });
+    expect(on.review.impactMap).toBe(true);
+    expect(reviewConfigToJson(on.review)).toEqual({ impact_map: true });
+    const off = parseFocusManifest({ review: { impact_map: false } });
+    expect(off.review.impactMap).toBe(false);
+    expect(reviewConfigToJson(off.review)).toEqual({ impact_map: false });
+  });
+
   it("parses gittensory.minimal.yml with zero warnings and enables no agent actions", () => {
     const manifest = parseFocusManifestContent(readConfigExample("gittensory.minimal.yml"), "repo_file");
     expect(manifest.warnings).toEqual([]);

@@ -5,6 +5,8 @@ import {
   gateConfigToJson,
   parseFocusManifest,
   parseFocusManifestContent,
+  resolveReviewPromptOverrides,
+  reviewConfigToJson,
 } from "../../src/signals/focus-manifest";
 
 // #1682: self-host operators need discoverable, copy-paste templates under config/examples/ that
@@ -69,6 +71,20 @@ describe("config/examples review templates (#1682)", () => {
     for (const field of ["inline_comments", "suggestions", "finding_categories"]) {
       expect(full, `missing review field ${field}`).toMatch(new RegExp(`# ${field}:`));
     }
+  });
+
+  it("resolves review.changed_files_summary via manifest parse + boolean helper (#2146)", () => {
+    const full = readConfigExample("gittensory.full.yml");
+    expect(full).toMatch(/# changed_files_summary:/);
+    expect(parseFocusManifest({}).review.changedFilesSummary).toBeNull();
+    expect(resolveReviewPromptOverrides(parseFocusManifest({})).changedFilesSummary).toBe(false);
+    const on = parseFocusManifest({ review: { changed_files_summary: true } });
+    expect(on.review.changedFilesSummary).toBe(true);
+    expect(resolveReviewPromptOverrides(on).changedFilesSummary).toBe(true);
+    expect(reviewConfigToJson(on.review)).toEqual({ changed_files_summary: true });
+    const off = parseFocusManifest({ review: { changed_files_summary: false } });
+    expect(off.review.changedFilesSummary).toBe(false);
+    expect(resolveReviewPromptOverrides(off).changedFilesSummary).toBe(false);
   });
 
   it("parses gittensory.minimal.yml with zero warnings and enables no agent actions", () => {

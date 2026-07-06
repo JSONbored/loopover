@@ -225,3 +225,9 @@ export { bestMetadataOpportunityAtOrAboveScore } from "./metadata-best-min-score
 export * as scoringModel from "./scoring/model.js";
 export * as scoringPreview from "./scoring/preview.js";
 export * as scoringPendingPrScenarios from "./scoring/pending-pr-scenarios.js";
+export {
+  isDuplicateClusterWinner,
+  isDuplicateClusterWinnerByClaim,
+  resolveDuplicateClusterWinnerNumber,
+  type DuplicateClaimMember,
+} from "./duplicate-winner.js";

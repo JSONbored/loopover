@@ -297,6 +297,28 @@ describe("buildUnifiedCommentBody", () => {
     expect(withoutEffort).not.toContain("review effort:");
   });
 
+  it("forwards maxFindings caps into the rendered blocker/nit sections (#2049)", () => {
+    const body = buildUnifiedCommentBody({
+      gate: gate({
+        conclusion: "action_required",
+        summary: "Fix blockers.",
+        blockers: [
+          { code: "b1", severity: "critical", title: "one", detail: "d" },
+          { code: "b2", severity: "critical", title: "two", detail: "d" },
+          { code: "b3", severity: "critical", title: "three", detail: "d" },
+        ],
+      }),
+      aiReview: { notes: "Needs work.\n\n**Nits (2)**\n- a\n- b" },
+      panelRows,
+      readinessTotal: 40,
+      changedFiles: 2,
+      footerMarkdown: footer,
+      maxFindingsCaps: { blockers: 1, nits: 1 },
+    });
+    expect(body).toContain("+2 more");
+    expect(body).toContain("+1 more");
+  });
+
   it("passes a public review update timestamp into the unified comment", () => {
     const body = buildUnifiedCommentBody({
       gate: gate(),

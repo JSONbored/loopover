@@ -68,7 +68,7 @@ function tokenize(text: string): Set<string> {
  *  `reader.ts` match inside an unrelated, longer filename such as `csv-reader.ts`. */
 function issueMentionsChangedPath(issueBody: string, changedPaths: string[]): boolean {
   const lowerBody = issueBody.toLowerCase();
-  const bodyPathTokens = lowerBody.match(/[a-z0-9_\-./]+/g) ?? [];
+  const bodyPathTokens = (lowerBody.match(/[a-z0-9_\-./]+/g) ?? []).map((token) => token.replace(/\.+$/g, ""));
   return changedPaths.some((path) => {
     const lowerPath = path.toLowerCase();
     if (lowerBody.includes(lowerPath)) return true;

@@ -57,6 +57,17 @@ describe("findUnlinkedIssueCandidates", () => {
     expect(result[0]?.pathMentioned).toBe(true);
   });
 
+  it("qualifies via a basename-only mention followed by a sentence period", () => {
+    const result = findUnlinkedIssueCandidates({
+      prTitle: "xyz",
+      prBody: "abc",
+      changedPaths: ["src/utils/reader.ts"],
+      openIssues: [issue({ number: 10, title: "bug", body: "Please fix reader.ts." })],
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0]?.pathMentioned).toBe(true);
+  });
+
   it("does NOT false-positive when a basename is a substring of a longer, unrelated filename (#boundary-matching)", () => {
     // "reader.ts" must not match merely because it is a substring of "csv-reader.ts" -- a different file.
     const result = findUnlinkedIssueCandidates({

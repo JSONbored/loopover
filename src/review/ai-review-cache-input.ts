@@ -5,10 +5,11 @@ import type {
 } from "../signals/focus-manifest";
 import { sha256Hex } from "../utils/crypto";
 
-// Bumped v1→v2 (#2995): `features` gained a `cultureProfile` member. Every prior cached review's fingerprint was
-// computed without that key, so bumping the version guarantees a clean cache miss on the first review after
-// upgrade rather than silently reusing a hash computed under a different payload shape.
-export const AI_REVIEW_CACHE_INPUT_VERSION = "ai-review-input:v2";
+// Bumped v1→v2 (#2995): `features` gained a `cultureProfile` member. Bumped v2→v3 (#2182-#2186): `features`
+// gained an `impactMap` member. Every prior cached review's fingerprint was computed without that key, so
+// bumping the version guarantees a clean cache miss on the first review after upgrade rather than silently
+// reusing a hash computed under a different payload shape.
+export const AI_REVIEW_CACHE_INPUT_VERSION = "ai-review-input:v3";
 
 // #regate-churn (root cause, confirmed in production): this fingerprint USED to also hash the PR's live
 // `baseSha`, on the theory that a rebase/retarget can change the diff GitHub reports for an otherwise-unchanged
@@ -111,6 +112,9 @@ export type AiReviewCacheInput = {
     // #2995: added alongside the repo quality-culture profile. Explicitly enumerated below (not passed through
     // raw) so a FUTURE new feature key can't silently change every existing cache entry's fingerprint again.
     cultureProfile: boolean;
+    // #2182-#2186: impact-map computation queries the same live vector index RAG does (computeImpactMap issues
+    // its own retrieveContextWithMetrics calls), so it can go stale for an unchanged head SHA exactly like RAG.
+    impactMap: boolean;
   };
 };
 
@@ -197,6 +201,7 @@ export async function aiReviewCacheInputFingerprint(input: AiReviewCacheInput): 
       enrichment: input.features.enrichment,
       reputation: input.features.reputation,
       cultureProfile: input.features.cultureProfile,
+      impactMap: input.features.impactMap,
     },
   };
   return `${AI_REVIEW_CACHE_INPUT_VERSION}:${await sha256Hex(stableStringify(payload))}`;

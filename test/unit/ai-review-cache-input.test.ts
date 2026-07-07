@@ -35,6 +35,7 @@ const baseInput = (): AiReviewCacheInput => ({
     enrichment: false,
     reputation: false,
     cultureProfile: false,
+    impactMap: false,
   },
 });
 

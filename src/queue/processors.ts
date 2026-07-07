@@ -8727,13 +8727,18 @@ async function maybePublishPrPublicSurface(
             // so a repo with it active also bypasses the AI-review result cache rather than fingerprinting a
             // value that can't prove freshness.
             cultureProfile: isRepoCultureProfileEnabled(env) && reviewCultureProfile === true,
+            // Impact map (#2182-#2186): queries the SAME live vector index RAG does (computeImpactMap issues
+            // its own retrieveContextWithMetrics calls), so it can go stale for the SAME head SHA exactly like
+            // RAG — a repo with it active also bypasses the AI-review result cache.
+            impactMap: shouldComputeImpactMap(env, reviewImpactMap === true),
           };
           const dynamicReviewContextActive =
             dynamicReviewFeatures.grounding ||
             dynamicReviewFeatures.rag ||
             dynamicReviewFeatures.enrichment ||
             dynamicReviewFeatures.reputation ||
-            dynamicReviewFeatures.cultureProfile;
+            dynamicReviewFeatures.cultureProfile ||
+            dynamicReviewFeatures.impactMap;
           const inputFingerprint = await aiReviewCacheInputFingerprint({
             title: pr.title,
             mode: settings.aiReviewMode,

@@ -55,6 +55,15 @@ gate:
 #     relatedWork: false                                # linkedIssue | relatedWork | reviewLoad (Change scope) |
 #     openPrQueue: false                                # validationEvidence (Validation posture) | openPrQueue (Contributor workload) | contributorContext | gateResult
 
+# AI-review eligibility filters (#3999): a draft PR previously re-triggered a full AI review on every
+# push, letting a contributor iterate for free while tokens kept burning — skip_drafts stops that.
+# skip_docs_only skips the reviewer entirely when every changed file is documentation, which never
+# needs an AI pass.
+review:
+  auto_review:
+    skip_drafts: true
+    skip_docs_only: true
+
 # Linked-issue label propagation (#priority-linked-issue-gate, #priority-linked-issue-gate-ownership): a PR
 # that closes/fixes/resolves an issue inherits that issue's point-bearing gittensor:* label onto the PR
 # itself, instead of the PR's own label being decided purely by its commit-title prefix. bug/feature are

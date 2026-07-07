@@ -18256,6 +18256,79 @@ describe("queue processors", () => {
     expect(unifiedCommentBody).toContain("| Security | 1 |");
   });
 
+  // #1962: with BOTH the operator flag and the manifest opt-in on, the review emits a "Fix handoff" collapsible —
+  // one machine-readable block per inline finding a contributor's own local agent can consume — in the unified
+  // comment. Flag-OFF (every other review test) ⇒ no such section.
+  it("emits the Fix handoff collapsible in the unified comment when review.fixHandoff + the operator flag are on", async () => {
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      GITTENSORY_REVIEW_UNIFIED_COMMENT: "1",
+      GITTENSORY_REVIEW_INLINE_COMMENTS: "true",
+      GITTENSORY_REVIEW_FIX_HANDOFF: "true",
+      GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory",
+      AI: {
+        run: async () =>
+          ({
+            response: JSON.stringify({
+              assessment: "One real issue.",
+              blockers: [],
+              nits: [],
+              suggestions: [],
+              inlineFindings: [
+                { path: "src/db.ts", line: 2, severity: "blocker", body: "This query is vulnerable to SQL injection.", suggestion: "Use a parameterized query." },
+              ],
+            }),
+          }) as { response: string },
+      } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commentMode: "all_prs", publicSurface: "comment_only", autoLabelEnabled: false, checkRunMode: "off", gateCheckMode: "enabled", aiReviewMode: "block", gatePack: "oss-anti-slop" });
+    let unifiedCommentBody = "";
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url === "https://raw.githubusercontent.com/JSONbored/gittensory/HEAD/.gittensory.yml") {
+        // NOTE: the manifest key is camelCase `fixHandoff` (unlike snake-case `finding_categories`) — see focus-manifest parse.
+        return new Response("review:\n  inline_comments: true\n  fixHandoff: true\n");
+      }
+      if (url.includes("/pulls/9/files"))
+        return Response.json([{ filename: "src/db.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@ -1,1 +1,2 @@\n ctx\n+export const ok = true;" }]);
+      if (url.endsWith("/pulls/9")) return Response.json({ number: 9, title: "Add query helper", state: "open", user: { login: "contributor" }, head: { sha: "a9" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+      if (url.includes("/commits/a9/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a9/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      if (url.endsWith("/pulls/9/reviews") && method === "POST") return Response.json({ id: 55 });
+      if (url.includes("/issues/9/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/9/comments") && method === "POST") {
+        unifiedCommentBody = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+        return Response.json({ id: 1 }, { status: 201 });
+      }
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pr-fix-handoff",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 9, title: "Add query helper", state: "open", user: { login: "contributor" }, head: { sha: "a9" }, labels: [], body: "Closes #1" },
+      },
+    });
+
+    expect(unifiedCommentBody).toContain("Fix handoff"); // the collapsible section is emitted
+    expect(unifiedCommentBody).toContain("Fix handoff — Blocker at `src/db.ts:2`"); // the per-finding block header + location anchor
+    expect(unifiedCommentBody).toContain("This query is vulnerable to SQL injection."); // the finding, handed off verbatim
+    expect(unifiedCommentBody).toContain("Suggested change:"); // its suggestion carried through
+  });
+
   // FIX B + FIX D3 at the processor call site: a unified comment for a PR whose CI has a FAILED check, with the
   // PR's files only available from GitHub (stored rows empty) — proves (B) the inline file fetch populates the
   // real diff/changed-file count on the first review, and (D3) the failing check name + its per-check WHY render

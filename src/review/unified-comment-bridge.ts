@@ -31,6 +31,7 @@ import { GITTENSORY_GATE_CHECK_NAME } from "./check-names";
 import { classifyChangedFile, type ReviewFileClass } from "./changed-files-classify";
 import { githubPrFileDiffUrl } from "./changed-files-diff-link";
 import { classifyFindingCategory, FINDING_CATEGORIES, type FindingCategory } from "./finding-category-classify";
+import type { FixHandoffBlock } from "./fix-handoff-render";
 import {
   buildUnifiedReviewInput,
   renderUnifiedReviewComment,
@@ -348,6 +349,12 @@ export type UnifiedCommentBridgeArgs = {
    *  this only when BOTH the operator's GITTENSORY_REVIEW_IMPACT_MAP flag and the per-repo manifest opt-in
    *  are on — see `shouldComputeImpactMap`, `src/review/impact-map-wire.ts`). */
   impactMap?: ImpactMapSummaryInput[] | undefined;
+  /** review.fixHandoff emission (#1962): pre-rendered fix-handoff blocks (one per inline finding — a
+   *  contributor's own local agent can consume them; content-only, no server-side write). When present and
+   *  non-empty a "Fix handoff" collapsible is appended. Default OFF — the processor passes this only when the
+   *  operator's GITTENSORY_REVIEW_FIX_HANDOFF flag AND the per-repo `review.fixHandoff` manifest opt-in are on
+   *  (see `shouldEmitFixHandoff`, `src/review/fix-handoff.ts`), so the rendered comment is byte-identical when off. */
+  fixHandoffBlocks?: FixHandoffBlock[] | undefined;
   /** The disposition holds this PR for owner review because its diff touches a hard-guardrail path — so an
    *  otherwise-ready comment renders "held for review" instead of "safe to merge". (#guarded-hold-comment) */
   heldForReview?: boolean | undefined;
@@ -597,6 +604,19 @@ export function buildImpactMapCollapsible(entries: ImpactMapSummaryInput[]): Uni
   return { title: "Impact map", body };
 }
 
+/**
+ * Build the "Fix handoff" collapsible (#1962): the pre-rendered fix-handoff blocks for this review's inline
+ * findings, one per finding, so a contributor's OWN local coding agent can consume them. Pure rendering — each
+ * block's `.body` was already produced (and made public-safe) by `buildFixHandoffBlock`
+ * (src/review/fix-handoff-render.ts); this only stitches them under one collapsible. Returns null when there are
+ * no blocks (emission off, or no inline findings), so the caller chains it unconditionally exactly like the
+ * impact-map / finding-category collapsibles above.
+ */
+export function buildFixHandoffCollapsible(blocks: FixHandoffBlock[]): UnifiedCollapsible | null {
+  if (blocks.length === 0) return null;
+  return { title: "Fix handoff", body: blocks.map((block) => block.body).join("\n\n") };
+}
+
 /** A finding's path + body — everything `buildFindingCategoryCollapsible` needs to use the finding's own
  *  `category` when present, or fall back to `classifyFindingCategory` when it isn't. Deliberately narrower than
  *  `InlineFinding` (no line/severity/suggestion) so the bridge's pure-rendering surface stays minimal. */
@@ -723,10 +743,18 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
   const impactMapCollapsible = args.impactMap && args.impactMap.length > 0 ? buildImpactMapCollapsible(args.impactMap) : null;
   const withImpactMap =
     impactMapCollapsible !== null ? [...(withFindingCategories ?? []), impactMapCollapsible] : withFindingCategories;
+  // review.fixHandoff emission (#1962): when the operator flag AND the manifest opt in, the processor hands us
+  // the pre-rendered fix-handoff blocks here; append the "Fix handoff" collapsible after Impact map (another
+  // structural, no-AI section) and ahead of the visual preview. Flag-OFF (the processor passes undefined) ⇒
+  // extraCollapsibles is unchanged.
+  const fixHandoffCollapsible =
+    args.fixHandoffBlocks && args.fixHandoffBlocks.length > 0 ? buildFixHandoffCollapsible(args.fixHandoffBlocks) : null;
+  const withFixHandoff =
+    fixHandoffCollapsible !== null ? [...(withImpactMap ?? []), fixHandoffCollapsible] : withImpactMap;
   // Visual-capture port: when before/after routes are present, append a "Visual preview" collapsible to the
   // extra sections. Flag-OFF (the processor passes no beforeAfter) ⇒ extraCollapsibles is unchanged.
   const visualCollapsible = args.beforeAfter && args.beforeAfter.length > 0 ? buildBeforeAfterCollapsible(args.beforeAfter) : null;
-  const withVisual = visualCollapsible !== null ? [...(withImpactMap ?? []), visualCollapsible] : withImpactMap;
+  const withVisual = visualCollapsible !== null ? [...(withFixHandoff ?? []), visualCollapsible] : withFixHandoff;
   // #3612: "Scroll preview" renders ALONGSIDE "Visual preview" (never replacing it) — self-host + gif:true
   // only, so this is null (no section, no behavior change) for every repo that hasn't opted in.
   const scrollCollapsible = args.beforeAfter && args.beforeAfter.length > 0 ? buildScrollPreviewCollapsible(args.beforeAfter) : null;

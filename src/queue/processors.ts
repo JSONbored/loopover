@@ -451,6 +451,8 @@ import { createReviewAdapters } from "../review/adapters";
 import { extractChangedSymbols } from "../review/impact-symbols";
 import { computeImpactMap } from "../review/impact-map";
 import { formatImpactMapPromptSection, shouldComputeImpactMap } from "../review/impact-map-wire";
+import { shouldEmitFixHandoff } from "../review/fix-handoff";
+import { buildFixHandoffBlocks } from "../review/fix-handoff-render";
 import {
   buildRepoCultureProfileContext,
   isRepoCultureProfileEnabled,
@@ -8282,6 +8284,7 @@ async function maybePublishPrPublicSurface(
   let effortScoreEnabledForReview = false;
   let reviewMemoryEnabledForReview = false;
   let findingCategoriesEnabledForReview = false;
+  let fixHandoffEnabledForReview = false;
   let minFindingSeverityForReview: ReviewFindingSeverity | null = null;
   let inlineCommentsPerCategoryForReview: number | null = null;
   let aiReviewExpected = false;
@@ -8804,6 +8807,11 @@ async function maybePublishPrPublicSurface(
     // pass). ANDed with the operator's GITTENSORY_REVIEW_MEMORY kill-switch at the actual apply site below
     // (shouldApplyReviewMemory) — this flag alone only carries the per-repo manifest opt-in.
     reviewMemoryEnabledForReview = shouldApplyReviewMemory(env, resolveReviewMemoryManifestToggle(reviewManifestForAutoReview));
+    // review.fixHandoff emission (#1962): resolved the same unconditional way as the deterministic sections above,
+    // ANDing the per-repo `review.fixHandoff` manifest opt-in with the operator's GITTENSORY_REVIEW_FIX_HANDOFF
+    // kill-switch + convergence allowlist (shouldEmitFixHandoff). The blocks themselves are built from this pass's
+    // inline findings at the publish site below, mirroring findingCategories.
+    fixHandoffEnabledForReview = shouldEmitFixHandoff(env, repoFullName, reviewManifestForAutoReview?.review.fixHandoff ?? undefined);
     maybeAddRequiredAutoReviewSkipHold(env, {
       settings,
       advisory,
@@ -10166,6 +10174,12 @@ async function maybePublishPrPublicSurface(
           : {}),
         ...(findingCategoriesEnabledForReview && aiReview?.inlineFindings?.length
           ? { findingCategories: aiReview.inlineFindings }
+          : {}),
+        // review.fixHandoff emission (#1962): the SAME fresh inline findings feed the fix-handoff blocks —
+        // present ONLY on a cache-miss review with inline comments enabled — so a cache hit never re-emits them,
+        // exactly like findingCategories above. Flag-OFF ⇒ omitted ⇒ the rendered comment is byte-identical.
+        ...(fixHandoffEnabledForReview && aiReview?.inlineFindings?.length
+          ? { fixHandoffBlocks: buildFixHandoffBlocks(aiReview.inlineFindings) }
           : {}),
         maxFindingsCaps: reviewConfig.maxFindings,
         commentVerbosity: reviewConfig.commentVerbosity,

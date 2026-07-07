@@ -1,3 +1,4 @@
+// Mirror of the app suite pointed at the gittensory-engine copy so the extracted module owns its branch coverage (#2280).
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SCREENSHOT_CONTRACT_MESSAGE,
@@ -9,8 +10,8 @@ import {
   isScreenshotTableGateAction,
   isScreenshotTableGateInScope,
   normalizeScreenshotTableGateConfig,
-} from "../../src/review/screenshot-table-gate";
-import type { ScreenshotTableGateConfig } from "../../src/types";
+} from "../../packages/gittensory-engine/src/review/screenshot-table-gate";
+import type { ScreenshotTableGateConfig } from "../../packages/gittensory-engine/src/types/manifest-deps-types";
 
 function config(overrides: Partial<ScreenshotTableGateConfig> = {}): ScreenshotTableGateConfig {
   return { ...DEFAULT_SCREENSHOT_TABLE_GATE, whenLabels: [], whenPaths: [], ...overrides };

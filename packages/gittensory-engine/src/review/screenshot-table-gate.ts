@@ -97,9 +97,8 @@ function isMarkdownTableSeparatorRow(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed || !/-{3,}/.test(trimmed)) return false;
   const withoutEdgePipes = trimmed.replace(/^\|/, "").replace(/\|$/, "").trim();
-  if (!withoutEdgePipes) return false;
   const cells = withoutEdgePipes.split("|");
-  return cells.length > 0 && cells.every((cell) => TABLE_SEPARATOR_CELL.test(cell));
+  return cells.every((cell) => TABLE_SEPARATOR_CELL.test(cell));
 }
 
 /** True when `body` contains at least one markdown TABLE region (`| ... |` header + separator row) whose cells

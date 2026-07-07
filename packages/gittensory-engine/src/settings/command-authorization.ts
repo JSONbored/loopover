@@ -158,7 +158,10 @@ function normalizeCommandRoleList(commandName: string, roles: CommandAuthorizati
   if (maintainerRoles.length === roles.length) return roles;
 
   warnings.push(`Ignored author command authorization roles for maintainer-only command: ${commandName}.`);
-  return maintainerRoles.length > 0 ? dedupeRoles(maintainerRoles) : [...(DEFAULT_COMMAND_AUTHORIZATION_POLICY.commands[commandName] ?? ["maintainer", "collaborator"])];
+  if (maintainerRoles.length > 0) return dedupeRoles(maintainerRoles);
+  const defaultRoles = DEFAULT_COMMAND_AUTHORIZATION_POLICY.commands[commandName];
+  /* v8 ignore next -- defensive: MAINTAINER_ONLY_DEFAULT_COMMANDS is derived from these keys, so a maintainer-only command always resolves a default list. */
+  return [...(defaultRoles ?? ["maintainer", "collaborator"])];
 }
 
 function actorRoles(args: {

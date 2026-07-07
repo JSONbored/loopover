@@ -426,7 +426,7 @@ import {
   isPlanCommand,
   isPlannerEnabled,
 } from "../review/planner";
-import { classifyConfigurationCommandRequest } from "../github/configuration-command";
+import { classifyConfigurationCommandRequest, classifyMentionCommandRequest } from "../github/configuration-command";
 import { summarizeEffectiveConfig } from "../settings/effective-config-summary";
 import {
   buildReviewGroundingText,
@@ -5586,6 +5586,7 @@ async function processGitHubWebhook(
     }
 
     if (eventName === "issue_comment" && (await maybeProcessResolveCommand(env, deliveryId, payload))) { await recordWebhookEvent(env, { deliveryId, eventName, action: payload.action, installationId: payload.installation?.id, repositoryFullName: payload.repository?.full_name, payloadHash: "processed", status: "processed" }); return; }
+    if (eventName === "issue_comment" && (await maybeProcessPauseCommand(env, deliveryId, payload))) { await recordWebhookEvent(env, { deliveryId, eventName, action: payload.action, installationId: payload.installation?.id, repositoryFullName: payload.repository?.full_name, payloadHash: "processed", status: "processed" }); return; }
     if (
       eventName === "issue_comment" &&
       (await maybeProcessConfigurationCommand(env, deliveryId, payload))
@@ -10716,6 +10717,79 @@ async function recordConfigurationSkip(
 ): Promise<void> {
   await recordAuditEvent(env, {
     eventType: "github_app.configuration_skipped",
+    actor,
+    targetKey,
+    outcome: "completed",
+    detail: reason,
+    metadata: { deliveryId, repoFullName, reason },
+  });
+}
+
+/**
+ * `@gittensory pause` (#2164): pause AUTO-REVIEW for this PR only by recording a per-PR `autoreview_paused` marker
+ * (an audit event the sweep/webhook re-review path reads), plus a public-safe confirmation. #1960 hard constraint:
+ * pause suppresses ONLY auto-review — it deliberately does NOT mutate `repository_settings` or touch gate
+ * enforcement / the one-shot disposition. Honors the repo's per-repo `commandAuthorization` for `pause` over the
+ * REAL repo permission (never the spoofable comment `author_association`). Returns true once it owns the event.
+ */
+async function maybeProcessPauseCommand(
+  env: Env,
+  deliveryId: string,
+  payload: GitHubWebhookPayload,
+): Promise<boolean> {
+  const req = classifyMentionCommandRequest(payload, getInstallationId(payload), "pause");
+  if (!req) return false;
+  if (!req.ok) {
+    await recordAutoReviewPauseSkip(env, deliveryId, req.repoFullName, req.targetKey, req.actor, req.reason);
+    return true;
+  }
+  const targetKey = `${req.repoFullName}#${req.issueNumber}`;
+  const settings = await resolveRepositorySettings(env, req.repoFullName);
+  const association = await resolveRealRepoPermissionAssociation(env, req.installationId, req.repoFullName, req.actor);
+  const authorization = evaluateCommandAuthorization({
+    policy: settings.commandAuthorization,
+    commandName: "pause",
+    commenterLogin: req.actor,
+    commenterAssociation: association,
+  });
+  if (!authorization.authorized) {
+    await recordAutoReviewPauseSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, authorization.reason);
+    return true;
+  }
+  await recordAuditEvent(env, {
+    eventType: "github_app.autoreview_paused",
+    actor: req.actor,
+    targetKey,
+    outcome: "completed",
+    detail: `Auto-review paused for ${targetKey} by @${req.actor}.`,
+    metadata: { deliveryId, repoFullName: req.repoFullName },
+  });
+  const body = sanitizePublicComment(
+    [
+      AGENT_COMMAND_COMMENT_MARKER,
+      "",
+      "> [!NOTE]",
+      `> **Auto-review paused for this PR by @${req.actor}**`,
+      "> New pushes to this PR will not be auto-reviewed until `@gittensory resume`. Gate enforcement and the one-shot disposition are unaffected.",
+      "",
+      "---",
+      gittensoryFooter(),
+    ].join("\n"),
+  );
+  await createIssueComment(env, req.installationId, req.repoFullName, req.issueNumber, body);
+  return true;
+}
+
+async function recordAutoReviewPauseSkip(
+  env: Env,
+  deliveryId: string,
+  repoFullName: string | null,
+  targetKey: string | null,
+  actor: string | null,
+  reason: string,
+): Promise<void> {
+  await recordAuditEvent(env, {
+    eventType: "github_app.autoreview_paused_skipped",
     actor,
     targetKey,
     outcome: "completed",

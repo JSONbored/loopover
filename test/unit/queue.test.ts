@@ -10718,6 +10718,90 @@ describe("queue processors", () => {
     expect(skip?.detail).toBe("unsupported_comment_action_or_bot");
   });
 
+  it("pause (#2164): a maintainer @gittensory pause records the auto-review-paused marker + confirmation, WITHOUT touching the gate/kill-switch", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupPlannerRepo(env);
+    let postedBody: string | undefined;
+    let checkRunPosted = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" }); // maintainer
+      if (url.includes("/check-runs")) { checkRunPosted = true; return Response.json({ id: 1 }, { status: 201 }); }
+      if (url.includes("/issues/77/comments")) {
+        postedBody = init?.body ? JSON.parse(init.body.toString()).body : undefined;
+        return Response.json({ id: 5 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@gittensory pause", "maintainer1"));
+    const audit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("github_app.autoreview_paused").first<{ outcome: string }>();
+    expect(audit?.outcome).toBe("completed");
+    expect(postedBody).toContain("Auto-review paused for this PR");
+    expect(postedBody).toContain("Gate enforcement and the one-shot disposition are unaffected");
+    // #1960 hard constraint: pause suppresses ONLY auto-review — it must NOT flip the gate check-run or the
+    // repository-wide agent kill-switch.
+    expect(checkRunPosted).toBe(false);
+    const killSwitch = await env.DB.prepare("select agent_paused from repository_settings where repo_full_name = ?").bind("JSONbored/gittensory").first<{ agent_paused: number }>();
+    expect(killSwitch?.agent_paused ?? 0).toBe(0);
+  });
+
+  it("pause: a non-maintainer is denied — no marker recorded and no comment", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupPlannerRepo(env);
+    let posted = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "read" }); // not a maintainer
+      if (url.includes("/comments")) { posted = true; return Response.json({ id: 5 }, { status: 201 }); }
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@gittensory pause", "outsider"));
+    expect(posted).toBe(false);
+    const paused = await env.DB.prepare("select 1 from audit_events where event_type = ?").bind("github_app.autoreview_paused").first();
+    expect(paused).toBeFalsy();
+    const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.autoreview_paused_skipped").first<{ detail: string }>();
+    expect(skip?.detail).toBe("not_maintainer_or_pr_author");
+  });
+
+  it("pause: a non-pause comment is not intercepted (the handler declines)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupPlannerRepo(env);
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
+    await processJob(env, plannerWebhook("nothing to see here", "maintainer1"));
+    const paused = await env.DB.prepare("select 1 from audit_events where event_type = ?").bind("github_app.autoreview_paused").first();
+    const skipped = await env.DB.prepare("select 1 from audit_events where event_type = ?").bind("github_app.autoreview_paused_skipped").first();
+    expect(paused).toBeFalsy();
+    expect(skipped).toBeFalsy();
+  });
+
+  it("pause: a bot-authored command is recorded as a classifier skip, never acted on", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupPlannerRepo(env);
+    let posted = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/comments")) posted = true;
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pause-bot",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 77, title: "t", state: "open", user: { login: "reporter" }, body: "b" },
+        comment: { body: "@gittensory pause", user: { login: "some-bot[bot]", type: "Bot" } },
+        sender: { login: "some-bot[bot]", type: "Bot" },
+      },
+    } as unknown as Parameters<typeof processJob>[1]);
+    expect(posted).toBe(false);
+    const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.autoreview_paused_skipped").first<{ detail: string }>();
+    expect(skip?.detail).toBe("unsupported_comment_action_or_bot");
+  });
+
   it("REGRESSION (#audit-draft-maintenance): a clean DRAFT PR is never auto-merged/approved/closed (drafts are WIP)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, {
@@ -23261,7 +23345,7 @@ describe("queue processors", () => {
     });
   });
 
-  it("a #1960 action-command verb with no dispatch handler wired yet (e.g. pause) is bailed out of the Q&A answer-card path, not misrendered as help (#2160)", async () => {
+  it("a #1960 action-command verb with no dispatch handler wired yet (e.g. explain) is bailed out of the Q&A answer-card path, not misrendered as help (#2160)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
     await upsertRepositorySettings(env, {
@@ -23310,14 +23394,14 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: { number: 93, title: "Not yet wired", state: "open", user: { login: "contributor" }, pull_request: {} },
-        comment: { id: 900, body: "@gittensory pause", author_association: "OWNER", user: { login: "maintainer", type: "User" } },
+        comment: { id: 900, body: "@gittensory explain", author_association: "OWNER", user: { login: "maintainer", type: "User" } },
         sender: { login: "maintainer", type: "User" },
       },
     });
 
-    // No handler claims a bare "pause" comment yet (its dispatch lands in a follow-up bounty -- unlike
-    // "resolve"/"configuration", which now have their own handlers), so the Q&A answer-card path must bail
-    // rather than post a stray "help" card or any other Q&A comment.
+    // No handler claims a bare "explain" comment yet (its dispatch lands in a follow-up bounty -- unlike
+    // "resolve"/"configuration"/"pause", which now have their own handlers), so the Q&A answer-card path must
+    // bail rather than post a stray "help" card or any other Q&A comment.
     expect(calls.comments).toBe(0);
     const feedback = await env.DB.prepare("select id from audit_events where event_type = ?").bind("github_app.agent_command_feedback_prompted").first<{ id: string }>();
     expect(feedback ?? null).toBeNull();

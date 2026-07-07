@@ -236,6 +236,23 @@ describe("visual screenshot on-demand SSRF guard", () => {
     }
   });
 
+  it("REGRESSION (security review): times out a hostile page-realm height probe before rasterization", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.finalUrl = "https://preview.pages.dev/page";
+      mocks.evaluate.mockReturnValue(new Promise(() => undefined));
+
+      const result = captureShot(env(), "https://preview.pages.dev/page");
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      await expect(result).resolves.toEqual({ png: null, authWalled: false });
+      expect(mocks.screenshot).not.toHaveBeenCalled();
+      expect(mocks.close).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("never emulates a color scheme when no theme is requested — every existing caller, byte-identical to today", async () => {
     mocks.finalUrl = "https://preview.pages.dev/page";
     await captureShot(env(), "https://preview.pages.dev/page");

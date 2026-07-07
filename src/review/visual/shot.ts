@@ -45,6 +45,7 @@ export const MAX_SCREENSHOT_HEIGHT = 10000;
 export const MAX_SCREENSHOT_PIXELS = 14_400_000; // 1440 × 10000, matching the full-page cap.
 export const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024;
 const SCREENSHOT_TIMEOUT_MS = 10000;
+const SCREENSHOT_HEIGHT_PROBE_TIMEOUT_MS = 2_000;
 
 /** Per-call shot-route options: the R2 namespace (key prefix) + the production host for the on-demand render
  *  allowlist. Defaults to gittensory so the /gittensory/shot route works with no options. */
@@ -141,13 +142,25 @@ async function captureBoundedFullPageShot(page: ScreenshotPage, viewport: Viewpo
   // Fast-path only: this executes inside the screenshotted PAGE's own JS realm, so a hostile page can override
   // scrollHeight/offsetHeight getters (e.g. via Object.defineProperty) to under-report its height and sail
   // through this check -- it does not by itself guard anything (#3712 security review). Real enforcement is
-  // the post-capture dimension re-check below, against Chromium's actual rasterized output.
-  const height = await page.evaluate(() => {
-    const doc = (globalThis as unknown as { document: { body: { scrollHeight: number; offsetHeight: number }; documentElement: { clientHeight: number; scrollHeight: number; offsetHeight: number } } }).document;
-    const body = doc.body;
-    const element = doc.documentElement;
-    return Math.ceil(Math.max(body.scrollHeight, body.offsetHeight, element.clientHeight, element.scrollHeight, element.offsetHeight));
-  });
+  // the post-capture dimension re-check below, against Chromium's actual rasterized output. Keep this probe
+  // time-bounded too: hostile getters/globals can hang before the screenshot timeout is even armed.
+  let heightProbeTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  const height = await Promise.race([
+    page.evaluate(() => {
+      const doc = (globalThis as unknown as { document: { body: { scrollHeight: number; offsetHeight: number }; documentElement: { clientHeight: number; scrollHeight: number; offsetHeight: number } } }).document;
+      const body = doc.body;
+      const element = doc.documentElement;
+      return Math.ceil(Math.max(body.scrollHeight, body.offsetHeight, element.clientHeight, element.scrollHeight, element.offsetHeight));
+    }),
+    new Promise<null>((resolve) => {
+      heightProbeTimeoutId = setTimeout(() => resolve(null), SCREENSHOT_HEIGHT_PROBE_TIMEOUT_MS);
+    }),
+  ]);
+  clearTimeout(heightProbeTimeoutId as ReturnType<typeof setTimeout>);
+  if (height === null) {
+    console.log(JSON.stringify({ ev: "render_screenshot_height_probe_timeout", timeoutMs: SCREENSHOT_HEIGHT_PROBE_TIMEOUT_MS }));
+    return null;
+  }
   const pixelArea = viewport.width * height;
   if (height > MAX_SCREENSHOT_HEIGHT || pixelArea > MAX_SCREENSHOT_PIXELS) {
     console.log(JSON.stringify({ ev: "render_screenshot_too_large", width: viewport.width, height, maxHeight: MAX_SCREENSHOT_HEIGHT, maxPixels: MAX_SCREENSHOT_PIXELS }));

@@ -701,6 +701,7 @@ export function buildUnifiedReviewInput(opts: {
   reviewEffort?: { band: 1 | 2 | 3 | 4 | 5; minutes: number };
   maxFindingsCaps?: { blockers: number | null; nits: number | null };
   linkedIssueSatisfaction?: { status: "addressed" | "partial" | "unaddressed"; rationale: string };
+  inlineFindings?: ReadonlyArray<{ category?: UnifiedFindingCategory | undefined }>;
 }): UnifiedReviewInput {
   const ex = extractReviewSummary(opts.reviews);
   const changedFiles = typeof opts.changedFiles === "number" ? opts.changedFiles : opts.changedFiles.length;
@@ -720,6 +721,7 @@ export function buildUnifiedReviewInput(opts: {
     ...(opts.reviewEffort !== undefined ? { reviewEffort: opts.reviewEffort } : {}),
     ...(opts.maxFindingsCaps !== undefined ? { maxFindingsCaps: opts.maxFindingsCaps } : {}),
     ...(opts.linkedIssueSatisfaction !== undefined ? { linkedIssueSatisfaction: opts.linkedIssueSatisfaction } : {}),
+    ...(opts.inlineFindings !== undefined ? { inlineFindings: opts.inlineFindings } : {}),
   };
 }
 

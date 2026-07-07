@@ -86,19 +86,22 @@ describe("buildUnifiedCommentBody findingCategories wiring (#1958)", () => {
     footerMarkdown: footer,
   };
 
-  it("appends the Finding categories section when findingCategories is present + non-empty", () => {
+  it("appends both category summaries when findingCategories is present + non-empty", () => {
     const body = buildUnifiedCommentBody({ ...base, findingCategories: findings });
+    expect(body).toContain("**Findings by category:** 1 security");
     expect(body).toContain("Finding categories");
     expect(body).toContain("| Security | 1 |");
   });
 
-  it("does NOT add a Finding categories section when findingCategories is absent (flag-OFF parity)", () => {
+  it("does NOT add category summaries when findingCategories is absent (flag-OFF parity)", () => {
     const body = buildUnifiedCommentBody(base);
+    expect(body).not.toContain("Findings by category");
     expect(body).not.toContain("Finding categories");
   });
 
-  it("does NOT add a Finding categories section when findingCategories is empty", () => {
+  it("does NOT add category summaries when findingCategories is empty", () => {
     const body = buildUnifiedCommentBody({ ...base, findingCategories: [] });
+    expect(body).not.toContain("Findings by category");
     expect(body).not.toContain("Finding categories");
   });
 

@@ -666,6 +666,7 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
     ...(args.merged !== undefined ? { merged: args.merged } : {}),
     ...(args.reviewEffort !== undefined ? { reviewEffort: args.reviewEffort } : {}),
     ...(args.maxFindingsCaps !== undefined ? { maxFindingsCaps: args.maxFindingsCaps } : {}),
+    ...(args.findingCategories !== undefined ? { inlineFindings: args.findingCategories } : {}),
   });
   // The gate already produced 0/1 reviewer notes from a synthesis of the model pair; reflect the caller's
   // actual reviewer count (for the chip + the "N reviewers, synthesized" evidence) without re-deriving it.

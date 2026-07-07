@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { isDuplicateClusterWinner, isDuplicateClusterWinnerByClaim, resolveDuplicateClusterWinnerNumber } from "../../src/signals/duplicate-winner";
 import { dupWinnerLinkedDuplicateCount, dupWinnerLinkedDuplicateWinnerNumber, linkedIssueDuplicatePullRequestsForGate } from "../../src/queue/processors";
 import type { PullRequestRecord } from "../../src/types";
-import { listOtherOpenPullRequests, upsertPullRequestFromGitHub } from "../../src/db/repositories";
+import { listOtherOpenPullRequests, listOtherOpenPullRequestsForAuthor, upsertPullRequestFromGitHub } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 describe("isDuplicateClusterWinner (#dup-winner)", () => {
@@ -302,6 +302,27 @@ describe("listOtherOpenPullRequests ordering (#audit-3.9)", () => {
     expect(siblings).toHaveLength(100); // capped
     expect(Math.min(...siblingNumbers)).toBe(1); // the true winner #1 is retained despite being inserted last
     expect(siblingNumbers).not.toContain(102); // the lowest 100 (1..100) are returned, not the first-inserted 100
+  });
+
+  it("caps author-scoped contributor-cap siblings at the lowest 100 PRs (resource budget regression)", async () => {
+    const env = createTestEnv();
+    // Insert #1 last so the LIMIT must be applied after numeric ordering, not insertion order. Rows from other
+    // authors and the subject PR are excluded before the cap, so the fixed live-check budget is all same-author
+    // siblings and cannot be inflated by unrelated open PRs.
+    const sameAuthorNumbers = [...Array.from({ length: 101 }, (_, i) => i + 2), 1]; // 2..102, then 1
+    for (const n of sameAuthorNumbers) {
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: n, title: `Author PR ${n}`, state: "open", user: { login: "Prolific" }, head: { sha: `s${n}` }, labels: [], body: "x" });
+    }
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 200, title: "Subject PR", state: "open", user: { login: "prolific" }, head: { sha: "subject" }, labels: [], body: "x" });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 201, title: "Other author PR", state: "open", user: { login: "someone-else" }, head: { sha: "other" }, labels: [], body: "x" });
+
+    const siblings = await listOtherOpenPullRequestsForAuthor(env, "owner/repo", 200, "prolific");
+    const siblingNumbers = siblings.map((p) => p.number);
+    expect(siblings).toHaveLength(100);
+    expect(siblingNumbers[0]).toBe(1);
+    expect(siblingNumbers).not.toContain(102);
+    expect(siblingNumbers).not.toContain(200);
+    expect(siblingNumbers).not.toContain(201);
   });
 });
 

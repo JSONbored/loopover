@@ -3706,7 +3706,11 @@ export async function listOtherOpenPullRequestsForAuthor(env: Env, fullName: str
     .select()
     .from(pullRequests)
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.state, "open"), not(eq(pullRequests.number, number)), sql`lower(${pullRequests.authorLogin}) = lower(${authorLogin})`))
-    .orderBy(asc(pullRequests.number));
+    // Keep the per-webhook live-verification and sibling-wake work budget fixed. The cap path only needs the
+    // lowest-numbered siblings to preserve the "oldest PRs win" rule, and wake coalescing can discover later
+    // over-cap siblings from their own deliveries without letting one delivery fan out across an unbounded set.
+    .orderBy(asc(pullRequests.number))
+    .limit(100);
   return rows.map(toPullRequestRecordFromRow);
 }
 

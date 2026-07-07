@@ -113,16 +113,18 @@ describe("buildSlopAssessment", () => {
     expect(buildDuplicateClusterFinding({ inDuplicateCluster: false })).toBeNull();
   });
 
-  it("stacks the duplicate-cluster weight with another signal into the expected band (#563)", () => {
+  it("stacks the duplicate-cluster weight with two other signals into the expected band (#563, #3939 recalibration)", () => {
     const result = buildSlopAssessment({
-      // code file with no test evidence → missing_test_evidence (30); non-empty description suppresses empty_description.
+      // code file with no test evidence → missing_test_evidence (15); non-empty description suppresses empty_description.
       changedFiles: [{ path: "src/parser.ts", additions: 10, deletions: 1 }],
       description: "Refactor the parser.",
       inDuplicateCluster: true, // → duplicate_cluster_membership (15)
+      hasLinkedIssue: false, // → no_linked_issue_without_rationale (15) -- a third weak signal, needed post-#3939:
+      // two weak signals alone (30) now land in `low` (1-30), not `elevated` (31-59); three reaches 45.
     });
-    expect(result.slopRisk).toBe(SLOP_WEIGHTS.missingTestEvidence + SLOP_WEIGHTS.duplicateClusterMembership);
+    expect(result.slopRisk).toBe(SLOP_WEIGHTS.missingTestEvidence + SLOP_WEIGHTS.duplicateClusterMembership + SLOP_WEIGHTS.noLinkedIssueWithoutRationale);
     expect(result.band).toBe("elevated");
-    expect(result.findings.map((finding) => finding.code).sort()).toEqual(["duplicate_cluster_membership", "missing_test_evidence"]);
+    expect(result.findings.map((finding) => finding.code).sort()).toEqual(["duplicate_cluster_membership", "missing_test_evidence", "no_linked_issue_without_rationale"]);
     expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
   });
 
@@ -196,7 +198,8 @@ describe("buildSlopAssessment", () => {
     });
 
     expect(result.slopRisk).toBe(SLOP_WEIGHTS.trivialWhitespaceChurn);
-    expect(result.band).toBe("elevated");
+    // A single strong signal (30) alone is `low` (1-30), not `elevated` (31-59) — post-#3939 recalibration.
+    expect(result.band).toBe("low");
     expect(result.findings).toEqual([
       expect.objectContaining({
         code: "trivial_whitespace_churn",
@@ -307,9 +310,10 @@ describe("buildSlopAssessment", () => {
   });
 
   it("reaches the high band when multiple strong signals stack", () => {
-    // Code change, no tests, no description: missing-test-evidence (15) + empty-description (15) = 30 = elevated.
-    const elevated = buildSlopAssessment({ changedFiles: [{ path: "src/x.ts", additions: 10, deletions: 1 }], description: "" });
-    expect(elevated.band).toBe("elevated");
+    // Code change, no tests, no description: missing-test-evidence (15) + empty-description (15) = 30 = low
+    // (post-#3939 recalibration: two weak signals alone no longer reach `elevated`, which now needs ≥31).
+    const twoWeakSignals = buildSlopAssessment({ changedFiles: [{ path: "src/x.ts", additions: 10, deletions: 1 }], description: "" });
+    expect(twoWeakSignals.band).toBe("low");
 
     // High-whitespace-churn code change + no tests + no description: 30 + 15 + 15 = 60 -> high (>=60).
     const high = buildSlopAssessment({
@@ -625,7 +629,8 @@ describe("buildNonSubstantivePaddingFinding (#561 path-matcher signal)", () => {
     });
     expect(result.findings.map((finding) => finding.code)).toEqual(["non_substantive_padding"]);
     expect(result.slopRisk).toBe(SLOP_WEIGHTS.nonSubstantivePadding);
-    expect(result.band).toBe("elevated");
+    // A single strong signal (30) alone is `low` (1-30), not `elevated` (31-59) — post-#3939 recalibration.
+    expect(result.band).toBe("low");
     expect(JSON.stringify(result)).not.toMatch(FORBIDDEN);
   });
 });
@@ -643,11 +648,18 @@ describe("slop golden fixtures & determinism (#565)", () => {
       codes: ["missing_test_evidence"],
     },
     {
-      name: "elevated — untested code change inside a duplicate cluster",
-      input: { changedFiles: [{ path: "src/svc.ts", additions: 12, deletions: 3 }], description: "Add retry logic to the sync client.", inDuplicateCluster: true },
-      slopRisk: 30,
+      // Three weak signals (45), not two (30): post-#3939 recalibration, two weak signals alone land in `low`
+      // (1-30) -- `elevated` (31-59) now needs genuine multi-signal evidence.
+      name: "elevated — untested, unlinked code change inside a duplicate cluster",
+      input: {
+        changedFiles: [{ path: "src/svc.ts", additions: 12, deletions: 3 }],
+        description: "Add retry logic to the sync client.",
+        inDuplicateCluster: true,
+        hasLinkedIssue: false,
+      },
+      slopRisk: 45,
       band: "elevated",
-      codes: ["duplicate_cluster_membership", "missing_test_evidence"],
+      codes: ["duplicate_cluster_membership", "missing_test_evidence", "no_linked_issue_without_rationale"],
     },
     {
       name: "high — whitespace churn, untested code, and empty description",

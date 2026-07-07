@@ -7089,6 +7089,10 @@ export async function runAiReviewForAdvisory(
       claudeEffort: args.reviewSelfHostAiModel?.claudeEffort ?? null,
       codexModel: args.reviewSelfHostAiModel?.codexModel ?? null,
       codexEffort: args.reviewSelfHostAiModel?.codexEffort ?? null,
+      ollamaModel: args.reviewSelfHostAiModel?.ollamaModel ?? null,
+      openaiModel: args.reviewSelfHostAiModel?.openaiModel ?? null,
+      openaiCompatibleModel: args.reviewSelfHostAiModel?.openaiCompatibleModel ?? null,
+      anthropicModel: args.reviewSelfHostAiModel?.anthropicModel ?? null,
       // Inline comments (#inline-comments): ask the model for line-anchored findings only when the operator flag,
       // the cutover allowlist, AND the per-repo manifest toggle all pass. Otherwise the prompt is byte-identical.
       inlineFindings: inlineFindingsRequested,

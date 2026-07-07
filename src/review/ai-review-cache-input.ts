@@ -6,10 +6,11 @@ import type {
 import { sha256Hex } from "../utils/crypto";
 
 // Bumped v1→v2 (#2995): `features` gained a `cultureProfile` member. Bumped v2→v3 (#2182-#2186): `features`
-// gained an `impactMap` member. Every prior cached review's fingerprint was computed without that key, so
-// bumping the version guarantees a clean cache miss on the first review after upgrade rather than silently
-// reusing a hash computed under a different payload shape.
-export const AI_REVIEW_CACHE_INPUT_VERSION = "ai-review-input:v3";
+// gained an `impactMap` member. Bumped v3→v4 (#3902): `selfHostAiModelOverride` gained ollamaModel/openaiModel/
+// openaiCompatibleModel/anthropicModel members. Every prior cached review's fingerprint was computed without
+// that key, so bumping the version guarantees a clean cache miss on the first review after upgrade rather than
+// silently reusing a hash computed under a different payload shape.
+export const AI_REVIEW_CACHE_INPUT_VERSION = "ai-review-input:v4";
 
 // #regate-churn (root cause, confirmed in production): this fingerprint USED to also hash the PR's live
 // `baseSha`, on the theory that a rebase/retarget can change the diff GitHub reports for an otherwise-unchanged
@@ -172,6 +173,10 @@ export async function aiReviewCacheInputFingerprint(input: AiReviewCacheInput): 
           claudeEffort: input.selfHostAiModelOverride.claudeEffort ?? null,
           codexModel: input.selfHostAiModelOverride.codexModel ?? null,
           codexEffort: input.selfHostAiModelOverride.codexEffort ?? null,
+          ollamaModel: input.selfHostAiModelOverride.ollamaModel ?? null,
+          openaiModel: input.selfHostAiModelOverride.openaiModel ?? null,
+          openaiCompatibleModel: input.selfHostAiModelOverride.openaiCompatibleModel ?? null,
+          anthropicModel: input.selfHostAiModelOverride.anthropicModel ?? null,
         }
       : null,
     profile: input.profile ?? null,

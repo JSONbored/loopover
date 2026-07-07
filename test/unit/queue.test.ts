@@ -3559,7 +3559,7 @@ describe("queue processors", () => {
         metadata: {
           inputFingerprint: await aiReviewCacheInputFingerprint({
             title: "Clean PR", mode: "block", byok: false, provider: null, model: null, aiReviewAllAuthors: false,
-            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null },
+            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null, ollamaModel: null, openaiModel: null, openaiCompatibleModel: null, anthropicModel: null },
             reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = true;", additions: 1, deletions: 0 }],
             profile: null, securityFocus: false, inlineComments: false, pathInstructions: [], pathGuidance: "", repoInstructions: null, excludePaths: [], pathFilters: [], changedPaths: ["src/a.ts"],
             features: { grounding: false, rag: false, enrichment: false, reputation: false, cultureProfile: false, impactMap: false },
@@ -4138,7 +4138,7 @@ describe("queue processors", () => {
             aiReviewReviewers: null,
             gatePack: "oss-anti-slop",
             reviewerPlan: env.AI_REVIEW_PLAN,
-            selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null },
+            selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null, ollamaModel: null, openaiModel: null, openaiCompatibleModel: null, anthropicModel: null },
             reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = true;", additions: 1, deletions: 0 }],
             profile: null,
             securityFocus: false,
@@ -4219,7 +4219,7 @@ describe("queue processors", () => {
         metadata: {
           inputFingerprint: await aiReviewCacheInputFingerprint({
             title: "Current PR", mode: "block", byok: false, provider: null, model: null, aiReviewAllAuthors: false,
-            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null },
+            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null, ollamaModel: null, openaiModel: null, openaiCompatibleModel: null, anthropicModel: null },
             reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = true;", additions: 1, deletions: 0 }],
             profile: null, securityFocus: false, inlineComments: false, pathInstructions: [], pathGuidance: "", repoInstructions: null, excludePaths: [], pathFilters: [], changedPaths: ["src/a.ts"],
             features: { grounding: false, rag: false, enrichment: false, reputation: false, cultureProfile: false, impactMap: false },
@@ -4276,7 +4276,7 @@ describe("queue processors", () => {
         metadata: {
           inputFingerprint: await aiReviewCacheInputFingerprint({
             title: "Current PR", mode: "block", byok: false, provider: null, model: null, aiReviewAllAuthors: false,
-            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null },
+            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null, ollamaModel: null, openaiModel: null, openaiCompatibleModel: null, anthropicModel: null },
             reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = true;", additions: 1, deletions: 0 }],
             profile: null, securityFocus: false, inlineComments: false, pathInstructions: [], pathGuidance: "", repoInstructions: null, excludePaths: [], pathFilters: [], changedPaths: ["src/a.ts"],
             features: { grounding: false, rag: false, enrichment: false, reputation: false, cultureProfile: false, impactMap: false },
@@ -4332,7 +4332,7 @@ describe("queue processors", () => {
         metadata: {
           inputFingerprint: await aiReviewCacheInputFingerprint({
             title: "Current PR", mode: "block", byok: false, provider: null, model: null, aiReviewAllAuthors: false,
-            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null },
+            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null, ollamaModel: null, openaiModel: null, openaiCompatibleModel: null, anthropicModel: null },
             reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = true;", additions: 1, deletions: 0 }],
             profile: null, securityFocus: false, inlineComments: false, pathInstructions: [], pathGuidance: "", repoInstructions: null, excludePaths: [], pathFilters: [], changedPaths: ["src/a.ts"],
             features: { grounding: false, rag: false, enrichment: false, reputation: false, cultureProfile: false, impactMap: false },
@@ -4385,7 +4385,7 @@ describe("queue processors", () => {
         metadata: {
           inputFingerprint: await aiReviewCacheInputFingerprint({
             title: "Current PR", mode: "block", byok: false, provider: null, model: null, aiReviewAllAuthors: false,
-            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null },
+            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null, ollamaModel: null, openaiModel: null, openaiCompatibleModel: null, anthropicModel: null },
             reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = true;", additions: 1, deletions: 0 }],
             profile: null, securityFocus: false, inlineComments: false, pathInstructions: [], pathGuidance: "", repoInstructions: null, excludePaths: [], pathFilters: [], changedPaths: ["src/a.ts"],
             features: { grounding: false, rag: false, enrichment: false, reputation: false, cultureProfile: false, impactMap: false },
@@ -4434,7 +4434,7 @@ describe("queue processors", () => {
         metadata: {
           inputFingerprint: await aiReviewCacheInputFingerprint({
             title: "Partially published PR", mode: "block", byok: false, provider: null, model: null, aiReviewAllAuthors: false,
-            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null },
+            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null, ollamaModel: null, openaiModel: null, openaiCompatibleModel: null, anthropicModel: null },
             reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = true;", additions: 1, deletions: 0 }],
             profile: null, securityFocus: false, inlineComments: false, pathInstructions: [], pathGuidance: "", repoInstructions: null, excludePaths: [], pathFilters: [], changedPaths: ["src/a.ts"],
             features: { grounding: false, rag: false, enrichment: false, reputation: false, cultureProfile: false, impactMap: false },
@@ -4486,7 +4486,7 @@ describe("queue processors", () => {
         metadata: {
           inputFingerprint: await aiReviewCacheInputFingerprint({
             title: "Current PR", mode: "block", byok: false, provider: null, model: null, aiReviewAllAuthors: false,
-            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null },
+            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null, ollamaModel: null, openaiModel: null, openaiCompatibleModel: null, anthropicModel: null },
             reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = true;", additions: 1, deletions: 0 }],
             profile: null, securityFocus: false, inlineComments: false, pathInstructions: [], pathGuidance: "", repoInstructions: null, excludePaths: [], pathFilters: [], changedPaths: ["src/a.ts"],
             features: { grounding: false, rag: false, enrichment: false, reputation: false, cultureProfile: false, impactMap: false },
@@ -5402,7 +5402,7 @@ describe("queue processors", () => {
       aiReviewReviewers: null,
       gatePack: "oss-anti-slop",
       reviewerPlan: env.AI_REVIEW_PLAN,
-      selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null },
+      selfHostProviderConfig: null, selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null, ollamaModel: null, openaiModel: null, openaiCompatibleModel: null, anthropicModel: null },
       reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = value.length;", additions: 1, deletions: 0 }],
       profile: null,
       securityFocus: false,
@@ -15023,10 +15023,10 @@ describe("queue processors", () => {
     const usage = await env.DB.prepare("select feature, status from ai_usage_events where feature = ?").bind("ai_review_pr").first<{ feature: string; status: string }>();
     expect(usage).toMatchObject({ feature: "ai_review_pr", status: "ok" });
     expect(cacheReadSpy).toHaveBeenCalled();
-    expect(cacheReadSpy.mock.calls[0]?.[5]).toMatch(/^ai-review-input:v3:/);
+    expect(cacheReadSpy.mock.calls[0]?.[5]).toMatch(/^ai-review-input:v4:/);
     expect(cacheWriteSpy).toHaveBeenCalled();
     expect(cacheWriteSpy.mock.calls[0]?.[5]).toMatchObject({
-      metadata: { inputFingerprint: expect.stringMatching(/^ai-review-input:v3:/) },
+      metadata: { inputFingerprint: expect.stringMatching(/^ai-review-input:v4:/) },
     });
     cacheReadSpy.mockRestore();
     cacheWriteSpy.mockRestore();

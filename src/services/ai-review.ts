@@ -283,6 +283,15 @@ export type GittensoryAiReviewInput = {
   codexModel?: string | null | undefined;
   codexEffort?: string | null | undefined;
   /**
+   * Same override mechanism, extended to the HTTP-API self-host providers (#3902): overrides
+   * OLLAMA_AI_MODEL/OPENAI_AI_MODEL/OPENAI_COMPATIBLE_AI_MODEL/ANTHROPIC_AI_MODEL for THIS repo. A hosted
+   * (Workers-AI) `env.AI` ignores these fields entirely. Absent/null ⇒ byte-identical to today.
+   */
+  ollamaModel?: string | null | undefined;
+  openaiModel?: string | null | undefined;
+  openaiCompatibleModel?: string | null | undefined;
+  anthropicModel?: string | null | undefined;
+  /**
    * `.gittensory.yml` `review.path_instructions` (#review-path-instructions), pre-resolved by the caller to the
    * entries whose glob matched THIS PR's changed files (via `resolveReviewPathInstructions`) — a ready-to-append
    * prompt section. Absent / empty ⇒ the reviewer prompt is byte-identical. Public-safe by construction (the
@@ -797,10 +806,11 @@ function buildRepoInstructionsSystemAppend(repoInstructions: string | null | und
 
 /** Correlation + per-repo override context forwarded to `env.AI.run`'s options. `jobId`/`repoFullName`/
  *  `pullNumber` (#codex-timeout-fields) are purely observational — a self-host provider-failure log, never read
- *  by any provider's own request logic. `claudeModel`/`claudeEffort`/`codexModel`/`codexEffort`
- *  (#selfhost-ai-model-override) are the exception: the self-host claude-code/codex providers DO read their
- *  matching pair to pick the model/effort for THIS repo, taking priority over that provider's global env var.
- *  Both self-host-only; a hosted (Workers-AI) `env.AI` ignores every field here. */
+ *  by any provider's own request logic. `claudeModel`/`claudeEffort`/`codexModel`/`codexEffort` and
+ *  `ollamaModel`/`openaiModel`/`openaiCompatibleModel`/`anthropicModel` (#selfhost-ai-model-override, #3902) are
+ *  the exception: the matching self-host provider DOES read its own field to pick the model (+ effort, for the
+ *  CLI providers) for THIS repo, taking priority over that provider's global env var. All self-host-only; a
+ *  hosted (Workers-AI) `env.AI` ignores every field here. */
 type AiRunCorrelation = {
   jobId?: string | undefined;
   repoFullName?: string | undefined;
@@ -809,6 +819,10 @@ type AiRunCorrelation = {
   claudeEffort?: string | undefined;
   codexModel?: string | undefined;
   codexEffort?: string | undefined;
+  ollamaModel?: string | undefined;
+  openaiModel?: string | undefined;
+  openaiCompatibleModel?: string | undefined;
+  anthropicModel?: string | undefined;
 };
 
 /** One reviewer opinion (whichever provider `env.AI` resolves to — self-host Codex/Claude Code/etc, or the
@@ -864,6 +878,10 @@ async function runWorkersOpinion(
             ...(correlation?.claudeEffort !== undefined ? { claudeEffort: correlation.claudeEffort } : {}),
             ...(correlation?.codexModel !== undefined ? { codexModel: correlation.codexModel } : {}),
             ...(correlation?.codexEffort !== undefined ? { codexEffort: correlation.codexEffort } : {}),
+            ...(correlation?.ollamaModel !== undefined ? { ollamaModel: correlation.ollamaModel } : {}),
+            ...(correlation?.openaiModel !== undefined ? { openaiModel: correlation.openaiModel } : {}),
+            ...(correlation?.openaiCompatibleModel !== undefined ? { openaiCompatibleModel: correlation.openaiCompatibleModel } : {}),
+            ...(correlation?.anthropicModel !== undefined ? { anthropicModel: correlation.anthropicModel } : {}),
             attempt,
           },
           extra,
@@ -1865,6 +1883,10 @@ export async function runGittensoryAiReview(
     claudeEffort: input.claudeEffort ?? undefined,
     codexModel: input.codexModel ?? undefined,
     codexEffort: input.codexEffort ?? undefined,
+    ollamaModel: input.ollamaModel ?? undefined,
+    openaiModel: input.openaiModel ?? undefined,
+    openaiCompatibleModel: input.openaiCompatibleModel ?? undefined,
+    anthropicModel: input.anthropicModel ?? undefined,
   };
   if (input.providerKey) {
     const outcome = await runProviderReview(

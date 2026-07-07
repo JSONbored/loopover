@@ -240,6 +240,17 @@ describe("aiReviewCacheInputFingerprint", () => {
     expect(effortChanged).not.toBe(original);
   });
 
+  it("changes when the PER-REPO review.ai_model override gains an ollama/openai/openai-compatible/anthropic model (#3902)", async () => {
+    const original = await aiReviewCacheInputFingerprint(baseInput());
+    for (const key of ["ollamaModel", "openaiModel", "openaiCompatibleModel", "anthropicModel"] as const) {
+      const changed = await aiReviewCacheInputFingerprint({
+        ...baseInput(),
+        selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null, ollamaModel: null, openaiModel: null, openaiCompatibleModel: null, anthropicModel: null, [key]: "repo-override-model" },
+      });
+      expect(changed, key).not.toBe(original);
+    }
+  });
+
   it("normalizes an absent self-host provider config the same whether omitted or explicitly empty", async () => {
     const nullConfig = await aiReviewCacheInputFingerprint({ ...baseInput(), selfHostProviderConfig: null });
     const emptyConfig = await aiReviewCacheInputFingerprint({ ...baseInput(), selfHostProviderConfig: {} });

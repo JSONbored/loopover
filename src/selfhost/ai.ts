@@ -39,6 +39,14 @@ interface AiRunOptions {
   claudeEffort?: string;
   codexModel?: string;
   codexEffort?: string;
+  // Same override mechanism, extended to the HTTP-API providers (#3902) -- ollama/openai/openai-compatible/
+  // anthropic previously had no way to see a per-repo override at all (their model was resolved ONCE from the
+  // global env var at buildProvider() construction time, before any repo was known). Read per-call, same
+  // priority as above: repo override > global env var > this file's own default.
+  ollamaModel?: string;
+  openaiModel?: string;
+  openaiCompatibleModel?: string;
+  anthropicModel?: string;
 }
 /** A chat completion (`response`) or an embedding result (`data`). Both optional: the core reads whichever it
  *  asked for (extractAiText → `response`, embedTexts → `data`), each defensive about the other being absent.
@@ -197,6 +205,17 @@ export function resolveCodexFirstOutputTimeoutMs(env: Record<string, string | un
   return 30_000;
 }
 
+/** Read the per-call repo override matching this provider variant (#3902) -- ollama/openai/openai-compatible
+ *  each have their OWN `.gittensory.yml` field, so a bare `options.model`-style single field would collide
+ *  across variants sharing this one function. `firstConfigured` gives the repo override priority over the
+ *  construction-time-resolved `opts.model` (itself already env-var > undefined), matching the same repo-override
+ *  > global-env-var priority `configuredClaudeModel`/`configuredCodexModel` already enforce for the CLI providers. */
+function resolveOpenAiCompatibleRepoOverride(providerName: string, options: AiRunOptions): string | undefined {
+  if (providerName === "ollama") return options.ollamaModel;
+  if (providerName === "openai") return options.openaiModel;
+  return options.openaiCompatibleModel;
+}
+
 /** OpenAI-compatible endpoint (Ollama's /v1, OpenAI, vLLM, LM Studio, …) — chat + embeddings. */
 export function createOpenAiCompatibleAi(opts: {
   baseUrl: string;
@@ -204,6 +223,8 @@ export function createOpenAiCompatibleAi(opts: {
   model?: string | undefined;
   defaultModel?: string | undefined;
   embedModel?: string | undefined;
+  /** Which `.gittensory.yml` `review.ai_model` field this instance's per-call override reads from (#3902). */
+  providerName?: "ollama" | "openai" | "openai-compatible" | undefined;
 }): SelfHostAi {
   const base = opts.baseUrl.replace(/\/+$/, "");
   const headers = (): Record<string, string> => ({ "content-type": "application/json", ...(opts.apiKey ? { authorization: `Bearer ${opts.apiKey}` } : {}) });
@@ -222,7 +243,8 @@ export function createOpenAiCompatibleAi(opts: {
         const json = (await res.json()) as { data?: Array<{ embedding: number[] }> };
         return { data: (json.data ?? []).map((d) => d.embedding) };
       }
-      const resolvedModel = resolveModel(opts.model, model, opts.defaultModel ?? DEFAULT_OPENAI_COMPATIBLE_CHAT_MODEL);
+      const repoOverride = opts.providerName ? resolveOpenAiCompatibleRepoOverride(opts.providerName, options) : undefined;
+      const resolvedModel = resolveModel(firstConfigured(repoOverride, opts.model), model, opts.defaultModel ?? DEFAULT_OPENAI_COMPATIBLE_CHAT_MODEL);
       const res = await fetch(`${base}/chat/completions`, {
         method: "POST",
         headers: headers(),
@@ -255,7 +277,9 @@ export function createAnthropicAi(opts: { apiKey: string; model?: string | undef
           .map((m) => m.content)
           .join("\n\n") || undefined;
       const messages = msgs.filter((m) => m.role !== "system").map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content }));
-      const resolvedModel = resolveModel(opts.model, model, "claude-sonnet-5");
+      // Repo override > construction-time env-resolved opts.model (#3902), same priority as the OpenAI-compatible
+      // providers above and the CLI providers' claudeModel/codexModel.
+      const resolvedModel = resolveModel(firstConfigured(options.anthropicModel, opts.model), model, "claude-sonnet-5");
       const res = await fetch(`${base}/v1/messages`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-api-key": opts.apiKey, "anthropic-version": "2023-06-01" },
@@ -1070,6 +1094,7 @@ export function buildProvider(name: string, env: Record<string, string | undefin
         model: configuredOpenAiCompatibleModel(name, env),
         defaultModel: defaultOpenAiCompatibleModel(name),
         embedModel: env.AI_EMBED_MODEL,
+        providerName: name,
       });
     case "anthropic": {
       const apiKey = env.ANTHROPIC_API_KEY;

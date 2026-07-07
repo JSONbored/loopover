@@ -3575,7 +3575,7 @@ describe("review.auto_review (#1954 / #2038–#2041)", () => {
 });
 
 describe("review.ai_model (#selfhost-ai-model-override)", () => {
-  it("parses all four knobs, marks present, and round-trips", () => {
+  it("parses all eight knobs, marks present, and round-trips", () => {
     const m = parseFocusManifest({
       review: {
         ai_model: {
@@ -3583,6 +3583,10 @@ describe("review.ai_model (#selfhost-ai-model-override)", () => {
           claude_effort: "high",
           codex_model: "gpt-5.5-pro",
           codex_effort: "xhigh",
+          ollama_model: "llama3.3",
+          openai_model: "gpt-5.5",
+          openai_compatible_model: "qwen2.5-coder",
+          anthropic_model: "claude-opus-4-8",
         },
       },
     });
@@ -3591,9 +3595,27 @@ describe("review.ai_model (#selfhost-ai-model-override)", () => {
       claudeEffort: "high",
       codexModel: "gpt-5.5-pro",
       codexEffort: "xhigh",
+      ollamaModel: "llama3.3",
+      openaiModel: "gpt-5.5",
+      openaiCompatibleModel: "qwen2.5-coder",
+      anthropicModel: "claude-opus-4-8",
     });
     expect(m.review.present).toBe(true);
     expect(parseFocusManifest({ review: reviewConfigToJson(m.review) }).review.aiModel).toEqual(m.review.aiModel);
+  });
+
+  it("parses each of the four HTTP-API provider knobs independently (#3902)", () => {
+    for (const [key, camelKey] of [
+      ["ollama_model", "ollamaModel"],
+      ["openai_model", "openaiModel"],
+      ["openai_compatible_model", "openaiCompatibleModel"],
+      ["anthropic_model", "anthropicModel"],
+    ] as const) {
+      const m = parseFocusManifest({ review: { ai_model: { [key]: "some-model" } } });
+      expect(m.review.aiModel).toEqual({ ...EMPTY_SELF_HOST_AI_MODEL_CONFIG, [camelKey]: "some-model" });
+      expect(m.review.present).toBe(true);
+      expect(reviewConfigToJson(m.review)).toEqual({ ai_model: { [key]: "some-model" } });
+    }
   });
 
   it("absent/null ai_model yields the empty defaults and does not mark review present on its own", () => {

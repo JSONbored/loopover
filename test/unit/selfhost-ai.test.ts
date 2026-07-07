@@ -155,6 +155,46 @@ describe("createOpenAiCompatibleAi (#979)", () => {
     await createOpenAiCompatibleAi({ baseUrl: "http://o/v1" }).run("m", {});
     expect(body?.messages).toEqual([{ role: "user", content: "" }]);
   });
+
+  it("each providerName's per-repo review.ai_model override (#3902) outranks the construction-time model, which outranks the hardcoded default", async () => {
+    let sentModel = "";
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init: { body: string }) => {
+      sentModel = (JSON.parse(init.body) as { model: string }).model;
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 });
+    }));
+    const cases: Array<{ providerName: "ollama" | "openai" | "openai-compatible"; overrideKey: "ollamaModel" | "openaiModel" | "openaiCompatibleModel" }> = [
+      { providerName: "ollama", overrideKey: "ollamaModel" },
+      { providerName: "openai", overrideKey: "openaiModel" },
+      { providerName: "openai-compatible", overrideKey: "openaiCompatibleModel" },
+    ];
+    for (const { providerName, overrideKey } of cases) {
+      const ai = createOpenAiCompatibleAi({ baseUrl: "http://o/v1", model: "construction-time-model", defaultModel: "hardcoded-default", providerName });
+      // Repo override wins over the construction-time-resolved model.
+      await ai.run("m", { prompt: "x", [overrideKey]: "repo-override-model" });
+      expect(sentModel).toBe("repo-override-model");
+      // No override on THIS call → falls through to the construction-time model, unaffected by the prior call.
+      await ai.run("m", { prompt: "x" });
+      expect(sentModel).toBe("construction-time-model");
+      // A DIFFERENT variant's override field must not leak across providerName -- only its own key applies.
+      const otherKey = cases.find((c) => c.overrideKey !== overrideKey)!.overrideKey;
+      await ai.run("m", { prompt: "x", [otherKey]: "wrong-provider-model" });
+      expect(sentModel).toBe("construction-time-model");
+    }
+    // No providerName set at all (e.g. an embed-only construction) → override fields are simply never consulted.
+    const noNameAi = createOpenAiCompatibleAi({ baseUrl: "http://o/v1", model: "construction-time-model" });
+    await noNameAi.run("m", { prompt: "x", ollamaModel: "should-be-ignored" });
+    expect(sentModel).toBe("construction-time-model");
+  });
+
+  it("falls all the way through to the hardcoded default when no override and no construction-time model are set", async () => {
+    let sentModel = "";
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init: { body: string }) => {
+      sentModel = (JSON.parse(init.body) as { model: string }).model;
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 });
+    }));
+    await createOpenAiCompatibleAi({ baseUrl: "http://o/v1", defaultModel: "hardcoded-default", providerName: "ollama" }).run("@cf/ignored", { prompt: "x" });
+    expect(sentModel).toBe("hardcoded-default");
+  });
 });
 
 describe("createSelfHostAi — provider selection", () => {
@@ -205,6 +245,23 @@ describe("createAnthropicAi (#979 native BYOK)", () => {
   it("throws on a non-OK response", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("e", { status: 429 })));
     await expect(createAnthropicAi({ apiKey: "k" }).run("m", { prompt: "x" })).rejects.toThrow(/anthropic_http_429/);
+  });
+
+  it("the per-repo review.ai_model.anthropic_model override (#3902) outranks the construction-time model, which outranks the hardcoded default", async () => {
+    let sentModel = "";
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init: { body: string }) => {
+      sentModel = (JSON.parse(init.body) as { model: string }).model;
+      return new Response(JSON.stringify({ content: [{ type: "text", text: "ok" }] }), { status: 200 });
+    }));
+    const ai = createAnthropicAi({ apiKey: "sk-ant", model: "claude-sonnet-4-6" });
+    await ai.run("@cf/ignored", { prompt: "x", anthropicModel: "claude-opus-4-8" });
+    expect(sentModel).toBe("claude-opus-4-8");
+    // No override on this call → falls through to the construction-time model.
+    await ai.run("@cf/ignored", { prompt: "x" });
+    expect(sentModel).toBe("claude-sonnet-4-6");
+    // No override AND no construction-time model → falls all the way through to the hardcoded default.
+    await createAnthropicAi({ apiKey: "sk-ant" }).run("@cf/ignored", { prompt: "x" });
+    expect(sentModel).toBe("claude-sonnet-5");
   });
 });
 
@@ -815,6 +872,23 @@ describe("branch coverage — defaults + edge inputs", () => {
     expect(typeof buildProvider("openai-compatible", {})?.run).toBe("function"); // defaults to http://localhost:11434/v1
     expect(buildProvider("anthropic", {})).toBeUndefined(); // anthropic is credentialed and requires ANTHROPIC_API_KEY
     expect(typeof buildProvider("anthropic", { ANTHROPIC_API_KEY: "sk-ant" })?.run).toBe("function");
+  });
+
+  it("buildProvider wires each HTTP-API provider's own review.ai_model field end to end (#3902)", async () => {
+    let sentModel = "";
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: { body: string }) => {
+      const parsed = JSON.parse(init.body) as { model: string };
+      sentModel = parsed.model;
+      return new Response(url.includes("/v1/messages") ? JSON.stringify({ content: [{ type: "text", text: "ok" }] }) : JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 });
+    }));
+    await buildProvider("ollama", { OLLAMA_AI_MODEL: "global-ollama" })!.run("m", { prompt: "x", ollamaModel: "repo-ollama" });
+    expect(sentModel).toBe("repo-ollama");
+    await buildProvider("openai", { OPENAI_API_KEY: "sk-test", OPENAI_AI_MODEL: "global-openai" })!.run("m", { prompt: "x", openaiModel: "repo-openai" });
+    expect(sentModel).toBe("repo-openai");
+    await buildProvider("openai-compatible", { OPENAI_COMPATIBLE_AI_MODEL: "global-compat" })!.run("m", { prompt: "x", openaiCompatibleModel: "repo-compat" });
+    expect(sentModel).toBe("repo-compat");
+    await buildProvider("anthropic", { ANTHROPIC_API_KEY: "sk-ant", ANTHROPIC_AI_MODEL: "global-anthropic" })!.run("m", { prompt: "x", anthropicModel: "repo-anthropic" });
+    expect(sentModel).toBe("repo-anthropic");
   });
   it("extractCliText reads content + response fields", () => {
     expect(extractCliText(JSON.stringify({ content: "c" }))).toBe("c");

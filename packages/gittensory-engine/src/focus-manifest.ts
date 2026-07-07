@@ -603,6 +603,14 @@ export type SelfHostAiModelConfig = {
   codexModel: string | null;
   /** `review.ai_model.codex_effort`: overrides CODEX_AI_EFFORT for this repo's codex reviewer. null (default) ⇒ the operator's global env var, then "medium". */
   codexEffort: string | null;
+  /** `review.ai_model.ollama_model` (#3902): overrides OLLAMA_AI_MODEL for this repo's ollama reviewer. null (default) ⇒ the operator's global env var, then the provider's own default. */
+  ollamaModel: string | null;
+  /** `review.ai_model.openai_model` (#3902): overrides OPENAI_AI_MODEL for this repo's openai reviewer. null (default) ⇒ the operator's global env var, then the provider's own default. */
+  openaiModel: string | null;
+  /** `review.ai_model.openai_compatible_model` (#3902): overrides OPENAI_COMPATIBLE_AI_MODEL for this repo's openai-compatible reviewer. null (default) ⇒ the operator's global env var, then the provider's own default. */
+  openaiCompatibleModel: string | null;
+  /** `review.ai_model.anthropic_model` (#3902): overrides ANTHROPIC_AI_MODEL for this repo's anthropic (BYOK Messages API) reviewer. null (default) ⇒ the operator's global env var, then the provider's own default. */
+  anthropicModel: string | null;
 };
 
 export const EMPTY_SELF_HOST_AI_MODEL_CONFIG: SelfHostAiModelConfig = {
@@ -610,6 +618,10 @@ export const EMPTY_SELF_HOST_AI_MODEL_CONFIG: SelfHostAiModelConfig = {
   claudeEffort: null,
   codexModel: null,
   codexEffort: null,
+  ollamaModel: null,
+  openaiModel: null,
+  openaiCompatibleModel: null,
+  anthropicModel: null,
 };
 
 /** Per-repo before/after screenshot-capture config under `review.visual` (#3609 / #3610). Generic by design —
@@ -2101,7 +2113,11 @@ function selfHostAiModelPresent(config: SelfHostAiModelConfig): boolean {
     config.claudeModel !== null ||
     config.claudeEffort !== null ||
     config.codexModel !== null ||
-    config.codexEffort !== null
+    config.codexEffort !== null ||
+    config.ollamaModel !== null ||
+    config.openaiModel !== null ||
+    config.openaiCompatibleModel !== null ||
+    config.anthropicModel !== null
   );
 }
 
@@ -2122,6 +2138,10 @@ function parseSelfHostAiModelConfig(value: JsonValue | undefined, warnings: stri
     claudeEffort: parsePublicSafeText(record.claude_effort, "review.ai_model.claude_effort", warnings),
     codexModel: parsePublicSafeText(record.codex_model, "review.ai_model.codex_model", warnings),
     codexEffort: parsePublicSafeText(record.codex_effort, "review.ai_model.codex_effort", warnings),
+    ollamaModel: parsePublicSafeText(record.ollama_model, "review.ai_model.ollama_model", warnings),
+    openaiModel: parsePublicSafeText(record.openai_model, "review.ai_model.openai_model", warnings),
+    openaiCompatibleModel: parsePublicSafeText(record.openai_compatible_model, "review.ai_model.openai_compatible_model", warnings),
+    anthropicModel: parsePublicSafeText(record.anthropic_model, "review.ai_model.anthropic_model", warnings),
   };
 }
 
@@ -2506,6 +2526,10 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
     if (review.aiModel.claudeEffort !== null) aiModel.claude_effort = review.aiModel.claudeEffort;
     if (review.aiModel.codexModel !== null) aiModel.codex_model = review.aiModel.codexModel;
     if (review.aiModel.codexEffort !== null) aiModel.codex_effort = review.aiModel.codexEffort;
+    if (review.aiModel.ollamaModel !== null) aiModel.ollama_model = review.aiModel.ollamaModel;
+    if (review.aiModel.openaiModel !== null) aiModel.openai_model = review.aiModel.openaiModel;
+    if (review.aiModel.openaiCompatibleModel !== null) aiModel.openai_compatible_model = review.aiModel.openaiCompatibleModel;
+    if (review.aiModel.anthropicModel !== null) aiModel.anthropic_model = review.aiModel.anthropicModel;
     out.ai_model = aiModel;
   }
   if (visualConfigPresent(review.visual)) {

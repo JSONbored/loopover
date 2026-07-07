@@ -153,7 +153,7 @@ describe("selectInlineComments (#inline-comments)", () => {
     });
   });
 
-  describe("category tags (#1958)", () => {
+  describe("category tags (#1958 / #2149)", () => {
     const withCategory: InlineFinding = { path: "src/a.ts", line: 2, severity: "nit", body: "Use const.", category: "style" };
 
     it("defaults to OFF (backward compatible) — no category tag when the fourth argument is omitted", () => {
@@ -163,24 +163,24 @@ describe("selectInlineComments (#inline-comments)", () => {
 
     it("does not render a category tag when explicitly disabled, even if the finding carries one", () => {
       const out = selectInlineComments([withCategory], files, false, false);
-      expect(out[0]?.body).not.toContain("(style)");
+      expect(out[0]?.body).not.toContain(" · Style");
     });
 
     it("renders the model's own category when enabled and the finding carries one", () => {
       const out = selectInlineComments([withCategory], files, false, true);
-      expect(out[0]?.body).toBe("**Nit (style):** Use const.");
+      expect(out[0]?.body).toBe("**Nit · Style:** Use const.");
     });
 
     it("falls back to the deterministic classifier when enabled but the finding has no category (safe default, never omitted)", () => {
       const noCategory: InlineFinding = { path: "src/app.test.ts", line: 2, severity: "nit", body: "Use const." };
       const out = selectInlineComments([noCategory], [fileWith("src/app.test.ts", "@@ -1,1 +1,2 @@\n ctx\n+added2")], false, true);
-      expect(out[0]?.body).toBe("**Nit (tests):** Use const.");
+      expect(out[0]?.body).toBe("**Nit · Tests:** Use const.");
     });
 
     it("composes with a suggestion block — both the category tag and the suggestion render together", () => {
       const both: InlineFinding = { path: "src/a.ts", line: 2, severity: "blocker", body: "Missing null check.", category: "correctness", suggestion: "if (!x) return;" };
       const out = selectInlineComments([both], files, true, true);
-      expect(out[0]?.body).toBe("**Blocker (correctness):** Missing null check.\n\n```suggestion\nif (!x) return;\n```");
+      expect(out[0]?.body).toBe("**Blocker · Correctness:** Missing null check.\n\n```suggestion\nif (!x) return;\n```");
     });
   });
 
@@ -357,7 +357,7 @@ describe("maybePostInlineComments (#inline-comments, review-path entry)", () => 
       return new Response("unexpected", { status: 500 });
     });
     await maybePostInlineComments(envWithKey(), { ...base, aiReview: { inlineFindings: withCategory }, getFiles, categoriesEnabled: true });
-    expect(calls[0]?.body).toMatchObject({ comments: [{ path: "src/a.ts", line: 2, side: "RIGHT", body: "**Nit (maintainability):** guard this" }] });
+    expect(calls[0]?.body).toMatchObject({ comments: [{ path: "src/a.ts", line: 2, side: "RIGHT", body: "**Nit · Maintainability:** guard this" }] });
   });
 
   it("threads perCategoryCap end-to-end when set (#2159)", async () => {

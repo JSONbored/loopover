@@ -10,7 +10,7 @@
 
 import { createPullRequestReviewComments } from "../github/pr-actions";
 import { isConvergenceRepoAllowed } from "./cutover-gate";
-import { classifyFindingCategory } from "./finding-category-classify";
+import { formatInlineCommentSeverityLabel } from "./inline-comment-label";
 import { selectAnchoredInlineFindings } from "./inline-comments-select";
 export { rightSideLinesFromPatch } from "./inline-comments-select";
 import type { InlineFinding } from "../services/ai-review";
@@ -78,16 +78,15 @@ function safeSuggestionBlock(suggestion: string | undefined): string {
 
 /** The inline comment body: a compact severity (+ optional category) label + the finding, plus a one-click GitHub
  *  suggested-change block when the finding carries a `suggestion` AND the caller has suggestions enabled (#1956).
- *  When `categoriesEnabled` (#1958), the label gets a parenthetical category tag — the model's own `category` when
- *  it emitted one in the fixed enum, else the deterministic fallback (`classifyFindingCategory`), so the tag is
- *  never sometimes-present. Public-safe by construction — both the body and the suggestion were already run
- *  through the public-safe filter by composeInlineFindings before they reached here; `category` is a fixed enum
- *  literal, never free text. */
+ *  When `categoriesEnabled` (#1958 / #2149), the label carries a title-cased category tag (`Blocker · Security`) —
+ *  the model's own `category` when it emitted one in the fixed enum, else the deterministic fallback
+ *  (`classifyFindingCategory`), so the tag is never sometimes-present. Public-safe by construction — both the body
+ *  and the suggestion were already run through the public-safe filter by composeInlineFindings before they reached
+ *  here; `category` is a fixed enum literal, never free text. */
 function formatInlineBody(finding: InlineFinding, suggestionsEnabled: boolean, categoriesEnabled = false): string {
-  const label = finding.severity === "blocker" ? "Blocker" : "Nit";
-  const categoryTag = categoriesEnabled ? ` (${finding.category ?? classifyFindingCategory(finding)})` : "";
+  const label = formatInlineCommentSeverityLabel(finding, categoriesEnabled);
   const suggestionBlock = suggestionsEnabled ? safeSuggestionBlock(finding.suggestion) : "";
-  return `**${label}${categoryTag}:** ${finding.body}${suggestionBlock}`;
+  return `**${label}:** ${finding.body}${suggestionBlock}`;
 }
 
 /** PURE: turn the model's line-anchored findings into GitHub inline review comments, dropping any whose

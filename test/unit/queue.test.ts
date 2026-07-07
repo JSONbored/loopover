@@ -17724,7 +17724,7 @@ describe("queue processors", () => {
     });
 
     // The inline PR-review comment label carries the category tag.
-    expect(inlineReviewComments[0]?.body).toBe("**Nit (security):** This query is vulnerable to SQL injection.");
+    expect(inlineReviewComments[0]?.body).toBe("**Nit · Security:** This query is vulnerable to SQL injection.");
     // The unified comment's new collapsible counts it too.
     expect(unifiedCommentBody).toContain("Finding categories");
     expect(unifiedCommentBody).toContain("| Security | 1 |");

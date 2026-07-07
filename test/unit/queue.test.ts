@@ -26744,7 +26744,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       expect(completed?.n).toBe(2);
     });
 
-    it("retries (via a thrown lock-contended error) when a concurrent delivery already holds the per-PR actuation lock", async () => {
+    it("REGRESSION: the first conversion returns before the repeated-cycle lock so a retry cannot double-count it", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });

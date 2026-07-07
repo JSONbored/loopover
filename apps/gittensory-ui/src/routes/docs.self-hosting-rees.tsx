@@ -71,14 +71,51 @@ function SelfHostingRees() {
         ]}
       />
 
-      <h2>Engine configuration</h2>
+      <h2>Run REES</h2>
+      <p>
+        REES runs as its own small HTTP service, separate from the engine. The simplest way to run
+        it is in-network alongside the engine, using the docker-compose stack in the repo root — no
+        separate hosting to manage, and nothing published to the host (the engine reaches it only
+        over the compose network):
+      </p>
+      <CodeBlock lang="bash" code={`docker compose --profile rees up -d`} />
+      <p>Point the engine at it and generate a fresh shared secret:</p>
+      <CodeBlock
+        filename=".env"
+        code={`GITTENSORY_REVIEW_REPOS=owner/repo
+GITTENSORY_REVIEW_ENRICHMENT=true
+REES_URL=http://rees:8080
+REES_SHARED_SECRET=<generate-a-new-shared-secret>`}
+      />
+      <p>
+        No <code>SENTRY_*</code> variables are required for a working local REES. Set them only if
+        you want REES error reporting — see "Service configuration" below for the variables REES
+        reads, and add them for the <code>rees</code> service through a{" "}
+        <code>docker-compose.override.yml</code> rather than the root <code>.env</code>: REES reads
+        the same <code>SENTRY_DSN</code> name the main engine uses, so forwarding the whole{" "}
+        <code>.env</code> file would point REES's error reporting at the engine's Sentry project
+        instead of a dedicated one.
+      </p>
+
+      <h3>Pointing at an external or managed instance instead</h3>
+      <p>
+        If you'd rather run REES elsewhere — a separate host, a managed provider, or one shared
+        instance across multiple self-hosted installs — point <code>REES_URL</code> at it directly
+        and skip the <code>rees</code> compose profile entirely. Generate a dedicated shared secret
+        for that instance; never reuse a secret across two different REES instances you run:
+      </p>
       <CodeBlock
         filename=".env"
         code={`GITTENSORY_REVIEW_REPOS=owner/repo
 GITTENSORY_REVIEW_ENRICHMENT=true
 REES_URL=https://enrichment.example.internal
-REES_SHARED_SECRET=<shared-secret>
-REES_TIMEOUT_MS=8000
+REES_SHARED_SECRET=<shared-secret>`}
+      />
+
+      <h3>Common options (either path)</h3>
+      <CodeBlock
+        filename=".env"
+        code={`REES_TIMEOUT_MS=8000
 REES_PROFILE=balanced
 REES_FORWARD_GITHUB_TOKEN=false
 REES_ANALYZERS=all`}
@@ -114,34 +151,6 @@ REES_ANALYZERS=all`}
           },
         ]}
       />
-
-      <h2>Self-hosting REES</h2>
-      <p>
-        The docker-compose stack in the repo root can run REES for you instead of pointing{" "}
-        <code>REES_URL</code> at a managed or external instance. Start it alongside the engine with
-        the <code>rees</code> profile:
-      </p>
-      <CodeBlock lang="bash" code={`docker compose --profile rees up -d`} />
-      <p>
-        REES is not published to the host — the engine reaches it only over the compose network.
-        Point the engine at it and generate a fresh shared secret; do not reuse a secret from any
-        other REES instance (for example a managed Railway deployment) you also run:
-      </p>
-      <CodeBlock
-        filename=".env"
-        code={`GITTENSORY_REVIEW_ENRICHMENT=true
-REES_URL=http://rees:8080
-REES_SHARED_SECRET=<generate-a-new-shared-secret>`}
-      />
-      <p>
-        No <code>SENTRY_*</code> variables are required for a working local REES. Set them only if
-        you want REES error reporting — see "Service configuration" below for the variables REES
-        reads, and add them for the <code>rees</code> service through a{" "}
-        <code>docker-compose.override.yml</code> rather than the root <code>.env</code>: REES reads
-        the same <code>SENTRY_DSN</code> name the main engine uses, so forwarding the whole{" "}
-        <code>.env</code> file would point REES's error reporting at the engine's Sentry project
-        instead of a dedicated one.
-      </p>
 
       <h2>Disable cleanly</h2>
       <p>

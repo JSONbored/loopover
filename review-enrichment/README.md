@@ -1,6 +1,10 @@
 # Review-enrichment service (REES)
 
-A standalone Railway microservice that produces a structured **review brief** for the gittensory review engine.
+A standalone microservice that produces a structured **review brief** for the gittensory review engine. Run it
+in-network alongside a self-hosted engine via the repo-root `docker-compose --profile rees` service (the simplest
+path, no separate hosting to manage — see the [self-hosting REES docs](https://gittensory.aethereal.dev/docs/self-hosting-rees)),
+or deploy it as its own service on any platform that can run a Dockerfile-based Node service — see
+[Deploy (Railway)](#deploy-railway) below for one example.
 
 The engine reviews PRs by running a headless `claude --print` subprocess with `Bash`/`WebFetch` disallowed and **no
 repo checkout**, so it cannot run a linter, hit a CVE database, resolve a dependency tree, or query git history. REES
@@ -12,7 +16,7 @@ treats any timeout/error as "no brief" and proceeds.
 
 | Route             | Purpose                                                                         |
 | ----------------- | ------------------------------------------------------------------------------- |
-| `GET /health`     | Liveness (Railway healthcheck).                                                 |
+| `GET /health`     | Liveness health check.                                                          |
 | `GET /ready`      | Readiness.                                                                      |
 | `POST /v1/ping`   | Auth check only — the engine calls this at startup to verify the shared secret matches. Returns `{ok:true}` or 401. |
 | `POST /v1/enrich` | `Authorization: Bearer <REES_SHARED_SECRET>` → `EnrichRequest` → `ReviewBrief`. |
@@ -160,9 +164,9 @@ category, skipped/capped work counts by category, and elapsed time. Never put re
 comments, tokens, private configs, or raw external payloads into cache categories, metric keys, Sentry tags, or logs.
 
 The engine also sends `budget.timeoutMs` with one second of headroom below `REES_TIMEOUT_MS`, so REES can return a
-partial/degraded brief before the caller aborts the HTTP request. If Railway is still running an older REES build,
-temporarily raise the engine-side `REES_TIMEOUT_MS` above the REES analyzer budget, or set `REES_ANALYZERS` to a
-bounded list that excludes `history` until the budget-aware build is deployed.
+partial/degraded brief before the caller aborts the HTTP request. If your REES deployment is still running an older
+build, temporarily raise the engine-side `REES_TIMEOUT_MS` above the REES analyzer budget, or set `REES_ANALYZERS` to
+a bounded list that excludes `history` until the budget-aware build is deployed.
 
 ## Run locally
 
@@ -176,10 +180,14 @@ curl -XPOST localhost:8080/v1/enrich -H 'authorization: Bearer dev' \
 
 ## Deploy (Railway)
 
-Separate service from the engine. Set **Root Directory = `review-enrichment`** so Railway reads this folder's
-`railway.json` + `Dockerfile`. Set `REES_SHARED_SECRET` (same value the engine holds) as a service variable — never
-commit it. The engine reaches the service over Railway **private networking** (`<service>.railway.internal`); no public
-domain is required.
+For a self-hosted engine, `docker compose --profile rees up -d` from the repo root (see the
+[self-hosting REES docs](https://gittensory.aethereal.dev/docs/self-hosting-rees)) is the simplest path — no
+separate service to host. If you'd rather run REES on its own outside that compose network, it's a plain
+Dockerfile-based Node service and can go anywhere that builds one; Railway is one option this repo has release
+tooling for (the Sentry/source-map wiring below). Point **Root Directory = `review-enrichment`** at a `railway.json`
+you add there (see Railway's Dockerfile-builder docs) and set `REES_SHARED_SECRET` (same value the engine holds) as a
+service variable — never commit it. The engine reaches the service over Railway **private networking**
+(`<service>.railway.internal`); no public domain is required.
 
 ## Sentry releases and source maps
 

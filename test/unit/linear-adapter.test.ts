@@ -181,7 +181,7 @@ describe("maybeSuggestProjectOrMilestoneMatch with backend: linear (#3186)", () 
       if (url === "https://api.linear.app/graphql") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { query: string };
         if (body.query.includes("attachmentsForURL")) {
-          return Response.json({ data: { attachmentsForURL: { nodes: [{ issue: { project: { id: "proj-1", name: "Self-host reliability roadmap" }, projectMilestone: null } }] } } });
+          return Response.json({ data: { attachmentsForURL: { nodes: [{ issue: { project: { id: "proj-1", name: "Self-host reliability roadmap" }, projectMilestone: { id: "mile-1", name: "Stealth Launch M3" } } }] } } });
         }
         projectsListed = true;
         return Response.json({ data: { projects: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } });
@@ -204,8 +204,10 @@ describe("maybeSuggestProjectOrMilestoneMatch with backend: linear (#3186)", () 
     );
     expect(result).toEqual({ suggested: true });
     expect(projectsListed).toBe(false);
-    expect(posted[0]).toContain("linked to");
-    expect(posted[0]).toContain("Self-host reliability roadmap");
+    expect(posted[0]).toContain("linked to the project");
+    expect(posted[0]).toContain("linked to the milestone");
+    expect(posted[0]).not.toContain("Self-host reliability roadmap");
+    expect(posted[0]).not.toContain("Stealth Launch M3");
     expect(posted[0]).not.toContain("term overlap");
   });
 
@@ -239,8 +241,9 @@ describe("maybeSuggestProjectOrMilestoneMatch with backend: linear (#3186)", () 
       PR_URL,
     );
     expect(result).toEqual({ suggested: true });
-    expect(posted[0]).toContain("term overlap");
-    expect(posted[0]).toContain("Self-host reliability roadmap");
+    expect(posted[0]).toContain("matching project");
+    expect(posted[0]).not.toContain("term overlap");
+    expect(posted[0]).not.toContain("Self-host reliability roadmap");
   });
 
   it("API-error best-effort path: a Linear outage propagates to the caller instead of silently mismatching", async () => {

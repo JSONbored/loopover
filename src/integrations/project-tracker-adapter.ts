@@ -302,17 +302,19 @@ type ProjectTrackerMatches = {
   project: ProjectTrackerMatch | null;
 };
 
-function describeMatch(match: ProjectTrackerMatch, noun: "milestone" | "project"): string {
+function describeMatch(match: ProjectTrackerMatch, noun: "milestone" | "project", revealTitle: boolean): string {
+  const title = revealTitle ? ` ${codeFormat(match.item.title)}` : "";
   if (match.source === "native") {
-    return `This PR is linked to the ${codeFormat(match.item.title)} ${noun} (confirmed via Linear's GitHub integration).`;
+    return `This PR is linked to the${title} ${noun} (confirmed via Linear's GitHub integration).`;
   }
-  return `This PR looks like it's part of the ${codeFormat(match.item.title)} ${noun} (${Math.round(match.score * 100)}% title/body term overlap).`;
+  const confidence = revealTitle ? ` (${Math.round(match.score * 100)}% title/body term overlap)` : "";
+  return `This PR looks like it's part of a matching${title} ${noun}${confidence}.`;
 }
 
-function renderSuggestionComment(matches: ProjectTrackerMatches): string {
+function renderSuggestionComment(matches: ProjectTrackerMatches, revealTitles: boolean): string {
   const lines = [PROJECT_TRACKER_SUGGEST_COMMENT_MARKER];
-  if (matches.milestone) lines.push(describeMatch(matches.milestone, "milestone"));
-  if (matches.project) lines.push(describeMatch(matches.project, "project"));
+  if (matches.milestone) lines.push(describeMatch(matches.milestone, "milestone", revealTitles));
+  if (matches.project) lines.push(describeMatch(matches.project, "project", revealTitles));
   lines.push("", "This is an advisory suggestion only — nothing has been attached automatically.");
   return lines.join("\n");
 }
@@ -397,7 +399,9 @@ export async function maybeSuggestProjectOrMilestoneMatch(
   }
   if (alreadyPosted) return { suggested: false };
 
-  await createIssueComment(ctx.env, ctx.installationId, ctx.repoFullName, pullNumber, renderSuggestionComment(matches));
+  // Linear API keys are workspace-scoped, so project/milestone names may be internal even when the GitHub
+  // repository is public. Keep the public suggestion useful without echoing Linear tracker titles (#3290).
+  await createIssueComment(ctx.env, ctx.installationId, ctx.repoFullName, pullNumber, renderSuggestionComment(matches, backend !== "linear"));
   return { suggested: true };
 }
 

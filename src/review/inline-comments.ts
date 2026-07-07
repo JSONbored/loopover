@@ -11,6 +11,7 @@
 import { createPullRequestReviewComments } from "../github/pr-actions";
 import { isConvergenceRepoAllowed } from "./cutover-gate";
 import { formatInlineCommentSeverityLabel } from "./inline-comment-label";
+import { addedLinesByPath, anchoredSuggestionBlock } from "./inline-suggestion-anchor";
 import { selectAnchoredInlineFindings } from "./inline-comments-select";
 export { rightSideLinesFromPatch } from "./inline-comments-select";
 import type { InlineFinding } from "../services/ai-review";
@@ -65,16 +66,8 @@ export type ReviewInlineComment = { path: string; line: number; side: "RIGHT"; b
 /** Hard cap on inline comments posted per PR review — a focused review leaves a handful of precise notes, not a
  *  wall (the model is also asked to be selective, and composeInlineFindings already caps at 10). */
 
-/** GitHub's suggested-change syntax requires the LITERAL ` ```suggestion ` fence; if the suggestion text itself
- *  contains a triple-backtick run, embedding it verbatim would prematurely close the fence and corrupt the
- *  comment (the rest of the finding body would spill out as raw, unintended markdown). Fail-safe (#1956):
- *  drop the suggestion block and keep the finding text rather than risk a malformed comment — mirrors the
- *  "a bad/blank suggestion is simply dropped while keeping the finding itself" discipline already applied when
- *  the suggestion is parsed (ai-review.ts's parseModelReview). */
-function safeSuggestionBlock(suggestion: string | undefined): string {
-  if (!suggestion || suggestion.includes("```")) return "";
-  return `\n\n\`\`\`suggestion\n${suggestion}\n\`\`\``;
-}
+/** GitHub's suggested-change syntax requires the LITERAL ` ```suggestion ` fence; see
+ *  {@link anchoredSuggestionBlock} for anchor-safety and fence validation (#2140 / #1956). */
 
 /** The inline comment body: a compact severity (+ optional category) label + the finding, plus a one-click GitHub
  *  suggested-change block when the finding carries a `suggestion` AND the caller has suggestions enabled (#1956).
@@ -83,9 +76,14 @@ function safeSuggestionBlock(suggestion: string | undefined): string {
  *  (`classifyFindingCategory`), so the tag is never sometimes-present. Public-safe by construction — both the body
  *  and the suggestion were already run through the public-safe filter by composeInlineFindings before they reached
  *  here; `category` is a fixed enum literal, never free text. */
-function formatInlineBody(finding: InlineFinding, suggestionsEnabled: boolean, categoriesEnabled = false): string {
+function formatInlineBody(
+  finding: InlineFinding,
+  suggestionsEnabled: boolean,
+  categoriesEnabled: boolean,
+  addedLines: Map<string, Set<number>>,
+): string {
   const label = formatInlineCommentSeverityLabel(finding, categoriesEnabled);
-  const suggestionBlock = suggestionsEnabled ? safeSuggestionBlock(finding.suggestion) : "";
+  const suggestionBlock = anchoredSuggestionBlock(finding, suggestionsEnabled, addedLines);
   return `**${label}:** ${finding.body}${suggestionBlock}`;
 }
 
@@ -108,11 +106,12 @@ export function selectInlineComments(
     minFindingSeverity,
     perCategoryCap,
   });
+  const addedLines = addedLinesByPath(files);
   return selected.map((finding) => ({
     path: finding.path,
     line: finding.line,
     side: "RIGHT" as const,
-    body: formatInlineBody(finding, suggestionsEnabled, categoriesEnabled),
+    body: formatInlineBody(finding, suggestionsEnabled, categoriesEnabled, addedLines),
   }));
 }
 

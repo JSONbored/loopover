@@ -151,6 +151,29 @@ describe("selectInlineComments (#inline-comments)", () => {
       expect(out[0]?.body).toBe("**Blocker:** Fix this.");
       expect(out[0]?.body).not.toContain("escape attempt");
     });
+
+    it("strips the suggestion on a context line but keeps the plain inline comment (#2140)", () => {
+      const contextFinding: InlineFinding = {
+        path: "src/a.ts",
+        line: 1,
+        severity: "nit",
+        body: "On context.",
+        suggestion: "ctx fix",
+      };
+      const out = selectInlineComments([contextFinding], files, true);
+      expect(out).toEqual([{ path: "src/a.ts", line: 1, side: "RIGHT", body: "**Nit:** On context." }]);
+    });
+
+    it("never emits a suggestion for a file with no usable patch (#2140)", () => {
+      const finding: InlineFinding = {
+        path: "src/no-patch.ts",
+        line: 1,
+        severity: "nit",
+        body: "missing patch",
+        suggestion: "fix",
+      };
+      expect(selectInlineComments([finding], files, true)).toEqual([]);
+    });
   });
 
   describe("category tags (#1958 / #2149)", () => {

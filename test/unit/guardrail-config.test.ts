@@ -1,26 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { resolveHardGuardrailGlobs } from "../../src/review/guardrail-config";
+import {
+  DEFAULT_HARD_GUARDRAIL_GLOBS,
+  resolveHardGuardrailGlobs,
+} from "../../src/review/guardrail-config";
 
 describe("resolveHardGuardrailGlobs", () => {
-  it("does not invent path guardrails when effective settings omit hardGuardrailGlobs", () => {
-    expect(resolveHardGuardrailGlobs(undefined)).toEqual([]);
-    expect(resolveHardGuardrailGlobs(null)).toEqual([]);
-    expect(resolveHardGuardrailGlobs({})).toEqual([]);
-    expect(resolveHardGuardrailGlobs({ hardGuardrailGlobs: null })).toEqual([]);
+  it("uses invariant guardrails when effective settings omit hardGuardrailGlobs", () => {
+    expect(resolveHardGuardrailGlobs(undefined)).toEqual(DEFAULT_HARD_GUARDRAIL_GLOBS);
+    expect(resolveHardGuardrailGlobs(null)).toEqual(DEFAULT_HARD_GUARDRAIL_GLOBS);
+    expect(resolveHardGuardrailGlobs({})).toEqual(DEFAULT_HARD_GUARDRAIL_GLOBS);
+    expect(resolveHardGuardrailGlobs({ hardGuardrailGlobs: null })).toEqual(DEFAULT_HARD_GUARDRAIL_GLOBS);
   });
 
-  it("returns a clone of the configured guardrail globs", () => {
-    const configured = ["src/settings/**", ".github/workflows/**"];
+  it("adds configured guardrail globs without allowing them to replace invariants", () => {
+    const configured = ["src/custom/**", ".github/workflows/**"];
     const resolved = resolveHardGuardrailGlobs({ hardGuardrailGlobs: configured });
 
-    expect(resolved).toEqual(configured);
+    expect(resolved).toEqual([...DEFAULT_HARD_GUARDRAIL_GLOBS, "src/custom/**"]);
     expect(resolved).not.toBe(configured);
 
     resolved.push("mutated/**");
-    expect(configured).toEqual(["src/settings/**", ".github/workflows/**"]);
+    expect(configured).toEqual(["src/custom/**", ".github/workflows/**"]);
   });
 
-  it("preserves an explicit empty list as no path guardrails", () => {
-    expect(resolveHardGuardrailGlobs({ hardGuardrailGlobs: [] })).toEqual([]);
+  it("keeps invariant guardrails when configured globs are explicitly empty", () => {
+    expect(resolveHardGuardrailGlobs({ hardGuardrailGlobs: [] })).toEqual(DEFAULT_HARD_GUARDRAIL_GLOBS);
   });
 });

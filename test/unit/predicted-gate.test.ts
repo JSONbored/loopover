@@ -451,20 +451,20 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.blockers).toHaveLength(0);
   });
 
-  it("does NOT predict a guardrail hold when hardGuardrailGlobs is omitted", () => {
+  it("predicts a guardrail hold for invariant guardrails when hardGuardrailGlobs is omitted", () => {
     const result = verdict({ gate: { duplicates: "block" }, changedPaths: [".github/workflows/ci.yml"] });
-    expect(result.conclusion).toBe("success");
-    expect(result.warnings.some((w) => w.code === "guardrail_hold")).toBe(false);
+    expect(result.conclusion).toBe("neutral");
+    expect(result.warnings.some((w) => w.code === "guardrail_hold")).toBe(true);
   });
 
-  it("does NOT predict a guardrail hold when hardGuardrailGlobs is explicitly empty", () => {
+  it("REGRESSION: predicts a guardrail hold for invariant guardrails when hardGuardrailGlobs is explicitly empty", () => {
     const result = verdict({
       gate: { duplicates: "block" },
       manifestExtra: { settings: { hardGuardrailGlobs: [] } },
       changedPaths: [".github/workflows/ci.yml"],
     });
-    expect(result.conclusion).toBe("success");
-    expect(result.warnings.some((w) => w.code === "guardrail_hold")).toBe(false);
+    expect(result.conclusion).toBe("neutral");
+    expect(result.warnings.some((w) => w.code === "guardrail_hold")).toBe(true);
   });
 
   it("does NOT predict a guardrail hold for an ordinary changed path", () => {

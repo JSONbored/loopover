@@ -22579,6 +22579,116 @@ describe("queue processors", () => {
     expect(paused ?? null).toBeNull();
   });
 
+  it("skips @gittensory pause when sender is a bot or login ends with [bot] (#2164)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 104,
+      title: "Pause bot skip paths",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "pause-bot-skip-sha" },
+      labels: [],
+      body: "Validation: npm test",
+    });
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pause-sender-bot-skip",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 104, title: "Pause bot skip paths", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 830, body: "@gittensory pause", user: { login: "maintainer", type: "User" } },
+        sender: { login: "gittensory[bot]", type: "Bot" },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pause-bot-suffix-skip",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 104, title: "Pause bot skip paths", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 831, body: "@gittensory pause", user: { login: "dependabot[bot]", type: "User" } },
+        sender: { login: "dependabot[bot]", type: "User" },
+      },
+    });
+
+    const skips = await env.DB.prepare("select detail from audit_events where event_type = ? order by detail")
+      .bind("github_app.autoreview_paused_skipped")
+      .all<{ detail: string }>();
+    expect(skips.results.map((event) => event.detail)).toEqual(["bot_author", "bot_author"]);
+    const paused = await env.DB.prepare("select id from audit_events where event_type = ?").bind("github_app.autoreview_paused").first<{ id: string }>();
+    expect(paused ?? null).toBeNull();
+  });
+
+  it("@gittensory pause respects the DB global-agent-frozen kill-switch (#2164)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await repositoriesModule.setGlobalAgentFrozen(env, true, "test");
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 105,
+      title: "Pause while globally frozen",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "pause-global-frozen-sha" },
+      labels: [],
+      body: "Validation: npm test",
+    });
+    const calls = { commentPosts: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/issues/105/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/105/comments") && method === "POST") {
+        calls.commentPosts += 1;
+        return Response.json({ id: 9205 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pause-global-frozen",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 105, title: "Pause while globally frozen", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 832, body: "@gittensory pause fleet frozen", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    expect(calls.commentPosts).toBe(0);
+    const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?")
+      .bind("github_app.autoreview_paused_skipped")
+      .first<{ detail: string }>();
+    expect(skipped?.detail).toBe("agent_paused");
+    const paused = await env.DB.prepare("select id from audit_events where event_type = ?").bind("github_app.autoreview_paused").first<{ id: string }>();
+    expect(paused ?? null).toBeNull();
+  });
+
   it("a #1960 action-command verb with no dispatch handler wired yet (e.g. configuration) is bailed out of the Q&A answer-card path, not misrendered as help (#2160)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);

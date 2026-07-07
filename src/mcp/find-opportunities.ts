@@ -232,8 +232,9 @@ export async function runFindOpportunities(
   }
 
   const repoFullNames = [...new Set(issues.map((issue) => issue.repoFullName))];
+  const goalSpecsByRepo = buildGoalSpecsByRepo(repoFullNames, parsed.goalSpec);
   const ranked = rankCandidateIssuesWithSummary(issues, {
-    goalSpecsByRepo: buildGoalSpecsByRepo(repoFullNames, parsed.goalSpec),
+    ...(goalSpecsByRepo ? { goalSpecsByRepo } : {}),
   });
   const filtered = ranked.issues
     .map(toRankedEntry)

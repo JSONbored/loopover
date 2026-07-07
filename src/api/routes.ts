@@ -5180,7 +5180,7 @@ const EXTENSION_CONTRIBUTOR_CONTEXT_PATH = /^\/v1\/extension\/contributors\/[^/]
 type ProtectedRouteContext = {
   env: Env;
   req: { header: (name: string) => string | undefined | null };
-  json: (object: { error: string }, status?: number) => Response;
+  json: (object: { error: string; reason?: string }, status?: number) => Response;
 };
 
 function isExtensionScopedSession(identity: AuthIdentity): boolean {

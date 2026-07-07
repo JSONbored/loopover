@@ -10337,6 +10337,87 @@ describe("queue processors", () => {
     expect(skip?.detail).toBe("no_plan_generated");
   });
 
+  it("configuration (#2168): a maintainer @gittensory configuration posts the effective resolved config", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupPlannerRepo(env);
+    let postedBody: string | undefined;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" }); // maintainer
+      if (url.includes("/issues/77/comments")) {
+        postedBody = init?.body ? JSON.parse(init.body.toString()).body : undefined;
+        return Response.json({ id: 5 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@gittensory configuration", "maintainer1"));
+    expect(postedBody).toContain("Effective review configuration");
+    expect(postedBody).toContain("Agent execution mode: **live**");
+    expect(postedBody).toContain("Autonomy by action class:");
+    // public-safe: never leaks a reward/trust/wallet field
+    expect(postedBody?.toLowerCase()).not.toMatch(/reward|wallet|hotkey|coldkey|trustscore/);
+    const audit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("github_app.configuration_posted").first<{ outcome: string }>();
+    expect(audit?.outcome).toBe("completed");
+  });
+
+  it("configuration: a non-maintainer is denied — nothing is posted and a skip is recorded", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupPlannerRepo(env);
+    let posted = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "read" }); // not a maintainer
+      if (url.includes("/issues/77/comments")) {
+        posted = true;
+        return Response.json({ id: 5 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@gittensory configuration", "outsider"));
+    expect(posted).toBe(false);
+    const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.configuration_skipped").first<{ detail: string }>();
+    expect(skip?.detail).toBe("not_maintainer_or_pr_author");
+  });
+
+  it("configuration: a non-configuration comment is not intercepted (the handler declines, no config audit)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupPlannerRepo(env);
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
+    await processJob(env, plannerWebhook("just a normal comment, no mention", "maintainer1"));
+    const posted = await env.DB.prepare("select 1 from audit_events where event_type = ?").bind("github_app.configuration_posted").first();
+    const skipped = await env.DB.prepare("select 1 from audit_events where event_type = ?").bind("github_app.configuration_skipped").first();
+    expect(posted).toBeFalsy();
+    expect(skipped).toBeFalsy();
+  });
+
+  it("configuration: a bot-authored command is recorded as a classifier skip, never posted", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupPlannerRepo(env);
+    let posted = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/comments")) posted = true;
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "config-bot",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 77, title: "t", state: "open", user: { login: "reporter" }, body: "b" },
+        comment: { body: "@gittensory configuration", user: { login: "some-bot[bot]", type: "Bot" } },
+        sender: { login: "some-bot[bot]", type: "Bot" },
+      },
+    } as unknown as Parameters<typeof processJob>[1]);
+    expect(posted).toBe(false);
+    const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.configuration_skipped").first<{ detail: string }>();
+    expect(skip?.detail).toBe("unsupported_comment_action_or_bot");
+  });
+
   it("REGRESSION (#audit-draft-maintenance): a clean DRAFT PR is never auto-merged/approved/closed (drafts are WIP)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, {

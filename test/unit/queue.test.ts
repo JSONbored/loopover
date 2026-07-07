@@ -16974,11 +16974,10 @@ describe("queue processors", () => {
 
       expect(calls.comments).toBe(2);
       expect(postedBody).toContain("<!-- gittensory-pr-panel:v1 -->");
-      // The new deterministic, no-AI collapsible — one row per category, collapsing the source file and the
-      // doc file into their own rows with the mocked +/- totals.
+      // The deterministic changed-files collapsible — per-file rows with GitHub Files-tab links (#2157).
       expect(postedBody).toContain("Changed files");
-      expect(postedBody).toContain("| Source | 1 | +5 | -1 |");
-      expect(postedBody).toContain("| Docs | 1 | +2 | -0 |");
+      expect(postedBody).toContain("| `src/cache.ts` | +5 | -1 | [View diff](https://github.com/JSONbored/gittensory/pull/3/files#diff-");
+      expect(postedBody).toContain("| `README.md` | +2 | -0 | [View diff](https://github.com/JSONbored/gittensory/pull/3/files#diff-");
     } finally {
       liveCiSpy.mockRestore();
     }

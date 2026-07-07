@@ -29,6 +29,7 @@ import type { CaptureRoute } from "./visual/capture";
 import { PR_PANEL_COMMENT_MARKER } from "../github/comments";
 import { GITTENSORY_GATE_CHECK_NAME } from "./check-names";
 import { classifyChangedFile, type ReviewFileClass } from "./changed-files-classify";
+import { githubPrFileDiffUrl } from "./changed-files-diff-link";
 import { classifyFindingCategory, FINDING_CATEGORIES, type FindingCategory } from "./finding-category-classify";
 import {
   buildUnifiedReviewInput,
@@ -315,6 +316,8 @@ export type UnifiedCommentBridgeArgs = {
    *  passes this only when the manifest opts in — see `resolveReviewPromptOverrides`'s `changedFilesSummary`).
    *  (#1957) */
   changedFilesSummary?: ChangedFileSummaryInput[] | undefined;
+  /** Repo + PR number for per-file "View diff" links in the changed-files table (#2157). */
+  changedFilesSummaryContext?: ChangedFilesSummaryContext | undefined;
   /** Deterministic per-PR review-effort estimate (review.effort_score port, `src/review/review-effort.ts`). When
    *  present, a compact `review effort: N/5 (~M min)` chip is appended to the status-chip row (passed straight
    *  through to `buildUnifiedReviewInput`'s `reviewEffort`). No AI. Default OFF (the processor passes this only
@@ -454,6 +457,17 @@ export function buildScrollPreviewCollapsible(routes: CaptureRoute[]): UnifiedCo
  *  doesn't drag GitHub's full file-record shape into its pure-rendering surface. */
 export type ChangedFileSummaryInput = { path: string; additions: number; deletions: number };
 
+/** Repo + PR coordinates for per-file "View diff" links on the changed-files table (#2157). */
+export type ChangedFilesSummaryContext = { repoFullName: string; pullNumber: number };
+
+function markdownChangedFilePath(value: string): string {
+  return `\`${value
+    .replace(/\\/g, "\\\\")
+    .replace(/`/g, "\\`")
+    .replace(/\|/g, "\\|")
+    .replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;"))}\``;
+}
+
 /** Display order for the "Changed files" table — SOURCE FIRST, mirroring the same source-first priority this
  *  codebase already applies to the AI reviewer's own diff ordering (`diffFilePriority`,
  *  `src/review/review-diff.ts`): the code a maintainer most needs to read leads, generated/mechanical output
@@ -469,14 +483,30 @@ const CHANGED_FILE_CATEGORY_LABEL: Record<ReviewFileClass, string> = {
 };
 
 /**
- * Build the "Changed files" collapsible: one row per file category (source/test/docs/config/generated, via
- * the deterministic `classifyChangedFile`), with a file count and +/- totals — collapsing an arbitrarily large
- * same-category group into a single row so a big PR doesn't turn into a wall of per-file lines. No AI, no
- * network — pure grouping over data the caller already has. Returns null when there are no files (nothing to
- * summarize), so the caller can unconditionally chain this alongside the other optional collapsibles.
+ * Build the "Changed files" collapsible. Without `context`, groups by category (source/test/docs/config/generated)
+ * with file counts and +/- totals — byte-identical to #2145. With `context`, renders one row per file (sorted
+ * source-first) and a public-safe GitHub Files-tab "View diff" link per row (#2157).
  */
-export function buildChangedFilesSummaryCollapsible(files: ChangedFileSummaryInput[]): UnifiedCollapsible | null {
+export function buildChangedFilesSummaryCollapsible(
+  files: ChangedFileSummaryInput[],
+  context?: ChangedFilesSummaryContext | undefined,
+): UnifiedCollapsible | null {
   if (files.length === 0) return null;
+  if (context) {
+    const sorted = [...files].sort((left, right) => {
+      const leftCategory = CHANGED_FILE_CATEGORY_ORDER.indexOf(classifyChangedFile(left.path));
+      const rightCategory = CHANGED_FILE_CATEGORY_ORDER.indexOf(classifyChangedFile(right.path));
+      if (leftCategory !== rightCategory) return leftCategory - rightCategory;
+      return left.path.localeCompare(right.path);
+    });
+    const rows = sorted.map((file) => {
+      const diffUrl = githubPrFileDiffUrl(context.repoFullName, context.pullNumber, file.path);
+      const diffCell = diffUrl ? `[View diff](${diffUrl})` : "—";
+      return `| ${markdownChangedFilePath(file.path)} | +${file.additions} | -${file.deletions} | ${diffCell} |`;
+    });
+    const body = ["| File | Added | Removed | |", "| --- | --- | --- | --- |", ...rows].join("\n");
+    return { title: "Changed files", body };
+  }
   const totals = new Map<ReviewFileClass, { count: number; additions: number; deletions: number }>();
   for (const file of files) {
     const category = classifyChangedFile(file.path);
@@ -665,7 +695,7 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
   // before pixels). Flag-OFF (the processor passes undefined) ⇒ extraCollapsibles is unchanged. (#1957)
   const changedFilesCollapsible =
     args.changedFilesSummary && args.changedFilesSummary.length > 0
-      ? buildChangedFilesSummaryCollapsible(args.changedFilesSummary)
+      ? buildChangedFilesSummaryCollapsible(args.changedFilesSummary, args.changedFilesSummaryContext)
       : null;
   const withChangedFiles =
     changedFilesCollapsible !== null ? [...(withManifestValidation ?? []), changedFilesCollapsible] : withManifestValidation;

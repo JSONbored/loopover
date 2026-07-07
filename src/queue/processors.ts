@@ -9836,6 +9836,7 @@ async function maybePublishPrPublicSurface(
                 additions: file.additions,
                 deletions: file.deletions,
               })),
+              changedFilesSummaryContext: { repoFullName, pullNumber: pr.number },
             }
           : {}),
         // review.effort_score (#1955): deterministic, no-AI complexity/time estimate — only computed when the

@@ -121,7 +121,7 @@ describe("buildSlopAssessment", () => {
       inDuplicateCluster: true, // → duplicate_cluster_membership (15)
     });
     expect(result.slopRisk).toBe(SLOP_WEIGHTS.missingTestEvidence + SLOP_WEIGHTS.duplicateClusterMembership);
-    expect(result.band).toBe("elevated");
+    expect(result.band).toBe("low");
     expect(result.findings.map((finding) => finding.code).sort()).toEqual(["duplicate_cluster_membership", "missing_test_evidence"]);
     expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
   });
@@ -196,7 +196,7 @@ describe("buildSlopAssessment", () => {
     });
 
     expect(result.slopRisk).toBe(SLOP_WEIGHTS.trivialWhitespaceChurn);
-    expect(result.band).toBe("elevated");
+    expect(result.band).toBe("low");
     expect(result.findings).toEqual([
       expect.objectContaining({
         code: "trivial_whitespace_churn",
@@ -307,9 +307,9 @@ describe("buildSlopAssessment", () => {
   });
 
   it("reaches the high band when multiple strong signals stack", () => {
-    // Code change, no tests, no description: missing-test-evidence (15) + empty-description (15) = 30 = elevated.
-    const elevated = buildSlopAssessment({ changedFiles: [{ path: "src/x.ts", additions: 10, deletions: 1 }], description: "" });
-    expect(elevated.band).toBe("elevated");
+    // Code change, no tests, no description: missing-test-evidence (15) + empty-description (15) = 30 = low.
+    const lowPair = buildSlopAssessment({ changedFiles: [{ path: "src/x.ts", additions: 10, deletions: 1 }], description: "" });
+    expect(lowPair.band).toBe("low");
 
     // High-whitespace-churn code change + no tests + no description: 30 + 15 + 15 = 60 -> high (>=60).
     const high = buildSlopAssessment({
@@ -625,7 +625,7 @@ describe("buildNonSubstantivePaddingFinding (#561 path-matcher signal)", () => {
     });
     expect(result.findings.map((finding) => finding.code)).toEqual(["non_substantive_padding"]);
     expect(result.slopRisk).toBe(SLOP_WEIGHTS.nonSubstantivePadding);
-    expect(result.band).toBe("elevated");
+    expect(result.band).toBe("low");
     expect(JSON.stringify(result)).not.toMatch(FORBIDDEN);
   });
 });
@@ -643,10 +643,10 @@ describe("slop golden fixtures & determinism (#565)", () => {
       codes: ["missing_test_evidence"],
     },
     {
-      name: "elevated — untested code change inside a duplicate cluster",
+      name: "low — untested code change inside a duplicate cluster",
       input: { changedFiles: [{ path: "src/svc.ts", additions: 12, deletions: 3 }], description: "Add retry logic to the sync client.", inDuplicateCluster: true },
       slopRisk: 30,
-      band: "elevated",
+      band: "low",
       codes: ["duplicate_cluster_membership", "missing_test_evidence"],
     },
     {

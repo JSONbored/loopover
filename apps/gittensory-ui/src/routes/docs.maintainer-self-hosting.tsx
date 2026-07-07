@@ -100,6 +100,12 @@ const SECTION_LINKS = [
       "Review not firing, REES silent, AI unavailable, RAG empty, queue stuck, and webhook failures.",
     to: "/docs/self-hosting-troubleshooting",
   },
+  {
+    title: "Docs accuracy audit",
+    description:
+      "Checklist mapping website docs to docker-compose, env, release, observability, and backup sources of truth.",
+    to: "/docs/self-hosting-docs-audit",
+  },
 ] as const;
 
 function MaintainerSelfHosting() {

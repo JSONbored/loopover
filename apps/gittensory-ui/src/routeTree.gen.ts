@@ -35,6 +35,7 @@ import { Route as DocsSelfHostingRagRouteImport } from './routes/docs.self-hosti
 import { Route as DocsSelfHostingQuickstartRouteImport } from './routes/docs.self-hosting-quickstart'
 import { Route as DocsSelfHostingOperationsRouteImport } from './routes/docs.self-hosting-operations'
 import { Route as DocsSelfHostingGithubAppRouteImport } from './routes/docs.self-hosting-github-app'
+import { Route as DocsSelfHostingDocsAuditRouteImport } from './routes/docs.self-hosting-docs-audit'
 import { Route as DocsSelfHostingConfigurationRouteImport } from './routes/docs.self-hosting-configuration'
 import { Route as DocsSelfHostingBackupScalingRouteImport } from './routes/docs.self-hosting-backup-scaling'
 import { Route as DocsSelfHostingAiProvidersRouteImport } from './routes/docs.self-hosting-ai-providers'
@@ -203,6 +204,12 @@ const DocsSelfHostingGithubAppRoute =
   DocsSelfHostingGithubAppRouteImport.update({
     id: '/self-hosting-github-app',
     path: '/self-hosting-github-app',
+    getParentRoute: () => DocsRoute,
+  } as any)
+const DocsSelfHostingDocsAuditRoute =
+  DocsSelfHostingDocsAuditRouteImport.update({
+    id: '/self-hosting-docs-audit',
+    path: '/self-hosting-docs-audit',
     getParentRoute: () => DocsRoute,
   } as any)
 const DocsSelfHostingConfigurationRoute =
@@ -419,6 +426,7 @@ export interface FileRoutesByFullPath {
   '/docs/self-hosting-ai-providers': typeof DocsSelfHostingAiProvidersRoute
   '/docs/self-hosting-backup-scaling': typeof DocsSelfHostingBackupScalingRoute
   '/docs/self-hosting-configuration': typeof DocsSelfHostingConfigurationRoute
+  '/docs/self-hosting-docs-audit': typeof DocsSelfHostingDocsAuditRoute
   '/docs/self-hosting-github-app': typeof DocsSelfHostingGithubAppRoute
   '/docs/self-hosting-operations': typeof DocsSelfHostingOperationsRoute
   '/docs/self-hosting-quickstart': typeof DocsSelfHostingQuickstartRoute
@@ -477,6 +485,7 @@ export interface FileRoutesByTo {
   '/docs/self-hosting-ai-providers': typeof DocsSelfHostingAiProvidersRoute
   '/docs/self-hosting-backup-scaling': typeof DocsSelfHostingBackupScalingRoute
   '/docs/self-hosting-configuration': typeof DocsSelfHostingConfigurationRoute
+  '/docs/self-hosting-docs-audit': typeof DocsSelfHostingDocsAuditRoute
   '/docs/self-hosting-github-app': typeof DocsSelfHostingGithubAppRoute
   '/docs/self-hosting-operations': typeof DocsSelfHostingOperationsRoute
   '/docs/self-hosting-quickstart': typeof DocsSelfHostingQuickstartRoute
@@ -539,6 +548,7 @@ export interface FileRoutesById {
   '/docs/self-hosting-ai-providers': typeof DocsSelfHostingAiProvidersRoute
   '/docs/self-hosting-backup-scaling': typeof DocsSelfHostingBackupScalingRoute
   '/docs/self-hosting-configuration': typeof DocsSelfHostingConfigurationRoute
+  '/docs/self-hosting-docs-audit': typeof DocsSelfHostingDocsAuditRoute
   '/docs/self-hosting-github-app': typeof DocsSelfHostingGithubAppRoute
   '/docs/self-hosting-operations': typeof DocsSelfHostingOperationsRoute
   '/docs/self-hosting-quickstart': typeof DocsSelfHostingQuickstartRoute
@@ -602,6 +612,7 @@ export interface FileRouteTypes {
     | '/docs/self-hosting-ai-providers'
     | '/docs/self-hosting-backup-scaling'
     | '/docs/self-hosting-configuration'
+    | '/docs/self-hosting-docs-audit'
     | '/docs/self-hosting-github-app'
     | '/docs/self-hosting-operations'
     | '/docs/self-hosting-quickstart'
@@ -660,6 +671,7 @@ export interface FileRouteTypes {
     | '/docs/self-hosting-ai-providers'
     | '/docs/self-hosting-backup-scaling'
     | '/docs/self-hosting-configuration'
+    | '/docs/self-hosting-docs-audit'
     | '/docs/self-hosting-github-app'
     | '/docs/self-hosting-operations'
     | '/docs/self-hosting-quickstart'
@@ -721,6 +733,7 @@ export interface FileRouteTypes {
     | '/docs/self-hosting-ai-providers'
     | '/docs/self-hosting-backup-scaling'
     | '/docs/self-hosting-configuration'
+    | '/docs/self-hosting-docs-audit'
     | '/docs/self-hosting-github-app'
     | '/docs/self-hosting-operations'
     | '/docs/self-hosting-quickstart'
@@ -936,6 +949,13 @@ declare module '@tanstack/react-router' {
       path: '/self-hosting-github-app'
       fullPath: '/docs/self-hosting-github-app'
       preLoaderRoute: typeof DocsSelfHostingGithubAppRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/self-hosting-docs-audit': {
+      id: '/docs/self-hosting-docs-audit'
+      path: '/self-hosting-docs-audit'
+      fullPath: '/docs/self-hosting-docs-audit'
+      preLoaderRoute: typeof DocsSelfHostingDocsAuditRouteImport
       parentRoute: typeof DocsRoute
     }
     '/docs/self-hosting-configuration': {
@@ -1238,6 +1258,7 @@ interface DocsRouteChildren {
   DocsSelfHostingAiProvidersRoute: typeof DocsSelfHostingAiProvidersRoute
   DocsSelfHostingBackupScalingRoute: typeof DocsSelfHostingBackupScalingRoute
   DocsSelfHostingConfigurationRoute: typeof DocsSelfHostingConfigurationRoute
+  DocsSelfHostingDocsAuditRoute: typeof DocsSelfHostingDocsAuditRoute
   DocsSelfHostingGithubAppRoute: typeof DocsSelfHostingGithubAppRoute
   DocsSelfHostingOperationsRoute: typeof DocsSelfHostingOperationsRoute
   DocsSelfHostingQuickstartRoute: typeof DocsSelfHostingQuickstartRoute
@@ -1274,6 +1295,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsSelfHostingAiProvidersRoute: DocsSelfHostingAiProvidersRoute,
   DocsSelfHostingBackupScalingRoute: DocsSelfHostingBackupScalingRoute,
   DocsSelfHostingConfigurationRoute: DocsSelfHostingConfigurationRoute,
+  DocsSelfHostingDocsAuditRoute: DocsSelfHostingDocsAuditRoute,
   DocsSelfHostingGithubAppRoute: DocsSelfHostingGithubAppRoute,
   DocsSelfHostingOperationsRoute: DocsSelfHostingOperationsRoute,
   DocsSelfHostingQuickstartRoute: DocsSelfHostingQuickstartRoute,

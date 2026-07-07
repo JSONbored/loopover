@@ -16,7 +16,7 @@ import { isAuthorBlacklisted } from "../settings/contributor-blacklist";
 import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
 import { cancelInFlightWorkflowRunsForHeadSha, createInstallationToken, githubErrorStatus, isGitHubRateLimitedError } from "../github/app";
-import { fetchLiveCiAggregate, mergeRequiredCiContexts, refreshInstallationHealthForInstallation } from "../github/backfill";
+import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, mergeRequiredCiContexts, refreshInstallationHealthForInstallation } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { ensurePullRequestAssignee } from "../github/assignees";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
@@ -363,8 +363,8 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     //    branch-protection REQUIRED checks server-side, but only as a backstop when a repo actually configures
     //    them; a red-CI close has no server-side check at all. Re-read live CI right before the mutation so a
     //    check that flipped in this narrow window is never acted on from stale information. Non-CI closes
-    //    (gate verdict, duplicate/slop, conflict, linked-issue hard-rule, blacklist) are exempt — their adverse
-    //    signal does not depend on CI still being red.
+    //    (gate verdict, duplicate/slop, linked-issue hard-rule, blacklist) are exempt — their adverse signal
+    //    does not depend on CI still being red.
     //    A heuristic close staged BEFORE #2478 has no closeRequiresCiState at all -- that field didn't exist yet
     //    -- so `undefined` here is genuinely ambiguous (a legacy CI-driven close and a legacy non-CI close are
     //    byte-identical in storage). The planner now ALWAYS sets the field going forward (never omits it), so
@@ -372,28 +372,48 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     //    failed) rather than skipping the recheck, which would let a stale CI-driven close silently execute
     //    after CI recovers (flagged by the gate's own review of #2478).
     const isAmbiguousLegacyHeuristicClose = action.actionClass === "close" && action.closeKind === "heuristic" && action.closeRequiresCiState === undefined;
-    if (action.actionClass === "merge" || (action.actionClass === "close" && action.closeRequiresCiState === "failed") || isAmbiguousLegacyHeuristicClose) {
+    const requiresLiveCiRecheck = action.actionClass === "merge" || (action.actionClass === "close" && action.closeRequiresCiState === "failed") || isAmbiguousLegacyHeuristicClose;
+    // #3863: a base-conflict-justified heuristic close (closeRequiresMergeableState === true) is read from the
+    // SAME planning-pass snapshot as the CI check above -- an unrelated PR merging into the base branch during
+    // a slow review pass (AI review, gate evaluation) can clear the conflict before this mutation runs, and
+    // nothing re-verified it right before acting. The approval-queue's accept-time path already does this SAME
+    // live re-check for a STAGED close (agent-approval-queue.ts); this is the immediate, same-pass execution
+    // path, which had no equivalent.
+    const requiresLiveMergeableRecheck = action.actionClass === "close" && action.closeKind === "heuristic" && action.closeRequiresMergeableState === true;
+    if (requiresLiveCiRecheck || requiresLiveMergeableRecheck) {
       const ciToken = await createInstallationToken(env, ctx.installationId).catch(() => undefined);
       const admissionKey = githubRateLimitAdmissionKeyForToken(env, ciToken, ctx.installationId);
       // mergeRequiredCiContexts(null, ...) -- no live branch-protection re-fetch here, just the maintainer's own
       // configured expectedCiContexts (or null/fold-all when unset), matching the "no branch protection" arm of
       // the planning pass's own merge (mergeRequiredCiContexts is pure and already exported for that call site).
-      const liveCi = await fetchLiveCiAggregate(env, ctx.repoFullName, expectedHeadSha, ciToken, mergeRequiredCiContexts(null, ctx.expectedCiContexts), admissionKey);
+      const [liveCi, liveMergeableState] = await Promise.all([
+        requiresLiveCiRecheck
+          ? fetchLiveCiAggregate(env, ctx.repoFullName, expectedHeadSha, ciToken, mergeRequiredCiContexts(null, ctx.expectedCiContexts), admissionKey)
+          : Promise.resolve(undefined),
+        requiresLiveMergeableRecheck ? fetchLivePullRequestMergeState(env, ctx.repoFullName, ctx.pullNumber, ciToken, admissionKey) : Promise.resolve(undefined),
+      ]);
       // The planner itself only ever stages a merge when ciState === "passed" exactly (reviewGood in
       // agent-actions.ts; "pending" short-circuits to no actions at all upstream) -- the live re-check must
       // require the SAME exact state, not just "not failed". Otherwise a check that regressed to pending or
       // became unreadable (unverified) between planning and actuation would still merge, on the assumption
       // that only an explicit failure invalidates the plan.
-      const staleReason =
-        action.actionClass === "merge"
-          ? liveCi.ciState !== "passed"
-            ? `live CI is no longer passing (now: ${liveCi.ciState})`
+      const ciStaleReason = !requiresLiveCiRecheck
+        ? null
+        : action.actionClass === "merge"
+          ? liveCi!.ciState !== "passed"
+            ? `live CI is no longer passing (now: ${liveCi!.ciState})`
             : null
           // isAmbiguousLegacyHeuristicClose falls back to "failed" (the old unconditional requirement); an
           // explicitly-tagged fresh close compares against its own recorded requirement.
-          : liveCi.ciState !== (action.closeRequiresCiState ?? "failed")
-            ? `CI state changed since planning (now: ${liveCi.ciState})`
+          : liveCi!.ciState !== (action.closeRequiresCiState ?? "failed")
+            ? `CI state changed since planning (now: ${liveCi!.ciState})`
             : null;
+      // Only a CONFIRMED "clean" clears a conflict-justified close -- an ambiguous/unresolvable live read
+      // (unknown, unstable, blocked, or a failed fetch, which resolves to undefined) is not proof the conflict
+      // resolved, matching the approval-queue's own fail-safe-toward-keeping-the-close precedent (#3863).
+      const mergeableStaleReason =
+        requiresLiveMergeableRecheck && liveMergeableState === "clean" ? "the base-branch conflict that justified this close has since cleared" : null;
+      const staleReason = ciStaleReason ?? mergeableStaleReason;
       if (staleReason) {
         await audit("denied", `${staleReason} — action not executed`);
         continue;

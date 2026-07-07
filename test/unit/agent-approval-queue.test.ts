@@ -754,7 +754,11 @@ describe("agent approval queue (#779)", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
     await seedInstallation(env);
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
-    vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce("dirty");
+    // Queues exactly 2 responses (Once, not a persistent mockResolvedValue): the accept-time recheck AND the
+    // executor's own actuation-time recheck (#3863) each consume one call and must see the SAME still-conflicting
+    // state for this test's premise to hold; an unconsumed persistent override would otherwise leak into later
+    // tests since this file's beforeEach only clearAllMocks (not resetAllMocks).
+    vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce("dirty").mockResolvedValueOnce("dirty");
     const { action } = await createPendingAgentActionIfAbsent(env, {
       repoFullName: "owner/repo",
       pullNumber: 7,
@@ -778,6 +782,10 @@ describe("agent approval queue (#779)", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
     await seedInstallation(env);
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    // The conflict itself is still live (dirty) -- only the review-decision differs from the "cleared" test
+    // above. Queues exactly 2 responses (see the comment on the test above) so both the accept-time recheck and
+    // the executor's own actuation-time recheck (#3863) see a consistent "still conflicting" state.
+    vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce("dirty").mockResolvedValueOnce("dirty");
     vi.mocked(fetchLivePullRequestReviewDecision).mockResolvedValueOnce("CHANGES_REQUESTED");
     const { action } = await createPendingAgentActionIfAbsent(env, {
       repoFullName: "owner/repo",
@@ -929,6 +937,10 @@ describe("agent approval queue (#779)", () => {
     // The live review-decision read itself FAILS (transient API error) -- this must fail open (not stale),
     // not be silently treated as "confirmed no changes requested" merely because the resolved value is undefined.
     vi.mocked(fetchLivePullRequestReviewDecision).mockRejectedValueOnce(new Error("GitHub API transient 502"));
+    // The conflict itself is still live (dirty) -- this test's premise (the close proceeds despite the
+    // review-decision read failing) needs it to hold. Queues exactly 2 responses (see the comment on the
+    // "when the live conflict signal remains" test above) for the accept-time and actuation-time (#3863) rechecks.
+    vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce("dirty").mockResolvedValueOnce("dirty");
     const { action } = await createPendingAgentActionIfAbsent(env, {
       repoFullName: "owner/repo",
       pullNumber: 7,

@@ -34,9 +34,12 @@ vi.mock("../../src/github/app", async (importOriginal) => ({
 }));
 // The actuation-time live CI re-check (#2128) defaults to "still passing" so the existing merge tests stay
 // deterministic; individual tests below override this to exercise the staleness-denial path.
+// The actuation-time live mergeable-state re-check (#3863) defaults to "dirty" (conflict still present) so no
+// existing test needs to override it; the tests below explicitly set it to exercise the staleness-denial path.
 vi.mock("../../src/github/backfill", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/github/backfill")>()),
   fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null })),
+  fetchLivePullRequestMergeState: vi.fn(async () => "dirty" as const),
   refreshInstallationHealthForInstallation: vi.fn(async () => null),
 }));
 
@@ -45,7 +48,7 @@ import { ensurePullRequestLabel, removePullRequestLabel } from "../../src/github
 import { ensurePullRequestAssignee } from "../../src/github/assignees";
 import { fetchPullRequestFreshness } from "../../src/github/pr-freshness";
 import { createInstallationToken } from "../../src/github/app";
-import { fetchLiveCiAggregate, refreshInstallationHealthForInstallation } from "../../src/github/backfill";
+import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, refreshInstallationHealthForInstallation } from "../../src/github/backfill";
 import {
   actionParams,
   applyModerationEscalationForRule,
@@ -510,6 +513,56 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [hardRuleClose]);
     expect(outcomes[0]?.outcome).toBe("completed");
     expect(fetchLiveCiAggregate).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION (#3863): a base-conflict-justified heuristic close is DENIED when the live mergeable_state has since cleared", async () => {
+    const env = createTestEnv({});
+    const conflictClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "conflicts with the base branch", closeComment: "closing", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: true };
+    vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce("clean");
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [conflictClose]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(outcomes[0]?.detail).toContain("the base-branch conflict that justified this close has since cleared");
+    expect(closePullRequest).not.toHaveBeenCalled();
+  });
+
+  it("a base-conflict-justified heuristic close proceeds when the live mergeable_state is still dirty (#3863)", async () => {
+    const env = createTestEnv({});
+    const conflictClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "conflicts with the base branch", closeComment: "closing", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: true };
+    vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce("dirty");
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [conflictClose]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(closePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7);
+  });
+
+  it("a base-conflict-justified heuristic close fails open (still proceeds) when the live mergeable_state read is ambiguous/unresolved (#3863)", async () => {
+    const env = createTestEnv({});
+    const conflictClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "conflicts with the base branch", closeComment: "closing", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: true };
+    // "unknown" (still computing) and a failed fetch (undefined) are both NOT a confirmed "clean" -- neither is
+    // proof the conflict resolved, so the close must not be silently blocked by an inconclusive live read.
+    vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce("unknown");
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [conflictClose]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(closePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7);
+  });
+
+  it("a non-conflict heuristic close (closeRequiresMergeableState omitted/false) skips the live mergeable-state re-check entirely (#3863)", async () => {
+    const env = createTestEnv({});
+    const gateClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "policy gate blocker", closeComment: "closing", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: false };
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [gateClose]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(fetchLivePullRequestMergeState).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION (#3863): closeRequiresMergeableState round-trips through the persist/replay round trip so a staged conflict close still re-checks live mergeable-state", async () => {
+    const env = createTestEnv({});
+    const conflictClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "conflicts with the base branch", closeComment: "closing", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: true };
+    const persisted = actionParams(conflictClose);
+    const replayed = pendingActionToPlanned({ actionClass: "close", params: persisted, reason: conflictClose.reason });
+    expect(replayed.closeRequiresMergeableState).toBe(true);
+    vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce("clean");
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [replayed]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(closePullRequest).not.toHaveBeenCalled();
   });
 
   it("LIVE merge is denied when live CI has since turned failing (#2128)", async () => {

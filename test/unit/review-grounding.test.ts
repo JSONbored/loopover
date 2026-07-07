@@ -174,13 +174,17 @@ describe("review-grounding: fetchFullFileContents (injected FileFetcher, fail-sa
         ["assets/icon.heic"],
         ["dist/pkg.tgz"],
         ["old.ts", "removed"],
+        ["src/new.ts", "added"],
       ),
       fetcher,
     );
     expect(out).toBeDefined();
-    // source (priority 0) before docs (priority 2); binary + removed excluded before fetch
+    // source (priority 0) before docs (priority 2); binary + removed + added excluded before fetch
     expect(out?.map((f) => f.path)).toEqual(["src/a.ts", "README.md"]);
     expect(reads).toEqual(["src/a.ts", "README.md"]);
+    // #3897: an ADDED file's entire body is already every `+` line of the diff -- fetching it again
+    // would duplicate that content in the prompt, so it's excluded the same way "removed" is.
+    expect(reads).not.toContain("src/new.ts");
     for (const path of binary) expect(reads).not.toContain(path);
   });
 

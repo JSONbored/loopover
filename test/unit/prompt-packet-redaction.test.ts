@@ -102,55 +102,45 @@ describe("buildPromptPacket redaction (#2321 adversarial allowlist)", () => {
     PROMPT_PACKET_TEXT_FIELDS.map((field) => ({ id, field, sample })),
   ))("strips unsafe term family '$id' injected into $field", ({ field, sample }) => {
     const input = cleanPacketInput({ [field]: `prefix ${sample} suffix` });
-    const result = buildPromptPacket(input);
+    const packet = buildPromptPacket(input);
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.packet[field]).toContain(PROMPT_PACKET_REDACTED_TERM);
-    expect(result.packet[field]).not.toMatch(new RegExp(String.raw`\b${sample.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\b`, "i"));
+    expect(packet[field]).toContain(PROMPT_PACKET_REDACTED_TERM);
+    expect(packet[field]).not.toMatch(new RegExp(String.raw`\b${sample.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\b`, "i"));
   });
 
   it.each(LOCAL_PATH_SAMPLES.flatMap(({ id, sample }) =>
     PROMPT_PACKET_TEXT_FIELDS.map((field) => ({ id, field, sample })),
   ))("strips local-path prefix '$id' injected into $field", ({ field, sample }) => {
     const input = cleanPacketInput({ [field]: `clone failed at ${sample} during setup` });
-    const result = buildPromptPacket(input);
+    const packet = buildPromptPacket(input);
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.packet[field]).toContain(PROMPT_PACKET_REDACTED_PATH);
-    expect(result.packet[field]).not.toContain(sample);
+    expect(packet[field]).toContain(PROMPT_PACKET_REDACTED_PATH);
+    expect(packet[field]).not.toContain(sample);
   });
 
   it("applies both unsafe-term and local-path filters in the same field (double jeopardy)", () => {
-    const result = buildPromptPacket(
+    const packet = buildPromptPacket(
       cleanPacketInput({ taskBrief: "wallet backup stored at /home/alice/secrets before retry" }),
     );
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.packet.taskBrief).toContain(PROMPT_PACKET_REDACTED_TERM);
-    expect(result.packet.taskBrief).toContain(PROMPT_PACKET_REDACTED_PATH);
-    expect(result.packet.taskBrief).not.toMatch(/\bwallet\b/i);
-    expect(result.packet.taskBrief).not.toMatch(/\/home\//);
+    expect(packet.taskBrief).toContain(PROMPT_PACKET_REDACTED_TERM);
+    expect(packet.taskBrief).toContain(PROMPT_PACKET_REDACTED_PATH);
+    expect(packet.taskBrief).not.toMatch(/\bwallet\b/i);
+    expect(packet.taskBrief).not.toMatch(/\/home\//);
   });
 
   it("leaves fields with zero unsafe content byte-identical", () => {
     const input = cleanPacketInput();
-    const result = buildPromptPacket(input);
+    const packet = buildPromptPacket(input);
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
     for (const field of PROMPT_PACKET_TEXT_FIELDS) {
-      expect(result.packet[field]).toBe(input[field]);
+      expect(packet[field]).toBe(input[field]);
     }
   });
 
   it("strips a field that contains only an unsafe term instead of forwarding it verbatim", () => {
-    const result = buildPromptPacket(cleanPacketInput({ constraints: "wallet" }));
+    const packet = buildPromptPacket(cleanPacketInput({ constraints: "wallet" }));
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.packet.constraints).toBe(PROMPT_PACKET_REDACTED_TERM);
+    expect(packet.constraints).toBe(PROMPT_PACKET_REDACTED_TERM);
   });
 });

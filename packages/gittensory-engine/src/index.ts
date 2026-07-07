@@ -159,7 +159,6 @@ export {
   buildPromptPacket,
   sanitizePromptPacketField,
   type PromptPacket,
-  type PromptPacketBuildResult,
   type PromptPacketInput,
   type PromptPacketTextField,
 } from "./prompt-packet.js";

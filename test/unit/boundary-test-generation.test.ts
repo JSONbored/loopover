@@ -83,10 +83,10 @@ describe("detectBoundaryTouches", () => {
     expect(touches.length).toBe(20);
   });
 
-  it("truncates an oversized snippet to the display cap", () => {
-    const longLine = `+if (x === null) { ${"a".repeat(300)} }`;
-    const touches = detectBoundaryTouches([{ path: "src/long.ts", patch: longLine }]);
-    expect(touches[0]?.snippet.length).toBeLessThanOrEqual(160);
+  it("returns only path and kind metadata, never matched source snippets", () => {
+    const touches = detectBoundaryTouches([{ path: "src/long.ts", patch: "+if (x === null) return secretValue;" }]);
+    expect(touches[0]).toEqual({ path: "src/long.ts", kind: "null_or_undefined_branch" });
+    expect(touches[0] as Record<string, unknown>).not.toHaveProperty("snippet");
   });
 
   it("scans multiple files and aggregates touches across them", () => {
@@ -150,6 +150,14 @@ describe("buildBoundaryTestGenerationFinding", () => {
     expect(finding?.detail).toContain("…");
   });
 
+  it("builds from precomputed source-free touches when supplied", () => {
+    const finding = buildBoundaryTestGenerationFinding({
+      touches: [{ path: "src/list.ts", kind: "array_index_bounds" }],
+    });
+    expect(finding?.detail).toContain("array/index bounds");
+    expect(finding?.detail).toContain("src/list.ts");
+  });
+
   it("handles undefined tests/testFiles (absent input) the same as an empty list", () => {
     const finding = buildBoundaryTestGenerationFinding({
       files: [{ path: "src/list.ts", patch: "+if (items.length === 0) return null;\n" }],
@@ -167,8 +175,8 @@ describe("buildBoundaryTestGenerationSpec", () => {
 
   it("builds a scaffold-tests spec with one hint per distinct pattern kind", () => {
     const spec = buildBoundaryTestGenerationSpec([
-      { path: "src/list.ts", kind: "array_index_bounds", snippet: "list[list.length - 1]" },
-      { path: "src/user.ts", kind: "null_or_undefined_branch", snippet: "user === null" },
+      { path: "src/list.ts", kind: "array_index_bounds" },
+      { path: "src/user.ts", kind: "null_or_undefined_branch" },
     ]);
     expect(spec).not.toBeNull();
     expect(spec?.action).toBe("scaffold_boundary_tests");
@@ -179,8 +187,8 @@ describe("buildBoundaryTestGenerationSpec", () => {
 
   it("deduplicates hints when multiple touches share the same pattern kind", () => {
     const spec = buildBoundaryTestGenerationSpec([
-      { path: "src/a.ts", kind: "empty_collection_check", snippet: "a.length === 0" },
-      { path: "src/b.ts", kind: "empty_collection_check", snippet: "b.length === 0" },
+      { path: "src/a.ts", kind: "empty_collection_check" },
+      { path: "src/b.ts", kind: "empty_collection_check" },
     ]);
     expect(spec?.hints).toHaveLength(1);
     expect(spec?.touches).toHaveLength(2);

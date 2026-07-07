@@ -19,13 +19,15 @@ describe("MCP gittensory_suggest_boundary_tests (#1972)", () => {
     const result = await client.callTool({
       name: "gittensory_suggest_boundary_tests",
       arguments: {
-        changedFiles: [{ path: "src/list.ts", patch: "+if (items.length === 0) return null;\n" }],
+        changedFiles: [{ path: "src/list.ts" }],
+        boundaryTouches: [{ path: "src/list.ts", kind: "empty_collection_check" }],
       },
     });
     expect(result.isError).toBeFalsy();
-    const data = result.structuredContent as { finding: { code: string } | null; spec: { action: string } | null };
+    const data = result.structuredContent as { finding: { code: string } | null; spec: { action: string; touches: unknown[] } | null };
     expect(data.finding?.code).toBe("boundary_test_generation_available");
     expect(data.spec?.action).toBe("scaffold_boundary_tests");
+    expect(data.spec?.touches).toEqual([{ path: "src/list.ts", kind: "empty_collection_check" }]);
     expect(JSON.stringify(data)).not.toMatch(/wallet|hotkey|reward|payout|trust score/i);
   });
 
@@ -34,7 +36,8 @@ describe("MCP gittensory_suggest_boundary_tests (#1972)", () => {
     const result = await client.callTool({
       name: "gittensory_suggest_boundary_tests",
       arguments: {
-        changedFiles: [{ path: "src/list.ts", patch: "+if (items.length === 0) return null;\n" }],
+        changedFiles: [{ path: "src/list.ts" }],
+        boundaryTouches: [{ path: "src/list.ts", kind: "empty_collection_check" }],
         testFiles: ["test/unit/list.test.ts"],
       },
     });
@@ -49,11 +52,37 @@ describe("MCP gittensory_suggest_boundary_tests (#1972)", () => {
     const result = await client.callTool({
       name: "gittensory_suggest_boundary_tests",
       arguments: {
-        changedFiles: [{ path: "src/util.ts", patch: "+export const greeting = 'hello';\n" }],
+        changedFiles: [{ path: "src/util.ts" }],
       },
     });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as { finding: unknown };
     expect(data.finding).toBeNull();
+  });
+
+  it("rejects raw patch input at the MCP boundary", async () => {
+    const client = await connect();
+    const result = await client.callTool({
+      name: "gittensory_suggest_boundary_tests",
+      arguments: {
+        changedFiles: [{ path: "src/list.ts", patch: "+if (items.length === 0) return null;\n" }],
+      },
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  it("ignores boundary touches for files not listed in changedFiles", async () => {
+    const client = await connect();
+    const result = await client.callTool({
+      name: "gittensory_suggest_boundary_tests",
+      arguments: {
+        changedFiles: [{ path: "src/list.ts" }],
+        boundaryTouches: [{ path: "src/other.ts", kind: "empty_collection_check" }],
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as { finding: unknown; spec: unknown };
+    expect(data.finding).toBeNull();
+    expect(data.spec).toBeNull();
   });
 });

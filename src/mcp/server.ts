@@ -125,7 +125,7 @@ import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
 import { loadPublicRepoFocusManifest, loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict } from "../rules/predicted-gate";
 import { buildIssueSlopAssessment, buildSlopAssessment } from "../signals/slop";
-import { buildBoundaryTestGenerationFinding, buildBoundaryTestGenerationSpec, detectBoundaryTouches } from "../signals/boundary-test-generation";
+import { buildBoundaryTestGenerationFinding, buildBoundaryTestGenerationSpec } from "../signals/boundary-test-generation";
 import { buildRepoDataQuality } from "../signals/data-quality";
 import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
@@ -791,13 +791,22 @@ const checkIssueSlopShape = {
 const checkIssueSlopOutputSchema = checkSlopRiskOutputSchema;
 
 // Boundary-safe test-generation suggestion (#1972): pure local-metadata, like checkSlopRisk — the agent
-// supplies changed-file paths + patch text (never full file content) plus any test evidence it already has.
-// Advisory-only; this tool never blocks or writes anything — it only returns criteria/hints for the caller's
-// OWN agent to scaffold tests from (mirrors the local-write-tools.ts no-cloud-write boundary).
+// supplies changed-file paths plus precomputed boundary-touch metadata from its local diff scan. The remote MCP
+// boundary never accepts patch/source text. Advisory-only; this tool never blocks or writes anything — it only
+// returns criteria/hints for the caller's OWN agent to scaffold tests from.
 const suggestBoundaryTestsShape = {
-  changedFiles: z
-    .array(z.object({ path: z.string().min(1).max(400), patch: z.string().max(20000).optional() }))
-    .max(500),
+  changedFiles: z.array(z.object({ path: z.string().min(1).max(400) }).strict()).max(500),
+  boundaryTouches: z
+    .array(
+      z
+        .object({
+          path: z.string().min(1).max(400),
+          kind: z.enum(["array_index_bounds", "null_or_undefined_branch", "empty_collection_check"]),
+        })
+        .strict(),
+    )
+    .max(20)
+    .optional(),
   tests: z.array(z.string().max(400)).max(2000).optional(),
   testFiles: z.array(z.string().max(400)).max(2000).optional(),
 };
@@ -1277,7 +1286,7 @@ export class GittensoryMcp {
       "gittensory_suggest_boundary_tests",
       {
         description:
-          "Boundary-safe test-generation suggestion (#1972): scan changed-file patches for a small, precise set of boundary-condition patterns (off-by-one array/index bounds, null/undefined branches, empty-collection checks) with no test evidence in the diff, and return a LOCAL-execution action spec (criteria/hints only — never generated test code) for your OWN agent to scaffold tests with. Advisory-only; never blocks, never writes.",
+          "Boundary-safe test-generation suggestion (#1972): evaluate locally precomputed boundary-touch metadata (path + pattern kind only; no patch/source text) with no test evidence in the diff, and return a LOCAL-execution action spec (criteria/hints only — never generated test code) for your OWN agent to scaffold tests with. Advisory-only; never blocks, never writes.",
         inputSchema: suggestBoundaryTestsShape,
         outputSchema: suggestBoundaryTestsOutputSchema,
       },
@@ -2294,8 +2303,9 @@ export class GittensoryMcp {
   }
 
   private suggestBoundaryTests(input: z.infer<z.ZodObject<typeof suggestBoundaryTestsShape>>): ToolPayload {
-    const touches = detectBoundaryTouches(input.changedFiles);
-    const finding = buildBoundaryTestGenerationFinding({ files: input.changedFiles, tests: input.tests, testFiles: input.testFiles });
+    const changedPaths = new Set(input.changedFiles.map((file) => file.path));
+    const touches = (input.boundaryTouches ?? []).filter((touch) => changedPaths.has(touch.path));
+    const finding = buildBoundaryTestGenerationFinding({ touches, tests: input.tests, testFiles: input.testFiles });
     const spec = finding ? buildBoundaryTestGenerationSpec(touches) : null;
     return {
       summary: finding ? "Boundary-condition code changed without test evidence." : "No boundary-condition gap detected.",

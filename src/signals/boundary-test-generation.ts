@@ -26,8 +26,6 @@ export type BoundaryPatternKind = "array_index_bounds" | "null_or_undefined_bran
 export type BoundaryTouch = {
   path: string;
   kind: BoundaryPatternKind;
-  /** The matched added line, trimmed, capped for display (never the full patch). */
-  snippet: string;
 };
 
 // Kept deliberately SMALL and PRECISE (per #1972's scope note: false positives are worse than a narrow
@@ -44,7 +42,6 @@ const BOUNDARY_PATTERNS: ReadonlyArray<{ kind: BoundaryPatternKind; pattern: Reg
   { kind: "empty_collection_check", pattern: EMPTY_COLLECTION_CHECK_PATTERN },
 ];
 
-const MAX_SNIPPET_LENGTH = 160;
 const MAX_TOUCHES = 20;
 
 /** Added-line prefix in a unified diff: a single leading `+` not followed by another `+` (which would be the
@@ -71,7 +68,7 @@ export function detectBoundaryTouches(files: BoundaryPatchInput[]): BoundaryTouc
     for (const line of addedLines(patch)) {
       for (const { kind, pattern } of BOUNDARY_PATTERNS) {
         if (!pattern.test(line)) continue;
-        touches.push({ path: file.path, kind, snippet: line.slice(0, MAX_SNIPPET_LENGTH) });
+        touches.push({ path: file.path, kind });
         if (touches.length >= MAX_TOUCHES) return touches;
         break; // one match per line is enough signal; avoid double-counting the same line across patterns
       }
@@ -96,11 +93,12 @@ const PATTERN_LABELS: Record<BoundaryPatternKind, string> = {
  * or evidence-covered repo sees byte-identical behavior.
  */
 export function buildBoundaryTestGenerationFinding(input: {
-  files: BoundaryPatchInput[];
+  files?: BoundaryPatchInput[] | undefined;
+  touches?: BoundaryTouch[] | undefined;
   tests?: string[] | undefined;
   testFiles?: string[] | undefined;
 }): AdvisoryFinding | null {
-  const touches = detectBoundaryTouches(input.files);
+  const touches = input.touches ?? detectBoundaryTouches(input.files ?? []);
   if (touches.length === 0) return null;
   if (hasLocalTestEvidence({ tests: input.tests, testFiles: input.testFiles })) return null;
 
@@ -120,8 +118,7 @@ export function buildBoundaryTestGenerationFinding(input: {
 export type BoundaryTestGenerationSpec = {
   action: "scaffold_boundary_tests";
   description: string;
-  /** The boundary touches this spec was generated from — criteria only, no source content beyond the already-
-   *  public per-line snippet the diff itself carries. */
+  /** The boundary touches this spec was generated from — path + pattern kind only, never source text. */
   touches: BoundaryTouch[];
   /** Natural-language hints the contributor's own agent uses to scaffold tests in the repo's own framework and
    *  conventions — content supplied by gittensory, execution stays on the contributor's machine. */

@@ -583,6 +583,11 @@ describe("buildFocusManifestGuidance", () => {
     expect(guidance.findings.some((finding) => finding.code === "manifest_linked_issue_required")).toBe(true);
   });
 
+  it("REGRESSION (#no-issue-rationale-exemption): does not require a linked issue when the caller reports a clear no-issue rationale", () => {
+    const guidance = buildFocusManifestGuidance({ manifest: wanted, changedPaths: ["src/x.ts"], linkedIssueCount: 0, testFileCount: 1, hasNoIssueRationale: true });
+    expect(guidance.findings.some((finding) => finding.code === "manifest_linked_issue_required")).toBe(false);
+  });
+
   it("prefers a linked issue under the preferred policy", () => {
     const manifest = parseFocusManifest({ wantedPaths: ["src/"], linkedIssuePolicy: "preferred" });
     const guidance = buildFocusManifestGuidance({ manifest, changedPaths: ["src/x.ts"], linkedIssueCount: 0, testFileCount: 1 });

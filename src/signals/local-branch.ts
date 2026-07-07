@@ -10,6 +10,7 @@ import {
   buildQueueHealth,
   buildRepoFitRecommendation,
   buildRoleContext,
+  hasClearNoIssueRationale,
   type ContributorOutcomeHistory,
   type ContributorProfile,
   type ContributorScoringProfile,
@@ -308,6 +309,7 @@ export function buildLocalBranchAnalysis(args: {
     linkedIssueCount: preflight.linkedIssues.length,
     testFileCount: testFiles.length,
     passedValidationCount: validationSummary.passed,
+    hasNoIssueRationale: hasClearNoIssueRationale({ title, body: args.input.body }),
   });
   const localFindings = [
     ...buildLocalFindings(args.input, changedFiles, preflight, scorePreview, baseFreshness, githubBranchStatus, scorePreview.branchEligibility),

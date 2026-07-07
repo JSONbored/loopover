@@ -831,6 +831,23 @@ describe("v2 signal builders", () => {
     expect(missingPacket.findings.map((finding) => finding.code)).toContain("pr_not_cached");
   });
 
+  it("REGRESSION (#no-issue-rationale-exemption): buildPullRequestMaintainerPacket respects a clear no-issue rationale", () => {
+    const rationalePr = { ...pullRequests[0]!, linkedIssues: [], body: "No issue: docs typo fix." };
+    const rationalePacket = buildPullRequestMaintainerPacket({
+      repo,
+      pullRequest: rationalePr,
+      issues: [],
+      pullRequests: [rationalePr],
+      files: [],
+      reviews: [],
+      checks: [],
+      recentMergedPullRequests: [],
+      repoFullName: repo.fullName,
+      pullNumber: rationalePr.number,
+    });
+    expect(rationalePacket.findings.map((finding) => finding.code)).not.toContain("missing_linked_issue");
+  });
+
   it("handles registry change report boundaries and all tracked fields", () => {
     const onlyCurrent = snapshot("only", [{ repo: "JSONbored/gittensory", emissionShare: 0.02, issueDiscoveryShare: 0, labelMultipliers: {} }]);
     const current = snapshot("current", [

@@ -587,11 +587,17 @@ export function buildFocusManifestGuidance(args: {
   linkedIssueCount?: number | undefined;
   testFileCount?: number | undefined;
   passedValidationCount?: number | undefined;
+  // Caller-computed (via hasClearNoIssueRationale in ../signals/engine, not imported here to avoid a
+  // circular dependency -- engine.ts already imports FocusManifest types from this module): a linked-issue-
+  // required/preferred manifest policy must not keep flagging a PR whose body already explains why no
+  // issue is linked, same exemption the "Linked issue" review-panel signal already applies.
+  hasNoIssueRationale?: boolean | undefined;
 }): FocusManifestGuidance {
   const { manifest } = args;
   const changedPaths = args.changedPaths.filter((path) => typeof path === "string" && path.length > 0);
   const labels = (args.labels ?? []).map((label) => label.toLowerCase());
   const linkedIssueCount = Math.max(0, args.linkedIssueCount ?? 0);
+  const hasNoIssueRationale = args.hasNoIssueRationale ?? false;
   const testFileCount = Math.max(0, args.testFileCount ?? 0);
   const passedValidationCount = Math.max(0, args.passedValidationCount ?? 0);
 
@@ -651,7 +657,7 @@ export function buildFocusManifestGuidance(args: {
     publicNextSteps.push(`Consider a maintainer-preferred label (${manifest.preferredLabels.slice(0, 3).join(", ")}).`);
   }
 
-  if (manifest.linkedIssuePolicy === "required" && linkedIssueCount === 0) {
+  if (manifest.linkedIssuePolicy === "required" && linkedIssueCount === 0 && !hasNoIssueRationale) {
     findings.push({
       code: "manifest_linked_issue_required",
       severity: "warning",

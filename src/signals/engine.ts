@@ -2556,7 +2556,7 @@ export function buildPreflightResult(
       action: maintainerAuthored ? "No action." : "Refresh registry data or choose a registered active repo.",
     });
   }
-  if (linkedIssues.length === 0 && lane.lane !== "issue_discovery") {
+  if (linkedIssues.length === 0 && lane.lane !== "issue_discovery" && !hasClearNoIssueRationale({ title: input.title, body: input.body })) {
     findings.push({
       code: "missing_linked_issue",
       severity: "warning",
@@ -2767,7 +2767,7 @@ export function buildPullRequestMaintainerPacket(args: {
       detail: "Gittensory does not have this pull request in the local cache.",
     });
   } else {
-    if (pr.linkedIssues.length === 0) {
+    if (pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(pr)) {
       findings.push({
         code: "missing_linked_issue",
         severity: "warning",

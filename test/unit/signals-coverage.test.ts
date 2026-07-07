@@ -269,7 +269,9 @@ describe("signal coverage edge cases", () => {
     expect(cleanPacket.suggestedActions).toEqual(["Queue looks manageable from cached Gittensory signals."]);
     expect(local.status).toBe("ready");
     expect(local.localDiff).toMatchObject({ codeFileCount: 1, testFileCount: 1, inferredLinkedIssues: [1] });
-    expect(directNoIssue.findings.map((finding) => finding.code)).toContain("missing_linked_issue");
+    // "No issue: typo fix" is a clear no-issue rationale (#no-issue-rationale-exemption) -- no
+    // missing_linked_issue finding despite zero linked issues.
+    expect(directNoIssue.findings.map((finding) => finding.code)).not.toContain("missing_linked_issue");
     expect(outsideUnknownLane).toMatchObject({ status: "hold" });
     expect(outsideUnknownLane.findings.find((finding) => finding.code === "lane_not_recommended")).toMatchObject({
       severity: "warning",
@@ -280,6 +282,15 @@ describe("signal coverage edge cases", () => {
       severity: "info",
       action: "No action.",
     });
+  });
+
+  it("REGRESSION (#no-issue-rationale-exemption): missing_linked_issue only fires without a clear no-issue rationale", () => {
+    const directRepo = repo("owner/direct");
+    const noRationale = buildPreflightResult({ repoFullName: directRepo.fullName, title: "Fix pagination", body: "Just a fix, no context." }, directRepo, [], []);
+    const withRationale = buildPreflightResult({ repoFullName: directRepo.fullName, title: "Fix pagination", body: "No issue: internal cleanup only." }, directRepo, [], []);
+
+    expect(noRationale.findings.map((finding) => finding.code)).toContain("missing_linked_issue");
+    expect(withRationale.findings.map((finding) => finding.code)).not.toContain("missing_linked_issue");
   });
 
   it("recognizes GitHub's fully-qualified owner/repo#N closing reference, repo-scoped", () => {

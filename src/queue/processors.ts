@@ -11254,17 +11254,10 @@ async function recloseDisallowedReopenIfNeeded(
     pr.number,
   );
   const latestReopenerLogin = latestReopener.login?.toLowerCase() ?? null;
-  // A bounded scan that did NOT cover every page and found no reopened event is attacker-controllable: the
-  // original contributor can pad newer issue events until their reopen falls outside the inspected window. Treat
-  // only a visible different reopener (or a fully covered no-match) as superseding; an incomplete unknown result
-  // keeps enforcing the one-shot close. A read error remains distinct because it proves no timeline facts. (#2369)
-  const latestReopenerUnknownInPartialWindow =
-    latestReopenerLogin === null &&
-    !latestReopener.coveredAllPages &&
-    !latestReopener.errored;
-  const reopenerSuperseded =
-    latestReopener.errored ||
-    (!latestReopenerUnknownInPartialWindow && latestReopenerLogin !== reopener);
+  // A bounded scan that did NOT cover every page and found no reopened event is attacker-controllable: padding can
+  // hide either the original contributor reopen or a later maintainer-authorized reopen. If the current reopener is
+  // not visible and confirmed to still be the webhook sender, fail safe by denying the GitHub write. (#2369)
+  const reopenerSuperseded = latestReopener.errored || latestReopenerLogin !== reopener;
   if (reopenerSuperseded) {
     await recordAuditEvent(env, {
       eventType: "github_app.reopen_reclosed",

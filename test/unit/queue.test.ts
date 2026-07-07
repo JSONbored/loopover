@@ -23132,7 +23132,7 @@ describe("one-shot reopen prevention", () => {
     expect(audit?.outcome).toBe("completed");
   });
 
-  it("REGRESSION: re-closes when padding hides the contributor reopen beyond the inspected event window", async () => {
+  it("REGRESSION: denies when padding makes the latest reopener ambiguous beyond the inspected event window", async () => {
     const calls: Array<{ url: string; method: string }> = [];
     const eventPages: number[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -23163,11 +23163,11 @@ describe("one-shot reopen prevention", () => {
 
     expect(eventPages).toContain(22);
     expect(eventPages).not.toContain(12);
-    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(true);
-    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(true);
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(false);
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
     const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.reopen_reclosed").first<{ outcome: string; detail: string }>();
-    expect(audit?.outcome).toBe("completed");
-    expect(audit?.detail).toContain("re-closed a disallowed reopen by contributor");
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("the current reopener is now unknown, not contributor");
   });
 
   it("REGRESSION: fails CLOSED (denies the re-close) when the reopener-timeline read errors (#2369)", async () => {

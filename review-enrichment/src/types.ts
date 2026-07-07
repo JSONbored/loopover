@@ -103,6 +103,7 @@ export interface InstallScriptFinding {
   version: string;
   hooks: string[];
   publishedAt: string | null;
+  metadataCapped?: true;
 }
 
 /** A newly-added/upgraded npm package that is materially heavy but only directly imported/required a few times

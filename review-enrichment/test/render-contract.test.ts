@@ -50,6 +50,25 @@ test("renderBrief omits descriptor-owned and fallback sections for empty finding
   assert.equal(systemSuffix, "");
 });
 
+test("renderBrief reports capped install-script metadata without claiming hooks", () => {
+  const { promptSection } = renderBrief({
+    installScript: [
+      {
+        package: "evilpkg",
+        version: "1.0.0",
+        hooks: [],
+        publishedAt: null,
+        metadataCapped: true,
+      },
+    ],
+  });
+
+  assert.match(promptSection, /Dependency install scripts/);
+  assert.match(promptSection, /evilpkg@1\.0\.0/);
+  assert.match(promptSection, /metadata exceeded the scan cap/);
+  assert.doesNotMatch(promptSection, /runs\s+\s*on install/);
+});
+
 test("buildBrief reports partial analyzer results as degraded", async () => {
   const analyzers: AnalyzerRegistry = {
     dependency: async () => [

@@ -89,3 +89,45 @@ test("scanInstallScripts treats version-identifying exact metadata as top-level 
 
   assert.deepEqual(findings, []);
 });
+
+test("scanInstallScripts reports capped npm metadata for manual lifecycle review", async () => {
+  const findings = await scanInstallScripts(npmAdd("evilpkg"), undefined, {
+    analysis: {
+      fetchJson: async () => ({
+        ok: false,
+        reason: "response_too_large",
+        bytes: null,
+        elapsedMs: 5,
+        endpointCategory: "npm-version",
+        capped: true,
+      }),
+    },
+  });
+
+  assert.deepEqual(findings, [
+    {
+      package: "evilpkg",
+      version: "1.0.0",
+      hooks: [],
+      publishedAt: null,
+      metadataCapped: true,
+    },
+  ]);
+});
+
+test("scanInstallScripts keeps non-size registry failures silent", async () => {
+  const findings = await scanInstallScripts(npmAdd("missingpkg"), undefined, {
+    analysis: {
+      fetchJson: async () => ({
+        ok: false,
+        reason: "http_error",
+        status: 404,
+        bytes: null,
+        elapsedMs: 5,
+        endpointCategory: "npm-version",
+      }),
+    },
+  });
+
+  assert.deepEqual(findings, []);
+});

@@ -73,6 +73,12 @@ export function renderBrief(
       "### Dependency install scripts (supply-chain risk — review before merging)",
     );
     for (const dep of installScripts) {
+      if (dep.metadataCapped) {
+        lines.push(
+          `- ${safeCodeSpan(`${dep.package}@${dep.version}`)} registry metadata exceeded the scan cap; manually inspect lifecycle scripts before merging`,
+        );
+        continue;
+      }
       const when = dep.publishedAt
         ? ` (published ${dep.publishedAt.slice(0, 10)})`
         : "";

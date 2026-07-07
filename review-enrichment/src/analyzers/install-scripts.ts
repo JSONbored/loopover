@@ -139,7 +139,18 @@ export async function scanInstallScripts(
     const response = options.analysis
       ? await options.analysis.fetchJson<NpmVersionMetadata | NpmPackumentMetadata>(url, fetchOptions)
       : await boundedFetchJson<NpmVersionMetadata | NpmPackumentMetadata>(url, fetchOptions);
-    if (!response.ok) continue;
+    if (!response.ok) {
+      if (response.reason === "response_too_large") {
+        findings.push({
+          package: change.package,
+          version: change.to,
+          hooks: [],
+          publishedAt: null,
+          metadataCapped: true,
+        });
+      }
+      continue;
+    }
     const data = response.data;
     const version = versionMetadata(data, change.to);
     const scripts = version?.scripts ?? {};

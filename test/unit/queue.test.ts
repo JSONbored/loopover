@@ -53,7 +53,7 @@ import {
   markAiReviewPublished,
   recordReviewSuppression,
 } from "../../src/db/repositories";
-import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, claimAiReviewLock, claimPrActuationLock, contributorEvidenceBatchSize, enrichOpenPullRequestsWithChangedFiles, processJob, reconcileLiveDuplicateSiblings, releaseAiReviewLock, releasePrActuationLock } from "../../src/queue/processors";
+import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, claimAiReviewLock, claimPrActuationLock, contributorEvidenceBatchSize, enrichOpenPullRequestsWithChangedFiles, processJob, reconcileLiveDuplicateSiblings, releaseAiReviewLock, releasePrActuationLock, SWEEP_FANOUT_RESOLUTION_CONCURRENCY } from "../../src/queue/processors";
 import type { PullRequestRecord } from "../../src/types";
 import { aiReviewCacheInputFingerprint } from "../../src/review/ai-review-cache-input";
 import { fingerprint as reviewMemoryFingerprint } from "../../src/review/review-memory-match";
@@ -823,6 +823,37 @@ describe("queue processors", () => {
     expect(fanout?.outcome).toBe("queued"); // reached — the dispatch failure did not throw the fan-out itself
     expect(JSON.parse(fanout?.metadata_json ?? "{}")).toMatchObject({ repoCount: 2 }); // both PASSED their settings/draining checks regardless of dispatch outcome
     errors.mockRestore();
+  });
+
+  it("REGRESSION (#3899): resolves multiple repos' settings/drain-state CONCURRENTLY, bounded by SWEEP_FANOUT_RESOLUTION_CONCURRENCY", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_REPOS: "",
+      JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue,
+    });
+    const repoNames = ["r1", "r2", "r3", "r4", "r5", "r6"];
+    for (const name of repoNames) {
+      await upsertRepositoryFromGitHub(env, { name, full_name: `owner/${name}`, private: false, owner: { login: "owner" } });
+      await upsertRepositorySettings(env, { repoFullName: `owner/${name}`, autonomy: { label: "auto" } });
+    }
+    const realResolve = repositorySettingsModule.resolveRepositorySettings;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const resolveSpy = vi.spyOn(repositorySettingsModule, "resolveRepositorySettings").mockImplementation(async (e, repoFullName) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5)); // hold the window open long enough for others to overlap
+      const result = await realResolve(e, repoFullName);
+      inFlight -= 1;
+      return result;
+    });
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule" });
+
+    expect(maxInFlight).toBeGreaterThan(1); // proves real overlap — not the old strictly-sequential loop
+    expect(maxInFlight).toBeLessThanOrEqual(SWEEP_FANOUT_RESOLUTION_CONCURRENCY); // proves BOUNDED, not unlimited fan-out
+    expect(sent.filter((m) => m.type === "agent-regate-sweep").length).toBe(repoNames.length); // every repo still dispatched
+    resolveSpy.mockRestore();
   });
 
   it("agent re-gate sweep recomputes stale open PR verdicts as an advisory audit, never publishing (#777)", async () => {

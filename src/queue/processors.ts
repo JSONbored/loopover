@@ -387,6 +387,7 @@ import {
   loadRepoFocusManifest,
   loadRepoFocusManifests,
   loadRepoReviewContext,
+  mapWithConcurrencyLimit,
 } from "../signals/focus-manifest-loader";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { getLastRepoDocRefreshAttemptedAtBulk, performRepoDocRefresh } from "../github/repo-doc-refresh-runner";
@@ -1243,6 +1244,16 @@ async function fanOutRepoSignalSnapshotJobs(
   });
 }
 
+// Bounded concurrency for the per-repo settings+drain-state resolution below (#3899) — matches
+// REPO_FOCUS_MANIFEST_MAX_CONCURRENT_LOADS, the same "many small per-repo D1/KV reads" shape.
+export const SWEEP_FANOUT_RESOLUTION_CONCURRENCY = 4;
+
+type SweepFanoutResolutionOutcome =
+  | { kind: "ineligible" }
+  | { kind: "draining" }
+  | { kind: "configured"; repo: { fullName: string; installationId?: number } }
+  | { kind: "errored" };
+
 // #777 scheduled re-gate sweep. The cron (index.ts) enqueues one fan-out job hourly; this enqueues a per-repo
 // sweep job for every repo that opted the agent in (an acting autonomy level). Mirrors the signal-snapshot
 // fan-out so each repo's sweep runs as its own bounded, retryable queue message.
@@ -1281,46 +1292,54 @@ async function fanOutAgentRegateSweepJobs(
       ...(typeof repo?.installationId === "number" ? { installationId: repo.installationId } : {}),
     });
   }
+  // #3899: resolve every repo's settings + drain-state CONCURRENTLY (bounded), not one at a time. Each repo
+  // costs resolveRepositorySettings's own 3 parallel round-trips plus a 4th getLatestRegatedAt read; awaiting
+  // that serially per repo made this whole prefix scale linearly with repo count, before the per-repo dispatch
+  // below (already parallel) even started. Reuses the same bounded worker-pool helper loadRepoFocusManifests
+  // already relies on for the same "many small per-repo D1/KV reads" shape.
+  const outcomes = await mapWithConcurrencyLimit(
+    [...byKey.values()],
+    SWEEP_FANOUT_RESOLUTION_CONCURRENCY,
+    async (repo): Promise<SweepFanoutResolutionOutcome> => {
+      const repoFullName = repo.fullName;
+      // #audit-sweep-fanout-isolation: one repo's settings/draining-check failure (a transient D1 read error, say)
+      // must not throw and abort resolution for every OTHER repo's independent worker — return an "errored"
+      // outcome for just this repo (it gets picked up again next tick) instead of rejecting.
+      try {
+        const settings = await resolveRepositorySettings(env, repoFullName);
+        if (
+          !(
+            isConvergenceRepoAllowed(env, repoFullName) ||
+            isAgentConfigured(settings.autonomy)
+          )
+        )
+          return { kind: "ineligible" };
+        // In-flight guard (#audit-sweep-fanout): skip a repo whose prior sweep is still draining — its per-PR jobs are
+        // mid-flight and stamping last_regated_at as they run, so the freshest stamp being within the sweep window
+        // means a sweep is active. Re-arming now would enqueue duplicate per-PR jobs for the not-yet-drained
+        // candidates, so this is what finally stops the 2-min cron piling a second full sweep on an unfinished one.
+        if (isRegateSweepDraining(await getLatestRegatedAt(env, repoFullName), now)) return { kind: "draining" };
+        return { kind: "configured", repo };
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "sweep_fanout_repo_check_failed",
+            repository: repoFullName,
+            error: errorMessage(error),
+          }),
+        );
+        return { kind: "errored" };
+      }
+    },
+  );
   const configured: Array<{ fullName: string; installationId?: number }> = [];
   let skippedDraining = 0;
   let skippedErrored = 0;
-  for (const repo of byKey.values()) {
-    const repoFullName = repo.fullName;
-    // #audit-sweep-fanout-isolation: one repo's settings/draining-check failure (a transient D1 read error, say)
-    // must not throw out of this loop and abort the fan-out for EVERY OTHER already-iterated-and-pending repo —
-    // it previously did, since an uncaught throw here escapes the whole function before the dispatch loop below
-    // ever runs. Skip just this repo (it gets picked up again next tick) and keep going.
-    try {
-      const settings = await resolveRepositorySettings(env, repoFullName);
-      if (
-        !(
-          isConvergenceRepoAllowed(env, repoFullName) ||
-          isAgentConfigured(settings.autonomy)
-        )
-      )
-        continue;
-      // In-flight guard (#audit-sweep-fanout): skip a repo whose prior sweep is still draining — its per-PR jobs are
-      // mid-flight and stamping last_regated_at as they run, so the freshest stamp being within the sweep window
-      // means a sweep is active. Re-arming now would enqueue duplicate per-PR jobs for the not-yet-drained
-      // candidates, so this is what finally stops the 2-min cron piling a second full sweep on an unfinished one.
-      if (
-        isRegateSweepDraining(await getLatestRegatedAt(env, repoFullName), now)
-      ) {
-        skippedDraining += 1;
-        continue;
-      }
-      configured.push(repo);
-    } catch (error) {
-      skippedErrored += 1;
-      console.error(
-        JSON.stringify({
-          level: "error",
-          event: "sweep_fanout_repo_check_failed",
-          repository: repoFullName,
-          error: errorMessage(error),
-        }),
-      );
-    }
+  for (const outcome of outcomes) {
+    if (outcome.kind === "configured") configured.push(outcome.repo);
+    else if (outcome.kind === "draining") skippedDraining += 1;
+    else if (outcome.kind === "errored") skippedErrored += 1;
   }
   await Promise.all(
     configured.map((repo, index) => {

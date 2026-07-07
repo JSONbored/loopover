@@ -196,7 +196,8 @@ async function readBoundedResponseText(response: Response): Promise<string | nul
   }
 }
 
-async function mapWithConcurrencyLimit<T, U>(items: T[], limit: number, mapper: (item: T) => Promise<U>): Promise<U[]> {
+/** Bounded-concurrency fan-out: runs `mapper` over `items` with at most `limit` in flight at once (#3899). */
+export async function mapWithConcurrencyLimit<T, U>(items: T[], limit: number, mapper: (item: T) => Promise<U>): Promise<U[]> {
   const results: U[] = new Array(items.length);
   let nextIndex = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {

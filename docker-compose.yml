@@ -802,6 +802,15 @@ services:
       # /var/run/docker.sock grants container-escape risk and is intentionally omitted.
     volumes:
       - runner-work:/tmp/runner
+    # A memory ceiling so a single runaway CI job can't exhaust host RAM and take down the app alongside
+    # it (#3893) -- same universal-default treatment every other service in this file already has. This
+    # is independent of the CPU-priority tuning above: that's host-specific (vCPU count, replica count)
+    # and stays an opt-in docker-compose.override.yml pattern, but a memory cap needs no host-specific
+    # sizing to be a safe default.
+    deploy:
+      resources:
+        limits:
+          memory: "${RUNNER_MEM_LIMIT:-2g}"
 
   # ── Backups (--profile backup) ────────────────────────────────────────────
   # Active database backup (Postgres pg_dump or WAL-safe SQLite online backup) + a Qdrant snapshot, on a loop

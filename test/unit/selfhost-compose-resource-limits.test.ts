@@ -13,7 +13,7 @@ function readYaml(path: string): Record<string, unknown> {
 // Pure structural checks only (no `docker` CLI invocation): the self-hosted runner container this actually
 // runs on does not have Docker-in-Docker access, so a test that shells out to `docker compose config`
 // would be unreliable/environment-dependent here (same constraint as docker-compose-override-example.test.ts).
-describe("docker-compose.yml — per-service memory limits (#1828, #2495)", () => {
+describe("docker-compose.yml — per-service memory limits (#1828, #2495, #3893)", () => {
   const EXPECTED_LIMITS: Record<string, string> = {
     gittensory: "${GITTENSORY_MEM_LIMIT:-2g}",
     redis: "${REDIS_MEM_LIMIT:-512m}",
@@ -24,6 +24,7 @@ describe("docker-compose.yml — per-service memory limits (#1828, #2495)", () =
     loki: "${LOKI_MEM_LIMIT:-1g}",
     tempo: "${TEMPO_MEM_LIMIT:-1g}",
     grafana: "${GRAFANA_MEM_LIMIT:-512m}",
+    runner: "${RUNNER_MEM_LIMIT:-2g}",
   };
 
   it("caps the core app and every heavyweight optional service with an operator-overridable memory limit", () => {
@@ -51,6 +52,7 @@ describe("docker-compose.yml — per-service memory limits (#1828, #2495)", () =
       "LOKI_MEM_LIMIT",
       "TEMPO_MEM_LIMIT",
       "GRAFANA_MEM_LIMIT",
+      "RUNNER_MEM_LIMIT",
     ]) {
       expect(env, key).toContain(key);
     }

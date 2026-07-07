@@ -351,5 +351,13 @@ describe("agent audit-feed route (#784)", () => {
       expect(body.events[0]?.detail).not.toMatch(/reward/i);
       expect(body.events[0]?.detail).toContain("private context");
     });
+
+    it("passes through a null detail on the ?pull= branch unchanged (no sanitizer call on a null)", async () => {
+      const env = createTestEnv();
+      await recordAuditEvent(env, { eventType: "github_app.type_label_decision", actor: "gittensory", targetKey: "owner/repo#7", outcome: "completed", detail: null, createdAt: "2026-06-18T10:00:00.000Z" });
+      const res = await app.request("/v1/repos/owner/repo/agent/audit-feed?pull=7", { headers: headers(env) }, env);
+      const body = (await res.json()) as { events: Array<{ detail: string | null }> };
+      expect(body.events[0]?.detail).toBeNull();
+    });
   });
 });

@@ -23467,6 +23467,26 @@ describe("queue processors", () => {
       });
     }
 
+    // Fails only the ONE audit_events insert whose bound values include `needle` (e.g. a specific
+    // eventType), leaving every other audit write in the same job untouched -- a blanket "throw on any
+    // audit_events insert" (as the sibling #orb-ci-stuck-repeat fail-open tests use for a narrower job
+    // type) breaks unrelated earlier writes on the fuller pull_request webhook path used here.
+    function failAuditEventInsertsContaining(env: Env, needle: string) {
+      const realPrepare = env.DB.prepare.bind(env.DB);
+      env.DB.prepare = ((sql: string) => {
+        const statement = realPrepare(sql);
+        if (!/insert\s+into\s+["`]?audit_events["`]?/i.test(sql)) return statement;
+        return {
+          ...statement,
+          bind(...values: unknown[]) {
+            const bound = statement.bind(...(values as never[]));
+            if (!values.some((value) => typeof value === "string" && value.includes(needle))) return bound;
+            return { ...bound, run: () => Promise.reject(new Error("audit write failed")) };
+          },
+        };
+      }) as typeof env.DB.prepare;
+    }
+
     it("applies the type label when oss_maintainer mode + an unconfirmed miner suppress the context label", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
@@ -23995,6 +24015,112 @@ describe("queue processors", () => {
       expect(seen.issueFetches).toBe(0);
       expect(seen.posted).toEqual(["gittensor:bug"]);
       expect(seen.removed.sort()).toEqual(["gittensor:feature", "gittensor:priority"]);
+    });
+
+    it("records the audit event for a normal applied label decision (#label-decoupling audit)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "label_only",
+        autoLabelEnabled: true,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+      });
+      const seen = { posted: [] as string[], removed: [] as string[], checkRunCreated: false };
+      stubTypeLabelFetch(219, seen);
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "type-label-recorded",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 219, title: "fix: broken pagination", state: "open", user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha219" }, labels: [], body: "Fixes #1" },
+        },
+      });
+
+      expect(seen.posted).toEqual(["gittensor:bug"]);
+      const labelEvent = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.type_label_decision", "JSONbored/gittensory#219")
+        .first<{ outcome: string; detail: string }>();
+      expect(labelEvent?.outcome).toBe("completed");
+      expect(labelEvent?.detail).toBe("applied labels: gittensor:bug");
+    });
+
+    it("does not let a failing audit write stop label application (completed outcome, fail-open)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "label_only",
+        autoLabelEnabled: true,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+      });
+      const seen = { posted: [] as string[], removed: [] as string[], checkRunCreated: false };
+      stubTypeLabelFetch(220, seen);
+      failAuditEventInsertsContaining(env, "github_app.type_label_decision");
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "type-label-completed-audit-fail",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 220, title: "fix: broken pagination", state: "open", user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha220" }, labels: [], body: "Fixes #1" },
+        },
+      });
+
+      // The label application itself must complete even though its audit-event write threw.
+      expect(seen.posted).toEqual(["gittensor:bug"]);
+    });
+
+    it("does not let a failing audit write stop the decision when type labels are disabled (denied outcome, fail-open)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "off",
+        autoLabelEnabled: true,
+        typeLabelsEnabled: false,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+      });
+      const seen = { posted: [] as string[], removed: [] as string[], checkRunCreated: false };
+      stubTypeLabelFetch(221, seen);
+      failAuditEventInsertsContaining(env, "github_app.type_label_decision");
+
+      // Fail-open: the webhook job must still complete (and still reach the type-label decision) even
+      // though recording it fails.
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "type-label-denied-audit-fail",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 221, title: "fix: broken pagination", state: "open", user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha221" }, labels: [], body: "Fixes #1" },
+        },
+      });
+      expect(seen.posted).toEqual([]);
     });
   });
 });

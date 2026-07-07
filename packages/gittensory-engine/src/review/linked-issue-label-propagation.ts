@@ -48,7 +48,19 @@ function normalizeMapping(input: unknown, index: number, warnings: string[]): Li
     warnings.push(`settings.linkedIssueLabelPropagation.mappings[${index}].removeOtherTypeLabels must be a boolean; ignoring this mapping.`);
     return null;
   }
-  return { issueLabel, prLabel, removeOtherTypeLabels: record.removeOtherTypeLabels === true };
+  // Unlike `removeOtherTypeLabels`, a malformed value here can only ever be warned-and-defaulted (never
+  // dropped) -- defaulting to `undefined`/strict is always the SAFE direction, so there is no silent-flip
+  // risk that would justify discarding an otherwise-valid mapping over it. Mirrors `src/review/linked-issue-
+  // label-propagation.ts`'s copy of this normalizer.
+  let trustMaintainerAuthoredIssue: boolean | undefined;
+  if (record.trustMaintainerAuthoredIssue !== undefined) {
+    if (typeof record.trustMaintainerAuthoredIssue === "boolean") {
+      trustMaintainerAuthoredIssue = record.trustMaintainerAuthoredIssue;
+    } else {
+      warnings.push(`settings.linkedIssueLabelPropagation.mappings[${index}].trustMaintainerAuthoredIssue must be a boolean; ignoring it.`);
+    }
+  }
+  return { issueLabel, prLabel, removeOtherTypeLabels: record.removeOtherTypeLabels === true, trustMaintainerAuthoredIssue };
 }
 
 /** Defaults-fill a per-repo `linkedIssueLabelPropagation` override into an always-complete, safe config —

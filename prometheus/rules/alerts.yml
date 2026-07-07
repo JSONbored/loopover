@@ -39,22 +39,30 @@ groups:
   - name: gittensory-jobs
     rules:
       - alert: GittensoryHighJobFailureRatio
-        # Fraction of processed jobs that failed over the last 10m. The `> 0` guard on
-        # the denominator avoids a 0/0 = NaN (which never fires but is noise in /rules).
-        # 0.10 = 10% of jobs failing. Raise if your workload has expected transient
-        # failures; lower if any failure is a real problem.
+        # Fraction of jobs ATTEMPTED (failed + succeeded) that failed over the last 10m.
+        # gittensory_jobs_processed_total only increments on success, so the denominator
+        # must be failed+processed, not processed alone (#3892) -- dividing by processed
+        # alone computes failed:success and can read as high as 100% at a true 50% failure
+        # rate. The `> 0` guard on the ratio avoids a 0/0 = NaN (which never fires but is
+        # noise in /rules) when no jobs ran at all. 0.10 = 10% of jobs failing. Raise if
+        # your workload has expected transient failures; lower if any failure is a real
+        # problem. Mirrors the Grafana "Job Failure Rate" panel's formula.
         expr: |
           (
             sum(rate(gittensory_jobs_failed_total[10m]))
             /
-            sum(rate(gittensory_jobs_processed_total[10m])) > 0
+            (
+              sum(rate(gittensory_jobs_failed_total[10m]))
+              +
+              sum(rate(gittensory_jobs_processed_total[10m]))
+            ) > 0
           ) > 0.10
         for: 15m
         labels:
           severity: warning
         annotations:
           summary: "gittensory job failure ratio above 10%"
-          description: "{{ $value | humanizePercentage }} of jobs processed in the last 10m failed (sustained 15m). Expected: well under 10%."
+          description: "{{ $value | humanizePercentage }} of jobs attempted in the last 10m failed (sustained 15m). Expected: well under 10%."
           runbook: "Tail logs for level=error job events (e.g. selfhost_cron_error). A spike usually means a bad upstream (GitHub API / AI provider / DB) or a poison payload — check what changed."
 
       - alert: GittensoryDeadLetterJobsGrowing

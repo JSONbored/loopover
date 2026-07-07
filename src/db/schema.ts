@@ -157,6 +157,9 @@ export const repositorySettings = sqliteTable("repository_settings", {
   reviewEvasionProtection: text("review_evasion_protection").notNull().default("off"),
   reviewEvasionLabel: text("review_evasion_label").notNull().default("review-evasion"),
   reviewEvasionComment: integer("review_evasion_comment", { mode: "boolean" }).notNull().default(true),
+  // Merge-train FIFO gate (#selfhost-merge-train): off by default, same "opt-in, no surprise behavior change"
+  // shape as reviewEvasionProtection above.
+  mergeTrainMode: text("merge_train_mode").notNull().default("off"),
   // Config-driven before/after screenshot-table gate (#2006): off by default. whenLabels/whenPaths are JSON
   // string arrays (mirrors contributorBlacklistJson's shape); screenshotTableGateMessage is nullable ("no
   // override" is a `.gittensory.yml`-only concept -- null here means "use the built-in default message").

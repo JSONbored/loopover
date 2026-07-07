@@ -1009,6 +1009,14 @@ export type RepositorySettings = {
    *  re-closes as the App -- a close the contributor cannot themselves reopen (#one-shot-reopen) -- applies
    *  the configured label/comment, and records a `review_evasion` moderation strike. */
   reviewEvasionProtection?: "off" | "close" | undefined;
+  /** Merge-train FIFO gate (#selfhost-merge-train): without this, a PR merges the instant its OWN gate
+   *  clears, with zero awareness of an older sibling PR still open in the same repo -- proven live to cause
+   *  out-of-order merges and the conflicts that follow. `"off"` (the default) is unchanged behavior.
+   *  `"audit"` logs what the gate WOULD hold, without actually holding anything -- the safe way to validate
+   *  the fix before enabling it for real. `"enforce"` actually defers a merge behind a still-viable older
+   *  sibling, bounded by a staleness cap (see {@link "../review/merge-train"}) so one stuck old PR can never
+   *  block newer ones forever. */
+  mergeTrainMode?: "off" | "audit" | "enforce" | undefined;
   /** Review-evasion protection: label applied alongside the enforcement close, gated on `close` autonomy
    *  like every other anti-abuse label (#label-scoping), mirroring {@link blacklistLabel}'s shape. `undefined`
    *  ⇒ the `"review-evasion"` default; explicit `null` ⇒ close without any label. */

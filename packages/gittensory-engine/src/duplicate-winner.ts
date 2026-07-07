@@ -11,14 +11,11 @@
  * caller can compute the winner ONCE per review run and thread the result boolean consistently into every
  * surface (advisory finding, close reason, slop, panels), so they agree by construction.
  *
- * ELECTION ORDER (#dup-winner true-creation-time): prefer each PR's true GitHub `pull_request.created_at` —
- * the real order contributors opened their PRs in — over `linkedIssueClaimedAt` (gittensory's own sync-time,
- * i.e. whenever a webhook/sweep/backfill pass happened to OBSERVE the linked issue). Sync order and creation
- * order diverge whenever processing isn't strictly FIFO (a stalled sweep catching up on a backlog, backfill
- * reordering, webhook delivery delay), under the old claim-time-only rule, that divergence could crown a
- * LATER contributor the winner and close the PR of whoever actually opened first. `createdAt` is compared
- * only when BOTH sides of a given comparison have a valid one; otherwise this falls back to the legacy
- * claim-time comparison unchanged, so sparse/legacy rows keep their existing fail-closed behavior exactly.
+ * ELECTION ORDER: compare `linkedIssueClaimedAt`, the time gittensory first observed the PR claiming
+ * the issue. GitHub `pull_request.created_at` is intentionally not an ordering signal here: contributors can
+ * edit an old placeholder PR to add a linked issue later, so creation time would let backdated claims steal
+ * duplicate-winner credit from the PR that actually claimed the issue first. Sparse legacy rows that lack
+ * claim timing keep failing closed so unknown ordering cannot suppress duplicate evidence.
  *
  * INVARIANT (the caller MUST honor it): {@link openSiblingNumbers} carries OPEN-only sibling PR numbers. The
  * existing sources already exclude closed/merged PRs. Once the winner closes (e.g. red CI), it leaves the open
@@ -34,7 +31,7 @@
 export type DuplicateClaimMember = {
   number: number;
   linkedIssueClaimedAt?: string | null | undefined;
-  /** GitHub's true PR creation time. See the module doc's "ELECTION ORDER" note. */
+  /** GitHub's true PR creation time. Retained for caller compatibility; not used for winner ordering. */
   createdAt?: string | null | undefined;
 };
 
@@ -55,8 +52,7 @@ export function isDuplicateClusterWinner(prNumber: number, openSiblingNumbers: n
 
 /**
  * True iff `pr` is the earliest-elected claimant in the open duplicate cluster (see the module doc's
- * "ELECTION ORDER" note for the createdAt-vs-claim-time precedence). Sparse legacy rows fail closed; ties
- * between equally-ordered members use PR number.
+ * "ELECTION ORDER" note). Sparse legacy rows fail closed; ties between equally-ordered members use PR number.
  */
 export function isDuplicateClusterWinnerByClaim(pr: DuplicateClaimMember, openSiblings: DuplicateClaimMember[]): boolean {
   if (openSiblings.length === 0) return true;
@@ -67,18 +63,11 @@ export function isDuplicateClusterWinnerByClaim(pr: DuplicateClaimMember, openSi
 }
 
 /**
- * True iff `pr` is ordered at or ahead of `sibling` for cluster-winner purposes. Prefers `createdAt` when BOTH
- * sides have a valid one (the true creation-time order); otherwise falls back to the legacy `linkedIssueClaimedAt`
- * comparison unchanged (including its fail-closed-on-missing/invalid-timestamp behavior), so a mixed
- * legacy/modern cluster never silently guesses using two different clocks for the two sides of one comparison.
+ * True iff `pr` is ordered at or ahead of `sibling` for cluster-winner purposes. Only the observed linked-issue
+ * claim time participates in the election; `createdAt` is deliberately ignored because an older PR can claim a
+ * linked issue later by editing its body.
  */
 function prPrecedesSibling(pr: DuplicateClaimMember, sibling: DuplicateClaimMember): boolean {
-  const prCreated = claimTimeMs(pr.createdAt);
-  const siblingCreated = claimTimeMs(sibling.createdAt);
-  if (prCreated !== null && siblingCreated !== null) {
-    if (prCreated !== siblingCreated) return prCreated < siblingCreated;
-    return pr.number <= sibling.number;
-  }
   const prClaim = claimTimeMs(pr.linkedIssueClaimedAt);
   if (prClaim === null) return false;
   const siblingClaim = claimTimeMs(sibling.linkedIssueClaimedAt);

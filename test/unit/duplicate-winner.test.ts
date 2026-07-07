@@ -92,76 +92,50 @@ describe("isDuplicateClusterWinnerByClaim (#dup-winner claim election)", () => {
   });
 });
 
-describe("isDuplicateClusterWinnerByClaim createdAt precedence (#dup-winner true-creation-time)", () => {
+describe("isDuplicateClusterWinnerByClaim claim-time election with createdAt present (#dup-winner anti-backdating)", () => {
   const member = (number: number, createdAt: string | null, linkedIssueClaimedAt: string | null) => ({ number, createdAt, linkedIssueClaimedAt });
 
-  it("REGRESSION: elects the PR that GitHub says opened first, even when gittensory OBSERVED (claimed) the later-opened sibling first", () => {
-    // PR 13 truly opened first (10:00) but gittensory's stalled sweep only got around to syncing/claiming it at
-    // 11:00. PR 14 opened later (10:05) but was claimed immediately (10:06) because the sweep happened to reach
-    // it first. Under the old claim-time-only rule, 14 would wrongly win and 13 (the real first mover) would be
-    // closed as the "duplicate." createdAt must override that.
+  it("REGRESSION: does not let an older placeholder PR steal winner credit by adding the issue later", () => {
+    // PR 12 was opened first but only edited in the linked issue after PR 13 had already claimed it. The
+    // anti-backdating signal is linkedIssueClaimedAt, so createdAt must not override the actual claim order.
     expect(
       isDuplicateClusterWinnerByClaim(
-        member(13, "2026-06-29T10:00:00.000Z", "2026-06-29T11:00:00.000Z"),
-        [member(14, "2026-06-29T10:05:00.000Z", "2026-06-29T10:06:00.000Z")],
+        member(12, "2026-06-29T09:00:00.000Z", "2026-06-29T10:05:00.000Z"),
+        [member(13, "2026-06-29T09:30:00.000Z", "2026-06-29T10:00:00.000Z")],
+      ),
+    ).toBe(false);
+    expect(
+      isDuplicateClusterWinnerByClaim(
+        member(13, "2026-06-29T09:30:00.000Z", "2026-06-29T10:00:00.000Z"),
+        [member(12, "2026-06-29T09:00:00.000Z", "2026-06-29T10:05:00.000Z")],
       ),
     ).toBe(true);
-    // And symmetrically, the later-created PR no longer wins just because it was claimed first.
+  });
+
+  it("ignores createdAt even when both sides have valid values", () => {
     expect(
       isDuplicateClusterWinnerByClaim(
-        member(14, "2026-06-29T10:05:00.000Z", "2026-06-29T10:06:00.000Z"),
+        member(14, "2026-06-29T10:05:00.000Z", "2026-06-29T10:00:00.000Z"),
         [member(13, "2026-06-29T10:00:00.000Z", "2026-06-29T11:00:00.000Z")],
       ),
-    ).toBe(false);
-  });
-
-  it("falls back to claim-time comparison when only ONE side has a valid createdAt (mixed legacy/modern cluster)", () => {
-    // pr has createdAt; sibling (a legacy row) does not — never mix clocks across the two sides of one
-    // comparison. pr's claim (10:00) is earlier than sibling's claim (10:05) ⇒ pr still wins via the fallback.
-    expect(
-      isDuplicateClusterWinnerByClaim(
-        { number: 12, createdAt: "2026-06-29T09:00:00.000Z", linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z" },
-        [{ number: 13, createdAt: null, linkedIssueClaimedAt: "2026-06-29T10:05:00.000Z" }],
-      ),
-    ).toBe(true);
-    // Same mixed case, but pr's own claim is later than the sibling's ⇒ pr loses via the fallback.
-    expect(
-      isDuplicateClusterWinnerByClaim(
-        { number: 12, createdAt: "2026-06-29T09:00:00.000Z", linkedIssueClaimedAt: "2026-06-29T10:05:00.000Z" },
-        [{ number: 13, createdAt: null, linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z" }],
-      ),
-    ).toBe(false);
-  });
-
-  it("falls back to claim-time comparison when a createdAt value is present but unparseable", () => {
-    expect(
-      isDuplicateClusterWinnerByClaim(
-        member(12, "not-a-date", "2026-06-29T10:00:00.000Z"),
-        [member(13, "2026-06-29T09:00:00.000Z", "2026-06-29T10:05:00.000Z")],
-      ),
     ).toBe(true);
   });
 
-  it("tie-breaks equal createdAt values by PR number, mirroring the claim-time tie-break", () => {
-    expect(isDuplicateClusterWinnerByClaim(member(12, "2026-06-29T10:00:00.000Z", null), [member(13, "2026-06-29T10:00:00.000Z", null)])).toBe(true);
-    expect(isDuplicateClusterWinnerByClaim(member(13, "2026-06-29T10:00:00.000Z", null), [member(12, "2026-06-29T10:00:00.000Z", null)])).toBe(false);
-  });
-
-  it("createdAt-based cases are unaffected by (and do not require) a claim timestamp at all", () => {
-    expect(isDuplicateClusterWinnerByClaim(member(12, "2026-06-29T10:00:00.000Z", null), [member(13, "2026-06-29T10:05:00.000Z", null)])).toBe(true);
+  it("still fails closed when createdAt is present but claim timing is missing", () => {
+    expect(isDuplicateClusterWinnerByClaim(member(12, "2026-06-29T10:00:00.000Z", null), [member(13, "2026-06-29T10:05:00.000Z", null)])).toBe(false);
   });
 });
 
 describe("resolveDuplicateClusterWinnerNumber (#dup-winner-credit)", () => {
   it("returns this PR's own number when it is the winner", () => {
-    expect(resolveDuplicateClusterWinnerNumber({ number: 12, createdAt: "2026-06-29T10:00:00.000Z" }, [{ number: 13, createdAt: "2026-06-29T10:05:00.000Z" }])).toBe(12);
+    expect(resolveDuplicateClusterWinnerNumber({ number: 12, linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z" }, [{ number: 13, linkedIssueClaimedAt: "2026-06-29T10:05:00.000Z" }])).toBe(12);
   });
 
   it("returns the actual winning sibling's number when this PR is a loser, even with multiple siblings", () => {
     expect(
-      resolveDuplicateClusterWinnerNumber({ number: 14, createdAt: "2026-06-29T10:10:00.000Z" }, [
-        { number: 13, createdAt: "2026-06-29T10:00:00.000Z" },
-        { number: 15, createdAt: "2026-06-29T10:05:00.000Z" },
+      resolveDuplicateClusterWinnerNumber({ number: 14, linkedIssueClaimedAt: "2026-06-29T10:10:00.000Z" }, [
+        { number: 13, linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z" },
+        { number: 15, linkedIssueClaimedAt: "2026-06-29T10:05:00.000Z" },
       ]),
     ).toBe(13);
   });
@@ -223,9 +197,9 @@ describe("dupWinnerLinkedDuplicateCount (#dup-winner close-reason seam)", () => 
     expect(dupWinnerLinkedDuplicateCount([], 12, "2026-06-29T10:00:00.000Z", false)).toBe(0);
   });
 
-  it("REGRESSION (#dup-winner true-creation-time): createdAt overrides a claim-time-only verdict when passed through", () => {
-    // By claim time alone this PR (12) would lose to sibling 13 (claimed earlier, 10:00 vs 10:05). But 12's true
-    // createdAt (09:00) precedes 13's (09:30), so passing createdAt flips the verdict to a win (count 0).
+  it("REGRESSION (#dup-winner anti-backdating): createdAt does not override claim-time ordering when passed through", () => {
+    // PR 12 is older, but sibling 13 claimed the linked issue first; passing createdAt must not suppress the
+    // duplicate count for the later claimant.
     expect(
       dupWinnerLinkedDuplicateCount(
         [{ number: 13, linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z", createdAt: "2026-06-29T09:30:00.000Z" }],
@@ -234,21 +208,21 @@ describe("dupWinnerLinkedDuplicateCount (#dup-winner close-reason seam)", () => 
         true,
         "2026-06-29T09:00:00.000Z",
       ),
-    ).toBe(0);
+    ).toBe(1);
   });
 });
 
 describe("dupWinnerLinkedDuplicateWinnerNumber (#dup-winner-credit close-reason naming seam)", () => {
   it("flag OFF ⇒ null regardless of who would win (generic wording, byte-identical to before this existed)", () => {
-    expect(dupWinnerLinkedDuplicateWinnerNumber([{ number: 13, createdAt: "2026-06-29T10:05:00.000Z" }], 12, undefined, false, "2026-06-29T10:00:00.000Z")).toBeNull();
+    expect(dupWinnerLinkedDuplicateWinnerNumber([{ number: 13, linkedIssueClaimedAt: "2026-06-29T10:05:00.000Z" }], 12, "2026-06-29T10:00:00.000Z", false, "2026-06-29T10:00:00.000Z")).toBeNull();
   });
 
   it("winner + flag ON ⇒ null (nothing to name — its own close reason omits the duplicate cause entirely)", () => {
-    expect(dupWinnerLinkedDuplicateWinnerNumber([{ number: 13, createdAt: "2026-06-29T10:05:00.000Z" }], 12, undefined, true, "2026-06-29T10:00:00.000Z")).toBeNull();
+    expect(dupWinnerLinkedDuplicateWinnerNumber([{ number: 13, linkedIssueClaimedAt: "2026-06-29T10:05:00.000Z" }], 12, "2026-06-29T10:00:00.000Z", true, "2026-06-29T10:00:00.000Z")).toBeNull();
   });
 
   it("loser + flag ON ⇒ the actual winning sibling's number", () => {
-    expect(dupWinnerLinkedDuplicateWinnerNumber([{ number: 12, createdAt: "2026-06-29T10:00:00.000Z" }], 14, undefined, true, "2026-06-29T10:10:00.000Z")).toBe(12);
+    expect(dupWinnerLinkedDuplicateWinnerNumber([{ number: 12, linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z" }], 14, "2026-06-29T10:10:00.000Z", true, "2026-06-29T10:10:00.000Z")).toBe(12);
   });
 
   it("loser + flag ON, but the election is too ambiguous ⇒ null (falls back to generic wording)", () => {
@@ -305,7 +279,7 @@ describe("listOtherOpenPullRequests ordering (#audit-3.9)", () => {
   });
 });
 
-describe("upsertPullRequestFromGitHub createdAt threading (#dup-winner true-creation-time)", () => {
+describe("upsertPullRequestFromGitHub createdAt threading", () => {
   it("populates createdAt from GitHub's true pull_request.created_at on the IMMEDIATE upsert return, not just on a later DB round-trip", async () => {
     const env = createTestEnv();
     const record = await upsertPullRequestFromGitHub(env, "owner/repo", {

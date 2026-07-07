@@ -360,8 +360,8 @@ export const ISSUE_SLOP_RUBRIC_MARKDOWN = [
   "# Gittensory issue slop triage rubric",
   "",
   "- `clean`: 0",
-  "- `low`: 1-24",
-  "- `elevated`: 25-59",
+  "- `low`: 1-30",
+  "- `elevated`: 31-59",
   "- `high`: 60-100",
   "",
   "Advisory-only (issues never block). Current deterministic signals:",
@@ -500,14 +500,16 @@ function ensurePublicSafeText(text: string, fallback: string): string {
   return isFocusManifestPublicSafe(text) ? text : fallback;
 }
 
-// Documented thresholds (#565): the deterministic slopRisk (0-100) maps to fixed bands — clean = 0,
-// low = 1-24, elevated = 25-59, high = 60-100. Strong signals (trivial churn, non-substantive padding)
-// weigh 30 (any two reach `high`); weak/corroborating/traceability signals — including missing-test-evidence
-// — weigh 15. Identical metadata always yields an identical band (see golden fixtures).
+// Documented thresholds (#565, recalibrated by #3939): the deterministic slopRisk (0-100) maps to fixed
+// bands — clean = 0, low = 1-30, elevated = 31-59, high = 60-100. Strong signals (trivial churn,
+// non-substantive padding) weigh 30 (any two reach `high`); weak/corroborating/traceability signals —
+// including missing-test-evidence — weigh 15, so a single strong or a pair of weak signals alone now lands
+// in `low`, not `elevated` — `elevated` needs genuine multi-signal evidence (strong+weak ≥ 45, or 3×weak =
+// 45). Identical metadata always yields an identical band (see golden fixtures).
 function slopBandFor(slopRisk: number): SlopBand {
   if (slopRisk <= 0) return "clean";
-  if (slopRisk < 31) return "low";    // raised from 25: a single strong signal (30pts) is low, not elevated
-  if (slopRisk < 60) return "elevated"; // elevated now requires multi-signal evidence (strong+weak ≥ 45, or 3×weak = 45)
+  if (slopRisk < 31) return "low";
+  if (slopRisk < 60) return "elevated";
   return "high";
 }
 

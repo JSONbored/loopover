@@ -134,7 +134,7 @@ describe("buildSlopAssessment", () => {
       description: "Add retry-with-backoff to the registry sync client.",
     });
 
-    // De-weighted to 15: missing-test alone is corroborating, not decisive, and lands in `low` (1-24).
+    // De-weighted to 15: missing-test alone is corroborating, not decisive, and lands in `low` (1-30).
     expect(result.slopRisk).toBe(SLOP_WEIGHTS.missingTestEvidence);
     expect(result.band).toBe("low");
     expect(result.findings).toEqual([

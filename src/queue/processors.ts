@@ -171,6 +171,8 @@ import {
   parseGittensoryMentionCommand,
   sanitizePublicComment,
 } from "../github/commands";
+import { classifyPrCommandRequest } from "../github/pr-command-request";
+import { normalizeResolveFindingRef } from "../github/resolve-command";
 import {
   ensurePullRequestLabel,
   removePullRequestLabel,
@@ -5836,16 +5838,25 @@ async function processGitHubWebhook(
           settings,
         );
       }
-      // Review-evasion protection: repeated ready<->draft cycling (#gaming-tactic-draft-cycle). Always counts
-      // the conversion (cheap, no side effects) so the count is accurate from the very first converted_to_draft
-      // event this repo ever sees, even before reviewEvasionProtection is turned on for it -- only the
-      // ENFORCEMENT below is gated on that setting. Runs after both guards above so a PR already closed by
-      // either of them fails this guard's own freshness re-check instead of being redundantly re-closed.
+      // Review-evasion protection: repeated ready<->draft cycling (#gaming-tactic-draft-cycle). Only counts a
+      // conversion PERFORMED BY THE PR'S OWN AUTHOR -- a maintainer/third-party converting the PR to draft is an
+      // unrelated action and must never contribute to (or be conflated with) the author's own cycling pattern;
+      // counting it here would let one maintainer draft-toggle plus the author's own first-ever (legitimate)
+      // conversion reach count>=2 and wrongly close that first conversion as "repeated" cycling. Always counts
+      // (cheap, no side effects) so the count is accurate from the very first converted_to_draft event this repo
+      // ever sees, even before reviewEvasionProtection is turned on for it -- only the ENFORCEMENT is gated on
+      // that setting. Runs after both guards above so a PR already closed by either of them fails this guard's
+      // own freshness re-check instead of being redundantly re-closed.
       if (payload.action === "converted_to_draft" && installationId) {
-        const draftConversionCount = await bumpPullRequestDraftConversionCount(env, repoFullName, pr.number).catch(
-          /* v8 ignore next -- fail-safe: a counter-write failure only means this ONE cycle isn't detected. */
-          () => 0,
-        );
+        const draftConverter = (payload.sender?.login ?? "").toLowerCase();
+        const draftAuthor = (pr.authorLogin ?? "").toLowerCase();
+        const isAuthorDraftConversion = draftConverter.length > 0 && draftConverter === draftAuthor;
+        const draftConversionCount = isAuthorDraftConversion
+          ? await bumpPullRequestDraftConversionCount(env, repoFullName, pr.number).catch(
+              /* v8 ignore next -- fail-safe: a counter-write failure only means this ONE cycle isn't detected. */
+              () => 0,
+            )
+          : 0;
         await maybeCloseRepeatedDraftCycling(
           env,
           deliveryId,
@@ -11978,6 +11989,12 @@ async function maybeCloseRepeatedDraftCycling(
   settings: RepositorySettings,
   draftConversionCount: number,
 ): Promise<void> {
+  // Checked BEFORE claiming the actuation lock (unlike the two sibling guards above): this guard only ever
+  // fires on the >=2nd author-driven conversion of a `reviewEvasionProtection: close` repo, which is rare -- an
+  // unconditional lock claim on every converted_to_draft webhook would add avoidable contention with the two
+  // siblings above on every repo that never enabled this feature, or on every first-time conversion.
+  if ((settings.reviewEvasionProtection ?? "off") !== "close") return;
+  if (draftConversionCount < 2) return;
   const actuationLock = await claimPrActuationLock(env, repoFullName, pr.number);
   if (!actuationLock.acquired) {
     throw new PrActuationLockContendedError(repoFullName, pr.number, "review-evasion-draft-cycle");
@@ -11999,13 +12016,16 @@ async function closeRepeatedDraftCyclingIfDetected(
   settings: RepositorySettings,
   draftConversionCount: number,
 ): Promise<void> {
-  if ((settings.reviewEvasionProtection ?? "off") !== "close") return;
-  if (draftConversionCount < 2) return;
-  const converter = (payload.sender?.login ?? "").toLowerCase();
+  // Defense-in-depth (mirrors the two sibling guards' identical actor check): the call site already only ever
+  // increments draftConversionCount -- and therefore only ever reaches draftConversionCount >= 2 -- when THIS
+  // SAME payload's sender matches the PR's author (both non-empty), so neither `?? ""` fallback below can
+  // actually trigger and the guard below can never actually return here today. Kept anyway so a future call
+  // site added without that same pre-filter can't silently enforce against the wrong (or a blank) actor.
+  /* v8 ignore next -- unreachable given the call site's own author-only increment guarantee; see comment above. */
   const authorLogin = (pr.authorLogin ?? "").toLowerCase();
-  // Only the PR's OWN author converting their OWN PR to draft is a cycling-evasion candidate -- a third party
-  // (e.g. a maintainer converting a contributor's PR to draft) is an ordinary maintainer action, not evasion,
-  // and must never be enforced against the author who didn't do it (mirrors the two sibling guards above).
+  /* v8 ignore next -- unreachable given the call site's own author-only increment guarantee; see comment above. */
+  const converter = (payload.sender?.login ?? "").toLowerCase();
+  /* v8 ignore next -- unreachable given the call site's own author-only increment guarantee; see comment above. */
   if (!converter || !authorLogin || converter !== authorLogin) return;
   if (isProtectedAutomationAuthor(pr.authorLogin)) return;
   if (!pr.headSha) return;

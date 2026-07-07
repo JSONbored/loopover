@@ -22797,12 +22797,12 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: { number: 93, title: "Not yet wired", state: "open", user: { login: "contributor" }, pull_request: {} },
-        comment: { id: 900, body: "@gittensory pause waiting on design sign-off", author_association: "OWNER", user: { login: "maintainer", type: "User" } },
+        comment: { id: 900, body: "@gittensory configuration", author_association: "OWNER", user: { login: "maintainer", type: "User" } },
         sender: { login: "maintainer", type: "User" },
       },
     });
 
-    // No handler claims a bare "pause" comment yet (its dispatch lands in a follow-up bounty), so the Q&A
+    // No handler claims a bare "configuration" comment yet (its dispatch lands in a follow-up bounty), so the Q&A
     // answer-card path must bail rather than post a stray "help" card or any other Q&A comment.
     expect(calls.comments).toBe(0);
     const feedback = await env.DB.prepare("select id from audit_events where event_type = ?").bind("github_app.agent_command_feedback_prompted").first<{ id: string }>();
@@ -26081,6 +26081,32 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
     });
 
+    it("REGRESSION (gate-flagged, gittensory-orb review): a maintainer's draft conversion must NOT count toward the author's own cycle -- the author's first-ever conversion is never enforced even after a prior third-party one", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls, { collaboratorPermission: "write" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+      const maintainerConversion = draftEvasionPayload("contributor");
+      maintainerConversion.sender = { login: "a-maintainer", type: "User" };
+
+      // A maintainer converts the contributor's PR to draft first.
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-mixed-1", eventName: "pull_request", payload: maintainerConversion });
+      // Without the fix, this maintainer action would have already bumped the shared counter to 1.
+      const afterMaintainer = await env.DB.prepare("select draft_conversion_count as n from pull_requests where repo_full_name = ? and number = 42")
+        .bind("JSONbored/gittensory")
+        .first<{ n: number }>();
+      expect(afterMaintainer?.n).toBe(0); // the maintainer's own conversion never counted at all.
+
+      // The AUTHOR now converts their OWN PR to draft for the very first time -- ordinary WIP behavior.
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-mixed-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+      const afterAuthor = await env.DB.prepare("select draft_conversion_count as n from pull_requests where repo_full_name = ? and number = 42")
+        .bind("JSONbored/gittensory")
+        .first<{ n: number }>();
+      expect(afterAuthor?.n).toBe(1); // the author's first conversion is counted as their first, not their second.
+    });
+
     it("does nothing for a protected automation author (e.g. dependabot[bot]), even after a repeated cycle", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
@@ -26303,17 +26329,22 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
       // Deliberately autonomy: {} -- draft-dodge's own outer dispatch condition (isAgentConfigured) is false, so
       // ITS lock claim never fires. The remaining sibling (review-evasion-active-review) has no settings gate at
-      // its OWN lock claim, so it claims+releases the lock normally first (mocked to succeed); THIS guard's own
-      // subsequent claim -- the second and only other .claim() call in this pass -- is the one mocked to fail,
-      // isolating its throw from the sibling's identically-shaped one.
+      // its OWN lock claim, so it claims+releases the lock normally on every converted_to_draft delivery. THIS
+      // guard now checks reviewEvasionProtection/count BEFORE claiming its own lock (#nit-lock-contention), so it
+      // never attempts a claim at all until draftConversionCount reaches 2 -- the first delivery below produces
+      // only the sibling's claim (mocked to succeed); the second produces the sibling's claim (succeeds) THEN
+      // this guard's own first-ever claim attempt, which is the one mocked to fail here.
       await setupEvasionRepo(env, { autonomy: {} });
-      const claimSpy = vi.spyOn(env.SELFHOST_TRANSIENT_CACHE!, "claim").mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      const claimSpy = vi.spyOn(env.SELFHOST_TRANSIENT_CACHE!, "claim").mockResolvedValueOnce(true).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-lock-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      expect(claimSpy).toHaveBeenCalledTimes(1); // count is only 1 -- this guard never attempted a claim yet.
 
       await expect(
-        processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-lock-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") }),
+        processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-lock-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") }),
       ).rejects.toThrow("during review-evasion-draft-cycle");
 
-      expect(claimSpy).toHaveBeenCalledTimes(2);
+      expect(claimSpy).toHaveBeenCalledTimes(3);
       expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
     });
 

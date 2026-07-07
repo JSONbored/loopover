@@ -250,7 +250,7 @@ export async function drainOrbRelay(
       method: "POST",
       headers: { authorization: `Bearer ${env.ORB_ENROLLMENT_SECRET}`, "content-type": "application/json" },
       body: JSON.stringify({ ack }),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) throw new Error(`orb_relay_drain_http_${res.status}`);
     const body = (await res.json()) as { events?: Array<{ deliveryId?: unknown; eventName?: unknown; rawBody?: unknown }> };

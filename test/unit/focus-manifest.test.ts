@@ -2684,6 +2684,12 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: [], whenPaths: [], action: "close" });
   });
 
+  it("resolveEffectiveSettings keeps the DB layer's enabled/action when the manifest override omits them (#2006)", () => {
+    const db = { screenshotTableGate: { enabled: true, whenLabels: ["frontend"], whenPaths: [], action: "comment" } } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { screenshotTableGate: { whenPaths: ["apps/ui/**"] } } }));
+    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: ["frontend"], whenPaths: ["apps/ui/**"], action: "comment" });
+  });
+
   it("drops a malformed screenshotTableGate.action field instead of replacing existing policy with defaults (#2006)", () => {
     const parsed = parseFocusManifest({ settings: { screenshotTableGate: { enabled: true, action: "delete" } } });
     expect(parsed.settings.screenshotTableGate).toEqual({ enabled: true });

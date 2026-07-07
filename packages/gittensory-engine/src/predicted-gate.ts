@@ -315,8 +315,8 @@ export function buildPredictedGateVerdict(args: {
     summary: sanitizePublicComment(evaluation.summary),
     readinessScore: readiness.total,
     confirmedContributor: effectiveConfirmedContributor,
-    blockers: evaluation.blockers.map(publicSafeFinding),
-    warnings: evaluation.warnings.map(publicSafeFinding),
+    blockers: evaluation.blockers.map((finding) => publicSafeFinding(finding)),
+    warnings: evaluation.warnings.map((finding) => publicSafeFinding(finding)),
     funnel: pack === "oss-anti-slop" ? { ...OSS_ANTI_SLOP_FUNNEL } : null,
     note: predictedGateNote(hasChangedPaths),
   };

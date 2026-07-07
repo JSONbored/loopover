@@ -474,6 +474,21 @@ groups:
           description: "{{ $value | printf \"%.0f\" }} AI review(s) came back inconclusive over the last 30m (sustained 10m). Dual-AI review is repeatedly failing to produce a usable verdict."
           runbook: "Check provider health and circuit-breaker state (gittensory_ai_provider_failures_total / gittensory_ai_provider_circuit_open_total) and verify AI_PROVIDER credentials are still valid for every configured reviewer."
 
+      - alert: GittensoryAiReviewOnMergeFloorBypassAttempted
+        # A repo's .gittensory.yml tried to loosen the operator's onMerge/combine/reviewer-count floor and
+        # got clamped back to the operator's own configured minimum (#3901). A governance/config signal, not
+        # an operational outage, but same absolute-increase style as GittensoryAiProviderCircuitOpen above:
+        # any occurrence (> 0) over 1h is worth a look, sustained 5m so a single instantaneous blip doesn't
+        # immediately page.
+        expr: increase(gittensory_ai_review_onmerge_clamped_total[1h]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "a repo's review-floor clamp fired"
+          description: "{{ $value | printf \"%.0f\" }} onMerge/combine/reviewer-count clamp event(s) over the last 1h — a repo config tried to loosen below the operator's configured floor."
+          runbook: "Check which repo's .gittensory.yml requested the loosened setting (gittensory_ai_review_onmerge_clamped_total is labeled by mode) and confirm whether that repo's floor should be adjusted or the request declined."
+
       - alert: GittensoryAiProviderCircuitOpen
         # A provider's circuit breaker opens after AI_PROVIDER_FAILURE_THRESHOLD consecutive failures and
         # short-circuits further attempts for a cooldown window -- ANY circuit-open event in 15m means that

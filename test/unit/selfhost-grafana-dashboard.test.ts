@@ -104,6 +104,16 @@ describe("Gittensory Self-Host Grafana dashboard", () => {
     expect(targets.some((target) => target.expr === "(gittensory_orb_events_recorded_total or vector(0)) - (gittensory_orb_events_exported_total or vector(0))")).toBe(true);
   });
 
+  it("surfaces the onMerge/combine/reviewer-count floor-clamp counter on a panel and an alert (#3901)", () => {
+    const dashboard = readDashboard(selfhostDashboardPath);
+    const targets = dashboard.panels.flatMap((panel) => panel.targets ?? []);
+    const alerts = readFileSync(selfhostAlertsPath, "utf8");
+
+    expect(targets.some((target) => target.expr === "gittensory_ai_review_onmerge_clamped_total or vector(0)")).toBe(true);
+    expect(alerts).toContain("alert: GittensoryAiReviewOnMergeFloorBypassAttempted");
+    expect(alerts).toContain("expr: increase(gittensory_ai_review_onmerge_clamped_total[1h]) > 0");
+  });
+
   it("keeps rate-limit alerts grouped by the dashboard label dimensions", () => {
     const alerts = readFileSync(selfhostAlertsPath, "utf8");
 

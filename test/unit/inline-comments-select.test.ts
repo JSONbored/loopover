@@ -114,6 +114,12 @@ describe("selectAnchoredInlineFindings (#2159)", () => {
   });
 
   it("breaks on the total cap without per-category sorting when perCategoryCap is unset", () => {
+    const twelveLineFiles = [
+      fileWith(
+        "src/a.ts",
+        "@@ -1,0 +1,12 @@\n+1\n+2\n+3\n+4\n+5\n+6\n+7\n+8\n+9\n+10\n+11\n+12",
+      ),
+    ];
     const findings: InlineFinding[] = Array.from({ length: 12 }, (_, index) => ({
       path: "src/a.ts",
       line: index + 1,
@@ -121,7 +127,7 @@ describe("selectAnchoredInlineFindings (#2159)", () => {
       body: `body-${index + 1}`,
       category: "style" as const,
     }));
-    expect(selectAnchoredInlineFindings(findings, files, {})).toHaveLength(DEFAULT_MAX_INLINE_COMMENTS);
+    expect(selectAnchoredInlineFindings(findings, twelveLineFiles, {})).toHaveLength(DEFAULT_MAX_INLINE_COMMENTS);
   });
 
   it("still enforces the total cap after per-category trimming", () => {

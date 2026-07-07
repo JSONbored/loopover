@@ -14,13 +14,7 @@ export type SnapshotReplayViewer = "public" | "authenticated";
 export type SnapshotReplayStatus = "populated" | "stale" | "missing";
 export type SnapshotReplayConfidence = "high" | "medium" | "low" | "unknown";
 export type SnapshotReplayFreshness =
-  | "fresh"
-  | "stale"
-  | "rebuilding"
-  | "missing"
-  | "degraded"
-  | "possibly_stale"
-  | "unknown";
+  "fresh" | "stale" | "rebuilding" | "missing" | "degraded" | "possibly_stale" | "unknown";
 
 export type SnapshotReplaySource = {
   name: string;

@@ -11,11 +11,7 @@ export type AuthorAssociation =
   | "NONE";
 
 export type PreviewScenarioId =
-  | "confirmed-miner"
-  | "non-miner"
-  | "bot-author"
-  | "maintainer-author"
-  | "miner-api-unavailable";
+  "confirmed-miner" | "non-miner" | "bot-author" | "maintainer-author" | "miner-api-unavailable";
 
 export type PreviewScenario = {
   id: PreviewScenarioId;

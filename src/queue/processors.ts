@@ -4117,6 +4117,41 @@ export async function releaseAiReviewLock(
   await releaseTransientLockIfOwner(env, aiReviewLockKey(repoFullName, prNumber, headSha, mode), ownerToken);
 }
 
+/**
+ * The inconclusive-hold shape a pass returns when it lost the {@link claimAiReviewLock} race (#regate-dup-prep):
+ * another pass already owns this exact (repo, PR, head, mode) lock, so THIS pass defers entirely rather than
+ * racing it. Shared by both lock-claim sites that guard runAiReviewForAdvisory's expensive section — the
+ * caller-side claim in maybePublishPrPublicSurface (wraps the cache-read decision itself, so a loser never even
+ * reaches the cache-miss log) and runAiReviewForAdvisory's own claim (the historical, narrower placement, kept for
+ * any other/direct caller) — so both produce byte-identical advisory findings and gate disposition instead of two
+ * hand-written "another pass is running" messages drifting apart over time. `persistable: false` (not merely
+ * `cacheable: false`): the concurrent pass this call deferred to persists the REAL result within seconds, so this
+ * placeholder must never be written even non-durably — a later read within the non-cacheable retry cooldown could
+ * otherwise replay a stale "another pass is running" long after that pass finished.
+ */
+function aiReviewLockContendedResult(
+  advisory: Pick<Awaited<ReturnType<typeof buildPullRequestAdvisory>>, "findings">,
+): Awaited<ReturnType<typeof runAiReviewForAdvisory>> {
+  const findings: AdvisoryFinding[] = [
+    {
+      code: "ai_review_inconclusive",
+      severity: "warning",
+      title: "AI review already in progress for this PR head",
+      detail: "Another Gittensory pass is already running the AI review for this exact PR head. This pass is skipping to avoid a duplicate LLM call.",
+      action: "The gate is held for a human reviewer rather than passed automatically; it re-evaluates once the in-flight review completes or on the next update.",
+    },
+  ];
+  advisory.findings.push(...findings);
+  return {
+    notes: "AI review is already running for this PR head in another Gittensory pass. Gittensory is holding this PR for manual review until that pass completes.",
+    reviewerCount: 0,
+    inlineFindings: [],
+    findings,
+    cacheable: false,
+    persistable: false,
+  };
+}
+
 /** Read the CI head SHA off a `check_suite`/`check_run` `completed` payload (the event node carries `head_sha`;
  *  `check_run` also nests it under `check_suite.head_sha`). Returns "" when absent. The payload type doesn't model
  *  these events, so we narrow off `Record<string, unknown>` the same way the `pull_requests[]` read does. */
@@ -6891,6 +6926,15 @@ export async function runAiReviewForAdvisory(
     // self-host provider's failure log purely for operator correlation; never read by any review logic. Absent
     // (e.g. a sweep/repair fan-out with no single originating delivery, or a unit test) ⇒ the log line omits it.
     deliveryId?: string | undefined;
+    // A {@link claimAiReviewLock} claim the CALLER already acquired (#regate-dup-prep) before its own cache-read
+    // decision, so the (repo, PR, head, mode) mutex covers that cache-read too — not just this function's
+    // expensive section. When supplied and `.acquired`, this function trusts it, skips its OWN claim below
+    // entirely, and — critically — does NOT release it in its `finally` (release stays the claiming caller's job,
+    // so the lock keeps covering the caller's own post-return cache WRITE too; releasing here the instant this
+    // function returns would reopen a narrower version of the exact race this lock exists to close). Absent (the
+    // default, and every existing caller) ⇒ this function claims + releases its own lock exactly as before —
+    // byte-identical to today.
+    preAcquiredAiReviewLock?: TransientLockClaim | undefined;
   },
 ): Promise<
   | {
@@ -6974,33 +7018,21 @@ export async function runAiReviewForAdvisory(
   // return different verdicts. Claim before the expensive section below; a pass that loses the race returns the
   // same inconclusive-hold shape the "AI produced no usable verdict" path already returns, so the gate is held
   // (neutral) for a human rather than either pass's independently-decided verdict racing the other's cache write.
-  const aiReviewLock = await claimAiReviewLock(
-    env,
-    args.repoFullName,
-    args.pr.number,
-    args.advisory.headSha,
-    args.settings.aiReviewMode,
-  );
-  if (!aiReviewLock.acquired) {
-    const findings: AdvisoryFinding[] = [
-      {
-        code: "ai_review_inconclusive",
-        severity: "warning",
-        title: "AI review already in progress for this PR head",
-        detail: "Another Gittensory pass is already running the AI review for this exact PR head. This pass is skipping to avoid a duplicate LLM call.",
-        action: "The gate is held for a human reviewer rather than passed automatically; it re-evaluates once the in-flight review completes or on the next update.",
-      },
-    ];
-    args.advisory.findings.push(...findings);
-    return {
-      notes: "AI review is already running for this PR head in another Gittensory pass. Gittensory is holding this PR for manual review until that pass completes.",
-      reviewerCount: 0,
-      inlineFindings: [],
-      findings,
-      cacheable: false,
-      persistable: false,
-    };
-  }
+  // #regate-dup-prep: prefer the caller's OWN claim (args.preAcquiredAiReviewLock) when it already did one — the
+  // caller wraps its own cache-read decision in the SAME lock key, so claiming again here would be this function
+  // contending against its own caller's claim (always losing) rather than against a genuinely different pass.
+  // Absent (every existing/direct caller) ⇒ claim it here exactly as before.
+  const selfClaimedAiReviewLock = args.preAcquiredAiReviewLock === undefined;
+  const aiReviewLock =
+    args.preAcquiredAiReviewLock ??
+    (await claimAiReviewLock(
+      env,
+      args.repoFullName,
+      args.pr.number,
+      args.advisory.headSha,
+      args.settings.aiReviewMode,
+    ));
+  if (!aiReviewLock.acquired) return aiReviewLockContendedResult(args.advisory);
   try {
     // BYOK: decrypt the maintainer's provider key only for confirmed contributors when opted in. Falls back to free Workers AI when
     // no key is configured or the encryption secret is unavailable (getDecryptedRepositoryAiKey → null).
@@ -7361,14 +7393,19 @@ export async function runAiReviewForAdvisory(
     });
     return undefined;
   } finally {
-    await releaseAiReviewLock(
-      env,
-      args.repoFullName,
-      args.pr.number,
-      args.advisory.headSha,
-      args.settings.aiReviewMode,
-      aiReviewLock.ownerToken,
-    );
+    // #regate-dup-prep: only release a lock THIS call actually claimed. A caller-supplied
+    // preAcquiredAiReviewLock must keep covering the caller's own post-return work (e.g. persisting the fresh
+    // review to cache) — releasing it here the instant this function returns would free the lock before that
+    // write happens, reopening a narrower version of the exact race this lock exists to close.
+    if (selfClaimedAiReviewLock)
+      await releaseAiReviewLock(
+        env,
+        args.repoFullName,
+        args.pr.number,
+        args.advisory.headSha,
+        args.settings.aiReviewMode,
+        aiReviewLock.ownerToken,
+      );
   }
 }
 
@@ -8851,6 +8888,54 @@ async function maybePublishPrPublicSurface(
       }
     }
     if (aiReviewWillRun) {
+      // Per-(repo, PR, head SHA, mode) advisory lock (#regate-dup-prep), claimed HERE — not just inside
+      // runAiReviewForAdvisory — so it covers the cache-read DECISION below too, not only the LLM call itself.
+      // Two near-simultaneous webhook deliveries (or a webhook racing a sweep tick) for the SAME PR at the SAME
+      // head can both reach this point before either has written a cache entry; without this outer claim both
+      // would independently run resolveReviewManifestForAiReview, the review-file load, the cache read, log an
+      // identical "cache miss," and only THEN contend on runAiReviewForAdvisory's own (narrower) internal claim —
+      // by which point the duplicate prep work (and, depending on timing, a duplicate real LLM call) already
+      // happened. Claiming before ANY of that means a losing pass defers immediately: it never reads the cache,
+      // never logs a miss, never loads review files, and never spends the fingerprint computation. A lost race
+      // returns the shared inconclusive-hold placeholder (same shape runAiReviewForAdvisory's own claim returns)
+      // rather than duplicating that work anyway — the winning pass (or the next webhook/sweep tick if the
+      // winner itself fails) is the backstop that populates the cache. Passed into runAiReviewForAdvisory as
+      // preAcquiredAiReviewLock so that function trusts this claim instead of re-claiming (and losing) against
+      // itself; released here, AFTER the cache write below, so the lock covers the full read-decide-run-persist
+      // sequence, not just the read or just the run.
+      const aiReviewHeadSha = advisory.headSha;
+      /* v8 ignore next -- defensive: aiReviewWillRun folds in shouldRequirePublicAiReviewForAdvisory's own
+       * `!args.advisory.headSha` guard, so a truthy aiReviewWillRun always means a truthy headSha; this narrows
+       * the type for claimAiReviewLock/releaseAiReviewLock (both require a non-nullish headSha) rather than
+       * guard against a reachable runtime state. */
+      if (!aiReviewHeadSha) return;
+      const aiReviewLock = await claimAiReviewLock(
+        env,
+        repoFullName,
+        pr.number,
+        aiReviewHeadSha,
+        settings.aiReviewMode,
+      );
+      if (!aiReviewLock.acquired) {
+        aiReview = aiReviewLockContendedResult(advisory);
+      } else {
+        try {
+          await aiReviewCacheReadDecideAndRun(aiReviewLock);
+        } finally {
+          await releaseAiReviewLock(
+            env,
+            repoFullName,
+            pr.number,
+            aiReviewHeadSha,
+            settings.aiReviewMode,
+            aiReviewLock.ownerToken,
+          );
+        }
+      }
+    }
+    async function aiReviewCacheReadDecideAndRun(
+      aiReviewLock: TransientLockClaim,
+    ): Promise<void> {
       await withReviewPipelineSpan(
         "selfhost.review.ai",
         {
@@ -9104,6 +9189,10 @@ async function maybePublishPrPublicSurface(
               reviewSelfHostAiModel,
               reviewImpactMap,
               reviewCultureProfile,
+              // #regate-dup-prep: this call's own advisory lock is already claimed (by aiReviewCacheReadDecideAndRun's
+              // caller, above) — pass it through so runAiReviewForAdvisory trusts it instead of re-claiming (and
+              // losing) against itself, and does not release it before the cache write below runs.
+              preAcquiredAiReviewLock: aiReviewLock,
               deliveryId: webhook.deliveryId,
             });
             // `persistable === false` (only the lock-contention placeholder — see runAiReviewForAdvisory's return

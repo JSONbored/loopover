@@ -5577,6 +5577,96 @@ describe("queue processors", () => {
       ).resolves.toBeUndefined();
       auditSpy.mockRestore();
     });
+
+    it("REPRODUCES the production incident (JSONbored/awesome-claude#4554): two near-simultaneous webhook deliveries for the SAME PR + head SHA spend AI exactly ONCE, not twice (#regate-dup-prep)", async () => {
+      // Root cause: two GitHub webhook deliveries ~900ms apart for the identical head SHA each independently
+      // reached the cache-read/cache-miss-log decision in maybePublishPrPublicSurface BEFORE either one ever
+      // claimed claimAiReviewLock (that claim used to live only deep inside runAiReviewForAdvisory) — so both
+      // logged an identical "no reusable stored AI review" cache miss and both proceeded to spend a real LLM
+      // call for byte-identical code. The fix claims the SAME (repo, PR, head, mode) lock in the CALLER, wrapping
+      // the cache-read decision itself, so the loser of the race defers before ever reading the cache — not
+      // merely before the LLM call.
+      //
+      // A real LLM call has genuine wall-clock latency (seconds), which is exactly the window the second
+      // delivery's cache-read can land inside, still finding nothing written yet. A synchronous test stub
+      // resolves instantly, closing that window — Promise.all alone is not enough to force the race
+      // deterministically (the loser's cache-read can simply land AFTER the winner's entire pass, including its
+      // cache WRITE, has already completed, producing an incidental cache HIT that proves nothing either way).
+      // Widen the window explicitly with a real setTimeout inside env.AI.run, the same "hold the window open
+      // long enough for others to overlap" technique this file already uses for the sweep fan-out concurrency
+      // regression above (#3899) — so the assertion below is a genuine two-way race, not a scheduling accident.
+      let aiCalls = 0;
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: {
+          run: async () => {
+            aiCalls += 1;
+            await new Promise((resolve) => setTimeout(resolve, 20)); // hold the window open long enough for the racing delivery to reach its own cache-read
+            return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) };
+          },
+        } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 90, title: "Baseline PR", state: "open", user: { login: "contributor" }, head: { sha: "a90" }, labels: [], body: "Closes #1" });
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 90, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 91, title: "Duplicate-delivery PR", state: "open", user: { login: "contributor" }, head: { sha: "a91" }, labels: [], body: "Closes #1" });
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 91, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/pulls/90/files") || url.includes("/pulls/91/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+        if (url.endsWith("/pulls/90")) return Response.json({ number: 90, title: "Baseline PR", state: "open", user: { login: "contributor" }, head: { sha: "a90" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+        if (url.endsWith("/pulls/91")) return Response.json({ number: 91, title: "Duplicate-delivery PR", state: "open", user: { login: "contributor" }, head: { sha: "a91" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+        if (url.includes("/commits/a90/check-runs") || url.includes("/commits/a91/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/commits/a90/status") || url.includes("/commits/a91/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/90/comments") || url.includes("/issues/91/comments")) return method === "POST" || method === "PATCH" ? Response.json({ id: 1 }, { status: 201 }) : Response.json([]);
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        return Response.json({});
+      });
+
+      // Baseline: measure how many underlying env.AI.run calls a SINGLE genuine review attempt makes (block mode's
+      // dual-reviewer setup means this is not necessarily 1) — the race assertion below compares in ATTEMPTS, the
+      // same "attempts, not raw call counts" idiom the #9 low-activity-repo regression above uses, not a hardcoded
+      // call count. A separate PR/head so this baseline run's own cache write cannot affect the race below.
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "delivery-baseline", repoFullName: "JSONbored/gittensory", prNumber: 90, installationId: 123 });
+      const callsPerAttempt = aiCalls;
+      expect(callsPerAttempt).toBeGreaterThan(0);
+      aiCalls = 0;
+
+      // Two DIFFERENT delivery ids (matching the real incident's two distinct webhook deliveries) for the SAME
+      // repo/PR/head, fired concurrently — neither awaits the other before both are in flight.
+      await Promise.all([
+        processJob(env, { type: "agent-regate-pr", deliveryId: "delivery-a", repoFullName: "JSONbored/gittensory", prNumber: 91, installationId: 123 }),
+        processJob(env, { type: "agent-regate-pr", deliveryId: "delivery-b", repoFullName: "JSONbored/gittensory", prNumber: 91, installationId: 123 }),
+      ]);
+
+      // The DISCRIMINATING assertion (fails on unfixed code, verified by temporarily reverting the fix): exactly
+      // ONE pass logged a genuine cache miss (read the cache, found nothing, ran fresh) — the loser never reached
+      // the cache-read at all, because the lock now wraps that read too, not just the LLM call. Without the fix
+      // this is 2: both passes independently reach the cache-read and both log a miss before either one's
+      // runAiReviewForAdvisory-internal lock (the historical, narrower placement) ever engages.
+      const missAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_cache_miss", "JSONbored/gittensory#91")
+        .first<{ n: number }>();
+      expect(missAudit?.n).toBe(1);
+
+      // The real review still only spent ONE attempt's worth of AI calls in total — never two full attempts (the
+      // production incident's duplicate LLM spend), and never zero (the winner completes a real review; the PR
+      // is not left permanently unreviewed because the other delivery happened to hold the lock).
+      expect(aiCalls).toBe(callsPerAttempt);
+
+      // The real review was actually published (the winner completed normally) and the PR is left in a normal,
+      // unbroken state — the loser deferred cleanly rather than crashing processJob or leaving the PR unreviewed.
+      const publishedReview = await repositoriesModule.getLatestPublishedAiReview(env, "JSONbored/gittensory", 91, "block");
+      expect(publishedReview).not.toBeNull();
+      const pr91 = await getPullRequest(env, "JSONbored/gittensory", 91);
+      expect(pr91?.state).toBe("open");
+    });
   });
   });
 

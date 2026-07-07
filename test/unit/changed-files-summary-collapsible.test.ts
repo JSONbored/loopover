@@ -41,7 +41,29 @@ describe("buildChangedFilesSummaryCollapsible per-file diff links (#2157)", () =
     expect(c?.body).not.toContain("| Source | 2 | +45 | -10 |");
   });
 
-  it("omits the diff link for paths that cannot be anchored", () => {
+  it("sorts same-category files by path when context is provided", () => {
+    const c = buildChangedFilesSummaryCollapsible(
+      [
+        { path: "src/z.ts", additions: 1, deletions: 0 },
+        { path: "src/a.ts", additions: 2, deletions: 0 },
+      ],
+      context,
+    );
+    const body = c?.body ?? "";
+    expect(body.indexOf("src/a.ts")).toBeLessThan(body.indexOf("src/z.ts"));
+  });
+
+  it("escapes adversarial path characters in per-file rows", () => {
+    const c = buildChangedFilesSummaryCollapsible(
+      [{ path: "src/weird\\path|`file<1>.ts", additions: 1, deletions: 0 }],
+      context,
+    );
+    expect(c?.body).toContain("&lt;1&gt;");
+    expect(c?.body).toContain("\\`");
+    expect(c?.body).toContain("\\|");
+    expect(c?.body).toContain("\\\\");
+  });
+
     const c = buildChangedFilesSummaryCollapsible([{ path: "   ", additions: 1, deletions: 0 }], context);
     expect(c?.body).toContain("| `   ` | +1 | -0 | — |");
   });

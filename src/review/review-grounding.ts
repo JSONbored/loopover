@@ -135,11 +135,10 @@ export async function fetchFullFileContents(
 ): Promise<ChangedFileContent[] | undefined> {
   if (!flags.fullFileContext || !ref) return undefined;
   // Source-first ordering (the diff's own priority) so the most-relevant files are inlined before the budget runs out.
-  // A newly ADDED file is excluded here (#3897): every line of it is already a `+` line in the diff itself
-  // (sent in the same prompt), so fetching + inlining its full content again is a byte-for-byte duplicate --
-  // wasted GitHub API round-trip and wasted prompt budget that a genuinely modified file needs more.
+  // Added files still need grounding: the review diff is budgeted and GitHub can omit inline patches for
+  // large/binary-ish files, so the full-file fallback must not assume every added line reached the prompt.
   const candidates = files
-    .filter((file) => file.status !== "removed" && file.status !== "added" && !SKIP_EXT.test(file.filename))
+    .filter((file) => file.status !== "removed" && !SKIP_EXT.test(file.filename))
     .sort((a, b) => diffFilePriority(a.filename) - diffFilePriority(b.filename));
   const out: ChangedFileContent[] = [];
   let used = 0;

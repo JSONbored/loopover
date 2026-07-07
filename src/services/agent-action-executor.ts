@@ -35,6 +35,7 @@ import {
   type ModerationRuleType,
 } from "../settings/moderation-rules";
 import { incr } from "../selfhost/metrics";
+import { captureError } from "../selfhost/sentry";
 
 // The agent actor name on every audit record — the App acts on the maintainer's behalf per their configured
 // autonomy (the config IS the authorization; there is no human commenter to authorize, unlike #824).
@@ -455,6 +456,14 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       // after the gate publishes. A possibly-transient failure is retried up to MERGE_RETRY_CAP, then held.
       if (action.actionClass === "merge" && ctx.headSha) {
         await handleMergeFailure(env, ctx, error);
+      } else {
+        // Non-merge action classes have no retry loop -- a single failure here is already this pass's terminal
+        // outcome (the planner may re-attempt on the next sweep if the underlying condition clears itself), so
+        // it is captured immediately rather than only on eventual exhaustion. Mirrors handleMergeFailure's own
+        // terminal-hold capture below and the "a real failure the maintainer must see" convention already used
+        // for review-pass failures (selfhost/sentry.ts's captureReviewFailure, queue/processors.ts). Previously
+        // this class of failure was audit-log-only, invisible without a manual audit_events query.
+        captureError(error, { kind: "agent_action_execution_failed", repo: ctx.repoFullName, pr: ctx.pullNumber, installationId: ctx.installationId, actionClass: action.actionClass });
       }
       // #2265: a permission-looking 403 on a PR-write mutation can mean the LOCAL installations.permissions
       // snapshot is stale after a maintainer-initiated downgrade (GitHub sends no downgrade webhook). Rate-limit
@@ -695,6 +704,9 @@ export async function executeIssueMaintenanceActions(env: Env, ctx: IssueActionE
       await audit("completed", action.reason);
     } catch (error) {
       await audit("error", errorMessage(error));
+      // Mirrors executeAgentMaintenanceActions's non-merge capture below -- issue-side label/close has no retry
+      // loop either, so a single failure here is already this pass's terminal outcome.
+      captureError(error, { kind: "agent_issue_action_execution_failed", repo: ctx.repoFullName, issue: ctx.issueNumber, installationId: ctx.installationId, actionClass: action.actionClass });
     }
   }
 
@@ -723,6 +735,11 @@ async function handleMergeFailure(env: Env, ctx: AgentActionExecutionContext, er
   }
   if (!terminal) return;
   await markPullRequestMergeBlocked(env, ctx.repoFullName, ctx.pullNumber, headSha, reason);
+  // A merge held for a human is the terminal outcome of this whole retry sequence -- exactly the "a real
+  // failure the maintainer must see" case captureReviewFailure already covers for an exhausted AI review pass.
+  // Fires once per hold (not per retry attempt), so a transient failure that resolves within MERGE_RETRY_CAP
+  // never reaches Sentry at all.
+  captureError(error, { kind: "agent_merge_blocked", repo: ctx.repoFullName, pr: ctx.pullNumber, installationId: ctx.installationId, reason: reason.slice(0, 280) });
   await recordAuditEvent(env, {
     eventType: "agent.action.merge_blocked",
     actor: AGENT_ACTOR,

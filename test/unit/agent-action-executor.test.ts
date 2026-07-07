@@ -68,6 +68,7 @@ import { STRUCTURED_CLOSE_REASONS_MAX_COUNT } from "../../src/settings/agent-exe
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
 import { clearProcessLocalGlobalAgentFrozenCacheForTest, getGlobalContributorBlacklist, isGlobalAgentFrozen, setGlobalAgentFrozen, upsertGlobalModerationConfig, upsertPullRequestFromGitHub } from "../../src/db/repositories";
 import * as repositoriesModule from "../../src/db/repositories";
+import * as sentryModule from "../../src/selfhost/sentry";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { createTestEnv } from "../helpers/d1";
 import { MODERATION_VIOLATION_EVENT_TYPE } from "../../src/settings/moderation-rules";
@@ -1125,16 +1126,22 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
   it("records a failed mutation as error rather than swallowing it", async () => {
     const env = createTestEnv({});
     vi.mocked(mergePullRequest).mockRejectedValueOnce(new Error("Pull Request is not mergeable"));
+    const captureSpy = vi.spyOn(sentryModule, "captureError");
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [merge]);
     expect(outcomes[0]?.outcome).toBe("error");
     expect(outcomes[0]?.detail).toMatch(/not mergeable/i);
     expect((await auditFor(env, "merge"))?.outcome).toBe("error");
+    // "not mergeable" is immediately terminal (classifyMergeFailure), so this held-for-human outcome must be
+    // Sentry-visible, not just an audit_events row a maintainer has to go looking for (#3862/#3863 gap sweep).
+    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ kind: "agent_merge_blocked", repo: "owner/repo", pr: 7 }));
+    captureSpy.mockRestore();
   });
 
   it("REGRESSION: a generic GitHub 403 merge rejection does not immediately pin merge_blocked_sha", async () => {
     const env = createTestEnv({});
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "" });
     vi.mocked(mergePullRequest).mockRejectedValueOnce(Object.assign(new Error("Resource not accessible by integration"), { status: 403 }));
+    const captureSpy = vi.spyOn(sentryModule, "captureError");
 
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [merge]);
 
@@ -1149,15 +1156,24 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
       .bind("agent.action.merge_blocked")
       .first<{ count: number }>();
     expect(blocked?.count).toBe(0);
+    // A retryable (non-terminal) failure must stay silent in Sentry -- only the eventual terminal hold (above)
+    // or MERGE_RETRY_CAP exhaustion should ever page anyone, or every transient 403 would be alert noise.
+    expect(captureSpy).not.toHaveBeenCalled();
+    captureSpy.mockRestore();
   });
 
   it("opportunistically refreshes installation health when a PR-write mutation fails with a 403 (#2265)", async () => {
     const env = createTestEnv({});
     vi.mocked(closePullRequest).mockRejectedValueOnce(Object.assign(new Error("Resource not accessible by integration"), { status: 403 }));
+    const captureSpy = vi.spyOn(sentryModule, "captureError");
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [close]);
     expect(outcomes[0]?.outcome).toBe("error");
     expect(refreshInstallationHealthForInstallation).toHaveBeenCalledTimes(1);
     expect(refreshInstallationHealthForInstallation).toHaveBeenCalledWith(env, 123);
+    // Non-merge action classes have no retry loop, so a single failure is already this pass's terminal outcome
+    // and must be Sentry-visible immediately (#3862/#3863 gap sweep).
+    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ kind: "agent_action_execution_failed", actionClass: "close" }));
+    captureSpy.mockRestore();
   });
 
   it("does not refresh installation health for a non-403 mutation failure (#2265)", async () => {
@@ -1583,9 +1599,12 @@ describe("executeIssueMaintenanceActions (#2270 issue-side actuation)", () => {
   it("records a failed mutation as error rather than swallowing it", async () => {
     const env = createTestEnv({});
     vi.mocked(closeIssue).mockRejectedValueOnce(new Error("github 500"));
+    const captureSpy = vi.spyOn(sentryModule, "captureError");
     const outcomes = await executeIssueMaintenanceActions(env, issueCtx(), [issueClose]);
     expect(outcomes[0]?.outcome).toBe("error");
     expect((await auditFor(env, "close"))?.outcome).toBe("error");
+    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ kind: "agent_issue_action_execution_failed", actionClass: "close" }));
+    captureSpy.mockRestore();
   });
 
   // #terminal-outcome-audit: the issue-actions executor has its own `audit` closure (a separate function scope

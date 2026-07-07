@@ -248,7 +248,7 @@ export async function drainOrbRelay(
     const base = orbBrokerBaseUrl(env);
     const res = await fetchImpl(`${base}/v1/orb/relay/pull`, {
       method: "POST",
-      headers: { authorization: `Bearer ${env.ORB_ENROLLMENT_SECRET}`, "content-type": "application/json" },
+      signal: AbortSignal.timeout(30_000),
       body: JSON.stringify({ ack }),
       signal: AbortSignal.timeout(15_000),
     });

@@ -1005,17 +1005,24 @@ async function main(): Promise<void> {
   // same WEBHOOKS lane the push receiver uses.
   if (process.env.ORB_RELAY_MODE === "pull" && process.env.ORB_ENROLLMENT_SECRET && relayDrainState) {
     const { drainOrbRelay } = await import("./orb/broker-client");
+    let drainInFlight = false;
     const { enqueueWebhookByEnv } = await import("./github/webhook");
-    /* v8 ignore start -- pull-mode relay loop is a live self-host timer; monitor semantics are covered in selfhost tests. */
-    const drainRelay = async (): Promise<void> => {
-      await drainOrbRelayWithMonitor({
-        state: relayDrainState,
-        relayEnv: {
-          ORB_ENROLLMENT_SECRET: process.env.ORB_ENROLLMENT_SECRET,
-          ORB_BROKER_URL: process.env.ORB_BROKER_URL,
-        },
-        env,
-        drain: drainOrbRelay,
+      if (drainInFlight) return;
+      drainInFlight = true;
+      try {
+        await drainOrbRelayWithMonitor({
+          state: relayDrainState,
+          relayEnv: {
+            ORB_ENROLLMENT_SECRET: process.env.ORB_ENROLLMENT_SECRET,
+            ORB_BROKER_URL: process.env.ORB_BROKER_URL,
+          },
+          env,
+          drain: drainOrbRelay,
+          enqueue: enqueueWebhookByEnv,
+        });
+      } finally {
+        drainInFlight = false;
+      }
         enqueue: enqueueWebhookByEnv,
       });
     };
@@ -1023,7 +1030,7 @@ async function main(): Promise<void> {
     setInterval(
       () =>
         void drainRelay().catch((error) =>
-          captureError(error, { kind: "orb_relay_drain" }),
+      30_000,
         ),
       15_000,
     );

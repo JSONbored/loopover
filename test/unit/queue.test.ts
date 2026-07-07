@@ -11366,7 +11366,10 @@ describe("queue processors", () => {
         if (/\/pulls\/\d+(?:\?|$)/.test(url) && method === "GET" && !url.includes(`/pulls/${prNumber}/`)) {
           return Response.json({ number: prNumber, state: "open", user: { login: "contributor" }, head: { sha: "sha1" }, base: { ref: "main", sha: "base" }, mergeable_state: "clean", labels: [] });
         }
-        if (url.includes(`/pulls/${prNumber}/files`)) return Response.json([{ filename: "src/queue/webhook-retry.ts", status: "modified", additions: 5, deletions: 0, changes: 5, patch: "@@\n+dedupe retries" }]);
+        // src/github/webhook.ts (not src/queue/**): this block tests the unlinked-issue guardrail specifically,
+        // and src/queue/** is one of ENGINE_DECISION_GUARDRAIL_GLOBS' built-in invariants (guardrail-config.ts) —
+        // a diff touching it would unconditionally hold regardless of this guardrail's own on/off setting.
+        if (url.includes(`/pulls/${prNumber}/files`)) return Response.json([{ filename: "src/github/webhook.ts", status: "modified", additions: 5, deletions: 0, changes: 5, patch: "@@\n+dedupe retries" }]);
         if (url.includes(`/commits/sha1/check-runs`)) return Response.json({ total_count: 0, check_runs: [] });
         if (url.includes(`/commits/sha1/status`)) return Response.json({ state: "success", statuses: [{ context: "ci/build", state: "success", description: "ok" }] });
         if (url.includes(`/commits/sha1/check-suites`)) return Response.json({ check_suites: [] });

@@ -30,7 +30,7 @@
 // `override_audit` D1 tables (none of which exist in gittensory's migrations yet) plus a careful soak/promote
 // design. This module is READ-ONLY observability: it reports drift; it never changes what blocks a live PR.
 
-import { findHottestReviewTargetForRepo, listRepositories } from "../db/repositories";
+import { findHottestInconclusiveReviewTargetForRepo, findHottestReviewTargetForRepo, listRepositories } from "../db/repositories";
 import { isAgentConfigured } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { loadGatePrecisionReport, type GatePrecisionReport } from "../services/gate-precision";
@@ -63,14 +63,21 @@ const REVIEW_BURST_THRESHOLD = 6;
  *  to prevent from recurring. */
 const REVIEW_BURST_WINDOW_HOURS = 2;
 
-/** One repo's outcome reports + the repo it covers — the input to the pure anomaly detector. `reviewBurst` is
- *  optional so existing snapshot-fixture tests need not be touched; absent/null means "not computed", not
- *  "healthy" -- the caller (runOpsAlerts/computeOpsStats) always populates it today. */
+/** #review-burst-blind-spot: reviewBurst (above) only sees SUCCESSFUL publishes, so a repeat-failure retry
+ *  storm (every attempt inconclusive, never publishing) sails under it indefinitely -- the exact incident
+ *  c7073949 (#3747) fixed. Lower than REVIEW_BURST_THRESHOLD on purpose: a failure burst is inherently rarer
+ *  and more anomalous than a publish burst (normal iteration never produces repeated INCONCLUSIVE calls). */
+const REVIEW_FAILURE_BURST_THRESHOLD = 3;
+
+/** One repo's outcome reports + the repo it covers — the input to the pure anomaly detector. `reviewBurst` and
+ *  `reviewFailureBurst` are optional so existing snapshot-fixture tests need not be touched; absent/null means
+ *  "not computed", not "healthy" -- the caller (runOpsAlerts/computeOpsStats) always populates both today. */
 export interface RepoOutcomeSnapshot {
   repoFullName: string;
   gatePrecision: GatePrecisionReport;
   calibration: OutcomeCalibration;
   reviewBurst?: { targetKey: string; count: number } | null | undefined;
+  reviewFailureBurst?: { targetKey: string; count: number } | null | undefined;
 }
 
 /**
@@ -120,6 +127,14 @@ export function detectOutcomeAnomalies(snapshot: RepoOutcomeSnapshot): string[] 
     );
   }
 
+  // REVIEW FAILURE BURST (#review-burst-blind-spot): the publish-burst check above cannot see a repeat-failure
+  // retry storm -- every attempt produced no usable output and never reached a publish. Catch that shape too.
+  if (snapshot.reviewFailureBurst && snapshot.reviewFailureBurst.count >= REVIEW_FAILURE_BURST_THRESHOLD) {
+    out.push(
+      `review failure burst: ${snapshot.reviewFailureBurst.targetKey} produced ${snapshot.reviewFailureBurst.count} inconclusive (zero-output) AI review calls in the last ${REVIEW_BURST_WINDOW_HOURS}h with no successful publish — likely a stuck-CI finalize loop or retry storm burning tokens for no result. Investigate why this PR's reviews keep failing.`,
+    );
+  }
+
   return out;
 }
 
@@ -159,12 +174,13 @@ export async function runOpsAlerts(env: Env): Promise<Record<string, string[]>> 
     const repos = await opsScanRepos(env);
     for (const repoFullName of repos) {
       try {
-        const [gatePrecision, calibration, reviewBurst] = await Promise.all([
+        const [gatePrecision, calibration, reviewBurst, reviewFailureBurst] = await Promise.all([
           loadGatePrecisionReport(env, repoFullName),
           buildRepoOutcomeCalibration(env, repoFullName),
           findHottestReviewTargetForRepo(env, repoFullName, reviewBurstSinceIso),
+          findHottestInconclusiveReviewTargetForRepo(env, repoFullName, reviewBurstSinceIso),
         ]);
-        const anomalies = detectOutcomeAnomalies({ repoFullName, gatePrecision, calibration, reviewBurst });
+        const anomalies = detectOutcomeAnomalies({ repoFullName, gatePrecision, calibration, reviewBurst, reviewFailureBurst });
         if (anomalies.length === 0) continue;
         found[repoFullName] = anomalies;
         // Structured log = gittensory's notify path (no Discord/operator webhook exists) AND the Sentry path
@@ -210,10 +226,11 @@ export async function computeOpsStats(env: Env): Promise<OpsStatsPayload> {
   const reviewBurstSinceIso = new Date(Date.now() - REVIEW_BURST_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
   for (const repoFullName of repos) {
     try {
-      const [gatePrecision, calibration, reviewBurst] = await Promise.all([
+      const [gatePrecision, calibration, reviewBurst, reviewFailureBurst] = await Promise.all([
         loadGatePrecisionReport(env, repoFullName),
         buildRepoOutcomeCalibration(env, repoFullName),
         findHottestReviewTargetForRepo(env, repoFullName, reviewBurstSinceIso),
+        findHottestInconclusiveReviewTargetForRepo(env, repoFullName, reviewBurstSinceIso),
       ]);
       rows.push({
         repoFullName,
@@ -228,7 +245,7 @@ export async function computeOpsStats(env: Env): Promise<OpsStatsPayload> {
           discriminates: calibration.slop.discriminates,
         },
         recommendations: calibration.recommendations,
-        anomalies: detectOutcomeAnomalies({ repoFullName, gatePrecision, calibration, reviewBurst }),
+        anomalies: detectOutcomeAnomalies({ repoFullName, gatePrecision, calibration, reviewBurst, reviewFailureBurst }),
       });
     } catch {
       /* a per-repo failure must not blank the whole feed */

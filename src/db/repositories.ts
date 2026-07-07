@@ -2627,6 +2627,41 @@ export async function findHottestReviewTargetForRepo(
   return { targetKey: row.targetKey, count: row.count };
 }
 
+/**
+ * #review-burst-blind-spot: findHottestReviewTargetForRepo (above) only counts SUCCESSFUL publish events, so a
+ * repeat-failure retry storm (every attempt SIGKILLed / zero output, never reaching a publish) is invisible to
+ * it -- the exact incident shape c7073949 (#3747) fixed. Every AI review call's `ai_usage_events` row already
+ * carries a structured `inconclusive` boolean in its metadata_json (set at src/services/ai-review.ts's `record`
+ * call site) regardless of whether the review ever published, so this is a genuine companion signal, not a
+ * guess: the hottest PR by INCONCLUSIVE review-call count in the window, across whichever repo's calls those
+ * are. Deliberately does not touch `status` (always "ok" for a completed call, inconclusive or not) so the
+ * daily neuron-budget sum (which filters status='ok') is never affected by this query.
+ */
+export async function findHottestInconclusiveReviewTargetForRepo(
+  env: Env,
+  repoFullName: string,
+  sinceIso: string,
+): Promise<{ targetKey: string; count: number } | null> {
+  const db = getDb(env.DB);
+  const pullNumberExpr = sql<string>`json_extract(${aiUsageEvents.metadataJson}, '$.pullNumber')`;
+  const [row] = await db
+    .select({ pullNumber: pullNumberExpr, count: sql<number>`count(*)` })
+    .from(aiUsageEvents)
+    .where(
+      and(
+        eq(aiUsageEvents.feature, "ai_review_pr"),
+        gte(aiUsageEvents.createdAt, sinceIso),
+        sql`json_extract(${aiUsageEvents.metadataJson}, '$.repoFullName') = ${repoFullName}`,
+        sql`json_extract(${aiUsageEvents.metadataJson}, '$.inconclusive') = 1`,
+      ),
+    )
+    .groupBy(pullNumberExpr)
+    .orderBy(desc(sql`count(*)`))
+    .limit(1);
+  if (!row || row.pullNumber === null) return null;
+  return { targetKey: `${repoFullName}#${row.pullNumber}`, count: row.count };
+}
+
 /** Moderation-rules engine (#selfhost-mod-engine): the actor's TOTAL violation count across every rule type in
  *  `eventTypes` and EVERY repo this install tracks (no targetKey/route scoping -- `audit_events` carries no
  *  repo/installation column at all, so this is inherently install-wide, mirroring the install-wide contributor

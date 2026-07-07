@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
-import { recordAuditEvent, recordGateBlockOutcome, upsertPullRequestFromGitHub } from "../../src/db/repositories";
+import { recordAiUsageEvent, recordAuditEvent, recordGateBlockOutcome, upsertPullRequestFromGitHub } from "../../src/db/repositories";
 import {
   computeOpsStats,
   detectOutcomeAnomalies,
@@ -139,6 +139,22 @@ describe("detectOutcomeAnomalies — over gittensory's own outcome data", () => 
     expect(detectOutcomeAnomalies(snap).some((a) => /review burst/.test(a))).toBe(false);
   });
 
+  it("flags a review FAILURE burst — repeated inconclusive AI-review calls for the same PR with no successful publish (#review-burst-blind-spot)", () => {
+    const snap: RepoOutcomeSnapshot = { ...healthySnapshot, reviewFailureBurst: { targetKey: "owner/repo#42", count: 4 } };
+    const out = detectOutcomeAnomalies(snap);
+    expect(out.some((a) => /review failure burst/.test(a) && /owner\/repo#42/.test(a) && /4 inconclusive/.test(a))).toBe(true);
+  });
+
+  it("does NOT flag a review failure burst below the threshold", () => {
+    const snap: RepoOutcomeSnapshot = { ...healthySnapshot, reviewFailureBurst: { targetKey: "owner/repo#42", count: 2 } };
+    expect(detectOutcomeAnomalies(snap).some((a) => /review failure burst/.test(a))).toBe(false);
+  });
+
+  it("does NOT flag a review failure burst when none was computed (absent/null)", () => {
+    expect(detectOutcomeAnomalies({ ...healthySnapshot, reviewFailureBurst: null }).some((a) => /review failure burst/.test(a))).toBe(false);
+    expect(detectOutcomeAnomalies(healthySnapshot).some((a) => /review failure burst/.test(a))).toBe(false); // field omitted entirely
+  });
+
   it("does NOT flag a review burst when none was computed (absent/null)", () => {
     expect(detectOutcomeAnomalies({ ...healthySnapshot, reviewBurst: null }).some((a) => /review burst/.test(a))).toBe(false);
     expect(detectOutcomeAnomalies(healthySnapshot).some((a) => /review burst/.test(a))).toBe(false); // field omitted entirely
@@ -226,6 +242,56 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
     const stats = await computeOpsStats(env);
     const row = stats.repos.find((r) => r.repoFullName === "owner/repo");
     expect(row?.anomalies.some((a) => /review burst/.test(a))).toBe(true);
+  });
+
+  it("detects and reports a review FAILURE burst end-to-end -- reproduces the #3747 incident shape (repeated inconclusive calls, zero publishes) (#review-burst-blind-spot)", async () => {
+    const env = createTestEnv();
+    await seedRegisteredRepo(env, "owner/repo");
+    // Mirrors the exact incident: every AI review call for this PR came back inconclusive (zero usable output),
+    // and NONE of them ever reached a successful publish -- so findHottestReviewTargetForRepo alone sees nothing.
+    for (let i = 0; i < 4; i += 1) {
+      await recordAiUsageEvent(env, {
+        feature: "ai_review_pr",
+        model: "self-host:claude-code",
+        status: "ok",
+        estimatedNeurons: 100,
+        metadata: { repoFullName: "owner/repo", pullNumber: 99, inconclusive: true },
+      });
+    }
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const found = await runOpsAlerts(env);
+
+    expect(found["owner/repo"]?.some((a) => /review failure burst/.test(a) && /owner\/repo#99/.test(a) && /4 inconclusive/.test(a))).toBe(true);
+    expect(found["owner/repo"]?.some((a) => /review burst:/.test(a))).toBe(false); // the publish-only signal stays silent -- proves this is a genuinely new detector, not a duplicate.
+    const stats = await computeOpsStats(env);
+    const row = stats.repos.find((r) => r.repoFullName === "owner/repo");
+    expect(row?.anomalies.some((a) => /review failure burst/.test(a))).toBe(true);
+  });
+
+  it("does NOT flag a review failure burst from a healthy mix of successful and merely-occasional inconclusive calls", async () => {
+    const env = createTestEnv();
+    await seedRegisteredRepo(env, "owner/repo");
+    await recordAiUsageEvent(env, {
+      feature: "ai_review_pr",
+      model: "self-host:claude-code",
+      status: "ok",
+      estimatedNeurons: 100,
+      metadata: { repoFullName: "owner/repo", pullNumber: 5, inconclusive: false },
+    });
+    await recordAiUsageEvent(env, {
+      feature: "ai_review_pr",
+      model: "self-host:claude-code",
+      status: "ok",
+      estimatedNeurons: 100,
+      metadata: { repoFullName: "owner/repo", pullNumber: 5, inconclusive: true },
+    });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const found = await runOpsAlerts(env);
+
+    expect(found["owner/repo"]).toBeUndefined();
+    expect(errors.mock.calls.map((c) => String(c[0])).some((line) => line.includes("ops_anomaly\""))).toBe(false);
   });
 
   it("fails safe per-repo: a load error on one repo is logged and the scan continues (ops_anomaly_repo_error)", async () => {

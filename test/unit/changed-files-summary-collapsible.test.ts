@@ -64,8 +64,32 @@ describe("buildChangedFilesSummaryCollapsible per-file diff links (#2157)", () =
     expect(c?.body).toContain("\\\\");
   });
 
-    const c = buildChangedFilesSummaryCollapsible([{ path: "   ", additions: 1, deletions: 0 }], context);
-    expect(c?.body).toContain("| `   ` | +1 | -0 | — |");
+  it("omits the View diff link when the path or repo context cannot be anchored", () => {
+    const unanchored = buildChangedFilesSummaryCollapsible([{ path: "   ", additions: 1, deletions: 0 }], context);
+    expect(unanchored?.body).toContain("| `   ` | +1 | -0 | — |");
+
+    const badRepo = buildChangedFilesSummaryCollapsible(
+      [{ path: "src/a.ts", additions: 1, deletions: 0 }],
+      { repoFullName: "not-a-repo", pullNumber: 1 },
+    );
+    expect(badRepo?.body).toContain("| `src/a.ts` | +1 | -0 | — |");
+  });
+
+  it("orders per-file rows source-first across categories when context is provided", () => {
+    const c = buildChangedFilesSummaryCollapsible(
+      [
+        { path: "docs/readme.md", additions: 1, deletions: 0 },
+        { path: "src/app.ts", additions: 2, deletions: 0 },
+      ],
+      context,
+    );
+    const body = c?.body ?? "";
+    expect(body.indexOf("src/app.ts")).toBeLessThan(body.indexOf("docs/readme.md"));
+  });
+
+  it("escapes a greater-than character in per-file paths", () => {
+    const c = buildChangedFilesSummaryCollapsible([{ path: "src/file>name.ts", additions: 1, deletions: 0 }], context);
+    expect(c?.body).toContain("&gt;");
   });
 
   it("keeps collapsed category rows without links when context is omitted", () => {

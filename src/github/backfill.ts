@@ -2485,6 +2485,10 @@ function isOwnGitHubAppCheckRun(env: Env, run: { name: string; app?: { slug?: st
   return ownSlug.length > 0 && appSlug === ownSlug && BOT_OWNED_CHECK_NAMES.has(run.name);
 }
 
+function isBotOwnedRequiredContextName(name: string): boolean {
+  return BOT_OWNED_CHECK_NAMES.has(name);
+}
+
 function normalizeCiContextName(name: string): string {
   const trimmed = name.trim();
   const slashIndex = trimmed.lastIndexOf("/");
@@ -2813,6 +2817,9 @@ async function reduceLiveCiAggregate(
   // A required context that never appeared in any result is not safe to treat as passed — count it as pending.
   if (enforceRequiredOnly) {
     for (const ctx of requiredContexts!) {
+      // The app creates these check-runs as part of review/public-surface publication. If branch protection
+      // requires one before the first run exists, treating its absence as CI to wait on self-deadlocks the review.
+      if (isBotOwnedRequiredContextName(ctx)) continue;
       if (!seenContextNames.has(ctx)) {
         anyPending = true;
         anyMissingRequiredContext = true;

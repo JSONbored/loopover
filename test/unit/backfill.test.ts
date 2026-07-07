@@ -57,6 +57,7 @@ import {
   setGitHubResponseCache,
   type CachedGitHubResponse,
 } from "../../src/github/client";
+import { GITTENSORY_CONTEXT_CHECK_NAME, GITTENSORY_GATE_CHECK_NAME, GITTENSORY_LEGACY_GATE_CHECK_NAME } from "../../src/review/check-names";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
@@ -4740,6 +4741,29 @@ describe("GitHub backfill", () => {
         // observed activity — distinct from hasVisiblePending, which stays false here (nothing is actively
         // queued/in_progress; the context simply never posted at all).
         expect(aggregate.hasMissingRequiredContext).toBe(true);
+        expect(aggregate.hasVisiblePending).toBe(false);
+      });
+
+      it("does not wait for absent bot-owned required contexts before the app can publish them", async () => {
+        const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "build", status: "completed", conclusion: "success" }] });
+          if (url.includes("/status?")) return Response.json({ statuses: [] });
+          return new Response("not found", { status: 404 });
+        });
+
+        const requiredContexts = mergeRequiredCiContexts(null, [
+          "build",
+          GITTENSORY_GATE_CHECK_NAME,
+          GITTENSORY_LEGACY_GATE_CHECK_NAME,
+          GITTENSORY_CONTEXT_CHECK_NAME,
+        ]);
+        const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", requiredContexts);
+
+        expect(aggregate.ciState).toBe("passed");
+        expect(aggregate.hasPending).toBe(false);
+        expect(aggregate.hasMissingRequiredContext).toBe(false);
         expect(aggregate.hasVisiblePending).toBe(false);
       });
 

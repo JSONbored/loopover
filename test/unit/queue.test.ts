@@ -67,6 +67,7 @@ import {
 } from "../../src/github/pr-freshness";
 import { createTestEnv } from "../helpers/d1";
 import { SWEEP_MAX_PRS } from "../../src/settings/agent-sweep";
+import { AGENT_LABEL_PENDING_CLOSURE, DEFAULT_LINKED_ISSUE_HARD_RULES } from "../../src/review/linked-issue-hard-rules";
 
 vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/github/pr-freshness")>();
@@ -2026,6 +2027,206 @@ describe("queue processors", () => {
       liveCiSpy.mockRestore();
       requiredContextsSpy.mockRestore();
     }
+  });
+
+  describe("linked-issue hard-rule violation persistence (#linked-issue-hard-rule-persistence)", () => {
+    // Shared scaffold for both regression tests below: a repo with the owner-assigned hard rule ON and the
+    // flag-then-close verify window ON (defaults), autonomy acting on close + review_state_label. Each test
+    // drives TWO separate agent-regate-pr passes over the SAME PR/head, changing only what the live GitHub read
+    // reports between them -- exactly the two ways resolveLinkedIssueHardRule's own statelessness lets a
+    // confirmed Pass-1 violation dodge the Pass-2 close.
+    // `linkedIssueHardRules` (unlike most repository settings) has NO backing DB column (src/db/schema.ts) --
+    // it is exclusively a `.gittensory.yml`-driven override (settings/repository-settings.ts's default is
+    // always the built-in all-off DEFAULT_LINKED_ISSUE_HARD_RULES; only resolveEffectiveSettings's manifest
+    // overlay can turn a rule on). So this scaffold enables it via a stubbed `.gittensory.yml` content fetch,
+    // not via upsertRepositorySettings.
+    const HARD_RULE_MANIFEST = JSON.stringify({ settings: { linkedIssueHardRules: { ownerAssignedClose: "block" } } });
+
+    async function seedHardRuleRepoAndPr(env: ReturnType<typeof createTestEnv>): Promise<void> {
+      await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", issues: "write", checks: "write" }, events: [] } });
+      await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+      await upsertRepositorySettings(env, {
+        repoFullName: "owner/agent-repo",
+        autonomy: { close: "auto", review_state_label: "auto" },
+        aiReviewMode: "off",
+        gatePack: "oss-anti-slop",
+        gateCheckMode: "enabled",
+        checkRunMode: "off",
+        commentMode: "off",
+        publicSurface: "off",
+      });
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Ineligible linked issue", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main" }, labels: [], body: "Closes #9" });
+    }
+
+    // Stateful label set (mutated by the real ensurePullRequestLabel/removePullRequestLabel POST/DELETE calls,
+    // mirroring how a real GitHub repo's label state persists between two separate agent-regate-pr passes) --
+    // the `/pulls/7` GET always reflects it, so Pass 2's own live re-sync of the stored PR sees the label Pass 1
+    // actually applied, exactly like the real GitHub API would report it. `ruleEnabled` selects whether the
+    // stubbed `.gittensory.yml` fetch turns the owner-assigned hard rule on (the two regression tests) or
+    // resolves to a genuine 404 -- i.e. the rule genuinely OFF (the sanity-check test).
+    function stubHardRuleFetch(liveLabels: string[], opts: { prBody: string; issueState: string; issueAssignees: string[]; ruleEnabled: boolean }) {
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url === "https://api.gittensor.io/miners") return Response.json([]);
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (/\/pulls\/7(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 7, title: "Ineligible linked issue", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, mergeable_state: "clean", labels: liveLabels.map((name) => ({ name })), body: opts.prBody });
+        if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+        if (url.includes("/issues/9") && method === "GET") return Response.json({ number: 9, state: opts.issueState, labels: [], assignees: opts.issueAssignees.map((login) => ({ login })), user: { login: "reporter" } });
+        if (url.includes("/issues/7/labels") && method === "GET") return Response.json(liveLabels.map((name) => ({ name })));
+        if (url.includes("/issues/7/labels") && method === "POST") {
+          const body = init?.body ? (JSON.parse(String(init.body)) as { labels?: string[] }) : {};
+          for (const label of body.labels ?? []) if (!liveLabels.includes(label)) liveLabels.push(label);
+          return Response.json(liveLabels.map((name) => ({ name })), { status: 200 });
+        }
+        if (url.includes("/labels/") && method === "DELETE") {
+          const removed = decodeURIComponent(url.slice(url.lastIndexOf("/labels/") + "/labels/".length));
+          const index = liveLabels.indexOf(removed);
+          if (index >= 0) liveLabels.splice(index, 1);
+          return new Response(null, { status: 204 });
+        }
+        // The `.gittensory.yml`/`.json` content fetch (raw.githubusercontent.com) is the ONLY place
+        // linkedIssueHardRules can be turned on (see the comment above).
+        if (url.includes("raw.githubusercontent.com")) return opts.ruleEnabled ? new Response(HARD_RULE_MANIFEST, { status: 200 }) : new Response("not found", { status: 404 });
+        return Response.json({});
+      });
+    }
+
+    const requiredContextsMock = () => vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockResolvedValue(null);
+    const liveCiMock = () =>
+      vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
+        ciState: "passed",
+        hasPending: false,
+        hasVisiblePending: false,
+        hasMissingRequiredContext: false,
+        failingDetails: [],
+        nonRequiredFailingDetails: [],
+        ciCompletenessWarning: null,
+      });
+
+    it("REGRESSION (body-edit-during-grace-window): Pass 1 flags a real owner-assigned violation; Pass 2's live re-parse finds NO linked issues (body edited) but the persisted violation still closes the PR", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedHardRuleRepoAndPr(env);
+      const requiredContextsSpy = requiredContextsMock();
+      const liveCiSpy = liveCiMock();
+      const liveLabels: string[] = [];
+      try {
+        // Pass 1: body links #9, issue #9 is genuinely assigned to the repo owner -> a REAL violation. Verify-
+        // before-close is on by default, so this pass FLAGS (pending-closure label) and does not close yet.
+        stubHardRuleFetch(liveLabels, { prBody: "Closes #9", issueState: "open", issueAssignees: ["owner"], ruleEnabled: true });
+        await processJob(env, { type: "agent-regate-pr", deliveryId: "hard-rule-pass-1", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+        const afterPass1 = await getPullRequest(env, "owner/agent-repo", 7);
+        expect(afterPass1?.state).toBe("open"); // flagged, not closed yet
+        // The label MUTATION itself is asserted via the executor's own audit trail, not the DB's cached
+        // labels_json -- that cache is only refreshed by the NEXT sync (reReviewStoredPullRequest resyncs at
+        // the START of a pass, so a label applied DURING this pass isn't reflected in labels_json until the
+        // following pass reads it back from the live GitHub state, which stubHardRuleFetch's liveLabels does).
+        const flagAudit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? and detail like ? order by rowid desc limit 1").bind("agent.action.label", "%linked-issue hard rule%").first<{ outcome: string; detail: string }>();
+        expect(flagAudit?.outcome).toBe("completed");
+        expect(liveLabels).toContain(AGENT_LABEL_PENDING_CLOSURE);
+        // The confirmed Pass-1 violation must already be persisted -- this is the fact Pass 2 depends on.
+        expect(afterPass1?.linkedIssueHardRuleViolatedAt).toEqual(expect.any(String));
+        expect(afterPass1?.linkedIssueHardRuleViolationReason).toContain("#9");
+
+        // Between passes: GitHub echoes the Pass-1 label mutation back as its own `labeled` webhook in real
+        // operation, which the normal PR-sync path (upsertPullRequestFromGitHub) writes into labels_json --
+        // reReviewStoredPullRequest's OWN resync only re-fetches on a head-SHA change (#sweep-resync), so it
+        // does not carry a same-pass label mutation forward on its own. Simulate that already-processed sync
+        // directly (same head, only the label list changed) rather than re-deriving the whole webhook pipeline.
+        await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Ineligible linked issue", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main" }, labels: liveLabels.map((name) => ({ name })), body: "Closes #9" });
+
+        // Pass 2: the contributor edited the PR body during the grace window to remove the closing reference.
+        // The live re-parse now sees ZERO linked issues, so resolveLinkedIssueHardRule alone would return
+        // undefined -- WITHOUT the persisted-violation backstop, clearLinkedIssueFlag would remove the
+        // pending-closure label and the PR would survive with the flag silently cleared.
+        stubHardRuleFetch(liveLabels, { prBody: "no more linked issue here", issueState: "open", issueAssignees: ["owner"], ruleEnabled: true });
+        await processJob(env, { type: "agent-regate-pr", deliveryId: "hard-rule-pass-2-body-edited", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+        // The disposition planner's `close` action is the observable proof the persisted violation was enforced
+        // (the executor's own closePullRequest mutation succeeds against GitHub directly; the PR row's `state`
+        // column only flips to "closed" once GitHub's OWN `closed` webhook round-trips back through the normal
+        // sync path -- a separate delivery this two-pass sweep test does not simulate, mirroring the identical
+        // gap for labels_json handled above).
+        const close = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by rowid desc limit 1").bind("agent.action.close").first<{ outcome: string; detail: string }>();
+        expect(close?.outcome).toBe("completed");
+        expect(close?.detail).toContain("#9");
+        // WITHOUT the persisted-violation backstop this pass's live re-parse (undefined -- zero linked issues)
+        // would have cleared the pending-closure flag instead: confirm that never happened.
+        const clearedFlag = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and detail like ?").bind("agent.action.label", "%resolved%").first<{ n: number }>();
+        expect(clearedFlag?.n).toBe(0);
+      } finally {
+        liveCiSpy.mockRestore();
+        requiredContextsSpy.mockRestore();
+      }
+    });
+
+    it("REGRESSION (live-issue-state-change-before-re-evaluation): Pass 1 flags a real violation; Pass 2's live re-parse re-evaluates the SAME issue as clean (assignee removed) but the persisted violation still closes the PR", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedHardRuleRepoAndPr(env);
+      const requiredContextsSpy = requiredContextsMock();
+      const liveCiSpy = liveCiMock();
+      const liveLabels: string[] = [];
+      try {
+        // Pass 1: same real owner-assigned violation as the sibling test above -> FLAGS, does not close.
+        stubHardRuleFetch(liveLabels, { prBody: "Closes #9", issueState: "open", issueAssignees: ["owner"], ruleEnabled: true });
+        await processJob(env, { type: "agent-regate-pr", deliveryId: "hard-rule-live-pass-1", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+        const afterPass1 = await getPullRequest(env, "owner/agent-repo", 7);
+        expect(afterPass1?.state).toBe("open");
+        const flagAudit = await env.DB.prepare("select outcome from audit_events where event_type = ? and detail like ? order by rowid desc limit 1").bind("agent.action.label", "%linked-issue hard rule%").first<{ outcome: string }>();
+        expect(flagAudit?.outcome).toBe("completed");
+        expect(liveLabels).toContain(AGENT_LABEL_PENDING_CLOSURE);
+        expect(afterPass1?.linkedIssueHardRuleViolatedAt).toEqual(expect.any(String));
+
+        // Between passes: GitHub echoes the Pass-1 label mutation back as its own `labeled` webhook in real
+        // operation (see the sibling test's identical comment for the full rationale).
+        await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Ineligible linked issue", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main" }, labels: liveLabels.map((name) => ({ name })), body: "Closes #9" });
+
+        // Pass 2: the PR body is UNCHANGED (still "Closes #9"), but issue #9's LIVE state changed between passes
+        // -- the owner was unassigned. The live re-parse re-evaluates the SAME issue number cleanly
+        // ({ violated: false }), indistinguishable from "never violated" to resolveLinkedIssueHardRule alone.
+        // WITHOUT the persisted-violation backstop, clearLinkedIssueFlag would remove the flag and the PR
+        // would survive.
+        stubHardRuleFetch(liveLabels, { prBody: "Closes #9", issueState: "open", issueAssignees: [], ruleEnabled: true });
+        await processJob(env, { type: "agent-regate-pr", deliveryId: "hard-rule-live-pass-2-unassigned", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+        // See the sibling test's identical comment: the `close` action's own audit outcome is the observable
+        // proof (the PR row's `state` column only flips once GitHub's `closed` webhook round-trips back).
+        const close = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by rowid desc limit 1").bind("agent.action.close").first<{ outcome: string; detail: string }>();
+        expect(close?.outcome).toBe("completed");
+        expect(close?.detail).toContain("#9");
+        const clearedFlag = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and detail like ?").bind("agent.action.label", "%resolved%").first<{ n: number }>();
+        expect(clearedFlag?.n).toBe(0);
+      } finally {
+        liveCiSpy.mockRestore();
+        requiredContextsSpy.mockRestore();
+      }
+    });
+
+    it("does not persist anything (and Pass 2 clears the flag normally) when the violation is GENUINELY resolved before it was ever confirmed", async () => {
+      // Sanity check / non-regression: a hard rule that is OFF (never violates at all) must not write the
+      // persisted marker, and the plan/label state must stay byte-identical to today's pre-existing behavior.
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", issues: "write", checks: "write" }, events: [] } });
+      await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+      await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { close: "auto", review_state_label: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "No hard rule enabled", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main" }, labels: [], body: "Closes #9" });
+      const requiredContextsSpy = requiredContextsMock();
+      const liveCiSpy = liveCiMock();
+      try {
+        stubHardRuleFetch([], { prBody: "Closes #9", issueState: "open", issueAssignees: ["owner"], ruleEnabled: false });
+        await processJob(env, { type: "agent-regate-pr", deliveryId: "hard-rule-off", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+        const after = await getPullRequest(env, "owner/agent-repo", 7);
+        expect(after?.state).toBe("open");
+        expect(after?.labels ?? []).not.toContain(AGENT_LABEL_PENDING_CLOSURE);
+        expect(after?.linkedIssueHardRuleViolatedAt).toBeNull();
+      } finally {
+        liveCiSpy.mockRestore();
+        requiredContextsSpy.mockRestore();
+      }
+    });
   });
 
   describe("durable CI-state snapshot cache (#selfhost-ci-verification, cross-job)", () => {
@@ -26623,6 +26824,89 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       const env = createTestEnv({});
       expect(await repositoriesModule.bumpPullRequestDraftConversionCount(env, "JSONbored/gittensory", 999999)).toBe(0);
     });
+  });
+});
+
+describe("markPullRequestLinkedIssueHardRuleViolated (#linked-issue-hard-rule-persistence)", () => {
+  it("sets violatedAt + the reason on the first call and never overwrites them on a later call", async () => {
+    const env = createTestEnv({});
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await repositoriesModule.upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      id: 5151,
+      number: 88,
+      state: "open",
+      title: "Some PR",
+      user: { login: "contributor" },
+      head: { sha: "sha-1", ref: "fix", repo: { full_name: "contributor/gittensory", owner: { login: "contributor" } } },
+      base: { sha: "base123", ref: "main", repo: { full_name: "JSONbored/gittensory", owner: { login: "JSONbored" } } },
+      draft: false,
+      merged: false,
+      created_at: "2026-05-27T00:00:00Z",
+      updated_at: "2026-05-27T00:00:00Z",
+    } as never);
+
+    const before = await repositoriesModule.getPullRequest(env, "JSONbored/gittensory", 88);
+    expect(before?.linkedIssueHardRuleViolatedAt).toBeNull();
+    expect(before?.linkedIssueHardRuleViolationReason).toBeNull();
+
+    await repositoriesModule.markPullRequestLinkedIssueHardRuleViolated(env, "JSONbored/gittensory", 88, "Linked issue #7 is assigned to the maintainer (@JSONbored)");
+    const afterFirst = await repositoriesModule.getPullRequest(env, "JSONbored/gittensory", 88);
+    expect(afterFirst?.linkedIssueHardRuleViolatedAt).toEqual(expect.any(String));
+    expect(afterFirst?.linkedIssueHardRuleViolationReason).toBe("Linked issue #7 is assigned to the maintainer (@JSONbored)");
+
+    // A SECOND confirmed violation (e.g. against a different linked issue, or a re-detected same one) must not
+    // move the timestamp or replace the reason -- the FIRST confirmed violation is what's remembered forever.
+    await repositoriesModule.markPullRequestLinkedIssueHardRuleViolated(env, "JSONbored/gittensory", 88, "Linked issue #9 is already assigned to @someone-else");
+    const afterSecond = await repositoriesModule.getPullRequest(env, "JSONbored/gittensory", 88);
+    expect(afterSecond?.linkedIssueHardRuleViolatedAt).toBe(afterFirst?.linkedIssueHardRuleViolatedAt);
+    expect(afterSecond?.linkedIssueHardRuleViolationReason).toBe("Linked issue #7 is assigned to the maintainer (@JSONbored)");
+
+    // A fresh push (new head SHA) between violations must NOT reset either field -- unlike mergeBlockedSha,
+    // this marker is deliberately not scoped to head SHA.
+    await repositoriesModule.upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      id: 5151,
+      number: 88,
+      state: "open",
+      title: "Some PR",
+      user: { login: "contributor" },
+      head: { sha: "sha-2", ref: "fix", repo: { full_name: "contributor/gittensory", owner: { login: "contributor" } } },
+      base: { sha: "base123", ref: "main", repo: { full_name: "JSONbored/gittensory", owner: { login: "JSONbored" } } },
+      draft: false,
+      merged: false,
+      created_at: "2026-05-27T00:00:00Z",
+      updated_at: "2026-05-27T00:00:00Z",
+    } as never);
+    const afterNewHead = await repositoriesModule.getPullRequest(env, "JSONbored/gittensory", 88);
+    expect(afterNewHead?.linkedIssueHardRuleViolatedAt).toBe(afterFirst?.linkedIssueHardRuleViolatedAt);
+    expect(afterNewHead?.linkedIssueHardRuleViolationReason).toBe("Linked issue #7 is assigned to the maintainer (@JSONbored)");
+  });
+
+  it("truncates an overlong reason to 280 chars, mirroring markPullRequestMergeBlocked", async () => {
+    const env = createTestEnv({});
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await repositoriesModule.upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      id: 5152,
+      number: 89,
+      state: "open",
+      title: "Some PR",
+      user: { login: "contributor" },
+      head: { sha: "sha-1", ref: "fix", repo: { full_name: "contributor/gittensory", owner: { login: "contributor" } } },
+      base: { sha: "base123", ref: "main", repo: { full_name: "JSONbored/gittensory", owner: { login: "JSONbored" } } },
+      draft: false,
+      merged: false,
+      created_at: "2026-05-27T00:00:00Z",
+      updated_at: "2026-05-27T00:00:00Z",
+    } as never);
+
+    const longReason = "x".repeat(400);
+    await repositoriesModule.markPullRequestLinkedIssueHardRuleViolated(env, "JSONbored/gittensory", 89, longReason);
+    const row = await repositoriesModule.getPullRequest(env, "JSONbored/gittensory", 89);
+    expect(row?.linkedIssueHardRuleViolationReason).toHaveLength(280);
+  });
+
+  it("is a safe no-op when the PR row does not exist yet", async () => {
+    const env = createTestEnv({});
+    await expect(repositoriesModule.markPullRequestLinkedIssueHardRuleViolated(env, "JSONbored/gittensory", 999999, "unreachable")).resolves.toBeUndefined();
   });
 });
 

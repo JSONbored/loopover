@@ -131,6 +131,34 @@ export function evaluateLinkedIssueHardRules(input: {
 }
 
 /**
+ * PURE merge of a freshly-recomputed (live) hard-rule result with a PR's persisted violation memory
+ * (#linked-issue-hard-rule-persistence). resolveLinkedIssueHardRule is fully re-evaluated from scratch every
+ * pass — it re-parses linked issues from the CURRENT PR body via regex and reads each linked issue's CURRENT
+ * live state, with no memory of a prior pass's finding. During the flag-then-close verification window
+ * (settings.linkedIssueHardRules.closeDelaySeconds), that statelessness lets a confirmed violation dodge the
+ * close two ways: (1) editing the PR body during the grace window to strip the closing reference, so the next
+ * pass sees zero linked issues and the live result is `undefined`; (2) the linked issue's live state changing
+ * between the violating pass and the verification pass (e.g. the assignee is removed), so the SAME issue
+ * number re-evaluates clean. Either way, `agent-actions.ts`'s `clearLinkedIssueFlag` would then remove the
+ * pending-closure label as if the violation never happened.
+ *
+ * `violatedAt` is the PR's persisted first-violation marker (`pullRequests.linkedIssueHardRuleViolatedAt`) —
+ * present (non-null) once ANY pass has ever confirmed a violation for this PR, and NEVER cleared. When present,
+ * the merged result is forced to `violated: true` regardless of what the live pass found THIS time, falling
+ * back to the persisted `reason` only when the live pass didn't also (re-)confirm one this pass. A live
+ * violation always wins for the `reason` text (freshest, most specific), so a persisted memory never masks new
+ * information — it only ever ADDS enforcement the live-only path would have missed.
+ */
+export function mergeLinkedIssueHardRuleWithPersistedViolation(
+  live: LinkedIssueHardRuleResult | undefined,
+  persisted: { violatedAt: string | null | undefined; reason: string | null | undefined },
+): LinkedIssueHardRuleResult | undefined {
+  if (live?.violated === true) return live;
+  if (persisted.violatedAt == null) return live;
+  return { violated: true, reason: persisted.reason ?? "the linked issue is not eligible for a community PR" };
+}
+
+/**
  * Orchestrate the per-PR linked-issue hard-rule decision (the testable core of maybeRunAgentMaintenance's
  * linked-issue block). Returns the hard-rule result, or undefined when no rule applies. Takes the raw PR body +
  * CI token so the overflow check and per-issue fact fetch happen here (the call-site stays branch-free):

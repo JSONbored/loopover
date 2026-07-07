@@ -7,6 +7,7 @@ import {
   evaluateLinkedIssueHardRules,
   hasVerifiableOpenLinkedIssueReference,
   loadLinkedIssueHardRules,
+  mergeLinkedIssueHardRuleWithPersistedViolation,
   resolveLinkedIssueHardRule,
   resolveLinkedIssueHasOpenReference,
   type LinkedIssueFacts,
@@ -499,6 +500,65 @@ describe("resolveLinkedIssueHardRule (#1144 — overflow + orchestration)", () =
     // the hard-rule violation above is computed independently and is unaffected by it either way.
     const db = { linkedIssueGateMode: "advisory", requireLinkedIssue: false } as unknown as RepositorySettings;
     expect(resolveEffectiveSettings(db, parseFocusManifest(null)).linkedIssueGateMode).toBe("advisory");
+  });
+});
+
+describe("mergeLinkedIssueHardRuleWithPersistedViolation (#linked-issue-hard-rule-persistence)", () => {
+  const notPersisted = { violatedAt: undefined, reason: undefined };
+
+  it("returns the live result unchanged when it is ALREADY a violation (persisted memory adds nothing new)", () => {
+    const live = { violated: true, reason: "Linked issue #9 is labeled `maintainer-only` — it is not open for community PRs unless assigned by a maintainer." };
+    expect(mergeLinkedIssueHardRuleWithPersistedViolation(live, notPersisted)).toBe(live);
+    // A live violation's reason wins even when a DIFFERENT persisted reason also exists — freshest evidence.
+    expect(
+      mergeLinkedIssueHardRuleWithPersistedViolation(live, { violatedAt: "2026-06-01T00:00:00Z", reason: "a stale, different reason" }),
+    ).toBe(live);
+  });
+
+  it("passes through undefined (no rule applies) when nothing is persisted", () => {
+    expect(mergeLinkedIssueHardRuleWithPersistedViolation(undefined, notPersisted)).toBeUndefined();
+  });
+
+  it("passes through a clean { violated: false } result unchanged when nothing is persisted", () => {
+    const clean = { violated: false, reason: null };
+    expect(mergeLinkedIssueHardRuleWithPersistedViolation(clean, notPersisted)).toBe(clean);
+  });
+
+  // REGRESSION (dodge 1): a contributor edits the PR body during the flag-then-close grace window to strip the
+  // "Closes #N" reference. The next pass's live re-parse then sees zero linked issues, so resolveLinkedIssueHardRule
+  // returns `undefined` -- exactly like this "live" input. Without the persisted memory, clearLinkedIssueFlag
+  // would remove the pending-closure label as if the violation never happened.
+  it("REGRESSION (body-edit-during-grace-window): a persisted violation is enforced even when the live re-parse now finds NO linked issues at all (undefined)", () => {
+    const merged = mergeLinkedIssueHardRuleWithPersistedViolation(undefined, {
+      violatedAt: "2026-06-01T12:00:00Z",
+      reason: "Linked issue #9 is labeled `maintainer-only` — it is not open for community PRs unless assigned by a maintainer.",
+    });
+    expect(merged).toEqual({
+      violated: true,
+      reason: "Linked issue #9 is labeled `maintainer-only` — it is not open for community PRs unless assigned by a maintainer.",
+    });
+  });
+
+  // REGRESSION (dodge 2): the linked issue's LIVE state changes between the violating pass and the verification
+  // pass (e.g. the assignee is removed, or the maintainer-only label is dropped) -- resolveLinkedIssueHardRule
+  // re-evaluates the SAME issue number cleanly and returns `{ violated: false, reason: null }`. Without the
+  // persisted memory, this is indistinguishable from "never violated" and the flag is cleared.
+  it("REGRESSION (live-issue-state-change-before-re-evaluation): a persisted violation is enforced even when the live re-parse now finds the SAME issue clean", () => {
+    const merged = mergeLinkedIssueHardRuleWithPersistedViolation(
+      { violated: false, reason: null },
+      { violatedAt: "2026-06-01T12:00:00Z", reason: "Linked issue #9 is already assigned to @claimed-dev — only the assignee or a maintainer can submit that work." },
+    );
+    expect(merged).toEqual({
+      violated: true,
+      reason: "Linked issue #9 is already assigned to @claimed-dev — only the assignee or a maintainer can submit that work.",
+    });
+  });
+
+  it("falls back to the generic reason when a persisted violation carries a null/missing reason", () => {
+    expect(mergeLinkedIssueHardRuleWithPersistedViolation(undefined, { violatedAt: "2026-06-01T00:00:00Z", reason: null })).toEqual({
+      violated: true,
+      reason: "the linked issue is not eligible for a community PR",
+    });
   });
 });
 

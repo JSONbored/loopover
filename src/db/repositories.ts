@@ -3503,6 +3503,26 @@ export async function markPullRequestMergeBlocked(env: Env, fullName: string, nu
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
 }
 
+// Linked-issue hard-rule violation memory (#linked-issue-hard-rule-persistence).
+
+/** Record the FIRST confirmed linked-issue hard-rule violation for a PR. Deliberately NOT scoped to headSha
+ *  (unlike markPullRequestMergeBlocked) and NEVER overwritten once set (mirrors bumpPullRequestDraftConversionCount's
+ *  own "never resets" discipline) -- COALESCE keeps whichever value was written first, so a contributor editing
+ *  the body or the linked issue's state changing after this call is a no-op here: the PR already proved itself in
+ *  violation once and stays that way for its lifetime. A no-op (0 rows affected) when the PR row doesn't exist yet
+ *  is safe -- the caller only reaches this after a live violation was just evaluated against an existing row. */
+export async function markPullRequestLinkedIssueHardRuleViolated(env: Env, fullName: string, number: number, reason: string): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({
+      linkedIssueHardRuleViolatedAt: sql`COALESCE(${pullRequests.linkedIssueHardRuleViolatedAt}, ${nowIso()})`,
+      linkedIssueHardRuleViolationReason: sql`COALESCE(${pullRequests.linkedIssueHardRuleViolationReason}, ${reason.slice(0, 280)})`,
+      updatedAt: nowIso(),
+    })
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number)));
+}
+
 /** Re-approval idempotency: record the head SHA the bot just auto-approved. The planner skips the `approve`
  *  disposition while approved_head_sha == headSha (this commit is already approved by the bot). Scoped to
  *  headSha so a later commit (the live head no longer matches) lets the bot re-approve the new code without
@@ -5561,6 +5581,8 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     // Read straight from the row, NEVER the GitHub payload — this is a gittensory-internal sweep marker.
     lastRegatedAt: row.lastRegatedAt,
     lastPublishedSurfaceSha: row.lastPublishedSurfaceSha,
+    linkedIssueHardRuleViolatedAt: row.linkedIssueHardRuleViolatedAt,
+    linkedIssueHardRuleViolationReason: row.linkedIssueHardRuleViolationReason,
   };
 }
 

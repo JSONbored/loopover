@@ -64,6 +64,7 @@ import {
   isGlobalAgentFrozen,
   listReviewSuppressions,
   markGateOutcomeOverridden,
+  markPullRequestLinkedIssueHardRuleViolated,
   startActiveReviewTracking,
   terminalizeActiveReviewTracking,
   bumpPullRequestDraftConversionCount,
@@ -492,6 +493,7 @@ import {
 } from "../github/pr-actions";
 import {
   loadLinkedIssueHardRules,
+  mergeLinkedIssueHardRuleWithPersistedViolation,
   resolveLinkedIssueHardRule,
   resolveLinkedIssueHasOpenReference,
 } from "../review/linked-issue-hard-rules";
@@ -2702,7 +2704,7 @@ async function runAgentMaintenancePlanAndExecute(
     env,
     repoFullName,
   );
-  const linkedIssueHardRule = await resolveLinkedIssueHardRule({
+  const liveLinkedIssueHardRule = await resolveLinkedIssueHardRule({
     env,
     repoFullName,
     repoOwner,
@@ -2712,6 +2714,19 @@ async function runAgentMaintenancePlanAndExecute(
     ciToken,
     prAuthorLogin: pr.authorLogin,
     installationId,
+  });
+  // Violation-persistence backstop (#linked-issue-hard-rule-persistence): remember a CONFIRMED violation forever
+  // (markPullRequestLinkedIssueHardRuleViolated is a no-op once already set) so a LATER pass can't lose it to a
+  // body edit or a linked issue's live state changing -- see mergeLinkedIssueHardRuleWithPersistedViolation's own
+  // doc comment for the full dodge-window rationale. Best-effort write: a D1 hiccup here only means this ONE
+  // confirmed violation isn't remembered, matching every other gittensory-computed marker write in this file
+  // (mergeBlockedSha, draftConversionCount, lastRegatedAt).
+  if (liveLinkedIssueHardRule?.violated === true) {
+    await markPullRequestLinkedIssueHardRuleViolated(env, repoFullName, pr.number, liveLinkedIssueHardRule.reason ?? "the linked issue is not eligible for a community PR").catch(() => undefined);
+  }
+  const linkedIssueHardRule = mergeLinkedIssueHardRuleWithPersistedViolation(liveLinkedIssueHardRule, {
+    violatedAt: pr.linkedIssueHardRuleViolatedAt,
+    reason: pr.linkedIssueHardRuleViolationReason,
   });
 
   // Unlinked-issue guardrail (#unlinked-issue-guardrail, credibility-gate-farming defense): when this PR

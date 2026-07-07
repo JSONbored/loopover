@@ -448,6 +448,20 @@ export const pullRequests = sqliteTable(
     // be stale or partial while this marker matches headSha. gittensory-computed (publish-written), omitted from
     // the GitHub-sync SET clause so a later sync cannot clobber it. (Mirrors approved_head_sha.)
     lastPublishedSurfaceSha: text("last_published_surface_sha"),
+    // Linked-issue hard-rule violation memory (#linked-issue-hard-rule-persistence). The FIRST time this PR NUMBER
+    // was confirmed to violate a hard rule (owner-assigned / assigned-to-another / maintainer-only / missing
+    // point-label) -- set once, NEVER cleared, and deliberately NOT scoped to head SHA (mirrors
+    // draft_conversion_count: an edited body or a fresh commit doesn't undo an already-proven violation). Checked
+    // ADDITIONALLY alongside resolveLinkedIssueHardRule's own live re-parse so a contributor cannot dodge the
+    // flag-then-close verification window by stripping the closing reference from the body, or by the linked
+    // issue's live state changing (e.g. unassigned), between the flagging pass and the verification pass.
+    // gittensory-computed (planner-written), omitted from the GitHub-sync SET clause so a later sync cannot clobber
+    // it.
+    linkedIssueHardRuleViolatedAt: text("linked_issue_hard_rule_violated_at"),
+    // The specific rule reason text captured at the moment of the FIRST violation (mirrors merge_blocked_reason's
+    // pairing with merge_blocked_sha) -- so a later close can still cite the concrete rule even if the live
+    // re-parse can no longer reproduce it (the issue was unlinked or its state changed).
+    linkedIssueHardRuleViolationReason: text("linked_issue_hard_rule_violation_reason"),
     createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
     updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },

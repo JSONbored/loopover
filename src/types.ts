@@ -534,6 +534,16 @@ export type PullRequestRecord = {
    *  stale-surface diagnostics, not as a hard re-review skip: GitHub comments/checks can still be stale or partial
    *  while this marker matches headSha. Publish-written; read straight from the row. */
   lastPublishedSurfaceSha?: string | null | undefined;
+  /** Linked-issue hard-rule violation memory (#linked-issue-hard-rule-persistence): the FIRST time this PR NUMBER
+   *  was confirmed to violate a hard rule. Set once, NEVER cleared, NOT scoped to head SHA (mirrors
+   *  draftConversionCount) — checked ADDITIONALLY alongside resolveLinkedIssueHardRule's own live re-parse so an
+   *  edited body or a changed linked-issue live state can't erase an already-confirmed violation. Planner-written;
+   *  read straight from the row. */
+  linkedIssueHardRuleViolatedAt?: string | null | undefined;
+  /** The specific rule reason text captured at the moment of the first violation (mirrors mergeBlockedReason's
+   *  pairing with mergeBlockedSha) — so a later close can still cite the concrete rule even when the live re-parse
+   *  can no longer reproduce it. */
+  linkedIssueHardRuleViolationReason?: string | null | undefined;
   /** File paths changed by this open PR, when the caller has already resolved them (e.g. from the
    *  `pull_request_files` cache). Absent/undefined when not resolved — callers must not assume an empty array
    *  means "no files changed". Mirrors {@link RecentMergedPullRequestRecord.changedFiles} so the same

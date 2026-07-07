@@ -41,7 +41,7 @@ gate:
   duplicates: block            # block | advisory | off — block obvious duplicate PRs
   readiness:
     mode: advisory             # advisory | off — readiness score is informational and never blocks the Gate
-    minScore: 60
+    minScore: 40               # lowered from 60: 73% false-positive rate showed PRs scoring 40-59 merge freely
   # aiReview:                  # opt-in AI maintainer review (off by default; needs the AI flags enabled)
   #   mode: advisory           # block | advisory | off — block only blocks on a dual-model consensus defect
   #   byok: false              # use a maintainer Anthropic/OpenAI key for the write-up; consensus stays on the free/default reviewer

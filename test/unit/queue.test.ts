@@ -24523,6 +24523,11 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       if (url.includes("/check-runs")) return Response.json({ id: 900 }, { status: 201 });
       if (url.includes("/labels")) return Response.json([{ name: "review-evasion" }]);
       if (url.includes("/pulls/42/files")) return Response.json([]);
+      // A .gittensory.yml content fetch (raw.githubusercontent.com) must resolve to SOMETHING with no opinion
+      // on reviewEvasionProtection -- otherwise a miss here falls through to the bundled JSONbored/gittensory
+      // fallback manifest (gittensory-repo-focus-manifest.ts), whose OWN checked-in reviewEvasionProtection:
+      // close would silently outrank every test below's DB-level override (yml > DB precedence, #config-as-code).
+      if (url.includes("raw.githubusercontent.com") && url.includes("gittensory.y")) return new Response("source: repo_file\n", { status: 200 });
       return new Response("not found", { status: 404 });
     });
   }
@@ -25500,6 +25505,488 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       await processJob(env, { type: "github-webhook", deliveryId: "draft-evasion-label-unset", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
 
       expect(labelPostBodies.some((b) => b.includes("review-evasion"))).toBe(true);
+    });
+  });
+
+  describe("repeated ready<->draft cycling (#gaming-tactic-draft-cycle)", () => {
+    it("does nothing on the FIRST draft conversion, then closes on the SECOND -- independent of active-review/gate-block state", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+      await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
+      // Deliberately NO startActiveReviewTracking / recordGateBlockOutcome call -- neither sibling guard's own
+      // trigger condition is present, so any close observed below can only be this new, count-based guard.
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      const patches = calls.filter((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"));
+      expect(patches).toHaveLength(1);
+      expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(true);
+      const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by rowid desc limit 1")
+        .bind("github_app.review_evasion_closed")
+        .first<{ outcome: string; detail: string }>();
+      expect(audit?.outcome).toBe("completed");
+      expect(audit?.detail).toContain("repeated draft-cycling");
+      expect(audit?.detail).toContain("#2");
+      const strike = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("moderation.violation.review_evasion").first<{ outcome: string }>();
+      expect(strike?.outcome).toBe("completed");
+    });
+
+    it("does nothing when reviewEvasionProtection is off, even after a repeated cycle", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env, { reviewEvasionProtection: "off" });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-off-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-off-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    });
+
+    it("does nothing when reviewEvasionProtection is unset (undefined, not just 'off'), even after a repeated cycle", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+      const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
+      vi.spyOn(repositorySettingsModule, "resolveRepositorySettings").mockResolvedValue({ ...baseSettings, reviewEvasionProtection: undefined });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-unset-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-unset-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    });
+
+    it("REGRESSION (gate-flagged): does not enforce against a THIRD PARTY repeatedly converting someone else's PR to draft", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls, { collaboratorPermission: "write" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+      const payload = draftEvasionPayload("contributor");
+      payload.sender = { login: "a-maintainer", type: "User" };
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-third-party-1", eventName: "pull_request", payload });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-third-party-2", eventName: "pull_request", payload });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    });
+
+    it("does nothing for a protected automation author (e.g. dependabot[bot]), even after a repeated cycle", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-bot-1", eventName: "pull_request", payload: draftEvasionPayload("dependabot[bot]") });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-bot-2", eventName: "pull_request", payload: draftEvasionPayload("dependabot[bot]") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    });
+
+    it("does nothing when the PR record has no headSha, even after a repeated cycle", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+      const payload = draftEvasionPayload("contributor");
+      payload.pull_request.head = null;
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-no-head-1", eventName: "pull_request", payload });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-no-head-2", eventName: "pull_request", payload });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    });
+
+    it("does nothing when the author holds write collaborator permission, even after a repeated cycle", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls, { collaboratorPermission: "write" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-maintainer-1", eventName: "pull_request", payload: draftEvasionPayload("write-collaborator") });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-maintainer-2", eventName: "pull_request", payload: draftEvasionPayload("write-collaborator") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    });
+
+    it("denies enforcement when close autonomy is not acting (observe)", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env, { autonomy: { close: "observe" } });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-observe-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-observe-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+      const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by rowid desc limit 1")
+        .bind("github_app.review_evasion_closed")
+        .first<{ outcome: string; detail: string }>();
+      expect(audit?.outcome).toBe("denied");
+      expect(audit?.detail).toContain("autonomy for close is not acting");
+    });
+
+    it("dry-run: audits the would-be enforcement without mutating GitHub or recording a live strike", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env, { agentDryRun: true });
+      await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-dry-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-dry-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+      const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by rowid desc limit 1")
+        .bind("github_app.review_evasion_closed")
+        .first<{ outcome: string; detail: string }>();
+      expect(audit?.outcome).toBe("completed");
+      expect(audit?.detail).toContain("dry-run");
+      const strike = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("moderation.violation.review_evasion").first<{ n: number }>();
+      expect(strike?.n).toBe(0);
+    });
+
+    it("denies enforcement when the agent is paused for this repo", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env, { agentPaused: true });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-paused-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-paused-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+      const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by rowid desc limit 1")
+        .bind("github_app.review_evasion_closed")
+        .first<{ outcome: string; detail: string }>();
+      expect(audit?.outcome).toBe("denied");
+      expect(audit?.detail).toContain("paused");
+    });
+
+    it("denies enforcement when pull_requests: write is not granted", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertInstallation(env, {
+        installation: {
+          id: 123,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          repository_selection: "selected",
+          permissions: { metadata: "read", issues: "write" },
+          events: ["pull_request"],
+        },
+        repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+      });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", publicSurface: "off", commentMode: "off", checkRunMode: "off", autonomy: { close: "auto" }, agentPaused: false, reviewEvasionProtection: "close" });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-no-write-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-no-write-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+      const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by rowid desc limit 1")
+        .bind("github_app.review_evasion_closed")
+        .first<{ outcome: string; detail: string }>();
+      expect(audit?.outcome).toBe("denied");
+      expect(audit?.detail).toContain("pull_requests: write not granted");
+    });
+
+    it("denies enforcement when the PR was converted back to ready_for_review before the close fires (requireDraft freshness)", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-fresh-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "no_longer_draft", expectedHeadSha: "abc123", liveHeadSha: "abc123", liveState: "open" });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-fresh-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+      expect(fetchPullRequestFreshness).toHaveBeenCalledWith(env, expect.objectContaining({ requireDraft: true }));
+      const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by rowid desc limit 1")
+        .bind("github_app.review_evasion_closed")
+        .first<{ outcome: string; detail: string }>();
+      expect(audit?.outcome).toBe("denied");
+    });
+
+    it("audits an error and does NOT record a strike when the close API call fails", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        calls.push({ url, method });
+        if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+        if (url.includes("/collaborators/")) return Response.json({ permission: "read" });
+        if (method === "PATCH" && url.endsWith("/pulls/42")) return new Response("server error", { status: 500 });
+        if (url.includes("raw.githubusercontent.com") && url.includes("gittensory.y")) return new Response("source: repo_file\n", { status: 200 });
+        return new Response("not found", { status: 404 });
+      });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+      await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-close-fail-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-close-fail-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by rowid desc limit 1")
+        .bind("github_app.review_evasion_closed")
+        .first<{ outcome: string; detail: string }>();
+      expect(audit?.outcome).toBe("error");
+      const strike = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("moderation.violation.review_evasion").first<{ n: number }>();
+      expect(strike?.n).toBe(0);
+    });
+
+    it("global moderation disabled: the close/label/comment still happen, but no moderation strike is recorded", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-mod-off-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-mod-off-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(true);
+      const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by rowid desc limit 1")
+        .bind("github_app.review_evasion_closed")
+        .first<{ outcome: string; detail: string }>();
+      expect(audit?.outcome).toBe("completed");
+      const strike = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("moderation.violation.review_evasion").first<{ n: number }>();
+      expect(strike?.n).toBe(0);
+    });
+
+    it("REGRESSION: the third (and every later) conversion is enforced too, not just exactly the second", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      let patchCount = 0;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        calls.push({ url, method });
+        if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+        if (url.includes("/collaborators/")) return Response.json({ permission: "read" });
+        if (method === "PATCH" && url.endsWith("/pulls/42")) {
+          patchCount += 1;
+          return Response.json({ state: "open" }); // simulate the close failing to stick / a reopen between cycles
+        }
+        if (method === "POST" && url.endsWith("/issues/42/comments")) return Response.json({ id: 1 }, { status: 201 });
+        if (url.includes("/labels")) return Response.json([{ name: "review-evasion" }]);
+        if (url.includes("/pulls/42/files")) return Response.json([]);
+        if (url.includes("raw.githubusercontent.com") && url.includes("gittensory.y")) return new Response("source: repo_file\n", { status: 200 });
+        return new Response("not found", { status: 404 });
+      });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-third-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-third-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-third-3", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(patchCount).toBe(2); // enforced on the 2nd AND the 3rd -- >= 2, not === 2.
+      const completed = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and outcome = 'completed'")
+        .bind("github_app.review_evasion_closed")
+        .first<{ n: number }>();
+      expect(completed?.n).toBe(2);
+    });
+
+    it("retries (via a thrown lock-contended error) when a concurrent delivery already holds the per-PR actuation lock", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      // Deliberately autonomy: {} -- draft-dodge's own outer dispatch condition (isAgentConfigured) is false, so
+      // ITS lock claim never fires. The remaining sibling (review-evasion-active-review) has no settings gate at
+      // its OWN lock claim, so it claims+releases the lock normally first (mocked to succeed); THIS guard's own
+      // subsequent claim -- the second and only other .claim() call in this pass -- is the one mocked to fail,
+      // isolating its throw from the sibling's identically-shaped one.
+      await setupEvasionRepo(env, { autonomy: {} });
+      const claimSpy = vi.spyOn(env.SELFHOST_TRANSIENT_CACHE!, "claim").mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+      await expect(
+        processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-lock-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") }),
+      ).rejects.toThrow("during review-evasion-draft-cycle");
+
+      expect(claimSpy).toHaveBeenCalledTimes(2);
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    });
+
+    it("does nothing when the webhook payload has no sender, even after a repeated cycle", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+      const payload = draftEvasionPayload("contributor");
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-no-sender-1", eventName: "pull_request", payload: { ...payload, sender: undefined } });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-no-sender-2", eventName: "pull_request", payload: { ...payload, sender: undefined } });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    });
+
+    it("does nothing when the PR record has no author (a deleted-account PR), even after a repeated cycle", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+      const payload = draftEvasionPayload("contributor");
+      payload.pull_request.user = null;
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-no-author-1", eventName: "pull_request", payload });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-no-author-2", eventName: "pull_request", payload });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    });
+
+    it("denies enforcement when the installation record is missing (uninstalled mid-flight)", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-no-install-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      vi.spyOn(repositoriesModule, "getInstallation").mockResolvedValue(null);
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-no-install-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+      const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by rowid desc limit 1")
+        .bind("github_app.review_evasion_closed")
+        .first<{ outcome: string; detail: string }>();
+      expect(audit?.outcome).toBe("denied");
+      expect(audit?.detail).toContain("pull_requests: write not granted");
+    });
+
+    it("skips the courtesy comment when reviewEvasionComment is explicitly false", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env, { reviewEvasionComment: false });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-comment-false-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-comment-false-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(true);
+      expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(false);
+    });
+
+    it("posts the courtesy comment when reviewEvasionComment is unset (undefined, not just a stored default)", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-comment-unset-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
+      vi.spyOn(repositorySettingsModule, "resolveRepositorySettings").mockResolvedValue({ ...baseSettings, reviewEvasionComment: undefined });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-comment-unset-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(true);
+    });
+
+    it("applies no label when reviewEvasionLabel is explicitly null (a .gittensory.yml-only 'no label' override)", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      const labelPostBodies: string[] = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        calls.push({ url, method });
+        if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+        if (url.includes("/collaborators/")) return Response.json({ permission: "read" });
+        if (method === "PATCH" && url.endsWith("/pulls/42")) return Response.json({ state: "closed" });
+        if (method === "POST" && url.endsWith("/issues/42/comments")) return Response.json({ id: 1 }, { status: 201 });
+        if (method === "POST" && url.endsWith("/issues/42/labels")) {
+          labelPostBodies.push(String(init?.body ?? ""));
+          return Response.json([], { status: 200 });
+        }
+        if (url.includes("/labels")) return Response.json([]);
+        if (url.includes("/pulls/42/files")) return Response.json([]);
+        return new Response("not found", { status: 404 });
+      });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-label-null-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
+      vi.spyOn(repositorySettingsModule, "resolveRepositorySettings").mockResolvedValue({ ...baseSettings, reviewEvasionLabel: null });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-label-null-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(labelPostBodies.some((b) => b.includes("review-evasion"))).toBe(false);
+      const audit = await env.DB.prepare("select outcome from audit_events where event_type = ? order by rowid desc limit 1").bind("github_app.review_evasion_closed").first<{ outcome: string }>();
+      expect(audit?.outcome).toBe("completed");
+    });
+
+    it("falls back to the default label when reviewEvasionLabel is unset (undefined, not just a stored default)", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      const labelPostBodies: string[] = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        calls.push({ url, method });
+        if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+        if (url.includes("/collaborators/")) return Response.json({ permission: "read" });
+        if (method === "PATCH" && url.endsWith("/pulls/42")) return Response.json({ state: "closed" });
+        if (method === "POST" && url.endsWith("/issues/42/comments")) return Response.json({ id: 1 }, { status: 201 });
+        if (method === "POST" && url.endsWith("/issues/42/labels")) {
+          labelPostBodies.push(String(init?.body ?? ""));
+          return Response.json([], { status: 200 });
+        }
+        if (url.includes("/labels")) return Response.json([]);
+        if (url.includes("/pulls/42/files")) return Response.json([]);
+        return new Response("not found", { status: 404 });
+      });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env);
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-label-unset-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
+      vi.spyOn(repositorySettingsModule, "resolveRepositorySettings").mockResolvedValue({ ...baseSettings, reviewEvasionLabel: undefined });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-label-unset-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(labelPostBodies.some((b) => b.includes("review-evasion"))).toBe(true);
+    });
+  });
+
+  describe("bumpPullRequestDraftConversionCount", () => {
+    it("increments across repeated calls for the same PR and is independent of head SHA", async () => {
+      const env = createTestEnv({});
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await repositoriesModule.upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        id: 4242,
+        number: 77,
+        state: "open",
+        title: "Some PR",
+        user: { login: "contributor" },
+        head: { sha: "sha-1", ref: "fix", repo: { full_name: "contributor/gittensory", owner: { login: "contributor" } } },
+        base: { sha: "base123", ref: "main", repo: { full_name: "JSONbored/gittensory", owner: { login: "JSONbored" } } },
+        draft: false,
+        merged: false,
+        created_at: "2026-05-27T00:00:00Z",
+        updated_at: "2026-05-27T00:00:00Z",
+      } as never);
+
+      expect(await repositoriesModule.bumpPullRequestDraftConversionCount(env, "JSONbored/gittensory", 77)).toBe(1);
+      expect(await repositoriesModule.bumpPullRequestDraftConversionCount(env, "JSONbored/gittensory", 77)).toBe(2);
+      // A fresh push (new head SHA) between cycles must NOT reset the counter -- unlike mergeAttemptCount.
+      await repositoriesModule.upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        id: 4242,
+        number: 77,
+        state: "open",
+        title: "Some PR",
+        user: { login: "contributor" },
+        head: { sha: "sha-2", ref: "fix", repo: { full_name: "contributor/gittensory", owner: { login: "contributor" } } },
+        base: { sha: "base123", ref: "main", repo: { full_name: "JSONbored/gittensory", owner: { login: "JSONbored" } } },
+        draft: false,
+        merged: false,
+        created_at: "2026-05-27T00:00:00Z",
+        updated_at: "2026-05-27T00:00:00Z",
+      } as never);
+      expect(await repositoriesModule.bumpPullRequestDraftConversionCount(env, "JSONbored/gittensory", 77)).toBe(3);
+    });
+
+    it("returns 0 for a PR that does not exist (no row to increment)", async () => {
+      const env = createTestEnv({});
+      expect(await repositoriesModule.bumpPullRequestDraftConversionCount(env, "JSONbored/gittensory", 999999)).toBe(0);
     });
   });
 });

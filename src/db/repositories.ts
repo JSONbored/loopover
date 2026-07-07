@@ -3387,6 +3387,25 @@ export async function bumpPullRequestMergeAttempt(env: Env, fullName: string, nu
   return Number(row?.count ?? 0);
 }
 
+// Review-evasion: repeated ready<->draft cycling (#gaming-tactic-draft-cycle).
+
+/** Increment the ready<->draft conversion counter for a PR and return the new total. Deliberately NOT scoped
+ *  to headSha (unlike bumpPullRequestMergeAttempt) -- a contributor pushing a new commit between draft cycles
+ *  is still doing the same repeated-evasion shape, so a fresh head must not reset the count back to zero. */
+export async function bumpPullRequestDraftConversionCount(env: Env, fullName: string, number: number): Promise<number> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({ draftConversionCount: sql`${pullRequests.draftConversionCount} + 1`, updatedAt: nowIso() })
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number)));
+  const [row] = await db
+    .select({ count: pullRequests.draftConversionCount })
+    .from(pullRequests)
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number)))
+    .limit(1);
+  return Number(row?.count ?? 0);
+}
+
 /** Mark a PR terminally merge-blocked for its current head SHA: the planner skips the `merge` disposition while
  *  merge_blocked_sha == headSha. Scoped to headSha so a later commit (a pushed fix) auto-clears the block (the
  *  guard compares it to the live head). Records the human-readable terminal reason. */

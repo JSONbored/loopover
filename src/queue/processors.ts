@@ -66,6 +66,7 @@ import {
   markGateOutcomeOverridden,
   startActiveReviewTracking,
   terminalizeActiveReviewTracking,
+  bumpPullRequestDraftConversionCount,
   recordProductUsageEvent,
   persistSignalSnapshot,
   recordWebhookEvent,
@@ -5814,6 +5815,27 @@ async function processGitHubWebhook(
           pr,
           payload,
           settings,
+        );
+      }
+      // Review-evasion protection: repeated ready<->draft cycling (#gaming-tactic-draft-cycle). Always counts
+      // the conversion (cheap, no side effects) so the count is accurate from the very first converted_to_draft
+      // event this repo ever sees, even before reviewEvasionProtection is turned on for it -- only the
+      // ENFORCEMENT below is gated on that setting. Runs after both guards above so a PR already closed by
+      // either of them fails this guard's own freshness re-check instead of being redundantly re-closed.
+      if (payload.action === "converted_to_draft" && installationId) {
+        const draftConversionCount = await bumpPullRequestDraftConversionCount(env, repoFullName, pr.number).catch(
+          /* v8 ignore next -- fail-safe: a counter-write failure only means this ONE cycle isn't detected. */
+          () => 0,
+        );
+        await maybeCloseRepeatedDraftCycling(
+          env,
+          deliveryId,
+          installationId,
+          repoFullName,
+          pr,
+          payload,
+          settings,
+          draftConversionCount,
         );
       }
       // Review-evasion protection: the "closed" half of the active-review-tracking cleanup (the
@@ -11786,6 +11808,213 @@ async function closeReviewEvasionDraftConversionIfActive(
     outcome: "completed",
     detail: `closed a review-evasion draft-conversion by ${pr.authorLogin} -- active review on headSha ${pr.headSha} was in progress`,
     metadata: { deliveryId, repoFullName, headSha: pr.headSha },
+  }).catch(
+    /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+    () => undefined,
+  );
+  await terminalizeActiveReviewTracking(env, repoFullName, pr.number, { onlyIfHeadSha: pr.headSha }).catch(() => undefined);
+  // unreachable implicit-else: the actor guard above already proved pr.authorLogin is a non-empty string
+  // (converter/authorLogin are both derived from it and must be truthy to reach this point); the check only
+  // exists to narrow the type for applyModerationEscalationForRule's non-nullable authorLogin param.
+  /* v8 ignore else */
+  if (pr.authorLogin) {
+    await applyModerationEscalationForRule(env, {
+      installationId,
+      repoFullName,
+      number: pr.number,
+      authorLogin: pr.authorLogin,
+      rule: "review_evasion",
+      moderationSettings: {
+        moderationGateMode: settings.moderationGateMode,
+        moderationRules: settings.moderationRules,
+        moderationWarningLabel: settings.moderationWarningLabel,
+        moderationBannedLabel: settings.moderationBannedLabel,
+      },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an escalation failure never blocks the (already-completed) close. */
+      () => undefined,
+    );
+  }
+}
+
+/** Review-evasion protection (#gaming-tactic-draft-cycle): a contributor who converts their OWN PR to draft
+ *  more than once is using draft state as a repeated shield to harvest AI-review/CI feedback for free while
+ *  dodging the one-shot disposition -- distinct from the two EXISTING draft guards above, which key off a
+ *  SPECIFIC head's review/gate state (an active pass, or a prior recorded gate failure) and can both be
+ *  legitimately absent on a fast cycle (e.g. converting to draft before either has recorded anything for the
+ *  new head at all). This guard instead keys purely on REPETITION: the second (and every later) ready->draft
+ *  conversion on the same PR is enforced regardless of the current review/gate state, since the pattern
+ *  itself -- not any one head's verdict -- is the abuse signal. A single, first-time draft conversion is
+ *  never enforced here (ordinary WIP behavior). Per-PR actuation-locked like its siblings. */
+async function maybeCloseRepeatedDraftCycling(
+  env: Env,
+  deliveryId: string,
+  installationId: number,
+  repoFullName: string,
+  pr: PullRequestRecord,
+  payload: GitHubWebhookPayload,
+  settings: RepositorySettings,
+  draftConversionCount: number,
+): Promise<void> {
+  const actuationLock = await claimPrActuationLock(env, repoFullName, pr.number);
+  if (!actuationLock.acquired) {
+    throw new PrActuationLockContendedError(repoFullName, pr.number, "review-evasion-draft-cycle");
+  }
+  try {
+    await closeRepeatedDraftCyclingIfDetected(env, deliveryId, installationId, repoFullName, pr, payload, settings, draftConversionCount);
+  } finally {
+    await releasePrActuationLock(env, repoFullName, pr.number, actuationLock.ownerToken);
+  }
+}
+
+async function closeRepeatedDraftCyclingIfDetected(
+  env: Env,
+  deliveryId: string,
+  installationId: number,
+  repoFullName: string,
+  pr: PullRequestRecord,
+  payload: GitHubWebhookPayload,
+  settings: RepositorySettings,
+  draftConversionCount: number,
+): Promise<void> {
+  if ((settings.reviewEvasionProtection ?? "off") !== "close") return;
+  if (draftConversionCount < 2) return;
+  const converter = (payload.sender?.login ?? "").toLowerCase();
+  const authorLogin = (pr.authorLogin ?? "").toLowerCase();
+  // Only the PR's OWN author converting their OWN PR to draft is a cycling-evasion candidate -- a third party
+  // (e.g. a maintainer converting a contributor's PR to draft) is an ordinary maintainer action, not evasion,
+  // and must never be enforced against the author who didn't do it (mirrors the two sibling guards above).
+  if (!converter || !authorLogin || converter !== authorLogin) return;
+  if (isProtectedAutomationAuthor(pr.authorLogin)) return;
+  if (!pr.headSha) return;
+  if (await hasMaintainerOrOwnerPermission(env, installationId, repoFullName, authorLogin)) return;
+
+  const targetKey = `${repoFullName}#${pr.number}`;
+  const evasionMode = resolveAgentActionMode({
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    agentPaused: settings.agentPaused,
+    agentDryRun: settings.agentDryRun,
+  });
+  if (!isActingAutonomyLevel(resolveAutonomy(settings.autonomy, "close"))) {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "denied",
+      detail: `autonomy for close is not acting -- repeated draft-cycling not enforced for ${pr.authorLogin} (conversion #${draftConversionCount})`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha, draftConversionCount },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return;
+  }
+  if (evasionMode === "dry_run") {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "completed",
+      detail: `dry-run: would close repeated draft-cycling by ${pr.authorLogin} -- conversion #${draftConversionCount}`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha, mode: "dry_run", draftConversionCount },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return;
+  }
+  if (evasionMode !== "live") {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "denied",
+      detail: `agent actions paused -- repeated draft-cycling not enforced for ${pr.authorLogin} (conversion #${draftConversionCount})`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha, draftConversionCount },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return;
+  }
+  const installation = await getInstallation(env, installationId);
+  const installationPermissions = installation?.permissions ?? null;
+  if (resolveAgentPermissionReadiness({ autonomy: settings.autonomy, installationPermissions, actionClass: "close" }) !== "ready") {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "denied",
+      detail: `denied repeated-draft-cycling enforcement for ${pr.authorLogin} -- pull_requests: write not granted`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha, draftConversionCount },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return;
+  }
+  // requireDraft: the justification evaporates if the author converted the PR BACK to ready_for_review in the
+  // window between ingestion and this check, mirroring the two sibling guards' identical fix (#2130). A PR
+  // already closed moments ago by one of the sibling guards also fails this (status !== "current"), so it is
+  // never redundantly re-closed here.
+  const freshness = await fetchPullRequestFreshness(env, { installationId, repoFullName, pullNumber: pr.number, expectedHeadSha: pr.headSha, requireDraft: true });
+  if (freshness.status !== "current") {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "denied",
+      detail: `${pullRequestFreshnessDetail(freshness)} -- repeated-draft-cycling enforcement not executed`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha, draftConversionCount },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return;
+  }
+
+  const closeError = await closePullRequest(env, installationId, repoFullName, pr.number)
+    .then(() => null)
+    .catch((error: unknown) => error);
+  if (closeError !== null) {
+    await recordAuditEvent(env, {
+      eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+      actor: "gittensory",
+      targetKey,
+      outcome: "error",
+      detail: `FAILED to close repeated draft-cycling by ${pr.authorLogin} -- the close API call did not succeed; the PR may still be open`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha, draftConversionCount, error: errorMessage(closeError) },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
+      () => undefined,
+    );
+    return; // the strike only counts once the enforcement close actually succeeds.
+  }
+
+  const shouldPostComment = settings.reviewEvasionComment ?? true;
+  if (shouldPostComment) {
+    await createIssueComment(
+      env,
+      installationId,
+      repoFullName,
+      pr.number,
+      `Gittensory detected this pull request has been converted to draft ${draftConversionCount} times — repeatedly cycling between ready and draft to solicit review feedback without a real one-shot attempt is not allowed. Please open a new pull request with the issues addressed.`,
+    ).catch(
+      /* v8 ignore next -- fail-safe: a courtesy-comment failure never blocks the handler. */
+      () => undefined,
+    );
+  }
+  const label = settings.reviewEvasionLabel === null ? null : (settings.reviewEvasionLabel ?? DEFAULT_REVIEW_EVASION_LABEL);
+  if (label !== null) {
+    await ensurePullRequestLabel(env, installationId, repoFullName, pr.number, label, { createMissingLabel: true }).catch(() => undefined);
+  }
+  await recordAuditEvent(env, {
+    eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
+    actor: "gittensory",
+    targetKey,
+    outcome: "completed",
+    detail: `closed repeated draft-cycling by ${pr.authorLogin} -- conversion #${draftConversionCount} on this PR`,
+    metadata: { deliveryId, repoFullName, headSha: pr.headSha, draftConversionCount },
   }).catch(
     /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
     () => undefined,

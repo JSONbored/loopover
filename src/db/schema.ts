@@ -428,6 +428,11 @@ export const pullRequests = sqliteTable(
     mergeAttemptCount: integer("merge_attempt_count").notNull().default(0),
     mergeBlockedSha: text("merge_blocked_sha"),
     mergeBlockedReason: text("merge_blocked_reason"),
+    // Review-evasion: repeated ready<->draft cycling (#gaming-tactic-draft-cycle). Counts every converted_to_draft
+    // webhook ever processed for this PR NUMBER -- deliberately NOT scoped to head SHA like mergeAttemptCount,
+    // since cycling back to draft after a fresh push is exactly the same evasion shape a new commit must not
+    // reset. gittensory-computed (webhook-written), omitted from the GitHub-sync SET clause.
+    draftConversionCount: integer("draft_conversion_count").notNull().default(0),
     // Re-approval idempotency: the head SHA the bot last auto-approved. The planner skips the `approve`
     // disposition while approved_head_sha == headSha (this commit is already approved). Keyed to head SHA → a
     // new commit makes the bot re-approve the new code. gittensory-computed (executor-written), omitted from

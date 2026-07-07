@@ -91,6 +91,13 @@ settings:
 #   scope: [agents]                 # agents | skills — which generated file types are in play
 #   allowOverwriteExisting: false   # required before Gittensory will touch an existing hand-maintained file
 
+# Review-evasion protection (config-as-code override; layered OVER the dashboard's own default of "off"):
+# closing or converting-to-draft your OWN PR while gittensory has an active review pass running, a prior
+# recorded gate failure, or a repeated ready<->draft cycle on this PR, is treated as dodging the one-shot
+# review rather than an ordinary action.
+settings:
+  reviewEvasionProtection: close
+
 publicNotes:
   - Prefer backend Workers, MCP, GitHub App, registry, and scoring work when scope allows.
   - Focused control-panel UI changes are welcome when they use live API data or honest empty/error states and tie to safety, release readiness, or operator-facing analytics.

@@ -152,6 +152,17 @@ export { resolvePlanOverallStatus, type PlanOverallStatus } from "./plan-overall
 export { hasPlanReadySteps } from "./plan-ready.js";
 export { isPlanTerminated } from "./plan-terminated.js";
 export * from "./plan-templates.js";
+export {
+  PROMPT_PACKET_REDACTED_PATH,
+  PROMPT_PACKET_REDACTED_TERM,
+  PROMPT_PACKET_TEXT_FIELDS,
+  buildPromptPacket,
+  sanitizePromptPacketField,
+  type PromptPacket,
+  type PromptPacketBuildResult,
+  type PromptPacketInput,
+  type PromptPacketTextField,
+} from "./prompt-packet.js";
 export * from "./portfolio/queue.js";
 export {
   applyAiPolicyFatigueToRankInput,

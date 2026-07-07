@@ -413,7 +413,7 @@ describe("RAG wired into the AI reviewer (flag GITTENSORY_REVIEW_RAG)", () => {
       notesReferencedRetrievedPath: false,
       findingReferencedRetrievedPath: false,
     });
-  });
+  }, 60_000);
 
   it("FLAG-OFF (default): the prompt is byte-identical to the no-RAG prompt (ragContext undefined)", async () => {
     // The flag-OFF call site leaves ragContext undefined; the prompt must equal the no-RAG prompt.

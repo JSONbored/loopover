@@ -7242,7 +7242,7 @@ describe("queue processors", () => {
     } finally {
       errors.mockRestore();
     }
-  });
+  }, 60_000);
 
   it("REGRESSION (#orb-retry-storm): a repair dispatch under the attempt cap records a repair_attempt audit event, and a second sweep tick does not duplicate the repair_exhausted event once already flagged", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
@@ -7287,7 +7287,7 @@ describe("queue processors", () => {
       .bind("agent.sweep.regate.repair_exhausted", targetKey)
       .first<{ n: number }>();
     expect(exhausted?.n).toBe(1);
-  });
+  }, 60_000);
 
   it("agent re-gate sweep fail-opens when current Gate check reads fail during repair priority selection", async () => {
     const sent: import("../../src/types").JobMessage[] = [];

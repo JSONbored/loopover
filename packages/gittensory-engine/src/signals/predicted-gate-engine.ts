@@ -899,15 +899,21 @@ export function tokenize(value: string): string[] {
 }
 
 function extractLinkedIssueNumbers(text: string, repoFullName: string): number[] {
-  const numbers = [...text.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi)].map((match) => Number(match[1]));
-  // GitHub also auto-closes via the fully-qualified `KEYWORD owner/repo#N` form (e.g. Renovate/Dependabot bodies).
-  // Count it only when owner/repo case-insensitively equals THIS repo — a reference to a different repo closes an
-  // issue elsewhere, not here, so it must not spoof a same-repo link. Same `\b`-anchored keywords as above (#1988).
+  // Strip inline code spans before scanning — mirrors src/db/repositories.ts (#4039) so the PR template's
+  // literal `(e.g. \`Closes #123\`)` checklist example does not spuriously link issue #123.
+  const withoutCodeSpans = text.replace(/`[^`\n]*`/g, " ");
   const target = repoFullName.toLowerCase();
-  for (const match of text.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+([\w.-]+\/[\w.-]+)#(\d+)\b/gi)) {
-    if (match[1]!.toLowerCase() === target) numbers.push(Number(match[2]));
+  const linkedIssues: number[] = [];
+  const seen = new Set<number>();
+  for (const match of withoutCodeSpans.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:([\w.-]+\/[\w.-]+)#|#)(\d+)\b/gi)) {
+    const owner = match[1];
+    if (owner && owner.toLowerCase() !== target) continue;
+    const value = Number(match[2]);
+    if (!Number.isInteger(value) || value <= 0 || seen.has(value)) continue;
+    seen.add(value);
+    linkedIssues.push(value);
   }
-  return [...new Set(numbers.filter((value) => Number.isInteger(value) && value > 0))];
+  return linkedIssues;
 }
 
 function isMaintainerAssociation(value: string | null | undefined): boolean {

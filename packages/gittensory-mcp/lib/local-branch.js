@@ -56,7 +56,7 @@ export function collectLocalBranchMetadata(input) {
   const ciStatusHints = input.ciStatusHints ?? collectCiStatusHints(cwd, baseRef, changedFiles);
   const commitMessages = input.commitMessages ?? collectCommitMessages(cwd, baseRef);
   const title = input.title ?? titleFromBranch(branchName) ?? firstCommitTitle(commitMessages);
-  const linkedIssues = [...new Set([...(input.linkedIssues ?? []), ...extractLinkedIssues([branchName, title, input.body, ...commitMessages].filter(Boolean).join("\n"))])].sort(
+  const linkedIssues = [...new Set([...(input.linkedIssues ?? []), ...extractLinkedIssues([branchName, title, input.body, ...commitMessages].filter(Boolean).join("\n"), repoFullName)])].sort(
     (left, right) => left - right,
   );
   const payload = {
@@ -557,14 +557,23 @@ function assertSourceUploadDisabled() {
   }
 }
 
-// Word-boundary the closing keywords (as the server-side extractors in src/db/repositories.ts and
-// src/signals/engine.ts already do) so a keyword embedded in a longer word does not spuriously link an
-// issue: without \b, `hotfix 5` / `prefixes 12` matched the `fix`/`fixes` substring and captured the
-// trailing number. The bare `#` branch stays boundary-free so `#123` still matches anywhere.
-export function extractLinkedIssues(text) {
-  const issues = [];
-  for (const match of String(text).matchAll(/(?:\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)|#)\s*#?(\d+)/gi)) issues.push(Number(match[1]));
-  return issues.filter((issue) => Number.isInteger(issue) && issue > 0);
+// Mirror src/db/repositories.ts extractLinkedIssueNumbersWithOverflow: strip inline code spans before
+// scanning (PR template checklist contains `(e.g. \`Closes #123\`)`), honor qualified owner/repo#N only
+// when it matches THIS repo, and word-boundary closing keywords so `hotfix 5` does not spoof a link.
+export function extractLinkedIssues(text, repoFullName = "") {
+  const target = String(repoFullName).toLowerCase();
+  const withoutCodeSpans = String(text).replace(/`[^`\n]*`/g, " ");
+  const linkedIssues = [];
+  const seen = new Set();
+  for (const match of withoutCodeSpans.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:([\w.-]+\/[\w.-]+)#|#)(\d+)\b/gi)) {
+    const owner = match[1];
+    if (owner && owner.toLowerCase() !== target) continue;
+    const value = Number(match[2]);
+    if (!Number.isInteger(value) || value <= 0 || seen.has(value)) continue;
+    seen.add(value);
+    linkedIssues.push(value);
+  }
+  return linkedIssues;
 }
 
 function statusFromCode(code) {

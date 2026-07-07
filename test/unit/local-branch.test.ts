@@ -1797,16 +1797,36 @@ describe("local MCP git metadata collection", () => {
   it("extracts linked issues only from standalone closing keywords, not keyword substrings", async () => {
     // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { extractLinkedIssues } = await import("../../packages/gittensory-mcp/lib/local-branch.js");
-    // Standalone closing keywords (hash optional, as this client-side extractor allows) and bare #refs link.
-    expect(extractLinkedIssues("fixes #5")).toEqual([5]);
-    expect(extractLinkedIssues("Closes 12 and resolves #34")).toEqual([12, 34]);
-    expect(extractLinkedIssues("see #7")).toEqual([7]);
-    expect(extractLinkedIssues("closes#3")).toEqual([3]);
+    const repo = "owner/repo";
+    // Standalone closing keywords (hash optional) link when scoped to this repo.
+    expect(extractLinkedIssues("fixes #5", repo)).toEqual([5]);
+    expect(extractLinkedIssues("Closes #12 and resolves #34", repo)).toEqual([12, 34]);
+    expect(extractLinkedIssues("closes #3", repo)).toEqual([3]);
+    expect(extractLinkedIssues("Closes owner/repo#42", repo)).toEqual([42]);
+    expect(extractLinkedIssues("Fixes Owner/Repo#7", repo)).toEqual([7]);
+    // Bare `#N` without a closing keyword does not link (server parity).
+    expect(extractLinkedIssues("see #7", repo)).toEqual([]);
+    // A different repo's qualified reference must not spoof a same-repo link (#3862).
+    expect(extractLinkedIssues("Resolves other/repo#99", repo)).toEqual([]);
     // Regression: a closing keyword embedded in a longer word must NOT capture a trailing number.
-    expect(extractLinkedIssues("hotfix 5")).toEqual([]);
-    expect(extractLinkedIssues("prefixes 12")).toEqual([]);
-    expect(extractLinkedIssues("unclosed 9")).toEqual([]);
-    expect(extractLinkedIssues("no references here")).toEqual([]);
+    expect(extractLinkedIssues("hotfix 5", repo)).toEqual([]);
+    expect(extractLinkedIssues("prefixes 12", repo)).toEqual([]);
+    expect(extractLinkedIssues("unclosed 9", repo)).toEqual([]);
+    expect(extractLinkedIssues("no references here", repo)).toEqual([]);
+    // REGRESSION (#4039): ignore closing keywords inside inline code spans (PR template checklist example).
+    const templateLine =
+      "- [ ] I linked a currently open issue this PR resolves (e.g. `Closes #123`) — a linked open issue is required for every contributor PR.";
+    expect(extractLinkedIssues(templateLine, repo)).toEqual([]);
+    expect(extractLinkedIssues(`Closes #42\n\n${templateLine}`, repo)).toEqual([42]);
+    // Dedupes repeated references and ignores unqualified refs to other repos when repoFullName is set.
+    expect(extractLinkedIssues("Fixes #1\nCloses owner/repo#1\nResolves owner/repo#2", repo)).toEqual([1, 2]);
+    expect(extractLinkedIssues("Closes other/repo#99", repo)).toEqual([]);
+    // Qualified refs require a matching repoFullName; without one they are ignored.
+    expect(extractLinkedIssues("Closes owner/repo#42", "")).toEqual([]);
+    // Dedupes duplicate closing keywords in the same body.
+    expect(extractLinkedIssues("Fixes #1\nFixes #1", repo)).toEqual([1]);
+    // Default repoFullName still links bare closing keywords.
+    expect(extractLinkedIssues("fixes #5")).toEqual([5]);
   });
 
   it("parses remotes, changed-file stats, linked issues, and refuses source upload mode", async () => {
@@ -1833,6 +1853,11 @@ describe("local MCP git metadata collection", () => {
     writeFileSync(join(tempDir, "src/cache.ts"), "export const cache = 1;\n");
     writeFileSync(join(tempDir, "test/cache.test.ts"), "expect(1).toBe(1);\n");
     git(tempDir, "add", "src/cache.ts", "test/cache.test.ts");
+
+    const templateLine =
+      "- [ ] I linked a currently open issue this PR resolves (e.g. `Closes #123`) — a linked open issue is required for every contributor PR.";
+    const templateOnly = collectLocalBranchMetadata({ cwd: tempDir, baseRef: "HEAD", login: "oktofeesh1", body: templateLine });
+    expect(templateOnly.linkedIssues).toEqual([]);
 
     const metadata = collectLocalBranchMetadata({ cwd: tempDir, baseRef: "HEAD", login: "oktofeesh1", body: "Fixes #7" });
     expect(metadata).toMatchObject({

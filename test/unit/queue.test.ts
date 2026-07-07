@@ -52,6 +52,7 @@ import {
   putCachedAiReview,
   markAiReviewPublished,
   recordReviewSuppression,
+  listReviewSuppressions,
 } from "../../src/db/repositories";
 import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, claimAiReviewLock, claimPrActuationLock, contributorEvidenceBatchSize, enrichOpenPullRequestsWithChangedFiles, processJob, reconcileLiveDuplicateSiblings, releaseAiReviewLock, releasePrActuationLock } from "../../src/queue/processors";
 import type { PullRequestRecord } from "../../src/types";
@@ -21852,6 +21853,429 @@ describe("queue processors", () => {
     expect(denied).toMatchObject({ event_type: "github_app.gate_override_denied", actor: "org-member", target_key: "JSONbored/gittensory#91", outcome: "denied", detail: "not_maintainer_or_pr_author" });
     const overridden = await env.DB.prepare("select id from audit_events where event_type = ?").bind("github_app.gate_overridden").first<{ id: string }>();
     expect(overridden ?? null).toBeNull();
+  });
+
+  // #1964 (record slice): `@gittensory resolve` records review-memory suppression signals for advisory warnings.
+  describe("@gittensory resolve (#1964)", () => {
+    async function seedResolvePr(env: Env, repoFullName: string, prNumber: number, headSha: string) {
+      const slash = repoFullName.indexOf("/");
+      const owner = slash >= 0 ? repoFullName.slice(0, slash) : repoFullName;
+      const name = slash >= 0 ? repoFullName.slice(slash + 1) : repoFullName;
+      await upsertRepositoryFromGitHub(env, { name, full_name: repoFullName, private: false, owner: { login: owner } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName,
+        commentMode: "off",
+        publicSurface: "off",
+        autoLabelEnabled: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        requireLinkedIssue: true,
+        linkedIssueGateMode: "advisory",
+      });
+      await upsertPullRequestFromGitHub(env, repoFullName, {
+        number: prNumber,
+        title: "Resolve me",
+        state: "open",
+        user: { login: "contributor" },
+        author_association: "CONTRIBUTOR",
+        head: { sha: headSha },
+        labels: [],
+        body: "No linked issue on purpose",
+      });
+    }
+
+    it("records a suppression signal and finding_resolved when an authorized maintainer resolves a named warning with review.memory ON", async () => {
+      const repoFullName = "JSONbored/resolve-1964-a";
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        GITTENSORY_REVIEW_MEMORY: "true",
+      });
+      await seedResolvePr(env, repoFullName, 1964, "resolve-1964-a");
+      await upsertRepoFocusManifest(env, repoFullName, { review: { memory: true } });
+      const calls = { permission: 0, checkPatches: 0, comments: 0 };
+      let confirmationBody = "";
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/collaborators/maintainer/permission")) {
+          calls.permission += 1;
+          return Response.json({ permission: "admin" });
+        }
+        if (url.includes("/issues/1964/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/1964/comments") && method === "POST") {
+          calls.comments += 1;
+          confirmationBody = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+          return Response.json({ id: 19641 });
+        }
+        if (url.includes("/check-runs") && method === "PATCH") {
+          calls.checkPatches += 1;
+          return Response.json({ id: 1 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "resolve-1964-allow",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "resolve-1964-a", full_name: repoFullName, private: false, owner: { login: "JSONbored" } },
+          issue: { number: 1964, title: "Resolve me", state: "open", user: { login: "contributor" }, pull_request: {} },
+          comment: {
+            id: 19640,
+            body: "@gittensory resolve missing_linked_issue",
+            author_association: "NONE",
+            user: { login: "maintainer", type: "User" },
+          },
+          sender: { login: "maintainer", type: "User" },
+        },
+      });
+
+      expect(calls.permission).toBe(1);
+      expect(calls.checkPatches).toBe(0);
+      expect(calls.comments).toBe(1);
+      expect(confirmationBody).toContain("Review finding resolved");
+      expect(confirmationBody).toContain("missing_linked_issue");
+      expect(confirmationBody).toContain("Gate check-run is unchanged");
+      const resolved = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?")
+        .bind("github_app.finding_resolved")
+        .first<{ outcome: string; detail: string }>();
+      expect(resolved).toMatchObject({ outcome: "completed" });
+      const memoryRecorded = await env.DB.prepare("select outcome from audit_events where event_type = ?")
+        .bind("github_app.review_memory_recorded")
+        .first<{ outcome: string }>();
+      expect(memoryRecorded).toMatchObject({ outcome: "completed" });
+      const suppressions = await listReviewSuppressions(env, repoFullName);
+      expect(suppressions).toHaveLength(1);
+      expect(suppressions[0]).toMatchObject({
+        category: "missing_linked_issue",
+        createdBy: "maintainer",
+      });
+    });
+
+    it("records finding_resolved without a suppression write when review.memory is OFF (operator kill-switch)", async () => {
+      const repoFullName = "JSONbored/resolve-1965-off";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedResolvePr(env, repoFullName, 1965, "resolve-1965-off");
+      await upsertRepoFocusManifest(env, repoFullName, { review: { memory: true } });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+        if (url.includes("/issues/1965/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/1965/comments") && method === "POST") return Response.json({ id: 19651 });
+        return new Response("not found", { status: 404 });
+      });
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "resolve-1965-flag-off",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "resolve-1965-off", full_name: repoFullName, private: false, owner: { login: "JSONbored" } },
+          issue: { number: 1965, title: "Resolve me", state: "open", user: { login: "contributor" }, pull_request: {} },
+          comment: {
+            id: 19650,
+            body: "@gittensory resolve missing_linked_issue",
+            author_association: "NONE",
+            user: { login: "maintainer", type: "User" },
+          },
+          sender: { login: "maintainer", type: "User" },
+        },
+      });
+
+      const memoryRecorded = await env.DB.prepare("select id from audit_events where event_type = ?")
+        .bind("github_app.review_memory_recorded")
+        .first<{ id: string }>();
+      expect(memoryRecorded ?? null).toBeNull();
+      expect(await listReviewSuppressions(env, repoFullName)).toHaveLength(0);
+      const resolved = await env.DB.prepare("select outcome from audit_events where event_type = ?")
+        .bind("github_app.finding_resolved")
+        .first<{ outcome: string }>();
+      expect(resolved).toMatchObject({ outcome: "completed" });
+    });
+
+    it("denies an unauthorized actor and records no suppression signal", async () => {
+      const repoFullName = "JSONbored/resolve-1966-deny";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_MEMORY: "true" });
+      await seedResolvePr(env, repoFullName, 1966, "resolve-1966-deny");
+      await upsertRepoFocusManifest(env, repoFullName, { review: { memory: true } });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/collaborators/org-member/permission")) return Response.json({ permission: "read" });
+        return new Response("not found", { status: 404 });
+      });
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "resolve-1966-deny",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "resolve-1966-deny", full_name: repoFullName, private: false, owner: { login: "JSONbored" } },
+          issue: { number: 1966, title: "Resolve me", state: "open", user: { login: "contributor" }, pull_request: {} },
+          comment: {
+            id: 19660,
+            body: "@gittensory resolve missing_linked_issue",
+            author_association: "MEMBER",
+            user: { login: "org-member", type: "User" },
+          },
+          sender: { login: "org-member", type: "User" },
+        },
+      });
+
+      const denied = await env.DB.prepare("select outcome from audit_events where event_type = ?")
+        .bind("github_app.finding_resolved_denied")
+        .first<{ outcome: string }>();
+      expect(denied).toMatchObject({ outcome: "denied" });
+      expect(await listReviewSuppressions(env, repoFullName)).toHaveLength(0);
+    });
+
+    it.each([
+      ["malformed finding id", "@gittensory resolve ../escape", "malformed_finding_id"],
+      ["absent finding code", "@gittensory resolve readiness_score_below_threshold", "finding_not_found"],
+    ] as const)("skips resolve when the maintainer supplies %s", async (_label, body, reason) => {
+      const repoFullName = "JSONbored/resolve-1967-skip";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_MEMORY: "true" });
+      await seedResolvePr(env, repoFullName, 1967, "resolve-1967-skip");
+      await upsertRepoFocusManifest(env, repoFullName, { review: { memory: true } });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+        return new Response("not found", { status: 404 });
+      });
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: `resolve-1967-${reason}`,
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "resolve-1967-skip", full_name: repoFullName, private: false, owner: { login: "JSONbored" } },
+          issue: { number: 1967, title: "Resolve me", state: "open", user: { login: "contributor" }, pull_request: {} },
+          comment: { id: 19670, body, author_association: "NONE", user: { login: "maintainer", type: "User" } },
+          sender: { login: "maintainer", type: "User" },
+        },
+      });
+
+      const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?")
+        .bind("github_app.finding_resolved_skipped")
+        .first<{ detail: string }>();
+      expect(skipped?.detail).toBe(reason);
+      expect(await listReviewSuppressions(env, repoFullName)).toHaveLength(0);
+    });
+
+    it("records every current advisory warning for a whole-PR `@gittensory resolve` ack", async () => {
+      const repoFullName = "JSONbored/resolve-1968-whole";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_MEMORY: "true" });
+      await seedResolvePr(env, repoFullName, 1968, "resolve-1968-whole");
+      await upsertRepoFocusManifest(env, repoFullName, { review: { memory: true } });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+        if (url.includes("/issues/1968/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/1968/comments") && method === "POST") return Response.json({ id: 19681 });
+        return new Response("not found", { status: 404 });
+      });
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "resolve-1968-whole",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "resolve-1968-whole", full_name: repoFullName, private: false, owner: { login: "JSONbored" } },
+          issue: { number: 1968, title: "Resolve me", state: "open", user: { login: "contributor" }, pull_request: {} },
+          comment: { id: 19680, body: "@gittensory resolve", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+          sender: { login: "maintainer", type: "User" },
+        },
+      });
+
+      expect(await listReviewSuppressions(env, repoFullName)).toHaveLength(2);
+      const resolved = await env.DB.prepare("select metadata_json from audit_events where event_type = ?")
+        .bind("github_app.finding_resolved")
+        .first<{ metadata_json: string }>();
+      expect(JSON.parse(resolved?.metadata_json ?? "{}")).toMatchObject({ scope: "whole_pr", resolvedWarningCount: 2 });
+    });
+
+    it("ignores issue comments that are not @gittensory resolve commands (#1964)", async () => {
+      const repoFullName = "JSONbored/resolve-1973-plain";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedResolvePr(env, repoFullName, 1973, "resolve-1973-plain");
+      let commentPosts = 0;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/issues/1973/comments") && method === "POST") {
+          commentPosts += 1;
+          return Response.json({ id: 19730 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "resolve-plain-comment",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "resolve-1973-plain", full_name: repoFullName, private: false, owner: { login: "JSONbored" } },
+          issue: { number: 1973, title: "Resolve me", state: "open", user: { login: "contributor" }, pull_request: {} },
+          comment: { id: 19731, body: "Looks good to me", author_association: "OWNER", user: { login: "maintainer", type: "User" } },
+          sender: { login: "maintainer", type: "User" },
+        },
+      });
+      expect(commentPosts).toBe(0);
+      const events = await env.DB.prepare("select event_type from audit_events where event_type like ?").bind("github_app.finding_resolved%").all<{ event_type: string }>();
+      expect(events.results ?? []).toEqual([]);
+    });
+
+    it("ignores other @gittensory verbs on the resolve handler path (#1964)", async () => {
+      const repoFullName = "JSONbored/resolve-1974-help";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedResolvePr(env, repoFullName, 1974, "resolve-1974-help");
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString().includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        return new Response("not found", { status: 404 });
+      });
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "resolve-help-verb",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "resolve-1974-help", full_name: repoFullName, private: false, owner: { login: "JSONbored" } },
+          issue: { number: 1974, title: "Resolve me", state: "open", user: { login: "contributor" }, pull_request: {} },
+          comment: { id: 19740, body: "@gittensory help", author_association: "OWNER", user: { login: "maintainer", type: "User" } },
+          sender: { login: "maintainer", type: "User" },
+        },
+      });
+      const events = await env.DB.prepare("select event_type from audit_events where event_type like ?").bind("github_app.finding_resolved%").all<{ event_type: string }>();
+      expect(events.results ?? []).toEqual([]);
+    });
+
+    it("skips resolve when the webhook payload lacks a repository (#1964)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString().includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        return new Response("not found", { status: 404 });
+      });
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "resolve-missing-repo",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          issue: { number: 1972, title: "Resolve me", state: "open", user: { login: "contributor" }, pull_request: {} },
+          comment: { id: 19720, body: "@gittensory resolve missing_linked_issue", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+          sender: { login: "maintainer", type: "User" },
+        },
+      });
+      const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.finding_resolved_skipped").first<{ detail: string }>();
+      expect(skipped?.detail).toBe("missing_repo_pr_installation_or_actor");
+    });
+
+    it("skips resolve when the cached pull request row is missing (#1964)", async () => {
+      const repoFullName = "JSONbored/resolve-1969-missing-pr";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_MEMORY: "true" });
+      const slash = repoFullName.indexOf("/");
+      await upsertRepositoryFromGitHub(env, { name: repoFullName.slice(slash + 1), full_name: repoFullName, private: false, owner: { login: repoFullName.slice(0, slash) } }, 123);
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString().includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        return new Response("not found", { status: 404 });
+      });
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "resolve-1969-missing-pr",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "resolve-1969-missing-pr", full_name: repoFullName, private: false, owner: { login: "JSONbored" } },
+          issue: { number: 1969, title: "Resolve me", state: "open", user: { login: "contributor" }, pull_request: {} },
+          comment: { id: 19690, body: "@gittensory resolve missing_linked_issue", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+          sender: { login: "maintainer", type: "User" },
+        },
+      });
+      const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.finding_resolved_skipped").first<{ detail: string }>();
+      expect(skipped?.detail).toBe("cached_pr_missing");
+    });
+
+    it("skips resolve in agentDryRun without recording finding_resolved (#1964)", async () => {
+      const repoFullName = "JSONbored/resolve-1970-dry-run";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_MEMORY: "true" });
+      await seedResolvePr(env, repoFullName, 1970, "resolve-1970-dry-run");
+      await upsertRepositorySettings(env, { repoFullName, commentMode: "off", publicSurface: "off", autoLabelEnabled: false, checkRunMode: "off", gateCheckMode: "enabled", requireLinkedIssue: true, linkedIssueGateMode: "advisory", agentDryRun: true });
+      await upsertRepoFocusManifest(env, repoFullName, { review: { memory: true } });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+        return new Response("not found", { status: 404 });
+      });
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "resolve-1970-dry-run",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "resolve-1970-dry-run", full_name: repoFullName, private: false, owner: { login: "JSONbored" } },
+          issue: { number: 1970, title: "Resolve me", state: "open", user: { login: "contributor" }, pull_request: {} },
+          comment: { id: 19700, body: "@gittensory resolve missing_linked_issue", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+          sender: { login: "maintainer", type: "User" },
+        },
+      });
+      const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.finding_resolved_skipped").first<{ detail: string }>();
+      expect(skipped?.detail).toBe("dry_run");
+      const resolved = await env.DB.prepare("select id from audit_events where event_type = ?").bind("github_app.finding_resolved").first<{ id: string }>();
+      expect(resolved ?? null).toBeNull();
+    });
+
+    it("skips resolve when the repository is agentPaused (#1964)", async () => {
+      const repoFullName = "JSONbored/resolve-1971-paused";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_MEMORY: "true" });
+      await seedResolvePr(env, repoFullName, 1971, "resolve-1971-paused");
+      await upsertRepositorySettings(env, { repoFullName, commentMode: "off", publicSurface: "off", autoLabelEnabled: false, checkRunMode: "off", gateCheckMode: "enabled", requireLinkedIssue: true, linkedIssueGateMode: "advisory", agentPaused: true });
+      await upsertRepoFocusManifest(env, repoFullName, { review: { memory: true } });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+        return new Response("not found", { status: 404 });
+      });
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "resolve-1971-paused",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "resolve-1971-paused", full_name: repoFullName, private: false, owner: { login: "JSONbored" } },
+          issue: { number: 1971, title: "Resolve me", state: "open", user: { login: "contributor" }, pull_request: {} },
+          comment: { id: 19710, body: "@gittensory resolve missing_linked_issue", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+          sender: { login: "maintainer", type: "User" },
+        },
+      });
+      const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.finding_resolved_skipped").first<{ detail: string }>();
+      expect(skipped?.detail).toBe("agent_paused");
+    });
   });
 
   it("a #1960 action-command verb with no dispatch handler wired yet (e.g. pause) is bailed out of the Q&A answer-card path, not misrendered as help (#2160)", async () => {

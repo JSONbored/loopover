@@ -62,7 +62,7 @@ describe("runSweepLivenessWatchdog (#audit-sweep-fanout-isolation follow-up)", (
   });
 
   it("REGRESSION: reports a finite ageMs for a repo that WAS regated once but fell outside the staleness window (not just a never-regated null marker)", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     const start = new Date("2026-07-06T10:00:00.000Z");
     vi.setSystemTime(start);
     const sent: import("../../src/types").JobMessage[] = [];
@@ -78,7 +78,7 @@ describe("runSweepLivenessWatchdog (#audit-sweep-fanout-isolation follow-up)", (
     expect(found).toEqual([expect.objectContaining({ repoFullName: "owner/aged-repo", lastRegatedAt: start.toISOString(), ageMs: SWEEP_STALENESS_THRESHOLD_MS + 60_000 })]);
     expect(Number.isFinite(found[0]?.ageMs)).toBe(true);
     expect(sent).toEqual([expect.objectContaining({ type: "agent-regate-sweep", repoFullName: "owner/aged-repo" })]);
-  });
+  }, 60_000);
 
   it("watches an ALLOWLISTED (GITTENSORY_REVIEW_REPOS) installed repo even with no autonomy configured, and skips a plain repo that is neither allowlisted nor agent-configured", async () => {
     const sent: import("../../src/types").JobMessage[] = [];

@@ -26,6 +26,9 @@ export function shouldApplyReviewMemory(
 ): boolean {
   return isReviewMemoryEnabled(env) && manifestReviewMemoryEnabled;
 }
+const RESOLVE_FINDING_CODE = /^[a-z][a-z0-9_]{0,199}$/;
+export function normalizeResolveFindingRef(raw: string | null | undefined): { ok: true; scope: "whole_pr" } | { ok: true; scope: "single"; findingCode: string } | { ok: false; reason: "malformed_finding_id" } { const trimmed = (raw ?? "").trim(); if (trimmed.length === 0) return { ok: true, scope: "whole_pr" }; const normalized = trimmed.toLowerCase().replace(/^finding-/, ""); if (!RESOLVE_FINDING_CODE.test(normalized)) return { ok: false, reason: "malformed_finding_id" }; return { ok: true, scope: "single", findingCode: normalized }; }
+export function selectWarningsForResolve(warnings: ReadonlyArray<AdvisoryFinding>, ref: { ok: true; scope: "whole_pr" } | { ok: true; scope: "single"; findingCode: string }): { findings: AdvisoryFinding[]; reason?: "finding_not_found" } { if (ref.scope === "whole_pr") return { findings: [...warnings] }; const matches = warnings.filter((finding) => finding.code === ref.findingCode); if (matches.length === 0) return { findings: [], reason: "finding_not_found" }; return { findings: matches }; }
 
 /** Apply-to-findings wiring (#2181, apply slice of #1964). PURE — no DB I/O (the caller already resolved
  *  `signals` via listReviewSuppressions); the caller wraps the READ side in its own try/catch (fail-safe: a

@@ -5460,6 +5460,7 @@ async function processGitHubWebhook(
       return;
     }
 
+    if (eventName === "issue_comment" && (await maybeProcessResolveCommand(env, deliveryId, payload))) { await recordWebhookEvent(env, { deliveryId, eventName, action: payload.action, installationId: payload.installation?.id, repositoryFullName: payload.repository?.full_name, payloadHash: "processed", status: "processed" }); return; }
     if (
       eventName === "issue_comment" &&
       (await maybeProcessPlanCommand(env, deliveryId, payload))
@@ -10287,6 +10288,37 @@ async function recordGateOverrideSkip(
   });
 }
 
+async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> { const command = parseGittensoryMentionCommand(payload.comment?.body);
+  if (!command) return false;
+  if (command.name !== "resolve") return false;
+  const { classifyPrCommandRequest } = await import("../github/pr-command-request");
+  const { normalizeResolveFindingRef, selectWarningsForResolve } = await import("../review/review-memory-wire");
+  const { fingerprint } = await import("../review/review-memory-match");
+  const req = classifyPrCommandRequest(payload, getInstallationId(payload));
+  if (!req.ok) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey: req.targetKey, outcome: "completed", detail: req.reason, metadata: { deliveryId, repoFullName: req.repoFullName ?? null, reason: req.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey: req.targetKey, outcome: "skipped", metadata: { reason: req.reason } }); return true; }
+  const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
+  const targetKey = `${req.repoFullName}#${req.pr.number}`;
+  if (!pr) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: "cached_pr_missing", metadata: { deliveryId, repoFullName: req.repoFullName, reason: "cached_pr_missing" } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: "cached_pr_missing" } }); return true; }
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "resolve" as GittensoryMentionCommandName, settings, pr });
+  if (!authorization.authorized) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resolve") } }); await recordGithubProductUsage(env, "finding_resolved_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resolve") } }); return true; }
+  const findingRef = normalizeResolveFindingRef(command.reason);
+  if (!findingRef.ok) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: findingRef.reason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: findingRef.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: findingRef.reason } }); return true; }
+  const { advisory } = await buildAuthorizedPrActionAdvisory(env, req.repoFullName, pr, settings);
+  const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null));
+  const selection = selectWarningsForResolve(gate.warnings, findingRef);
+  if (selection.reason === "finding_not_found") { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: selection.reason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: selection.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: selection.reason } }); return true; }
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
+  if (mode !== "live") { const skipReason = mode === "dry_run" ? "dry_run" : "agent_paused"; await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: skipReason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: skipReason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: skipReason } }); return true; }
+  const reviewManifest = await loadRepoFocusManifest(env, req.repoFullName).catch(() => null);
+  const reviewMemoryEnabled = shouldApplyReviewMemory(env, resolveReviewMemoryManifestToggle(reviewManifest));
+  const suppressionWrites = selection.findings.map((finding) => ({ category: finding.code, pathGlob: "", patternHash: fingerprint({ category: finding.code, message: `${finding.title} ${finding.detail}` }) }));
+  let recordedSuppressionCount = 0;
+  if (reviewMemoryEnabled && suppressionWrites.length > 0) { const { recordReviewSuppression } = await import("../db/repositories"); for (const write of suppressionWrites) { await recordReviewSuppression(env, { repoFullName: req.repoFullName, category: write.category, pathGlob: write.pathGlob, patternHash: write.patternHash, createdBy: req.actor }); recordedSuppressionCount += 1; } await recordAuditEvent(env, { eventType: "github_app.review_memory_recorded", actor: req.actor, targetKey, outcome: "completed", detail: `Recorded ${recordedSuppressionCount} review-memory suppression signal(s).`, metadata: { deliveryId, repoFullName: req.repoFullName, recordedSuppressionCount, scope: findingRef.scope, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } }); await recordGithubProductUsage(env, "review_memory_recorded", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: { recordedSuppressionCount, scope: findingRef.scope, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } }); }
+  const resolvedLabel = findingRef.scope === "whole_pr" ? "all current advisory findings" : `\`${findingRef.findingCode}\``;
+  const confirmation = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **Review finding resolved by @${req.actor}**`, `> Marked ${resolvedLabel} as resolved for this PR. The Gate check-run is unchanged.`, ...(recordedSuppressionCount > 0 ? ["", `Recorded ${recordedSuppressionCount} review-memory suppression signal(s) for future reviews.`] : []), "", "---", gittensoryFooter()].join("\n"));
+  await createOrUpdateAgentCommandComment(env, req.installationId, req.repoFullName, req.pr.number, confirmation, mode);
+  await recordAuditEvent(env, { eventType: "github_app.finding_resolved", actor: req.actor, targetKey, outcome: "completed", detail: `Marked ${resolvedLabel} as resolved.`, metadata: { deliveryId, repoFullName: req.repoFullName, scope: findingRef.scope, resolvedWarningCount: selection.findings.length, recordedSuppressionCount, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } });
+  await recordGithubProductUsage(env, "finding_resolved", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: { scope: findingRef.scope, resolvedWarningCount: selection.findings.length, recordedSuppressionCount, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } }); return true; }
 /**
  * `@gittensory plan` (#issue-coding-plan, flag-gated by GITTENSORY_REVIEW_PLANNER). On a MAINTAINER's comment on
  * an ISSUE (not a PR), generate a concise implementation plan from the issue text via Workers AI and post it as an

@@ -231,3 +231,49 @@ describe("buildFeasibilityVerdict branch coverage (#2313)", () => {
     }
   });
 });
+
+describe("feasibilityInputFromPreStartCheck mapping (#2313)", () => {
+  function report(over: Partial<Parameters<typeof feasibilityInputFromPreStartCheck>[0]> = {}) {
+    return {
+      found: true,
+      claimStatus: "unclaimed" as const,
+      duplicateClusterRisk: "none" as const,
+      ...over,
+    };
+  }
+
+  it("maps a not-found target to issueStatus 'missing', regardless of lifecycle/quality", () => {
+    expect(feasibilityInputFromPreStartCheck(report({ found: false })).issueStatus).toBe("missing");
+  });
+
+  it("maps lifecycle 'duplicate' to issueStatus 'duplicate' ahead of any quality status", () => {
+    expect(feasibilityInputFromPreStartCheck(report({ lifecycle: "duplicate", issueQualityStatus: "hold" })).issueStatus).toBe("duplicate");
+  });
+
+  it("maps lifecycle 'invalid' to issueStatus 'invalid' ahead of any quality status", () => {
+    expect(feasibilityInputFromPreStartCheck(report({ lifecycle: "invalid", issueQualityStatus: "do_not_use" })).issueStatus).toBe("invalid");
+  });
+
+  it("maps issueQualityStatus 'do_not_use' to issueStatus 'do_not_use'", () => {
+    expect(feasibilityInputFromPreStartCheck(report({ issueQualityStatus: "do_not_use" })).issueStatus).toBe("do_not_use");
+  });
+
+  it("maps issueQualityStatus 'needs_proof' to issueStatus 'needs_proof'", () => {
+    expect(feasibilityInputFromPreStartCheck(report({ issueQualityStatus: "needs_proof" })).issueStatus).toBe("needs_proof");
+  });
+
+  it("maps issueQualityStatus 'hold' to issueStatus 'hold'", () => {
+    expect(feasibilityInputFromPreStartCheck(report({ issueQualityStatus: "hold" })).issueStatus).toBe("hold");
+  });
+
+  it("defaults to issueStatus 'ready' when found and no lifecycle/quality signal fires", () => {
+    expect(feasibilityInputFromPreStartCheck(report()).issueStatus).toBe("ready");
+  });
+
+  it("passes claimStatus and duplicateClusterRisk through unchanged", () => {
+    const mapped = feasibilityInputFromPreStartCheck(report({ claimStatus: "claimed", duplicateClusterRisk: "high" }));
+    expect(mapped.claimStatus).toBe("claimed");
+    expect(mapped.duplicateClusterRisk).toBe("high");
+    expect(mapped.found).toBe(true);
+  });
+});

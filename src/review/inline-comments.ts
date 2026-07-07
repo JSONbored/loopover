@@ -11,6 +11,7 @@
 import { createPullRequestReviewComments } from "../github/pr-actions";
 import { isConvergenceRepoAllowed } from "./cutover-gate";
 import { formatInlineCommentSeverityLabel } from "./inline-comment-label";
+import { resolveInlineCommentAnchor, rightLinesByPath } from "./inline-comment-range";
 import { addedLinesByPath, anchoredSuggestionBlock } from "./inline-suggestion-anchor";
 import { selectAnchoredInlineFindings } from "./inline-comments-select";
 export { rightSideLinesFromPatch } from "./inline-comments-select";
@@ -60,8 +61,16 @@ export function shouldRenderFindingCategories(
   return inlineCommentsEnabled && manifestToggle === true;
 }
 
-/** A GitHub inline review comment anchored to a line on the RIGHT (added/context) side of the PR diff. */
-export type ReviewInlineComment = { path: string; line: number; side: "RIGHT"; body: string };
+/** A GitHub inline review comment anchored to a line on the RIGHT (added/context) side of the PR diff. Multi-line
+ *  comments set `start_line`/`start_side` with `line` as the inclusive end (#2141). */
+export type ReviewInlineComment = {
+  path: string;
+  line: number;
+  side: "RIGHT";
+  body: string;
+  start_line?: number;
+  start_side?: "RIGHT";
+};
 
 /** Hard cap on inline comments posted per PR review — a focused review leaves a handful of precise notes, not a
  *  wall (the model is also asked to be selective, and composeInlineFindings already caps at 10). */
@@ -107,12 +116,23 @@ export function selectInlineComments(
     perCategoryCap,
   });
   const addedLines = addedLinesByPath(files);
-  return selected.map((finding) => ({
-    path: finding.path,
-    line: finding.line,
-    side: "RIGHT" as const,
-    body: formatInlineBody(finding, suggestionsEnabled, categoriesEnabled, addedLines),
-  }));
+  const rightLines = rightLinesByPath(files);
+  return selected.map((finding) => {
+    const anchor = resolveInlineCommentAnchor(finding, rightLines);
+    const anchoredFinding: InlineFinding =
+      anchor.multiLine ? finding : { ...finding, endLine: undefined };
+    const comment: ReviewInlineComment = {
+      path: finding.path,
+      line: anchor.end,
+      side: "RIGHT" as const,
+      body: formatInlineBody(anchoredFinding, suggestionsEnabled, categoriesEnabled, addedLines),
+    };
+    if (anchor.multiLine) {
+      comment.start_line = anchor.start;
+      comment.start_side = "RIGHT";
+    }
+    return comment;
+  });
 }
 
 /** Post the model's inline findings as ONE quiet, non-blocking review (`event: COMMENT`) on the PR. Fully

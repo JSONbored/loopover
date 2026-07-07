@@ -60,6 +60,27 @@ describe("anchoredSuggestionBlock (#2140)", () => {
     expect(anchoredSuggestionBlock({ ...withSuggestion, line: 1 }, true, addedLines)).toBe("");
   });
 
+  it("keeps a multi-line suggestion when every line in the range is added (#2141)", () => {
+    const multiAdded = addedLinesByPath([{ path: "src/a.ts", payload: { patch: "@@ -1,0 +1,2 @@\n+one\n+two" } }]);
+    expect(
+      anchoredSuggestionBlock(
+        { ...withSuggestion, line: 1, endLine: 2, suggestion: "one\ntwo" },
+        true,
+        multiAdded,
+      ),
+    ).toContain("```suggestion");
+  });
+
+  it("drops a multi-line suggestion when any line in the range is context (#2141)", () => {
+    expect(
+      anchoredSuggestionBlock(
+        { ...withSuggestion, line: 1, endLine: 2, suggestion: "ctx\nadd" },
+        true,
+        addedLines,
+      ),
+    ).toBe("");
+  });
+
   it("drops unsafe suggestion fences even on an added line", () => {
     expect(
       anchoredSuggestionBlock({ ...withSuggestion, suggestion: "```\nescape\n```" }, true, addedLines),

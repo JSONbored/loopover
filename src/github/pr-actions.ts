@@ -68,7 +68,14 @@ export async function createPullRequestReviewComments(
   repoFullName: string,
   pullNumber: number,
   commitId: string,
-  comments: Array<{ path: string; line: number; side: "RIGHT" | "LEFT"; body: string }>,
+  comments: Array<{
+    path: string;
+    line: number;
+    side: "RIGHT" | "LEFT";
+    body: string;
+    start_line?: number;
+    start_side?: "RIGHT" | "LEFT";
+  }>,
   mode: AgentActionMode,
 ): Promise<{ id: number }> {
   const { owner, repo } = splitRepo(repoFullName);

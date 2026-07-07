@@ -374,6 +374,9 @@ export type InlineFinding = {
   severity: "blocker" | "nit";
   body: string;
   suggestion?: string | undefined;
+  /** Optional end line (inclusive) for a multi-line inline comment / ```suggestion block (#2141). When absent or
+   *  invalid (`endLine` ≤ `line`), the finding is treated as single-line. */
+  endLine?: number | undefined;
   /** `.gittensory.yml` `review.finding_categories` (#1958): the kind of issue (security/correctness/performance/
    *  maintainability/tests/style), when the model was asked to self-categorize and emitted a value in the fixed
    *  enum. Absent when the feature is off (the model was never asked) OR the model's value didn't parse — callers
@@ -638,6 +641,8 @@ export function parseModelReview(text: string): ModelReview | null {
               // JSON numbers are always finite (NaN/Infinity can't appear), so a numeric `line` is real; trunc a
               // float, and the `line > 0` guard below drops 0/negative anchors.
               const line = typeof o.line === "number" ? Math.trunc(o.line) : 0;
+              const endLineRaw = typeof o.endLine === "number" ? Math.trunc(o.endLine) : undefined;
+              const endLine = endLineRaw != null && endLineRaw > line ? endLineRaw : undefined;
               const body = typeof o.body === "string" ? o.body.trim() : "";
               const suggestion =
                 typeof o.suggestion === "string" ? o.suggestion.trim() : "";
@@ -653,6 +658,7 @@ export function parseModelReview(text: string): ModelReview | null {
                       body,
                       ...(suggestion ? { suggestion } : {}),
                       ...(category ? { category } : {}),
+                      ...(endLine != null ? { endLine } : {}),
                     },
                   ]
                 : [];
@@ -1325,6 +1331,7 @@ function mergeSameLineFindings(first: InlineFinding, next: InlineFinding): Inlin
   const weak = nextStronger ? first : next;
   const suggestion = strong.suggestion ?? weak.suggestion;
   const category = strong.category ?? weak.category;
+  const endLine = strong.endLine ?? weak.endLine;
   return {
     path: first.path,
     line: first.line,
@@ -1332,6 +1339,7 @@ function mergeSameLineFindings(first: InlineFinding, next: InlineFinding): Inlin
     body: strong.body,
     ...(suggestion ? { suggestion } : {}),
     ...(category ? { category } : {}),
+    ...(endLine != null ? { endLine } : {}),
   };
 }
 
@@ -1353,6 +1361,7 @@ export function composeInlineFindings(reviews: ModelReview[]): InlineFinding[] {
       // `category` is a fixed enum literal (never free text), so it carries through as-is — no public-safe
       // scrubbing needed, unlike body/suggestion.
       ...(finding.category ? { category: finding.category } : {}),
+      ...(finding.endLine != null ? { endLine: finding.endLine } : {}),
     };
     const key = `${finding.path}:${finding.line}`;
     const existing = byLine.get(key);

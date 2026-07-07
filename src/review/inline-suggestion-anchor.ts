@@ -1,5 +1,6 @@
 /** Suggestion anchor-safety for inline PR review comments (#2140). */
 
+import { parseInlineLineRange } from "./inline-comment-range";
 import type { InlineFinding } from "../services/ai-review";
 import type { PullRequestFileRecord } from "../types";
 
@@ -38,11 +39,16 @@ export function addedLinesByPath(
 
 /** True when a finding's line is an ADDED RIGHT-side line that can carry a ```suggestion block. */
 export function isSuggestionAnchorable(
-  finding: Pick<InlineFinding, "path" | "line">,
+  finding: Pick<InlineFinding, "path" | "line" | "endLine">,
   addedLines: Map<string, Set<number>>,
 ): boolean {
   const validLines = addedLines.get(finding.path);
-  return validLines != null && validLines.has(finding.line);
+  if (validLines == null) return false;
+  const { start, end } = parseInlineLineRange(finding);
+  for (let line = start; line <= end; line += 1) {
+    if (!validLines.has(line)) return false;
+  }
+  return true;
 }
 
 /** GitHub suggestion fence — dropped when blank or when the text would break the fence (#1956). */

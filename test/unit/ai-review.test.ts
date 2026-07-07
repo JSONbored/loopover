@@ -3034,6 +3034,25 @@ describe("pure helpers", () => {
     ]);
   });
 
+  it("parseModelReview parses endLine for multi-line inline findings and drops inverted ranges (#2141)", () => {
+    const json = JSON.stringify({
+      assessment: "ok",
+      blockers: [],
+      nits: [],
+      suggestions: [],
+      inlineFindings: [
+        { path: "src/a.ts", line: 1, endLine: 3, severity: "nit", body: "Multi." },
+        { path: "src/b.ts", line: 5, endLine: 3, severity: "nit", body: "Inverted." },
+        { path: "src/c.ts", line: 2, endLine: 2, severity: "nit", body: "Equal." },
+      ],
+    });
+    expect(parseModelReview(json)?.inlineFindings).toEqual([
+      { path: "src/a.ts", line: 1, endLine: 3, severity: "nit", body: "Multi." },
+      { path: "src/b.ts", line: 5, severity: "nit", body: "Inverted." },
+      { path: "src/c.ts", line: 2, severity: "nit", body: "Equal." },
+    ]);
+  });
+
   it("parseModelReview drops malformed inline findings (non-object / missing path|line|body / non-positive line), never partial", () => {
     const json = JSON.stringify({
       assessment: "ok",

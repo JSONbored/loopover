@@ -57,6 +57,8 @@ import {
   recordAgentCommandFeedback,
   recordAuditEvent,
   countRecentAuditEventsForActorAndTarget,
+  countRecentAuditEventsForActorInRepo,
+  countRecentAuditEventsForActorInRepoWithTargetSuffix,
   hasAuditEventForDelivery,
   recordGateBlockOutcome,
   getGateBlockOutcome,
@@ -12236,10 +12238,18 @@ const REVIEW_NAG_PING_EVENT_TYPE = "github_app.review_nag_ping";
 
 /**
  * Review-request nagging cooldown (#2463, anti-abuse): throttle a thread's OWN author repeatedly pinging
- * @gittensory for review on the SAME PR/issue. Runs BEFORE maybeProcessGittensoryMentionCommand below so a
- * throttled ping short-circuits ahead of the normal answer-card dispatch — under the threshold this just
- * records the ping (via the shared audit-events ledger, scoped by targetKey so the count never mixes threads)
- * and falls through unchanged; only crossing the threshold applies the repo's configured policy.
+ * @gittensory for review. Runs BEFORE maybeProcessGittensoryMentionCommand below so a throttled ping
+ * short-circuits ahead of the normal answer-card dispatch — under the threshold this just records the ping
+ * (still tagged with the THIS thread's own targetKey, so a per-thread audit trail is preserved) and falls
+ * through unchanged; only crossing the threshold applies the repo's configured policy.
+ *
+ * The running count is scoped to the ACTOR across the WHOLE repo (#review-nag-cross-pr-carryover), not to one
+ * `targetKey` — a contributor who exhausts their pings on PR A and opens a fresh PR B carries the count over
+ * instead of resetting to a clean 0/maxPings slate, mirroring how the contributor blacklist and moderation-rules
+ * ban tally already persist by login rather than by thread. This also makes enforcement immediate rather than
+ * merely cumulative: because the count already reflects every prior target, the very FIRST ping on PR B can
+ * already cross `maxPings` on its own — there's no need for a separate "still on cooldown" table, since the
+ * audit-events ledger read at the new repo scope already IS that persistent per-actor state.
  *
  * Deliberately scoped to the THREAD'S OWN author (`issue.user.login === commenter`): a third party pinging on
  * someone else's PR/issue must never throttle or close the AUTHOR's unrelated work — this mirrors the standing
@@ -12289,7 +12299,10 @@ async function maybeThrottleReviewNagPing(
   /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer (NOT NULL DEFAULT 5); the undefined side is defensive against the field's optional TS type. */
   const cooldownDays = Math.min(settings.reviewNagCooldownDays ?? 5, MAX_REVIEW_NAG_COOLDOWN_DAYS);
   const sinceIso = new Date(Date.now() - cooldownDays * 24 * 60 * 60 * 1000).toISOString();
-  const priorPings = await countRecentAuditEventsForActorAndTarget(env, commenter, REVIEW_NAG_PING_EVENT_TYPE, targetKey, sinceIso);
+  // Repo-wide, not per-target (#review-nag-cross-pr-carryover): counts every @gittensory ping this actor has
+  // sent anywhere in this repo within the window, so exhausting the budget on PR A already shows up on PR B's
+  // very first ping instead of restarting at 0/maxPings just because the targetKey (issue.number) is new.
+  const priorPings = await countRecentAuditEventsForActorInRepo(env, commenter, REVIEW_NAG_PING_EVENT_TYPE, repoFullName, sinceIso);
   const pingCount = priorPings + 1; // this ping counts too
 
   // Always record the ping first so the running count reflects reality even when the rest of this handler
@@ -12424,6 +12437,14 @@ function bodyMentionsLogin(body: string, login: string): boolean {
  * don't share one budget. Runs regardless of whether the comment also contains an `@gittensory` mention/command
  * — mentioning a maintainer is never a bot command, so this must not gate or interact with command dispatch.
  * Off (`reviewNagMonitoredMentions` empty/absent, the default) is a complete no-op — no extra reads at all.
+ *
+ * Like {@link maybeThrottleReviewNagPing}, the running count is scoped to the ACTOR across the WHOLE repo
+ * (#review-nag-cross-pr-carryover) rather than to one `targetKey`, so exhausting the budget mentioning @maintainer
+ * on PR A carries over to PR B instead of resetting. Because a mentioned login's own budget must stay independent
+ * of every OTHER monitored login's budget (the "don't share one budget" design above), the repo-wide count is
+ * additionally pinned to this one login's `mention:<login>` targetKey suffix via
+ * {@link countRecentAuditEventsForActorInRepoWithTargetSuffix} — carryover happens across PRs, never across
+ * different mentioned logins.
  */
 async function maybeThrottleMonitoredMentions(
   env: Env,
@@ -12457,13 +12478,25 @@ async function maybeThrottleMonitoredMentions(
   const mentionedLogin = monitoredLogins.find((login) => bodyMentionsLogin(body, login));
   if (!mentionedLogin) return false;
 
-  const targetKey = `${repoFullName}#${issue.number}#mention:${mentionedLogin.toLowerCase()}`;
+  // The per-login suffix is shared between the full targetKey (below, for the recordAuditEvent audit trail) and
+  // the repo-wide count's suffix filter, so a naming drift between the two can never silently under/over-count.
+  const mentionTargetSuffix = `mention:${mentionedLogin.toLowerCase()}`;
+  const targetKey = `${repoFullName}#${issue.number}#${mentionTargetSuffix}`;
   /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer (NOT NULL DEFAULT 3); the undefined side is defensive against the field's optional TS type. */
   const maxPings = settings.reviewNagMaxPings ?? 3;
   /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer (NOT NULL DEFAULT 5); the undefined side is defensive against the field's optional TS type. */
   const cooldownDays = Math.min(settings.reviewNagCooldownDays ?? 5, MAX_REVIEW_NAG_COOLDOWN_DAYS);
   const sinceIso = new Date(Date.now() - cooldownDays * 24 * 60 * 60 * 1000).toISOString();
-  const priorPings = await countRecentAuditEventsForActorAndTarget(env, commenter, MONITORED_MENTION_PING_EVENT_TYPE, targetKey, sinceIso);
+  // Repo-wide, not per-target (#review-nag-cross-pr-carryover), but still pinned to THIS mentioned login's own
+  // suffix so independently-budgeted mentioned logins never bleed into each other's count.
+  const priorPings = await countRecentAuditEventsForActorInRepoWithTargetSuffix(
+    env,
+    commenter,
+    MONITORED_MENTION_PING_EVENT_TYPE,
+    repoFullName,
+    mentionTargetSuffix,
+    sinceIso,
+  );
   const pingCount = priorPings + 1;
 
   await recordAuditEvent(env, {

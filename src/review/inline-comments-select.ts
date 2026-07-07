@@ -91,7 +91,7 @@ function anchorableInlineFindings(
 export function selectAnchoredInlineFindings(
   findings: InlineFinding[],
   files: Pick<PullRequestFileRecord, "path" | "payload">[],
-  options: InlineCommentSelectOptions = {},
+  options: InlineCommentSelectOptions,
 ): InlineFinding[] {
   const anchored = anchorableInlineFindings(findings, files, options.minFindingSeverity);
   const maxComments = options.maxComments ?? DEFAULT_MAX_INLINE_COMMENTS;
@@ -99,7 +99,11 @@ export function selectAnchoredInlineFindings(
   const ordered =
     perCategoryCap == null
       ? anchored
-      : [...anchored].sort((left, right) => compareInlineFindingPriority(left.finding, right.finding) || left.index - right.index);
+      : [...anchored].sort((left, right) => {
+          const byPriority = compareInlineFindingPriority(left.finding, right.finding);
+          if (byPriority !== 0) return byPriority;
+          return left.index - right.index;
+        });
   const perCategoryCounts = new Map<FindingCategory, number>();
   const out: InlineFinding[] = [];
   for (const { finding } of ordered) {

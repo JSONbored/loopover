@@ -34,8 +34,10 @@ describe("inlineFindingCategory + compareInlineFindingPriority (#2159)", () => {
     const securityBlocker: InlineFinding = { path: "src/a.ts", line: 1, severity: "blocker", body: "x", category: "security" };
     const styleNit: InlineFinding = { path: "src/a.ts", line: 2, severity: "nit", body: "y", category: "style" };
     const performanceNit: InlineFinding = { path: "src/a.ts", line: 3, severity: "nit", body: "z", category: "performance" };
+    const correctnessBlocker: InlineFinding = { path: "src/a.ts", line: 4, severity: "blocker", body: "c", category: "correctness" };
     expect(compareInlineFindingPriority(securityBlocker, styleNit)).toBeLessThan(0);
     expect(compareInlineFindingPriority(performanceNit, styleNit)).toBeLessThan(0);
+    expect(compareInlineFindingPriority(securityBlocker, correctnessBlocker)).toBeLessThan(0);
     expect(compareInlineFindingPriority(styleNit, styleNit)).toBe(0);
   });
 });
@@ -65,7 +67,7 @@ describe("selectAnchoredInlineFindings (#2159)", () => {
       { path: "src/a.ts", line: 2, severity: "blocker", body: "second", category: "security" },
       { path: "src/a.ts", line: 3, severity: "nit", body: "third", category: "style" },
     ];
-    expect(selectAnchoredInlineFindings(findings, files).map((f) => f.body)).toEqual(["first", "second", "third"]);
+    expect(selectAnchoredInlineFindings(findings, files, {}).map((f) => f.body)).toEqual(["first", "second", "third"]);
   });
 
   it("trims overflowing categories and keeps higher-priority findings when perCategoryCap is set", () => {
@@ -94,7 +96,7 @@ describe("selectAnchoredInlineFindings (#2159)", () => {
       { path: "src/a.ts", line: 1, severity: "blocker", body: "first", category: "security" },
       { path: "src/a.ts", line: 1, severity: "blocker", body: "duplicate", category: "security" },
     ];
-    expect(selectAnchoredInlineFindings(findings, files).map((finding) => finding.body)).toEqual(["first"]);
+    expect(selectAnchoredInlineFindings(findings, files, {}).map((finding) => finding.body)).toEqual(["first"]);
   });
 
   it("skips every category when perCategoryCap is zero", () => {
@@ -104,8 +106,22 @@ describe("selectAnchoredInlineFindings (#2159)", () => {
 
   it("ignores files with empty or missing patch content", () => {
     const findings: InlineFinding[] = [{ path: "src/empty.ts", line: 1, severity: "nit", body: "missing patch" }];
-    expect(selectAnchoredInlineFindings(findings, [{ path: "src/empty.ts", payload: { patch: "" } }])).toEqual([]);
+    expect(selectAnchoredInlineFindings(findings, [{ path: "src/empty.ts", payload: { patch: "" } }], {})).toEqual([]);
+    expect(
+      selectAnchoredInlineFindings(findings, [{ path: "src/empty.ts", payload: { patch: 42 as unknown as string } }], {}),
+    ).toEqual([]);
     expect(rightSideLinesFromPatch("preamble only").size).toBe(0);
+  });
+
+  it("breaks on the total cap without per-category sorting when perCategoryCap is unset", () => {
+    const findings: InlineFinding[] = Array.from({ length: 12 }, (_, index) => ({
+      path: "src/a.ts",
+      line: index + 1,
+      severity: "nit" as const,
+      body: `body-${index + 1}`,
+      category: "style" as const,
+    }));
+    expect(selectAnchoredInlineFindings(findings, files, {})).toHaveLength(DEFAULT_MAX_INLINE_COMMENTS);
   });
 
   it("still enforces the total cap after per-category trimming", () => {

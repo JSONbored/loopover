@@ -25,6 +25,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_get_issue_quality",
   "gittensory_validate_linked_issue",
   "gittensory_check_before_start",
+  "gittensory_find_opportunities",
   "gittensory_lint_pr_text",
   "gittensory_get_registry_changes",
   "gittensory_get_upstream_drift",

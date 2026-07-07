@@ -4,7 +4,16 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import { ElicitResultSchema, type ServerNotification, type ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { authenticatePrivateToken, extractBearerToken, isMcpActuationRepoAllowed, isMcpReadRepoAllowed, isMcpReadUnscoped, type AuthIdentity } from "../auth/security";
+import { runFindOpportunities, validateFindOpportunitiesInput } from "./find-opportunities";
+import {
+  authenticatePrivateToken,
+  extractBearerToken,
+  isAuthorizedGitHubSessionLogin,
+  isMcpActuationRepoAllowed,
+  isMcpReadRepoAllowed,
+  isMcpReadUnscoped,
+  type AuthIdentity,
+} from "../auth/security";
 import { canLoginAccessRepo, canWatchRepo, loadControlPanelAccessScope, loadControlPanelRoleSummary, type ControlPanelAccessScope } from "../services/control-panel-roles";
 import {
   countOpenIssues,
@@ -200,6 +209,26 @@ const checkBeforeStartShape = {
   issueNumber: z.number().int().positive().optional(),
   title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars).optional(),
   plannedPaths: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+};
+
+const findOpportunitiesShape = {
+  targets: z
+    .array(
+      z.object({
+        owner: z.string().min(1),
+        repo: z.string().min(1),
+      }),
+    )
+    .optional(),
+  searchQuery: z.string().min(1).max(500).optional(),
+  goalSpec: z
+    .object({
+      lane: z.string().min(1).optional(),
+      minRankScore: z.number().min(0).max(100).optional(),
+      languages: z.array(z.string().min(1)).optional(),
+    })
+    .optional(),
+  limit: z.number().int().min(1).max(50).optional(),
 };
 
 const lintPrTextShape = {
@@ -916,6 +945,38 @@ const checkBeforeStartOutputSchema = {
   report: z.unknown().optional(),
 };
 
+const findOpportunitiesOutputSchema = {
+  status: z.string().optional(),
+  ranked: z
+    .array(
+      z.object({
+        owner: z.string(),
+        repo: z.string(),
+        issueNumber: z.number(),
+        title: z.string(),
+        rankScore: z.number(),
+        laneFit: z.number(),
+        freshness: z.number(),
+        dupRisk: z.number(),
+        aiPolicyAllowed: z.literal(true),
+      }),
+    )
+    .optional(),
+  totalCandidates: z.number().optional(),
+  appliedLane: z.string().optional(),
+  appliedMinRankScore: z.number().optional(),
+  reason: z.string().optional(),
+  warnings: z
+    .array(
+      z.object({
+        repoFullName: z.string(),
+        stage: z.string(),
+        message: z.string(),
+      }),
+    )
+    .optional(),
+};
+
 const remediationPlanOutputSchema = {
   repoFullName: z.string().optional(),
   login: z.string().optional(),
@@ -1408,6 +1469,17 @@ export class GittensoryMcp {
         outputSchema: checkBeforeStartOutputSchema,
       },
       async (input) => this.toolResult(await this.checkBeforeStart(input)),
+    );
+
+    server.registerTool(
+      "gittensory_find_opportunities",
+      {
+        description:
+          "Metadata-only, no GitHub writes: discover and rank cross-repo open issues for miner targeting. Composes deterministic fan-out, AI-policy filtering (banned repos never appear), and opportunity ranking. Returns only public-safe fields — never raw reward/score internals.",
+        inputSchema: findOpportunitiesShape,
+        outputSchema: findOpportunitiesOutputSchema,
+      },
+      async (input) => this.toolResult(await this.findOpportunities(input)),
     );
 
     server.registerTool(
@@ -2128,6 +2200,47 @@ export class GittensoryMcp {
         report: report as unknown as Record<string, unknown>,
       },
     };
+  }
+
+  private async findOpportunities(input: z.infer<z.ZodObject<typeof findOpportunitiesShape>>): Promise<ToolPayload> {
+    const validated = validateFindOpportunitiesInput(input);
+    if (!validated.ok) {
+      return {
+        summary: "Invalid find-opportunities request.",
+        data: { status: "invalid_request", ranked: [], totalCandidates: 0, reason: validated.reason },
+      };
+    }
+    if (validated.value.searchQuery) {
+      await this.requireDiscoveryAccess();
+    } else {
+      for (const target of validated.value.targets ?? []) {
+        await this.requireRepoAccess(`${target.owner}/${target.repo}`);
+      }
+    }
+    const result = await runFindOpportunities(this.env, validated.value, {
+      canAccessRepo: (repoFullName) => this.canAccessRepo(repoFullName),
+    });
+    const count = result.ranked.length;
+    return {
+      summary:
+        result.status === "ok"
+          ? `Gittensory ranked ${count} metadata-only opportunit${count === 1 ? "y" : "ies"}.`
+          : "Gittensory could not rank opportunities for this request.",
+      data: result as unknown as Record<string, unknown>,
+    };
+  }
+
+  /** Cross-repo search requires unscoped MCP read (wildcard allowlist) or operator/session authority. */
+  private async requireDiscoveryAccess(): Promise<void> {
+    if (this.identity.kind === "session") {
+      if (isAuthorizedGitHubSessionLogin(this.env, this.identity.actor)) return;
+      if (this.identity.session.scopes.includes("extension:contributor_context")) return;
+      const scope = await this.loadSessionAccessScope();
+      if (scope.operator) return;
+    }
+    if (this.identity.kind === "static" && this.identity.actor === "mcp" && !isMcpReadUnscoped(this.env.MCP_READ_REPO_ALLOWLIST)) {
+      throw new Error("Forbidden: cross-repo opportunity search requires unscoped MCP read access.");
+    }
   }
 
   private lintPrText(input: { commitMessages?: string[] | undefined; prBody?: string | undefined; linkedIssue?: number | undefined }): ToolPayload {

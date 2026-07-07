@@ -1216,6 +1216,17 @@ describe("api routes", () => {
     const invalidLintPrText = await app.request("/v1/lint/pr-text", { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ linkedIssue: -1 }) }, env);
     expect(invalidLintPrText.status).toBe(400);
 
+    const invalidFindOpportunities = await app.request(
+      "/v1/opportunities/find",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({}) },
+      env,
+    );
+    expect(invalidFindOpportunities.status).toBe(400);
+    await expect(invalidFindOpportunities.json()).resolves.toMatchObject({
+      status: "invalid_request",
+      reason: "targets_or_search_query_required",
+    });
+
     // Agent-native slop self-checks (mirror the gittensory_check_slop_risk / gittensory_check_issue_slop MCP tools).
     const slopRisk = await app.request(
       "/v1/lint/slop-risk",
@@ -5075,6 +5086,7 @@ describe("api routes", () => {
     expect(toolNames).toContain("gittensory_get_decision_pack");
     expect(toolNames).toContain("gittensory_explain_repo_decision");
     expect(toolNames).toContain("gittensory_preflight_pr");
+    expect(toolNames).toContain("gittensory_find_opportunities");
     expect(toolNames).toContain("gittensory_preflight_local_diff");
     expect(toolNames).toContain("gittensory_preview_local_pr_score");
     expect(toolNames).toContain("gittensory_explain_score_breakdown");
@@ -5098,7 +5110,6 @@ describe("api routes", () => {
     expect(toolNames).toContain("gittensory_agent_prepare_pr_packet");
     for (const removed of [
       "gittensory_get_contributor_fit",
-      "gittensory_find_opportunities",
       "gittensory_get_contribution_strategy",
       "gittensory_explain_reward_risk",
       "gittensory_rank_next_actions",

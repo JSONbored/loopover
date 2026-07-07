@@ -2588,6 +2588,77 @@ export async function countRecentAuditEventsForActorAndTarget(env: Env, actor: s
   return row.count;
 }
 
+/** Shared by every `targetKey` literal-prefix `LIKE` scan below ({@link countRecentAuditEventsForActorInRepo},
+ *  {@link findHottestReviewTargetForRepo}) so a repo name containing a SQL `LIKE` wildcard (`%`/`_`) is always
+ *  matched literally, never as a pattern -- e.g. `owner/foo_bar` must never spuriously match `owner/fooXbar#...`'s
+ *  targets. */
+function escapeSqlLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
+
+/**
+ * Repo-scoped sibling of {@link countRecentAuditEventsForActorAndTarget} (#review-nag-cross-pr-carryover): counts
+ * one actor's matching events across EVERY target within `repoFullName` (their current PR/issue plus every other
+ * one they've touched), not just the single `targetKey` the caller happens to be evaluating. The per-target count
+ * lets a contributor who exhausts a cooldown on PR A reset to a clean slate simply by opening a fresh PR B (a new
+ * `issue.number` is a new `targetKey`) -- this is the fix: the running count now follows the ACTOR through the
+ * repo, mirroring how the contributor blacklist and moderation-rules ban tally already persist by login rather
+ * than by thread. Reuses the same literal-prefix `LIKE ... ESCAPE` scoping as {@link findHottestReviewTargetForRepo}
+ * so `owner/foo_bar` can never spuriously match `owner/fooXbar#...`'s targets.
+ */
+export async function countRecentAuditEventsForActorInRepo(env: Env, actor: string, eventType: string, repoFullName: string, sinceIso: string): Promise<number> {
+  const db = getDb(env.DB);
+  const targetPrefixPattern = `${escapeSqlLikePattern(repoFullName)}#%`;
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(auditEvents)
+    .where(
+      and(
+        eq(auditEvents.actor, actor),
+        eq(auditEvents.eventType, eventType),
+        sql`${auditEvents.targetKey} LIKE ${targetPrefixPattern} ESCAPE '\\'`,
+        gte(auditEvents.createdAt, sinceIso),
+      ),
+    );
+  /* v8 ignore next -- count(*) always returns exactly one row; the empty-array guard only satisfies the destructure type. */
+  if (!row) return 0;
+  return row.count;
+}
+
+/**
+ * Variant of {@link countRecentAuditEventsForActorInRepo} for a `targetKey` shape that carries a THIRD segment
+ * after `repo#issueNumber` (e.g. maybeThrottleMonitoredMentions's `owner/repo#123#mention:someLogin`): scopes
+ * across every PR/issue NUMBER in the repo (the same repo-wide carryover fix) while still pinning to one EXACT
+ * `targetKeySuffix`, so independently-budgeted sub-targets (one per monitored login) never bleed into each
+ * other's count. Pass the suffix literally, e.g. `mention:someLogin` -- both `repoFullName` and `targetKeySuffix`
+ * are escaped before embedding, so neither can smuggle in a stray SQL `LIKE` wildcard.
+ */
+export async function countRecentAuditEventsForActorInRepoWithTargetSuffix(
+  env: Env,
+  actor: string,
+  eventType: string,
+  repoFullName: string,
+  targetKeySuffix: string,
+  sinceIso: string,
+): Promise<number> {
+  const db = getDb(env.DB);
+  const targetPattern = `${escapeSqlLikePattern(repoFullName)}#%#${escapeSqlLikePattern(targetKeySuffix)}`;
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(auditEvents)
+    .where(
+      and(
+        eq(auditEvents.actor, actor),
+        eq(auditEvents.eventType, eventType),
+        sql`${auditEvents.targetKey} LIKE ${targetPattern} ESCAPE '\\'`,
+        gte(auditEvents.createdAt, sinceIso),
+      ),
+    );
+  /* v8 ignore next -- count(*) always returns exactly one row; the empty-array guard only satisfies the destructure type. */
+  if (!row) return 0;
+  return row.count;
+}
+
 /** #orb-ci-stuck-repeat / #orb-retry-storm ops-alerts signal: the single PR within `repoFullName` that published
  *  the most review surfaces in the last `sinceIso`-bounded window, and how many. `github_app.pr_public_surface_
  *  published` is a genuine INSERT-only event (never upserted) recorded once per successful publish pass
@@ -2596,10 +2667,6 @@ export async function countRecentAuditEventsForActorAndTarget(env: Env, actor: s
  *  overwrites rather than accumulates), this correctly counts repeat publishes even when the head SHA never
  *  changes -- exactly the shape of a stuck-CI or sweep retry-storm bleed. Returns null when the repo published
  *  no surfaces in the window at all. */
-function escapeSqlLikePattern(value: string): string {
-  return value.replace(/[\\%_]/g, "\\$&");
-}
-
 export async function findHottestReviewTargetForRepo(
   env: Env,
   repoFullName: string,
@@ -4388,6 +4455,58 @@ export async function markAiReviewPublished(
   await env.DB
     .prepare("UPDATE ai_review_cache SET published_at = ? WHERE repo_full_name = ? AND pull_number = ? AND head_sha = ? AND published_at IS NULL")
     .bind(nowIso(), repoFullName, pullNumber, headSha)
+    .run();
+}
+
+/** #ai-slop-cache: the stored AI slop advisory result for (repo, pull, head SHA), or null on a miss. Mirrors
+ *  getCachedAiReview but deliberately simpler -- see ai_slop_cache's migration doc comment for why no
+ *  cacheable/allowNonCacheable/maxAgeMs dimension is needed here: every stored row is unconditionally durable.
+ *  A nullish head SHA is always a miss (nothing to key on). `expectedInputFingerprint` mismatching (e.g. the
+ *  repo turned BYOK on/off, or changed its BYOK provider/model, since this row was written) is also a miss so a
+ *  config change can't silently replay an opinion produced under a different reviewer. */
+export async function getCachedAiSlopAdvisory(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+  headSha: string | null | undefined,
+  expectedInputFingerprint: string,
+): Promise<{ status: string; band: string | null; finding: AdvisoryFinding | null; estimatedNeurons: number } | null> {
+  if (!headSha) return null;
+  const row = await env.DB
+    .prepare("SELECT status, band, finding_json AS findingJson, estimated_neurons AS estimatedNeurons, input_fingerprint AS inputFingerprint FROM ai_slop_cache WHERE repo_full_name = ? AND pull_number = ? AND head_sha = ?")
+    .bind(repoFullName, pullNumber, headSha)
+    .first<{ status: string; band: string | null; findingJson: string | null; estimatedNeurons: number; inputFingerprint: string }>();
+  if (!row || row.inputFingerprint !== expectedInputFingerprint) return null;
+  return {
+    status: row.status,
+    band: row.band,
+    finding: parseJson<AdvisoryFinding | null>(row.findingJson, null),
+    estimatedNeurons: row.estimatedNeurons,
+  };
+}
+
+/** #ai-slop-cache: upsert the AI slop advisory result for (repo, pull, head SHA). A nullish head SHA is a
+ *  no-op (mirrors putCachedAiReview). Only call this for a result that actually spent the LLM call/attempts
+ *  (status "ok") -- the caller is responsible for not caching a pre-call short-circuit (disabled/unavailable/
+ *  quota_exceeded), since those return before any provider call and caching them would suppress a legitimate
+ *  retry once quota resets without having saved anything. */
+export async function putCachedAiSlopAdvisory(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+  headSha: string | null | undefined,
+  inputFingerprint: string,
+  result: { status: string; band: string | null; finding: AdvisoryFinding | null; estimatedNeurons: number },
+): Promise<void> {
+  if (!headSha) return;
+  await env.DB
+    .prepare(
+      `INSERT INTO ai_slop_cache (repo_full_name, pull_number, head_sha, input_fingerprint, status, band, finding_json, estimated_neurons, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(repo_full_name, pull_number, head_sha) DO UPDATE SET
+         input_fingerprint = excluded.input_fingerprint, status = excluded.status, band = excluded.band, finding_json = excluded.finding_json, estimated_neurons = excluded.estimated_neurons, created_at = excluded.created_at`,
+    )
+    .bind(repoFullName, pullNumber, headSha, inputFingerprint, result.status, result.band, jsonString(result.finding), result.estimatedNeurons, nowIso())
     .run();
 }
 

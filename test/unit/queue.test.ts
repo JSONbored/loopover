@@ -20425,6 +20425,47 @@ describe("queue processors", () => {
       expect(closeAudit?.n).toBeGreaterThanOrEqual(1);
     });
 
+    it("REGRESSION (#review-nag-cross-pr-carryover): a contributor who exhausted their pings on PR A carries the count over to a BRAND-NEW PR B instead of resetting to a clean 0/maxPings slate", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertInstallation(env, {
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["issue_comment"] },
+        repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+      });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3, autonomy: { close: "auto", label: "auto" } });
+      // PR A: "chatty" already sent 3 pings (the full budget) and PR A was closed for it -- this is the exact
+      // state left behind by the "close policy on a PR thread" scenario above.
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 220, title: "PR A (already closed)", state: "closed", user: { login: "chatty" }, head: { sha: "sha220" }, author_association: "NONE", labels: [], body: "" });
+      for (let i = 0; i < 3; i += 1) {
+        await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#220", outcome: "completed" });
+      }
+      // PR B: a BRAND-NEW PR from the SAME contributor -- a new issue.number means a new targetKey the old
+      // per-target count would treat as a clean slate. Only ONE ping is sent here.
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 221, title: "PR B (brand new)", state: "open", user: { login: "chatty" }, head: { sha: "sha221" }, author_association: "NONE", labels: [], body: "" });
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(221, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "nag-carryover-pr-b",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 221, title: "PR B (brand new)", state: "open", pull_request: {}, user: { login: "chatty" }, author_association: "NONE" },
+          comment: { id: 1, body: "@gittensory help", user: { login: "chatty", type: "User" }, author_association: "NONE" },
+        },
+      });
+      // Under the OLD per-targetKey count, this is ping 1/3 on PR B alone -- under threshold, no action. The
+      // FIX counts every prior ping across the whole repo, so this single PR-B ping is already #4 overall
+      // (3 carried over from PR A + this one), crossing maxPings=3 on the very first PR-B ping.
+      expect(seen.closed).toBe(true);
+      expect(seen.comments.some((c) => c.includes("chatty") && c.includes("4 times"))).toBe(true);
+      const prA = await env.DB.prepare("select state from pull_requests where number = 220").first<{ state: string }>();
+      expect(prA?.state).toBe("closed"); // PR A is untouched by this second evaluation
+      const closeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.close'").first<{ n: number }>();
+      expect(closeAudit?.n).toBeGreaterThanOrEqual(1);
+    });
+
     it("close policy degrades to hold on an ISSUE thread (no closeIssue primitive yet)", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3 });
@@ -20922,6 +20963,86 @@ describe("queue processors", () => {
       expect(seen.closed).toBe(true);
       expect(seen.labels).toContain("too-chatty");
       // #label-scoping: close: "auto" alone (no broad label: "auto") is sufficient for the label AND the close.
+    });
+
+    it("REGRESSION (#review-nag-cross-pr-carryover): a contributor who exhausted their @-mention pings for ONE login on PR A carries that login's count over to a BRAND-NEW PR B", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertInstallation(env, {
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["issue_comment"] },
+        repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+      });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3, reviewNagMonitoredMentions: ["JSONbored"], autonomy: { close: "auto" } });
+      // PR A: "chatty" already sent 3 pings mentioning @JSONbored (the full budget) and PR A was closed for it.
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 320, title: "PR A (already closed)", state: "closed", user: { login: "chatty" }, head: { sha: "sha320" }, author_association: "NONE", labels: [], body: "" });
+      for (let i = 0; i < 3; i += 1) {
+        await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.monitored_mention_ping", actor: "chatty", targetKey: "JSONbored/gittensory#320#mention:jsonbored", outcome: "completed" });
+      }
+      // PR B: a BRAND-NEW PR from the SAME contributor mentioning the SAME login. A new issue.number is a new
+      // targetKey the old per-target count would treat as a clean slate. Only ONE mention is sent here.
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 321, title: "PR B (brand new)", state: "open", user: { login: "chatty" }, head: { sha: "sha321" }, author_association: "NONE", labels: [], body: "" });
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubMonitoredMentionFetch(321, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "mention-carryover-pr-b",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 321, title: "PR B (brand new)", state: "open", pull_request: {}, user: { login: "chatty" }, author_association: "NONE" },
+          comment: { id: 1, body: "@JSONbored please look at this", user: { login: "chatty", type: "User" }, author_association: "NONE" },
+        },
+      });
+      // Under the OLD per-targetKey count, this is mention-ping 1/3 on PR B alone -- under threshold, no action.
+      // The FIX counts every prior @JSONbored mention-ping across the whole repo, so this single PR-B ping is
+      // already #4 overall (3 carried over from PR A + this one), crossing maxPings=3 on the very first ping.
+      expect(seen.closed).toBe(true);
+      const prA = await env.DB.prepare("select state from pull_requests where number = 320").first<{ state: string }>();
+      expect(prA?.state).toBe("closed"); // PR A is untouched by this second evaluation
+    });
+
+    it("REGRESSION (#review-nag-cross-pr-carryover): a DIFFERENT monitored login mentioned on PR B keeps its own independent budget, unaffected by another login's exhausted count", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertInstallation(env, {
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["issue_comment"] },
+        repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+      });
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        reviewNagPolicy: "close",
+        reviewNagMaxPings: 3,
+        reviewNagMonitoredMentions: ["JSONbored", "other-maintainer"],
+        autonomy: { close: "auto" },
+      });
+      // PR A: "chatty" already exhausted the @JSONbored budget (3 pings) -- same seed as the carryover test above.
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 322, title: "PR A (JSONbored exhausted)", state: "closed", user: { login: "chatty" }, head: { sha: "sha322" }, author_association: "NONE", labels: [], body: "" });
+      for (let i = 0; i < 3; i += 1) {
+        await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.monitored_mention_ping", actor: "chatty", targetKey: "JSONbored/gittensory#322#mention:jsonbored", outcome: "completed" });
+      }
+      // PR B: the SAME contributor mentions a DIFFERENT monitored login ("other-maintainer") for the FIRST time.
+      // If the repo-wide carryover fix accidentally merged every mentioned login into one shared count, this
+      // single ping would incorrectly already be "#4" and get throttled -- it must instead be a fresh 1/3.
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 323, title: "PR B (different login)", state: "open", user: { login: "chatty" }, head: { sha: "sha323" }, author_association: "NONE", labels: [], body: "" });
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubMonitoredMentionFetch(323, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "mention-independent-login-pr-b",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 323, title: "PR B (different login)", state: "open", pull_request: {}, user: { login: "chatty" }, author_association: "NONE" },
+          comment: { id: 1, body: "@other-maintainer could you take a look?", user: { login: "chatty", type: "User" }, author_association: "NONE" },
+        },
+      });
+      expect(seen.closed).toBe(false); // "other-maintainer"'s own budget is untouched by @JSONbored's exhausted count
+      const mentionPings = await env.DB.prepare(
+        "select count(*) as n from audit_events where event_type = 'github_app.monitored_mention_ping' and target_key = 'JSONbored/gittensory#323#mention:other-maintainer'",
+      ).first<{ n: number }>();
+      expect(mentionPings?.n).toBe(1); // recorded as ping 1/3 for THIS login, not folded into @JSONbored's tally
     });
 
     it("does NOT throttle the repo owner, an admin login, an automation bot, or an exempt login", async () => {

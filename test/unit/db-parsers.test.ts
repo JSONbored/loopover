@@ -4,6 +4,8 @@ import {
   countRecentDeadLetters,
   countRecentDeadLettersByType,
   countRecentAuditEventsForActorAndTarget,
+  countRecentAuditEventsForActorInRepo,
+  countRecentAuditEventsForActorInRepoWithTargetSuffix,
   findHottestReviewTargetForRepo,
   hasAuditEventForDelivery,
   getLatestScorePreview,
@@ -579,6 +581,67 @@ describe("database row parser hardening", () => {
     expect(await countRecentAuditEventsForActorAndTarget(env, "chatty", "github_app.review_nag_ping", "owner/repo#1", "2026-06-24T09:00:00.000Z")).toBe(2);
     expect(await countRecentAuditEventsForActorAndTarget(env, "chatty", "github_app.review_nag_ping", "owner/repo#1", "2026-06-24T11:00:00.000Z")).toBe(1); // only the 12:00 one
     expect(await countRecentAuditEventsForActorAndTarget(env, "chatty", "github_app.review_nag_ping", "owner/repo#1", "2026-06-24T13:00:00.000Z")).toBe(0); // none after the cutoff → count(*) returns 0
+  });
+
+  it("countRecentAuditEventsForActorInRepo counts one actor's events across EVERY target within a repo, not just one targetKey (#review-nag-cross-pr-carryover)", async () => {
+    const env = createTestEnv();
+    // Same actor, TWO different targets (PR #1 and PR #2) within the same repo -- both must count toward the total.
+    await recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "owner/repo#1", outcome: "completed", createdAt: "2026-06-24T10:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "owner/repo#1", outcome: "completed", createdAt: "2026-06-24T10:05:00.000Z" });
+    await recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "owner/repo#2", outcome: "completed", createdAt: "2026-06-24T12:00:00.000Z" });
+    // A different actor in the SAME repo must not be counted (the actor filter).
+    await recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "someone-else", targetKey: "owner/repo#3", outcome: "completed", createdAt: "2026-06-24T12:00:00.000Z" });
+    // The SAME actor pinging a DIFFERENT repo must not be counted (the repo-prefix scope).
+    await recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "owner/other-repo#1", outcome: "completed", createdAt: "2026-06-24T12:00:00.000Z" });
+    // An unrelated event type on the same actor+repo must not be counted (the eventType filter).
+    await recordAuditEvent(env, { eventType: "github_app.agent_command_replied", actor: "chatty", targetKey: "owner/repo#1", outcome: "completed", createdAt: "2026-06-24T12:00:00.000Z" });
+
+    expect(await countRecentAuditEventsForActorInRepo(env, "chatty", "github_app.review_nag_ping", "owner/repo", "2026-06-24T09:00:00.000Z")).toBe(3);
+    expect(await countRecentAuditEventsForActorInRepo(env, "chatty", "github_app.review_nag_ping", "owner/repo", "2026-06-24T11:00:00.000Z")).toBe(1); // only the 12:00 owner/repo#2 ping
+    expect(await countRecentAuditEventsForActorInRepo(env, "chatty", "github_app.review_nag_ping", "owner/repo", "2026-06-24T13:00:00.000Z")).toBe(0); // none after the cutoff → count(*) returns 0
+  });
+
+  it("countRecentAuditEventsForActorInRepo treats repo names as literal LIKE prefixes (regression mirroring findHottestReviewTargetForRepo's #review-burst-scope-pollution fix)", async () => {
+    const env = createTestEnv();
+    await recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "owner/foo_bar#1", outcome: "completed", createdAt: "2026-06-24T10:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "owner/foo_bar#2", outcome: "completed", createdAt: "2026-06-24T10:05:00.000Z" });
+    // owner/fooXbar is a DIFFERENT repo that would spuriously match "owner/foo_bar#%" if `_` were left as a SQL
+    // wildcard instead of being escaped -- must not leak into owner/foo_bar's count.
+    await recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "owner/fooXbar#99", outcome: "completed", createdAt: "2026-06-24T10:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "owner/fooXbar#99", outcome: "completed", createdAt: "2026-06-24T10:05:00.000Z" });
+    await recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "owner/fooXbar#99", outcome: "completed", createdAt: "2026-06-24T10:10:00.000Z" });
+
+    expect(await countRecentAuditEventsForActorInRepo(env, "chatty", "github_app.review_nag_ping", "owner/foo_bar", "2026-06-24T09:00:00.000Z")).toBe(2);
+  });
+
+  it("countRecentAuditEventsForActorInRepoWithTargetSuffix counts across every PR/issue number in a repo while still pinning to ONE exact targetKey suffix (#review-nag-cross-pr-carryover)", async () => {
+    const env = createTestEnv();
+    // Two different PR numbers within the SAME repo, both suffixed "#mention:jsonbored" -- both count.
+    await recordAuditEvent(env, { eventType: "github_app.monitored_mention_ping", actor: "chatty", targetKey: "owner/repo#1#mention:jsonbored", outcome: "completed", createdAt: "2026-06-24T10:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "github_app.monitored_mention_ping", actor: "chatty", targetKey: "owner/repo#2#mention:jsonbored", outcome: "completed", createdAt: "2026-06-24T10:05:00.000Z" });
+    // A DIFFERENT mentioned login's suffix on the SAME repo+actor must NOT bleed into the "jsonbored" count --
+    // this is the independent-budget guarantee the plain repo-prefix countRecentAuditEventsForActorInRepo can't
+    // provide on its own.
+    await recordAuditEvent(env, { eventType: "github_app.monitored_mention_ping", actor: "chatty", targetKey: "owner/repo#3#mention:other-maintainer", outcome: "completed", createdAt: "2026-06-24T10:07:00.000Z" });
+    // A different actor with the SAME suffix must not be counted (the actor filter).
+    await recordAuditEvent(env, { eventType: "github_app.monitored_mention_ping", actor: "someone-else", targetKey: "owner/repo#4#mention:jsonbored", outcome: "completed", createdAt: "2026-06-24T10:08:00.000Z" });
+    // A different repo with the SAME suffix must not be counted (the repo-prefix scope).
+    await recordAuditEvent(env, { eventType: "github_app.monitored_mention_ping", actor: "chatty", targetKey: "owner/other-repo#1#mention:jsonbored", outcome: "completed", createdAt: "2026-06-24T10:09:00.000Z" });
+
+    expect(await countRecentAuditEventsForActorInRepoWithTargetSuffix(env, "chatty", "github_app.monitored_mention_ping", "owner/repo", "mention:jsonbored", "2026-06-24T09:00:00.000Z")).toBe(2);
+    expect(await countRecentAuditEventsForActorInRepoWithTargetSuffix(env, "chatty", "github_app.monitored_mention_ping", "owner/repo", "mention:other-maintainer", "2026-06-24T09:00:00.000Z")).toBe(1);
+    expect(await countRecentAuditEventsForActorInRepoWithTargetSuffix(env, "chatty", "github_app.monitored_mention_ping", "owner/repo", "mention:jsonbored", "2026-06-24T10:06:00.000Z")).toBe(0); // cutoff after both matching pings
+  });
+
+  it("countRecentAuditEventsForActorInRepoWithTargetSuffix escapes BOTH the repo prefix and the suffix before embedding them in the LIKE pattern (regression mirroring countRecentAuditEventsForActorInRepo's escaping fix)", async () => {
+    const env = createTestEnv();
+    await recordAuditEvent(env, { eventType: "github_app.monitored_mention_ping", actor: "chatty", targetKey: "owner/foo_bar#1#mention:some_login", outcome: "completed", createdAt: "2026-06-24T10:00:00.000Z" });
+    // Neither a repo-name collision (fooXbar vs foo_bar) NOR a suffix collision (someXlogin vs some_login) may
+    // leak in if `_` were left as an unescaped SQL wildcard in either segment.
+    await recordAuditEvent(env, { eventType: "github_app.monitored_mention_ping", actor: "chatty", targetKey: "owner/fooXbar#2#mention:some_login", outcome: "completed", createdAt: "2026-06-24T10:01:00.000Z" });
+    await recordAuditEvent(env, { eventType: "github_app.monitored_mention_ping", actor: "chatty", targetKey: "owner/foo_bar#3#mention:someXlogin", outcome: "completed", createdAt: "2026-06-24T10:02:00.000Z" });
+
+    expect(await countRecentAuditEventsForActorInRepoWithTargetSuffix(env, "chatty", "github_app.monitored_mention_ping", "owner/foo_bar", "mention:some_login", "2026-06-24T09:00:00.000Z")).toBe(1);
   });
 
   it("findHottestReviewTargetForRepo returns the PR with the most published surfaces in the window, scoped to ONE repo (#orb-ci-stuck-repeat)", async () => {

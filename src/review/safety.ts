@@ -34,6 +34,8 @@ const HARD_SECRET_KINDS = new Set([
   "stripe_secret_key",
   "sendgrid_key",
   "huggingface_token",
+  "voyage_api_key",
+  "firecrawl_api_key",
   "jwt",
   "generic_secret_assignment",
 ]);

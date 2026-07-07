@@ -475,6 +475,8 @@ describe("gate treats secret_leak as a hard blocker", () => {
       `### src/config.ts (modified) +1/-0\n@@\n+const jwt = "${"eyJhbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"}";`,
     ],
     ["generic_secret_assignment", `### src/config.ts (modified) +1/-0\n@@\n+secret = "${"sk_live_" + "aK9xQ2mZw7Ln4Rv8Pt3Bh6"}"`],
+    ["voyage_api_key", `### src/config.ts (modified) +1/-0\n@@\n+const voyage = "${"pa-" + "aK9xQ2mZw7Ln4Rv8Pt3B"}";`],
+    ["firecrawl_api_key", `### src/config.ts (modified) +1/-0\n@@\n+const firecrawl = "${"fc-" + "aK9xQ2mZw7Ln4Rv8"}";`],
   ])("hard-blocks a %s finding", (kind, diff) => {
     const finding = secretLeakFinding(diff);
     expect(finding?.code).toBe("secret_leak");

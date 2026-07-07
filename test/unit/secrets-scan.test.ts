@@ -97,6 +97,26 @@ describe("scanForSecrets — deterministic secret-pattern scanner", () => {
     expect(scanForSecrets(fakeToken).kinds).toContain("huggingface_token");
   });
 
+  it("flags Voyage AI API keys", () => {
+    expect(scanForSecrets("pa-" + "aK9xQ2mZw7Ln4Rv8Pt3B").kinds).toContain("voyage_api_key");
+    expect(scanForSecrets("al-" + "mN4pL8sT2vW6xY0A1qZ5").kinds).toContain("voyage_api_key");
+  });
+
+  it("does not flag Voyage AI-shaped values below the length floor or with identifier continuation", () => {
+    expect(scanForSecrets("pa-" + "a".repeat(19)).kinds).not.toContain("voyage_api_key");
+    expect(scanForSecrets("pa-" + "a".repeat(20) + "-suffix").kinds).not.toContain("voyage_api_key");
+    expect(scanForSecrets("al-" + "b".repeat(20) + "_suffix").kinds).not.toContain("voyage_api_key");
+  });
+
+  it("flags a Firecrawl API key", () => {
+    expect(scanForSecrets("fc-" + "aK9xQ2mZw7Ln4Rv8").kinds).toContain("firecrawl_api_key");
+  });
+
+  it("does not flag Firecrawl-shaped values below the length floor or with identifier continuation", () => {
+    expect(scanForSecrets("fc-" + "c".repeat(15)).kinds).not.toContain("firecrawl_api_key");
+    expect(scanForSecrets("fc-" + "c".repeat(16) + "-suffix").kinds).not.toContain("firecrawl_api_key");
+  });
+
   it("flags a JWT", () => {
     const fakeJwt = "eyJhbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
     expect(scanForSecrets(fakeJwt).kinds).toContain("jwt");

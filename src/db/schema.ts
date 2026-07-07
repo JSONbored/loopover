@@ -1372,3 +1372,27 @@ export const aiReviewCache = sqliteTable(
     primary: primaryKey({ columns: [table.repoFullName, table.pullNumber, table.headSha] }),
   }),
 );
+
+// AI slop advisory cache (#ai-slop-cache): mirrors aiReviewCache above but deliberately simpler -- the slop
+// advisory has no dynamic-context dimension (no RAG/grounding/enrichment feed into it, see ai-slop.ts) and
+// nothing analogous to a published GitHub artifact to protect against replaying, so a hit here is always
+// unconditionally durable for a given (repo, pull, head SHA) -- no cacheable/published_at columns needed.
+export const aiSlopCache = sqliteTable(
+  "ai_slop_cache",
+  {
+    repoFullName: text("repo_full_name").notNull(),
+    pullNumber: integer("pull_number").notNull(),
+    headSha: text("head_sha").notNull(),
+    // Fingerprints the one input that can change independently of the head SHA: which provider produced the
+    // opinion (free/default reviewer vs. a maintainer's BYOK key/model) -- see ai-slop-cache-input.ts.
+    inputFingerprint: text("input_fingerprint").notNull(),
+    status: text("status").notNull(),
+    band: text("band"),
+    findingJson: text("finding_json"),
+    estimatedNeurons: integer("estimated_neurons").notNull().default(0),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    primary: primaryKey({ columns: [table.repoFullName, table.pullNumber, table.headSha] }),
+  }),
+);

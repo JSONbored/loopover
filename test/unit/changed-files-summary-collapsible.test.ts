@@ -59,9 +59,46 @@ describe("buildChangedFilesSummaryCollapsible per-file diff links (#2157)", () =
       context,
     );
     expect(c?.body).toContain("&lt;1&gt;");
-    expect(c?.body).toContain("\\`");
+    expect(c?.body).toContain("``src/weird");
+    expect(c?.body).toContain("file&lt;1&gt;.ts``");
     expect(c?.body).toContain("\\|");
     expect(c?.body).toContain("\\\\");
+  });
+
+  it("neutralizes line breaks in per-file paths before rendering public Markdown", () => {
+    const c = buildChangedFilesSummaryCollapsible(
+      [
+        {
+          path: "src/safe.ts\n@octocat\r\n[approve](mailto:attacker@example.com)",
+          additions: 1,
+          deletions: 0,
+        },
+      ],
+      context,
+    );
+    expect(c?.body).toContain("src/safe.ts�@octocat��[approve](mailto:attacker@example.com)");
+    expect(c?.body).not.toContain("\n@octocat");
+    expect(c?.body).not.toContain("\n[approve]");
+  });
+
+  it("falls back to grouped category totals when too many per-file rows would be rendered", () => {
+    const manyFiles = Array.from({ length: 201 }, (_, index) => ({
+      path: `src/file-${index}.ts`,
+      additions: 1,
+      deletions: 0,
+    }));
+    const c = buildChangedFilesSummaryCollapsible(manyFiles, context);
+    expect(c?.body).toContain("| Source | 201 | +201 | -0 |");
+    expect(c?.body).not.toContain("[View diff]");
+  });
+
+  it("falls back to grouped category totals when per-file rows would exceed the body budget", () => {
+    const c = buildChangedFilesSummaryCollapsible(
+      [{ path: `src/${"a".repeat(31_000)}.ts`, additions: 1, deletions: 0 }],
+      context,
+    );
+    expect(c?.body).toContain("| Source | 1 | +1 | -0 |");
+    expect(c?.body).not.toContain("[View diff]");
   });
 
   it("omits the View diff link when the path or repo context cannot be anchored", () => {

@@ -7,7 +7,8 @@ import {
 } from "../../src/services/ai-slop";
 import { evaluateGateCheck } from "../../src/rules/advisory";
 import { runAiSlopForAdvisory } from "../../src/queue/processors";
-import { recordAiUsageEvent, upsertRepositoryAiKey } from "../../src/db/repositories";
+import { getCachedAiSlopAdvisory, putCachedAiSlopAdvisory, recordAiUsageEvent, upsertRepositoryAiKey } from "../../src/db/repositories";
+import { aiSlopCacheInputFingerprint } from "../../src/review/ai-slop-cache-input";
 import type { Advisory, PullRequestFileRecord, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -473,5 +474,177 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
     expect(adv.findings).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
+  });
+
+  describe("AI slop advisory cache wiring (#ai-slop-cache)", () => {
+    it("reuses a stored advisory for an unchanged head SHA instead of calling the model again", async () => {
+      const run = vi.fn(async () => ({ response: slopJson({ band: "high" }) }));
+      const env = enabledEnv(run);
+      const fingerprint = await aiSlopCacheInputFingerprint({ byok: false, provider: null, model: null });
+      await putCachedAiSlopAdvisory(env, "acme/widgets", 3, "sha3", fingerprint, {
+        status: "ok",
+        band: "high",
+        finding: { code: AI_SLOP_FINDING_CODE, title: "cached finding", severity: "warning", detail: "from cache" },
+        estimatedNeurons: 42,
+      });
+      const adv = advisory();
+      await runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "high", confirmedContributor: true });
+
+      expect(run).not.toHaveBeenCalled(); // no LLM call spent on the cache hit
+      expect(adv.findings).toEqual([{ code: AI_SLOP_FINDING_CODE, title: "cached finding", severity: "warning", detail: "from cache" }]);
+    });
+
+    it("swallows a throwing audit-event write on a cache hit (fail-safe, the finding still reaches the advisory)", async () => {
+      const run = vi.fn();
+      const env = enabledEnv(run);
+      const fingerprint = await aiSlopCacheInputFingerprint({ byok: false, provider: null, model: null });
+      await putCachedAiSlopAdvisory(env, "acme/widgets", 3, "sha3", fingerprint, {
+        status: "ok",
+        band: "high",
+        finding: { code: AI_SLOP_FINDING_CODE, title: "cached finding", severity: "warning", detail: "from cache" },
+        estimatedNeurons: 42,
+      });
+      const repositoriesModule = await import("../../src/db/repositories");
+      const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 audit write error"));
+      const adv = advisory();
+      await runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "high", confirmedContributor: true });
+
+      expect(run).not.toHaveBeenCalled(); // still a cache hit despite the audit-write failure
+      expect(adv.findings).toEqual([{ code: AI_SLOP_FINDING_CODE, title: "cached finding", severity: "warning", detail: "from cache" }]);
+      auditSpy.mockRestore();
+    });
+
+    it("passes a nullish PR body through as undefined (not null) to the fresh advisory call on a cache miss", async () => {
+      const run = vi.fn(async (_model: string, options: { messages: { content: string }[] }) => {
+        expect(options.messages[1]?.content).toContain("Description: (none)"); // buildUserPrompt's no-body branch
+        return { response: slopJson({ band: "elevated" }) };
+      });
+      const env = enabledEnv(run);
+      const adv = advisory();
+      await runAiSlopForAdvisory(env, {
+        settings: noByok,
+        advisory: adv,
+        repoFullName: "acme/widgets",
+        pr: { number: 3, title: "Tidy" }, // no `body` key at all — exercises the `?? undefined` nullish arm
+        author: "alice",
+        files,
+        deterministicBand: "elevated",
+        confirmedContributor: true,
+      });
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(adv.findings.map((f) => f.code)).toEqual([AI_SLOP_FINDING_CODE]);
+    });
+
+    it("misses the cache and writes back a fresh 'ok' result so the NEXT call at this head is a hit", async () => {
+      const run = vi.fn(async () => ({ response: slopJson({ band: "elevated" }) }));
+      const env = enabledEnv(run);
+      const adv = advisory();
+      await runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
+      expect(run).toHaveBeenCalledTimes(1); // fresh call on the miss
+
+      const fingerprint = await aiSlopCacheInputFingerprint({ byok: false, provider: null, model: null });
+      const cached = await getCachedAiSlopAdvisory(env, "acme/widgets", 3, "sha3", fingerprint);
+      expect(cached).toMatchObject({ status: "ok", band: "elevated" });
+
+      // A second call for the SAME head must now reuse the cache, not spend another LLM call.
+      const adv2 = advisory();
+      await runAiSlopForAdvisory(env, { settings: noByok, advisory: adv2, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
+      expect(run).toHaveBeenCalledTimes(1); // still 1 — the second pass was a cache hit
+      expect(adv2.findings).toEqual(adv.findings);
+    });
+
+    it("does not cache a quota_exceeded short-circuit — a later call still tries the model once quota allows", async () => {
+      const run = vi.fn(async () => ({ response: slopJson({ band: "elevated" }) }));
+      const budgetedEnv = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "1" });
+      const adv = advisory();
+      await runAiSlopForAdvisory(budgetedEnv, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
+      expect(run).not.toHaveBeenCalled(); // quota_exceeded short-circuits before any model call
+      expect(adv.findings).toEqual([]);
+
+      const fingerprint = await aiSlopCacheInputFingerprint({ byok: false, provider: null, model: null });
+      expect(await getCachedAiSlopAdvisory(budgetedEnv, "acme/widgets", 3, "sha3", fingerprint)).toBeNull(); // nothing was persisted
+
+      // Same head, budget now available — must still attempt the model instead of replaying a quota miss.
+      const richEnv = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000" });
+      const adv2 = advisory();
+      await runAiSlopForAdvisory(richEnv, { settings: noByok, advisory: adv2, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
+      expect(run).toHaveBeenCalledTimes(1);
+    });
+
+    it("misses the cache when BYOK is toggled on since the row was written (fresh reviewer → fresh call)", async () => {
+      const run = vi.fn(async () => ({ response: slopJson({ band: "clean", rationale: "genuine", signals: [] }) })); // Workers AI must not be used once BYOK is on
+      const env = createTestEnv({
+        AI: { run } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+        TOKEN_ENCRYPTION_SECRET: "ai-slop-byok-cache-test-encryption-secret-32",
+      });
+      const freeFingerprint = await aiSlopCacheInputFingerprint({ byok: false, provider: null, model: null });
+      await putCachedAiSlopAdvisory(env, "acme/widgets", 3, "sha3", freeFingerprint, {
+        status: "ok",
+        band: "high",
+        finding: { code: AI_SLOP_FINDING_CODE, title: "stale free-tier finding", severity: "warning", detail: "d" },
+        estimatedNeurons: 12,
+      });
+      await upsertRepositoryAiKey(env, { repoFullName: "acme/widgets", provider: "anthropic", key: "sk-ant-byok-cache-9999", model: null });
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify({ content: [{ type: "text", text: slopJson({ band: "high" }) }] }), { status: 200 }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const adv = advisory();
+      await runAiSlopForAdvisory(env, { settings: { aiReviewByok: true } as RepositorySettings, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
+
+      // A fresh BYOK call was made (not the stale free-tier cache row, and not Workers AI).
+      expect(fetchMock).toHaveBeenCalled();
+      expect(run).not.toHaveBeenCalled();
+      expect(adv.findings.map((f) => f.title)).not.toContain("stale free-tier finding");
+    });
+
+    it("is fail-safe when the cache READ throws — falls through to a fresh model call, never blocks the advisory", async () => {
+      const run = vi.fn(async () => ({ response: slopJson({ band: "elevated" }) }));
+      const env = enabledEnv(run);
+      const repositoriesModule = await import("../../src/db/repositories");
+      const readSpy = vi.spyOn(repositoriesModule, "getCachedAiSlopAdvisory").mockRejectedValueOnce(new Error("D1 read error"));
+      const adv = advisory();
+      await runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
+      expect(run).toHaveBeenCalledTimes(1); // degraded to a miss instead of throwing
+      expect(adv.findings.map((f) => f.code)).toEqual([AI_SLOP_FINDING_CODE]);
+      readSpy.mockRestore();
+    });
+
+    it("is fail-safe when the cache WRITE throws — the fresh finding still reaches the advisory, and the failure is audited", async () => {
+      const run = vi.fn(async () => ({ response: slopJson({ band: "elevated" }) }));
+      const env = enabledEnv(run);
+      const repositoriesModule = await import("../../src/db/repositories");
+      const writeSpy = vi.spyOn(repositoriesModule, "putCachedAiSlopAdvisory").mockRejectedValueOnce(new Error("D1 write error"));
+      const adv = advisory();
+      await runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
+      expect(adv.findings.map((f) => f.code)).toEqual([AI_SLOP_FINDING_CODE]); // swallowed, not thrown
+      writeSpy.mockRestore();
+
+      const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_slop_cache_write_error", "acme/widgets#3")
+        .first<{ outcome: string; detail: string }>();
+      expect(audit?.outcome).toBe("error");
+      expect(audit?.detail).toContain("D1 write error");
+    });
+
+    it("is fail-safe when BOTH the cache WRITE and its own error-audit write throw (doubly-nested fail-safe)", async () => {
+      const run = vi.fn(async () => ({ response: slopJson({ band: "elevated" }) }));
+      const env = enabledEnv(run);
+      const repositoriesModule = await import("../../src/db/repositories");
+      const writeSpy = vi.spyOn(repositoriesModule, "putCachedAiSlopAdvisory").mockRejectedValueOnce(new Error("D1 write error"));
+      const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (_env, event) => {
+        if (event.eventType === "github_app.ai_slop_cache_write_error") throw new Error("D1 audit write error");
+        return undefined;
+      });
+      const adv = advisory();
+      await expect(
+        runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true }),
+      ).resolves.toBeUndefined(); // never throws, even with both the cache write AND its own audit write failing
+      expect(adv.findings.map((f) => f.code)).toEqual([AI_SLOP_FINDING_CODE]);
+      writeSpy.mockRestore();
+      auditSpy.mockRestore();
+    });
   });
 });

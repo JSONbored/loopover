@@ -13,7 +13,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "deploy:api": "wrangler d1 migrations apply gittensory --remote && wrangler deploy",
+    "deploy:api": "npm --workspace @jsonbored/gittensory-engine run build && wrangler d1 migrations apply gittensory --remote && wrangler deploy",
     "selfhost:postgres:migrate": "tsx scripts/migrate-selfhost-sqlite-to-postgres.ts",
     "selfhost:env-reference": "node scripts/gen-selfhost-env-reference.mjs",
     "selfhost:env-reference:check": "node scripts/gen-selfhost-env-reference.mjs --check",

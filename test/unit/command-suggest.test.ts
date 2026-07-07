@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   COMMAND_SUGGEST_MAX_DISTANCE,
+  COMMAND_SUGGEST_MAX_VERB_LENGTH,
   buildDidYouMeanSections,
   formatDidYouMeanLine,
   isKnownGittensoryCommandVerb,
@@ -58,6 +59,12 @@ describe("suggestCommand", () => {
     expect(suggestCommand("xyzzyqwerty", catalog)).toBeNull();
   });
 
+  it("skips suggestions for oversized unknown verbs", () => {
+    const oversizedVerb = "a".repeat(COMMAND_SUGGEST_MAX_VERB_LENGTH + 1);
+
+    expect(suggestCommand(oversizedVerb, catalog)).toBeNull();
+  });
+
   it("keeps the closest catalog entry when multiple targets are within range", () => {
     expect(suggestCommand("hel", catalog)).toBe("help");
   });
@@ -71,7 +78,9 @@ describe("suggestCommand", () => {
 
 describe("formatDidYouMeanLine", () => {
   it("renders a public-safe markdown hint", () => {
-    expect(formatDidYouMeanLine("preflight")).toBe("- Did you mean `@gittensory preflight`?");
+    expect(formatDidYouMeanLine("preflight")).toBe(
+      "- Did you mean `@gittensory preflight`?",
+    );
   });
 });
 

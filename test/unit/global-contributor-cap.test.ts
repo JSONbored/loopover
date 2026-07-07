@@ -14,6 +14,13 @@ describe("resolveGlobalContributorOpenItemCap (#2562)", () => {
     expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "1" })).toBe(1);
   });
 
+  // Live enforcement only ever samples a fixed 100-row budget (MAX_CONTRIBUTOR_OPEN_ITEM_CAP), so a configured
+  // value above that is silently unenforceable -- mirrors normalizeOpenItemCap's own clamp (db/repositories.ts).
+  it("clamps a value above the live-check sample budget to 100, and preserves exactly 100 unclamped", () => {
+    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "500" })).toBe(100);
+    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "100" })).toBe(100);
+  });
+
   it("drops a fractional/non-positive/non-numeric value to null (no cap), never coerced", () => {
     expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "2.5" })).toBeNull();
     expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "0" })).toBeNull();

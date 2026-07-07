@@ -7507,13 +7507,16 @@ export async function runAiSlopForAdvisory(
             model: args.settings.aiReviewModel ?? storedKey.model,
           }
         : null;
-    // #ai-slop-cache: the slop advisory's LLM call is fully deterministic given the same head SHA (no RAG/
-    // grounding/enrichment feeds into it, unlike ai review — see ai_slop_cache's migration doc comment), so a
-    // repeated scheduled sweep pass at an unchanged head reuses the stored result instead of re-spending up to
-    // 6 free-tier attempts (or a BYOK call) on every tick — confirmed in production: 110 ai_slop_pr calls on a
-    // single PR in 24h at an unchanged head. The fingerprint only needs to cover which provider would answer
-    // (free vs. this repo's BYOK key/model); everything else the model sees is already pinned to the head SHA.
+    // #ai-slop-cache: repeated scheduled sweeps at an unchanged prompt reuse the stored result instead of
+    // re-spending up to 6 free-tier attempts (or a BYOK call) on every tick. The fingerprint includes the
+    // provider identity plus the prompt-shaping inputs that can drift for the same head SHA (PR edits,
+    // retarget/base-diff changes, or deterministic-band setting changes).
+    const aiSlopDiff = buildAiReviewDiff(args.files);
     const inputFingerprint = await aiSlopCacheInputFingerprint({
+      title: args.pr.title,
+      body: args.pr.body ?? null,
+      diff: aiSlopDiff,
+      deterministicBand: args.deterministicBand,
       byok: Boolean(providerKey),
       provider: providerKey?.provider,
       model: providerKey?.model,
@@ -7548,7 +7551,7 @@ export async function runAiSlopForAdvisory(
         prNumber: args.pr.number,
         title: args.pr.title,
         body: args.pr.body ?? undefined,
-        diff: buildAiReviewDiff(args.files),
+        diff: aiSlopDiff,
         actor: args.author,
         deterministicBand: args.deterministicBand,
         providerKey,

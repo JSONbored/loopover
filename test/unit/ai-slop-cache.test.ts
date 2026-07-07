@@ -87,10 +87,28 @@ describe("AI slop advisory cache (#ai-slop-cache)", () => {
 });
 
 describe("aiSlopCacheInputFingerprint", () => {
+  const promptInput = {
+    title: "Tidy",
+    body: "cleanup",
+    diff: "### src/a.ts\n@@\n+const x = 1;",
+    deterministicBand: "elevated",
+    byok: false,
+    provider: null,
+    model: null,
+  };
+
   it("is stable for the same input", async () => {
-    const a = await aiSlopCacheInputFingerprint({ byok: false, provider: null, model: null });
-    const b = await aiSlopCacheInputFingerprint({ byok: false, provider: null, model: null });
+    const a = await aiSlopCacheInputFingerprint(promptInput);
+    const b = await aiSlopCacheInputFingerprint(promptInput);
     expect(a).toBe(b);
+  });
+
+  it("differs when mutable prompt inputs change at the same head SHA", async () => {
+    const original = await aiSlopCacheInputFingerprint(promptInput);
+    await expect(aiSlopCacheInputFingerprint({ ...promptInput, title: "Add generated SDK dump" })).resolves.not.toBe(original);
+    await expect(aiSlopCacheInputFingerprint({ ...promptInput, body: "high-risk generated churn" })).resolves.not.toBe(original);
+    await expect(aiSlopCacheInputFingerprint({ ...promptInput, diff: "### src/a.ts\n@@\n+// generated wall of text" })).resolves.not.toBe(original);
+    await expect(aiSlopCacheInputFingerprint({ ...promptInput, deterministicBand: "high" })).resolves.not.toBe(original);
   });
 
   it("differs when byok flips", async () => {

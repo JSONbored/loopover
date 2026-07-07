@@ -11,9 +11,9 @@ CREATE TABLE IF NOT EXISTS ai_slop_cache (
   repo_full_name TEXT NOT NULL,
   pull_number INTEGER NOT NULL,
   head_sha TEXT NOT NULL,
-  -- Fingerprints the one input that can change independently of the head SHA: which provider produced the
-  -- opinion (free/default reviewer vs. a maintainer's BYOK key/model). Title/body/diff/deterministicBand are
-  -- all already pinned to the head SHA (see getReviewFiles/buildAiReviewDiff), so they need no fingerprinting.
+  -- Fingerprints mutable prompt inputs (title/body/current built diff/deterministicBand) plus which provider
+  -- produced the opinion (free/default reviewer vs. a maintainer's BYOK key/model). The row key still scopes
+  -- cache lifetime to a PR head SHA, while the fingerprint forces misses for same-head prompt drift.
   input_fingerprint TEXT NOT NULL,
   status TEXT NOT NULL,
   band TEXT,

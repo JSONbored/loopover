@@ -6,7 +6,7 @@ import {
   type AiSlopInput,
 } from "../../src/services/ai-slop";
 import { evaluateGateCheck } from "../../src/rules/advisory";
-import { runAiSlopForAdvisory } from "../../src/queue/processors";
+import { buildAiReviewDiff, runAiSlopForAdvisory } from "../../src/queue/processors";
 import { getCachedAiSlopAdvisory, putCachedAiSlopAdvisory, recordAiUsageEvent, upsertRepositoryAiKey } from "../../src/db/repositories";
 import { aiSlopCacheInputFingerprint } from "../../src/review/ai-slop-cache-input";
 import type { Advisory, PullRequestFileRecord, RepositorySettings } from "../../src/types";
@@ -370,6 +370,17 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
   ];
   const pr = { number: 3, title: "Tidy", body: "cleanup" };
   const noByok = { aiReviewByok: false } as RepositorySettings;
+  const slopFingerprint = (over: Partial<Parameters<typeof aiSlopCacheInputFingerprint>[0]> = {}) =>
+    aiSlopCacheInputFingerprint({
+      title: pr.title,
+      body: pr.body,
+      diff: buildAiReviewDiff(files),
+      deterministicBand: "high",
+      byok: false,
+      provider: null,
+      model: null,
+      ...over,
+    });
 
   it("appends a single ai_slop_advisory finding when the model flags slop", async () => {
     const adv = advisory();
@@ -480,7 +491,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
     it("reuses a stored advisory for an unchanged head SHA instead of calling the model again", async () => {
       const run = vi.fn(async () => ({ response: slopJson({ band: "high" }) }));
       const env = enabledEnv(run);
-      const fingerprint = await aiSlopCacheInputFingerprint({ byok: false, provider: null, model: null });
+      const fingerprint = await slopFingerprint();
       await putCachedAiSlopAdvisory(env, "acme/widgets", 3, "sha3", fingerprint, {
         status: "ok",
         band: "high",
@@ -497,7 +508,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
     it("swallows a throwing audit-event write on a cache hit (fail-safe, the finding still reaches the advisory)", async () => {
       const run = vi.fn();
       const env = enabledEnv(run);
-      const fingerprint = await aiSlopCacheInputFingerprint({ byok: false, provider: null, model: null });
+      const fingerprint = await slopFingerprint();
       await putCachedAiSlopAdvisory(env, "acme/widgets", 3, "sha3", fingerprint, {
         status: "ok",
         band: "high",
@@ -542,7 +553,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
       await runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
       expect(run).toHaveBeenCalledTimes(1); // fresh call on the miss
 
-      const fingerprint = await aiSlopCacheInputFingerprint({ byok: false, provider: null, model: null });
+      const fingerprint = await slopFingerprint({ deterministicBand: "elevated" });
       const cached = await getCachedAiSlopAdvisory(env, "acme/widgets", 3, "sha3", fingerprint);
       expect(cached).toMatchObject({ status: "ok", band: "elevated" });
 
@@ -561,7 +572,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
       expect(run).not.toHaveBeenCalled(); // quota_exceeded short-circuits before any model call
       expect(adv.findings).toEqual([]);
 
-      const fingerprint = await aiSlopCacheInputFingerprint({ byok: false, provider: null, model: null });
+      const fingerprint = await slopFingerprint({ deterministicBand: "elevated" });
       expect(await getCachedAiSlopAdvisory(budgetedEnv, "acme/widgets", 3, "sha3", fingerprint)).toBeNull(); // nothing was persisted
 
       // Same head, budget now available — must still attempt the model instead of replaying a quota miss.
@@ -580,7 +591,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
         AI_DAILY_NEURON_BUDGET: "100000",
         TOKEN_ENCRYPTION_SECRET: "ai-slop-byok-cache-test-encryption-secret-32",
       });
-      const freeFingerprint = await aiSlopCacheInputFingerprint({ byok: false, provider: null, model: null });
+      const freeFingerprint = await slopFingerprint({ deterministicBand: "elevated" });
       await putCachedAiSlopAdvisory(env, "acme/widgets", 3, "sha3", freeFingerprint, {
         status: "ok",
         band: "high",

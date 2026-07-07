@@ -979,7 +979,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(seen[seen.indexOf("--effort") + 1]).toBe("medium");
   });
 
-  it("Claude Code passes systemAppend through --append-system-prompt and strips the duplicate stdin copy (#1471)", async () => {
+  it("Claude Code keeps systemAppend out of argv and supplies it through stdin once (#1471)", async () => {
     const systemAppend = "REPOSITORY REVIEW INSTRUCTIONS: Follow async-error conventions.";
     let seen: string[] = [];
     let capturedInput = "";
@@ -995,10 +995,11 @@ describe("subscription CLI helpers + fail-safe", () => {
       ],
       systemAppend,
     });
-    expect(seen[seen.indexOf("--append-system-prompt") + 1]).toBe(systemAppend);
+    expect(seen).not.toContain("--append-system-prompt");
+    expect(seen).not.toContain(systemAppend);
     expect(capturedInput).toContain("Base system.");
     expect(capturedInput).toContain("Review this diff.");
-    expect(capturedInput).not.toContain(systemAppend);
+    expect(countOccurrences(capturedInput, systemAppend)).toBe(1);
 
     await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, cap).run("", {
       prompt: "Review this diff.",

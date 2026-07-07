@@ -75,7 +75,7 @@ function toCliPrompt(options: AiRunOptions, systemAppend: string | undefined): s
     .join("\n\n");
 }
 
-function prependCodexSystemAppend(prompt: string, systemAppend: string | undefined): string {
+function prependCliSystemAppend(prompt: string, systemAppend: string | undefined): string {
   return systemAppend
     ? `ADDITIONAL SYSTEM INSTRUCTIONS:\n${systemAppend}\n\n${prompt}`
     : prompt;
@@ -736,10 +736,9 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
           OTEL_METRIC_EXPORT_INTERVAL: parentEnv.OTEL_METRIC_EXPORT_INTERVAL,
         });
         const systemAppend = normalizedSystemAppend(options);
-        const prompt = toCliPrompt(options, systemAppend);
+        const prompt = prependCliSystemAppend(toCliPrompt(options, systemAppend), systemAppend);
         const spawn = spawnImpl ?? (await defaultSpawn());
         const args = ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "plan", "--effort", effort, "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"];
-        if (systemAppend) args.push("--append-system-prompt", systemAppend);
         attempted = true;
         const { stdout, code, stderr, timedOut } = await spawn(
           "claude",
@@ -808,7 +807,7 @@ export function createCodexAi(
         await authCheckImpl(parentEnv);
         const env = codexCliEnv(parentEnv);
         const systemAppend = normalizedSystemAppend(options);
-        const prompt = prependCodexSystemAppend(toCliPrompt(options, systemAppend), systemAppend);
+        const prompt = prependCliSystemAppend(toCliPrompt(options, systemAppend), systemAppend);
         const spawn = spawnImpl ?? (await defaultSpawn());
         const args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only"];
         if (codexModel) args.push("--model", codexModel);

@@ -6,6 +6,7 @@ import { REVIEW_THREAD_BLOCKER_CODE } from "../../packages/gittensory-engine/src
 import { guardrailPathMatches } from "../../packages/gittensory-engine/src/signals/change-guardrail";
 import {
   buildCollisionReport,
+  buildLaneAdvice,
   buildPreflightResult,
   buildPublicReadinessScore,
   buildQueueHealth,
@@ -504,6 +505,54 @@ describe("predicted-gate engine branch coverage (#2283)", () => {
       queueHealth: buildQueueHealth(REPO, [], [], buildCollisionReport(REPO.fullName, [], [])),
     });
     expect(readiness.components.find((c) => c.key === "traceability")?.evidence).toContain("no-issue rationale");
+
+    const withIdentifiers = gateAdvisoryInternals.advisory(
+      "pull_request",
+      "acme/widgets#1",
+      REPO.fullName,
+      [],
+      "summary",
+      1,
+      7,
+      "sha123",
+    );
+    expect(withIdentifiers.pullNumber).toBe(1);
+    expect(withIdentifiers.issueNumber).toBe(7);
+    expect(withIdentifiers.headSha).toBe("sha123");
+
+    const overflowGuardrail = gateAdvisoryInternals.buildGuardrailHoldFinding(
+      Array.from({ length: 6 }, (_, index) => ({ path: `src/file-${index}.ts`, glob: "src/**" })),
+    );
+    expect(overflowGuardrail.detail).toContain("and 1 more");
+
+    const issueDiscoveryLane = buildLaneAdvice(
+      { ...REPO, registryConfig: { ...REPO.registryConfig!, emissionShare: 1, issueDiscoveryShare: 1 } },
+      REPO.fullName,
+    );
+    expect(issueDiscoveryLane.lane).toBe("issue_discovery");
+
+    const openReady = buildPublicReadinessScore({
+      pr: { ...pr(REPO.fullName, 3, "Fix"), state: "open", isDraft: false, linkedIssues: [7] },
+      preflight: buildPreflightResult({ repoFullName: REPO.fullName, title: "Fix", body: "", linkedIssues: [7], changedFiles: ["src/a.ts"] }, REPO, [], []),
+      queueHealth: buildQueueHealth(REPO, [], [], buildCollisionReport(REPO.fullName, [], [])),
+    });
+    expect(openReady.components.find((c) => c.key === "pr_state")?.score).toBe(10);
+
+    const openDraft = buildPublicReadinessScore({
+      pr: { ...pr(REPO.fullName, 4, "Fix"), state: "open", isDraft: true, linkedIssues: [7, 8] },
+      preflight: buildPreflightResult({ repoFullName: REPO.fullName, title: "Fix", body: "", linkedIssues: [7, 8], changedFiles: ["src/a.ts"] }, REPO, [], []),
+      queueHealth: buildQueueHealth(REPO, [], [], buildCollisionReport(REPO.fullName, [], [])),
+    });
+    expect(openDraft.components.find((c) => c.key === "pr_state")?.score).toBe(6);
+    expect(openDraft.components.find((c) => c.key === "change_scope")?.evidence).toContain("2 linked issues");
+
+    const closedPr = buildPublicReadinessScore({
+      pr: { ...pr(REPO.fullName, 5, "Fix"), state: "closed", isDraft: false, linkedIssues: [7] },
+      preflight: buildPreflightResult({ repoFullName: REPO.fullName, title: "Fix", body: "", linkedIssues: [7], changedFiles: ["src/a.ts"] }, REPO, [], []),
+      queueHealth: buildQueueHealth(REPO, [], [], buildCollisionReport(REPO.fullName, [], [])),
+    });
+    expect(closedPr.components.find((c) => c.key === "pr_state")?.score).toBe(3);
+    expect(closedPr.components.find((c) => c.key === "change_scope")?.evidence).toContain("1 linked issue");
   });
 });
 

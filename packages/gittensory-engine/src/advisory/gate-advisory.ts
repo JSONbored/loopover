@@ -629,9 +629,11 @@ function normalizeScore(value: number | null | undefined): number | null {
 
 /** @internal Exported for unit tests of advisory severity wiring. */
 export const gateAdvisoryInternals = {
+  advisory,
   highestSeverity,
   conclusionForSeverity,
   buildSizeHoldFinding,
+  buildGuardrailHoldFinding,
   promoteAdvisoryToBlock,
   isConfiguredGateBlocker,
   buildQualityGateWarning,

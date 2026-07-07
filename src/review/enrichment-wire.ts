@@ -161,6 +161,45 @@ const REES_PROFILE_NAMES = ["fast", "balanced", "deep"] as const;
 type ReesProfileName = (typeof REES_PROFILE_NAMES)[number];
 const REES_PROFILE_NAME_SET = new Set<string>(REES_PROFILE_NAMES);
 
+function markdownHeadingLevel(line: string): number | undefined {
+  const match = /^(#{1,6})\s+/.exec(line.trimStart());
+  return match?.[1]?.length;
+}
+
+function isPublicSafeEnrichmentLine(line: string): boolean {
+  try {
+    sanitizePublicComment(line);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function retainPublicSafeEnrichmentSections(
+  defanged: string,
+): string | undefined {
+  const lines = defanged.split("\n");
+  const safeLines: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const headingLevel = markdownHeadingLevel(line);
+    if (isPublicSafeEnrichmentLine(line)) {
+      safeLines.push(line);
+      continue;
+    }
+    if (headingLevel === undefined) continue;
+
+    while (index + 1 < lines.length) {
+      const nextLevel = markdownHeadingLevel(lines[index + 1] ?? "");
+      if (nextLevel !== undefined && nextLevel <= headingLevel) break;
+      index += 1;
+    }
+  }
+
+  const safeBlock = safeLines.join("\n").trim();
+  return safeBlock || undefined;
+}
+
 function sanitizeEnrichmentPromptSection(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -172,21 +211,10 @@ function sanitizeEnrichmentPromptSection(value: unknown): string | undefined {
       MAX_ENRICHMENT_PROMPT_SECTION_CHARS,
     );
   } catch {
-    const safeLines = defanged
-      .split("\n")
-      .filter((line) => {
-        try {
-          sanitizePublicComment(line);
-          return true;
-        } catch {
-          return false;
-        }
-      })
-      .join("\n")
-      .trim();
-    return safeLines
-      ? safeLines.slice(0, MAX_ENRICHMENT_PROMPT_SECTION_CHARS)
-      : undefined;
+    return retainPublicSafeEnrichmentSections(defanged)?.slice(
+      0,
+      MAX_ENRICHMENT_PROMPT_SECTION_CHARS,
+    );
   }
 }
 

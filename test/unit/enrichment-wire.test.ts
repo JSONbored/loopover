@@ -520,6 +520,41 @@ describe("buildReviewEnrichment", () => {
     expect(result?.systemSuffix).toContain("untrusted advisory context");
   });
 
+  it("drops non-public-safe enrichment sections with adjacent unlabeled values", async () => {
+    globalThis.fetch = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          json: async () => ({
+            promptSection: [
+              "## EXTERNAL REVIEW BRIEF",
+              "### Dependency advisory",
+              "- package left-pad has CVE-2099-0001",
+              "### wallet",
+              "- adjacent unlabeled identifier",
+              "extra evidence without a forbidden label",
+              "### Safe follow-up",
+              "- retain public context",
+            ].join("\n"),
+          }),
+        }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await buildReviewEnrichment(
+      env({ REES_URL: "https://r" }),
+      input,
+    );
+
+    expect(result?.promptSection).toContain("## EXTERNAL REVIEW BRIEF");
+    expect(result?.promptSection).toContain("### Dependency advisory");
+    expect(result?.promptSection).toContain("### Safe follow-up");
+    expect(result?.promptSection).not.toContain("### wallet");
+    expect(result?.promptSection).not.toContain("adjacent unlabeled identifier");
+    expect(result?.promptSection).not.toContain(
+      "extra evidence without a forbidden label",
+    );
+  });
+
   it("undefined on a fetch throw (timeout/network) — fail-safe", async () => {
     globalThis.fetch = vi.fn(async () => {
       throw new Error("timeout");

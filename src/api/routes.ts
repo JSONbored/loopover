@@ -5389,10 +5389,10 @@ async function requireDiscoveryAccessForApi(c: ProtectedRouteContext, identity: 
     if (isExtensionContributorScopedSession(identity)) return null;
     const scope = await loadControlPanelAccessScope(c.env, identity.actor);
     if (scope.operator) return null;
-    return c.json({ error: "forbidden", reason: "cross_repo_search_requires_discovery_access" }, 403);
+    return c.json({ error: "cross_repo_search_requires_discovery_access" }, 403);
   }
   if (identity.kind === "static" && identity.actor === "mcp" && !isMcpReadUnscoped(c.env.MCP_READ_REPO_ALLOWLIST)) {
-    return c.json({ error: "forbidden", reason: "cross_repo_search_requires_unscoped_mcp_read" }, 403);
+    return c.json({ error: "cross_repo_search_requires_unscoped_mcp_read" }, 403);
   }
   return null;
 }

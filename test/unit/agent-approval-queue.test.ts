@@ -34,6 +34,9 @@ vi.mock("../../src/github/backfill", async (importOriginal) => ({
   fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null })),
   fetchLivePullRequestMergeState: vi.fn(async () => "clean"),
   fetchLivePullRequestReviewDecision: vi.fn(async () => undefined),
+  // Defaults to "no live blockers left" so the existing accept tests stay deterministic; individual tests below
+  // override this to exercise the thread-staleness supersede path.
+  fetchLiveReviewThreadBlockers: vi.fn(async () => []),
 }));
 // resolveLinkedIssueHardRule defaults to the REAL implementation, which is a safe no-op here: loadLinkedIssueHardRules
 // (also real, unmocked) always returns the all-off default config, so the real resolver returns undefined (not
@@ -49,7 +52,7 @@ vi.mock("../../src/review/linked-issue-hard-rules", async (importOriginal) => {
 import { createPullRequestReview, mergePullRequest } from "../../src/github/pr-actions";
 import { ensurePullRequestLabel } from "../../src/github/labels";
 import { createInstallationToken } from "../../src/github/app";
-import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision } from "../../src/github/backfill";
+import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision, fetchLiveReviewThreadBlockers } from "../../src/github/backfill";
 import { resolveLinkedIssueHardRule } from "../../src/review/linked-issue-hard-rules";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { actionParams, executeAgentMaintenanceActions, pendingActionToPlanned, type AgentActionExecutionContext } from "../../src/services/agent-action-executor";
@@ -842,22 +845,31 @@ describe("agent approval queue (#779)", () => {
     expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({ ciState: "pending", mergeableState: "clean" });
   });
 
-  it("REGRESSION (gate review): a duplicate/slop/blocker-only close (no conflict) is never touched by the mergeable-state recheck", async () => {
+  it("REGRESSION (gate review): a duplicate/slop/blocker-only close (no conflict, no review thread) is never touched by the mergeable-state/thread recheck", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
     await seedInstallation(env);
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
-    // mergeableState reads "clean" (the default mock) and this close was NEVER conflict-justified
-    // (closeRequiresMergeableState: false) -- a duplicate/slop/blocker close's mergeability was never the
-    // signal that justified it, so it must execute as staged rather than being superseded just because the
-    // PR happens to have clean mergeability (the gate-review-flagged over-broad-predicate regression).
+    // mergeableState reads "clean" (the default mock) and this close was NEVER conflict- or thread-justified
+    // (closeRequiresMergeableState: false, closeRequiresThreadResolved: false) -- a duplicate/slop/blocker
+    // close's mergeability/review-thread state was never the signal that justified it, so it must execute as
+    // staged rather than being superseded just because the PR happens to have clean mergeability (the
+    // gate-review-flagged over-broad-predicate regression). Narrowed by #review-thread-staleness to also cover
+    // the new review-thread exemption -- this close stays exempt from BOTH live rechecks.
     const { action } = await createPendingAgentActionIfAbsent(env, {
       repoFullName: "owner/repo",
       pullNumber: 7,
       installationId: 5,
       actionClass: "close",
       autonomyLevel: "auto_with_approval",
-      params: { closeComment: "duplicate of another open PR", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: false, expectedHeadSha: "h7" },
+      params: {
+        closeComment: "duplicate of another open PR",
+        closeKind: "heuristic",
+        closeRequiresCiState: "not_required",
+        closeRequiresMergeableState: false,
+        closeRequiresThreadResolved: false,
+        expectedHeadSha: "h7",
+      },
       reason: "duplicate of another open PR",
     });
 
@@ -867,10 +879,162 @@ describe("agent approval queue (#779)", () => {
     expect(result.executionOutcome).toBe("completed");
     const { closePullRequest } = await import("../../src/github/pr-actions");
     expect(closePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
-    // No live recheck was even attempted for this close -- it isn't scoped by closeRequiresMergeableState.
+    // No live recheck was even attempted for this close -- it isn't scoped by closeRequiresMergeableState or
+    // closeRequiresThreadResolved.
     expect(fetchLiveCiAggregate).not.toHaveBeenCalled();
     expect(fetchLivePullRequestMergeState).not.toHaveBeenCalled();
     expect(fetchLivePullRequestReviewDecision).not.toHaveBeenCalled();
+    expect(fetchLiveReviewThreadBlockers).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION (#review-thread-staleness): a review-thread-only close (closeRequiresThreadResolved: true) DOES trigger the live rechecks", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    // The thread is still unresolved live (the default empty-array mock is overridden here) so this close
+    // proceeds, but the point of this test is that the fetch was attempted at all -- unlike the exempt
+    // duplicate/slop close above, a review-thread-justified close IS scoped by closeRequiresThreadResolved.
+    // Queues exactly 2 responses (Once, not persistent): the accept-time recheck AND the executor's own
+    // actuation-time recheck each consume one call and must see the SAME still-unresolved state (mirrors the
+    // #3863 conflict-recheck tests' own "queues exactly 2 responses" comment).
+    vi.mocked(fetchLiveReviewThreadBlockers).mockResolvedValueOnce([{ title: "fix this", scannerFinding: false }]).mockResolvedValueOnce([{ title: "fix this", scannerFinding: false }]);
+    const { action } = await createPendingAgentActionIfAbsent(env, {
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      installationId: 5,
+      actionClass: "close",
+      autonomyLevel: "auto_with_approval",
+      params: { closeComment: "unresolved review thread", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: false, closeRequiresThreadResolved: true, expectedHeadSha: "h7" },
+      reason: "unresolved review thread",
+    });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    const { closePullRequest } = await import("../../src/github/pr-actions");
+    expect(closePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
+    expect(fetchLiveReviewThreadBlockers).toHaveBeenCalledWith(env, "owner/repo", 7, "test-installation-token", expect.any(String));
+  });
+
+  it("REGRESSION (#review-thread-staleness): accept supersedes a review-thread-justified heuristic close when the thread(s) have since resolved", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    // fetchLiveReviewThreadBlockers defaults to [] (the module mock above) -- a contributor resolved the
+    // thread(s) on GitHub since this close was staged.
+    const { action } = await createPendingAgentActionIfAbsent(env, {
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      installationId: 5,
+      actionClass: "close",
+      autonomyLevel: "auto_with_approval",
+      params: { closeComment: "unresolved review thread", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: false, closeRequiresThreadResolved: true, expectedHeadSha: "h7" },
+      reason: "unresolved review thread",
+    });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("stale_disposition");
+    const { closePullRequest } = await import("../../src/github/pr-actions");
+    expect(closePullRequest).not.toHaveBeenCalled();
+    const audit = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ detail: string; metadata_json: string }>();
+    expect(audit?.detail).toContain("the review thread(s) that justified this close are now all resolved");
+    expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({ liveThreadBlockerCount: 0 });
+  });
+
+  it("accept still executes a review-thread-justified heuristic close when the live thread signal remains unresolved", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    // Queues exactly 2 responses (see the comment on the "DOES trigger the live rechecks" test above) so both
+    // the accept-time recheck and the executor's own actuation-time recheck see a consistent still-unresolved state.
+    vi.mocked(fetchLiveReviewThreadBlockers).mockResolvedValueOnce([{ title: "still needs a fix", scannerFinding: false }]).mockResolvedValueOnce([{ title: "still needs a fix", scannerFinding: false }]);
+    const { action } = await createPendingAgentActionIfAbsent(env, {
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      installationId: 5,
+      actionClass: "close",
+      autonomyLevel: "auto_with_approval",
+      params: { closeComment: "unresolved review thread", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: false, closeRequiresThreadResolved: true, expectedHeadSha: "h7" },
+      reason: "unresolved review thread",
+    });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    const { closePullRequest } = await import("../../src/github/pr-actions");
+    expect(closePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
+  });
+
+  it("REGRESSION (#review-thread-staleness): a FULFILLED-but-nullish live thread-blocker result (?? 0 branch) reads the same as a confirmed-empty array", async () => {
+    // Distinct from the "failed live thread-blocker read" test below: there the promise itself REJECTS (fails
+    // open -- the close proceeds). Here it FULFILLS with a value that is not a real array (defensive:
+    // fetchLiveReviewThreadBlockers's real contract always resolves to an array, never undefined/null, so this
+    // exercises the `liveThreadBlockers?.length ?? 0` nullish-fallback arm for a hypothetically-loosened
+    // contract). A FULFILLED-but-nullish result is treated the SAME as a confirmed empty array (0 blockers), not
+    // as an ambiguous read -- only a REJECTED promise gets the fail-open treatment. The close is superseded,
+    // and the executor's own actuation-time recheck is never reached (the row was already rejected here), so
+    // only ONE response needs to be queued.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    vi.mocked(fetchLiveReviewThreadBlockers).mockResolvedValueOnce(undefined as unknown as never);
+    const { action } = await createPendingAgentActionIfAbsent(env, {
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      installationId: 5,
+      actionClass: "close",
+      autonomyLevel: "auto_with_approval",
+      params: { closeComment: "unresolved review thread", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: false, closeRequiresThreadResolved: true, expectedHeadSha: "h7" },
+      reason: "unresolved review thread",
+    });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("stale_disposition");
+    const { closePullRequest } = await import("../../src/github/pr-actions");
+    expect(closePullRequest).not.toHaveBeenCalled();
+    const audit = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ detail: string; metadata_json: string }>();
+    expect(audit?.detail).toContain("the review thread(s) that justified this close are now all resolved");
+    expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({ liveThreadBlockerCount: null });
+  });
+
+  it("REGRESSION (#review-thread-staleness): a failed live thread-blocker read fails open instead of masquerading as 'all resolved'", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    // The live thread-blocker read itself FAILS (transient API error) -- this must fail open (not stale) at the
+    // approval-queue's own accept-time recheck, not be silently treated as "confirmed all resolved" merely
+    // because the resolved value would otherwise read as an empty/absent result. The SECOND queued response is
+    // for the executor's own separate actuation-time recheck (a real fetchLiveReviewThreadBlockers never
+    // rejects -- it fails open to [] internally -- so this simulates that read still finding the thread
+    // unresolved, keeping this test's premise about the QUEUE's fail-open path isolated from the executor's).
+    vi.mocked(fetchLiveReviewThreadBlockers).mockRejectedValueOnce(new Error("GitHub API transient 502")).mockResolvedValueOnce([{ title: "still open", scannerFinding: false }]);
+    const { action } = await createPendingAgentActionIfAbsent(env, {
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      installationId: 5,
+      actionClass: "close",
+      autonomyLevel: "auto_with_approval",
+      params: { closeComment: "unresolved review thread", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: false, closeRequiresThreadResolved: true, expectedHeadSha: "h7" },
+      reason: "unresolved review thread",
+    });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    const { closePullRequest } = await import("../../src/github/pr-actions");
+    expect(closePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
   });
 
   it("REGRESSION (gate review): a LEGACY heuristic close row (closeRequiresMergeableState undefined, staged before the field existed) still gets the live recheck", async () => {
@@ -911,6 +1075,10 @@ describe("agent approval queue (#779)", () => {
     // Same legacy row shape (closeRequiresMergeableState undefined) but the live mergeable-state read still
     // shows "dirty" -- the recheck fires (per the test above) but finds nothing stale, so the close proceeds.
     vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce("dirty");
+    // closeRequiresThreadResolved is ALSO undefined on this legacy row, so the thread recheck fires too (same
+    // ambiguous-legacy discipline) -- give it a non-empty live result so only the conflict axis under test here
+    // determines the outcome, not an incidental "no threads left" default from the module mock.
+    vi.mocked(fetchLiveReviewThreadBlockers).mockResolvedValueOnce([{ title: "unrelated legacy blocker", scannerFinding: false }]);
     const { action } = await createPendingAgentActionIfAbsent(env, {
       repoFullName: "owner/repo",
       pullNumber: 7,
@@ -947,7 +1115,9 @@ describe("agent approval queue (#779)", () => {
       installationId: 5,
       actionClass: "close",
       autonomyLevel: "auto_with_approval",
-      params: { closeComment: "base conflict", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: true, expectedHeadSha: "h7" },
+      // closeRequiresThreadResolved explicitly false: this close was ONLY ever conflict-justified, so the new
+      // thread recheck must not incidentally fire (and spuriously "clear" via its own [] default) alongside it.
+      params: { closeComment: "base conflict", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresMergeableState: true, closeRequiresThreadResolved: false, expectedHeadSha: "h7" },
       reason: "base branch now conflicts",
     });
 

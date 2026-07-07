@@ -6,7 +6,7 @@ import { executeAgentMaintenanceActions, pendingActionToPlanned } from "./agent-
 import { downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, type PlannedAgentAction } from "../settings/agent-actions";
 import { findBlacklistEntry } from "../settings/contributor-blacklist";
 import { isCloseHoldOnly, isHoldOnly } from "../review/outcomes-wire";
-import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision, mergeRequiredCiContexts } from "../github/backfill";
+import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision, fetchLiveReviewThreadBlockers, mergeRequiredCiContexts } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import type { AgentPendingActionParams, AgentPendingActionRecord } from "../types";
 
@@ -200,10 +200,15 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
   // silently skip the live recheck for any pre-existing auto_with_approval close row staged before this
   // field was introduced, even one that WAS originally conflict-justified -- exactly the safety gap this
   // recheck exists to close. Fail toward "revalidate" for the unknown case, not "skip" (gate review finding).
-  const shouldRecheckLiveDisposition =
-    pr?.headSha &&
-    (pending.actionClass === "merge" ||
-      (pending.actionClass === "close" && pending.params.closeKind === "heuristic" && pending.params.closeRequiresMergeableState !== false));
+  const isMergeableRecheck = pending.actionClass === "close" && pending.params.closeKind === "heuristic" && pending.params.closeRequiresMergeableState !== false;
+  // Mirrors isMergeableRecheck's LIVE-SIGNAL shape (#review-thread-staleness) but deliberately scoped to
+  // `=== true`, not `!== false`: unlike closeRequiresMergeableState, closeRequiresThreadResolved has NO
+  // pre-existing legacy rows anywhere -- it is introduced in the same change as its only producer, so a
+  // freshly planned heuristic close ALWAYS sets it explicitly (mirroring closeRequiresMergeableState's own
+  // "never omitted" discipline). `undefined` here can therefore only mean "not thread-justified", never an
+  // ambiguous legacy row, so there is no equivalent "fail toward revalidate" case to guard against.
+  const isThreadRecheck = pending.actionClass === "close" && pending.params.closeKind === "heuristic" && pending.params.closeRequiresThreadResolved === true;
+  const shouldRecheckLiveDisposition = pr?.headSha && (pending.actionClass === "merge" || isMergeableRecheck || isThreadRecheck);
   if (shouldRecheckLiveDisposition) {
     const token = await createInstallationToken(env, pending.installationId).catch(() => undefined);
     const admissionKey = githubRateLimitAdmissionKeyForToken(env, token, pending.installationId);
@@ -211,13 +216,14 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     // above), so ONE transient rejection must fail open on that specific check, not throw the whole accept
     // out of decidePendingAgentAction. A settled-rejected check is treated the same as "nothing concerning
     // found" -- exactly what each function's own internal fail-safe catch already resolves to on success.
-    const [ciResult, mergeableResult, reviewResult] = await Promise.allSettled([
+    const [ciResult, mergeableResult, reviewResult, threadResult] = await Promise.allSettled([
       // mergeRequiredCiContexts(null, ...) -- no live branch-protection re-fetch here, just the maintainer's own
       // configured expectedCiContexts (or null/fold-all when unset), so this accept-time re-check honors the
       // same required-contexts view the original plan was evaluated against (#selfhost-ci-verification).
       fetchLiveCiAggregate(env, pending.repoFullName, pr.headSha, token, mergeRequiredCiContexts(null, settings.expectedCiContexts), admissionKey),
       fetchLivePullRequestMergeState(env, pending.repoFullName, pending.pullNumber, token, admissionKey),
       fetchLivePullRequestReviewDecision(env, pending.repoFullName, pending.pullNumber, token, admissionKey),
+      isThreadRecheck ? fetchLiveReviewThreadBlockers(env, pending.repoFullName, pending.pullNumber, token, admissionKey) : Promise.resolve(undefined),
     ]);
     // A REJECTED promise stays undefined (fail-open — the read itself failed, not a genuine CI signal); a
     // FULFILLED promise reporting anything other than "passed" (failed, pending, or unverified) is a real,
@@ -230,6 +236,19 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     // below instead of failing open on it (gate review finding).
     const reviewFetchSucceeded = reviewResult.status === "fulfilled";
     const reviewDecision = reviewFetchSucceeded ? reviewResult.value : undefined;
+    // Tracked separately from the VALUE for the same reason as reviewFetchSucceeded above: a REJECTED promise
+    // also resolves to undefined, which must not read as "confirmed no threads remain" -- fetchLiveReviewThreadBlockers
+    // itself already fails open to [] on a GraphQL error, so a genuinely FULFILLED empty array is the only
+    // signal that legitimately means "no live blockers left".
+    const threadFetchSucceeded = threadResult.status === "fulfilled";
+    const liveThreadBlockers = threadFetchSucceeded ? threadResult.value : undefined;
+    const threadsNowResolved = isThreadRecheck && threadFetchSucceeded && (liveThreadBlockers?.length ?? 0) === 0;
+    // Gated on isMergeableRecheck explicitly (not just "reached the close branch"): a thread-only close
+    // (isThreadRecheck true, isMergeableRecheck false) also reaches this branch now, and mergeableState reads
+    // "clean" for most never-conflicted PRs by default -- without this gate, a thread-only close would be
+    // wrongly superseded as if it were conflict-justified merely because mergeability happens to read clean
+    // (the SAME over-broad-predicate class the #2478 gate review already caught once for closeRequiresMergeableState).
+    const mergeableNowCleared = isMergeableRecheck && reviewFetchSucceeded && mergeableState === "clean" && reviewDecision !== "CHANGES_REQUESTED";
     const staleReason =
       pending.actionClass === "merge"
         ? ciState !== undefined && ciState !== "passed"
@@ -239,14 +258,18 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
             : reviewDecision === "CHANGES_REQUESTED"
               ? "a reviewer has since requested changes"
               : null
-        : // Only reached when closeRequiresMergeableState !== false (see shouldRecheckLiveDisposition above), so
-          // CI state is irrelevant to this specific close's justification and the only live signal that matters
-          // is whether the conflict has cleared. reviewFetchSucceeded is required alongside the value check --
-          // see its own comment above -- so a failed live-review read fails open instead of masquerading as
-          // "confirmed no changes requested".
-          reviewFetchSucceeded && mergeableState === "clean" && reviewDecision !== "CHANGES_REQUESTED"
+        : // Only reached when closeRequiresMergeableState !== false or closeRequiresThreadResolved === true (see
+          // shouldRecheckLiveDisposition above), so CI state is irrelevant to this specific close's justification
+          // and the only live signals that matter are whether the conflict has cleared or the thread(s) resolved --
+          // each gated individually below (mergeableNowCleared / threadsNowResolved) so a close justified by only
+          // ONE of the two axes is never wrongly cleared by the other axis's unrelated live state.
+          // reviewFetchSucceeded is required alongside the value check -- see its own comment above -- so a failed
+          // live-review read fails open instead of masquerading as "confirmed no changes requested".
+          mergeableNowCleared
           ? "the conflict that justified this close has since cleared"
-          : null;
+          : threadsNowResolved
+            ? "the review thread(s) that justified this close are now all resolved"
+            : null;
     if (staleReason) {
       await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });
       await recordAuditEvent(env, {
@@ -255,7 +278,13 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
         targetKey,
         outcome: "denied",
         detail: `superseded ${pending.actionClass}: ${staleReason} since staging`,
-        metadata: { ...baseMetadata, ciState: ciState ?? null, mergeableState: mergeableState ?? null, reviewDecision: reviewDecision ?? null },
+        metadata: {
+          ...baseMetadata,
+          ciState: ciState ?? null,
+          mergeableState: mergeableState ?? null,
+          reviewDecision: reviewDecision ?? null,
+          liveThreadBlockerCount: liveThreadBlockers?.length ?? null,
+        },
       });
       return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy }, executionOutcome: "stale_disposition" };
     }

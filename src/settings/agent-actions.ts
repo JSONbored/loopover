@@ -3,6 +3,7 @@ import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckConclusion } from "../rules/ad
 import { DEFAULT_AUTO_MAINTAIN_POLICY, autonomyRequiresApproval, isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
 import { changedPathsHittingGuardrail, isGuardrailHit } from "../signals/change-guardrail";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../review/linked-issue-hard-rules";
+import { REVIEW_THREAD_BLOCKER_CODE } from "../review/review-thread-findings";
 import { sanitizePublicComment } from "../github/commands";
 
 // High-slop threshold default when a repo hasn't set slopGateMinScore (mirrors the gate's `high` band).
@@ -111,6 +112,10 @@ export type PlannedAgentAction = {
   // AgentPendingActionParams in types.ts for why the approval queue's accept-time recheck is scoped to this
   // specific case rather than every non-CI heuristic close. ALWAYS set for a heuristic close (never omitted).
   closeRequiresMergeableState?: boolean;
+  // True when an unresolved GitHub review thread (REVIEW_THREAD_BLOCKER_CODE) was part of this close's
+  // justification -- see the doc comment on AgentPendingActionParams in types.ts. Mirrors
+  // closeRequiresMergeableState's own discipline: ALWAYS set for a heuristic close (never omitted).
+  closeRequiresThreadResolved?: boolean;
   // For a "heuristic" close: true when the close is backed by CONCRETE, non-judgment evidence — a committed
   // secret, a failing/red CI run, a base conflict, a deterministic linked-issue-overlap duplicate, or a
   // rule-based lane/manifest/pre-merge rejection — rather than any AI/model-derived verdict or a fuzzy score.
@@ -687,6 +692,11 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // or review-thread blocker into success once the gate has classified it as blocking.
   const conclusion: GateCheckConclusion = input.conclusion;
   const isConflict = input.pr.mergeableState === "dirty"; // conflicts with base — can't merge as-is
+  // True when an unresolved GitHub review thread is (at least one of) this close's justifications -- the SAME
+  // staleness class as isConflict above (#3863), just triggered by a contributor clicking "Resolve conversation"
+  // on GitHub instead of the base branch becoming mergeable again. A mixed blocker set (thread + something else)
+  // still counts: the thread recheck only re-verifies ITS OWN signal, so it's harmless to also gate on it here.
+  const isReviewThreadJustified = (input.gateBlockerCodes ?? []).includes(REVIEW_THREAD_BLOCKER_CODE);
   const isContributor = !input.authorIsOwner && !input.authorIsAdmin && !input.authorIsAutomationBot;
   // The owner-close exemption is PER-REPO CONFIGURABLE (#configurable-owner-close): by default the repo owner's
   // own PRs are exempt from auto-close (closeOwnerAuthors !== true ⇒ merge or manual-hold only), but a maintainer
@@ -1154,6 +1164,8 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       closeRequiresCiState: ciFailed ? "failed" : "not_required",
       // Always explicit (never omitted), mirroring closeRequiresCiState's own discipline above.
       closeRequiresMergeableState: isConflict,
+      // Always explicit (never omitted), mirroring closeRequiresCiState's own discipline above.
+      closeRequiresThreadResolved: isReviewThreadJustified,
     });
   }
   // else: guarded → manual; not-good OWNER/automation → manual; action-required/unverified → manual;

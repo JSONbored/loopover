@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { AGENT_LABEL_CHANGES, AGENT_LABEL_MIGRATION_COLLISION, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, DEFAULT_BLACKLIST_LABEL, DEFAULT_CONTRIBUTOR_CAP_LABEL, DEFAULT_REVIEW_NAG_LABEL, downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput, type PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
+import { REVIEW_THREAD_BLOCKER_CODE } from "../../src/review/review-thread-findings";
 import type { GateCheckConclusion } from "../../src/rules/advisory";
 // #module-cycle-regression: forces the SAME module-load cycle that broke once (scoring/model.ts ->
 // db/repositories.ts -> agent-actions.ts -> rules/advisory.ts -> scoring/preview.ts -> scoring/model.ts) to
@@ -1087,7 +1088,49 @@ describe("planAgentMaintenanceActions (#778)", () => {
         closeKind: "heuristic",
         closeConcreteEvidence: false,
         closeRequiresMergeableState: false,
+        closeRequiresThreadResolved: false,
       });
+    });
+
+    it("REGRESSION (#review-thread-staleness): CLOSES a review-thread-only blocker with closeRequiresThreadResolved: true, so the actuation-time recheck can catch a since-resolved thread", () => {
+      const plan = planAgentMaintenanceActions(
+        input({
+          conclusion: "failure",
+          autonomy: { approve: "auto", merge: "auto", close: "auto" },
+          ciState: "passed",
+          gateBlockerCodes: [REVIEW_THREAD_BLOCKER_CODE],
+          blockerTitles: ["reviewer review thread unresolved: fix this"],
+          pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" },
+        }),
+      );
+      const cls = classes(plan);
+      expect(cls).not.toContain("approve");
+      expect(cls).not.toContain("merge");
+      expect(cls).toContain("close");
+      expect(plan.find((a) => a.actionClass === "close")).toMatchObject({
+        closeKind: "heuristic",
+        closeRequiresMergeableState: false,
+        closeRequiresThreadResolved: true,
+      });
+    });
+
+    it("REGRESSION (#review-thread-staleness): a mixed blocker set (review thread + something else) still tags closeRequiresThreadResolved: true", () => {
+      const plan = planAgentMaintenanceActions(
+        input({
+          conclusion: "failure",
+          autonomy: { approve: "auto", merge: "auto", close: "auto" },
+          ciState: "passed",
+          gateBlockerCodes: [REVIEW_THREAD_BLOCKER_CODE, "ai_consensus_defect"],
+          blockerTitles: ["reviewer review thread unresolved: fix this", "AI review found a defect"],
+          pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" },
+        }),
+      );
+      expect(plan.find((a) => a.actionClass === "close")).toMatchObject({ closeKind: "heuristic", closeRequiresThreadResolved: true });
+    });
+
+    it("does NOT tag closeRequiresThreadResolved when gateBlockerCodes is absent (nullish ?? [] fallback)", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", blockerTitles: ["readiness score too low"], pr: { labels: [] } }));
+      expect(plan.find((a) => a.actionClass === "close")).toMatchObject({ closeKind: "heuristic", closeRequiresThreadResolved: false });
     });
 
     it("CLOSES on already-red CI even while an unrelated check is still pending — red is terminal, it does not need the rest to settle", () => {

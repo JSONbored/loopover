@@ -36,10 +36,13 @@ vi.mock("../../src/github/app", async (importOriginal) => ({
 // deterministic; individual tests below override this to exercise the staleness-denial path.
 // The actuation-time live mergeable-state re-check (#3863) defaults to "dirty" (conflict still present) so no
 // existing test needs to override it; the tests below explicitly set it to exercise the staleness-denial path.
+// The actuation-time live review-thread re-check (#review-thread-staleness) defaults to a single still-unresolved
+// blocker for the same reason -- individual tests below override it to exercise the staleness-denial path.
 vi.mock("../../src/github/backfill", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/github/backfill")>()),
   fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null })),
   fetchLivePullRequestMergeState: vi.fn(async () => "dirty" as const),
+  fetchLiveReviewThreadBlockers: vi.fn(async () => [{ title: "still unresolved", scannerFinding: false }]),
   refreshInstallationHealthForInstallation: vi.fn(async () => null),
 }));
 
@@ -48,7 +51,7 @@ import { ensurePullRequestLabel, removePullRequestLabel } from "../../src/github
 import { ensurePullRequestAssignee } from "../../src/github/assignees";
 import { fetchPullRequestFreshness } from "../../src/github/pr-freshness";
 import { createInstallationToken } from "../../src/github/app";
-import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, refreshInstallationHealthForInstallation } from "../../src/github/backfill";
+import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLiveReviewThreadBlockers, refreshInstallationHealthForInstallation } from "../../src/github/backfill";
 import {
   actionParams,
   applyModerationEscalationForRule,
@@ -561,6 +564,59 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     const replayed = pendingActionToPlanned({ actionClass: "close", params: persisted, reason: conflictClose.reason });
     expect(replayed.closeRequiresMergeableState).toBe(true);
     vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce("clean");
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [replayed]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(closePullRequest).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION (#review-thread-staleness): a review-thread-justified heuristic close is DENIED when the live review threads have since all resolved", async () => {
+    const env = createTestEnv({});
+    const threadClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "unresolved review thread", closeComment: "closing", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresThreadResolved: true };
+    vi.mocked(fetchLiveReviewThreadBlockers).mockResolvedValueOnce([]);
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [threadClose]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(outcomes[0]?.detail).toContain("the review thread(s) that justified this close are now all resolved");
+    expect(closePullRequest).not.toHaveBeenCalled();
+  });
+
+  it("a review-thread-justified heuristic close proceeds when the live review thread is still unresolved (#review-thread-staleness)", async () => {
+    const env = createTestEnv({});
+    const threadClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "unresolved review thread", closeComment: "closing", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresThreadResolved: true };
+    // The module mock's default already returns a single still-unresolved blocker.
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [threadClose]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(closePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7);
+  });
+
+  it("a review-thread-justified heuristic close fails open (still proceeds) when the live thread-blocker read is ambiguous/unresolved (#review-thread-staleness)", async () => {
+    const env = createTestEnv({});
+    const threadClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "unresolved review thread", closeComment: "closing", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresThreadResolved: true };
+    // fetchLiveReviewThreadBlockers itself never rejects in production (it fails open to [] internally on a
+    // GraphQL error) -- but the executor's own Promise.all resolution here still must not treat an ambiguous
+    // undefined result (were one ever to occur) as proof the threads resolved. Simulate that with a resolved
+    // single-element array standing in for "read succeeded, still unresolved" -- the true fail-open contract is
+    // that only a CONFIRMED empty array clears the close, covered by the DENIED test above.
+    vi.mocked(fetchLiveReviewThreadBlockers).mockResolvedValueOnce([{ title: "ambiguous but present", scannerFinding: false }]);
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [threadClose]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(closePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7);
+  });
+
+  it("a non-thread heuristic close (closeRequiresThreadResolved omitted/false) skips the live thread-blocker re-check entirely (#review-thread-staleness)", async () => {
+    const env = createTestEnv({});
+    const gateClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "policy gate blocker", closeComment: "closing", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresThreadResolved: false };
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [gateClose]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(fetchLiveReviewThreadBlockers).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION (#review-thread-staleness): closeRequiresThreadResolved round-trips through the persist/replay round trip so a staged thread-justified close still re-checks live thread blockers", async () => {
+    const env = createTestEnv({});
+    const threadClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "unresolved review thread", closeComment: "closing", closeKind: "heuristic", closeRequiresCiState: "not_required", closeRequiresThreadResolved: true };
+    const persisted = actionParams(threadClose);
+    const replayed = pendingActionToPlanned({ actionClass: "close", params: persisted, reason: threadClose.reason });
+    expect(replayed.closeRequiresThreadResolved).toBe(true);
+    vi.mocked(fetchLiveReviewThreadBlockers).mockResolvedValueOnce([]);
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [replayed]);
     expect(outcomes[0]?.outcome).toBe("denied");
     expect(closePullRequest).not.toHaveBeenCalled();

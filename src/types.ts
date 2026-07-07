@@ -1165,16 +1165,26 @@ export type AgentPendingActionParams = {
   // so `undefined` unambiguously means a LEGACY row staged before this field existed, not "not CI-driven".
   closeRequiresCiState?: "failed" | "not_required";
   // True when a base conflict (mergeable_state: "dirty") was part of this heuristic close's justification --
-  // the ONLY non-CI close reason the approval queue's accept-time live recheck has a cheap, reliable live
-  // signal for. Other non-CI heuristic reasons (duplicate PR, slop score, a gate-verdict blocker) have no
-  // equivalently cheap live re-derivation, so decidePendingAgentAction only reruns its mergeable-state/
-  // review-decision staleness check when this is true -- gating it on closeRequiresCiState === "not_required"
-  // alone (any non-CI reason) instead would supersede EVERY duplicate/slop/blocker-only close whose
-  // mergeability simply happens to read "clean" (which most never-conflicted PRs already are), even though
-  // their actual justification never depended on mergeability and may still be live (gate review finding).
+  // one of the few non-CI close reasons (alongside closeRequiresThreadResolved below) the approval queue's
+  // accept-time live recheck has a cheap, reliable live signal for. Other non-CI heuristic reasons (duplicate
+  // PR, slop score, a gate-verdict blocker not backed by a review thread) have no equivalently cheap live
+  // re-derivation, so decidePendingAgentAction only reruns its mergeable-state/review-decision staleness check
+  // when this is true -- gating it on closeRequiresCiState === "not_required" alone (any non-CI reason) instead
+  // would supersede EVERY duplicate/slop/blocker-only close whose mergeability simply happens to read "clean"
+  // (which most never-conflicted PRs already are), even though their actual justification never depended on
+  // mergeability and may still be live (gate review finding).
   // ALWAYS set (never omitted) for a freshly planned heuristic close, mirroring closeRequiresCiState's own
   // discipline -- so `undefined` unambiguously means a legacy row staged before this field existed.
   closeRequiresMergeableState?: boolean;
+  // True when an unresolved GitHub review thread (REVIEW_THREAD_BLOCKER_CODE) was part of this heuristic
+  // close's justification -- the SAME staleness class as closeRequiresMergeableState (#3863) but for a
+  // contributor RESOLVING the thread on GitHub instead of the base branch becoming mergeable again. ALWAYS set
+  // (never omitted) for a freshly planned heuristic close, mirroring closeRequiresMergeableState's own
+  // discipline. Unlike closeRequiresMergeableState, this field has NO pre-existing legacy rows -- it is
+  // introduced alongside its only producer, so `undefined` here unambiguously means "not thread-justified",
+  // not an ambiguous legacy row; the accept-time/actuation-time rechecks below scope on it with a strict
+  // `=== true`, not the broader `!== false` closeRequiresMergeableState needs for its own legacy-row case.
+  closeRequiresThreadResolved?: boolean;
   // Persisted so the close-precision breaker's concrete-evidence exemption (see
   // PlannedAgentAction.closeConcreteEvidence) still applies correctly when a staged heuristic close is later
   // accepted -- without this, EVERY staged close would silently fall back to "not concrete" at accept-time and

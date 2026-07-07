@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildGrounding,
   diffFilePriority,
+  diffFullyCoversFile,
   fetchFullFileContents,
   type FileFetcher,
   formatGroundingSections,
@@ -200,6 +201,71 @@ describe("review-grounding: fetchFullFileContents (injected FileFetcher, fail-sa
       fetcher,
     );
 
+    expect(reads).toEqual(["src/new.ts"]);
+    expect(out).toEqual([{ path: "src/new.ts", text: "export const hidden = true;" }]);
+  });
+
+  it("skips the full-file fetch for a MODIFIED file rewritten in one hunk that already covers it (#3897 follow-up)", async () => {
+    const reads: string[] = [];
+    const fetcher: FileFetcher = {
+      getFileContent: async (path) => {
+        reads.push(path);
+        return "SHOULD_NOT_FETCH";
+      },
+    };
+    const rewritten: PullRequestFile = {
+      filename: "src/rewritten.ts",
+      status: "modified",
+      patch: "@@ -1,5 +1,5 @@\n-old1\n-old2\n-old3\n-old4\n-old5\n+new1\n+new2\n+new3\n+new4\n+new5",
+      additions: 5,
+      deletions: 5,
+    };
+    const out = await fetchFullFileContents({ ciGrounding: false, fullFileContext: true }, "sha", [rewritten], fetcher);
+    // No fetch at all -- the hunk already carries every line of the file, so grounding would be a duplicate.
+    expect(reads).toEqual([]);
+    expect(out).toBeUndefined();
+  });
+
+  it("still fetches a MODIFIED file whose hunk only covers part of it (context proves an untouched tail)", async () => {
+    const reads: string[] = [];
+    const fetcher: FileFetcher = {
+      getFileContent: async (path) => {
+        reads.push(path);
+        return "export const full = 'post-change body';";
+      },
+    };
+    const partial: PullRequestFile = {
+      filename: "src/partial.ts",
+      status: "modified",
+      // Only the first 2 of 10 lines changed; git's default 3-line trailing context pulls 3 unchanged
+      // lines into the hunk, so oldCount/newCount (5) sit well above deletions/additions (2) -- proof
+      // real unchanged file content exists beyond the hunk.
+      patch: "@@ -1,5 +1,5 @@\n-old1\n-old2\n+new1\n+new2\n line3\n line4\n line5",
+      additions: 2,
+      deletions: 2,
+    };
+    const out = await fetchFullFileContents({ ciGrounding: false, fullFileContext: true }, "sha", [partial], fetcher);
+    expect(reads).toEqual(["src/partial.ts"]);
+    expect(out).toEqual([{ path: "src/partial.ts", text: "export const full = 'post-change body';" }]);
+  });
+
+  it("still fetches an ADDED file even when its single hunk shape would otherwise look fully-covering (status gate holds)", async () => {
+    const reads: string[] = [];
+    const fetcher: FileFetcher = {
+      getFileContent: async (path) => {
+        reads.push(path);
+        return "export const hidden = true;";
+      },
+    };
+    const added: PullRequestFile = {
+      filename: "src/new.ts",
+      status: "added",
+      patch: "@@ -0,0 +1,2 @@\n+line1\n+line2",
+      additions: 2,
+      deletions: 0,
+    };
+    const out = await fetchFullFileContents({ ciGrounding: false, fullFileContext: true }, "sha", [added], fetcher);
+    // diffFullyCoversFile is scoped to status "modified" -- an added file is still fetched unconditionally (#3976).
     expect(reads).toEqual(["src/new.ts"]);
     expect(out).toEqual([{ path: "src/new.ts", text: "export const hidden = true;" }]);
   });

@@ -101,9 +101,20 @@ export function buildCheckAggregate(checks: CheckSummaryRecord[]): CheckAggregat
   return { state, passing, failingDetails };
 }
 
-/** Map gittensory's PR file records to the subset the grounding engine reads (filename + status). */
+/** Map gittensory's PR file records to the subset the grounding engine reads (filename + status, plus the
+ *  patch/additions/deletions a MODIFIED file's diffFullyCoversFile check needs to skip a redundant fetch
+ *  when the diff already carries the whole file — see review-grounding.ts). */
 function toGroundingFiles(files: PullRequestFileRecord[]): PullRequestFile[] {
-  return files.map((file) => ({ filename: file.path, ...(file.status ? { status: file.status } : {}) }));
+  return files.map((file) => {
+    const patch = typeof file.payload?.patch === "string" ? file.payload.patch : undefined;
+    return {
+      filename: file.path,
+      ...(file.status ? { status: file.status } : {}),
+      ...(patch !== undefined ? { patch } : {}),
+      additions: file.additions,
+      deletions: file.deletions,
+    };
+  });
 }
 
 /**

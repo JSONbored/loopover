@@ -36,10 +36,16 @@ export interface ChangedFileContent {
   truncated?: boolean;
 }
 
-/** A changed file in the PR (subset of reviewbot's PullRequestFile that grounding reads). */
+/** A changed file in the PR (subset of reviewbot's PullRequestFile that grounding reads). `patch` +
+ *  `additions`/`deletions` are optional so a caller that hasn't wired them through still type-checks;
+ *  without them a modified file is simply never recognized as fully-covered-by-diff (falls back to
+ *  fetching, same as before -- see `diffFullyCoversFile`). */
 export interface PullRequestFile {
   filename: string;
   status?: string;
+  patch?: string;
+  additions?: number;
+  deletions?: number;
 }
 
 export interface ReviewGrounding {
@@ -124,6 +130,51 @@ export interface FileFetcher {
   getFileContent(path: string, ref: string, maxChars?: number): Promise<string | null>;
 }
 
+// ── Modified-file dedup (#3897 follow-up): a hunk-header check for "the diff already IS the whole file" ──
+
+/** Unified-diff hunk header: `@@ -oldStart,oldCount +newStart,newCount @@` (a bare number with no comma
+ *  means count 1, standard unified-diff shorthand). */
+const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+
+/** git's default unified-diff context window (`-U3`): the MAXIMUM number of unchanged lines it will ever
+ *  show around a change, whether or not more unchanged content follows. This makes it a strict ambiguity
+ *  boundary, not slack — a hunk carrying FEWER than this many trailing unchanged lines proves the file
+ *  truly ends there (git would never truncate below its own configured context), but a hunk carrying
+ *  EXACTLY this many is ambiguous: it could be the true end of file, or git could have capped a longer
+ *  unchanged tail at the context window. Only the unambiguous case may skip the fetch. */
+const DIFF_CONTEXT_LINES = 3;
+
+/**
+ * True when a MODIFIED file's diff hunk already PROVABLY covers its entire post-change body, making the
+ * separate full-file fetch a byte-for-byte duplicate of what the diff itself sent — the same waste #3918
+ * targeted for added files (since reverted for them by #3976, whose reasoning does NOT apply here: this
+ * check, unlike a blanket status==="added" skip, is proven per-file from the hunk math itself, not assumed
+ * from status alone). A single hunk starting at line 1 on both sides, whose unchanged-line count (old/new
+ * count minus deletions/additions) is STRICTLY BELOW `DIFF_CONTEXT_LINES`, cannot have any untouched tail:
+ * if more unchanged file remained, git's default context would have shown exactly `DIFF_CONTEXT_LINES`
+ * lines regardless, so seeing fewer proves there was nothing left to show (verified against real `git
+ * diff` output). Seeing exactly `DIFF_CONTEXT_LINES` is deliberately treated as NOT proven — the context
+ * window could be capping a longer tail — so this falls back to fetching, the safe default.
+ * Deliberately scoped to `status === "modified"` (or absent, for a caller that never sets it) only --
+ * "added"/"renamed"/other statuses fall through to `false` (the safe default: fetch the full file) so
+ * this can never re-skip an added file's fetch, which #3976 restored because GitHub can omit/truncate an
+ * added file's patch on large files without any hunk-count anomaly for this check to catch.
+ */
+export function diffFullyCoversFile(file: PullRequestFile): boolean {
+  if (file.status !== undefined && file.status !== "modified") return false;
+  if (!file.patch || file.additions === undefined || file.deletions === undefined) return false;
+  const hunks = file.patch.split("\n").filter((line) => line.startsWith("@@"));
+  if (hunks.length !== 1) return false; // multiple hunks ⇒ an unchanged (and unseen) gap sits between them
+  const match = HUNK_HEADER.exec(hunks[0]!);
+  if (!match) return false;
+  const oldStart = Number.parseInt(match[1]!, 10);
+  const oldCount = match[2] !== undefined ? Number.parseInt(match[2], 10) : 1;
+  const newStart = Number.parseInt(match[3]!, 10);
+  const newCount = match[4] !== undefined ? Number.parseInt(match[4], 10) : 1;
+  if (oldStart > 1 || newStart > 1) return false; // leading unchanged lines exist before the hunk
+  return oldCount - file.deletions < DIFF_CONTEXT_LINES && newCount - file.additions < DIFF_CONTEXT_LINES;
+}
+
 /** Centrally fetch the FULL post-change content of changed files (the one grounding input no lane fetches
  *  otherwise). Flag-gated + bounded + fully fail-safe — returns undefined when off or on any error. The
  *  caller passes the already-resolved head ref + a FileFetcher (vs reviewbot's RunContext/ReviewTarget). */
@@ -137,8 +188,11 @@ export async function fetchFullFileContents(
   // Source-first ordering (the diff's own priority) so the most-relevant files are inlined before the budget runs out.
   // Added files still need grounding: the review diff is budgeted and GitHub can omit inline patches for
   // large/binary-ish files, so the full-file fallback must not assume every added line reached the prompt.
+  // A MODIFIED file is excluded only when its own hunk header proves it already carries the whole file
+  // (see diffFullyCoversFile) -- a strictly narrower, provable case than "added", so it can't reintroduce
+  // the #3976 gap: anything less than full-hunk proof still falls through to the fetch.
   const candidates = files
-    .filter((file) => file.status !== "removed" && !SKIP_EXT.test(file.filename))
+    .filter((file) => file.status !== "removed" && !SKIP_EXT.test(file.filename) && !diffFullyCoversFile(file))
     .sort((a, b) => diffFilePriority(a.filename) - diffFilePriority(b.filename));
   const out: ChangedFileContent[] = [];
   let used = 0;

@@ -3732,7 +3732,7 @@ async function reviewLocalPr(input) {
   );
 
   const sections = [
-    { name: "preflight", status: result.analysis.preflight?.status === "fail" ? "fail" : result.analysis.preflight?.status === "warn" ? "warn" : "pass" },
+    { name: "preflight", status: preflightSectionStatus(result.analysis.preflight?.status) },
     { name: "slop_risk", status: slopRisk.ok ? slopRiskSectionStatus(slopRisk.value) : "fail" },
     { name: "pr_text_lint", status: prTextLint.ok ? prTextLintSectionStatus(prTextLint.value) : "fail" },
   ];
@@ -3757,6 +3757,12 @@ async function runReviewCheck(run) {
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : "review_check_failed" };
   }
+}
+
+function preflightSectionStatus(status) {
+  if (status === "hold") return "fail";
+  if (status === "needs_work") return "warn";
+  return "pass";
 }
 
 function slopRiskSectionStatus(value) {

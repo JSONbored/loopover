@@ -2,7 +2,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { closeFixtureServer, createPacketRepo, run, runAsync, startFixtureServer } from "./support/mcp-cli-harness";
+import {
+  closeFixtureServer,
+  createPacketRepo,
+  localBranchAnalysisFixture,
+  run,
+  runAsync,
+  startFixtureServer,
+} from "./support/mcp-cli-harness";
 
 describe("gittensory-mcp CLI — review-pr", () => {
   let tempDir: string | null = null;
@@ -63,7 +70,9 @@ describe("gittensory-mcp CLI — review-pr", () => {
     expect(json.prTextLint).toMatchObject({ verdict: "strong" });
     expect(json.slopRiskError).toBeUndefined();
     expect(json.prTextLintError).toBeUndefined();
-    expect(JSON.stringify(json)).not.toMatch(/wallet|hotkey|coldkey|reward|trust score/i);
+    expect(JSON.stringify(json)).not.toMatch(
+      /wallet|hotkey|coldkey|reward|trust score/i,
+    );
 
     const plain = await runAsync(
       [
@@ -100,14 +109,142 @@ describe("gittensory-mcp CLI — review-pr", () => {
       GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
     };
 
-    const json = JSON.parse(await runAsync(["review-pr", "--login", "JSONbored", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], env)) as {
+    const json = JSON.parse(
+      await runAsync(
+        [
+          "review-pr",
+          "--login",
+          "JSONbored",
+          "--cwd",
+          tempDir,
+          "--repo",
+          "JSONbored/gittensory",
+          "--json",
+        ],
+        env,
+      ),
+    ) as {
       overallStatus: string;
       sections: Array<{ name: string; status: string }>;
       prTextLint: { verdict: string };
     };
     expect(json.prTextLint.verdict).toBe("weak");
-    expect(json.sections.find((section) => section.name === "pr_text_lint")).toMatchObject({ status: "warn" });
+    expect(
+      json.sections.find((section) => section.name === "pr_text_lint"),
+    ).toMatchObject({ status: "warn" });
     expect(json.overallStatus).toBe("warn");
+  });
+
+  it("maps needs_work preflight to a warning instead of passing (regression)", async () => {
+    tempDir = createPacketRepo();
+    const url = await startFixtureServer({
+      localBranchAnalysis: {
+        ...localBranchAnalysisFixture(),
+        preflight: {
+          status: "needs_work",
+          findings: [
+            {
+              code: "missing_test_evidence",
+              severity: "warning",
+              title: "Missing test evidence",
+            },
+          ],
+        },
+      },
+    });
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+    };
+
+    const json = JSON.parse(
+      await runAsync(
+        [
+          "review-pr",
+          "--login",
+          "JSONbored",
+          "--cwd",
+          tempDir,
+          "--repo",
+          "JSONbored/gittensory",
+          "--commit",
+          "fix(mcp): map preflight status",
+          "--body",
+          "Fixes #1968\n\nValidated with npm test.",
+          "--linked-issue",
+          "1968",
+          "--json",
+        ],
+        env,
+      ),
+    ) as {
+      overallStatus: string;
+      sections: Array<{ name: string; status: string }>;
+      preflight: { status: string };
+    };
+
+    expect(json.preflight.status).toBe("needs_work");
+    expect(
+      json.sections.find((section) => section.name === "preflight"),
+    ).toMatchObject({ status: "warn" });
+    expect(json.overallStatus).toBe("warn");
+  });
+
+  it("maps hold preflight to a failing section", async () => {
+    tempDir = createPacketRepo();
+    const url = await startFixtureServer({
+      localBranchAnalysis: {
+        ...localBranchAnalysisFixture(),
+        preflight: {
+          status: "hold",
+          findings: [
+            {
+              code: "lane_hold",
+              severity: "critical",
+              title: "Lane unavailable",
+            },
+          ],
+        },
+      },
+    });
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+    };
+
+    const json = JSON.parse(
+      await runAsync(
+        [
+          "review-pr",
+          "--login",
+          "JSONbored",
+          "--cwd",
+          tempDir,
+          "--repo",
+          "JSONbored/gittensory",
+          "--commit",
+          "fix(mcp): map preflight status",
+          "--body",
+          "Fixes #1968\n\nValidated with npm test.",
+          "--linked-issue",
+          "1968",
+          "--json",
+        ],
+        env,
+      ),
+    ) as {
+      overallStatus: string;
+      sections: Array<{ name: string; status: string }>;
+      preflight: { status: string };
+    };
+
+    expect(json.preflight.status).toBe("hold");
+    expect(
+      json.sections.find((section) => section.name === "preflight"),
+    ).toMatchObject({ status: "fail" });
+    expect(json.overallStatus).toBe("fail");
   });
 
   it("reads the PR body from --body-file", async () => {
@@ -123,7 +260,20 @@ describe("gittensory-mcp CLI — review-pr", () => {
 
     const json = JSON.parse(
       await runAsync(
-        ["review-pr", "--login", "JSONbored", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--body-file", bodyPath, "--linked-issue", "1968", "--json"],
+        [
+          "review-pr",
+          "--login",
+          "JSONbored",
+          "--cwd",
+          tempDir,
+          "--repo",
+          "JSONbored/gittensory",
+          "--body-file",
+          bodyPath,
+          "--linked-issue",
+          "1968",
+          "--json",
+        ],
         env,
       ),
     ) as { prTextLint: { verdict: string } };
@@ -141,7 +291,20 @@ describe("gittensory-mcp CLI — review-pr", () => {
 
     const json = JSON.parse(
       await runAsync(
-        ["review-pr", "--login", "JSONbored", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--body", "Validated with npm test.", "--linked-issue", "1968", "--json"],
+        [
+          "review-pr",
+          "--login",
+          "JSONbored",
+          "--cwd",
+          tempDir,
+          "--repo",
+          "JSONbored/gittensory",
+          "--body",
+          "Validated with npm test.",
+          "--linked-issue",
+          "1968",
+          "--json",
+        ],
         env,
       ),
     ) as {
@@ -153,13 +316,27 @@ describe("gittensory-mcp CLI — review-pr", () => {
     };
     expect(json.slopRisk).toBeUndefined();
     expect(json.slopRiskError).toMatch(/Gittensory API 500/);
-    expect(json.sections.find((section) => section.name === "slop_risk")).toMatchObject({ status: "fail" });
+    expect(
+      json.sections.find((section) => section.name === "slop_risk"),
+    ).toMatchObject({ status: "fail" });
     expect(json.overallStatus).toBe("fail");
     // The pr-text-lint section still succeeded even though slop-risk failed.
     expect(json.prTextLint).toMatchObject({ verdict: "strong" });
 
     const plain = await runAsync(
-      ["review-pr", "--login", "JSONbored", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--body", "Validated with npm test.", "--linked-issue", "1968"],
+      [
+        "review-pr",
+        "--login",
+        "JSONbored",
+        "--cwd",
+        tempDir,
+        "--repo",
+        "JSONbored/gittensory",
+        "--body",
+        "Validated with npm test.",
+        "--linked-issue",
+        "1968",
+      ],
       env,
     );
     expect(plain).toMatch(/Slop risk: unavailable \(Gittensory API 500/);
@@ -177,7 +354,20 @@ describe("gittensory-mcp CLI — review-pr", () => {
 
     const json = JSON.parse(
       await runAsync(
-        ["review-pr", "--login", "JSONbored", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--body", "Validated with npm test.", "--linked-issue", "1968", "--json"],
+        [
+          "review-pr",
+          "--login",
+          "JSONbored",
+          "--cwd",
+          tempDir,
+          "--repo",
+          "JSONbored/gittensory",
+          "--body",
+          "Validated with npm test.",
+          "--linked-issue",
+          "1968",
+          "--json",
+        ],
         env,
       ),
     ) as {
@@ -189,14 +379,18 @@ describe("gittensory-mcp CLI — review-pr", () => {
     };
     expect(json.prTextLint).toBeUndefined();
     expect(json.prTextLintError).toMatch(/Gittensory API 503/);
-    expect(json.sections.find((section) => section.name === "pr_text_lint")).toMatchObject({ status: "fail" });
+    expect(
+      json.sections.find((section) => section.name === "pr_text_lint"),
+    ).toMatchObject({ status: "fail" });
     expect(json.overallStatus).toBe("fail");
     expect(json.slopRisk).toMatchObject({ band: "clean" });
   });
 
   it("requires --login", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
-    await expect(runAsync(["review-pr", "--cwd", tempDir], {})).rejects.toThrow(/Pass --login/);
+    await expect(runAsync(["review-pr", "--cwd", tempDir], {})).rejects.toThrow(
+      /Pass --login/,
+    );
   });
 
   it("prints help", () => {

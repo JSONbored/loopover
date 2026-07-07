@@ -2479,7 +2479,7 @@ export async function isGlobalAgentFrozen(env: Env): Promise<boolean> {
   try {
     const row = await env.DB.prepare("SELECT frozen FROM global_agent_controls WHERE id = 'singleton'").first<{ frozen: number }>();
     if (!row) {
-      console.warn(JSON.stringify({ ev: "global_kill_switch_row_missing", message: "global_agent_controls has no singleton row — treating as unfrozen; re-run migrations or re-seed the row" }));
+      console.warn(JSON.stringify({ event: "global_kill_switch_row_missing", message: "global_agent_controls has no singleton row — treating as unfrozen; re-run migrations or re-seed the row" }));
       if (processLocalGlobalAgentFrozen === null) processLocalGlobalAgentFrozen = false;
       return processLocalGlobalAgentFrozen === true;
     }
@@ -2488,8 +2488,8 @@ export async function isGlobalAgentFrozen(env: Env): Promise<boolean> {
     return frozen;
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200);
-    console.warn(JSON.stringify({ ev: "global_kill_switch_read_error", message }));
-    if (processLocalGlobalAgentFrozen === true) { console.warn(JSON.stringify({ ev: "global_kill_switch_read_error_fail_closed", message: "process-local cache shows frozen=1 — halting agent actions despite the read error" })); return true; }
+    console.warn(JSON.stringify({ event: "global_kill_switch_read_error", message }));
+    if (processLocalGlobalAgentFrozen === true) { console.warn(JSON.stringify({ event: "global_kill_switch_read_error_fail_closed", message: "process-local cache shows frozen=1 — halting agent actions despite the read error" })); return true; }
     return false;
   }
 }

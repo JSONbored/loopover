@@ -3927,7 +3927,7 @@ async function scheduleTrailingIssueLinkedReReview(
   } catch (error) {
     console.log(
       JSON.stringify({
-        ev: "issue_link_trailing_enqueue_failed",
+        event: "issue_link_trailing_enqueue_failed",
         repoFullName,
         pull: prNumber,
         message: errorMessage(error).slice(0, 120),
@@ -3970,7 +3970,7 @@ async function wakeOverCapSiblingPullRequests(
       } catch (error) {
         console.log(
           JSON.stringify({
-            ev: "contributor_cap_wake_enqueue_failed",
+            event: "contributor_cap_wake_enqueue_failed",
             repoFullName,
             pull: prNumber,
             message: errorMessage(error).slice(0, 120),
@@ -6593,7 +6593,7 @@ async function resolvePullRequestFilesForReview(
     if (fetched.length > 0) {
       console.log(
         JSON.stringify({
-          ev: "review_files_fetched_inline",
+          event: "review_files_fetched_inline",
           repository: args.repoFullName,
           pullNumber: args.pullNumber,
           files: fetched.length,
@@ -8151,7 +8151,7 @@ async function maybePublishPrPublicSurface(
       }
       console.log(
         JSON.stringify({
-          ev: "type_label_decision",
+          event: "type_label_decision",
           repoFullName,
           pull: pr.number,
           applied: true,
@@ -8162,7 +8162,7 @@ async function maybePublishPrPublicSurface(
     } catch (error) {
       console.log(
         JSON.stringify({
-          ev: "type_label_error",
+          event: "type_label_error",
           repoFullName,
           pull: pr.number,
           message: errorMessage(error).slice(0, 150),
@@ -8172,7 +8172,7 @@ async function maybePublishPrPublicSurface(
   } else {
     console.log(
       JSON.stringify({
-        ev: "type_label_decision",
+        event: "type_label_decision",
         repoFullName,
         pull: pr.number,
         applied: false,
@@ -10007,7 +10007,7 @@ async function maybePublishPrPublicSurface(
             ).catch((error) =>
               console.log(
                 JSON.stringify({
-                  ev: "recapture_enqueue_failed",
+                  event: "recapture_enqueue_failed",
                   repoFullName,
                   pull: pr.number,
                   message: errorMessage(error).slice(0, 120),
@@ -10018,7 +10018,7 @@ async function maybePublishPrPublicSurface(
         } catch (error) {
           console.log(
             JSON.stringify({
-              ev: "visual_capture_error",
+              event: "visual_capture_error",
               repoFullName,
               pull: pr.number,
               message: errorMessage(error).slice(0, 200),
@@ -10046,7 +10046,7 @@ async function maybePublishPrPublicSurface(
             incr("gittensory_review_memory_suppressed_total", { repo: repoFullName });
             console.log(
               JSON.stringify({
-                ev: "review_memory_applied",
+                event: "review_memory_applied",
                 repoFullName,
                 pull: pr.number,
                 suppressedCount,
@@ -10057,7 +10057,7 @@ async function maybePublishPrPublicSurface(
         } catch (error) {
           console.log(
             JSON.stringify({
-              ev: "review_memory_error",
+              event: "review_memory_error",
               repoFullName,
               pull: pr.number,
               message: errorMessage(error).slice(0, 200),

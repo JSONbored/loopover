@@ -134,10 +134,10 @@ export async function runSelfTune(env: Env): Promise<void> {
           nowMs,
         });
       } catch (error) {
-        console.warn(JSON.stringify({ ev: "selftune_repo_error", repo: repoFullName, message: errorMessage(error).slice(0, 200) }));
+        console.warn(JSON.stringify({ event: "selftune_repo_error", repo: repoFullName, message: errorMessage(error).slice(0, 200) }));
       }
     }
   } catch (error) {
-    console.warn(JSON.stringify({ ev: "selftune_error", message: errorMessage(error).slice(0, 200) }));
+    console.warn(JSON.stringify({ event: "selftune_error", message: errorMessage(error).slice(0, 200) }));
   }
 }

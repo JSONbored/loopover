@@ -86,6 +86,6 @@ export function neutralizePromptInjection(text: string): { text: string; injecte
  *  verdict. Returns the safe title for the prompt. (#271 review-path injection) */
 export function safeReviewTitle(target: { title?: string; repo?: string; number?: number }): string {
   const { text, injected } = neutralizePromptInjection(target.title ?? "");
-  if (injected) console.log(JSON.stringify({ ev: "prompt_injection_neutralized", repo: target.repo, pr: target.number, field: "title" }));
+  if (injected) console.log(JSON.stringify({ event: "prompt_injection_neutralized", repo: target.repo, pr: target.number, field: "title" }));
   return text;
 }

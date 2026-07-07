@@ -116,7 +116,7 @@ export async function applyAutoTune(flags: FlagStore, report: GateEvalReport): P
       await flags.setFlag(`holdonly:${action.project}`, true);
       engaged.push(action);
     } catch (error) {
-      console.log(JSON.stringify({ ev: "auto_tune_error", project: action.project, message: String(error).slice(0, 120) }));
+      console.log(JSON.stringify({ event: "auto_tune_error", project: action.project, message: String(error).slice(0, 120) }));
     }
   }
   return engaged;
@@ -198,7 +198,7 @@ export async function applyCloseAutoTune(flags: FlagStore, report: GateEvalRepor
       await flags.setFlag(`closehold:${action.project}`, true);
       engaged.push(action);
     } catch (error) {
-      console.log(JSON.stringify({ ev: "close_tune_error", project: action.project, message: String(error).slice(0, 120) }));
+      console.log(JSON.stringify({ event: "close_tune_error", project: action.project, message: String(error).slice(0, 120) }));
     }
   }
   return engaged;

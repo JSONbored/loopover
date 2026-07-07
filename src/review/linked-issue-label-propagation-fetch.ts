@@ -74,7 +74,7 @@ async function resolveIssueLabelsForPropagation(
   if (kept.length < allLabels.length && allLabels.length > 0) {
     console.log(
       JSON.stringify({
-        ev: "linked_issue_label_propagation_filtered",
+        event: "linked_issue_label_propagation_filtered",
         repoFullName: args.repoFullName,
         issueNumber: result.facts.number,
         reason: maintainerAuthored ? "strict_label_requires_direct_ownership" : "no_direct_ownership_match",

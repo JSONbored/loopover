@@ -463,7 +463,7 @@ export async function retrieveContextWithMetrics(
     // context was injected) instead of flying blind — feeds tuning of minScore/topK + the /stats readout.
     console.log(
       JSON.stringify({
-        ev: "rag_retrieve",
+        event: "rag_retrieve",
         project: opts.project,
         repo: opts.repo,
         candidates: metrics.candidates,

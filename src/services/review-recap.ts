@@ -180,7 +180,7 @@ export async function sendReviewRecapToDiscord(env: Env, recap: ReviewRecap): Pr
     return { sent: true };
   } catch (error) {
     const detail = errorMessage(error).slice(0, 160);
-    console.warn(JSON.stringify({ ev: "review_recap_discord_failed", repo: recap.repoFullName, message: detail }));
+    console.warn(JSON.stringify({ event: "review_recap_discord_failed", repo: recap.repoFullName, message: detail }));
     await recordAuditEvent(env, {
       eventType: "review_recap_notification.discord",
       actor: "gittensory",

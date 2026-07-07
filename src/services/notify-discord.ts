@@ -108,7 +108,7 @@ async function auditExternalNotification(
     detail,
     metadata: { repoFullName: params.repoFullName, pullNumber: params.pullNumber, actionOutcome: params.outcome, ...metadata },
   }).catch((error) => {
-    console.warn(JSON.stringify({ ev: `${provider}_notify_audit_failed`, repo: params.repoFullName, pull: params.pullNumber, message: errorMessage(error).slice(0, 120) }));
+    console.warn(JSON.stringify({ event: `${provider}_notify_audit_failed`, repo: params.repoFullName, pull: params.pullNumber, message: errorMessage(error).slice(0, 120) }));
   });
 }
 
@@ -144,7 +144,7 @@ export async function notifyActionToDiscord(
     await postWebhook(resolved.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) }, "discord");
     await auditExternalNotification(env, params, "discord", "completed", "sent", { source: resolved.source });
   } catch (error) {
-    console.warn(JSON.stringify({ ev: "discord_notify_failed", repo: params.repoFullName, pull: params.pullNumber, message: errorMessage(error).slice(0, 120) }));
+    console.warn(JSON.stringify({ event: "discord_notify_failed", repo: params.repoFullName, pull: params.pullNumber, message: errorMessage(error).slice(0, 120) }));
     await auditExternalNotification(env, params, "discord", "error", errorMessage(error).slice(0, 160), { source: resolved.source });
   }
 }
@@ -188,7 +188,7 @@ export async function notifyActionToSlack(
     await postWebhook(webhookUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) }, "slack");
     await auditExternalNotification(env, params, "slack", "completed", "sent");
   } catch (error) {
-    console.warn(JSON.stringify({ ev: "slack_notify_failed", repo: params.repoFullName, pull: params.pullNumber, message: errorMessage(error).slice(0, 120) }));
+    console.warn(JSON.stringify({ event: "slack_notify_failed", repo: params.repoFullName, pull: params.pullNumber, message: errorMessage(error).slice(0, 120) }));
     await auditExternalNotification(env, params, "slack", "error", errorMessage(error).slice(0, 160));
   }
 }

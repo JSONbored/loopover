@@ -161,7 +161,7 @@ export async function recordNativeGateDecision(
       .run();
   } catch (error) {
     // Telemetry must never break finalization.
-    console.warn(JSON.stringify({ ev: "parity_audit_record_error", project, pr: input.pullNumber, message: errorMessage(error).slice(0, 200) }));
+    console.warn(JSON.stringify({ event: "parity_audit_record_error", project, pr: input.pullNumber, message: errorMessage(error).slice(0, 200) }));
   }
 }
 

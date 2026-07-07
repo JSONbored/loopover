@@ -70,7 +70,7 @@ export async function isHoldOnly(env: Env, project: string): Promise<boolean> {
   } catch (error) {
     console.warn(
       JSON.stringify({
-        ev: "flags_read_error",
+        event: "flags_read_error",
         message: errorMessage(error).slice(0, 120),
       }),
     );
@@ -96,7 +96,7 @@ export async function isCloseHoldOnly(
   } catch (error) {
     console.warn(
       JSON.stringify({
-        ev: "flags_read_error",
+        event: "flags_read_error",
         message: errorMessage(error).slice(0, 120),
       }),
     );
@@ -136,7 +136,7 @@ async function listEngagedProjectScopes(env: Env): Promise<{ holdonly: string[];
   } catch (error) {
     console.warn(
       JSON.stringify({
-        ev: "flags_read_error",
+        event: "flags_read_error",
         message: errorMessage(error).slice(0, 120),
       }),
     );
@@ -242,8 +242,8 @@ async function appendReviewAudit(
   } catch (error) {
     console.warn(
       JSON.stringify({
-        ev: "review_audit_record_error",
-        event: input.eventType,
+        event: "review_audit_record_error",
+        auditEventType: input.eventType,
         project: input.project,
         message: errorMessage(error).slice(0, 160),
       }),
@@ -331,7 +331,7 @@ export async function recordPrOutcome(
   }).catch((error) =>
     console.warn(
       JSON.stringify({
-        ev: "pr_outcome_audit_error",
+        event: "pr_outcome_audit_error",
         message: errorMessage(error).slice(0, 160),
       }),
     ),
@@ -554,18 +554,18 @@ export async function runSelfTuneBreaker(env: Env): Promise<void> {
     const closeClearCandidates = new Set([...report.rows.map((row) => row.project), ...engagedScopes.closehold]);
     for (const project of mergeClearCandidates) {
       if (await maybeAutoClearHoldOnly(flags, report, project, nowMs)) {
-        console.log(JSON.stringify({ ev: "breaker_auto_cleared", project }));
+        console.log(JSON.stringify({ event: "breaker_auto_cleared", project }));
       }
     }
     for (const project of closeClearCandidates) {
       if (await maybeAutoClearCloseHoldOnly(flags, report, project, nowMs)) {
-        console.log(JSON.stringify({ ev: "close_breaker_auto_cleared", project }));
+        console.log(JSON.stringify({ event: "close_breaker_auto_cleared", project }));
       }
     }
   } catch (error) {
     console.warn(
       JSON.stringify({
-        ev: "breaker_tick_error",
+        event: "breaker_tick_error",
         message: errorMessage(error).slice(0, 200),
       }),
     );

@@ -339,7 +339,7 @@ export async function runAutoApplyRecommendations(env: StorageEnv, ctx: AutoAppl
         const payload = rec.overridePayload;
         if (!isStrictlyTightening(payload, liveFloor, liveCap)) continue;
         const res = await applyOverrideRecommendation(env, ctx.project, payload, { force: false, soakMs: SHADOW_SOAK_MS, nowMs: ctx.nowMs });
-        console.log(JSON.stringify({ ev: "auto_apply_shadowed", project: ctx.project, reason: res.reason }));
+        console.log(JSON.stringify({ event: "auto_apply_shadowed", project: ctx.project, reason: res.reason }));
         break; // one pending soak at a time
       }
     }
@@ -359,12 +359,12 @@ export async function runAutoApplyRecommendations(env: StorageEnv, ctx: AutoAppl
         await writeLiveOverride(env, ctx.project, shadow.override);
         await deleteShadowOverride(env, ctx.project);
         await recordOverrideAudit(env, ctx.project, "override_promoted", { override: shadow.override, reason: gate.reason });
-        console.log(JSON.stringify({ ev: "auto_apply_promoted", project: ctx.project, override: describeOverride(shadow.override) }));
+        console.log(JSON.stringify({ event: "auto_apply_promoted", project: ctx.project, override: describeOverride(shadow.override) }));
       } else {
-        console.log(JSON.stringify({ ev: "auto_apply_hold", project: ctx.project, reason: gate.reason }));
+        console.log(JSON.stringify({ event: "auto_apply_hold", project: ctx.project, reason: gate.reason }));
       }
     }
   } catch (error) {
-    console.log(JSON.stringify({ ev: "auto_apply_error", project: ctx.project, message: String(error).slice(0, 160) }));
+    console.log(JSON.stringify({ event: "auto_apply_error", project: ctx.project, message: String(error).slice(0, 160) }));
   }
 }

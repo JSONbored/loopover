@@ -158,12 +158,12 @@ async function captureBoundedFullPageShot(page: ScreenshotPage, viewport: Viewpo
   ]);
   clearTimeout(heightProbeTimeoutId as ReturnType<typeof setTimeout>);
   if (height === null) {
-    console.log(JSON.stringify({ ev: "render_screenshot_height_probe_timeout", timeoutMs: SCREENSHOT_HEIGHT_PROBE_TIMEOUT_MS }));
+    console.log(JSON.stringify({ event: "render_screenshot_height_probe_timeout", timeoutMs: SCREENSHOT_HEIGHT_PROBE_TIMEOUT_MS }));
     return null;
   }
   const pixelArea = viewport.width * height;
   if (height > MAX_SCREENSHOT_HEIGHT || pixelArea > MAX_SCREENSHOT_PIXELS) {
-    console.log(JSON.stringify({ ev: "render_screenshot_too_large", width: viewport.width, height, maxHeight: MAX_SCREENSHOT_HEIGHT, maxPixels: MAX_SCREENSHOT_PIXELS }));
+    console.log(JSON.stringify({ event: "render_screenshot_too_large", width: viewport.width, height, maxHeight: MAX_SCREENSHOT_HEIGHT, maxPixels: MAX_SCREENSHOT_PIXELS }));
     return null;
   }
 
@@ -172,11 +172,11 @@ async function captureBoundedFullPageShot(page: ScreenshotPage, viewport: Viewpo
     new Promise<null>((resolve) => setTimeout(() => resolve(null), SCREENSHOT_TIMEOUT_MS)),
   ]);
   if (!shot) {
-    console.log(JSON.stringify({ ev: "render_screenshot_timeout", timeoutMs: SCREENSHOT_TIMEOUT_MS }));
+    console.log(JSON.stringify({ event: "render_screenshot_timeout", timeoutMs: SCREENSHOT_TIMEOUT_MS }));
     return null;
   }
   if (shot.byteLength > MAX_SCREENSHOT_BYTES) {
-    console.log(JSON.stringify({ ev: "render_screenshot_bytes_too_large", bytes: shot.byteLength, maxBytes: MAX_SCREENSHOT_BYTES }));
+    console.log(JSON.stringify({ event: "render_screenshot_bytes_too_large", bytes: shot.byteLength, maxBytes: MAX_SCREENSHOT_BYTES }));
     return null;
   }
   // Re-validate against the ACTUAL rendered PNG dimensions -- these come from Chromium's rasterizer, not page
@@ -184,7 +184,7 @@ async function captureBoundedFullPageShot(page: ScreenshotPage, viewport: Viewpo
   // rather than let through, since that's precisely what a successful spoof would look like from here.
   const dims = readPngDimensions(shot);
   if (!dims || dims.height > MAX_SCREENSHOT_HEIGHT || dims.width * dims.height > MAX_SCREENSHOT_PIXELS) {
-    console.log(JSON.stringify({ ev: "render_screenshot_dimensions_too_large", width: dims?.width ?? null, height: dims?.height ?? null, maxHeight: MAX_SCREENSHOT_HEIGHT, maxPixels: MAX_SCREENSHOT_PIXELS }));
+    console.log(JSON.stringify({ event: "render_screenshot_dimensions_too_large", width: dims?.width ?? null, height: dims?.height ?? null, maxHeight: MAX_SCREENSHOT_HEIGHT, maxPixels: MAX_SCREENSHOT_PIXELS }));
     return null;
   }
   return shot;
@@ -201,7 +201,7 @@ export async function captureShot(env: Env, url: string, viewport: Viewport = VI
   // private / cloud-metadata 169.254.169.254 / etc.). Callers may resolve `url` from a deployment_status
   // webhook or a PR-comment preview link, so guard at this choke point regardless of how the URL was obtained.
   if (!url || !isSafeHttpUrl(url) || (opts.isAllowedUrl && !opts.isAllowedUrl(url))) {
-    console.log(JSON.stringify({ ev: "render_screenshot_blocked", url: String(url).slice(0, 120) }));
+    console.log(JSON.stringify({ event: "render_screenshot_blocked", url: String(url).slice(0, 120) }));
     return { png: null, authWalled: false };
   }
   if (!env.BROWSER) return { png: null, authWalled: false };
@@ -222,7 +222,7 @@ export async function captureShot(env: Env, url: string, viewport: Viewport = VI
       if (protocol === "http:" || protocol === "https:") {
         const isAllowedNavigation = !request.isNavigationRequest() || !opts.isAllowedUrl || opts.isAllowedUrl(requestUrl);
         if (!isSafeHttpUrl(requestUrl) || !isAllowedNavigation) {
-          console.log(JSON.stringify({ ev: "render_screenshot_request_blocked", url: requestUrl.slice(0, 120) }));
+          console.log(JSON.stringify({ event: "render_screenshot_request_blocked", url: requestUrl.slice(0, 120) }));
           request.abort().catch(() => undefined);
           return;
         }
@@ -233,14 +233,14 @@ export async function captureShot(env: Env, url: string, viewport: Viewport = VI
     if (opts.theme) await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: opts.theme }]);
     await page.goto(url, { waitUntil: "networkidle0", timeout: 20000 });
     if (!isSafeHttpUrl(page.url()) || (opts.isAllowedUrl && !opts.isAllowedUrl(page.url()))) {
-      console.log(JSON.stringify({ ev: "render_screenshot_redirect_blocked", url, final: page.url().slice(0, 200) }));
+      console.log(JSON.stringify({ event: "render_screenshot_redirect_blocked", url, final: page.url().slice(0, 200) }));
       return { png: null, authWalled: false };
     }
     // A protected route that redirected to a login page: don't return a screenshot of the sign-in screen —
     // flag it so the caller renders an honest auth placeholder. (The requested URL not itself being a login
     // page guards a PR that legitimately changes the login screen.)
     if (isAuthWallUrl(page.url()) && !isAuthWallUrl(url)) {
-      console.log(JSON.stringify({ ev: "render_screenshot_auth_walled", url, final: page.url().slice(0, 200) }));
+      console.log(JSON.stringify({ event: "render_screenshot_auth_walled", url, final: page.url().slice(0, 200) }));
       return { png: null, authWalled: true };
     }
     // Full-page (not just the viewport), but bounded: before/after should include the same page position for
@@ -251,7 +251,7 @@ export async function captureShot(env: Env, url: string, viewport: Viewport = VI
   } catch (error) {
     // Log before degrading to null — otherwise a networkidle0 timeout, a binding quota error, or a render
     // crash is indistinguishable from "no page" and the cell silently blanks.
-    console.log(JSON.stringify({ ev: "render_screenshot_error", mode: "binding", url, message: String(error).slice(0, 200) }));
+    console.log(JSON.stringify({ event: "render_screenshot_error", mode: "binding", url, message: String(error).slice(0, 200) }));
     return { png: null, authWalled: false };
   } finally {
     if (browser) await browser.close().catch(() => undefined);
@@ -301,7 +301,7 @@ async function waitForScrollSettle(): Promise<void> {
  */
 export async function captureScrollFrames(env: Env, url: string, viewport: Viewport = VIEWPORT, opts: CaptureShotOptions = {}): Promise<{ frames: Uint8Array[]; authWalled: boolean }> {
   if (!url || !isSafeHttpUrl(url) || (opts.isAllowedUrl && !opts.isAllowedUrl(url))) {
-    console.log(JSON.stringify({ ev: "render_scroll_frames_blocked", url: String(url).slice(0, 120) }));
+    console.log(JSON.stringify({ event: "render_scroll_frames_blocked", url: String(url).slice(0, 120) }));
     return { frames: [], authWalled: false };
   }
   if (!env.BROWSER) return { frames: [], authWalled: false };
@@ -322,7 +322,7 @@ export async function captureScrollFrames(env: Env, url: string, viewport: Viewp
       if (protocol === "http:" || protocol === "https:") {
         const isAllowedNavigation = !request.isNavigationRequest() || !opts.isAllowedUrl || opts.isAllowedUrl(requestUrl);
         if (!isSafeHttpUrl(requestUrl) || !isAllowedNavigation) {
-          console.log(JSON.stringify({ ev: "render_scroll_frames_request_blocked", url: requestUrl.slice(0, 120) }));
+          console.log(JSON.stringify({ event: "render_scroll_frames_request_blocked", url: requestUrl.slice(0, 120) }));
           request.abort().catch(() => undefined);
           return;
         }
@@ -333,11 +333,11 @@ export async function captureScrollFrames(env: Env, url: string, viewport: Viewp
     if (opts.theme) await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: opts.theme }]);
     await page.goto(url, { waitUntil: "networkidle0", timeout: 20000 });
     if (!isSafeHttpUrl(page.url()) || (opts.isAllowedUrl && !opts.isAllowedUrl(page.url()))) {
-      console.log(JSON.stringify({ ev: "render_scroll_frames_redirect_blocked", url, final: page.url().slice(0, 200) }));
+      console.log(JSON.stringify({ event: "render_scroll_frames_redirect_blocked", url, final: page.url().slice(0, 200) }));
       return { frames: [], authWalled: false };
     }
     if (isAuthWallUrl(page.url()) && !isAuthWallUrl(url)) {
-      console.log(JSON.stringify({ ev: "render_scroll_frames_auth_walled", url, final: page.url().slice(0, 200) }));
+      console.log(JSON.stringify({ event: "render_scroll_frames_auth_walled", url, final: page.url().slice(0, 200) }));
       return { frames: [], authWalled: true };
     }
     // `document`/`window` below run inside the real page (the callback is serialized and executed in the
@@ -362,7 +362,7 @@ export async function captureScrollFrames(env: Env, url: string, viewport: Viewp
     }
     return { frames, authWalled: false };
   } catch (error) {
-    console.log(JSON.stringify({ ev: "render_scroll_frames_error", mode: "binding", url, message: String(error).slice(0, 200) }));
+    console.log(JSON.stringify({ event: "render_scroll_frames_error", mode: "binding", url, message: String(error).slice(0, 200) }));
     return { frames: [], authWalled: false };
   } finally {
     if (browser) await browser.close().catch(() => undefined);

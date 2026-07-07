@@ -117,7 +117,7 @@ async function fetchRepoTree(env: Env, repoFullName: string, ref: string, token:
     }
     return entries;
   } catch (error) {
-    console.error(JSON.stringify({ level: "error", event: "rag_index_tree_error", ev: "rag_index_tree_error", repo: repoFullName, message: String(error).slice(0, 200) }));
+    console.error(JSON.stringify({ level: "error", event: "rag_index_tree_error", repo: repoFullName, message: String(error).slice(0, 200) }));
     return null;
   }
 }
@@ -220,7 +220,7 @@ export async function listStoredChunkPaths(infra: ReturnType<typeof createReview
       .all<{ path: string }>();
     return (rows.results ?? []).map((row) => row.path).filter((path) => typeof path === "string" && path.length > 0);
   } catch (error) {
-    console.error(JSON.stringify({ level: "error", event: "rag_list_paths_error", ev: "rag_list_paths_error", project, repo, message: String(error).slice(0, 200) }));
+    console.error(JSON.stringify({ level: "error", event: "rag_list_paths_error", project, repo, message: String(error).slice(0, 200) }));
     return [];
   }
 }
@@ -312,7 +312,7 @@ export async function indexRepo(
       }
     }
     console.log(
-      JSON.stringify({ ev: "rag_index_repo", project, repo: repoFullName, files: filesIndexed, indexed: upserted, capped }),
+      JSON.stringify({ event: "rag_index_repo", project, repo: repoFullName, files: filesIndexed, indexed: upserted, capped }),
     );
     return { indexed: upserted, files: filesIndexed, capped };
   } catch (error) {
@@ -379,7 +379,7 @@ export async function reindexChangedPaths(
       }
     }
     console.log(
-      JSON.stringify({ ev: "rag_reindex_paths", project, repo: repoFullName, paths: unique.length, files: filesIndexed, indexed: upserted, capped }),
+      JSON.stringify({ event: "rag_reindex_paths", project, repo: repoFullName, paths: unique.length, files: filesIndexed, indexed: upserted, capped }),
     );
     return { indexed: upserted, files: filesIndexed, capped };
   } catch (error) {

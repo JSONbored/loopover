@@ -213,7 +213,7 @@ export async function recordSubmissionOutcome(env: Env, project: string, submitt
       .bind(project, submitter)
       .run();
   } catch (error) {
-    console.log(JSON.stringify({ ev: "reputation_record_error", message: String(error).slice(0, 150) }));
+    console.log(JSON.stringify({ event: "reputation_record_error", message: String(error).slice(0, 150) }));
   }
 }
 

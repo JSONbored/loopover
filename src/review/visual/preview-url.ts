@@ -106,7 +106,7 @@ export async function getLatestDeploymentStatus(params: {
     // 404 → the ref genuinely has no deployments. Any other failure (403 missing scope, rate limit, 5xx) is
     // NOT "no preview"; report `error` so the caller keeps polling rather than showing a false terminal state.
     if (error instanceof PreviewGitHubError && error.status === 404) return { url: null, failed: false };
-    console.log(JSON.stringify({ ev: "deployment_lookup_error", repo: `${params.repo.owner}/${params.repo.repo}`, selector, message: String(error).slice(0, 200) }));
+    console.log(JSON.stringify({ event: "deployment_lookup_error", repo: `${params.repo.owner}/${params.repo.repo}`, selector, message: String(error).slice(0, 200) }));
     return { url: null, failed: false, error: true };
   }
   const ids = deployments.map((d) => d.id).filter((id): id is number => id != null);
@@ -117,7 +117,7 @@ export async function getLatestDeploymentStatus(params: {
         apiVersion: params.apiVersion,
         rateLimitAdmissionKey: params.rateLimitAdmissionKey,
       }).catch((error) => {
-        console.log(JSON.stringify({ ev: "deployment_status_error", deployment: id, message: String(error).slice(0, 200) }));
+        console.log(JSON.stringify({ event: "deployment_status_error", deployment: id, message: String(error).slice(0, 200) }));
         return [] as Array<{ state?: string; environment_url?: string }>;
       }),
     ),
@@ -195,7 +195,7 @@ export async function findPreviewUrlFromChecks(params: {
       if (url) return url;
     }
   } catch (error) {
-    console.log(JSON.stringify({ ev: "preview_from_checks_error", repo: `${params.repo.owner}/${params.repo.repo}`, message: String(error).slice(0, 200) }));
+    console.log(JSON.stringify({ event: "preview_from_checks_error", repo: `${params.repo.owner}/${params.repo.repo}`, message: String(error).slice(0, 200) }));
   }
   return null;
 }
@@ -228,7 +228,7 @@ export async function findPreviewUrlFromPrComments(params: {
       if (url) return url;
     }
   } catch (error) {
-    console.log(JSON.stringify({ ev: "preview_from_comments_error", repo: `${params.repo.owner}/${params.repo.repo}`, message: String(error).slice(0, 200) }));
+    console.log(JSON.stringify({ event: "preview_from_comments_error", repo: `${params.repo.owner}/${params.repo.repo}`, message: String(error).slice(0, 200) }));
   }
   return null;
 }

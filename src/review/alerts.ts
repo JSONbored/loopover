@@ -268,6 +268,6 @@ export async function runAnomalyAlerts(env: Env, config: AlertAgentConfig, deps:
   try {
     await fetch(webhookUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
   } catch (error) {
-    console.log(JSON.stringify({ ev: "anomaly_alert_error", project: config.slug, message: String(error).slice(0, 200) }));
+    console.log(JSON.stringify({ event: "anomaly_alert_error", project: config.slug, message: String(error).slice(0, 200) }));
   }
 }

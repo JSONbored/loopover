@@ -8170,7 +8170,7 @@ async function maybePublishPrPublicSurface(
         outcome: "completed",
         detail: `applied labels: ${decisionResult.applyLabels.join(", ") || "none"}`,
         metadata: { labels: decisionResult.applyLabels, source: decisionResult.source },
-      });
+      }).catch(() => undefined);
     } catch (error) {
       console.log(
         JSON.stringify({
@@ -8186,7 +8186,7 @@ async function maybePublishPrPublicSurface(
         outcome: "error",
         detail: errorMessage(error).slice(0, 150),
         metadata: { labels: [], source: null },
-      });
+      }).catch(() => undefined);
     }
   } else {
     const skipReason = settings.agentPaused
@@ -8209,7 +8209,7 @@ async function maybePublishPrPublicSurface(
       outcome: "denied",
       detail: skipReason,
       metadata: { labels: [], source: null },
-    });
+    }).catch(() => undefined);
   }
 
   // Respect the per-repo agent pause: suppress all public surface mutations (label, comment, context

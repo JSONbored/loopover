@@ -132,7 +132,6 @@ describe("metrics registry (#982)", () => {
     setSelfHostedMetricsMode(true);
     incr("gittensory_gate_decisions_total", { repo: "owner/repo", conclusion: "success" });
     incr("gittensory_reviews_published_total", { repo: "owner/repo" });
-    incr("gittensory_agent_disposition_total", { repo: "owner/repo", action_class: "hold", blocker_class: "none", autonomy_level: "auto" });
 
     const out = await renderMetrics();
     expect(out).toContain('gittensory_gate_decisions_total{conclusion="success",repo="owner/repo"} 1');
@@ -146,7 +145,25 @@ describe("metrics registry (#982)", () => {
 
     const out = await renderMetrics();
     expect(out).not.toContain("owner/repo");
-    expect(out).toContain('gittensory_agent_disposition_total{action_class="hold",autonomy_level="auto",blocker_class="none"} 1');
+    expect(out).toContain(
+      'gittensory_agent_disposition_total{action_class="hold",autonomy_level="auto",blocker_class="none",repo="redacted-1"} 1',
+    );
+  });
+
+  it("keeps agent disposition repository labels redacted in self-hosted metrics mode", async () => {
+    setSelfHostedMetricsMode(true);
+    incr("gittensory_agent_disposition_total", {
+      repo: "private-owner/secret-repo",
+      action_class: "hold",
+      blocker_class: "manifest_blocked",
+      autonomy_level: "auto",
+    });
+
+    const out = await renderMetrics();
+    expect(out).toContain(
+      'gittensory_agent_disposition_total{action_class="hold",autonomy_level="auto",blocker_class="manifest_blocked",repo="redacted-1"} 1',
+    );
+    expect(out).not.toContain("private-owner/secret-repo");
   });
 
   it("gauges sample at scrape time", async () => {

@@ -147,9 +147,11 @@ export function setSelfHostedMetricsMode(isSelfHosted: boolean): void {
 const PRIVATE_REPO_LABEL_METRICS = new Set([
   "gittensory_gate_decisions_total",
   "gittensory_reviews_published_total",
-  "gittensory_agent_disposition_total",
 ]);
-const ALWAYS_REDACT_REPO_LABEL_METRICS = new Set(["gittensory_queue_backlog_by_repo"]);
+const ALWAYS_REDACT_REPO_LABEL_METRICS = new Set([
+  "gittensory_agent_disposition_total",
+  "gittensory_queue_backlog_by_repo",
+]);
 const redactedRepoLabels = new Map<string, string>();
 
 function redactedRepoLabel(repo: string): string {

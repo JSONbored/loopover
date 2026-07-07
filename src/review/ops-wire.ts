@@ -30,7 +30,7 @@
 // `override_audit` D1 tables (none of which exist in gittensory's migrations yet) plus a careful soak/promote
 // design. This module is READ-ONLY observability: it reports drift; it never changes what blocks a live PR.
 
-import { findHottestInconclusiveReviewTargetForRepo, findHottestReviewTargetForRepo, listRepositories } from "../db/repositories";
+import { findHottestInconclusiveReviewTargetForRepo, findHottestReviewTargetForRepo, listRepositories, sumByokAiUsageForRepoSince } from "../db/repositories";
 import { isAgentConfigured } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { loadGatePrecisionReport, type GatePrecisionReport } from "../services/gate-precision";
@@ -68,6 +68,11 @@ const REVIEW_BURST_WINDOW_HOURS = 2;
  *  c7073949 (#3747) fixed. Lower than REVIEW_BURST_THRESHOLD on purpose: a failure burst is inherently rarer
  *  and more anomalous than a publish burst (normal iteration never produces repeated INCONCLUSIVE calls). */
 const REVIEW_FAILURE_BURST_THRESHOLD = 3;
+
+/** #hosted-ai-usage-observability: the trailing window computeOpsStats' byokUsage rollup covers. Wider than the
+ *  burst windows above on purpose -- this is a spend-visibility figure an operator checks periodically, not a
+ *  same-tick anomaly to alert on. */
+const BYOK_USAGE_WINDOW_HOURS = 24;
 
 /** One repo's outcome reports + the repo it covers — the input to the pure anomaly detector. `reviewBurst` and
  *  `reviewFailureBurst` are optional so existing snapshot-fixture tests need not be touched; absent/null means
@@ -209,6 +214,10 @@ export interface OpsStatsRepoRow {
   recommendations: { total: number; positive: number; negative: number; pending: number; positiveRate: number | null };
   /** The active anomaly lines for this repo (same as the cron alert), so the dashboard can flag drift. */
   anomalies: string[];
+  /** #hosted-ai-usage-observability: real (not estimated) BYOK token/cost usage over the trailing
+   *  BYOK_USAGE_WINDOW_HOURS -- the only AI activity the hosted Worker can ever have (the legacy Workers-AI
+   *  binding path is retired). Previously nothing exposed this for the hosted deployment at all. */
+  byokUsage: { calls: number; inputTokens: number; outputTokens: number; totalTokens: number; costUsd: number };
 }
 
 export interface OpsStatsPayload {
@@ -224,13 +233,15 @@ export async function computeOpsStats(env: Env): Promise<OpsStatsPayload> {
   const repos = await opsScanRepos(env);
   const rows: OpsStatsRepoRow[] = [];
   const reviewBurstSinceIso = new Date(Date.now() - REVIEW_BURST_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
+  const byokUsageSinceIso = new Date(Date.now() - BYOK_USAGE_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
   for (const repoFullName of repos) {
     try {
-      const [gatePrecision, calibration, reviewBurst, reviewFailureBurst] = await Promise.all([
+      const [gatePrecision, calibration, reviewBurst, reviewFailureBurst, byokUsage] = await Promise.all([
         loadGatePrecisionReport(env, repoFullName),
         buildRepoOutcomeCalibration(env, repoFullName),
         findHottestReviewTargetForRepo(env, repoFullName, reviewBurstSinceIso),
         findHottestInconclusiveReviewTargetForRepo(env, repoFullName, reviewBurstSinceIso),
+        sumByokAiUsageForRepoSince(env, repoFullName, byokUsageSinceIso),
       ]);
       rows.push({
         repoFullName,
@@ -246,6 +257,7 @@ export async function computeOpsStats(env: Env): Promise<OpsStatsPayload> {
         },
         recommendations: calibration.recommendations,
         anomalies: detectOutcomeAnomalies({ repoFullName, gatePrecision, calibration, reviewBurst, reviewFailureBurst }),
+        byokUsage,
       });
     } catch {
       /* a per-repo failure must not blank the whole feed */

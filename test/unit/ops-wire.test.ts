@@ -336,6 +336,48 @@ describe("computeOpsStats — cross-repo outcome aggregate", () => {
     // Privacy: aggregate only — never actor logins / trust internals.
     expect(JSON.stringify(payload)).not.toMatch(/login|actor|reward|payout|trust|wallet|hotkey|credibility/i);
   });
+
+  it("rolls up real BYOK token/cost usage over the trailing window (#hosted-ai-usage-observability)", async () => {
+    const env = createTestEnv();
+    await seedRegisteredRepo(env, "owner/repo");
+    await recordAiUsageEvent(env, {
+      feature: "ai_review_pr",
+      model: "byok:anthropic",
+      provider: "anthropic",
+      status: "ok",
+      estimatedNeurons: 0,
+      inputTokens: 1000,
+      outputTokens: 500,
+      totalTokens: 1500,
+      costUsd: 0.045,
+      metadata: { repoFullName: "owner/repo", pullNumber: 7, inconclusive: false },
+    });
+    await recordAiUsageEvent(env, {
+      feature: "ai_review_pr",
+      model: "byok:anthropic",
+      provider: "anthropic",
+      status: "ok",
+      estimatedNeurons: 0,
+      inputTokens: 2000,
+      outputTokens: 800,
+      totalTokens: 2800,
+      costUsd: 0.09,
+      metadata: { repoFullName: "owner/repo", pullNumber: 8, inconclusive: false },
+    });
+
+    const payload = await computeOpsStats(env);
+    const row = payload.repos.find((r) => r.repoFullName === "owner/repo");
+    expect(row?.byokUsage).toEqual({ calls: 2, inputTokens: 3000, outputTokens: 1300, totalTokens: 4300, costUsd: 0.135 });
+  });
+
+  it("reports zero BYOK usage for a repo with no BYOK calls in the window", async () => {
+    const env = createTestEnv();
+    await seedRegisteredRepo(env, "owner/repo");
+
+    const payload = await computeOpsStats(env);
+    const row = payload.repos.find((r) => r.repoFullName === "owner/repo");
+    expect(row?.byokUsage).toEqual({ calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0 });
+  });
 });
 
 describe("GET /v1/internal/ops/stats — bearer-gated, flag-gated endpoint", () => {

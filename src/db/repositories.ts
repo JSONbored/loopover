@@ -3244,6 +3244,49 @@ export async function countByokAiEventsForRepoSince(env: Env, repoFullName: stri
   return Number(row?.total ?? 0);
 }
 
+/**
+ * #hosted-ai-usage-observability: the ONLY AI activity the HOSTED gittensory-api Worker can ever have is a
+ * maintainer's own BYOK call (the legacy Workers-AI-binding path is retired; `env.AI` is undefined there) --
+ * yet nothing previously read back the real token/cost columns migration 0109 added to `ai_usage_events` for
+ * the hosted deployment specifically (the one dashboard built for this, orb-ai-usage.json, is wired
+ * exclusively to self-host's own local reporting-export SQLite mirror and cannot see the hosted D1 at all).
+ * Real, not estimated: sums the actual provider-reported input/output/total tokens and cost_usd, not the
+ * estimatedNeurons quota-proxy sumAiEstimatedNeuronsSince already tracks.
+ */
+export async function sumByokAiUsageForRepoSince(
+  env: Env,
+  repoFullName: string,
+  sinceIso: string,
+): Promise<{ calls: number; inputTokens: number; outputTokens: number; totalTokens: number; costUsd: number }> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({
+      calls: sql<number>`count(*)`,
+      inputTokens: sql<number>`coalesce(sum(${aiUsageEvents.inputTokens}), 0)`,
+      outputTokens: sql<number>`coalesce(sum(${aiUsageEvents.outputTokens}), 0)`,
+      totalTokens: sql<number>`coalesce(sum(${aiUsageEvents.totalTokens}), 0)`,
+      costUsd: sql<number>`coalesce(sum(${aiUsageEvents.costUsd}), 0)`,
+    })
+    .from(aiUsageEvents)
+    .where(
+      and(
+        gte(aiUsageEvents.createdAt, sinceIso),
+        eq(aiUsageEvents.status, "ok"),
+        sql`${aiUsageEvents.model} like 'byok:%'`,
+        sql`json_extract(${aiUsageEvents.metadataJson}, '$.repoFullName') = ${repoFullName}`,
+      ),
+    );
+  /* v8 ignore next -- SQL aggregate sum/count always returns one row; fallback protects D1 driver anomalies. */
+  if (!row) return { calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0 };
+  return {
+    calls: Number(row.calls),
+    inputTokens: Number(row.inputTokens),
+    outputTokens: Number(row.outputTokens),
+    totalTokens: Number(row.totalTokens),
+    costUsd: Number(row.costUsd),
+  };
+}
+
 export async function upsertContributorScoringProfile(env: Env, profile: ContributorScoringProfileRecord): Promise<void> {
   const db = getDb(env.DB);
   await db

@@ -16,19 +16,11 @@
 // deps so the core decision/reversal/gate-action aggregation is fully native here. The host wires its own
 // implementations (or the defaults below, which emit empty/no-signal reports, keeping the payload shape).
 //
-// SCOPE NOTE (#1955 — deterministic review-effort score): this feed's tables (`review_targets`, `review_audit`,
-// and the injected eval/parity engine's own source, `review_audit`'s `gate_decision`/`pr_outcome` rows) are the
-// LEGACY reviewbot ledger — nothing writes new rows to `review_targets` since the self-host convergence cutover
-// (see public-stats.ts's file header), and every write into `review_audit` (outcomes-wire.ts's `pr_outcome`,
-// the gate's `gate_decision`) carries only decision/outcome metadata, never a PR's changed files or patches.
-// There is therefore NO live source this module could aggregate a per-PR review-effort estimate FROM today —
-// unlike public-stats.ts's `getPublicStats`, which reads the ACTIVE `audit_events` ledger the live review
-// pipeline (src/queue/processors.ts) still writes to every publish, and where `estimateReviewEffort`'s minutes
-// are now persisted (`reviewEffortMinutes` in `github_app.pr_public_surface_published` metadata) and averaged.
-// Wiring a same-shaped aggregate here would only ever read back a permanently-null placeholder — scaffolding
-// with no live behavior — so it is deliberately left out of this change rather than faked. A REAL maintainer-
-// dashboard effort aggregate needs its own persisted source (e.g. this module reading `audit_events` the way
-// public-stats.ts now does), which is a genuine follow-up, not a one-line addition to this file.
+// REVIEW EFFORT (#2155): decision/reversal/gate-action aggregates still read the legacy `review_targets` /
+// `review_audit` ledgers above, but the maintainer dashboard's complexity read comes from the ACTIVE `audit_events`
+// ledger (same `github_app.pr_public_surface_published` rows + `reviewEffortMinutes` metadata public-stats.ts uses).
+// Bearer-gated here only — never folded into the public homepage counter.
+import { bandFromMinutes } from "./review-effort";
 
 // ── Inlined report types (ported shapes from reviewbot src/core/{eval,tuning}.ts) ────────────────
 
@@ -176,6 +168,13 @@ const BUCKET_SQL: Record<string, string> = {
   month: "strftime('%Y-%m', created_at)",
 };
 
+export interface ReviewEffortAggregate {
+  /** Rounded average complexity band across distinct reviewed PRs in the window; null when no samples. */
+  avgBand: number | null;
+  /** Sum of per-PR estimated review minutes in the window; 0 when no samples. */
+  totalEstimatedMinutes: number;
+}
+
 export interface StatsPayload {
   generatedAt: string;
   window: { fromIso: string; days: number; bucket: string };
@@ -187,12 +186,26 @@ export interface StatsPayload {
   reversals: Array<{ bucket: string; project: string; n: number }>;
   /** Non-content gate decisions (incl. SHADOW would-actions), per project+action. */
   gateActions: Array<{ project: string; action: string; n: number }>;
+  /** Aggregate review-effort signal for maintainer triage (#2155); reads `audit_events`, not the legacy ledgers. */
+  reviewEffort: ReviewEffortAggregate;
   /** Gate eval: prediction scored against the PR's real outcome — merge/close precision per project. */
   gateEval: GateEvalReport;
   /** Ranked tuning recommendations derived from the eval (ready-to-flip / tighten / loosen). */
   recommendations: TuningRec[];
   /** Cross-system gate-decision parity: a SHADOW writer's gate decisions vs the authoritative ones. */
   gateParity: GateParityReport & { cutoverReady: Array<{ project: string; ready: boolean }> };
+}
+
+/** Fold per-PR persisted minutes into the maintainer aggregate (avg band + total minutes). */
+export function aggregateReviewEffort(perPrMinutes: number[]): ReviewEffortAggregate {
+  if (perPrMinutes.length === 0) {
+    return { avgBand: null, totalEstimatedMinutes: 0 };
+  }
+  const bands = perPrMinutes.map((minutes) => bandFromMinutes(minutes));
+  return {
+    avgBand: Math.round(bands.reduce((sum, band) => sum + band, 0) / bands.length),
+    totalEstimatedMinutes: perPrMinutes.reduce((sum, minutes) => sum + minutes, 0),
+  };
 }
 
 /** Aggregate the decision ledger for the dashboard. Pure-ish (reads D1 only); no GitHub I/O. */
@@ -211,7 +224,7 @@ export async function computeStats(
   const bucketExpr = BUCKET_SQL[bucket] ?? BUCKET_SQL.day;
   const fromIso = new Date(opts.nowMs - days * 86_400_000).toISOString().slice(0, 10); // YYYY-MM-DD
 
-  const [decisionRows, reversalRows] = await Promise.all([
+  const [decisionRows, reversalRows, effortRows] = await Promise.all([
     storage(env).prepare(
       `SELECT ${bucketExpr} AS bucket, project, COALESCE(verdict, status) AS verdict, COUNT(*) AS n
        FROM review_targets
@@ -226,6 +239,25 @@ export async function computeStats(
        GROUP BY bucket, project
        ORDER BY bucket ASC`,
     ).bind(fromIso).all<{ bucket: string; project: string; n: number }>(),
+    // review-effort (#2155): same persisted `reviewEffortMinutes` public-stats averages, scoped to this window.
+    // Repeated publish events for one PR collapse to one sample (per-PR AVG) before the global fold.
+    storage(env).prepare(
+      `SELECT minutes FROM (
+         SELECT repo, number, AVG(minutes) AS minutes
+           FROM (
+             SELECT LOWER(substr(target_key, 1, instr(target_key, '#') - 1)) AS repo,
+                    CAST(substr(target_key, instr(target_key, '#') + 1) AS INTEGER) AS number,
+                    json_extract(metadata_json, '$.reviewEffortMinutes') AS minutes
+               FROM audit_events
+              WHERE event_type = 'github_app.pr_public_surface_published'
+                AND created_at >= ?
+                AND instr(target_key, '#') > 0
+           )
+          WHERE minutes IS NOT NULL
+          GROUP BY repo, number
+       )`,
+    ).bind(fromIso).all<{ minutes: number }>()
+      .catch(() => ({ results: [] as Array<{ minutes: number }> })),
   ]);
 
   // Non-content gate decisions (incl. SHADOW would-actions) — recorded as `gate_decision` audit rows with
@@ -247,6 +279,9 @@ export async function computeStats(
 
   const rows = decisionRows.results ?? [];
   const reversals = reversalRows.results ?? [];
+  const reviewEffort = aggregateReviewEffort(
+    (effortRows.results ?? []).map((row) => row.minutes ?? 0).filter((minutes) => minutes > 0),
+  );
   return {
     generatedAt: new Date(opts.nowMs).toISOString(),
     window: { fromIso, days, bucket },
@@ -255,6 +290,7 @@ export async function computeStats(
     rows,
     reversals,
     gateActions: gateRows.results ?? [],
+    reviewEffort,
     gateEval,
     recommendations,
     gateParity: { ...parity, cutoverReady: parity.rows.map((r) => ({ project: r.project, ready: isParityCutoverReady(r) })) },

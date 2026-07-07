@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { estimateReviewEffort, type ReviewEffortFile } from "../../src/review/review-effort";
+import { bandFromMinutes, estimateReviewEffort, type ReviewEffortFile } from "../../src/review/review-effort";
 
 // A patch with exactly `added` added lines (each `+`), so a test can dial the effort precisely.
 function srcPatch(added: number): string {
@@ -54,5 +54,19 @@ describe("estimateReviewEffort (#2151)", () => {
     // BAND_MAX top tier is 300; 5×100 source lines + 5×3 per-file overhead = 515 → band 5
     const files = Array.from({ length: 5 }, (_, i) => file(`src/pkg${i}/mod.ts`, 100));
     expect(estimateReviewEffort(files)).toEqual({ band: 5, minutes: 258 });
+  });
+});
+
+describe("bandFromMinutes (#2155)", () => {
+  it("maps persisted minutes back to the same band the estimator would have produced", () => {
+    const samples = [
+      estimateReviewEffort([]),
+      estimateReviewEffort([file("src/a.ts", 20)]),
+      estimateReviewEffort([file("src/a.ts", 200)]),
+      estimateReviewEffort([file("src/a.ts", 400)]),
+    ];
+    for (const sample of samples) {
+      expect(bandFromMinutes(sample.minutes)).toBe(sample.band);
+    }
   });
 });

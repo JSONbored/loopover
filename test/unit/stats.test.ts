@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createTestEnv } from "../helpers/d1";
 import {
+  aggregateReviewEffort,
   computeStats,
   handleParity,
   handleStats,
@@ -22,6 +24,10 @@ function stubEnv(extra: Record<string, unknown> = {}): Env {
     { project: "metagraphed", action: "merge", n: 7 },
     { project: "metagraphed", action: "hold", n: 2 },
   ];
+  const effortMinutes = [
+    { minutes: 4 },
+    { minutes: 96 },
+  ];
   let lastSql = "";
   return {
     ...extra,
@@ -31,9 +37,15 @@ function stubEnv(extra: Record<string, unknown> = {}): Env {
         return {
           bind: () => ({
             all: async () => ({
-              // gate_decision breakdown → gateActions; other review_audit reads → reversals;
+              // review-effort read → effortMinutes; gate_decision → gateActions; other review_audit → reversals;
               // everything else → decision rows. (The eval/parity engine is the default no-op deps.)
-              results: lastSql.includes("gate_decision") ? gateActions : lastSql.includes("review_audit") ? reversals : decisions,
+              results: lastSql.includes("reviewEffortMinutes")
+                ? effortMinutes
+                : lastSql.includes("gate_decision")
+                  ? gateActions
+                  : lastSql.includes("review_audit")
+                    ? reversals
+                    : decisions,
             }),
           }),
         };
@@ -59,6 +71,7 @@ describe("computeStats — D1 aggregate for the dashboard", () => {
     expect(out.gateEval).toEqual({ rows: [], hasSignal: false });
     expect(out.recommendations).toEqual([]);
     expect(out.gateParity.cutoverReady).toEqual([]);
+    expect(out.reviewEffort).toEqual({ avgBand: 3, totalEstimatedMinutes: 100 });
   });
 
   it("clamps an absurd window and falls back to a safe bucket", async () => {
@@ -127,6 +140,96 @@ describe("handleStats — bearer-gated, CORS-open feed", () => {
     expect(res.headers.get("access-control-allow-origin")).toBe("*");
     const body = (await res.json()) as { projects: string[] };
     expect(body.projects).toContain("awesome-claude");
+  });
+});
+
+describe("aggregateReviewEffort — maintainer complexity fold (#2155)", () => {
+  it("returns null avgBand and 0 total minutes for an empty sample", () => {
+    expect(aggregateReviewEffort([])).toEqual({ avgBand: null, totalEstimatedMinutes: 0 });
+  });
+
+  it("averages bands and sums minutes across per-PR samples", () => {
+    // minutes 4 -> band 1; minutes 96 -> band 4 -> rounded avg 3; total 100.
+    expect(aggregateReviewEffort([4, 96])).toEqual({ avgBand: 3, totalEstimatedMinutes: 100 });
+  });
+});
+
+describe("computeStats — review-effort read is fail-safe", () => {
+  function effortThrowingEnv(): Env {
+    let lastSql = "";
+    return {
+      DB: {
+        prepare: (s: string) => {
+          lastSql = s;
+          return {
+            bind: () => ({
+              all: async () => {
+                if (lastSql.includes("reviewEffortMinutes")) throw new Error("effort read down");
+                return { results: [] };
+              },
+            }),
+          };
+        },
+      },
+    } as unknown as Env;
+  }
+
+  it("falls back to reviewEffort null/0 when the audit_events effort query rejects", async () => {
+    const out = await computeStats(effortThrowingEnv(), { days: 30, bucket: "day", nowMs: NOW });
+    expect(out.reviewEffort).toEqual({ avgBand: null, totalEstimatedMinutes: 0 });
+  });
+
+  it("averages real reviewEffortMinutes out of audit_events via json_extract (real D1)", async () => {
+    const env = createTestEnv();
+    const db = env.DB;
+    await db
+      .prepare(
+        `INSERT INTO audit_events (id, event_type, target_key, outcome, metadata_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        "published-a",
+        "github_app.pr_public_surface_published",
+        "JSONbored/gittensory#10",
+        "completed",
+        JSON.stringify({ reviewEffortMinutes: 4 }),
+        "2026-06-10T00:00:00.000Z",
+        "published-b",
+        "github_app.pr_public_surface_published",
+        "JSONbored/gittensory#11",
+        "completed",
+        JSON.stringify({ reviewEffortMinutes: 96 }),
+        "2026-06-11T00:00:00.000Z",
+      )
+      .run();
+
+    const out = await computeStats(env, { days: 90, bucket: "day", nowMs: NOW });
+    expect(out.reviewEffort).toEqual({ avgBand: 3, totalEstimatedMinutes: 100 });
+  });
+
+  it("skips nullish/zero minute rows when folding reviewEffort (the ?? 0 + > 0 filter branches)", async () => {
+    function mixedEffortEnv(): Env {
+      let lastSql = "";
+      return {
+        DB: {
+          prepare: (s: string) => {
+            lastSql = s;
+            return {
+              bind: () => ({
+                all: async () => ({
+                  results: lastSql.includes("reviewEffortMinutes")
+                    ? [{ minutes: null }, { minutes: 0 }, { minutes: 10 }]
+                    : [],
+                }),
+              }),
+            };
+          },
+        },
+      } as unknown as Env;
+    }
+
+    const out = await computeStats(mixedEffortEnv(), { days: 30, bucket: "day", nowMs: NOW });
+    expect(out.reviewEffort).toEqual({ avgBand: 2, totalEstimatedMinutes: 10 });
   });
 });
 
@@ -300,6 +403,7 @@ describe("computeStats — NaN window + null D1 results (the ?? [] fallbacks)", 
     expect(out.gateActions).toEqual([]);
     expect(out.projects).toEqual([]);
     expect(out.verdicts).toEqual([]);
+    expect(out.reviewEffort).toEqual({ avgBand: null, totalEstimatedMinutes: 0 });
   });
 });
 

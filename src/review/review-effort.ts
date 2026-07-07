@@ -46,6 +46,11 @@ function bandForEffort(effort: number): 1 | 2 | 3 | 4 | 5 {
   return 5;
 }
 
+/** Map a persisted minutes estimate back to its complexity band (inverse of `estimateReviewEffort`'s minutes step). */
+export function bandFromMinutes(minutes: number): 1 | 2 | 3 | 4 | 5 {
+  return bandForEffort(Math.max(0, minutes) / MINUTES_PER_EFFORT);
+}
+
 /** Estimate the review effort of a change set. Pure and deterministic. */
 export function estimateReviewEffort(files: ReviewEffortFile[]): ReviewEffort {
   let weighted = 0;

@@ -460,12 +460,18 @@ export type ChangedFileSummaryInput = { path: string; additions: number; deletio
 /** Repo + PR coordinates for per-file "View diff" links on the changed-files table (#2157). */
 export type ChangedFilesSummaryContext = { repoFullName: string; pullNumber: number };
 
+const MAX_CHANGED_FILE_DIFF_ROWS = 200;
+const MAX_CHANGED_FILES_DIFF_BODY_LENGTH = 30_000;
+
 function markdownChangedFilePath(value: string): string {
-  return `\`${value
+  const safeValue = value
+    .replace(/[\u0000-\u001f\u007f]/g, "�")
     .replace(/\\/g, "\\\\")
-    .replace(/`/g, "\\`")
     .replace(/\|/g, "\\|")
-    .replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;"))}\``;
+    .replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;"));
+  const longestBacktickRun = safeValue.match(/`+/g)?.reduce((longest, run) => Math.max(longest, run.length), 0) ?? 0;
+  const fence = "`".repeat(longestBacktickRun + 1);
+  return `${fence}${safeValue}${fence}`;
 }
 
 /** Display order for the "Changed files" table — SOURCE FIRST, mirroring the same source-first priority this
@@ -492,7 +498,7 @@ export function buildChangedFilesSummaryCollapsible(
   context?: ChangedFilesSummaryContext | undefined,
 ): UnifiedCollapsible | null {
   if (files.length === 0) return null;
-  if (context) {
+  if (context && files.length <= MAX_CHANGED_FILE_DIFF_ROWS) {
     const sorted = [...files].sort((left, right) => {
       const leftCategory = CHANGED_FILE_CATEGORY_ORDER.indexOf(classifyChangedFile(left.path));
       const rightCategory = CHANGED_FILE_CATEGORY_ORDER.indexOf(classifyChangedFile(right.path));
@@ -505,7 +511,7 @@ export function buildChangedFilesSummaryCollapsible(
       return `| ${markdownChangedFilePath(file.path)} | +${file.additions} | -${file.deletions} | ${diffCell} |`;
     });
     const body = ["| File | Added | Removed | |", "| --- | --- | --- | --- |", ...rows].join("\n");
-    return { title: "Changed files", body };
+    if (body.length <= MAX_CHANGED_FILES_DIFF_BODY_LENGTH) return { title: "Changed files", body };
   }
   const totals = new Map<ReviewFileClass, { count: number; additions: number; deletions: number }>();
   for (const file of files) {

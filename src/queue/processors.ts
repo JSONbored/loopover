@@ -384,6 +384,7 @@ import {
 } from "../signals/focus-manifest";
 import { decideReviewEligibility } from "../review/review-eligibility";
 import {
+  loadPublicRepoFocusManifest,
   loadRepoFocusManifest,
   loadRepoFocusManifests,
   loadRepoReviewContext,
@@ -9542,9 +9543,12 @@ async function maybePublishPrPublicSurface(
   }
 
   if (decision.willComment) {
-    // Maintainer review-content overrides from `.gittensory.yml` (footer text, row toggles, intro note).
-    // Cached, so this is a DB read after the settings resolution already loaded the manifest.
-    const repoFocusManifestForComment = await loadRepoFocusManifest(env, repoFullName);
+    // Maintainer review-content overrides may come from private self-host config, but validation warnings
+    // rendered in the public PR comment must come only from the repo-published manifest.
+    const [repoFocusManifestForComment, publicRepoFocusManifestForComment] = await Promise.all([
+      loadRepoFocusManifest(env, repoFullName),
+      loadPublicRepoFocusManifest(env, repoFullName).catch(() => null),
+    ]);
     const reviewConfig = repoFocusManifestForComment.review;
     // Duplicate-winner adjudication (#dup-winner): thread the flag into the public panel builders so the
     // winner's hard-duplicate block is suppressed (they recompute the winner from their own open-only sibling
@@ -9856,10 +9860,10 @@ async function maybePublishPrPublicSurface(
           : {}),
         maxFindingsCaps: reviewConfig.maxFindings,
         commentVerbosity: reviewConfig.commentVerbosity,
-        // review-manifest validation (#2056): reuse the same manifest already loaded above for reviewConfig —
-        // unconditional (no manifest opt-in needed, a broken config should always fail clearly); no warnings
-        // ⇒ the bridge omits the section (byte-identical).
-        manifestWarnings: repoFocusManifestForComment.warnings,
+        // review-manifest validation (#2056): public PR comments may disclose only repo-published manifest
+        // warnings. Self-host private config can carry operator-only policy and raw invalid values, so never
+        // render warnings from the full/private manifest here.
+        manifestWarnings: publicRepoFocusManifestForComment?.warnings ?? [],
       });
     } else {
       deterministicBody = buildPublicPrIntelligenceComment(commentArgs);

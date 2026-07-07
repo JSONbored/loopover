@@ -312,6 +312,8 @@ describe("data spine repositories", () => {
     expect(await getRepositorySettings(env, "owner/caprepo")).toMatchObject({ contributorOpenPrCap: 2, contributorOpenIssueCap: 5 });
     await upsertRepositorySettings(env, { repoFullName: "owner/caprepo", contributorOpenPrCap: 3, contributorOpenIssueCap: null });
     expect(await getRepositorySettings(env, "owner/caprepo")).toMatchObject({ contributorOpenPrCap: 3, contributorOpenIssueCap: null }); // update persists + can clear
+    await upsertRepositorySettings(env, { repoFullName: "owner/caprepo", contributorOpenPrCap: 101, contributorOpenIssueCap: 150 });
+    expect(await getRepositorySettings(env, "owner/caprepo")).toMatchObject({ contributorOpenPrCap: 100, contributorOpenIssueCap: 100 }); // clamps to the live-check sample budget
     // A cap must be a positive whole number: fractional, non-positive, and non-finite values are all
     // dropped to null rather than silently coerced (there's no such thing as "allow 2.5 open PRs").
     await upsertRepositorySettings(env, { repoFullName: "owner/badcaprepo", contributorOpenPrCap: 2.5 as never });

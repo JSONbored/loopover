@@ -9085,13 +9085,15 @@
             "type": "integer",
             "nullable": true,
             "minimum": 0,
-            "exclusiveMinimum": true
+            "exclusiveMinimum": true,
+            "maximum": 100
           },
           "contributorOpenIssueCap": {
             "type": "integer",
             "nullable": true,
             "minimum": 0,
-            "exclusiveMinimum": true
+            "exclusiveMinimum": true,
+            "maximum": 100
           },
           "contributorCapLabel": {
             "type": "string",

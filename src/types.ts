@@ -622,6 +622,8 @@ export type CombineStrategy = "single" | "consensus" | "synthesis";
  *  {@link CombineStrategy} for why the canonical definition lives here rather than `services/ai-review.ts`. */
 export type OnMerge = "either" | "both";
 
+export const MAX_CONTRIBUTOR_OPEN_ITEM_CAP = 100;
+
 export type RepositorySettings = {
   repoFullName: string;
   commentMode: "off" | "detected_contributors_only" | "all_prs";
@@ -850,11 +852,12 @@ export type RepositorySettings = {
   blacklistLabel?: string | null | undefined;
   /** Per-contributor open-PR cap (#2270, anti-abuse): the max PRs a single non-owner/admin/bot contributor may
    *  have open on this repo at once. `null`/absent (default) = no cap, byte-identical to today. Layered like
-   *  every other settings field (`.gittensory.yml` `settings.contributorOpenPrCap` > DB > `null`). Enforcement
-   *  (closing the newest PR(s) over the cap) is a separate follow-up; this field only carries the threshold. */
+   *  every other settings field (`.gittensory.yml` `settings.contributorOpenPrCap` > DB > `null`). Capped at
+   *  {@link MAX_CONTRIBUTOR_OPEN_ITEM_CAP} so the fixed live-verification sample can enforce the threshold. */
   contributorOpenPrCap?: number | null | undefined;
   /** Per-contributor open-issue cap (#2270, anti-abuse): same shape and precedence as {@link contributorOpenPrCap},
-   *  applied to open issues instead of open PRs. `null`/absent (default) = no cap. */
+   *  applied to open issues instead of open PRs. `null`/absent (default) = no cap. Also capped at
+   *  {@link MAX_CONTRIBUTOR_OPEN_ITEM_CAP}. */
   contributorOpenIssueCap?: number | null | undefined;
   /** The label applied to a PR/issue closed for exceeding a per-contributor open-item cap (#2270). Same
    *  configurable-with-fallback shape as {@link blacklistLabel} (including the explicit-`null`-closes-without-a-

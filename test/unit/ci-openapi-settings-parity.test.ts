@@ -49,4 +49,9 @@ describe("OpenAPI settings-parity check (#2556)", () => {
     const schemaFields = new Set(Object.keys(RepositorySettingsSchema.shape));
     expect(diffFieldSets(typeFields, schemaFields)).toEqual({ missingFromSchema: [], extraInSchema: [] });
   });
+  it("rejects contributor open caps above the enforcement sample budget", () => {
+    expect(() => RepositorySettingsSchema.partial().parse({ contributorOpenPrCap: 101 })).toThrow();
+    expect(() => RepositorySettingsSchema.partial().parse({ contributorOpenIssueCap: 101 })).toThrow();
+    expect(RepositorySettingsSchema.partial().parse({ contributorOpenPrCap: 100, contributorOpenIssueCap: 100 })).toMatchObject({ contributorOpenPrCap: 100, contributorOpenIssueCap: 100 });
+  });
 });

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { MAX_REVIEW_NAG_COOLDOWN_DAYS } from "../settings/agent-actions";
+import { MAX_CONTRIBUTOR_OPEN_ITEM_CAP } from "../types";
 import { extendZodWithOpenApi } from "@asteasolutions/zod-to-openapi";
 
 extendZodWithOpenApi(z);
@@ -733,8 +734,8 @@ export const RepositorySettingsSchema = z
     autoMaintain: z.object({ requireApprovals: z.number().int(), mergeMethod: z.enum(["merge", "squash", "rebase"]) }).optional(),
     agentPaused: z.boolean().optional(),
     agentDryRun: z.boolean().optional(),
-    contributorOpenPrCap: z.number().int().positive().nullable().optional(),
-    contributorOpenIssueCap: z.number().int().positive().nullable().optional(),
+    contributorOpenPrCap: z.number().int().positive().max(MAX_CONTRIBUTOR_OPEN_ITEM_CAP).nullable().optional(),
+    contributorOpenIssueCap: z.number().int().positive().max(MAX_CONTRIBUTOR_OPEN_ITEM_CAP).nullable().optional(),
     contributorCapLabel: z.string().nullable().optional(),
     contributorCapCancelCi: z.boolean().nullable().optional(),
     reviewNagPolicy: z.enum(["off", "hold", "close"]).optional(),

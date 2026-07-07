@@ -1273,6 +1273,14 @@ function normalizeOptionalPositiveInteger(value: JsonValue | undefined, field: s
   return null;
 }
 
+const MAX_CONTRIBUTOR_OPEN_ITEM_CAP = 100;
+
+function normalizeOptionalContributorOpenItemCap(value: JsonValue | undefined, field: string, warnings: string[]): number | null {
+  const parsed = normalizeOptionalPositiveInteger(value, field, warnings);
+  if (parsed === null) return null;
+  return Math.min(parsed, MAX_CONTRIBUTOR_OPEN_ITEM_CAP);
+}
+
 const REVIEW_VISUAL_MAX_ROUTES_LIMIT = 5;
 
 function normalizeOptionalVisualMaxRoutes(value: JsonValue | undefined, warnings: string[]): number | null {
@@ -1664,8 +1672,9 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
     if (entries.length > 0) out.contributorBlacklist = entries;
   }
   // Per-contributor open PR/issue caps (#2270): discrete counts, not scores — reuse the same positive-integer
-  // normalizer as contentLane.maxAppendedEntries so a fractional/non-positive typo is dropped with a warning
-  // instead of configuring a nonsensical cap. UNLIKE contributorBlacklist above, an explicit yml `null` here is
+  // shape as contentLane.maxAppendedEntries so a fractional/non-positive typo is dropped with a warning
+  // instead of configuring a nonsensical cap. Valid counts clamp to the fixed live-verification budget. UNLIKE
+  // contributorBlacklist above, an explicit yml `null` here is
   // load-bearing (not the same as omitting the key): the documented `yml > DB > null` precedence means a
   // maintainer must be able to force a DB-configured cap back to "no cap" via `.gittensory.yml` without deleting
   // the DB row. `normalizeOptionalPositiveInteger` collapses "absent" and "null" to the same silent `null`
@@ -1675,13 +1684,13 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   if (r.contributorOpenPrCap === null) {
     out.contributorOpenPrCap = null;
   } else {
-    const contributorOpenPrCap = normalizeOptionalPositiveInteger(r.contributorOpenPrCap, "settings.contributorOpenPrCap", warnings);
+    const contributorOpenPrCap = normalizeOptionalContributorOpenItemCap(r.contributorOpenPrCap, "settings.contributorOpenPrCap", warnings);
     if (contributorOpenPrCap !== null) out.contributorOpenPrCap = contributorOpenPrCap;
   }
   if (r.contributorOpenIssueCap === null) {
     out.contributorOpenIssueCap = null;
   } else {
-    const contributorOpenIssueCap = normalizeOptionalPositiveInteger(r.contributorOpenIssueCap, "settings.contributorOpenIssueCap", warnings);
+    const contributorOpenIssueCap = normalizeOptionalContributorOpenItemCap(r.contributorOpenIssueCap, "settings.contributorOpenIssueCap", warnings);
     if (contributorOpenIssueCap !== null) out.contributorOpenIssueCap = contributorOpenIssueCap;
   }
   // #label-scoping: same load-bearing-null idiom as blacklistLabel above.

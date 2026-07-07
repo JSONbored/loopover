@@ -61,6 +61,7 @@ import {
   webhookEvents,
 } from "./schema";
 import { DEFAULT_REVIEW_EVASION_LABEL, MAX_REVIEW_NAG_COOLDOWN_DAYS } from "../settings/agent-actions";
+import { MAX_CONTRIBUTOR_OPEN_ITEM_CAP } from "../types";
 import type {
   Advisory,
   AdvisoryFinding,
@@ -6757,12 +6758,12 @@ function normalizeQualityGateMinScore(value: number | null | undefined): number 
 }
 
 // A per-contributor open-item cap (#2270) counts discrete open PRs/issues, not a 0-100 score, so unlike
-// normalizeQualityGateMinScore it is neither clamped into a range nor rounded — a fractional or non-positive
-// value is a malformed cap (there's no such thing as "allow 2.5 open PRs"), so it is dropped to null (no cap)
-// rather than silently coerced into a nonsensical threshold.
+// normalizeQualityGateMinScore it is not rounded — a fractional or non-positive value is a malformed cap
+// (there's no such thing as "allow 2.5 open PRs"), so it is dropped to null (no cap). Valid counts are
+// clamped to the fixed live-verification sample budget so the cap cannot exceed the rows enforcement sees.
 function normalizeOpenItemCap(value: number | null | undefined): number | null {
   if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) return null;
-  return value;
+  return Math.min(value, MAX_CONTRIBUTOR_OPEN_ITEM_CAP);
 }
 
 function parsePublicSurface(value: string): RepositorySettings["publicSurface"] {

@@ -1905,8 +1905,12 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     const noOverride = resolveEffectiveSettings({ contributorOpenPrCap: 4, contributorOpenIssueCap: null } as unknown as RepositorySettings, parseFocusManifest({}));
     expect(noOverride.contributorOpenPrCap).toBe(4);
     expect(noOverride.contributorOpenIssueCap).toBeNull();
-    // A cap is a discrete count, not a 0-100 score: fractional, non-positive, and non-numeric values are all
-    // dropped with a warning rather than silently coerced or clamped into range.
+    // A cap is a discrete count, not a score: over-budget valid integers clamp to the fixed enforcement
+    // sample, while fractional, non-positive, and non-numeric values are dropped with a warning.
+    const overBudget = parseFocusManifest({ settings: { contributorOpenPrCap: 101, contributorOpenIssueCap: 150 } });
+    expect(overBudget.settings.contributorOpenPrCap).toBe(100);
+    expect(overBudget.settings.contributorOpenIssueCap).toBe(100);
+
     const invalid = parseFocusManifest({ settings: { contributorOpenPrCap: 2.5, contributorOpenIssueCap: 0 } });
     expect(invalid.settings.contributorOpenPrCap).toBeUndefined();
     expect(invalid.settings.contributorOpenIssueCap).toBeUndefined();

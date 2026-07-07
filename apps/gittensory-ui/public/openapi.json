@@ -9293,6 +9293,14 @@
           },
           "publicQualityMetrics": {
             "type": "boolean"
+          },
+          "mergeTrainMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "audit",
+              "enforce"
+            ]
           }
         },
         "required": [

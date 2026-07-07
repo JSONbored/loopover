@@ -779,6 +779,14 @@ settings:
   #                                     # Default: review-evasion.
   # reviewEvasionComment: true         # Post the public explanation comment before the enforcement close. Default: true.
 
+  # Merge-train FIFO gate (#selfhost-merge-train): without this, a PR merges the instant its OWN gate clears,
+  # with zero awareness of an older sibling PR still open in the same repo -- proven live to cause out-of-order
+  # merges and the conflicts that follow. "audit" logs what the gate WOULD hold, without actually holding
+  # anything -- validate the fix before enabling it for real. "enforce" actually defers a merge behind a
+  # still-viable older sibling, bounded by a 24h staleness cap so one stuck old PR can never block newer ones
+  # forever. Off by default.
+  # mergeTrainMode: off # off | audit | enforce. Default: off.
+
   # Linked-issue HARD-RULE auto-close (#linked-issue-hard-rules): a DETERMINISTIC verdict about the
   # linked issue itself (not an AI verdict), gated per-rule to block|off. Fires regardless of
   # `guardrailHit`; still respects the `close` autonomy class and the owner/automation exemption. Off

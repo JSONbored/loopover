@@ -127,6 +127,7 @@ const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["gittensory_gate_decisions_total", { help: "Gate decisions by conclusion.", type: "counter" }],
   ["gittensory_precision_breaker_downgrades_total", { help: "Would-merge/would-close actions downgraded to a human hold by an accuracy circuit-breaker, by breaker direction.", type: "counter" }],
   ["gittensory_agent_disposition_total", { help: "Final agent disposition per PR pass (merge/close/hold), by repo, action class, blocker-code class, and autonomy level.", type: "counter" }],
+  ["gittensory_merge_train_deferred_total", { help: "Merge-train FIFO gate deferrals (an older still-viable sibling held a merge), by repo and mode (audit/enforce).", type: "counter" }],
   ["gittensory_reviews_published_total", { help: "Published review comments.", type: "counter" }],
   ["gittensory_github_branch_protection_permission_denied_total", { help: "GitHub branch-protection reads denied by permissions.", type: "counter" }],
   ["gittensory_github_pr_files_fetch_total", { help: "GitHub pull-request file fetch attempts.", type: "counter" }],
@@ -154,6 +155,7 @@ const PRIVATE_REPO_LABEL_METRICS = new Set([
 const ALWAYS_REDACT_REPO_LABEL_METRICS = new Set([
   "gittensory_agent_disposition_total",
   "gittensory_queue_backlog_by_repo",
+  "gittensory_merge_train_deferred_total",
 ]);
 const redactedRepoLabels = new Map<string, string>();
 

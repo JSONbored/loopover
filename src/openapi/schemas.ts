@@ -770,6 +770,7 @@ export const RepositorySettingsSchema = z
     reviewEvasionProtection: z.enum(["off", "close"]).optional(),
     reviewEvasionLabel: z.string().nullable().optional(),
     reviewEvasionComment: z.boolean().optional(),
+    mergeTrainMode: z.enum(["off", "audit", "enforce"]).optional(),
     screenshotTableGate: z
       .object({
         enabled: z.boolean(),

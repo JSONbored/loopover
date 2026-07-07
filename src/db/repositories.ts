@@ -645,6 +645,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     reviewEvasionProtection: normalizeReviewEvasionProtection(row.reviewEvasionProtection),
     reviewEvasionLabel: row.reviewEvasionLabel,
     reviewEvasionComment: row.reviewEvasionComment,
+    mergeTrainMode: normalizeMergeTrainMode(row.mergeTrainMode),
     screenshotTableGate: parseScreenshotTableGateRow(row),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -765,6 +766,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     reviewEvasionProtection: normalizeReviewEvasionProtection(settings.reviewEvasionProtection),
     reviewEvasionLabel: settings.reviewEvasionLabel ?? DEFAULT_REVIEW_EVASION_LABEL,
     reviewEvasionComment: settings.reviewEvasionComment ?? true,
+    mergeTrainMode: normalizeMergeTrainMode(settings.mergeTrainMode),
     screenshotTableGate: normalizeScreenshotTableGateConfig(settings.screenshotTableGate, []),
   } satisfies RepositorySettings;
   const db = getDb(env.DB);
@@ -7057,6 +7059,10 @@ function normalizeReviewNagPolicy(value: string | null | undefined): "off" | "ho
 // held -- there is no partial-enforcement mode).
 function normalizeReviewEvasionProtection(value: string | null | undefined): "off" | "close" {
   return value === "close" ? "close" : "off";
+}
+
+function normalizeMergeTrainMode(value: string | null | undefined): "off" | "audit" | "enforce" {
+  return value === "audit" || value === "enforce" ? value : "off";
 }
 
 // Config-driven before/after screenshot-table gate (#2006): the row stores whenLabels/whenPaths as JSON string

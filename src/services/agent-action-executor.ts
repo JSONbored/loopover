@@ -6,6 +6,7 @@ import {
   getGlobalModerationConfig,
   insertNotificationDeliveryIfAbsent,
   isGlobalAgentFrozen,
+  listOtherOpenPullRequests,
   markPullRequestApproved,
   markPullRequestMergeBlocked,
   recordAuditEvent,
@@ -35,6 +36,7 @@ import {
   type ModerationRuleType,
 } from "../settings/moderation-rules";
 import { incr } from "../selfhost/metrics";
+import { shouldWaitForOlderSiblings } from "../review/merge-train";
 import { captureError } from "../selfhost/sentry";
 
 // The agent actor name on every audit record — the App acts on the maintainer's behalf per their configured
@@ -179,6 +181,15 @@ export type AgentActionExecutionContext = {
   // custom label name is honored instead of only ever checking the literal default. `null` explicitly disables
   // the manual-review label (and this guard with it); absent/undefined uses the default AGENT_LABEL_NEEDS_REVIEW.
   manualReviewLabel?: string | null | undefined;
+  // Merge-train FIFO gate (#selfhost-merge-train), resolved by the CALLER (same "the executor has no settings
+  // access" shape as the fields above): "off" (default, unchanged behavior) | "audit" (log what would be held,
+  // never actually hold) | "enforce" (actually defer a merge behind a still-viable older sibling). Absent/
+  // undefined behaves exactly like "off".
+  mergeTrainMode?: "off" | "audit" | "enforce" | undefined;
+  // This PR's own creation time, resolved by the CALLER (already has the PR record in scope) — the merge-train
+  // gate below compares this against open siblings fetched fresh, since siblings are only ever fetched lazily
+  // when the gate is actually enabled (see step 8b), not threaded through every caller unconditionally.
+  pullRequestCreatedAt?: string | null | undefined;
 };
 
 export type ModerationContextSettings = {
@@ -448,6 +459,35 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       if (staleReason) {
         await audit("denied", `${staleReason} — action not executed`);
         continue;
+      }
+    }
+    // 8b) merge-train FIFO gate (#selfhost-merge-train): a still-viable OLDER open sibling in this repo holds
+    // this merge until it merges, closes, or goes stale (see merge-train.ts's staleness cap). Siblings are
+    // fetched fresh here, lazily, ONLY when the gate is actually enabled for this repo — not threaded through
+    // every caller unconditionally, since the vast majority of merges never need this check. "audit" mode logs
+    // the decision but never actually holds anything, so it's safe to enable everywhere to validate the fix
+    // before switching a repo to "enforce".
+    if (action.actionClass === "merge" && ctx.mergeTrainMode && ctx.mergeTrainMode !== "off") {
+      const siblings = await listOtherOpenPullRequests(env, ctx.repoFullName, ctx.pullNumber);
+      const decision = shouldWaitForOlderSiblings(ctx.pullNumber, ctx.pullRequestCreatedAt, siblings, Date.now());
+      if (decision.wait) {
+        incr("gittensory_merge_train_deferred_total", { repo: ctx.repoFullName, mode: ctx.mergeTrainMode });
+        if (ctx.mergeTrainMode === "enforce") {
+          await audit("denied", `merge train: waiting for older mergeable sibling #${decision.blockingPr} — action not executed`);
+          continue;
+        }
+        // "audit" mode: record a SEPARATE, informational audit-trail entry (never through the shared `audit`
+        // closure above, which pushes into the SAME outcomes[] this function returns -- calling it here too
+        // would silently double the returned outcome count for this one action). The merge itself proceeds
+        // unaffected below.
+        await recordAuditEvent(env, {
+          eventType: "agent.action.merge_train_would_wait",
+          actor: "gittensory",
+          targetKey,
+          outcome: "denied",
+          detail: `merge train (audit mode): would wait for older mergeable sibling #${decision.blockingPr}`,
+          metadata: { repoFullName: ctx.repoFullName, pullNumber: ctx.pullNumber, blockingPr: decision.blockingPr },
+        }).catch(() => undefined);
       }
     }
     // 9) live — perform the real mutation, recording success or the error.

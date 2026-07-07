@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/github/pr-actions", () => ({
   createPullRequestReview: vi.fn(async () => ({ id: 1 })),
@@ -1850,5 +1850,84 @@ describe("pendingClosureLabelApplied (#1136 Pass-2 trigger)", () => {
   });
   it("false when there is no outcome at the label's index (outcomes shorter than the plan)", () => {
     expect(pendingClosureLabelApplied([approve2, labelAdd], [out("completed", "approve")])).toBe(false);
+  });
+});
+
+describe("executeAgentMaintenanceActions merge-train gate (#selfhost-merge-train)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchPullRequestFreshness).mockImplementation(async (_env, args) => ({
+      status: "current",
+      liveHeadSha: args.expectedHeadSha ?? null,
+      liveState: "open",
+      liveLabels: [],
+    }));
+    // Pin "now" alongside the fixtures' fixed 2026-07-0x createdAt values -- the gate's staleness cap
+    // (MERGE_TRAIN_MAX_WAIT_MS, 24h) compares against the REAL Date.now() in production code, so leaving the
+    // system clock unpinned would make these fixed dates drift stale (or not) purely based on whatever day
+    // the test suite happens to run on.
+    vi.setSystemTime(new Date("2026-07-05T12:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("mergeTrainMode absent/\"off\" (default) merges immediately, ignoring an older open sibling", async () => {
+    const env = createTestEnv({});
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 3, title: "Older sibling", state: "open", user: { login: "c" }, head: { sha: "sha3" }, labels: [], body: "", created_at: "2026-07-05T08:00:00.000Z" });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "This PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "", created_at: "2026-07-05T10:00:00.000Z" });
+
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ pullRequestCreatedAt: "2026-07-05T10:00:00.000Z" }), [merge]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(mergePullRequest).toHaveBeenCalled();
+  });
+
+  it("mergeTrainMode: \"enforce\" holds the merge behind a still-open OLDER sibling", async () => {
+    const env = createTestEnv({});
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 3, title: "Older sibling", state: "open", user: { login: "c" }, head: { sha: "sha3" }, labels: [], body: "", created_at: "2026-07-05T08:00:00.000Z" });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "This PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "", created_at: "2026-07-05T10:00:00.000Z" });
+
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ mergeTrainMode: "enforce", pullRequestCreatedAt: "2026-07-05T10:00:00.000Z" }), [merge]);
+    expect(outcomes[0]).toMatchObject({ actionClass: "merge", outcome: "denied" });
+    expect(outcomes[0]?.detail).toContain("merge train");
+    expect(outcomes[0]?.detail).toContain("#3");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it("mergeTrainMode: \"enforce\" merges normally when no older sibling exists", async () => {
+    const env = createTestEnv({});
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 9, title: "Newer sibling", state: "open", user: { login: "c" }, head: { sha: "sha9" }, labels: [], body: "", created_at: "2026-07-05T11:00:00.000Z" });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "This PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "", created_at: "2026-07-05T10:00:00.000Z" });
+
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ mergeTrainMode: "enforce", pullRequestCreatedAt: "2026-07-05T10:00:00.000Z" }), [merge]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(mergePullRequest).toHaveBeenCalled();
+  });
+
+  it("mergeTrainMode: \"audit\" records the would-hold decision but still executes the merge", async () => {
+    const env = createTestEnv({});
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 3, title: "Older sibling", state: "open", user: { login: "c" }, head: { sha: "sha3" }, labels: [], body: "", created_at: "2026-07-05T08:00:00.000Z" });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "This PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "", created_at: "2026-07-05T10:00:00.000Z" });
+
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ mergeTrainMode: "audit", pullRequestCreatedAt: "2026-07-05T10:00:00.000Z" }), [merge]);
+    // Exactly ONE outcome for the one planned action -- the audit-mode signal must not double it.
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(mergePullRequest).toHaveBeenCalled();
+    const wouldWaitRow = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by created_at desc limit 1")
+      .bind("agent.action.merge_train_would_wait")
+      .first<{ outcome: string; detail: string }>();
+    expect(wouldWaitRow?.detail).toContain("#3");
+  });
+
+  it("a git-conflicted (\"dirty\") older sibling never blocks an enforce-mode merge", async () => {
+    const env = createTestEnv({});
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 3, title: "Conflicted older sibling", state: "open", user: { login: "c" }, head: { sha: "sha3" }, labels: [], body: "", created_at: "2026-07-05T08:00:00.000Z", mergeable_state: "dirty" });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "This PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "", created_at: "2026-07-05T10:00:00.000Z" });
+
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ mergeTrainMode: "enforce", pullRequestCreatedAt: "2026-07-05T10:00:00.000Z" }), [merge]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(mergePullRequest).toHaveBeenCalled();
   });
 });

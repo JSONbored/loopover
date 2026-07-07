@@ -6920,6 +6920,11 @@ describe("queue processors", () => {
 
     const fanned = sent.filter((job): job is Extract<import("../../src/types").JobMessage, { type: "agent-regate-pr" }> => job.type === "agent-regate-pr");
     expect(fanned.map((job) => job.deliveryId)).toContain("regate-repair:owner/agent-repo#2");
+    // #orb-retry-storm: the attempt is recorded at EXECUTION time (after rate-limit admission), not at
+    // dispatch time -- a queued-but-not-yet-run job must not count against the cap. Process the fanned-out
+    // job (simulating the queue consumer picking it up) before checking the recorded count.
+    const repairJob = fanned.find((job) => job.deliveryId === "regate-repair:owner/agent-repo#2");
+    await processJob(env, repairJob!);
     const attemptsAfterFirst = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
       .bind("agent.sweep.regate.repair_attempt", targetKey)
       .first<{ n: number }>();

@@ -608,6 +608,25 @@ describe("database row parser hardening", () => {
     expect(await findHottestReviewTargetForRepo(env, "owner/nothing-here", "2026-06-24T09:00:00.000Z")).toBeNull();
   });
 
+  it("findHottestReviewTargetForRepo treats repo names as literal LIKE prefixes (regression for review-burst scope pollution)", async () => {
+    const env = createTestEnv();
+    const publish = (targetKey: string, createdAt: string) =>
+      recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", actor: "contributor", targetKey, outcome: "completed", createdAt });
+
+    await publish("owner/foo_bar#1", "2026-06-24T10:00:00.000Z");
+    await publish("owner/foo_bar#1", "2026-06-24T10:05:00.000Z");
+    await publish("owner/foo_bar#1", "2026-06-24T10:10:00.000Z");
+    await publish("owner/fooXbar#99", "2026-06-24T10:00:00.000Z");
+    await publish("owner/fooXbar#99", "2026-06-24T10:05:00.000Z");
+    await publish("owner/fooXbar#99", "2026-06-24T10:10:00.000Z");
+    await publish("owner/fooXbar#99", "2026-06-24T10:15:00.000Z");
+
+    expect(await findHottestReviewTargetForRepo(env, "owner/foo_bar", "2026-06-24T09:00:00.000Z")).toEqual({
+      targetKey: "owner/foo_bar#1",
+      count: 3,
+    });
+  });
+
   it("hasAuditEventForDelivery finds a matching deliveryId inside metadata_json, scoped to actor+eventType+targetKey (#2560)", async () => {
     const env = createTestEnv();
     await recordAuditEvent(env, {

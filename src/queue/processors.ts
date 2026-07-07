@@ -171,6 +171,8 @@ import {
   parseGittensoryMentionCommand,
   sanitizePublicComment,
 } from "../github/commands";
+import { classifyPrCommandRequest } from "../github/pr-command-request";
+import { normalizeResolveFindingRef } from "../github/resolve-command";
 import {
   ensurePullRequestLabel,
   removePullRequestLabel,
@@ -5510,6 +5512,22 @@ async function processGitHubWebhook(
     if (eventName === "issue_comment" && (await maybeProcessResolveCommand(env, deliveryId, payload))) { await recordWebhookEvent(env, { deliveryId, eventName, action: payload.action, installationId: payload.installation?.id, repositoryFullName: payload.repository?.full_name, payloadHash: "processed", status: "processed" }); return; }
     if (
       eventName === "issue_comment" &&
+      (await maybeProcessResolveCommand(env, deliveryId, payload))
+    ) {
+      await recordWebhookEvent(env, {
+        deliveryId,
+        eventName,
+        action: payload.action,
+        installationId: payload.installation?.id,
+        repositoryFullName: payload.repository?.full_name,
+        payloadHash: "processed",
+        status: "processed",
+      });
+      return;
+    }
+
+    if (
+      eventName === "issue_comment" &&
       (await maybeProcessPlanCommand(env, deliveryId, payload))
     ) {
       await recordWebhookEvent(env, {
@@ -10420,6 +10438,208 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
   await createOrUpdateAgentCommandComment(env, req.installationId, req.repoFullName, req.pr.number, confirmation, mode);
   await recordAuditEvent(env, { eventType: "github_app.finding_resolved", actor: req.actor, targetKey, outcome: "completed", detail: `Marked ${resolvedLabel} as resolved.`, metadata: { deliveryId, repoFullName: req.repoFullName, scope: findingRef.scope, resolvedWarningCount: selection.findings.length, recordedSuppressionCount, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } });
   await recordGithubProductUsage(env, "finding_resolved", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: { scope: findingRef.scope, resolvedWarningCount: selection.findings.length, recordedSuppressionCount, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } }); return true; }
+/**
+ * `@gittensory resolve [<finding-id>]` (#2166 dispatch scaffold). A maintainer records that a posted review
+ * finding (or every finding on the PR when no id is supplied) is resolved so it stops re-surfacing in future
+ * passes. Contributor scope stops at authorization + `github_app.finding_resolved` audit/usage + a public
+ * confirmation — suppression semantics that feed the next review are maintainer-owned (#1964).
+ */
+async function maybeProcessResolveCommand(
+  env: Env,
+  deliveryId: string,
+  payload: GitHubWebhookPayload,
+): Promise<boolean> {
+  const command = parseGittensoryMentionCommand(payload.comment?.body);
+  if (!command || command.name !== "resolve") return false;
+
+  const req = classifyPrCommandRequest(payload, getInstallationId(payload));
+  if (!req.ok) {
+    await recordFindingResolvedSkip(
+      env,
+      deliveryId,
+      req.repoFullName,
+      req.targetKey,
+      req.actor,
+      req.reason,
+    );
+    return true;
+  }
+  const targetKey = `${req.repoFullName}#${req.pr.number}`;
+  const [pr, settings] = await Promise.all([
+    getPullRequest(env, req.repoFullName, req.pr.number),
+    resolveRepositorySettings(env, req.repoFullName),
+  ]);
+  if (!pr) {
+    await recordFindingResolvedSkip(
+      env,
+      deliveryId,
+      req.repoFullName,
+      targetKey,
+      req.actor,
+      "cached_pr_missing",
+    );
+    return true;
+  }
+
+  const { authorization } = await authorizePrActionActor({
+    env,
+    deliveryId,
+    installationId: req.installationId,
+    repoFullName: req.repoFullName,
+    issue: payload.issue!,
+    actor: req.actor,
+    commandName: "resolve" as GittensoryMentionCommandName,
+    settings,
+    pr,
+  });
+  if (!authorization.authorized) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.finding_resolved_denied",
+      actor: req.actor,
+      targetKey,
+      outcome: "denied",
+      detail: authorization.reason,
+      metadata: {
+        deliveryId,
+        repoFullName: req.repoFullName,
+        allowedRoles: commandAuthorizationAllowedRoles(
+          settings.commandAuthorization,
+          "resolve",
+        ),
+      },
+    });
+    await recordGithubProductUsage(env, "finding_resolved_denied", {
+      actor: req.actor,
+      repoFullName: req.repoFullName,
+      targetKey,
+      outcome: "denied",
+      metadata: {
+        reason: authorization.reason,
+        actorKind: authorization.actorKind,
+        allowedRoles: commandAuthorizationAllowedRoles(
+          settings.commandAuthorization,
+          "resolve",
+        ),
+      },
+    });
+    return true;
+  }
+
+  const findingRef = normalizeResolveFindingRef(command.reason);
+  if (!findingRef.ok) {
+    await recordFindingResolvedSkip(
+      env,
+      deliveryId,
+      req.repoFullName,
+      targetKey,
+      req.actor,
+      findingRef.reason,
+    );
+    return true;
+  }
+
+  const mode = resolveAgentActionMode({
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    agentPaused: settings.agentPaused,
+    agentDryRun: settings.agentDryRun,
+  });
+  const resolvedLabel =
+    findingRef.scope === "whole_pr"
+      ? "all review findings on this pull request"
+      : `\`${findingRef.findingCode}\``;
+  const confirmation = sanitizePublicComment(
+    [
+      AGENT_COMMAND_COMMENT_MARKER,
+      "",
+      "> [!NOTE]",
+      `> **Review finding resolved by @${req.actor}**`,
+      `> Marked ${resolvedLabel} as resolved for this PR. The Gate check-run is unchanged.`,
+      "",
+      "---",
+      gittensoryFooter(),
+    ].join("\n"),
+  );
+  await createOrUpdateAgentCommandComment(
+    env,
+    req.installationId,
+    req.repoFullName,
+    req.pr.number,
+    confirmation,
+    mode,
+  );
+  if (mode === "live") {
+    await recordAuditEvent(env, {
+      eventType: "github_app.finding_resolved",
+      actor: req.actor,
+      targetKey,
+      outcome: "completed",
+      detail: `Marked ${resolvedLabel} as resolved.`,
+      metadata: {
+        deliveryId,
+        repoFullName: req.repoFullName,
+        scope: findingRef.scope,
+        ...(findingRef.scope === "single"
+          ? { findingCode: findingRef.findingCode }
+          : {}),
+      },
+    });
+    await recordGithubProductUsage(env, "finding_resolved", {
+      actor: req.actor,
+      repoFullName: req.repoFullName,
+      targetKey,
+      outcome: "completed",
+      metadata: {
+        scope: findingRef.scope,
+        ...(findingRef.scope === "single"
+          ? { findingCode: findingRef.findingCode }
+          : {}),
+      },
+    });
+  } else {
+    await recordFindingResolvedSkip(
+      env,
+      deliveryId,
+      req.repoFullName,
+      targetKey,
+      req.actor,
+      mode === "dry_run" ? "dry_run" : "agent_paused",
+      mode,
+    );
+  }
+  return true;
+}
+
+async function recordFindingResolvedSkip(
+  env: Env,
+  deliveryId: string,
+  repoFullName: string | null | undefined,
+  targetKey: string | null | undefined,
+  actor: string | null,
+  reason: string,
+  mode?: "dry_run" | "paused",
+): Promise<void> {
+  await recordAuditEvent(env, {
+    eventType: "github_app.finding_resolved_skipped",
+    actor,
+    targetKey,
+    outcome: "completed",
+    detail: reason,
+    metadata: {
+      deliveryId,
+      repoFullName: repoFullName ?? null,
+      reason,
+      ...(mode ? { mode } : {}),
+    },
+  });
+  await recordGithubProductUsage(env, "finding_resolved_skipped", {
+    actor,
+    repoFullName,
+    targetKey,
+    outcome: "skipped",
+    metadata: { reason, ...(mode ? { mode } : {}) },
+  });
+}
+
 /**
  * `@gittensory plan` (#issue-coding-plan, flag-gated by GITTENSORY_REVIEW_PLANNER). On a MAINTAINER's comment on
  * an ISSUE (not a PR), generate a concise implementation plan from the issue text via Workers AI and post it as an

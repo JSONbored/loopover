@@ -22716,12 +22716,12 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: { number: 93, title: "Not yet wired", state: "open", user: { login: "contributor" }, pull_request: {} },
-        comment: { id: 900, body: "@gittensory pause waiting on design sign-off", author_association: "OWNER", user: { login: "maintainer", type: "User" } },
+        comment: { id: 900, body: "@gittensory configuration", author_association: "OWNER", user: { login: "maintainer", type: "User" } },
         sender: { login: "maintainer", type: "User" },
       },
     });
 
-    // No handler claims a bare "pause" comment yet (its dispatch lands in a follow-up bounty), so the Q&A
+    // No handler claims a bare "configuration" comment yet (its dispatch lands in a follow-up bounty), so the Q&A
     // answer-card path must bail rather than post a stray "help" card or any other Q&A comment.
     expect(calls.comments).toBe(0);
     const feedback = await env.DB.prepare("select id from audit_events where event_type = ?").bind("github_app.agent_command_feedback_prompted").first<{ id: string }>();

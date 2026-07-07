@@ -99,6 +99,14 @@ jobs:
       - name: Install deps
         run: npm ci --ignore-scripts
 
+      # #ci-engine-build-order (release pipeline): --all bundles EVERYTHING self-contained, including
+      # packages/gittensory-miner/lib/*.js (committed, pre-built) which imports @jsonbored/gittensory-engine.
+      # That package's dist/ is gitignored and only exists after this build step -- the regular CI smoke
+      # test's narrower (non --all) build never hits this import chain, so it never caught the gap that
+      # ci.yml's own validate-code job hit for ordinary backend PRs (fixed there separately).
+      - name: Build engine package
+        run: npm run build --workspace @jsonbored/gittensory-engine
+
       - name: Build self-host bundle for release
         run: node scripts/build-selfhost.mjs --all
 

@@ -58,8 +58,8 @@ export const SLOP_RUBRIC_MARKDOWN = [
   "# Gittensory slop assessment rubric",
   "",
   "- `clean`: 0",
-  "- `low`: 1-24",
-  "- `elevated`: 25-59",
+  "- `low`: 1-30",
+  "- `elevated`: 31-59",
   "- `high`: 60-100",
   "",
   "Current deterministic signals:",
@@ -506,8 +506,8 @@ function ensurePublicSafeText(text: string, fallback: string): string {
 // — weigh 15. Identical metadata always yields an identical band (see golden fixtures).
 function slopBandFor(slopRisk: number): SlopBand {
   if (slopRisk <= 0) return "clean";
-  if (slopRisk < 25) return "low";
-  if (slopRisk < 60) return "elevated";
+  if (slopRisk < 31) return "low";    // raised from 25: a single strong signal (30pts) is low, not elevated
+  if (slopRisk < 60) return "elevated"; // elevated now requires multi-signal evidence (strong+weak ≥ 45, or 3×weak = 45)
   return "high";
 }
 

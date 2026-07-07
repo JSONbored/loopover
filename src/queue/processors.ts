@@ -257,6 +257,7 @@ import {
   resolveAgentPermissionReadiness,
 } from "../settings/agent-execution";
 import {
+  ISSUE_WAKE_MAX_PRS,
   SWEEP_FANOUT_DEDUP_MS,
   SWEEP_MAX_PRS,
   isRegateSweepDraining,
@@ -4419,11 +4420,16 @@ async function maybeReReviewOnLinkedIssueChange(
   if (isConvergenceRepoAllowed(env, repoFullName)) {
     const openPullRequests = await listOpenPullRequests(env, repoFullName);
     // Issue-side label/assignment changes can flip linked-issue hard-rule verdicts from mergeable to close.
-    // Wake every affected PR promptly: the issue-side signal can invalidate public gate state, so dropping a
-    // tail here would leave stale passing checks until the regular sweep eventually happens to reach it. Keep
-    // the actual re-gates asynchronous and staggered so the webhook does not perform expensive live reviews.
+    // Wake affected PRs promptly: the issue-side signal can invalidate public gate state, so dropping every
+    // linked PR past a tiny cap would leave stale passing checks until the regular sweep eventually reaches
+    // it. But this must still be BOUNDED -- a popular/tracking issue linked from hundreds of PRs cannot be
+    // allowed to enqueue hundreds of ~9-REST-GET re-gates from one webhook, which is exactly the budget
+    // exhaustion SWEEP_MAX_PRS exists to prevent for the periodic sweep. ISSUE_WAKE_MAX_PRS is a separate,
+    // larger one-shot budget (see its own comment) since this handler fires once per event, not every ~2 min.
+    // Keep the actual re-gates asynchronous and staggered so the webhook does not perform expensive live reviews.
     const linkingPrs = openPullRequests
       .filter((pr) => pr.linkedIssues.includes(issueNumber))
+      .slice(0, ISSUE_WAKE_MAX_PRS)
       .map((pr) => ({ number: pr.number, createdAt: pr.createdAt ?? null }));
     for (const [index, pr] of linkingPrs.entries()) {
       const prNumber = pr.number;

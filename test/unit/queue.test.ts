@@ -66,7 +66,7 @@ import {
   fetchPullRequestFreshness,
 } from "../../src/github/pr-freshness";
 import { createTestEnv } from "../helpers/d1";
-import { SWEEP_MAX_PRS } from "../../src/settings/agent-sweep";
+import { ISSUE_WAKE_MAX_PRS, SWEEP_MAX_PRS } from "../../src/settings/agent-sweep";
 import { AGENT_LABEL_PENDING_CLOSURE, DEFAULT_LINKED_ISSUE_HARD_RULES } from "../../src/review/linked-issue-hard-rules";
 
 vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
@@ -3243,6 +3243,47 @@ describe("queue processors", () => {
       { delaySeconds: 30 },
       { delaySeconds: 40 },
     ]);
+  });
+
+  it("REGRESSION (#3989 review): issue-side linked PR wake stays bounded by ISSUE_WAKE_MAX_PRS when a popular issue links far more PRs", async () => {
+    const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
+          sent.push(options ? { message, options } : { message });
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    for (let number = 1; number <= ISSUE_WAKE_MAX_PRS + 2; number += 1) {
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number, title: `Linking PR ${number}`, state: "open", user: { login: "contributor" }, head: { sha: `a${number}` }, labels: [], body: "Closes #1" });
+    }
+    vi.stubGlobal("fetch", async () => Response.json({}));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "issue-label-popular-issue-fanout",
+      eventName: "issues",
+      payload: {
+        action: "labeled",
+        repository: { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } },
+        installation: { id: 9001 },
+        issue: { number: 1, title: "Issue", state: "open", labels: [{ name: "maintainer-only" }] },
+        label: { name: "maintainer-only" },
+      } as never,
+    });
+
+    // ISSUE_WAKE_MAX_PRS + 2 PRs link the issue, but only the first ISSUE_WAKE_MAX_PRS are enqueued -- a
+    // popular/tracking issue must not be able to enqueue an unbounded number of ~9-REST-GET re-gates from a
+    // single webhook, even though this one-shot handler's budget is intentionally larger than SWEEP_MAX_PRS.
+    expect(sent).toHaveLength(ISSUE_WAKE_MAX_PRS);
+    expect(sent.map(({ message }) => (message as { prNumber: number }).prNumber)).toEqual(
+      Array.from({ length: ISSUE_WAKE_MAX_PRS }, (_, index) => index + 1),
+    );
   });
 
   it("REGRESSION (#2371): a coalesced issue-side signal schedules a trailing re-review so an add-then-remove sequence is never lost", async () => {

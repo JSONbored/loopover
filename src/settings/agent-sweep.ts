@@ -18,6 +18,14 @@ import type { PullRequestRecord } from "../types";
 // to `3 × 3 × 9 × 30 ≈ 2.4k/hr`, leaving budget for live webhooks, cache misses, and branch-protection reads.
 export const SWEEP_MAX_PRS = 3;
 
+// Issue-side wake budget (#3989 review): SWEEP_MAX_PRS (3) is sized for a sweep that RECURS every ~2 minutes,
+// so its ceiling has to survive being multiplied by ~30 ticks/hr. This handler instead fires ONCE per issue
+// label/assignment webhook, so a larger one-shot source budget is safe -- but it still must be bounded, or a
+// popular/tracking issue linked from hundreds of PRs would enqueue hundreds of ~9-REST-GET re-gates from a
+// single event. 25 reuses this file's own prior sweep ceiling (see SWEEP_MAX_PRS comment) as a one-shot budget:
+// worst case ~25 x 9 = 225 REST calls, staggered by the same delaySeconds window the caller already uses.
+export const ISSUE_WAKE_MAX_PRS = 25;
+
 // Skip-if-fresh window: a PR touched within this span was almost certainly just gated by its webhook, so the
 // sweep leaves it alone for that brief moment to avoid racing the in-flight webhook review. Kept SHORT (2 min)
 // because the sweep is now LIGHT (re-gate + act, no AI) and runs every ~2 min — a just-approved PR must be

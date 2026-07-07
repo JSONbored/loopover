@@ -22373,6 +22373,182 @@ describe("queue processors", () => {
     expect(paused ?? null).toBeNull();
   });
 
+  it("skips @gittensory pause for bot authors, missing context, and uncached PRs (#2164)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 100,
+      title: "Cached pause target",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "pause-cached-sha" },
+      labels: [],
+      body: "Validation: npm test",
+    });
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pause-bot-skip",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 100, title: "Cached pause target", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 825, body: "@gittensory pause", user: { login: "gittensory[bot]", type: "Bot" } },
+        sender: { login: "gittensory[bot]", type: "Bot" },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pause-missing-context",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        comment: { id: 826, body: "@gittensory pause", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pause-missing-cache",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 101, title: "Uncached pause target", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 827, body: "@gittensory pause", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    const skips = await env.DB.prepare("select detail from audit_events where event_type = ? order by detail")
+      .bind("github_app.autoreview_paused_skipped")
+      .all<{ detail: string }>();
+    expect(skips.results.map((event) => event.detail)).toEqual([
+      "bot_author",
+      "cached_pr_missing",
+      "missing_repo_pr_installation_or_actor",
+    ]);
+    const paused = await env.DB.prepare("select id from audit_events where event_type = ?").bind("github_app.autoreview_paused").first<{ id: string }>();
+    expect(paused ?? null).toBeNull();
+  });
+
+  it("records a default reason when @gittensory pause has no trailing text (#2164)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 102,
+      title: "Pause without reason",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: {},
+      labels: [],
+      body: "Validation: npm test",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/issues/102/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/102/comments") && method === "POST") return Response.json({ id: 9203 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pause-default-reason",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 102, title: "Pause without reason", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 828, body: "@gittensory pause", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    const paused = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ?")
+      .bind("github_app.autoreview_paused")
+      .first<{ detail: string; metadata_json: string }>();
+    expect(paused?.detail).toBe("No reason provided.");
+    expect(JSON.parse(paused?.metadata_json ?? "{}")).toMatchObject({ headSha: null });
+  });
+
+  it("@gittensory pause respects the global AGENT_ACTIONS_PAUSED kill-switch (#2164)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AGENT_ACTIONS_PAUSED: "true" });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 103,
+      title: "Pause while globally paused",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "pause-global-paused-sha" },
+      labels: [],
+      body: "Validation: npm test",
+    });
+    const calls = { commentPosts: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/issues/103/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/103/comments") && method === "POST") {
+        calls.commentPosts += 1;
+        return Response.json({ id: 9204 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pause-global-paused",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 103, title: "Pause while globally paused", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 829, body: "@gittensory pause fleet brake", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    expect(calls.commentPosts).toBe(0);
+    const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?")
+      .bind("github_app.autoreview_paused_skipped")
+      .first<{ detail: string }>();
+    expect(skipped?.detail).toBe("agent_paused");
+    const paused = await env.DB.prepare("select id from audit_events where event_type = ?").bind("github_app.autoreview_paused").first<{ id: string }>();
+    expect(paused ?? null).toBeNull();
+  });
+
   it("a #1960 action-command verb with no dispatch handler wired yet (e.g. configuration) is bailed out of the Q&A answer-card path, not misrendered as help (#2160)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);

@@ -6,6 +6,7 @@ PG_DB="${GITTENSORY_REPORTING_SOURCE_DATABASE_URL:-${DATABASE_URL:-}}"
 OUT_DIR="${GITTENSORY_REPORTING_DIR:-/reporting}"
 OUT_DB="${GITTENSORY_REPORTING_DB:-$OUT_DIR/gittensory-reporting.sqlite}"
 TMP_DB="${OUT_DB}.tmp"
+FINGERPRINT_FILE="${OUT_DB}.fingerprint"
 CSV_TMP_DIR="$(mktemp -d)"
 
 cleanup() {
@@ -134,7 +135,71 @@ sqlite_import_csv() {
 SQL
 }
 
+# Incremental fast-path (#3895): a live review pipeline is bursty -- most 30s cycles change nothing since the
+# last export, yet the full rebuild below re-exports and re-imports every row of every table every time. That
+# cost grows without bound as ai_usage_events (an append-only log of every AI call) accumulates -- measured on
+# a real self-host instance at 91GB of cumulative block I/O in 37 hours. A cheap COUNT+MAX fingerprint per
+# table is orders of magnitude cheaper than the full COPY/SELECT+INSERT rebuild, so skip the whole rebuild
+# when the fingerprint matches the last run's AND a last-good $OUT_DB already exists. Fails OPEN: any error or
+# missing piece while computing the fingerprint falls through to the existing full-rebuild path unchanged --
+# this is purely an optimization, never a new failure mode or a new way to serve stale data.
+sqlite_source_fingerprint() {
+  [ -s "$APP_DB" ] || return 1
+  fp=""
+  for spec in "pull_requests:updated_at" "review_audit:created_at" "review_targets:updated_at" "ai_usage_events:created_at"; do
+    tbl="${spec%%:*}"
+    col="${spec#*:}"
+    if source_table_exists "$tbl"; then
+      val="$(sqlite3 "$APP_DB" "SELECT COUNT(*) || ':' || COALESCE(MAX($col), '') FROM $tbl")" || return 1
+    else
+      val="absent"
+    fi
+    fp="$fp;$tbl=$val"
+  done
+  printf '%s' "$fp"
+}
+
+pg_source_fingerprint() {
+  fp=""
+  for spec in "pull_requests:updated_at" "review_audit:created_at" "review_targets:updated_at" "ai_usage_events:created_at"; do
+    tbl="${spec%%:*}"
+    col="${spec#*:}"
+    if pg_table_exists "$tbl"; then
+      val="$(pg_scalar "SELECT COUNT(*) || ':' || COALESCE(MAX($col)::text, '') FROM $tbl")" || return 1
+    else
+      val="absent"
+    fi
+    fp="$fp;$tbl=$val"
+  done
+  printf '%s' "$fp"
+}
+
+# Persist the fingerprint that was actually just exported, so the NEXT run's fast-path check above compares
+# against real state. Written atomically (temp file + mv) and only when a fingerprint was actually computed --
+# never persists an empty/unknown value, which would otherwise let two unrelated "couldn't compute" runs
+# falsely compare equal.
+persist_fingerprint() {
+  [ -n "$CURRENT_FINGERPRINT" ] || return 0
+  printf '%s' "$CURRENT_FINGERPRINT" >"${FINGERPRINT_FILE}.tmp"
+  mv "${FINGERPRINT_FILE}.tmp" "$FINGERPRINT_FILE"
+}
+
 mkdir -p "$OUT_DIR"
+
+CURRENT_FINGERPRINT=""
+if pg_enabled; then
+  if command -v psql >/dev/null 2>&1; then
+    pg_export_connection_env
+    CURRENT_FINGERPRINT="$(pg_source_fingerprint)" || CURRENT_FINGERPRINT=""
+  fi
+else
+  CURRENT_FINGERPRINT="$(sqlite_source_fingerprint)" || CURRENT_FINGERPRINT=""
+fi
+
+if [ -n "$CURRENT_FINGERPRINT" ] && [ -s "$OUT_DB" ] && [ -s "$FINGERPRINT_FILE" ] && [ "$(cat "$FINGERPRINT_FILE")" = "$CURRENT_FINGERPRINT" ]; then
+  echo "reporting export skipped: source unchanged since last export"
+  exit 0
+fi
 
 rm -f "$TMP_DB" "$TMP_DB-wal" "$TMP_DB-shm"
 TMP_DB_SQL="$(sql_string "$TMP_DB")"
@@ -328,6 +393,7 @@ FROM ai_usage_events
   sqlite3 "$TMP_DB" "PRAGMA quick_check;" | grep -qx "ok"
   mv "$TMP_DB" "$OUT_DB"
   rm -f "$TMP_DB-wal" "$TMP_DB-shm"
+  persist_fingerprint
 
   echo "reporting export complete: $OUT_DB"
   exit 0
@@ -526,5 +592,6 @@ fi
 sqlite3 "$TMP_DB" "PRAGMA quick_check;" | grep -qx "ok"
 mv "$TMP_DB" "$OUT_DB"
 rm -f "$TMP_DB-wal" "$TMP_DB-shm"
+persist_fingerprint
 
 echo "reporting export complete: $OUT_DB"

@@ -28,8 +28,8 @@ function sqlite(db: string, sql: string): string {
   return execFileSync("sqlite3", [db, sql], { encoding: "utf8" }).trim();
 }
 
-function runExporter(root: string, sourceDb: string, outDb: string, env: Record<string, string> = {}): void {
-  execFileSync("sh", ["scripts/export-grafana-reporting-db.sh"], {
+function runExporter(root: string, sourceDb: string, outDb: string, env: Record<string, string> = {}): string {
+  return execFileSync("sh", ["scripts/export-grafana-reporting-db.sh"], {
     cwd: process.cwd(),
     env: {
       ...process.env,
@@ -39,6 +39,7 @@ function runExporter(root: string, sourceDb: string, outDb: string, env: Record<
       ...env,
     },
     stdio: "pipe",
+    encoding: "utf8",
   });
 }
 
@@ -635,5 +636,79 @@ esac
     ).toThrow();
     expect(existsSync(outDb)).toBe(false);
     expect(readdirSync(csvTmp)).toEqual([]);
+  });
+
+  // ── Incremental fast-path (#3895) ──────────────────────────────────────────────────────────────────
+  it("skips the rebuild on a second run when the SQLite source is unchanged", () => {
+    const root = tmpRoot();
+    const appDb = join(root, "app.sqlite");
+    const outDb = join(root, "reporting.sqlite");
+    sqlite(appDb, `
+      CREATE TABLE pull_requests (
+        repo_full_name TEXT NOT NULL, number INTEGER NOT NULL, title TEXT NOT NULL, state TEXT NOT NULL,
+        author_login TEXT, merged_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      INSERT INTO pull_requests (repo_full_name, number, title, state, author_login, merged_at, created_at, updated_at)
+      VALUES ('JSONbored/gittensory', 5001, 'unchanged PR', 'open', 'JSONbored', NULL, '2026-07-06T00:00:00Z', '2026-07-06T00:00:00Z');
+
+      CREATE TABLE review_audit (
+        id TEXT NOT NULL, target_id TEXT NOT NULL, event_type TEXT NOT NULL, decision TEXT,
+        source TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+    `);
+
+    const first = runExporter(root, appDb, outDb);
+    expect(first).toContain("reporting export complete");
+    expect(sqlite(outDb, "SELECT count(*) FROM review_targets;")).toBe("1");
+
+    const second = runExporter(root, appDb, outDb);
+    expect(second).toContain("reporting export skipped: source unchanged since last export");
+    // The last-good snapshot is untouched, not silently emptied or corrupted by the skip.
+    expect(sqlite(outDb, "PRAGMA quick_check;")).toBe("ok");
+    expect(sqlite(outDb, "SELECT count(*) FROM review_targets;")).toBe("1");
+  });
+
+  it("redoes the rebuild once the SQLite source actually changes, reflecting the new row", () => {
+    const root = tmpRoot();
+    const appDb = join(root, "app.sqlite");
+    const outDb = join(root, "reporting.sqlite");
+    sqlite(appDb, `
+      CREATE TABLE pull_requests (
+        repo_full_name TEXT NOT NULL, number INTEGER NOT NULL, title TEXT NOT NULL, state TEXT NOT NULL,
+        author_login TEXT, merged_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      INSERT INTO pull_requests (repo_full_name, number, title, state, author_login, merged_at, created_at, updated_at)
+      VALUES ('JSONbored/gittensory', 5002, 'first PR', 'open', 'JSONbored', NULL, '2026-07-06T00:00:00Z', '2026-07-06T00:00:00Z');
+
+      CREATE TABLE review_audit (
+        id TEXT NOT NULL, target_id TEXT NOT NULL, event_type TEXT NOT NULL, decision TEXT,
+        source TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+    `);
+    runExporter(root, appDb, outDb);
+    expect(sqlite(outDb, "SELECT count(*) FROM review_targets;")).toBe("1");
+
+    sqlite(appDb, `
+      INSERT INTO pull_requests (repo_full_name, number, title, state, author_login, merged_at, created_at, updated_at)
+      VALUES ('JSONbored/gittensory', 5003, 'second PR', 'open', 'JSONbored', NULL, '2026-07-06T00:05:00Z', '2026-07-06T00:05:00Z');
+    `);
+    const second = runExporter(root, appDb, outDb);
+    expect(second).toContain("reporting export complete");
+    expect(sqlite(outDb, "SELECT count(*) FROM review_targets;")).toBe("2");
+  });
+
+  it("skips the rebuild on a second run when the Postgres source is unchanged", () => {
+    const root = tmpRoot();
+    const outDb = join(root, "reporting.sqlite");
+    const bin = fakePsql(root);
+    const runOpts = { DATABASE_URL: "postgres://gittensory:pw@postgres:5432/gittensory", PATH: `${bin}:${process.env.PATH ?? ""}` };
+
+    const first = runExporter(root, join(root, "unused.sqlite"), outDb, runOpts);
+    expect(first).toContain("reporting export complete");
+
+    const second = runExporter(root, join(root, "unused.sqlite"), outDb, runOpts);
+    expect(second).toContain("reporting export skipped: source unchanged since last export");
+    expect(sqlite(outDb, "PRAGMA quick_check;")).toBe("ok");
+    expect(sqlite(outDb, "SELECT count(*) FROM review_targets;")).toBe("3");
   });
 });

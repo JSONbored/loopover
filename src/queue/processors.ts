@@ -7922,13 +7922,12 @@ export async function reconcileLiveDuplicateSiblings(
   if (env.GITTENSORY_DUPLICATE_WINNER !== "true") return otherOpenPullRequests;
   const linkedIssues = new Set(pr.linkedIssues);
   if (linkedIssues.size === 0) return otherOpenPullRequests;
-  const lowerOverlapping = otherOpenPullRequests.filter(
+  const overlapping = otherOpenPullRequests.filter(
     (other) =>
-      other.number < pr.number &&
       other.state === "open" &&
       other.linkedIssues.some((issue) => linkedIssues.has(issue)),
   );
-  if (lowerOverlapping.length === 0) return otherOpenPullRequests;
+  if (overlapping.length === 0) return otherOpenPullRequests;
   const installationToken =
     installationId === null
       ? undefined
@@ -7939,7 +7938,7 @@ export async function reconcileLiveDuplicateSiblings(
   const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
   const staleClosed = new Set<number>();
   await Promise.all(
-    lowerOverlapping.map(async (sibling) => {
+    overlapping.map(async (sibling) => {
       // #2537: deliberately NOT durable-cached (flagged by the gate's own review) -- despite recomputing every
       // delivery, this reconcile feeds duplicate-winner selection, which can auto-CLOSE the CURRENT PR when
       // duplicateWinnerEnabled. A cached "open" read up to PR_STATE_CACHE_MAX_AGE_MS stale after a missed

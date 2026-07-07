@@ -4,7 +4,7 @@ import { createInstallationToken } from "../../src/github/app";
 import type { PullRequestRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
-// reconcileLiveDuplicateSiblings re-fetches a lower duplicate sibling's LIVE state via createInstallationToken +
+// reconcileLiveDuplicateSiblings re-fetches a duplicate sibling's LIVE state via createInstallationToken +
 // the REST /pulls/{n} call, so mock the token mint (the test env holds no App key) and stub fetch per case.
 vi.mock("../../src/github/app", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/github/app")>()),
@@ -55,26 +55,35 @@ describe("reconcileLiveDuplicateSiblings (#dup-winner / audit #15)", () => {
     expect(await reconcileLiveDuplicateSiblings(env, null, "owner/repo", pr, siblings)).toBe(siblings);
   });
 
-  it("flag ON but every overlapping sibling is HIGHER-numbered ⇒ this PR already wins, unchanged (no fetch)", async () => {
+  it("flag ON, a higher overlapping sibling LIVE-closed ⇒ dropped because claim-time election lets higher numbers demote", async () => {
     const env = createTestEnv();
     env.GITTENSORY_DUPLICATE_WINNER = "true";
-    vi.stubGlobal("fetch", async () => {
-      throw new Error("higher-numbered siblings cannot demote the winner; no live fetch expected");
-    });
+    stubLiveStates({ 12: "closed" });
     const siblings = [makePr(12, "open", [1])];
     const pr = makePr(9, "open", [1]);
-    expect(await reconcileLiveDuplicateSiblings(env, null, "owner/repo", pr, siblings)).toBe(siblings);
+    const result = await reconcileLiveDuplicateSiblings(env, null, "owner/repo", pr, siblings);
+    expect(result.map((p) => p.number)).toEqual([]);
   });
 
-  it("flag ON, a lower sibling that does NOT overlap the issue set ⇒ unchanged (not a cluster member)", async () => {
+  it("flag ON, a higher overlapping sibling LIVE-open ⇒ kept (claim-time winner selection decides later)", async () => {
     const env = createTestEnv();
     env.GITTENSORY_DUPLICATE_WINNER = "true";
-    const siblings = [makePr(5, "open", [2])];
+    stubLiveStates({ 12: "open" });
+    const siblings = [makePr(12, "open", [1])];
+    const pr = makePr(9, "open", [1]);
+    const result = await reconcileLiveDuplicateSiblings(env, null, "owner/repo", pr, siblings);
+    expect(result.map((p) => p.number)).toEqual([12]);
+  });
+
+  it("flag ON, a sibling that does NOT overlap the issue set ⇒ unchanged (not a cluster member)", async () => {
+    const env = createTestEnv();
+    env.GITTENSORY_DUPLICATE_WINNER = "true";
+    const siblings = [makePr(12, "open", [2])];
     const pr = makePr(9, "open", [1]);
     expect(await reconcileLiveDuplicateSiblings(env, null, "owner/repo", pr, siblings)).toBe(siblings);
   });
 
-  it("flag ON, a lower sibling already cached non-open ⇒ unchanged (the cache already excludes it)", async () => {
+  it("flag ON, a sibling already cached non-open ⇒ unchanged (the cache already excludes it)", async () => {
     const env = createTestEnv();
     env.GITTENSORY_DUPLICATE_WINNER = "true";
     const siblings = [makePr(5, "closed", [1])];
@@ -82,7 +91,7 @@ describe("reconcileLiveDuplicateSiblings (#dup-winner / audit #15)", () => {
     expect(await reconcileLiveDuplicateSiblings(env, null, "owner/repo", pr, siblings)).toBe(siblings);
   });
 
-  it("flag ON, a lower overlapping sibling LIVE-closed ⇒ dropped so the real lowest-OPEN PR is the winner", async () => {
+  it("flag ON, a lower overlapping sibling LIVE-closed ⇒ dropped so the remaining open cluster is adjudicated from live members", async () => {
     const env = createTestEnv();
     env.GITTENSORY_DUPLICATE_WINNER = "true";
     stubLiveStates({ 5: "closed" });
@@ -112,14 +121,14 @@ describe("reconcileLiveDuplicateSiblings (#dup-winner / audit #15)", () => {
     expect(result.map((p) => p.number)).toEqual([5]);
   });
 
-  it("flag ON, two lower overlapping siblings (one live-closed, one live-open) ⇒ only the closed one is dropped", async () => {
+  it("flag ON, two overlapping siblings (one live-closed, one live-open) ⇒ only the closed one is dropped", async () => {
     const env = createTestEnv();
     env.GITTENSORY_DUPLICATE_WINNER = "true";
-    stubLiveStates({ 4: "closed", 5: "open" });
-    const siblings = [makePr(4, "open", [1]), makePr(5, "open", [1])];
+    stubLiveStates({ 4: "closed", 12: "open" });
+    const siblings = [makePr(4, "open", [1]), makePr(12, "open", [1])];
     const pr = makePr(9, "open", [1]);
     const result = await reconcileLiveDuplicateSiblings(env, null, "owner/repo", pr, siblings);
-    expect(result.map((p) => p.number)).toEqual([5]);
+    expect(result.map((p) => p.number)).toEqual([12]);
   });
 
   it("flag ON, a numeric installation whose token mint THROWS ⇒ falls back to the public token and still reconciles", async () => {

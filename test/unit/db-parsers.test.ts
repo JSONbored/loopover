@@ -59,6 +59,15 @@ describe("database row parser hardening", () => {
     expect(extractLinkedIssueNumbers("Fixes #1", "owner/repo", -5)).toEqual([]);
   });
 
+  it("REGRESSION: ignores a closing keyword inside an inline code span, e.g. this repo's own PR template checklist example", () => {
+    // .github/pull_request_template.md literally contains "(e.g. `Closes #123`)" -- every PR that keeps the
+    // unmodified checklist item must NOT spuriously link to issue #123.
+    const templateLine = "- [ ] I linked a currently open issue this PR resolves (e.g. `Closes #123`) — a linked open issue is required for every contributor PR.";
+    expect(extractLinkedIssueNumbers(templateLine, "owner/repo")).toEqual([]);
+    // A real closing keyword elsewhere in the same body still counts.
+    expect(extractLinkedIssueNumbers(`Closes #42\n\n${templateLine}`, "owner/repo")).toEqual([42]);
+  });
+
   it("recognizes the fully-qualified `Fixes owner/repo#N` closing syntax when owner/repo matches this repo (#3862)", () => {
     expect(extractLinkedIssueNumbers("Closes owner/repo#42", "owner/repo")).toEqual([42]);
     // Case-insensitive, matching GitHub's own repo-name matching.

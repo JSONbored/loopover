@@ -782,14 +782,14 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
   // REGRESSION (gate-flagged gap, #selfhost-ci-verification): the planning pass evaluates settings.expectedCiContexts,
   // but this final pre-mutation re-check used to always pass `undefined` for requiredContexts (fold-all mode) --
   // a maintainer-configured repo could see the plan and its own execution-time re-check disagree on ciState.
-  it("threads ctx.expectedCiContexts into the live CI re-check's requiredContexts argument", async () => {
+  it("threads ctx.requiredCiContexts into the live CI re-check's requiredContexts argument", async () => {
     const env = createTestEnv({});
-    const outcomes = await executeAgentMaintenanceActions(env, ctx({ expectedCiContexts: ["build", "test"] }), [merge]);
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ requiredCiContexts: new Set(["build", "test"]) }), [merge]);
     expect(outcomes[0]?.outcome).toBe("completed");
     expect(fetchLiveCiAggregate).toHaveBeenCalledWith(env, "owner/repo", "sha7", expect.any(String), new Set(["build", "test"]), expect.any(String));
   });
 
-  it("passes null (fold-all) requiredContexts when ctx.expectedCiContexts is unset — unchanged pre-existing behavior", async () => {
+  it("passes null (fold-all) requiredContexts when ctx.requiredCiContexts is unset — unchanged pre-existing behavior", async () => {
     const env = createTestEnv({});
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [merge]);
     expect(outcomes[0]?.outcome).toBe("completed");

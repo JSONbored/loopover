@@ -6,7 +6,7 @@ import { executeAgentMaintenanceActions, pendingActionToPlanned } from "./agent-
 import { downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, type PlannedAgentAction } from "../settings/agent-actions";
 import { findBlacklistEntry } from "../settings/contributor-blacklist";
 import { isCloseHoldOnly, isHoldOnly } from "../review/outcomes-wire";
-import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision, fetchLivePullRequestState, fetchLiveReviewThreadBlockers, mergeRequiredCiContexts } from "../github/backfill";
+import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision, fetchLivePullRequestState, fetchLiveReviewThreadBlockers, fetchRequiredStatusContexts, mergeRequiredCiContexts } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import type { AgentPendingActionParams, AgentPendingActionRecord } from "../types";
 
@@ -228,13 +228,13 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     // The CI/mergeable/review calls are no-ops (Promise.resolve(undefined)) when shouldRecheckLiveDisposition is
     // false (block entered ONLY for a duplicate-only recheck); the thread/duplicate calls are independently
     // gated on their own specific flags, mirroring the executor's own same-pattern conditional-Promise.all in
-    // agent-action-executor.ts.
+    // agent-action-executor.ts. The branch-protection fetch is nested inside this same ternary (rather than a
+    // standalone variable) because pr is only known-defined when shouldRecheckLiveDisposition is true.
     const [ciResult, mergeableResult, reviewResult, threadResult, duplicateWinnerResult] = await Promise.allSettled([
       shouldRecheckLiveDisposition
-        ? // mergeRequiredCiContexts(null, ...) -- no live branch-protection re-fetch here, just the maintainer's own
-          // configured expectedCiContexts (or null/fold-all when unset), so this accept-time re-check honors the
-          // same required-contexts view the original plan was evaluated against (#selfhost-ci-verification).
-          fetchLiveCiAggregate(env, pending.repoFullName, pr!.headSha, token, mergeRequiredCiContexts(null, settings.expectedCiContexts), admissionKey)
+        ? fetchRequiredStatusContexts(env, pending.repoFullName, pr!.baseRef, token, admissionKey)
+            .then((branchProtectionContexts) => mergeRequiredCiContexts(branchProtectionContexts, settings.expectedCiContexts))
+            .then((requiredContexts) => fetchLiveCiAggregate(env, pending.repoFullName, pr!.headSha, token, requiredContexts, admissionKey))
         : Promise.resolve(undefined),
       shouldRecheckLiveDisposition ? fetchLivePullRequestMergeState(env, pending.repoFullName, pending.pullNumber, token, admissionKey) : Promise.resolve(undefined),
       shouldRecheckLiveDisposition ? fetchLivePullRequestReviewDecision(env, pending.repoFullName, pending.pullNumber, token, admissionKey) : Promise.resolve(undefined),
@@ -390,6 +390,12 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     }
   }
 
+  const executionCiToken = await createInstallationToken(env, pending.installationId).catch(() => undefined);
+  const executionAdmissionKey = githubRateLimitAdmissionKeyForToken(env, executionCiToken, pending.installationId);
+  const executionRequiredContexts = await fetchRequiredStatusContexts(env, pending.repoFullName, pr?.baseRef, executionCiToken, executionAdmissionKey)
+    .then((branchProtectionContexts) => mergeRequiredCiContexts(branchProtectionContexts, settings.expectedCiContexts))
+    .catch(() => mergeRequiredCiContexts(null, settings.expectedCiContexts));
+
   const outcomes = await executeAgentMaintenanceActions(
     env,
     {
@@ -406,9 +412,9 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       // same way the live webhook path does (src/queue/processors.ts) for the cancel hook to fire here too.
       contributorCapCancelCi: settings.contributorCapCancelCi ?? env.CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT === "true",
       // #selfhost-ci-verification: the executor's OWN final pre-mutation live-CI re-check (step 8 of
-      // executeAgentMaintenanceActions) needs the same configured expectedCiContexts this accept-time
-      // re-check (above) and the original plan were both evaluated against.
-      expectedCiContexts: settings.expectedCiContexts,
+      // executeAgentMaintenanceActions) needs the same effective required contexts this accept-time re-check
+      // (above) evaluated against. Re-fetch so branch-protection changes remain authoritative at accept time.
+      requiredCiContexts: executionRequiredContexts,
       // #3472 split-brain: a staged approve/merge can sit queued long enough for a SIBLING pass to publish a
       // manual-review hold on this same PR/head before the maintainer accepts — the executor's own live guard
       // (step 7b of executeAgentMaintenanceActions) needs the configured label to check for.

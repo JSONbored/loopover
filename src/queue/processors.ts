@@ -3138,9 +3138,9 @@ async function runAgentMaintenancePlanAndExecute(
         moderationBannedLabel: settings.moderationBannedLabel,
       },
       // #selfhost-ci-verification: the executor's own final pre-mutation live-CI re-check (immediately before a
-      // merge or a CI-driven close) must honor the same configured expectedCiContexts this plan was evaluated
-      // against, or the two can disagree on ciState.
-      expectedCiContexts: settings.expectedCiContexts,
+      // merge or a CI-driven close) must honor the same effective branch-protection-plus-expected contexts this
+      // plan was evaluated against, or the two can disagree on ciState.
+      requiredCiContexts: requiredContexts,
       // #3472 split-brain: the executor's own live manual-review hold guard (immediately before approve/merge)
       // must check the SAME configured label the planner itself resolves labels.manualReview from.
       manualReviewLabel: settings.manualReviewLabel,

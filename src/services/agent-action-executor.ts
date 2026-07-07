@@ -16,7 +16,7 @@ import { isAuthorBlacklisted } from "../settings/contributor-blacklist";
 import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
 import { cancelInFlightWorkflowRunsForHeadSha, createInstallationToken, githubErrorStatus, isGitHubRateLimitedError } from "../github/app";
-import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestState, fetchLiveReviewThreadBlockers, mergeRequiredCiContexts, refreshInstallationHealthForInstallation } from "../github/backfill";
+import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestState, fetchLiveReviewThreadBlockers, refreshInstallationHealthForInstallation } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { ensurePullRequestAssignee } from "../github/assignees";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
@@ -168,16 +168,13 @@ export type AgentActionExecutionContext = {
   // executor via getGlobalModerationConfig -- a single extra DB read only on the rare path where a
   // moderation-tracked close actually completed, not threaded through every caller.
   moderationSettings?: ModerationContextSettings | undefined;
-  // settings.expectedCiContexts (#selfhost-ci-verification), resolved by the CALLER (same "the executor has no
-  // settings access" shape as the fields above): the final pre-mutation live-CI re-verification (step 8 below)
-  // must honor the SAME configured-required-contexts view the planning pass already evaluated against, or a
-  // maintainer-configured expectedCiContexts repo could see the plan and its own execution-time re-check
-  // disagree on ciState (e.g. a still-in-progress NON-required check reading "pending" here when the plan's
-  // required-only view was already clean). Absent/undefined ⇒ fold-all mode, unchanged from before this field
-  // existed.
-  expectedCiContexts?: ReadonlyArray<string> | null | undefined;
+  // Effective required CI contexts (#selfhost-ci-verification), resolved by the CALLER (same "the executor has
+  // no settings access" shape as the fields above): the final pre-mutation live-CI re-verification (step 8 below)
+  // must honor the SAME branch-protection-plus-expected required-contexts view the planning pass already
+  // evaluated against. Absent/undefined ⇒ fold-all mode, unchanged from before this field existed.
+  requiredCiContexts?: ReadonlySet<string> | null | undefined;
   // settings.manualReviewLabel (#3472 split-brain), resolved by the CALLER (same "the executor has no settings
-  // access" shape as expectedCiContexts above): the approve/merge live label guard (step 7b below) needs the
+  // access" shape as requiredCiContexts above): the approve/merge live label guard (step 7b below) needs the
   // SAME configured label name the planner itself resolves labels.manualReview from (agent-actions.ts), so a
   // custom label name is honored instead of only ever checking the literal default. `null` explicitly disables
   // the manual-review label (and this guard with it); absent/undefined uses the default AGENT_LABEL_NEEDS_REVIEW.
@@ -401,12 +398,9 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     if (requiresLiveCiRecheck || requiresLiveMergeableRecheck || requiresLiveThreadRecheck || requiresLiveDuplicateRecheck) {
       const ciToken = await createInstallationToken(env, ctx.installationId).catch(() => undefined);
       const admissionKey = githubRateLimitAdmissionKeyForToken(env, ciToken, ctx.installationId);
-      // mergeRequiredCiContexts(null, ...) -- no live branch-protection re-fetch here, just the maintainer's own
-      // configured expectedCiContexts (or null/fold-all when unset), matching the "no branch protection" arm of
-      // the planning pass's own merge (mergeRequiredCiContexts is pure and already exported for that call site).
       const [liveCi, liveMergeableState, liveThreadBlockers, liveWinnerState] = await Promise.all([
         requiresLiveCiRecheck
-          ? fetchLiveCiAggregate(env, ctx.repoFullName, expectedHeadSha, ciToken, mergeRequiredCiContexts(null, ctx.expectedCiContexts), admissionKey)
+          ? fetchLiveCiAggregate(env, ctx.repoFullName, expectedHeadSha, ciToken, ctx.requiredCiContexts ?? null, admissionKey)
           : Promise.resolve(undefined),
         requiresLiveMergeableRecheck ? fetchLivePullRequestMergeState(env, ctx.repoFullName, ctx.pullNumber, ciToken, admissionKey) : Promise.resolve(undefined),
         requiresLiveThreadRecheck ? fetchLiveReviewThreadBlockers(env, ctx.repoFullName, ctx.pullNumber, ciToken, admissionKey) : Promise.resolve(undefined),

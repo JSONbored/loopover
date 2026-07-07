@@ -32,6 +32,7 @@ vi.mock("../../src/github/app", async (importOriginal) => ({
 vi.mock("../../src/github/backfill", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/github/backfill")>()),
   fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null })),
+  fetchRequiredStatusContexts: vi.fn(async () => null),
   fetchLivePullRequestMergeState: vi.fn(async () => "clean"),
   fetchLivePullRequestReviewDecision: vi.fn(async () => undefined),
   // Defaults to "no live blockers left" so the existing accept tests stay deterministic; individual tests below
@@ -55,7 +56,7 @@ vi.mock("../../src/review/linked-issue-hard-rules", async (importOriginal) => {
 import { createPullRequestReview, mergePullRequest } from "../../src/github/pr-actions";
 import { ensurePullRequestLabel } from "../../src/github/labels";
 import { createInstallationToken } from "../../src/github/app";
-import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision, fetchLivePullRequestState, fetchLiveReviewThreadBlockers } from "../../src/github/backfill";
+import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision, fetchLivePullRequestState, fetchLiveReviewThreadBlockers, fetchRequiredStatusContexts } from "../../src/github/backfill";
 import { resolveLinkedIssueHardRule } from "../../src/review/linked-issue-hard-rules";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { actionParams, executeAgentMaintenanceActions, pendingActionToPlanned, type AgentActionExecutionContext } from "../../src/services/agent-action-executor";
@@ -504,7 +505,7 @@ describe("agent approval queue (#779)", () => {
   // REGRESSION (gate-flagged gap, #selfhost-ci-verification): this accept-time re-check used to always pass
   // `undefined` for requiredContexts (fold-all mode), even for a repo with settings.expectedCiContexts
   // configured -- so this re-check could disagree with the plan it is meant to validate.
-  it("threads the repo's settings.expectedCiContexts into the accept-time live CI re-check", async () => {
+  it("threads the repo's expectedCiContexts into the accept-time live CI re-check", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
     // expectedCiContexts (#selfhost-ci-verification) is config-as-code only, resolved from the repo's focus
@@ -517,7 +518,39 @@ describe("agent approval queue (#779)", () => {
     const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
 
     expect(result.status).toBe("accepted");
+    expect(fetchRequiredStatusContexts).toHaveBeenCalledWith(env, "owner/repo", null, expect.any(String), expect.any(String));
     expect(fetchLiveCiAggregate).toHaveBeenCalledWith(env, "owner/repo", "h7", expect.any(String), new Set(["build", "test"]), expect.any(String));
+  });
+
+  it("unions branch-protection contexts into the accept-time live CI re-check", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await upsertRepoFocusManifest(env, "owner/repo", { gate: { expectedCiContexts: ["build"] } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, base: { ref: "main" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+    vi.mocked(fetchRequiredStatusContexts).mockResolvedValueOnce(new Set(["branch-required"])).mockResolvedValueOnce(new Set(["branch-required"]));
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted");
+    expect(fetchRequiredStatusContexts).toHaveBeenCalledWith(env, "owner/repo", "main", expect.any(String), expect.any(String));
+    expect(fetchLiveCiAggregate).toHaveBeenCalledWith(env, "owner/repo", "h7", expect.any(String), new Set(["branch-required", "build"]), expect.any(String));
+  });
+
+  it("falls back to expectedCiContexts when the accept-time branch-protection read fails", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await upsertRepoFocusManifest(env, "owner/repo", { gate: { expectedCiContexts: ["build"] } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, base: { ref: "main" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+    vi.mocked(fetchRequiredStatusContexts).mockRejectedValueOnce(new Error("branch protection unavailable")).mockRejectedValueOnce(new Error("branch protection unavailable"));
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted");
+    expect(fetchLiveCiAggregate).toHaveBeenCalledWith(env, "owner/repo", "h7", expect.any(String), new Set(["build"]), expect.any(String));
   });
 
   it("accept supersedes a staged merge when live CI has since turned pending, not just failed (#2126)", async () => {

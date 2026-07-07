@@ -44,6 +44,21 @@ describe("buildFixHandoffCollapsible (#1962)", () => {
     expect(c?.body).toContain("`src/b.ts (no specific line)`");
   });
 
+  it("escapes adversarial paths before rendering inline-code locations", () => {
+    const [block] = buildFixHandoffBlocks([
+      {
+        path: "src/x` [Review required](https://evil.example/phish) | <tag>",
+        line: 7,
+        severity: "blocker",
+        body: "Check the suspicious path rendering.",
+      },
+    ]);
+
+    expect(block?.path).toBe("src/x` [Review required](https://evil.example/phish) | <tag>");
+    expect(block?.body).toContain("`src/x\\` [Review required](https://evil.example/phish) \\| &lt;tag&gt;:7`");
+    expect(block?.body).not.toContain("`src/x` [Review required](https://evil.example/phish) | <tag>:7`");
+  });
+
   it("carries the no-server-side-write local-execution boundary on every block", () => {
     expect(buildFixHandoffCollapsible(blocks)?.body).toContain(LOCAL_WRITE_BOUNDARY);
   });

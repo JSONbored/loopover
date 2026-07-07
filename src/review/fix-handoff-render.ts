@@ -33,13 +33,25 @@ export type FixHandoffBlock = {
  *  parse fix-handoff blocks in a comment body without depending on markdown structure alone. */
 const FIX_HANDOFF_MARKER = "<!-- gittensory:fix-handoff -->";
 
+/** Public-safe inline-code escaping for a finding path/location. GitHub comments still render markdown inside
+ *  collapsibles, so neutralize delimiters that can break out of the `...` span or table-like contexts before
+ *  composing the location label. */
+function markdownPathCodeText(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/`/g, "\\`")
+    .replace(/\|/g, "\\|")
+    .replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;"));
+}
+
 /** PURE: build a single finding's fix-handoff block. Never throws; a finding whose `line` is not a positive
  *  integer (0, negative, non-finite — i.e. "no commentable line") still yields a valid PATH-ONLY block rather
  *  than being dropped, since the finding itself is still actionable context even without a line anchor. */
 export function buildFixHandoffBlock(finding: InlineFinding): FixHandoffBlock {
   const hasLine = Number.isInteger(finding.line) && finding.line > 0;
   const line = hasLine ? finding.line : 0;
-  const location = hasLine ? `${finding.path}:${line}` : `${finding.path} (no specific line)`;
+  const safePath = markdownPathCodeText(finding.path);
+  const location = hasLine ? `${safePath}:${line}` : `${safePath} (no specific line)`;
   const label = finding.severity === "blocker" ? "Blocker" : "Nit";
   const suggestedChange = finding.suggestion?.trim() || undefined;
   const suggestionBlock = suggestedChange ? `\n\nSuggested change:\n\`\`\`\n${suggestedChange}\n\`\`\`` : "";

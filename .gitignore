@@ -16,6 +16,9 @@ output/
 docker-compose.override.yml
 !docker-compose.override.yml.example
 *.local
+# Alertmanager receiver webhook files used by self-host local configs.
+alertmanager/*_url
+alertmanager/*_url_file
 # Private self-host operator config. Root AGENTS.md/CLAUDE.md are public project docs;
 # repo-scoped review instructions live under this ignored mount.
 gittensory-config/

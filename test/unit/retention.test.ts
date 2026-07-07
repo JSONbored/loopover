@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { getDb } from "../../src/db/client";
 import { dedupeSignalSnapshots, pruneExpiredRecords, RETENTION_POLICY } from "../../src/db/retention";
-import { aiUsageEvents, webhookEvents } from "../../src/db/schema";
+import { agentContextSnapshots, aiUsageEvents, webhookEvents } from "../../src/db/schema";
 import { processJob, runRetentionPrune } from "../../src/queue/processors";
 import { createTestEnv } from "../helpers/d1";
 
@@ -100,6 +100,24 @@ describe("pruneExpiredRecords", () => {
   it("rejects an unsafe table/column identifier (defensive guard)", async () => {
     const env = createTestEnv();
     await expect(pruneExpiredRecords(env, { policy: [{ table: "webhook_events; DROP TABLE x", column: "received_at", days: 1 }] })).rejects.toThrow("Unsafe retention identifier");
+  });
+
+  it("prunes agent_context_snapshots older than its window and keeps recent runs (#3896)", async () => {
+    const env = createTestEnv();
+    const db = getDb(env.DB);
+    await db.insert(agentContextSnapshots).values([
+      { id: "ctx-old", runId: "run-old", createdAt: daysAgo(40) },
+      { id: "ctx-recent", runId: "run-recent", createdAt: daysAgo(2) },
+    ]);
+
+    const results = await pruneExpiredRecords(env, {
+      nowMs: NOW,
+      policy: [{ table: "agent_context_snapshots", column: "created_at", days: 30 }],
+    });
+
+    expect(results[0]?.deleted).toBe(1);
+    const rows = await env.DB.prepare("SELECT id FROM agent_context_snapshots").all<{ id: string }>();
+    expect(rows.results.map((row) => row.id)).toEqual(["ctx-recent"]);
   });
 
   it("the policy only targets append-only/log/snapshot tables (no current-state tables)", () => {

@@ -21,6 +21,9 @@ export const RETENTION_POLICY: readonly RetentionRule[] = [
   { table: "signal_snapshots", column: "generated_at", days: 90 },
   { table: "score_previews", column: "generated_at", days: 90 },
   { table: "repo_snapshots", column: "fetched_at", days: 90 },
+  // One payloadJson blob per agent run (#3896); a per-run diagnostic snapshot with no cross-run rollup
+  // depending on it, so a shorter window than the audit/usage-log tables above is appropriate.
+  { table: "agent_context_snapshots", column: "created_at", days: 30 },
 ];
 
 export type PruneResult = { table: string; column: string; cutoff: string; deleted: number };

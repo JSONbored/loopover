@@ -166,6 +166,74 @@ AI_ON_MERGE=either`}
         ]}
       />
 
+      <h2>Claude Code (subscription)</h2>
+      <p>
+        No API key — <code>claude-code</code> runs your existing Claude subscription through the{" "}
+        <code>claude</code> CLI. Generate a long-lived token once with{" "}
+        <code>claude setup-token</code> and store it as <code>CLAUDE_CODE_OAUTH_TOKEN</code>.
+      </p>
+      <CodeBlock
+        filename=".env"
+        code={`AI_PROVIDER=claude-code
+CLAUDE_CODE_OAUTH_TOKEN=<token from claude setup-token>
+CLAUDE_AI_EFFORT=medium`}
+      />
+      <p>
+        <strong>Rotating it:</strong> when the subscription's usage limit resets or the token needs
+        replacing, run <code>claude setup-token</code> again and paste the new value into{" "}
+        <code>.env</code>. <code>CLAUDE_CODE_OAUTH_TOKEN</code> is baked into the container at
+        creation time, so a plain restart keeps serving the old value — recreate the service
+        instead:
+      </p>
+      <CodeBlock code={`docker compose up -d --no-deps gittensory`} />
+
+      <h2>Codex (subscription)</h2>
+      <p>
+        Codex has no equivalent of <code>claude setup-token</code>. Instead of an environment
+        variable, it stores an OAuth credential file, <code>auth.json</code>. Authenticate against
+        the running container so the file lands on the volume the image expects (
+        <code>/data/codex</code>, mounted at <code>~/.codex</code>):
+      </p>
+      <CodeBlock code={`docker compose exec gittensory codex auth`} />
+      <p>
+        This also needs the explicit opt-in shown in the fallback example above (
+        <code>GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1</code>) — see the Subscription CLI safety
+        note below for why it defaults to off.
+      </p>
+      <Callout variant="note" title="Rotating it needs no restart">
+        Codex reads <code>auth.json</code> fresh on every review — each review spawns a new{" "}
+        <code>codex</code> subprocess. Once <code>codex auth</code> succeeds, the very next review
+        authenticates correctly; there is no service to recreate and no env var to change.
+      </Callout>
+
+      <h2>Recognizing a stale or missing credential</h2>
+      <p>
+        Both subscription CLIs fail loudly in the self-host logs instead of silently degrading the
+        review:
+      </p>
+      <FeatureRow
+        items={[
+          {
+            title: "claude_code_no_oauth_token",
+            description:
+              "CLAUDE_CODE_OAUTH_TOKEN is unset. Add it to .env and recreate the service.",
+          },
+          {
+            title: "claude_code_error_401",
+            description: "The token was rejected. Generate a fresh one with claude setup-token.",
+          },
+          {
+            title: "codex_no_auth",
+            description: "auth.json is missing or expired. Re-run codex auth.",
+          },
+          {
+            title: "codex_credential_isolation_required",
+            description:
+              "GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER is not set to 1, or CODEX_HOME was set on the app container. Remove CODEX_HOME so Codex reads the mounted volume's default path.",
+          },
+        ]}
+      />
+
       <h2>Subscription CLI safety</h2>
       <Callout variant="warn" title="Credential isolation matters">
         Subscription CLIs store credentials on disk. Do not mount a writable or prompt-readable CLI

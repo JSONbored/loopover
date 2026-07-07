@@ -3713,6 +3713,78 @@ describe("queue processors", () => {
       });
     });
 
+    it("publishes the deterministic gate conclusion when auto-review eligibility is skipped but the gate does not pass", async () => {
+      let aiCalls = 0;
+      let gateConclusion: string | null = null;
+      let gateSummary = "";
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "off",
+        autoLabelEnabled: false,
+        checkRunMode: "enabled",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "block",
+        requireLinkedIssue: true,
+        autonomy: { merge: "observe", request_changes: "observe" },
+        agentDryRun: false,
+      });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", {
+        review: {
+          auto_review: { skip_drafts: true },
+        },
+        gate: { linkedIssue: "block" },
+      });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 82,
+        title: "Draft feature",
+        state: "open",
+        draft: true,
+        user: { login: "contributor" },
+        head: { sha: "a82" },
+        labels: [],
+        body: "No linked issue here.",
+      } as never);
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 82, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-credential" });
+        if (url.includes("/pulls/82/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+        if (url.endsWith("/pulls/82")) return Response.json({ number: 82, title: "Draft feature", state: "open", draft: true, user: { login: "contributor" }, head: { sha: "a82" }, labels: [], body: "No linked issue here.", mergeable_state: "clean" });
+        if (url.includes("/commits/a82/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/commits/a82/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/82/comments")) return method === "POST" ? Response.json({ id: 82 }, { status: 201 }) : Response.json([]);
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        if (url.includes("/check-runs") && (method === "POST" || method === "PATCH")) {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { conclusion?: string; output?: { title?: string; summary?: string } };
+          if (body.conclusion) gateConclusion = body.conclusion;
+          gateSummary = `${body.output?.title ?? ""} ${body.output?.summary ?? ""}`;
+          return Response.json({ id: 982, html_url: "https://github.com/check/982" }, { status: method === "POST" ? 201 : 200 });
+        }
+        return Response.json({});
+      });
+
+      await expect(
+        processJob(env, { type: "agent-regate-pr", deliveryId: "auto-review-skip-gate-not-pass", repoFullName: "JSONbored/gittensory", prNumber: 82, installationId: 123 }),
+      ).resolves.toBeUndefined();
+      expect(aiCalls).toBe(0);
+      expect(gateConclusion).toBe("neutral");
+      expect(gateSummary).toContain("Gittensory public check output is intentionally minimal");
+      const summary = await env.DB.prepare("select conclusion from check_summaries where repo_full_name = ? and pull_number = ?")
+        .bind("JSONbored/gittensory", 82)
+        .first<{ conclusion: string }>();
+      expect(summary?.conclusion).not.toBe("skipped");
+    });
+
     it("skips AI review when review.auto_review.skip_labels matches a PR label (#2062)", async () => {
       let aiCalls = 0;
       const env = createTestEnv({

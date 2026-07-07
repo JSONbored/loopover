@@ -9267,12 +9267,10 @@ async function maybePublishPrPublicSurface(
             decisionOutcome: gateEvaluation?.conclusion,
           },
           () =>
-            // #3698: a benign auto-review skip (draft, WIP title, too-large, docs-only, base-branch,
-            // auto-pause) shows the quiet "skipped (reason)" status -- but an IGNORED-AUTHOR skip also
-            // trips publicSurfaceSkipped, and that path exists specifically so the deterministic gate
-            // (e.g. the linked-issue hard rule) still shows its REAL, truthful conclusion instead of a
-            // "skipped" veneer that would let an ignored/excluded author's PR silently bypass it.
-            autoReviewSkipReason && !publicSurfaceSkipped
+            // #3698/#security: auto_review skip reasons are AI-review eligibility only. They may come
+            // from PR-controlled metadata, so the quiet skipped status is safe only after the deterministic
+            // gate has already passed; failures/holds must publish their real blocking conclusion.
+            autoReviewSkipReason && !publicSurfaceSkipped && gateEvaluation?.conclusion === "success"
               ? createOrUpdateSkippedGateCheckRun(
                   env,
                   installationId,
@@ -9307,7 +9305,10 @@ async function maybePublishPrPublicSurface(
             headSha: advisory.headSha,
             checkRunId: gateCheckResult.id,
             /* v8 ignore next -- gate-enabled publication always has a gate evaluation. */
-            conclusion: autoReviewSkipReason && !publicSurfaceSkipped ? "skipped" : (gateEvaluation?.conclusion ?? null),
+            conclusion:
+              autoReviewSkipReason && !publicSurfaceSkipped && gateEvaluation?.conclusion === "success"
+                ? "skipped"
+                : (gateEvaluation?.conclusion ?? null),
             detailsUrl: gateCheckResult.html_url,
             deliveryId: webhook.deliveryId,
           }).catch((error) => {

@@ -53,6 +53,7 @@ import {
   markAiReviewPublished,
   recordReviewSuppression,
   listReviewSuppressions,
+  setGlobalAgentFrozen,
 } from "../../src/db/repositories";
 import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, claimAiReviewLock, claimPrActuationLock, contributorEvidenceBatchSize, enrichOpenPullRequestsWithChangedFiles, processJob, reconcileLiveDuplicateSiblings, releaseAiReviewLock, releasePrActuationLock, SWEEP_FANOUT_RESOLUTION_CONCURRENCY } from "../../src/queue/processors";
 import type { PullRequestRecord } from "../../src/types";
@@ -10752,9 +10753,11 @@ describe("queue processors", () => {
     let postedBody: string | undefined;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
+      const method = init?.method ?? "GET";
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" }); // maintainer
-      if (url.includes("/issues/77/comments")) {
+      if (url.includes("/issues/77/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/77/comments") && method === "POST") {
         postedBody = init?.body ? JSON.parse(init.body.toString()).body : undefined;
         return Response.json({ id: 5 }, { status: 201 });
       }
@@ -10768,6 +10771,36 @@ describe("queue processors", () => {
     expect(postedBody?.toLowerCase()).not.toMatch(/reward|wallet|hotkey|coldkey|trustscore/);
     const audit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("github_app.configuration_posted").first<{ outcome: string }>();
     expect(audit?.outcome).toBe("completed");
+  });
+
+  it.each([
+    ["env pause", async (env: Env) => { (env as Env & { AGENT_ACTIONS_PAUSED: string }).AGENT_ACTIONS_PAUSED = "true"; }, "paused"],
+    ["repo pause", async (env: Env) => { await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentPaused: true }); }, "paused"],
+    ["repo dry-run", async (env: Env) => { await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentDryRun: true }); }, "dry_run"],
+    ["DB global freeze", async (env: Env) => { await setGlobalAgentFrozen(env, true); }, "paused"],
+  ] as const)("configuration respects %s — never posts the effective-config comment live", async (_label, applyPause, expectedMode) => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupPlannerRepo(env);
+    await applyPause(env);
+    const calls = { commentPosts: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/issues/77/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/77/comments") && method === "POST") {
+        calls.commentPosts += 1;
+        return Response.json({ id: 5 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, plannerWebhook("@gittensory configuration", "maintainer1"));
+
+    expect(calls.commentPosts).toBe(0);
+    const audit = await env.DB.prepare("select json_extract(metadata_json, '$.mode') as mode from audit_events where event_type = ?").bind("github_app.configuration_posted").first<{ mode: string }>();
+    expect(audit?.mode).toBe(expectedMode);
   });
 
   it("configuration: a non-maintainer is denied — nothing is posted and a skip is recorded", async () => {

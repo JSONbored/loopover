@@ -11113,14 +11113,14 @@ async function maybeProcessConfigurationCommand(
     return true;
   }
   const mode = resolveAgentActionMode({
-    globalPaused: isGlobalAgentPause(env),
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
   const body = sanitizePublicComment(
     [AGENT_COMMAND_COMMENT_MARKER, "", summarizeEffectiveConfig(settings, mode), "", "---", gittensoryFooter()].join("\n"),
   );
-  await createIssueComment(env, req.installationId, req.repoFullName, req.issueNumber, body);
+  await createOrUpdateAgentCommandComment(env, req.installationId, req.repoFullName, req.issueNumber, body, mode);
   await recordAuditEvent(env, {
     eventType: "github_app.configuration_posted",
     actor: req.actor,

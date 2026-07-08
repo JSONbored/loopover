@@ -479,6 +479,9 @@ export type RepositorySettings = {
   /** Review-evasion protection: whether to post the public explanation comment before the enforcement close.
    *  Default true. */
   reviewEvasionComment?: boolean | undefined;
+  /** Merge-train FIFO gate (#selfhost-merge-train): `"off"` keeps current behavior, `"audit"` logs would-hold
+   *  decisions, and `"enforce"` defers a merge behind a still-viable older sibling. */
+  mergeTrainMode?: "off" | "audit" | "enforce" | undefined;
   /** Config-driven before/after screenshot-table gate (#2006): a DETERMINISTIC check (no AI, zero hallucination
    *  risk) that a contributor visual/frontend PR's body contains a markdown table with before/after image
    *  markup, scoped to the repo's configured labels/paths (`whenLabels`/`whenPaths`, OR-matched). Off by

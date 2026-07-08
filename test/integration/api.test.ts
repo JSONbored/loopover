@@ -2448,7 +2448,7 @@ describe("api routes", () => {
         // #2267: qualityGateMode: "block" is downgraded to "advisory" on write — readiness/quality can never
         // hard-block a PR, so the dashboard/API save path can't persist a value implying enforcement it doesn't
         // have. slopGateMode: "block" is a DIFFERENT, legitimately-blockable dimension and is left untouched.
-        body: JSON.stringify({ gateCheckMode: "enabled", slopGateMode: "block", slopGateMinScore: 55, qualityGateMode: "block", autonomy: { merge: "auto_with_approval", deploy: "auto" }, autoMaintain: { requireApprovals: 2, mergeMethod: "rebase" }, agentPaused: true, agentDryRun: true }),
+        body: JSON.stringify({ gateCheckMode: "enabled", slopGateMode: "block", slopGateMinScore: 55, qualityGateMode: "block", mergeTrainMode: "enforce", autonomy: { merge: "auto_with_approval", deploy: "auto" }, autoMaintain: { requireApprovals: 2, mergeMethod: "rebase" }, agentPaused: true, agentDryRun: true }),
       },
       ownerEnv,
     );
@@ -2462,6 +2462,7 @@ describe("api routes", () => {
       slopGateMode: "block",
       slopGateMinScore: 55,
       qualityGateMode: "advisory", // #2267: downgraded, not persisted as "block"
+      mergeTrainMode: "enforce",
       autonomy: { merge: "auto_with_approval" }, // unknown action class dropped by the DB normalizer
       autoMaintain: { requireApprovals: 2, mergeMethod: "rebase" },
       agentPaused: true, // #776 kill-switch

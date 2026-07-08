@@ -729,6 +729,7 @@ const maintainerSettingsSchema = z
     manifestPolicyGateMode: z.enum(["off", "advisory", "block"]),
     selfAuthoredLinkedIssueGateMode: z.enum(["off", "advisory", "block"]),
     linkedIssueSatisfactionGateMode: z.enum(["off", "advisory", "block"]),
+    mergeTrainMode: z.enum(["off", "audit", "enforce"]),
     firstTimeContributorGrace: z.boolean(),
     slopGateMode: z.enum(["off", "advisory", "block"]),
     slopGateMinScore: z.number().int().min(0).max(100).nullable(),

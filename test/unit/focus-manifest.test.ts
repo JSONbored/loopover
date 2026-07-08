@@ -342,6 +342,7 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     reviewEvasionProtection: "reviewEvasionProtection:",
     reviewEvasionLabel: "reviewEvasionLabel:",
     reviewEvasionComment: "reviewEvasionComment:",
+    mergeTrainMode: "mergeTrainMode:",
     typeLabels: "typeLabels:",
     linkedIssueLabelPropagation: "linkedIssueLabelPropagation:",
     linkedIssueHardRules: "linkedIssueHardRules:",
@@ -1786,13 +1787,14 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
 
   it("drops invalid settings values with warnings and keeps the valid ones", () => {
     const m = parseFocusManifest({
-      settings: { commentMode: "loud", qualityGateMinScore: "high", autoLabelEnabled: "yes", gittensorLabel: "   ", publicSurface: "comment_only" },
+      settings: { commentMode: "loud", qualityGateMinScore: "high", autoLabelEnabled: "yes", gittensorLabel: "   ", mergeTrainMode: "later", publicSurface: "comment_only" },
     });
     expect(m.settings).toEqual({ publicSurface: "comment_only" });
     expect(m.warnings.some((w) => /settings\.commentMode/.test(w))).toBe(true);
     expect(m.warnings.some((w) => /settings\.qualityGateMinScore/.test(w))).toBe(true);
     expect(m.warnings.some((w) => /settings\.autoLabelEnabled/.test(w))).toBe(true);
     expect(m.warnings.some((w) => /settings\.gittensorLabel/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /settings\.mergeTrainMode/.test(w))).toBe(true);
   });
 
   it("ignores a non-mapping settings block and treats a settings-only manifest as present", () => {
@@ -1815,7 +1817,7 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
   });
 
   it("round-trips settings through settingsOverrideToJson and serializes empty as null", () => {
-    const original = parseFocusManifest({ settings: { commentMode: "all_prs", qualityGateMinScore: 40 } });
+    const original = parseFocusManifest({ settings: { commentMode: "all_prs", qualityGateMinScore: 40, mergeTrainMode: "audit" } });
     const reparsed = parseFocusManifest({ settings: settingsOverrideToJson(original.settings) });
     expect(reparsed.settings).toEqual(original.settings);
     expect(settingsOverrideToJson(parseFocusManifest({}).settings)).toBeNull();

@@ -985,6 +985,14 @@ settings:
 #     # repo back in at a layer where a broader default disabled it -- it does NOT bypass the env-var gate
 #     # itself, so the env vars remain the outer infra-availability switch.
 #     enabled: true
+#     # When true, and ONLY when the discovery above finds no preview at all for a PR, dispatch
+#     # .github/workflows/visual-capture-fallback.yml -- a fork-safe GitHub Actions job (contents: read, no
+#     # secrets) that builds, serves, and screenshots the PR's own code, and use its captured PNGs as the
+#     # "after" shot instead. Requires that workflow file to be present in this repo (copy it from
+#     # JSONbored/gittensory unmodified -- see the workflow's own header for setup). Bool. Default: false (no
+#     # dispatch, byte-identical to today). Not needed for gittensory-ui / metagraphed, which already have
+#     # their own preview-deploy pipeline. (#4112, part of the #3607 visual-capture convergence epic)
+#     actions_fallback: false
 #   # Maintainer overrides for the public review-panel CONTENT (not what gittensory measures). The
 #   # Gittensor attribution + register link is always appended to the footer regardless; maintainer text
 #   # failing the public-safe filter is dropped, never published.

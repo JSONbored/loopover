@@ -4,6 +4,7 @@ import {
   githubRateLimitAdmissionKeyForInstallation,
   latestGitHubRestRateLimitObservation,
 } from "../../src/github/client";
+import { fallbackShotR2Key } from "../../src/review/visual/actions-fallback";
 import { buildCapture, hasSuccessfulBotCapture, mapFilesToRoutes, resolvePreviewUrlTemplate, resolveVisualRoutes } from "../../src/review/visual/capture";
 import type { CaptureRoute } from "../../src/review/visual/capture";
 import * as pixelDiffModule from "../../src/review/visual/pixel-diff";
@@ -1243,5 +1244,258 @@ describe("hasSuccessfulBotCapture (#4110)", () => {
   it("false when every route is all-placeholder", () => {
     const routes = [route({ path: "/a", beforeUrl: REAL_BEFORE, afterUrl: LOADING_PLACEHOLDER }), route({ path: "/b", beforeUrl: REAL_BEFORE, afterUrl: FAILED_PLACEHOLDER })];
     expect(hasSuccessfulBotCapture(routes)).toBe(false);
+  });
+});
+
+describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve fallback)", () => {
+  function stubNoPreviewFound(extra?: (url: string, init?: RequestInit) => Response | null): (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> {
+    return async (input, init) => {
+      const url = input.toString();
+      const custom = extra?.(url, init);
+      if (custom) return custom;
+      if (url.includes("/deployments?")) return Response.json([]);
+      if (url.includes("/status")) return Response.json({ statuses: [] });
+      if (url.includes("/check-runs")) return Response.json({ check_runs: [] });
+      if (url.includes("/comments")) return Response.json([]);
+      return new Response("not found", { status: 404 });
+    };
+  }
+
+  it("dispatches the fallback workflow when no preview is found anywhere, pinned to the default branch, and marks the capture pending", async () => {
+    const dispatchBodies: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      stubNoPreviewFound((url, init) => {
+        if (!url.includes("/actions/workflows/visual-capture-fallback.yml/dispatches")) return null;
+        dispatchBodies.push(String(init?.body));
+        return new Response(null, { status: 204 });
+      }),
+    );
+
+    const result = await buildCapture(
+      createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "" }),
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 20, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      undefined,
+      { actionsFallback: true },
+    );
+
+    expect(dispatchBodies).toHaveLength(1);
+    expect(JSON.parse(dispatchBodies[0] as string)).toEqual({
+      ref: "main",
+      inputs: { pr_number: "20", head_sha: "cafebabe", routes: JSON.stringify(["/app"]) },
+    });
+    expect(result.previewPending).toBe(true);
+  });
+
+  it("leaves the capture non-pending when the dispatch call itself fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      stubNoPreviewFound((url) => (url.includes("/dispatches") ? new Response("nope", { status: 422 }) : null)),
+    );
+
+    const result = await buildCapture(
+      createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "" }),
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 21, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      undefined,
+      { actionsFallback: true },
+    );
+
+    expect(result.previewPending).toBe(false);
+  });
+
+  it("never dispatches when actions_fallback is not configured (byte-identical to pre-#4112)", async () => {
+    let dispatchCalled = false;
+    vi.stubGlobal(
+      "fetch",
+      stubNoPreviewFound((url) => {
+        if (url.includes("/dispatches")) dispatchCalled = true;
+        return null;
+      }),
+    );
+
+    const result = await buildCapture(
+      createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "" }),
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 22, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+    );
+
+    expect(dispatchCalled).toBe(false);
+    expect(result.previewPending).toBe(false);
+  });
+
+  it("never dispatches without a headSha to pin the build to", async () => {
+    let dispatchCalled = false;
+    vi.stubGlobal(
+      "fetch",
+      stubNoPreviewFound((url) => {
+        if (url.includes("/dispatches")) dispatchCalled = true;
+        return null;
+      }),
+    );
+
+    await buildCapture(
+      createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "" }),
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 23, previewFromChecks: true, defaultBranchRef: "main" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      undefined,
+      { actionsFallback: true },
+    );
+
+    expect(dispatchCalled).toBe(false);
+  });
+
+  it("never dispatches without a resolved default branch to pin the dispatch to", async () => {
+    let dispatchCalled = false;
+    vi.stubGlobal(
+      "fetch",
+      stubNoPreviewFound((url) => {
+        if (url.includes("/dispatches")) dispatchCalled = true;
+        return null;
+      }),
+    );
+
+    await buildCapture(
+      createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "" }),
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 24, headSha: "cafebabe", previewFromChecks: true },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      undefined,
+      { actionsFallback: true },
+    );
+
+    expect(dispatchCalled).toBe(false);
+  });
+
+  it("never dispatches when the preview deploy already FAILED (a real terminal state, not a gap to fill)", async () => {
+    let dispatchCalled = false;
+    vi.stubGlobal(
+      "fetch",
+      stubNoPreviewFound((url) => {
+        if (url.includes("/dispatches")) dispatchCalled = true;
+        return null;
+      }),
+    );
+
+    const result = await buildCapture(
+      createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "" }),
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 25, headSha: "cafebabe", previewFailed: true, defaultBranchRef: "main" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      undefined,
+      { actionsFallback: true },
+    );
+
+    expect(dispatchCalled).toBe(false);
+    expect(result.routes[0]?.afterUrl).toContain("placeholder=failed");
+  });
+
+  it("never dispatches when a real preview build is already pending (buildState 'building')", async () => {
+    let dispatchCalled = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/dispatches")) dispatchCalled = true;
+      if (url.includes("/deployments?")) return Response.json([]);
+      if (url.includes("/status")) return Response.json({ statuses: [] });
+      if (url.includes("/check-runs")) {
+        return Response.json({ check_runs: [{ name: "Cloudflare Workers Builds", status: "in_progress" }] });
+      }
+      if (url.includes("/comments")) return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await buildCapture(
+      createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "" }),
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 26, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      undefined,
+      { actionsFallback: true },
+    );
+
+    expect(dispatchCalled).toBe(false);
+    expect(result.previewPending).toBe(true);
+  });
+
+  it("uses an already-stored fallback shot from R2 as the after URL, without any preview discovery URL", async () => {
+    vi.stubGlobal("fetch", stubNoPreviewFound());
+    const env = createTestEnv({
+      PUBLIC_API_ORIGIN: "https://worker.example",
+      PUBLIC_SITE_ORIGIN: "https://prod.example.com",
+      REVIEW_AUDIT: memoryReviewAudit(),
+    });
+    const key = await fallbackShotR2Key("cafebabe", "/app", "desktop");
+    await env.REVIEW_AUDIT!.put(key, new Uint8Array([1, 2, 3]));
+
+    const result = await buildCapture(
+      env,
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 27, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      undefined,
+      { actionsFallback: true },
+    );
+
+    expect(result.routes[0]?.afterUrl).toBe(`https://worker.example/gittensory/shot?key=${encodeURIComponent(key)}`);
+  });
+
+  it("falls back to the loading placeholder when actions_fallback is enabled but no shot has landed in R2 yet", async () => {
+    vi.stubGlobal("fetch", stubNoPreviewFound());
+    const env = createTestEnv({
+      PUBLIC_API_ORIGIN: "https://worker.example",
+      PUBLIC_SITE_ORIGIN: "https://prod.example.com",
+      REVIEW_AUDIT: memoryReviewAudit(),
+    });
+
+    const result = await buildCapture(
+      env,
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 28, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      undefined,
+      { actionsFallback: true },
+    );
+
+    expect(result.routes[0]?.afterUrl).toContain("placeholder=loading");
+  });
+
+  it("falls back to the loading placeholder (never throws) when the R2 read for a fallback shot itself throws", async () => {
+    vi.stubGlobal("fetch", stubNoPreviewFound());
+    const env = createTestEnv({
+      PUBLIC_API_ORIGIN: "https://worker.example",
+      PUBLIC_SITE_ORIGIN: "https://prod.example.com",
+      REVIEW_AUDIT: memoryReviewAudit({ failGet: true }),
+    });
+
+    const result = await buildCapture(
+      env,
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 30, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      undefined,
+      { actionsFallback: true },
+    );
+
+    expect(result.routes[0]?.afterUrl).toContain("placeholder=loading");
+  });
+
+  it("falls back to the loading placeholder (never throws) when actions_fallback is enabled but REVIEW_AUDIT isn't configured", async () => {
+    vi.stubGlobal("fetch", stubNoPreviewFound());
+
+    const result = await buildCapture(
+      createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://prod.example.com" }),
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 29, headSha: "cafebabe", previewFromChecks: true, defaultBranchRef: "main" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      undefined,
+      { actionsFallback: true },
+    );
+
+    expect(result.routes[0]?.afterUrl).toContain("placeholder=loading");
   });
 });

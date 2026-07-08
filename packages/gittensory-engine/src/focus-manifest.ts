@@ -671,6 +671,15 @@ export type VisualConfig = {
    *  app-specific (there is no universal convention), so it is opaque, bounded, public-safe text, same shape
    *  as `review.ai_model`'s free-text fields. */
   themeStorageKey: string | null;
+  /** `review.visual.actions_fallback` (#4112): when true, and ONLY when the existing GitHub-native discovery
+   *  chain (Deployments API / commit checks / cloudflare-bot PR comment / an explicit `preview.url_template`)
+   *  finds no preview at all for this PR, dispatch `.github/workflows/visual-capture-fallback.yml` -- a
+   *  fork-safe GitHub Actions job that builds, serves, and screenshots the PR's own code with zero secrets --
+   *  and use its captured PNGs as the "after" shot instead. false (default) ⇒ byte-identical to today (no
+   *  dispatch, no change to the discovery order). Requires the target repo to have that workflow file present
+   *  (see the workflow's own header comment for setup); a repo without it just never gets a fallback run, same
+   *  as leaving this unset. (#3607 visual-capture convergence epic) */
+  actionsFallback: boolean;
 };
 
 /** A `prefers-color-scheme` value the capture pipeline can emulate before rendering (#3678). */
@@ -710,6 +719,7 @@ export const EMPTY_VISUAL_CONFIG: VisualConfig = {
   gif: false,
   enabled: null,
   themeStorageKey: null,
+  actionsFallback: false,
 };
 
 /** One `review.path_instructions[]` entry: a manifest path glob + the public-safe instructions to apply when a
@@ -2120,6 +2130,7 @@ function overlayVisualConfig(base: VisualConfig, override: VisualConfig): Visual
     gif: override.gif ? override.gif : base.gif,
     enabled: pickOverlayNullable(override.enabled, base.enabled),
     themeStorageKey: pickOverlayNullable(override.themeStorageKey, base.themeStorageKey),
+    actionsFallback: override.actionsFallback ? override.actionsFallback : base.actionsFallback,
   };
 }
 
@@ -2356,7 +2367,8 @@ function visualConfigPresent(config: VisualConfig): boolean {
     config.themes.length > 0 ||
     config.gif ||
     config.enabled !== null ||
-    config.themeStorageKey !== null
+    config.themeStorageKey !== null ||
+    config.actionsFallback
   );
 }
 
@@ -2440,8 +2452,9 @@ function parseVisualConfig(value: JsonValue | undefined, warnings: string[]): Vi
   const gif = normalizeOptionalBoolean(record.gif, "review.visual.gif", warnings) === true;
   const enabled = normalizeOptionalBoolean(record.enabled, "review.visual.enabled", warnings);
   const themeStorageKey = parsePublicSafeText(record.theme_storage_key, "review.visual.theme_storage_key", warnings);
+  const actionsFallback = normalizeOptionalBoolean(record.actions_fallback, "review.visual.actions_fallback", warnings) === true;
 
-  return { preview: { urlTemplate }, routes: { paths, maxRoutes }, themes, gif, enabled, themeStorageKey };
+  return { preview: { urlTemplate }, routes: { paths, maxRoutes }, themes, gif, enabled, themeStorageKey, actionsFallback };
 }
 
 function parseAutoReviewTitleKeywords(value: JsonValue | undefined, warnings: string[]): string[] {
@@ -2758,6 +2771,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
     if (review.visual.gif) visual.gif = true;
     if (review.visual.enabled !== null) visual.enabled = review.visual.enabled;
     if (review.visual.themeStorageKey !== null) visual.theme_storage_key = review.visual.themeStorageKey;
+    if (review.visual.actionsFallback) visual.actions_fallback = true;
     out.visual = visual;
   }
   if (review.linkedIssueSatisfaction !== null) out.linkedIssueSatisfaction = review.linkedIssueSatisfaction;

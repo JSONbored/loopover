@@ -359,7 +359,14 @@ import { randomUUID } from "node:crypto";
 import { isRetryableJobError, RetryableJobError } from "./retryable";
 import { screenshotsAllowed } from "../review/visual-wire";
 import { isVisualPath } from "../review/visual/paths";
-import { buildCapture, hasSuccessfulBotCapture, type CaptureRoute } from "../review/visual/capture";
+import { buildCapture, hasSuccessfulBotCapture, resolveVisualRoutes, type CaptureRoute } from "../review/visual/capture";
+import {
+  fallbackShotFileName,
+  fallbackShotR2Key,
+  fetchFallbackArtifactShots,
+  FALLBACK_WORKFLOW_NAME,
+  parseFallbackRunCorrelation,
+} from "../review/visual/actions-fallback";
 import { incr } from "../selfhost/metrics";
 import {
   renderReviewingPlaceholder,
@@ -494,6 +501,7 @@ import {
 } from "../review/feature-activation";
 import {
   deploymentStatusToPreview,
+  parseRepo,
   type DeploymentStatusPayload,
 } from "../review/visual/preview-url";
 import { resolveHardGuardrailGlobs } from "../review/guardrail-config";
@@ -4528,6 +4536,91 @@ async function maybeCaptureOnDeploymentStatus(
   return true;
 }
 
+/**
+ * Store the captured PNGs from a completed actions_fallback run into R2 under buildCapture's own lookup keys
+ * (#4112) — resolveVisualRoutes MUST be recomputed the exact same way buildCapture derives it, since the run
+ * carries only filenames (viewport-tagged, per fallbackShotFileName), not the original route paths. Fail-safe
+ * throughout: any missing token/config/route match just skips that shot (or all of them), never throws.
+ */
+async function storeVisualCaptureFallbackShots(
+  env: Env,
+  repoFullName: string,
+  installationId: number,
+  runId: number,
+  prNumber: number,
+  headSha: string,
+  rateLimitAdmissionKey: GitHubRateLimitAdmissionKey,
+): Promise<void> {
+  if (!env.REVIEW_AUDIT) return;
+  const token = await createInstallationToken(env, installationId).catch(() => undefined);
+  if (!token) return;
+  const shots = await fetchFallbackArtifactShots({ token, repo: parseRepo(repoFullName), runId, rateLimitAdmissionKey });
+  if (shots.length === 0) return;
+  const byFileName = new Map(shots.map((shot) => [shot.fileName, shot.png]));
+
+  // Recompute the SAME route list buildCapture would derive for this PR right now — the artifact carries only
+  // viewport-tagged filenames (fallbackShotFileName), not the original route paths, so both sides must agree
+  // independently on which routes those filenames correspond to.
+  const [visualConfig, storedFiles] = await Promise.all([
+    resolveVisualCaptureConfig(env, repoFullName),
+    listPullRequestFiles(env, repoFullName, prNumber),
+  ]);
+  const visualFiles = storedFiles.map((file) => file.path).filter(isVisualPath);
+  for (const path of resolveVisualRoutes(visualFiles, visualConfig.routes)) {
+    for (const viewportName of ["desktop", "mobile"] as const) {
+      const png = byFileName.get(fallbackShotFileName(path, viewportName));
+      if (!png) continue;
+      const key = await fallbackShotR2Key(headSha, path, viewportName);
+      await env.REVIEW_AUDIT.put(key, png, { httpMetadata: { contentType: "image/png" } }).catch(() => undefined);
+    }
+  }
+}
+
+/**
+ * workflow_run (completed) from THIS module's own .github/workflows/visual-capture-fallback.yml (#4112) →
+ * store its captured PNGs in R2, then re-review so a fresh buildCapture pass picks them up as the "after"
+ * shot. The run carries no natural PR link (it's workflow_dispatch, not pull_request) — parseFallbackRunCorrelation
+ * recovers {prNumber, headSha} from the run's own display_title, which dispatchVisualCaptureFallback set via
+ * the workflow's `run-name:`. Gated on the run's OWN name + trigger type so an unrelated workflow_run (this
+ * repo's ui-preview.yml, a target repo's other CI, etc.) is never mistaken for this fallback's completion.
+ */
+async function maybeCaptureOnActionsFallbackWorkflowRun(
+  env: Env,
+  deliveryId: string,
+  eventName: string,
+  payload: GitHubWebhookPayload,
+): Promise<boolean> {
+  if (eventName !== "workflow_run") return false;
+  const repoFullName = payload.repository?.full_name;
+  const installationId = getInstallationId(payload);
+  if (!repoFullName || !installationId) return false;
+  const run = (
+    payload as unknown as {
+      workflow_run?: { id?: number; name?: string; event?: string; conclusion?: string; display_title?: string };
+    }
+  ).workflow_run;
+  if (run?.name !== FALLBACK_WORKFLOW_NAME || run?.event !== "workflow_dispatch") return false;
+
+  if (run.conclusion === "success" && run.id && isConvergenceRepoAllowed(env, repoFullName)) {
+    const correlation = parseFallbackRunCorrelation(run.display_title);
+    if (correlation) {
+      const admissionKey = githubRateLimitAdmissionKeyForInstallation(installationId);
+      await storeVisualCaptureFallbackShots(env, repoFullName, installationId, run.id, correlation.prNumber, correlation.headSha, admissionKey);
+      await reReviewStoredPullRequest(env, deliveryId, installationId, repoFullName, correlation.prNumber);
+    }
+  }
+  await recordWebhookEvent(env, {
+    deliveryId,
+    eventName,
+    action: payload.action,
+    installationId,
+    repositoryFullName: repoFullName,
+    payloadHash: "processed",
+    status: "processed",
+  });
+  return true;
+}
+
 async function repairDataFidelity(
   env: Env,
   requestedBy: "schedule" | "api" | "test",
@@ -5699,6 +5792,10 @@ async function processGitHubWebhook(
     // stored PR row and re-reviews it now that CI has settled (merge on green, close-non-owner / hold-owner on
     // red). Without this a PR that goes green/red AFTER its open-time review is never re-evaluated.
     if (await maybeReReviewOnCiCompletion(env, deliveryId, eventName, payload))
+      return;
+    // actions_fallback's own workflow_run completion (#4112) — checked BEFORE the legacy status/workflow_run
+    // handler below, which otherwise unconditionally consumes EVERY workflow_run event first.
+    if (await maybeCaptureOnActionsFallbackWorkflowRun(env, deliveryId, eventName, payload))
       return;
     // Legacy status/workflow_run CI signals aren't re-review triggers (see the function's own doc comment), but
     // must still invalidate the durable CI-state cache so a tracked PR's next reader doesn't see a stale
@@ -10255,6 +10352,9 @@ async function maybePublishPrPublicSurface(
             ...(pr.headSha ? { headSha: pr.headSha } : {}),
             ...(pr.headRef ? { headRef: pr.headRef } : {}),
             previewFromChecks: true,
+            // Pins the actions_fallback dispatch (#4112) to a trusted ref -- see buildCapture. Absent (no
+            // stored default branch yet) ⇒ that dispatch just never fires, same as leaving it unconfigured.
+            ...(repo?.defaultBranch ? { defaultBranchRef: repo.defaultBranch } : {}),
           };
           // review.visual.enabled (#4083): a config-as-code override layered on top of the screenshotsAllowed
           // env-var gate above, not a replacement for it. Unset/true ⇒ defer to that gate's decision (buildCapture

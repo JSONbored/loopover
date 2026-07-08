@@ -3727,6 +3727,7 @@ describe("review.visual (#3609 preview.url_template / #3610 routes)", () => {
       gif: false,
       enabled: null,
       themeStorageKey: null,
+      actionsFallback: false,
     });
     expect(m.review.present).toBe(true);
     expect(parseFocusManifest({ review: reviewConfigToJson(m.review) }).review.visual).toEqual(m.review.visual);
@@ -3822,7 +3823,7 @@ describe("review.visual (#3609 preview.url_template / #3610 routes)", () => {
   it("resolveReviewVisualConfig: null manifest yields empty defaults; a set manifest passes through", () => {
     expect(resolveReviewVisualConfig(null)).toEqual({ ...EMPTY_VISUAL_CONFIG });
     const manifest = parseFocusManifest({ review: { visual: { routes: { paths: ["/app"] } } } });
-    expect(resolveReviewVisualConfig(manifest)).toEqual({ preview: { urlTemplate: null }, routes: { paths: ["/app"], maxRoutes: null }, themes: [], gif: false, enabled: null, themeStorageKey: null });
+    expect(resolveReviewVisualConfig(manifest)).toEqual({ preview: { urlTemplate: null }, routes: { paths: ["/app"], maxRoutes: null }, themes: [], gif: false, enabled: null, themeStorageKey: null, actionsFallback: false });
   });
 });
 
@@ -3907,7 +3908,7 @@ describe("review.visual.gif (#3612 scroll-through GIF capture)", () => {
 
   it("composes with themes — both configured independently and both round-trip", () => {
     const m = parseFocusManifest({ review: { visual: { gif: true, themes: ["dark"] } } });
-    expect(m.review.visual).toEqual({ preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: true, enabled: null, themeStorageKey: null });
+    expect(m.review.visual).toEqual({ preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: true, enabled: null, themeStorageKey: null, actionsFallback: false });
     expect(reviewConfigToJson(m.review)).toEqual({ visual: { themes: ["dark"], gif: true } });
   });
 
@@ -4010,7 +4011,7 @@ describe("review.visual.theme_storage_key (#4109 localStorage theme-forcing fall
 
   it("composes with themes — both configured independently and both round-trip", () => {
     const m = parseFocusManifest({ review: { visual: { themes: ["dark"], theme_storage_key: "theme" } } });
-    expect(m.review.visual).toEqual({ preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: false, enabled: null, themeStorageKey: "theme" });
+    expect(m.review.visual).toEqual({ preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: false, enabled: null, themeStorageKey: "theme", actionsFallback: false });
     expect(reviewConfigToJson(m.review)).toEqual({ visual: { themes: ["dark"], theme_storage_key: "theme" } });
   });
 
@@ -4029,6 +4030,61 @@ describe("review.visual.theme_storage_key (#4109 localStorage theme-forcing fall
     const globalDefault = parseReviewConfigMapping({ visual: { theme_storage_key: "theme" } }, []);
     const perRepo = parseReviewConfigMapping({ visual: { routes: { paths: ["/app"] } } }, []);
     expect(overlayReviewConfig(globalDefault, perRepo).visual.themeStorageKey).toBe("theme");
+    expect(overlayReviewConfig(globalDefault, perRepo).visual.routes.paths).toEqual(["/app"]);
+  });
+});
+
+describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve fallback)", () => {
+  it("parses actions_fallback: true, marks present, and round-trips", () => {
+    const m = parseFocusManifest({ review: { visual: { actions_fallback: true } } });
+    expect(m.review.visual.actionsFallback).toBe(true);
+    expect(m.review.present).toBe(true);
+    expect(reviewConfigToJson(m.review)).toEqual({ visual: { actions_fallback: true } });
+  });
+
+  it("absent actions_fallback defaults to false and does not mark review present on its own", () => {
+    expect(parseFocusManifest({}).review.visual.actionsFallback).toBe(false);
+    expect(parseFocusManifest({ review: { visual: {} } }).review.present).toBe(false);
+  });
+
+  it("actions_fallback: false does not mark review present, so the whole review block round-trips to null", () => {
+    const m = parseFocusManifest({ review: { visual: { actions_fallback: false } } });
+    expect(m.review.visual.actionsFallback).toBe(false);
+    expect(reviewConfigToJson(m.review)).toBeNull();
+  });
+
+  it("warns and defaults to false when actions_fallback is not a boolean", () => {
+    const bad = parseFocusManifest({ review: { visual: { actions_fallback: "yes" } } });
+    expect(bad.review.visual.actionsFallback).toBe(false);
+    expect(bad.warnings.some((w) => /review\.visual\.actions_fallback.*must be a boolean/.test(w))).toBe(true);
+  });
+
+  it("marks present via actions_fallback alone (preview + routes + themes + gif + enabled all empty)", () => {
+    const m = parseFocusManifest({ review: { visual: { actions_fallback: true } } });
+    expect(m.review.present).toBe(true);
+  });
+
+  it("composes with gif — both configured independently and both round-trip", () => {
+    const m = parseFocusManifest({ review: { visual: { actions_fallback: true, gif: true } } });
+    expect(m.review.visual).toEqual({ preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: [], gif: true, enabled: null, themeStorageKey: null, actionsFallback: true });
+    expect(reviewConfigToJson(m.review)).toEqual({ visual: { gif: true, actions_fallback: true } });
+  });
+
+  it("resolveReviewVisualConfig passes a configured actions_fallback: true through", () => {
+    const manifest = parseFocusManifest({ review: { visual: { actions_fallback: true } } });
+    expect(resolveReviewVisualConfig(manifest).actionsFallback).toBe(true);
+  });
+
+  it("overlay: a per-repo actions_fallback: true wins over a global-default false", () => {
+    const globalDefault = parseReviewConfigMapping({ visual: { actions_fallback: false } }, []);
+    const perRepo = parseReviewConfigMapping({ visual: { actions_fallback: true } }, []);
+    expect(overlayReviewConfig(globalDefault, perRepo).visual.actionsFallback).toBe(true);
+  });
+
+  it("overlay: an unset per-repo actions_fallback falls back to the global-default true", () => {
+    const globalDefault = parseReviewConfigMapping({ visual: { actions_fallback: true } }, []);
+    const perRepo = parseReviewConfigMapping({ visual: { routes: { paths: ["/app"] } } }, []);
+    expect(overlayReviewConfig(globalDefault, perRepo).visual.actionsFallback).toBe(true);
     expect(overlayReviewConfig(globalDefault, perRepo).visual.routes.paths).toEqual(["/app"]);
   });
 });

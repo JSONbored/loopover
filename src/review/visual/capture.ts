@@ -12,6 +12,7 @@
 // default TanStack route convention; those hooks can return if a per-repo visual config is added.
 import { sha256Hex } from "../../utils/crypto";
 import type { GitHubRateLimitAdmissionKey } from "../../github/client";
+import { dispatchVisualCaptureFallback, fallbackShotR2Key } from "./actions-fallback";
 import {
   findPreviewUrlFromChecks,
   findPreviewUrlFromPrComments,
@@ -99,6 +100,10 @@ export interface CaptureTarget {
   previewFailed?: boolean | undefined;
   /** Whether to scan commit checks / the cloudflare-bot PR comment for the preview URL (Workers Builds). */
   previewFromChecks?: boolean | undefined;
+  /** The repo's default branch -- REQUIRED to dispatch the actions_fallback workflow (#4112) against a
+   *  trusted ref rather than the PR's own branch. Absent ⇒ the fallback is never dispatched (fail-safe: no
+   *  ref to pin to means no dispatch, not a guess at "main"). */
+  defaultBranchRef?: string | undefined;
 }
 
 function joinUrl(base: string, path: string): string {
@@ -238,6 +243,28 @@ async function capturePage(
   return { url: onDemand };
 }
 
+/** Resolve the "after" shot when there is no real preview page to render (#4112): if `review.visual.
+ *  actions_fallback` is enabled AND the workflow_run webhook handler has already stored a fallback-captured
+ *  PNG in R2 for this exact head + route + viewport (fallbackShotR2Key), return its shot URL; otherwise fall
+ *  back to the ordinary loading/failed placeholder. This never fetches or dispatches anything itself — a
+ *  cache miss here just means the fallback hasn't landed yet (or was never enabled), degrading exactly like
+ *  "no preview yet" does everywhere else in this pipeline. */
+async function resolveFallbackAfterShot(
+  env: Env,
+  target: CaptureTarget,
+  path: string,
+  viewportName: "desktop" | "mobile",
+  actionsFallbackEnabled: boolean,
+  placeholder: string | undefined,
+): Promise<{ url?: string | undefined; png?: Uint8Array | undefined }> {
+  if (!actionsFallbackEnabled || !env.REVIEW_AUDIT || !target.headSha) return { url: placeholder };
+  const key = await fallbackShotR2Key(target.headSha, path, viewportName);
+  const cached = await env.REVIEW_AUDIT.get(key).catch(() => null);
+  if (!cached) return { url: placeholder };
+  const shotBase = env.PUBLIC_API_ORIGIN;
+  return { url: shotBase ? `${shotBase}/${NAMESPACE}/shot?key=${encodeURIComponent(key)}` : placeholder };
+}
+
 /** Upload a computed diff-overlay PNG to the same store `capturePage` uses, returning its shot URL — or
  *  undefined when there's no diff image (unchanged/new/removed/no-diff-provider), storage is unavailable, or
  *  the upload fails. Mirrors capturePage's own key/URL scheme so the diff shares its caching story. */
@@ -314,6 +341,9 @@ export type VisualCaptureConfig = {
    *  `CaptureShotOptions.theme` doc for the verified finding this fixes. null/undefined (default) ⇒ no
    *  localStorage write, byte-identical to today. Only takes effect when `themes` is also configured. */
   themeStorageKey?: string | null | undefined;
+  /** `review.visual.actions_fallback` (#4112): dispatch the GitHub-Actions build-and-serve fallback when NO
+   *  preview at all was found for this PR. false/absent (default) ⇒ byte-identical to today. */
+  actionsFallback?: boolean | null | undefined;
 };
 
 /**
@@ -365,6 +395,28 @@ export async function buildCapture(env: Env, token: string, target: CaptureTarge
     }
   }
 
+  // Fallback (#4112): the discovery chain above found NOTHING at all for this repo (no preview URL, not
+  // failed, and no real build already in flight) -- if review.visual.actions_fallback is enabled, dispatch
+  // .github/workflows/visual-capture-fallback.yml against the repo's own default branch and mark
+  // previewPending so the EXISTING recapture-poll mechanism (processors.ts) retries this same buildCapture
+  // call later, by which point the workflow_run webhook handler (running independently) has stored the
+  // fallback's captured PNGs in R2 for resolveFallbackAfterShot below to find. Requires headSha + a resolved
+  // default branch to pin the dispatch to a trusted ref; either missing ⇒ no dispatch (fail-safe).
+  const actionsFallbackEnabled = visualConfig?.actionsFallback === true;
+  const routes = resolveVisualRoutes(visualFiles, visualConfig?.routes);
+  if (!previewBase && !previewFailed && !previewPending && actionsFallbackEnabled && target.headSha && target.defaultBranchRef) {
+    const dispatched = await dispatchVisualCaptureFallback({
+      token,
+      repo,
+      ref: target.defaultBranchRef,
+      prNumber: target.prNumber,
+      headSha: target.headSha,
+      routes,
+      rateLimitAdmissionKey,
+    });
+    if (dispatched) previewPending = true;
+  }
+
   // With no real "after" shot, the cell shows a placeholder (same aspect ratio as a real shot): a spinner
   // while the preview is still building, or a static "deploy failed" card once it won't come.
   const shotBase = env.PUBLIC_API_ORIGIN;
@@ -381,7 +433,6 @@ export async function buildCapture(env: Env, token: string, target: CaptureTarge
   // heaviest capture mode (up to 6 extra renders per side), and doubling it for mobile is a narrower-scope
   // call deferred to a follow-up rather than shipped speculatively (matches #3674's hosted-diff deferral).
   const gifWanted = visualConfig?.gif === true && isScrollGifAvailable();
-  const routes = resolveVisualRoutes(visualFiles, visualConfig?.routes);
   // #3678: an explicit, non-empty theme list captures the SAME routes once per theme, each tagged on its
   // CaptureRoute entry. [undefined] (the default, absent config) renders the single un-emulated default —
   // capturePage/captureShot already treat an undefined theme as "no emulation call at all", so this one
@@ -400,8 +451,12 @@ export async function buildCapture(env: Env, token: string, target: CaptureTarge
       const [beforeShot, beforeMobileShot, afterShot, afterMobileShot] = await Promise.all([
         capturePage(env, target, beforePage, "before", "desktop", DESKTOP_VIEWPORT, diffAvailable, theme, themeStorageKey),
         capturePage(env, target, beforePage, "before", "mobile", MOBILE_VIEWPORT, diffAvailable, theme, themeStorageKey),
-        afterPage ? capturePage(env, target, afterPage, "after", "desktop", DESKTOP_VIEWPORT, diffAvailable, theme, themeStorageKey) : Promise.resolve<{ url?: string | undefined; png?: Uint8Array | undefined }>({ url: afterPlaceholder }),
-        afterPage ? capturePage(env, target, afterPage, "after", "mobile", MOBILE_VIEWPORT, diffAvailable, theme, themeStorageKey) : Promise.resolve<{ url?: string | undefined; png?: Uint8Array | undefined }>({ url: afterPlaceholder }),
+        afterPage
+          ? capturePage(env, target, afterPage, "after", "desktop", DESKTOP_VIEWPORT, diffAvailable, theme, themeStorageKey)
+          : resolveFallbackAfterShot(env, target, path, "desktop", actionsFallbackEnabled, afterPlaceholder),
+        afterPage
+          ? capturePage(env, target, afterPage, "after", "mobile", MOBILE_VIEWPORT, diffAvailable, theme, themeStorageKey)
+          : resolveFallbackAfterShot(env, target, path, "mobile", actionsFallbackEnabled, afterPlaceholder),
       ]);
       // A diff needs BOTH sides' real bytes — a placeholder/dash slot (no preview yet, auth-walled, render
       // failure) has no `png`, so compareCapturedScreenshots degrades to null exactly like a missing shot does.

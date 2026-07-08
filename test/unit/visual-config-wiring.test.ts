@@ -22,6 +22,7 @@ describe("review.visual wiring (#3609 / #3610)", () => {
       gif: false,
       enabled: null,
       themeStorageKey: null,
+      actionsFallback: false,
     });
     expect(loadSpy).toHaveBeenCalledWith(expect.anything(), "acme/widgets");
     loadSpy.mockRestore();
@@ -43,6 +44,13 @@ describe("review.visual wiring (#3609 / #3610)", () => {
     const manifest = parseFocusManifest({ review: { visual: { enabled: false } } });
     const loadSpy = vi.spyOn(focusManifestLoader, "loadRepoFocusManifest").mockResolvedValue(manifest);
     await expect(resolveVisualCaptureConfig({} as Env, "acme/widgets")).resolves.toEqual({ ...EMPTY_VISUAL_CONFIG, enabled: false });
+    loadSpy.mockRestore();
+  });
+
+  it("resolves a configured actions_fallback: true from the repo's focus manifest (#4112)", async () => {
+    const manifest = parseFocusManifest({ review: { visual: { actions_fallback: true } } });
+    const loadSpy = vi.spyOn(focusManifestLoader, "loadRepoFocusManifest").mockResolvedValue(manifest);
+    await expect(resolveVisualCaptureConfig({} as Env, "acme/widgets")).resolves.toEqual({ ...EMPTY_VISUAL_CONFIG, actionsFallback: true });
     loadSpy.mockRestore();
   });
 });

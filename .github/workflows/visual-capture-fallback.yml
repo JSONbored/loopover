@@ -1,0 +1,174 @@
+name: Gittensory Visual Capture Fallback
+
+# GitHub-Actions build-and-serve FALLBACK for a repo with no CI-produced preview deploy (#4112, part of the
+# #3607 visual-capture convergence epic). gittensory's preview-url.ts discovery chain (Deployments API ->
+# commit-check scan -> bot PR-comment scan) only ever finds a preview that SOME OTHER CI already produced;
+# this workflow is what lets a self-hosted repo with none of that still get an automated "after" screenshot,
+# by having Actions itself build, serve, and capture the PR's own code.
+#
+# Mirrors this repo's OWN ui-preview.yml fork-safety discipline: `contents: read` only, NO secrets anywhere in
+# this job. It is triggered ONLY by `workflow_dispatch`, and ONLY gittensory's own backend dispatches it
+# (src/review/visual/actions-fallback.ts, dispatchVisualCaptureFallback) -- always against `ref:
+# <default-branch>`. A `workflow_dispatch` call always runs the DISPATCHED ref's copy of this file, so a
+# contributor can never smuggle a modified workflow definition through their own PR branch (unlike a
+# `pull_request` trigger, which would run the version committed on the PR branch itself).
+#
+# Security boundary: the untrusted PR code is checked out and BUILT here, but its network reach never leaves
+# this job's own ephemeral runner -- it is served on 127.0.0.1 and captured by this SAME job's own preinstalled
+# headless Chrome, so no externally-reachable endpoint is ever created for it. This is deliberately NOT a
+# custom sandbox (Firecracker/gVisor/etc.): GitHub Actions already gives free, ephemeral, isolated compute for
+# untrusted PR code on public repos -- exactly the trust boundary this repo's own CI (ci.yml, ui-preview.yml)
+# already relies on -- so building a bespoke one here would just re-solve a problem GitHub already solves.
+# Every `${{ inputs.* }}` value is threaded through `env:` rather than interpolated straight into a `run:`
+# script -- standard GitHub Actions practice to keep an input's literal text out of the shell-parsed script,
+# regardless of how trusted its source is.
+#
+# Handoff: this job uploads its captured PNGs as a GitHub Actions artifact (`gittensory-visual-fallback`) and
+# stops -- it never talks to gittensory directly and holds no credential to do so. On completion, GitHub
+# delivers a `workflow_run` webhook; gittensory's backend then lists + downloads that run's artifact using its
+# OWN, already-trusted GitHub App installation token -- never a token that passed through this job.
+#
+# Setup (self-hosted repos only -- NOT needed for gittensory-ui / metagraphed, which already have their own
+# preview-deploy pipeline): copy this file, unmodified, into the target repo's `.github/workflows/` at this
+# EXACT path and name (`visual-capture-fallback.yml` / "Gittensory Visual Capture Fallback") -- gittensory's
+# dispatch call and workflow_run listener both key off this fixed name. Then set `review.visual.actions_fallback:
+# true` in that repo's `.gittensory.yml` (see .gittensory.yml.example) to opt in; it activates ONLY when the
+# existing discovery chain finds no preview at all, so a repo with its own CI-produced preview is unaffected.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "The PR number this capture is for."
+        required: true
+        type: string
+      head_sha:
+        description: "The exact PR head commit to check out and build."
+        required: true
+        type: string
+      routes:
+        description: 'JSON array of route paths to capture, e.g. ["/","/pricing"].'
+        required: false
+        type: string
+        default: '["/"]'
+      build_cmd:
+        description: "Shell command that builds the site. Edit this default for your own repo."
+        required: false
+        type: string
+        default: "npm ci && npm run build"
+      dist_dir:
+        description: "Directory the build writes its static output to."
+        required: false
+        type: string
+        default: "dist"
+      serve_port:
+        description: "Local port to serve the built output on."
+        required: false
+        type: string
+        default: "4173"
+
+# GitHub renders run-name from these inputs and surfaces the result as workflow_run.display_title in the
+# completion webhook -- a workflow_dispatch run carries no natural PR association otherwise. See
+# actions-fallback.ts's parseFallbackRunCorrelation, which reads this EXACT "pr=<n> sha=<sha>" shape back out.
+run-name: "gittensory-visual-fallback pr=${{ inputs.pr_number }} sha=${{ inputs.head_sha }}"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: visual-capture-fallback-${{ inputs.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    name: Build, serve, and capture PR routes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GITTENSORY_DIST_DIR: ${{ inputs.dist_dir }}
+      GITTENSORY_SERVE_PORT: ${{ inputs.serve_port }}
+      GITTENSORY_ROUTES_JSON: ${{ inputs.routes }}
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ inputs.head_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+
+      - name: Build
+        env:
+          GITTENSORY_BUILD_CMD: ${{ inputs.build_cmd }}
+        run: bash -euo pipefail -c "$GITTENSORY_BUILD_CMD"
+
+      - name: Serve built output on localhost
+        run: |
+          set -euo pipefail
+          npx --yes serve@14 -l "tcp://127.0.0.1:${GITTENSORY_SERVE_PORT}" "$GITTENSORY_DIST_DIR" \
+            > serve.log 2>&1 &
+          echo $! > serve.pid
+          for _ in $(seq 1 30); do
+            if curl --silent --fail --output /dev/null "http://127.0.0.1:${GITTENSORY_SERVE_PORT}/"; then
+              echo "Local server is up."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Local static server never became ready:"
+          cat serve.log || true
+          exit 1
+
+      - name: Slugify routes
+        run: |
+          set -euo pipefail
+          # Mirrors slugifyRoutePath in src/review/visual/actions-fallback.ts EXACTLY -- both sides must
+          # independently compute the same filename for the same route, or the download side can't find it.
+          cat <<'JS' > "$RUNNER_TEMP/slugify-routes.mjs"
+          const routes = JSON.parse(process.env.GITTENSORY_ROUTES_JSON);
+          const slugify = (path) => {
+            const trimmed = path.replace(/^\/+|\/+$/g, "");
+            if (trimmed === "") return "root";
+            return trimmed
+              .toLowerCase()
+              .replace(/[^a-z0-9/]+/g, "-")
+              .replace(/\/+/g, "-")
+              .replace(/-+/g, "-")
+              .replace(/^-|-$/g, "");
+          };
+          const pairs = routes.map((r) => [r, slugify(r)].join("\t")).join("\n");
+          require("node:fs").writeFileSync(process.env.GITHUB_WORKSPACE + "/routes.tsv", pairs + "\n");
+          JS
+          node "$RUNNER_TEMP/slugify-routes.mjs"
+
+      - name: Capture each route (desktop + mobile) with the runner's own headless Chrome
+        run: |
+          set -euo pipefail
+          mkdir -p shots
+          while IFS=$'\t' read -r route slug; do
+            [ -z "$route" ] && continue
+            google-chrome-stable --headless=new --no-sandbox --disable-gpu --hide-scrollbars \
+              --window-size=1440,900 --screenshot="shots/${slug}--desktop.png" \
+              "http://127.0.0.1:${GITTENSORY_SERVE_PORT}${route}"
+            google-chrome-stable --headless=new --no-sandbox --disable-gpu --hide-scrollbars \
+              --window-size=390,844 --screenshot="shots/${slug}--mobile.png" \
+              "http://127.0.0.1:${GITTENSORY_SERVE_PORT}${route}"
+          done < routes.tsv
+          ls -la shots/
+
+      - name: Stop local server
+        if: always()
+        run: kill "$(cat serve.pid)" 2>/dev/null || true
+
+      # gittensory's backend downloads this by name via its OWN installation token (never a token from this
+      # job) once the `workflow_run` completion webhook arrives -- see fetchFallbackArtifactShots.
+      - name: Upload captured screenshots
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gittensory-visual-fallback
+          path: shots/*.png
+          if-no-files-found: error
+          retention-days: 1

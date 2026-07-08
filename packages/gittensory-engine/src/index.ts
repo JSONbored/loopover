@@ -129,6 +129,7 @@ export {
   type TrackRecordTenure,
 } from "./track-record-summary.js";
 export * from "./governor/rate-limit.js";
+export * from "./governor/budget-cap.js";
 export {
   GOVERNOR_LEDGER_EVENT_TYPES,
   normalizeGovernorLedgerEvent,

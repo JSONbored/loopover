@@ -7751,14 +7751,18 @@ export async function runLinkedIssueSatisfactionForAdvisory(
             model: args.settings.aiReviewModel ?? storedKey.model,
           }
         : null;
-    // #linked-issue-satisfaction-cache: the assessment's LLM call is fully deterministic given the same head SHA
-    // + linked issue number (no RAG/grounding/enrichment feeds into it), so a repeated scheduled sweep pass at
-    // an unchanged head+issue reuses the stored result instead of re-spending up to 6 free-tier attempts (or a
-    // BYOK call) on every tick — mirrors ai_slop_cache's confirmed-in-production motivation exactly.
+    const diff = buildAiReviewDiff(args.files);
+    // #linked-issue-satisfaction-cache: the assessment's LLM call is fully deterministic for the same
+    // reviewer configuration and prompt. GitHub issue/PR text can be edited without changing the head SHA, so
+    // those prompt fields are part of this fingerprint rather than relying only on the row key.
     const inputFingerprint = await linkedIssueSatisfactionCacheInputFingerprint({
       byok: Boolean(providerKey),
       provider: providerKey?.provider,
       model: providerKey?.model,
+      issueText,
+      prTitle: args.pr.title,
+      prBody: args.pr.body ?? undefined,
+      diff,
     });
     const cached = await getCachedLinkedIssueSatisfaction(
       env,
@@ -7798,7 +7802,7 @@ export async function runLinkedIssueSatisfactionForAdvisory(
         issueText,
         prTitle: args.pr.title,
         prBody: args.pr.body ?? undefined,
-        diff: buildAiReviewDiff(args.files),
+        diff,
         actor: args.author,
         providerKey,
       });

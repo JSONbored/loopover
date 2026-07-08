@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runGittensoryLinkedIssueSatisfaction, type LinkedIssueSatisfactionRunInput } from "../../src/services/linked-issue-satisfaction-run";
-import { processJob, runLinkedIssueSatisfactionForAdvisory } from "../../src/queue/processors";
+import { buildAiReviewDiff, processJob, runLinkedIssueSatisfactionForAdvisory } from "../../src/queue/processors";
 import { evaluateGateCheck } from "../../src/rules/advisory";
 import {
   getCachedLinkedIssueSatisfaction,
@@ -294,6 +294,9 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
     { repoFullName: "acme/widgets", pullNumber: 7, path: "src/a.ts", status: "modified", additions: 40, deletions: 2, changes: 42, payload: { patch: "@@\n+app.get('/stream', sse);" } },
   ];
   const pr = { number: 7, title: "Add SSE stream endpoint", body: "Implements the requested SSE stream.", linkedIssues: [1275] };
+  const issueText = "Enrich SN74 Gittensor — add SSE stream\n\nWe need a live SSE stream surface for SN74 Gittensor.";
+  const processorFingerprint = () =>
+    linkedIssueSatisfactionCacheInputFingerprint({ byok: false, provider: null, model: null, issueText, prTitle: pr.title, prBody: pr.body, diff: buildAiReviewDiff(files) });
   const advisoryMode = { linkedIssueSatisfactionGateMode: "advisory", aiReviewByok: false } as RepositorySettings;
   const blockMode = { linkedIssueSatisfactionGateMode: "block", aiReviewByok: false } as RepositorySettings;
 
@@ -532,7 +535,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       stubIssueFetch();
       const run = vi.fn(async () => ({ response: satisfactionJson({ status: "unaddressed", confidence: 0.9 }) }));
       const env = enabledEnv(run);
-      const fingerprint = await linkedIssueSatisfactionCacheInputFingerprint({ byok: false, provider: null, model: null });
+      const fingerprint = await processorFingerprint();
       await putCachedLinkedIssueSatisfaction(env, "acme/widgets", 7, "sha7", 1275, fingerprint, {
         status: "ok",
         result: { status: "addressed", rationale: "cached: looks done", confidence: 0.8 },
@@ -548,7 +551,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       stubIssueFetch();
       const run = vi.fn();
       const env = enabledEnv(run);
-      const fingerprint = await linkedIssueSatisfactionCacheInputFingerprint({ byok: false, provider: null, model: null });
+      const fingerprint = await processorFingerprint();
       await putCachedLinkedIssueSatisfaction(env, "acme/widgets", 7, "sha7", 1275, fingerprint, {
         status: "ok",
         result: { status: "addressed", rationale: "cached: looks done", confidence: 0.8 },
@@ -589,13 +592,34 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       await runLinkedIssueSatisfactionForAdvisory(env, { settings: advisoryMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
       expect(run).toHaveBeenCalledTimes(1);
 
-      const fingerprint = await linkedIssueSatisfactionCacheInputFingerprint({ byok: false, provider: null, model: null });
+      const fingerprint = await processorFingerprint();
       const cached = await getCachedLinkedIssueSatisfaction(env, "acme/widgets", 7, "sha7", 1275, fingerprint);
       expect(cached).toMatchObject({ status: "ok", result: { status: "addressed" } });
 
       const adv2 = advisory();
       await runLinkedIssueSatisfactionForAdvisory(env, { settings: advisoryMode, advisory: adv2, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
       expect(run).toHaveBeenCalledTimes(1); // still 1 — second pass was a cache hit
+    });
+
+    it("misses the cache when editable issue or PR text changes at the same head SHA", async () => {
+      stubIssueFetch({ body: "We need a live SSE stream surface for SN74 Gittensor." });
+      const run = vi.fn(async () => ({ response: satisfactionJson({ status: "addressed", rationale: "The SSE endpoint satisfies the original ask." }) }));
+      const env = enabledEnv(run);
+      const adv = advisory();
+      await expect(
+        runLinkedIssueSatisfactionForAdvisory(env, { settings: blockMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 }),
+      ).resolves.toMatchObject({ status: "addressed" });
+
+      stubIssueFetch({ body: "We now need a GraphQL subscription instead of an SSE stream." });
+      run.mockResolvedValueOnce({ response: satisfactionJson({ status: "unaddressed", confidence: 0.9, rationale: "The changed issue asks for GraphQL, but the diff still adds SSE." }) });
+      const changedAdvisory = advisory();
+      const changedPr = { ...pr, title: "Add SSE endpoint for the old issue", body: "Still only implements SSE." };
+      await expect(
+        runLinkedIssueSatisfactionForAdvisory(env, { settings: blockMode, advisory: changedAdvisory, repoFullName: "acme/widgets", pr: changedPr, author: "alice", files, confirmedContributor: true, installationId: 1 }),
+      ).resolves.toMatchObject({ status: "unaddressed" });
+
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(changedAdvisory.findings).toContainEqual(expect.objectContaining({ code: "linked_issue_scope_mismatch" }));
     });
 
     it("misses the cache when the PR's primary linked issue number changes, even at the same head SHA", async () => {
@@ -785,10 +809,15 @@ describe("linked-issue satisfaction wired end-to-end through the real webhook pi
     expect(gatePatchBody.conclusion).toBe("failure");
     expect(gatePatchBody.output?.title).toContain("Linked issue does not appear to be satisfied");
 
-    // The assessment was cached under the PR's primary linked issue number.
-    const fingerprint = await linkedIssueSatisfactionCacheInputFingerprint({ byok: false, provider: null, model: null });
-    const cached = await getCachedLinkedIssueSatisfaction(env, "JSONbored/metagraphed", 3910, "realvenus3910", 1275, fingerprint);
-    expect(cached).toMatchObject({ status: "ok", result: { status: "unaddressed" } });
+    // The assessment was cached under the PR's primary linked issue number. The fingerprint itself includes
+    // prompt text, which this end-to-end test does not need to reconstruct from the webhook pipeline.
+    const cached = await env.DB.prepare(
+      "SELECT status, result_json AS resultJson FROM linked_issue_satisfaction_cache WHERE repo_full_name = ? AND pull_number = ? AND head_sha = ? AND linked_issue_number = ?",
+    )
+      .bind("JSONbored/metagraphed", 3910, "realvenus3910", 1275)
+      .first<{ status: string; resultJson: string }>();
+    expect(cached?.status).toBe("ok");
+    expect(JSON.parse(cached?.resultJson ?? "{}")?.status).toBe("unaddressed");
   });
 
   it("OFF mode (default): no fetch, no model spend, no cache row, and the comment never mentions linked-issue satisfaction at all — byte-identical to before this feature existed", async () => {

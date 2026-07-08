@@ -122,6 +122,38 @@ describe("linkedIssueSatisfactionCacheInputFingerprint", () => {
     expect(withUndefined).toBe(withNull);
   });
 
+  it("differs when mutable prompt text changes (regression for stale linked-issue gate cache)", async () => {
+    const before = await linkedIssueSatisfactionCacheInputFingerprint({
+      byok: false,
+      provider: null,
+      model: null,
+      issueText: "Need an SSE endpoint",
+      prTitle: "Add SSE endpoint",
+      prBody: "Closes the SSE issue",
+      diff: "+app.get('/stream', sse)",
+    });
+    const editedIssue = await linkedIssueSatisfactionCacheInputFingerprint({
+      byok: false,
+      provider: null,
+      model: null,
+      issueText: "Need a GraphQL subscription",
+      prTitle: "Add SSE endpoint",
+      prBody: "Closes the SSE issue",
+      diff: "+app.get('/stream', sse)",
+    });
+    const editedPr = await linkedIssueSatisfactionCacheInputFingerprint({
+      byok: false,
+      provider: null,
+      model: null,
+      issueText: "Need an SSE endpoint",
+      prTitle: "Add GraphQL subscription",
+      prBody: "Closes the GraphQL issue",
+      diff: "+app.get('/stream', sse)",
+    });
+    expect(editedIssue).not.toBe(before);
+    expect(editedPr).not.toBe(before);
+  });
+
   it("never collides with the ai_slop_cache fingerprint namespace even for identical inputs", async () => {
     const { aiSlopCacheInputFingerprint } = await import("../../src/review/ai-slop-cache-input");
     const slop = await aiSlopCacheInputFingerprint({ byok: false, provider: null, model: null });

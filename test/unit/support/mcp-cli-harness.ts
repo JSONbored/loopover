@@ -303,6 +303,21 @@ export async function startFixtureServer(
       response.end(JSON.stringify({ repoFullName: "owner/repo", pendingActions: [{ id: "pa-1", actionClass: "merge", pullNumber: 7, reason: "clean", status: "pending" }] }));
       return;
     }
+    if (request.url === "/v1/repos/owner/repo/maintainer-noise" && request.method === "GET") {
+      response.end(
+        JSON.stringify({
+          repoFullName: "owner/repo",
+          generatedAt: "2026-06-01T00:00:00.000Z",
+          score: 42,
+          level: "medium",
+          noiseSources: ["3 open PRs lack linked issue context."],
+          maintainerActions: ["review_now"],
+          queueHealth: { signals: { openPullRequests: 2 } },
+          summary: "Gittensory maintainer noise report for owner/repo: medium noise (score 42); 1 source(s) to triage.",
+        }),
+      );
+      return;
+    }
     if (request.url?.startsWith("/v1/repos/owner/repo/agent/pending-actions/") && request.method === "POST") {
       const accepted = request.url.endsWith("/accept");
       response.end(JSON.stringify(accepted ? { status: "accepted", executionOutcome: "completed" } : { status: "rejected" }));

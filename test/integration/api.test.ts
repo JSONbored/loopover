@@ -827,6 +827,17 @@ describe("api routes", () => {
     const gatePrecisionNoWindow = await app.request("/v1/repos/entrius/allways-ui/gate-precision", { headers: apiHeaders(env) }, env);
     await expect(gatePrecisionNoWindow.json()).resolves.toMatchObject({ windowDays: null });
 
+    const maintainerNoiseUnauthenticated = await app.request("/v1/repos/entrius/allways-ui/maintainer-noise", {}, env);
+    expect(maintainerNoiseUnauthenticated.status).toBe(401);
+    const maintainerNoise = await app.request("/v1/repos/entrius/allways-ui/maintainer-noise", { headers: apiHeaders(env) }, env);
+    expect(maintainerNoise.status).toBe(200);
+    await expect(maintainerNoise.json()).resolves.toMatchObject({
+      repoFullName: "entrius/allways-ui",
+      score: expect.any(Number),
+      level: expect.any(String),
+      noiseSources: expect.any(Array),
+    });
+
     const settingsPreviewUnauthenticated = await app.request("/v1/repos/entrius/allways-ui/settings-preview", { method: "POST", body: "{}" }, env);
     expect(settingsPreviewUnauthenticated.status).toBe(401);
 
@@ -931,7 +942,6 @@ describe("api routes", () => {
       "/v1/repos/entrius/allways-ui/maintainer-lane",
       "/v1/repos/entrius/allways-ui/maintainer-cut-readiness",
       "/v1/repos/entrius/allways-ui/contributor-intake-health",
-      "/v1/repos/entrius/allways-ui/maintainer-noise",
     ]) {
       const legacy = await app.request(path, { headers: apiHeaders(env) }, env);
       expect(legacy.status).toBe(404);

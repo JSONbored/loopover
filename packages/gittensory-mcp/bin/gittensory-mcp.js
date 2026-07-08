@@ -360,6 +360,10 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Return the canonical repo intelligence bundle from the private Gittensory API.",
   },
   {
+    name: "gittensory_get_maintainer_noise",
+    description: "Return the maintainer queue-noise triage report for a repo: a noise score/level, the specific noise sources to clear first, and recommended maintainer actions. Maintainer-authenticated; advisory only.",
+  },
+  {
     name: "gittensory_preflight_pr",
     description: "Preflight planned PR metadata against lane, duplicate, linked issue, test, and queue signals.",
   },
@@ -510,6 +514,18 @@ server.registerTool(
   async ({ owner, repo }) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("Gittensory repo intelligence.", await apiGet(`${prefix}/intelligence`));
+  },
+);
+
+server.registerTool(
+  "gittensory_get_maintainer_noise",
+  {
+    description: stdioToolDescription("gittensory_get_maintainer_noise"),
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }) => {
+    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    return toolResult("Gittensory maintainer noise report.", await apiGet(`${prefix}/maintainer-noise`));
   },
 );
 

@@ -26375,6 +26375,21 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       expect(audit?.detail).toContain("autonomy for close is not acting");
     });
 
+    it("REGRESSION: denies live self-close enforcement when close autonomy requires approval", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env, { autonomy: { close: "auto_with_approval" } });
+      await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "self-close-approval-required", eventName: "pull_request", payload: closedPayload("contributor") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+      const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.review_evasion_closed").first<{ outcome: string; detail: string }>();
+      expect(audit?.outcome).toBe("denied");
+      expect(audit?.detail).toContain("requires approval");
+    });
+
     it("denies enforcement when pull_requests: write is not granted", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
@@ -26908,6 +26923,21 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       expect(audit?.detail).toContain("autonomy for close is not acting");
     });
 
+    it("REGRESSION: denies live draft-conversion enforcement when close autonomy requires approval", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env, { autonomy: { close: "auto_with_approval" } });
+      await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-evasion-approval-required", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+      const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.review_evasion_closed").first<{ outcome: string; detail: string }>();
+      expect(audit?.outcome).toBe("denied");
+      expect(audit?.detail).toContain("requires approval");
+    });
+
     it("denies enforcement when pull_requests: write is not granted", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
@@ -27304,6 +27334,23 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
         .first<{ outcome: string; detail: string }>();
       expect(audit?.outcome).toBe("denied");
       expect(audit?.detail).toContain("autonomy for close is not acting");
+    });
+
+    it("REGRESSION: denies live repeated draft-cycling enforcement when close autonomy requires approval", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env, { autonomy: { close: "auto_with_approval" } });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-approval-required-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-approval-required-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+      const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by rowid desc limit 1")
+        .bind("github_app.review_evasion_closed")
+        .first<{ outcome: string; detail: string }>();
+      expect(audit?.outcome).toBe("denied");
+      expect(audit?.detail).toContain("requires approval");
     });
 
     it("dry-run: audits the would-be enforcement without mutating GitHub or recording a live strike", async () => {

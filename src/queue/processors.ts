@@ -12186,13 +12186,17 @@ async function closeReviewEvasionSelfCloseIfActive(
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
-  if (!isActingAutonomyLevel(resolveAutonomy(settings.autonomy, "close"))) {
+  const closeAutonomy = resolveAutonomy(settings.autonomy, "close");
+  if (closeAutonomy !== "auto") {
     await recordAuditEvent(env, {
       eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
       actor: "gittensory",
       targetKey,
       outcome: "denied",
-      detail: `autonomy for close is not acting -- review-evasion self-close not enforced for ${pr.authorLogin}`,
+      detail:
+        closeAutonomy === "auto_with_approval"
+          ? `close autonomy requires approval -- review-evasion self-close not enforced for ${pr.authorLogin}`
+          : `autonomy for close is not acting -- review-evasion self-close not enforced for ${pr.authorLogin}`,
       metadata: { deliveryId, repoFullName, headSha: pr.headSha },
     }).catch(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
@@ -12434,13 +12438,17 @@ async function closeReviewEvasionDraftConversionIfActive(
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
-  if (!isActingAutonomyLevel(resolveAutonomy(settings.autonomy, "close"))) {
+  const closeAutonomy = resolveAutonomy(settings.autonomy, "close");
+  if (closeAutonomy !== "auto") {
     await recordAuditEvent(env, {
       eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
       actor: "gittensory",
       targetKey,
       outcome: "denied",
-      detail: `autonomy for close is not acting -- review-evasion draft-conversion not enforced for ${pr.authorLogin}`,
+      detail:
+        closeAutonomy === "auto_with_approval"
+          ? `close autonomy requires approval -- review-evasion draft-conversion not enforced for ${pr.authorLogin}`
+          : `autonomy for close is not acting -- review-evasion draft-conversion not enforced for ${pr.authorLogin}`,
       metadata: { deliveryId, repoFullName, headSha: pr.headSha },
     }).catch(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
@@ -12648,13 +12656,17 @@ async function closeRepeatedDraftCyclingIfDetected(
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
-  if (!isActingAutonomyLevel(resolveAutonomy(settings.autonomy, "close"))) {
+  const closeAutonomy = resolveAutonomy(settings.autonomy, "close");
+  if (closeAutonomy !== "auto") {
     await recordAuditEvent(env, {
       eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
       actor: "gittensory",
       targetKey,
       outcome: "denied",
-      detail: `autonomy for close is not acting -- repeated draft-cycling not enforced for ${pr.authorLogin} (conversion #${draftConversionCount})`,
+      detail:
+        closeAutonomy === "auto_with_approval"
+          ? `close autonomy requires approval -- repeated draft-cycling not enforced for ${pr.authorLogin} (conversion #${draftConversionCount})`
+          : `autonomy for close is not acting -- repeated draft-cycling not enforced for ${pr.authorLogin} (conversion #${draftConversionCount})`,
       metadata: { deliveryId, repoFullName, headSha: pr.headSha, draftConversionCount },
     }).catch(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */

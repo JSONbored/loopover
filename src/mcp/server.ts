@@ -150,6 +150,7 @@ import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENA
 import { loadUpstreamStatus } from "../upstream/ruleset";
 import { simulateOpenPrPressure, type OpenPrPressureInput } from "../services/open-pr-pressure-scenarios";
 import { buildFindingTaxonomyDocument, FINDING_TAXONOMY_URI } from "../review/finding-taxonomy";
+import { buildEnrichmentAnalyzersTaxonomyDocument, ENRICHMENT_ANALYZERS_URI } from "../review/enrichment-analyzers-taxonomy";
 
 type AppContext = Context<{ Bindings: Env }>;
 type ToolPayload = {
@@ -2023,6 +2024,26 @@ export class GittensoryMcp {
             uri: FINDING_TAXONOMY_URI,
             mimeType: "application/json",
             text: JSON.stringify(buildFindingTaxonomyDocument(), null, 2),
+          },
+        ],
+      }),
+    );
+
+    // #2226 — read-only REES enrichment analyzer taxonomy for MCP discovery.
+    server.registerResource(
+      "gittensory_enrichment_analyzers",
+      ENRICHMENT_ANALYZERS_URI,
+      {
+        title: "Gittensory Enrichment Analyzers",
+        description: "REES enrichment analyzer taxonomy: names, categories, cost classes, and default profiles.",
+        mimeType: "application/json",
+      },
+      async () => ({
+        contents: [
+          {
+            uri: ENRICHMENT_ANALYZERS_URI,
+            mimeType: "application/json",
+            text: JSON.stringify(buildEnrichmentAnalyzersTaxonomyDocument(), null, 2),
           },
         ],
       }),

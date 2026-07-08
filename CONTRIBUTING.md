@@ -61,6 +61,10 @@ a third.
 the subnet's on-chain hyperparameters and validators, not by this repo. Merging a PR is not a promise of
 score, ranking, or compensation, and all review decisions are at maintainer discretion and final.
 
+**This repository is itself Gittensor-listed.** PRs merged here by registered miners may earn TAO
+under the subnet's own rules — see the badge in `README.md` for a live, aggregate merged-PR/line-count
+summary. That eligibility and scoring is Gittensor's, not ours, and does not change the bar above.
+
 ## What We Accept
 
 Focused contributions are welcome in these areas:

@@ -5,6 +5,7 @@
   <a href="https://www.npmjs.com/package/@jsonbored/gittensory-mcp"><img alt="MCP package" src="https://img.shields.io/npm/v/@jsonbored/gittensory-mcp?label=mcp" /></a>
   <a href="https://github.com/JSONbored/gittensory/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/JSONbored/gittensory" /></a>
   <a href="https://gittensory.aethereal.dev/docs"><img alt="Docs" src="https://img.shields.io/badge/docs-gittensory.aethereal.dev-0b6bcb" /></a>
+  <a href="https://gittensor.io/miners/repository?name=JSONbored/gittensory"><img alt="Gittensor impact" src="https://api.gittensor.io/repos/JSONbored%2Fgittensory/badge.svg" /></a>
 </p>
 
 Gittensory is a deterministic control plane for Gittensor OSS contribution work.

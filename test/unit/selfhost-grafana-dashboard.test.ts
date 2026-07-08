@@ -11,6 +11,8 @@ type DashboardTarget = {
   rawQueryText?: string;
   format?: string;
   instant?: boolean;
+  queryType?: string;
+  options?: { query?: string; timeField?: number };
 };
 
 type DashboardPanel = {
@@ -18,6 +20,7 @@ type DashboardPanel = {
   title?: string;
   description?: string;
   targets?: DashboardTarget[];
+  datasource?: { type?: string; uid?: string };
 };
 
 type Dashboard = {
@@ -269,6 +272,33 @@ describe("maintainer Reviews & PRs Grafana dashboard", () => {
       expect(panel?.description?.length ?? 0).toBeGreaterThan(0);
       expect(panel?.description).toContain("window");
     }
+  });
+
+  it("adds GitHub-API-backed issue-activity stat panels alongside the review_targets PR panels (#3716)", () => {
+    const dashboard = readDashboard();
+    const panelsById = new Map(dashboard.panels.map((panel) => [panel.id, panel]));
+
+    for (const [id, title, expectedQuery] of [
+      [12, "Issues opened", "org:JSONbored is:issue"],
+      [13, "Issues closed", "org:JSONbored is:issue is:closed"],
+      [14, "Issues open", "org:JSONbored is:issue is:open"],
+    ] as const) {
+      const panel = panelsById.get(id);
+      expect(panel?.title).toBe(title);
+      expect(panel?.datasource?.type).toBe("grafana-github-datasource");
+      const target = panel?.targets?.[0];
+      expect(target?.queryType).toBe("Issues");
+      expect(target?.options?.query).toBe(expectedQuery);
+      // A live GitHub-API source (not review_targets) — never asserted to be time-window bound the way
+      // the SQL panels above are; "Issues open" is deliberately a state snapshot with no timeField at all.
+      expect(panel?.description?.length ?? 0).toBeGreaterThan(0);
+    }
+
+    // "Issues open" is a current-state snapshot (mirrors github-prs.json's own "Open issues" panel) —
+    // no timeField, unlike the opened/closed flow panels.
+    expect(panelsById.get(14)?.targets?.[0]?.options?.timeField).toBeUndefined();
+    expect(panelsById.get(12)?.targets?.[0]?.options?.timeField).toBe(1);
+    expect(panelsById.get(13)?.targets?.[0]?.options?.timeField).toBe(0);
   });
 
   (sqliteCliAvailable ? it : it.skip)("filters the pull request table to the selected time window", () => {

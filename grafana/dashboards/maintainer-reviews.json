@@ -4,7 +4,7 @@
   "tags": ["gittensory", "maintainer"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 5,
+  "version": 6,
   "editable": false,
   "graphTooltip": 1,
   "refresh": "1m",
@@ -84,11 +84,51 @@
       "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS ignored FROM review_targets WHERE (status='ignored' OR verdict='ignore') AND unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds}", "rawQueryText": "SELECT count(*) AS ignored FROM review_targets WHERE (status='ignored' OR verdict='ignore') AND unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds}" }]
     },
     {
+      "type": "row",
+      "id": 11,
+      "title": "Issue activity",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 }
+    },
+    {
+      "type": "stat",
+      "id": 12,
+      "title": "Issues opened",
+      "description": "Live GitHub-API count via the grafana-github-datasource (org:JSONbored is:issue), not the local webhook-observed issues table -- upstream-accurate regardless of local sync gaps, at the cost of a different consistency model from the review_targets-backed PR panels above. See #3716 for the tradeoff.",
+      "datasource": { "type": "grafana-github-datasource", "uid": "github" },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" } } },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["count"], "fields": "/^number$/" } },
+      "targets": [{ "refId": "A", "queryType": "Issues", "owner": "", "repository": "", "options": { "query": "org:JSONbored is:issue", "timeField": 1 } }]
+    },
+    {
+      "type": "stat",
+      "id": 13,
+      "title": "Issues closed",
+      "description": "Live GitHub-API count via the grafana-github-datasource (org:JSONbored is:issue is:closed), not the local webhook-observed issues table. See #3716 for the tradeoff.",
+      "datasource": { "type": "grafana-github-datasource", "uid": "github" },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 6 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "red" } } },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["count"], "fields": "/^number$/" } },
+      "targets": [{ "refId": "A", "queryType": "Issues", "owner": "", "repository": "", "options": { "query": "org:JSONbored is:issue is:closed", "timeField": 0 } }]
+    },
+    {
+      "type": "stat",
+      "id": 14,
+      "title": "Issues open",
+      "description": "Current open-issue backlog (org:JSONbored is:issue is:open) -- a state snapshot, not filtered by the dashboard time window, mirroring github-prs.json's own 'Open issues' panel.",
+      "datasource": { "type": "grafana-github-datasource", "uid": "github" },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 6 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "orange" } } },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["count"], "fields": "/^number$/" } },
+      "targets": [{ "refId": "A", "queryType": "Issues", "owner": "", "repository": "", "options": { "query": "org:JSONbored is:issue is:open" } }]
+    },
+    {
       "type": "table",
       "id": 8,
       "title": "Pull requests (latest 1000)",
       "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
-      "gridPos": { "h": 16, "w": 24, "x": 0, "y": 5 },
+      "gridPos": { "h": 16, "w": 24, "x": 0, "y": 10 },
       "fieldConfig": {
         "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "filterable": true, "inspect": false } },
         "overrides": [
@@ -122,7 +162,7 @@
       "id": 9,
       "title": "Reviews per day",
       "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 1, "showPoints": "never", "stacking": { "mode": "none" } }, "unit": "short" }, "overrides": [] },
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": false }, "tooltip": { "mode": "single", "sort": "none" } },
       "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "time series", "timeColumns": ["time"], "queryText": "SELECT date(updated_at) AS time, count(*) AS reviews FROM review_targets WHERE unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds} GROUP BY date(updated_at) ORDER BY time", "rawQueryText": "SELECT date(updated_at) AS time, count(*) AS reviews FROM review_targets WHERE unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds} GROUP BY date(updated_at) ORDER BY time" }]
@@ -132,7 +172,7 @@
       "id": 10,
       "title": "By verdict",
       "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "right", "showLegend": true, "values": ["value", "percent"] }, "pieType": "donut", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true }, "tooltip": { "mode": "single", "sort": "none" } },
       "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT verdict, count(*) AS c FROM review_targets WHERE verdict IS NOT NULL AND unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds} GROUP BY verdict ORDER BY c DESC", "rawQueryText": "SELECT verdict, count(*) AS c FROM review_targets WHERE verdict IS NOT NULL AND unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds} GROUP BY verdict ORDER BY c DESC" }]

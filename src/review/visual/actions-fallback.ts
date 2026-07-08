@@ -239,19 +239,42 @@ const LOCAL_HEADER_SIZE = 30;
 // GitHub Actions artifacts hold at most a handful of files here (one per route x viewport); bound the walk
 // regardless of what a hostile/corrupt central directory claims, so a crafted entryCount can't spin forever.
 const MAX_ZIP_ENTRIES = 64;
+const MAX_ARTIFACT_BYTES = 60 * 1024 * 1024;
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
 
-async function inflateRawRaw(compressed: Uint8Array): Promise<Uint8Array | null> {
+async function inflateRawRaw(compressed: Uint8Array, maxBytes: number): Promise<Uint8Array | null> {
   try {
     // The cast only narrows the TYPE for the UI workspace's stricter DOM-lib BodyInit/BlobPart, which excludes
     // SharedArrayBuffer from ArrayBufferLike -- `compressed` is always a view over a plain (never shared)
-    // ArrayBuffer here (subarray of bytes ultimately sourced from Response#arrayBuffer()), mirrors shot.ts's
-    // own `png as Uint8Array<ArrayBuffer>` cast for the identical reason.
+    // ArrayBuffer here (subarray of bytes ultimately sourced from Response#arrayBuffer()).
     const stream = new Blob([compressed as Uint8Array<ArrayBuffer>]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-    const buf = await new Response(stream).arrayBuffer();
-    return new Uint8Array(buf);
+    const reader = stream.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(value);
+    }
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return out;
   } catch {
     return null;
   }
+}
+
+function isPng(bytes: Uint8Array): boolean {
+  return PNG_SIGNATURE.every((byte, index) => bytes[index] === byte);
 }
 
 /** Read every file entry out of a well-formed ZIP archive (method 0 = stored, or 8 = raw DEFLATE -- the only
@@ -259,7 +282,7 @@ async function inflateRawRaw(compressed: Uint8Array): Promise<Uint8Array | null>
  *  an unsupported compression method, an offset past the buffer end -- degrades that ONE entry (or the whole
  *  read) to being skipped/empty rather than throwing; this parses a REMOTE, only-indirectly-trusted byte
  *  stream (the fork-built artifact), so every read here is bounds-checked before use. */
-export async function parseZipEntries(bytes: Uint8Array): Promise<ZipEntry[]> {
+export async function parseZipEntries(bytes: Uint8Array, options: { maxEntryBytes?: number } = {}): Promise<ZipEntry[]> {
   try {
     if (bytes.byteLength < EOCD_MIN_SIZE) return [];
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -277,12 +300,14 @@ export async function parseZipEntries(bytes: Uint8Array): Promise<ZipEntry[]> {
     let centralDirOffset = view.getUint32(eocdOffset + 16, true);
     const entries: ZipEntry[] = [];
     const decoder = new TextDecoder();
+    const maxEntryBytes = options.maxEntryBytes ?? MAX_ARTIFACT_BYTES;
 
     for (let i = 0; i < entryCount; i++) {
       if (centralDirOffset < 0 || centralDirOffset + CENTRAL_DIR_HEADER_SIZE > bytes.byteLength) break;
       if (view.getUint32(centralDirOffset, true) !== CENTRAL_DIR_SIGNATURE) break;
       const method = view.getUint16(centralDirOffset + 10, true);
       const compressedSize = view.getUint32(centralDirOffset + 20, true);
+      const uncompressedSize = view.getUint32(centralDirOffset + 24, true);
       const nameLen = view.getUint16(centralDirOffset + 28, true);
       const extraLen = view.getUint16(centralDirOffset + 30, true);
       const commentLen = view.getUint16(centralDirOffset + 32, true);
@@ -304,8 +329,8 @@ export async function parseZipEntries(bytes: Uint8Array): Promise<ZipEntry[]> {
         const dataEnd = dataOffset + compressedSize;
         if (dataOffset >= 0 && dataEnd <= bytes.byteLength) {
           const compressed = bytes.subarray(dataOffset, dataEnd);
-          const data = method === 0 ? new Uint8Array(compressed) : method === 8 ? await inflateRawRaw(compressed) : null;
-          if (data) entries.push({ name, data });
+          const data = uncompressedSize > maxEntryBytes ? null : method === 0 ? new Uint8Array(compressed) : method === 8 ? await inflateRawRaw(compressed, maxEntryBytes) : null;
+          if (data && data.byteLength <= maxEntryBytes) entries.push({ name, data });
         }
       }
       centralDirOffset = nextCentralDirOffset;
@@ -329,7 +354,6 @@ export type FallbackShot = { fileName: string; png: Uint8Array };
 // Bounds a hostile/oversized artifact -- MAX_CONFIGURED_ROUTES (5, capture.ts) x 2 viewports x 2 themes,
 // rounded up, and a generous per-artifact byte cap (well above what ~20 full-page PNGs need in practice).
 const MAX_FALLBACK_SHOTS = 24;
-const MAX_ARTIFACT_BYTES = 60 * 1024 * 1024;
 
 function githubApiHeaders(token: string): Headers {
   const headers = new Headers();
@@ -393,6 +417,7 @@ export async function fetchFallbackArtifactShots(params: {
     for (const entry of entries) {
       if (shots.length >= MAX_FALLBACK_SHOTS) break;
       if (!entry.name.toLowerCase().endsWith(".png")) continue;
+      if (!isPng(entry.data)) continue;
       shots.push({ fileName: entry.name, png: entry.data });
     }
     return shots;

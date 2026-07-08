@@ -62,6 +62,10 @@ function concatBytes(parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
+function pngBytes(label: string): Uint8Array {
+  return concatBytes([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), new TextEncoder().encode(label)]);
+}
+
 function buildZip(files: Array<{ name: string; data: Uint8Array; method: 0 | 8 }>): Uint8Array {
   const localParts: Uint8Array[] = [];
   const centralParts: Uint8Array[] = [];
@@ -244,6 +248,10 @@ describe("parseZipEntries", () => {
     return { view: new DataView(zip.buffer, zip.byteOffset, zip.byteLength), centralDirStart, eocdStart };
   }
 
+  function viewCompressedSize(zip: Uint8Array): number {
+    return new DataView(zip.buffer, zip.byteOffset, zip.byteLength).getUint32(18, true);
+  }
+
   it("stops reading once a corrupted entry count walks the central directory past the buffer end", async () => {
     const zip = buildZip([{ name: "a.png", data: new TextEncoder().encode("A"), method: 0 }]);
     const { view, eocdStart } = singleEntryZipOffsets(zip, "a.png".length, 1);
@@ -305,6 +313,18 @@ describe("parseZipEntries", () => {
     view.setUint16(localEntryLen + 10, 99, true);
     const entries = await parseZipEntries(zip);
     expect(entries).toEqual([]);
+  });
+
+  it("skips a ZIP entry whose declared uncompressed size exceeds the configured cap", async () => {
+    const zip = buildZip([{ name: "big.png", data: new TextEncoder().encode("tiny"), method: 8 }]);
+    const { view, centralDirStart } = singleEntryZipOffsets(zip, "big.png".length, viewCompressedSize(zip));
+    view.setUint32(centralDirStart + 24, 9, true);
+    await expect(parseZipEntries(zip, { maxEntryBytes: 8 })).resolves.toEqual([]);
+  });
+
+  it("stops inflating a DEFLATE entry once the output exceeds the configured cap", async () => {
+    const zip = buildZip([{ name: "bomb.png", data: new TextEncoder().encode("A".repeat(4096)), method: 8 }]);
+    await expect(parseZipEntries(zip, { maxEntryBytes: 1024 })).resolves.toEqual([]);
   });
 });
 
@@ -471,8 +491,8 @@ describe("fetchFallbackArtifactShots", () => {
 
   it("lists, downloads, validates, and extracts PNG shots end to end", async () => {
     const zip = buildZip([
-      { name: "root--desktop.png", data: new TextEncoder().encode("desktop-bytes"), method: 0 },
-      { name: "root--mobile.png", data: new TextEncoder().encode("mobile-bytes"), method: 8 },
+      { name: "root--desktop.png", data: pngBytes("desktop-bytes"), method: 0 },
+      { name: "root--mobile.png", data: pngBytes("mobile-bytes"), method: 8 },
       { name: "manifest.json", data: new TextEncoder().encode("{}"), method: 0 },
     ]);
     stubSequence([
@@ -572,10 +592,21 @@ describe("fetchFallbackArtifactShots", () => {
     expect(shots).toEqual([]);
   });
 
+  it("ignores .png entries whose decompressed bytes do not have a PNG signature", async () => {
+    const zip = buildZip([{ name: "root--desktop.png", data: new TextEncoder().encode("not really a png"), method: 0 }]);
+    stubSequence([
+      () => Response.json({ artifacts: [{ id: 1, name: FALLBACK_ARTIFACT_NAME }] }),
+      () => new Response(null, { status: 302, headers: { location: "https://pipelines.actions.githubusercontent.com/x.zip" } }),
+      () => new Response(zip.buffer as ArrayBuffer, { status: 200 }),
+    ]);
+    const shots = await fetchFallbackArtifactShots({ token: "tok", repo: { owner: "acme", repo: "widgets" }, runId: 1 });
+    expect(shots).toEqual([]);
+  });
+
   it("caps the number of returned shots even when the artifact holds more PNGs than the limit", async () => {
     const files = Array.from({ length: 30 }, (_, i) => ({
       name: `route-${i}--desktop.png`,
-      data: new TextEncoder().encode(`shot-${i}`),
+      data: pngBytes(`shot-${i}`),
       method: 0 as const,
     }));
     const zip = buildZip(files);

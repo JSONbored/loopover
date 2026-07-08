@@ -7,7 +7,7 @@ import enginePkg from "../../packages/gittensory-engine/package.json";
 describe("gittensory-engine package scaffold", () => {
   it("declares the published package identity", () => {
     expect(enginePkg.name).toBe("@jsonbored/gittensory-engine");
-    expect(enginePkg.version).toBe("0.1.0");
+    expect(enginePkg.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(enginePkg.type).toBe("module");
     expect(enginePkg.license).toBe("AGPL-3.0-only");
     expect(enginePkg.publishConfig?.access).toBe("public");

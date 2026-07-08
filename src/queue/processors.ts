@@ -4601,6 +4601,7 @@ async function maybeCaptureOnActionsFallbackWorkflowRun(
     }
   ).workflow_run;
   if (run?.name !== FALLBACK_WORKFLOW_NAME || run?.event !== "workflow_dispatch") return false;
+  if (payload.action !== "completed") return false;
 
   const correlation = parseFallbackRunCorrelation(run.display_title);
   if (correlation) {

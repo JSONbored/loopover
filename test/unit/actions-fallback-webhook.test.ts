@@ -484,6 +484,37 @@ describe("workflow_run webhook -> actions_fallback storage (#4112)", () => {
     expect(artifactsListCalled).toBe(false);
   });
 
+  it("does not clear the dispatch marker for a non-terminal workflow_run activity", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
+    await seedRepoAndPr(env, "cafebabecafebabecafebabecafebabecafebabe");
+    await markFallbackDispatched(env, "cafebabecafebabecafebabecafebabecafebabe");
+    let artifactsListCalled = false;
+    vi.stubGlobal(
+      "fetch",
+      baseFetchStub({
+        "/actions/runs/": () => {
+          artifactsListCalled = true;
+          return Response.json({ artifacts: [] });
+        },
+      }),
+    );
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "requested-run-keeps-marker",
+      eventName: "workflow_run",
+      payload: {
+        action: "requested",
+        repository: { name: "fallback-repo", full_name: "owner/fallback-repo", owner: { login: "owner" } },
+        installation: { id: 9101 },
+        workflow_run: { id: 589, name: "Gittensory Visual Capture Fallback", event: "workflow_dispatch", conclusion: null, display_title: "gittensory-visual-fallback pr=55 sha=cafebabecafebabecafebabecafebabecafebabe" },
+      },
+    } as never);
+
+    expect(artifactsListCalled).toBe(false);
+    await expect(isFallbackDispatchInFlight(env, "cafebabecafebabecafebabecafebabecafebabe")).resolves.toBe(true);
+  });
+
   it("clears the dispatch marker on a FAILED run too (#4112 review fix -- a failed run shouldn't block a retry for the rest of the max-age window)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
     await seedRepoAndPr(env, "cafebabecafebabecafebabecafebabecafebabe");

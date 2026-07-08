@@ -53,6 +53,7 @@ export const GATE_MODE_MANIFEST = [
   { field: "duplicatePrGateMode", aliases: ["duplicatePrGateMode", "gate.duplicates"], pages: ["docs.how-reviews-work.tsx", "docs.tuning.tsx"] },
   { field: "qualityGateMode", aliases: ["qualityGateMode", "gate.readiness.mode"], pages: ["docs.how-reviews-work.tsx", "docs.tuning.tsx"] },
   { field: "slopGateMode", aliases: ["slopGateMode", "gate.slop.mode"], pages: ["docs.how-reviews-work.tsx", "docs.tuning.tsx"] },
+  { field: "copycatGateMode", aliases: ["copycatGateMode", "gate.copycat.mode"], pages: ["docs.how-reviews-work.tsx", "docs.tuning.tsx"] },
   { field: "sizeGateMode", aliases: ["sizeGateMode", "gate.size"], pages: ["docs.how-reviews-work.tsx", "docs.tuning.tsx", "docs.github-app.tsx"] },
   { field: "lockfileIntegrityGateMode", aliases: ["lockfileIntegrityGateMode", "gate.lockfileIntegrity"], pages: ["docs.how-reviews-work.tsx", "docs.tuning.tsx", "docs.github-app.tsx"] },
   { field: "claGateMode", aliases: ["claGateMode", "gate.claMode"], pages: ["docs.how-reviews-work.tsx", "docs.tuning.tsx", "docs.github-app.tsx"] },

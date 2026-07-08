@@ -110,6 +110,14 @@ function HowReviewsWork() {
           (engine default band <code>60</code>).
         </li>
         <li>
+          <strong>Copycat / plagiarism gate</strong> (<code>copycatGateMode</code>, default{" "}
+          <code>off</code>) — a code containment/similarity check against prior art (repo history,
+          other PRs). Escalating tiers: <code>warn</code>, <code>label</code>,{" "}
+          <code>block</code>, plus a further strikes escalation for repeat offenders. Config only
+          today — the detection engine itself has not shipped yet, so setting this has no effect
+          until it does.
+        </li>
+        <li>
           <strong>Merge-readiness gate</strong> (<code>mergeReadinessGateMode</code>, default{" "}
           <code>off</code>) — a composite readiness check.
         </li>

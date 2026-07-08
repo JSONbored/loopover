@@ -141,8 +141,8 @@ describe("check-docs-drift script", () => {
       const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
 
       expect(result.failures).toEqual([]);
-      // gateModes bumped 11 -> 12 for linkedIssueSatisfactionGateMode (#1961/#3906).
-      expect(result.counts).toEqual({ flags: 10, commands: 19, gateModes: 12 });
+      // gateModes bumped 12 -> 13 for copycatGateMode (#1969, currently inert config scaffold).
+      expect(result.counts).toEqual({ flags: 10, commands: 19, gateModes: 13 });
     });
 
     it("catches an unmapped *GateMode field missing from GATE_MODE_MANIFEST", () => {

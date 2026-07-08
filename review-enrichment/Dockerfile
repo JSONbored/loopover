@@ -1,4 +1,6 @@
-# Gittensory review-enrichment service (REES). Lean two-stage Node build; analyzers add CLI tools later (#1477).
+# Gittensory review-enrichment service (REES). Lean two-stage Node build; analyzers are pure-JS diff-hunk
+# heuristics with no external CLI tools (#1477 scoped this to the cheap, no-checkout path -- see
+# review-enrichment/src/analyzers/complexity.ts's header for why a real linter/AST toolchain is out of scope).
 # Build context = the review-enrichment/ directory (Railway "Root Directory" = review-enrichment).
 FROM node:22-slim AS build
 WORKDIR /app

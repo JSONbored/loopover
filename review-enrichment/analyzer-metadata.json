@@ -1180,11 +1180,38 @@
         "maxLineChars": 2000
       },
       "docs": {
-        "summary": "Flags newly-added catch/except blocks that swallow the error — empty body, unused binding, or a bare `return null`.",
-        "looksAt": "Added lines in changed non-test JS/TS/Python source files.",
-        "reports": "File, line, and kind: empty-catch, unused-binding, or return-null.",
+        "summary": "Flags newly-added catch/except blocks (and Go if-err checks) that swallow or mishandle the error — empty body, unused binding, a bare `return null`/`nil`, or a Python bare `except:` naming no exception type.",
+        "looksAt": "Added lines in changed non-test JS/TS/Python/Go source files.",
+        "reports": "File, line, and kind: empty-catch, unused-binding, return-null, or bare-except.",
         "network": "Pure local analyzer. No external network call.",
-        "notes": "Multiline catch bodies are collected with brace balance. Catches that log, rethrow, or reference the binding are not flagged. Brace counting is character-level (string literals are not stripped)."
+        "notes": "Multiline catch/if-err bodies are collected with brace balance (Go's `if err != nil { … }`, including the if-with-initializer form, is treated the same as a JS/TS catch). Handlers that log, rethrow/panic, or reference the checked binding are not flagged. Python's bare `except:` is flagged regardless of body — it catches SystemExit/KeyboardInterrupt too. Brace counting is character-level (string literals are not stripped)."
+      }
+    },
+    {
+      "name": "complexity",
+      "title": "Approximate cyclomatic complexity",
+      "category": "quality",
+      "cost": "local",
+      "defaultEnabled": true,
+      "profiles": [
+        "fast",
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "files"
+      ],
+      "limits": {
+        "maxFindings": 25,
+        "maxComplexity": 10,
+        "maxLineChars": 2000
+      },
+      "docs": {
+        "summary": "Flags a newly-added function whose approximate cyclomatic complexity (branch/loop/logical-operator density, computed on the diff-visible lines) exceeds a threshold.",
+        "looksAt": "Added lines in changed non-test TS/JS source files, starting from a named function declaration or a const/let/var-assigned arrow function whose opening line is part of the diff.",
+        "reports": "File, line, the detected function name, the measured complexity, and the configured threshold.",
+        "network": "Pure local analyzer. No external network call.",
+        "notes": "Diff-hunk approximation, not a whole-function true McCabe count: REES has no full-file content, so this counts if/for/while/case/catch/&&/||/?? token occurrences across the function's ADDED body lines only (1 + count), the same function-boundary detection size-smell.ts (#2019) uses for 'big-function'. A function whose signature line is not part of the diff is not scored. Distinct from deep-nesting (#2030), which measures brace NESTING depth, a readability smell, not decision-point density. Ternary (`? :`) is intentionally excluded — see the analyzer source header for why."
       }
     },
     {

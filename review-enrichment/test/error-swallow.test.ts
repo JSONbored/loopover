@@ -91,3 +91,62 @@ test("scanErrorSwallow: aggregates across files and renders a public-safe brief"
   assert.match(promptSection, /src\/a\.ts:1/);
   assert.doesNotMatch(promptSection, /catch \(e\)/);
 });
+
+test("detectErrorSwallow: flags Go if-err checks that swallow the error", () => {
+  assert.equal(detectErrorSwallow("if err != nil {}"), "empty-catch");
+  assert.equal(detectErrorSwallow("if err != nil { return }"), "unused-binding");
+  assert.equal(detectErrorSwallow("if err != nil { return nil }"), "return-null");
+  assert.equal(detectErrorSwallow("if writeErr != nil { return nil }"), "return-null");
+});
+
+test("detectErrorSwallow: does not flag Go if-err checks that propagate, log, or panic", () => {
+  assert.equal(detectErrorSwallow("if err != nil { return err }"), null);
+  assert.equal(detectErrorSwallow("if err != nil { return fmt.Errorf(\"x: %w\", err) }"), null);
+  assert.equal(detectErrorSwallow("if err != nil { log.Println(err) }"), null);
+  assert.equal(detectErrorSwallow("if err != nil { panic(err) }"), null);
+});
+
+test("detectErrorSwallow: does not mistake an unrelated nil-pointer check for error handling", () => {
+  assert.equal(detectErrorSwallow("if node != nil { return defaultNode }"), null);
+});
+
+test("detectErrorSwallow: recognizes the Go if-with-initializer form", () => {
+  assert.equal(detectErrorSwallow("if err := doStuff(); err != nil { return }"), "unused-binding");
+  assert.equal(detectErrorSwallow("if err := doStuff(); err != nil { return err }"), null);
+});
+
+test("detectErrorSwallow: flags a bare Python except naming no exception type, regardless of body", () => {
+  assert.equal(detectErrorSwallow("except:"), "bare-except");
+  assert.equal(detectErrorSwallow("  except:  "), "bare-except");
+  assert.equal(detectErrorSwallow("except:  # noqa"), "bare-except");
+});
+
+test("detectErrorSwallow: does not flag a Python except naming a real exception type", () => {
+  assert.equal(detectErrorSwallow("except Exception:"), null);
+  assert.equal(detectErrorSwallow("except (TypeError, ValueError):"), null);
+});
+
+test("scanPatchForErrorSwallow: supports multi-line Go if-err blocks on added lines", () => {
+  const patch = [
+    "@@ -1,0 +1,4 @@",
+    "+resp, err := doStuff()",
+    "+if err != nil {",
+    "+  return",
+    "+}",
+  ].join("\n");
+  assert.deepEqual(scanPatchForErrorSwallow("main.go", patch), [
+    { file: "main.go", line: 2, kind: "unused-binding" },
+  ]);
+});
+
+test("scanPatchForErrorSwallow: flags a bare except on an added Python line", () => {
+  const findings = scanPatchForErrorSwallow("lib/b.py", patchOf(["except:", "    handle()"]));
+  assert.deepEqual(findings, [{ file: "lib/b.py", line: 1, kind: "bare-except" }]);
+});
+
+test("scanPatchForErrorSwallow: skips Go test files", () => {
+  assert.deepEqual(
+    scanPatchForErrorSwallow("main_test.go", patchOf(["if err != nil {}"])),
+    [],
+  );
+});

@@ -530,12 +530,30 @@ export interface I18nFinding {
   line: number;
 }
 
-/** A swallowed-error catch/except block newly added in the diff (#2014, part of #1499).
- *  Reports file, line, and kind only — never catch body content. */
+/** A swallowed or mishandled error/exception newly added in the diff (#2014, extended for Go + Python
+ *  bare-except by #1477). Reports file, line, and kind only — never catch/handler body content. `empty-catch`:
+ *  an empty JS/TS `catch`, Go `if err != nil {}`, or Python `except: pass` body. `unused-binding`: the bound
+ *  exception/checked error variable is never referenced, logged, or re-thrown. `return-null`: the handler
+ *  returns a bare `null`/`nil` instead of propagating the error. `bare-except`: a Python `except:` naming no
+ *  exception type, which catches everything (including `SystemExit`/`KeyboardInterrupt`) regardless of body. */
 export interface ErrorSwallowFinding {
   file: string;
   line: number;
-  kind: "empty-catch" | "unused-binding" | "return-null";
+  kind: "empty-catch" | "unused-binding" | "return-null" | "bare-except";
+}
+
+/** An approximate cyclomatic complexity for a newly-added function, computed from diff-visible added lines only
+ *  (#1477) — `1 + a count of if/for/while/case/catch/&&/||/?? tokens` within the function's added body lines,
+ *  not a whole-function true McCabe count (REES has no full-file content to walk). Distinct from deep-nesting
+ *  (#2030), which measures brace NESTING depth, a readability smell, not decision-point density. Reports file,
+ *  line, the detected function name, the measured complexity, and the configured threshold — never source
+ *  content. */
+export interface ComplexityFinding {
+  file: string;
+  line: number;
+  name: string;
+  complexity: number;
+  threshold: number;
 }
 
 /** Deep control-flow nesting newly added in the diff (#2030, part of #1499).
@@ -698,6 +716,7 @@ export interface BriefFindings {
   floatingPromise?: FloatingPromiseFinding[];
   deepNesting?: DeepNestingFinding[];
   errorSwallow?: ErrorSwallowFinding[];
+  complexity?: ComplexityFinding[];
   unsafeAny?: UnsafeAnyFinding[];
   a11y?: A11yFinding[];
   i18n?: I18nFinding[];

@@ -35,6 +35,7 @@ import { scanDebugLeftover } from "./debug-leftover.js";
 import { scanDeepNesting } from "./deep-nesting.js";
 import { scanI18nRegression } from "./i18n-regression.js";
 import { scanErrorSwallow } from "./error-swallow.js";
+import { scanComplexity } from "./complexity.js";
 import { scanFloatingPromise } from "./floating-promise.js";
 import { scanSizeSmell } from "./size-smell.js";
 import { scanA11yRegression } from "./a11y-regression.js";
@@ -1128,24 +1129,64 @@ export const ANALYZER_DESCRIPTORS = [
     limits: { maxFindings: 25, maxLineChars: 2000 },
     docs: {
       summary:
-        "Flags newly-added catch/except blocks that swallow the error — empty body, unused binding, or a bare `return null`.",
-      looksAt: "Added lines in changed non-test JS/TS/Python source files.",
-      reports: "File, line, and kind: empty-catch, unused-binding, or return-null.",
+        "Flags newly-added catch/except blocks (and Go if-err checks) that swallow or mishandle the error — empty body, unused binding, a bare `return null`/`nil`, or a Python bare `except:` naming no exception type.",
+      looksAt: "Added lines in changed non-test JS/TS/Python/Go source files.",
+      reports: "File, line, and kind: empty-catch, unused-binding, return-null, or bare-except.",
       network: "Pure local analyzer. No external network call.",
       notes:
-        "Multiline catch bodies are collected with brace balance. Catches that log, rethrow, or reference the binding are not flagged. Brace counting is character-level (string literals are not stripped).",
+        "Multiline catch/if-err bodies are collected with brace balance (Go's `if err != nil { … }`, including the if-with-initializer form, is treated the same as a JS/TS catch). Handlers that log, rethrow/panic, or reference the checked binding are not flagged. Python's bare `except:` is flagged regardless of body — it catches SystemExit/KeyboardInterrupt too. Brace counting is character-level (string literals are not stripped).",
     },
     render: (findings, helpers) => {
       if (!findings.length) return [];
-      const lines = ["### Swallowed errors (empty catch / unused binding / return null)"];
+      const explain = (kind: (typeof findings)[number]["kind"]): string => {
+        switch (kind) {
+          case "empty-catch":
+            return "empty-catch — the error is checked/caught but the handling block is empty";
+          case "unused-binding":
+            return "unused-binding — the error is checked/caught but never referenced, logged, or returned";
+          case "return-null":
+            return "return-null — returns null/nil instead of propagating the error";
+          case "bare-except":
+            return "bare-except — catches every exception (including SystemExit/KeyboardInterrupt), no type named";
+        }
+      };
+      const lines = ["### Swallowed errors (empty catch / unused binding / return null / bare except)"];
       for (const item of findings) {
-        lines.push(
-          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${helpers.safeCodeSpan(item.kind)}`,
-        );
+        lines.push(`- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${explain(item.kind)}`);
       }
       return lines;
     },
     run: (req, { signal }) => scanErrorSwallow(req, signal),
+  }),
+  descriptor({
+    name: "complexity",
+    title: "Approximate cyclomatic complexity",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxComplexity: 10, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags a newly-added function whose approximate cyclomatic complexity (branch/loop/logical-operator density, computed on the diff-visible lines) exceeds a threshold.",
+      looksAt:
+        "Added lines in changed non-test TS/JS source files, starting from a named function declaration or a const/let/var-assigned arrow function whose opening line is part of the diff.",
+      reports: "File, line, the detected function name, the measured complexity, and the configured threshold.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Diff-hunk approximation, not a whole-function true McCabe count: REES has no full-file content, so this counts if/for/while/case/catch/&&/||/?? token occurrences across the function's ADDED body lines only (1 + count), the same function-boundary detection size-smell.ts (#2019) uses for 'big-function'. A function whose signature line is not part of the diff is not scored. Distinct from deep-nesting (#2030), which measures brace NESTING depth, a readability smell, not decision-point density. Ternary (`? :`) is intentionally excluded — see the analyzer source header for why.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Approximate cyclomatic complexity (diff-visible branch/loop/logical-operator density)"];
+      for (const item of findings) {
+        const location = helpers.safeCodeSpan(`${item.file}:${item.line}`);
+        const name = helpers.safeCodeSpan(item.name);
+        lines.push(`- ${location} — ${name}: approx. complexity ${item.complexity} (threshold ${item.threshold})`);
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanComplexity(req, signal),
   }),
   descriptor({
     name: "unsafeAny",

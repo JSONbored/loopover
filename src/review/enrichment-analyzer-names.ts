@@ -46,6 +46,7 @@ export const REES_ANALYZER_NAMES = [
   "floatingPromise",
   "deepNesting",
   "errorSwallow",
+  "complexity",
   "unsafeAny",
   "a11y",
   "i18n",

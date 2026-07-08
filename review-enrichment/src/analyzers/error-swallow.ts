@@ -1,16 +1,41 @@
-// Empty-catch / error-swallow analyzer (#2014). Flags newly-added catch/except blocks that swallow the error
-// (empty body, unused binding, or a bare `return null`) — a top source of silent failures. Pure compute over
-// added diff lines, no network. Scoped to JS/TS/Python source files; Python `except: pass` is included.
+// Empty-catch / error-swallow analyzer (#2014, extended for Go + Python bare-except by #1477). Flags
+// newly-added catch/except blocks (and Go `if err != nil` checks) that swallow or mishandle the error — empty
+// body, unused binding, a bare `return null`/`nil`, or (Python-only) a bare `except:` naming no exception type,
+// which catches everything (including SystemExit/KeyboardInterrupt) regardless of its body — all top sources
+// of silent failures. Pure compute over added diff lines, no network. Scoped to JS/TS/Python/Go source files.
 import type { EnrichRequest, ErrorSwallowFinding } from "../types.js";
 import { isTestPath } from "./test-ratio.js";
 
 const MAX_FINDINGS = 25;
 const MAX_LINE_CHARS = 2000;
 
-const SOURCE_EXTS = new Set(["ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "py"]);
+const SOURCE_EXTS = new Set(["ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "py", "go"]);
 
 const CATCH_OPEN_RE = /catch\s*(?:\(\s*([\w$]+)?\s*\))?\s*\{/;
+// Go's `if err != nil { ... }` check, in both its bare form (`if err != nil {`) and its very common
+// if-with-initializer form (`if err := f(); err != nil {`, where only the text after the `;` is the actual
+// check). The captured identifier must itself look like an error variable (contains "err"/"error",
+// case-insensitively on the leading letter) so an unrelated nil-pointer check like `if node != nil {` is never
+// mistaken for error handling. Parens are deliberately NOT part of the match: JS/TS require parens around an
+// `if` condition and Go idiomatic (gofmt) style never adds them, so this shape cannot occur in valid JS/TS.
+const GO_ERR_CHECK_OPEN_RE = /(?:\bif\s+|;\s*)(\w*[Ee]rr(?:or)?\d*)\s*!=\s*nil\s*\{/;
+const OPEN_RES: RegExp[] = [CATCH_OPEN_RE, GO_ERR_CHECK_OPEN_RE];
 const PY_EXCEPT_PASS_RE = /^\s*except(?:\s+[\w.]+\s*(?:as\s+(\w+))?)?\s*:\s*pass\s*(?:#.*)?$/;
+// A bare Python `except:` naming no exception type at all — flake8's E722. This is a defect independent of the
+// handler body (which may log or re-raise perfectly well): a bare except also catches SystemExit,
+// KeyboardInterrupt, and GeneratorExit, which should almost never be swallowed alongside ordinary exceptions.
+// Anchored so `except Exception:` / `except (A, B):` (a real type named) never match.
+const PY_BARE_EXCEPT_RE = /^\s*except\s*:\s*(?:#.*)?$/;
+
+/** Try each recognized error-handling opener (JS/TS `catch`, Go `if err != nil`) against `line`, in order.
+ *  Returns the first match, with the checked/bound identifier always in capture group 1. Pure. */
+function matchErrorOpen(line: string): RegExpExecArray | null {
+  for (const re of OPEN_RES) {
+    const match = re.exec(line);
+    if (match) return match;
+  }
+  return null;
+}
 
 function isScannablePath(path: string): boolean {
   const ext = /\.([^.]+)$/.exec(path)?.[1]?.toLowerCase();
@@ -30,9 +55,12 @@ function referencesBinding(body: string, binding: string): boolean {
 function bodySwallowsError(body: string, binding: string | null): ErrorSwallowFinding["kind"] | null {
   const trimmed = body.trim();
   if (!trimmed) return "empty-catch";
-  if (/^return\s+null\s*;?$/.test(trimmed)) return "return-null";
+  // `null` covers JS/TS; `nil` covers the Go equivalent (Go has no `null` literal).
+  if (/^return\s+(?:null|nil)\s*;?$/.test(trimmed)) return "return-null";
   if (!binding) return null;
   if (/\bthrow\b/.test(trimmed)) return null;
+  // Go's `panic(err)` re-escalates rather than swallowing, the same role `throw` plays in JS/TS.
+  if (/\bpanic\s*\(/.test(trimmed)) return null;
   if (/\b(?:console|logger|log|winston|pino|bunyan)\s*[.(]/.test(trimmed)) return null;
   if (/\bprint\s*\(/.test(trimmed)) return null;
   if (!referencesBinding(trimmed, binding)) return "unused-binding";
@@ -49,11 +77,12 @@ function braceBalanceFrom(line: string, openBrace: number): number {
   return depth;
 }
 
-/** Extract a complete JS/TS catch block from one line using brace balance, or null if incomplete. Pure. */
+/** Extract a complete error-handling block (JS/TS `catch`, or Go `if err != nil`) from one line using brace
+ *  balance, or null if incomplete. Pure. */
 export function parseCompleteCatchLine(
   line: string,
 ): { binding: string | null; body: string } | null {
-  const open = CATCH_OPEN_RE.exec(line);
+  const open = matchErrorOpen(line);
   if (!open) return null;
   const braceStart = line.indexOf("{", open.index ?? 0);
   if (braceStart < 0) return null;
@@ -73,12 +102,13 @@ export function parseCompleteCatchLine(
   return null;
 }
 
-/** Classify one source line for an error-swallow pattern, or null. Pure. */
+/** Classify one source line for an error-swallow / error-mishandling pattern, or null. Pure. */
 export function detectErrorSwallow(line: string): ErrorSwallowFinding["kind"] | null {
   const pyMatch = PY_EXCEPT_PASS_RE.exec(line);
   if (pyMatch) {
     return pyMatch[1] ? "unused-binding" : "empty-catch";
   }
+  if (PY_BARE_EXCEPT_RE.test(line)) return "bare-except";
 
   const complete = parseCompleteCatchLine(line);
   if (complete) {
@@ -161,7 +191,7 @@ export function scanPatchForErrorSwallow(
             pushFinding(newLine, kind);
             if (findings.length >= maxFindings) return findings;
           } else {
-            const open = CATCH_OPEN_RE.exec(body);
+            const open = matchErrorOpen(body);
             if (open) {
               const braceIndex = body.indexOf("{", open.index ?? 0);
               if (braceIndex >= 0) {

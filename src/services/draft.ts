@@ -573,6 +573,13 @@ export async function handleDraftCreate(request: Request, env: Env): Promise<Res
     return json({ ok: false, error: error instanceof Error ? error.message : "invalid_submission" }, 400);
   }
 
+  let origin: string;
+  try {
+    origin = trustedDraftOAuthOrigin(env, request.url);
+  } catch {
+    return json({ ok: false, error: "draft_flow_not_configured" }, 503);
+  }
+
   const id = newDraftId("draft");
   const state = randomDraftToken();
   await env.DB.prepare(
@@ -582,12 +589,6 @@ export async function handleDraftCreate(request: Request, env: Env): Promise<Res
     .bind(id, target.category, target.slug, target.targetPath, target.branchName, config.baseRef, JSON.stringify(fields), await sha256Hex(state))
     .run();
 
-  let origin: string;
-  try {
-    origin = trustedDraftOAuthOrigin(env, request.url);
-  } catch {
-    return json({ ok: false, error: "draft_flow_not_configured" }, 503);
-  }
   const authUrl = new URL("https://github.com/login/oauth/authorize");
   authUrl.searchParams.set("client_id", clientId);
   authUrl.searchParams.set("redirect_uri", `${origin}/v1/drafts/auth/callback`);

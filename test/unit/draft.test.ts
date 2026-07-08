@@ -896,6 +896,8 @@ describe("handleDraftCreate — nested body.fields branch + title fallbacks", ()
     );
     expect(res.status).toBe(503);
     expect((await res.json()) as { error: string }).toMatchObject({ error: "draft_flow_not_configured" });
+    const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM submission_drafts").first<{ n: number }>();
+    expect(row?.n).toBe(0);
   });
 
   it("returns 404 when the flag is off (handleDraftCreate guard)", async () => {
@@ -1274,6 +1276,28 @@ describe("handleDraftOAuthCallback — extra guards", () => {
     fetchSpy.mockRestore();
     expect(res.status).toBe(400);
     expect(await res.text()).toBe("GitHub authorization failed.");
+  });
+
+  it("returns 503 in callback when PUBLIC_API_ORIGIN is unset for non-localhost origins", async () => {
+    const app = createApp();
+    const env = draftEnv({ PUBLIC_API_ORIGIN: "" });
+    const localCreated = await app.request(
+      "/v1/drafts",
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(SAMPLE_FIELDS) },
+      env,
+    );
+    const created = (await localCreated.json()) as { authUrl: string };
+    const state = new URL(created.authUrl).searchParams.get("state") ?? "";
+    const cookie = localCreated.headers.get("set-cookie") ?? "";
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const res = await handleDraftOAuthCallback(
+      new Request(`${ORIGIN}/v1/drafts/auth/callback?code=valid&state=${encodeURIComponent(state)}`, { headers: callbackHeaders(cookie) }),
+      env,
+    );
+    expect(res.status).toBe(503);
+    expect(await res.text()).toBe("Draft flow not configured.");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 });
 

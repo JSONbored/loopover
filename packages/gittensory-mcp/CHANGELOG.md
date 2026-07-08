@@ -247,6 +247,7 @@
 - Apply the no-issue-rationale exemption to all linked-issue findings (#4064)
 - Sanitize validate-config terminal output (#4090)
 - Bound opportunity target fanout (#4072)
+- Build gittensory-engine before the publish gate + switch to workflow_dispatch (#4135)
 
 ### Security
 - Bound focus manifest ingestion (#890)

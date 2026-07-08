@@ -141,7 +141,7 @@ import { AGENT_ACTION_CLASSES, isActingAutonomyLevel, resolveAutonomy } from "..
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
 import { loadPublicRepoFocusManifest, loadRepoFocusManifest } from "../signals/focus-manifest-loader";
-import { buildPredictedGateVerdict } from "../rules/predicted-gate";
+import { buildPredictedGateVerdict, type PredictedGateVerdict } from "../rules/predicted-gate";
 import { buildIssueSlopAssessment, buildSlopAssessment } from "../signals/slop";
 import { buildBoundaryTestGenerationFinding, buildBoundaryTestGenerationSpec } from "../signals/boundary-test-generation";
 import { buildRepoDataQuality } from "../signals/data-quality";
@@ -860,6 +860,28 @@ const suggestBoundaryTestsOutputSchema = {
   spec: z.unknown().optional(),
 };
 
+/** One per-rule gate disposition (#2234): a fired gate rule and whether it BLOCKS or is merely ADVISORY, with the
+ *  public-safe reason already computed by the predictor. */
+export type GateDisposition = { rule: string; status: "block" | "advisory"; reason: string };
+
+/** Itemize a predicted-gate verdict into per-rule dispositions (#2234): every fired blocker is a `block`, every
+ *  warning an `advisory`, in that order. A rule that did not fire is not listed (it passed). PURE — a read-only
+ *  reshaping of what {@link buildPredictedGateVerdict} already computed; it adds no gate logic and no decision. */
+export function buildGateDispositions(verdict: Pick<PredictedGateVerdict, "blockers" | "warnings">): GateDisposition[] {
+  return [
+    ...verdict.blockers.map((finding) => ({ rule: finding.code, status: "block" as const, reason: finding.detail })),
+    ...verdict.warnings.map((finding) => ({ rule: finding.code, status: "advisory" as const, reason: finding.detail })),
+  ];
+}
+
+const explainGateDispositionOutputSchema = {
+  conclusion: z.string().optional(),
+  pack: z.enum(["gittensor", "oss-anti-slop"]).optional(),
+  dispositions: z
+    .array(z.object({ rule: z.string(), status: z.enum(["block", "advisory"]), reason: z.string() }))
+    .optional(),
+};
+
 const predictGateOutputSchema = {
   predicted: z.boolean().optional(),
   basis: z.string().optional(),
@@ -1341,6 +1363,17 @@ export class GittensoryMcp {
         outputSchema: predictGateOutputSchema,
       },
       async (input) => this.toolResult(await this.predictGate(input)),
+    );
+
+    server.registerTool(
+      "gittensory_explain_gate_disposition",
+      {
+        description:
+          "Explain WHY the Gittensory gate would pass or block a planned PR: the itemized per-rule dispositions (which specific gate rules block vs advise, and why) behind gittensory_predict_gate's verdict. Read-only reasoning surface from the repo's PUBLIC .gittensory.yml only — no merge/close decision. Self-scoped to the authenticated login.",
+        inputSchema: predictGateShape,
+        outputSchema: explainGateDispositionOutputSchema,
+      },
+      async (input) => this.toolResult(await this.explainGateDisposition(input)),
     );
 
     server.registerTool(
@@ -2467,7 +2500,12 @@ export class GittensoryMcp {
     };
   }
 
-  private async predictGate(input: z.infer<z.ZodObject<typeof predictGateShape>>): Promise<ToolPayload> {
+  /** Shared resolution + prediction behind BOTH gittensory_predict_gate and gittensory_explain_gate_disposition
+   *  (#2234): resolves the repo's public data + config and runs the SAME deterministic predictor, so the two tools
+   *  can never diverge (one returns the top-line verdict, the other the itemized per-rule dispositions). */
+  private async computePredictedGateVerdict(
+    input: z.infer<z.ZodObject<typeof predictGateShape>>,
+  ): Promise<{ repoFullName: string; verdict: PredictedGateVerdict }> {
     this.requireContributorAccess(input.login);
     const repoFullName = `${input.owner}/${input.repo}`;
     await this.requireRepoAccess(repoFullName);
@@ -2504,9 +2542,27 @@ export class GittensoryMcp {
       confirmedContributor,
       ...(input.changedPaths === undefined ? {} : { changedPaths: input.changedPaths }),
     });
+    return { repoFullName, verdict };
+  }
+
+  private async predictGate(input: z.infer<z.ZodObject<typeof predictGateShape>>): Promise<ToolPayload> {
+    const { repoFullName, verdict } = await this.computePredictedGateVerdict(input);
     return {
       summary: `Predicted Gittensory gate for ${repoFullName} under the ${verdict.pack} pack: ${verdict.conclusion}.`,
       data: verdict as unknown as Record<string, unknown>,
+    };
+  }
+
+  /** #2234: the itemized per-rule dispositions behind predict_gate's verdict — which specific gate rules would
+   *  block vs advise, and why. Reuses computePredictedGateVerdict (identical prediction), then reshapes it via the
+   *  pure buildGateDispositions. Read-only reasoning surface — no merge/close decision. */
+  private async explainGateDisposition(input: z.infer<z.ZodObject<typeof predictGateShape>>): Promise<ToolPayload> {
+    const { repoFullName, verdict } = await this.computePredictedGateVerdict(input);
+    const dispositions = buildGateDispositions(verdict);
+    const blocking = dispositions.filter((disposition) => disposition.status === "block").length;
+    return {
+      summary: `Gate disposition for ${repoFullName} under the ${verdict.pack} pack: ${verdict.conclusion} — ${blocking} blocking rule(s), ${dispositions.length - blocking} advisory.`,
+      data: { conclusion: verdict.conclusion, pack: verdict.pack, dispositions } as unknown as Record<string, unknown>,
     };
   }
 

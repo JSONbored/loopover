@@ -7,10 +7,8 @@
 // (src/review/parity.ts), which already scores the gate's `merge` predictions against the realized human
 // outcome (pr_outcome). No raw trust/reward/scoring internals are read or surfaced here.
 //
-// SCOPE (this PR, #1963): the pure builder (buildReviewRecap) + a manually-triggerable Discord delivery path
-// (generateAndSendReviewRecap, reusing resolveDiscordWebhook from notify-discord.ts — no second webhook
-// resolution mechanism). The scheduled cron trigger (mirroring the weekly-value-report cron wiring in
-// src/index.ts) is a clear, scoped follow-up — see the PR description.
+// SCOPE (#1963): pure builder + Discord delivery + scheduled sweep (review-recap-sweep). Slack delivery and
+// richer sections (queue health, top contributors, reversal rate) are follow-ups (#2244–#2246).
 import { listPullRequests, recordAuditEvent } from "../db/repositories";
 import { computeGateEval } from "../review/parity";
 import { resolveDiscordWebhook } from "./notify-discord";

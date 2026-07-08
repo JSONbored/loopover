@@ -1100,8 +1100,8 @@ settings:
 # periodic summary of recent review activity (PRs merged/closed, gate merge precision) for this repo. Discord
 # delivery only for now (reuses the same per-repo webhook resolution as the per-PR notifier); Slack is a
 # follow-up. There is no DB-backed dashboard counterpart -- precedence is simply this manifest value, or
-# fully disabled when the block (or `enabled`) is absent. This PR ships the builder + a manually-triggerable
-# delivery only -- the scheduled cron trigger is a scoped follow-up.
+# fully disabled when the block (or `enabled`) is absent. A daily self-host sweep (10:00 UTC) re-checks
+# eligibility and respects cadenceDays between posts.
 # reviewRecap:
 #   enabled: true    # Bool. Default: false (no recap is ever built or posted).
-#   cadenceDays: 7   # Positive integer. Days of activity each recap covers. Default: 7 (weekly).
+#   cadenceDays: 7   # Positive integer. Report window AND minimum days between recaps. Default: 7 (weekly).

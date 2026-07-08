@@ -678,6 +678,22 @@ features:
   refreshIntervalDays: 7              # Minimum days between refreshes. Default: 7.`}
       />
 
+      <h3>reviewRecap</h3>
+      <p>
+        Posts a periodic maintainer review recap to this repo&apos;s configured Discord webhook —
+        merged/closed PR counts and gate merge precision over the window, public-safe only. Disabled
+        by default: an unconfigured repo, or an explicit <code>enabled: false</code>, never gets a
+        recap. Self-host only; the sweep runs once a day at 10:00 UTC and respects each repo&apos;s{" "}
+        <code>cadenceDays</code> between posts.
+      </p>
+      <CodeBlock
+        filename=".gittensory.yml"
+        lang="yaml"
+        code={`reviewRecap:
+  enabled: true                       # Opt in. Default: false (fully disabled).
+  cadenceDays: 7                      # Report window AND minimum days between recaps. Default: 7.`}
+      />
+
       <h2>Instance-wide write switches (SELFHOST_DEPLOYMENT_MODE)</h2>
       <p>
         <code>SELFHOST_DEPLOYMENT_MODE</code> forces write suppression for the whole instance,

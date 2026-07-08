@@ -306,7 +306,7 @@ import {
 import { processSubmitDraft } from "../services/draft";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
 import { generateWeeklyValueReport } from "../services/weekly-value-report";
-import { generateAndSendReviewRecap } from "../services/review-recap";
+import { getLastReviewRecapAttemptedAtBulk, performReviewRecap } from "../services/review-recap-runner";
 import {
   REPO_OUTCOME_PATTERNS_SIGNAL,
   computeRepoOutcomePatterns,
@@ -437,6 +437,7 @@ import {
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { getLastRepoDocRefreshAttemptedAtBulk, performRepoDocRefresh } from "../github/repo-doc-refresh-runner";
 import { isRepoDocRefreshDue } from "../review/repo-doc-refresh-schedule";
+import { isReviewRecapDue } from "../review/review-recap-schedule";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import {
   callAiProvider,
@@ -1102,6 +1103,13 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       return;
     case "generate-review-recap":
       await runReviewRecapJob(env, message.repoFullName, message.windowDays);
+      return;
+    case "review-recap-sweep":
+      if (!message.repoFullName && message.requestedBy !== "test") {
+        await fanOutReviewRecapSweepJobs(env, message.requestedBy);
+        return;
+      }
+      if (message.repoFullName) await runReviewRecapJob(env, message.repoFullName, undefined);
       return;
     case "agent-regate-sweep":
       if (!message.repoFullName && message.requestedBy !== "test") {
@@ -2056,15 +2064,47 @@ async function fanOutBacklogConvergenceSweepJobs(
 // Maintainer review recap digest (#1963): build the recap for one repo and post it to Discord, gated on
 // this repo's `.gittensory.yml reviewRecap.enabled` (default OFF, mirrors repoDocGeneration.enabled below) --
 // fail-safe: a repo with no `reviewRecap:` block, or a manifest load failure, never posts. Config-gated at
-// THIS single call site (not inside generateAndSendReviewRecap itself) because this PR has no fan-out sweep
-// yet; the eventual scheduled trigger will enumerate opted-in repos the same way fanOutRepoDocRefreshSweepJobs
-// does, and can call generateAndSendReviewRecap directly since the enumeration step already filtered on
-// `.enabled` -- this per-call gate is what keeps a MANUAL trigger against a non-opted-in repo a no-op too.
+// THIS single call site (not inside performReviewRecap itself) so a manual trigger against a non-opted-in
+// repo is also a no-op; the scheduled sweep filters on `.enabled` before enqueueing per-repo jobs.
 async function runReviewRecapJob(env: Env, repoFullName: string, windowDays: number | undefined): Promise<void> {
   const manifest = await loadRepoFocusManifest(env, repoFullName).catch(() => null);
   if (!manifest?.reviewRecap.enabled) return;
-  await generateAndSendReviewRecap(env, repoFullName, {
+  await performReviewRecap(env, repoFullName, {
     windowDays: windowDays ?? manifest.reviewRecap.cadenceDays,
+  });
+}
+
+// Maintainer review recap sweep (#1963): enumerate every installed repo, bulk-load manifests, and enqueue one
+// `generate-review-recap` job for each repo that (a) has reviewRecap.enabled: true and (b) is due per its own
+// cadenceDays (default weekly). Mirrors fanOutRepoDocRefreshSweepJobs — daily eligibility re-check, per-repo cadence.
+async function fanOutReviewRecapSweepJobs(env: Env, requestedBy: "schedule" | "api" | "test"): Promise<void> {
+  const now = nowIso();
+  const repoFullNames = (await listRepositories(env)).map((repo) => repo.fullName);
+  const manifests = await loadRepoFocusManifests(env, repoFullNames);
+  const enabledRepos = repoFullNames.flatMap((repoFullName) => {
+    const manifest = manifests.get(repoFullName.toLowerCase());
+    return manifest?.reviewRecap.enabled ? [{ repoFullName, manifest }] : [];
+  });
+  const lastAttempts = await getLastReviewRecapAttemptedAtBulk(
+    env,
+    enabledRepos.map((entry) => entry.repoFullName),
+  );
+  const due = enabledRepos
+    .filter((entry) =>
+      isReviewRecapDue(lastAttempts.get(entry.repoFullName)?.generatedAt ?? null, entry.manifest.reviewRecap.cadenceDays, now),
+    )
+    .map((entry) => entry.repoFullName);
+  await Promise.all(
+    due.map((repoFullName, index) => {
+      const message: JobMessage = { type: "generate-review-recap", requestedBy, repoFullName };
+      const delaySeconds = Math.min(index * 10, 600);
+      return delaySeconds > 0 ? env.JOBS.send(message, { delaySeconds }) : env.JOBS.send(message);
+    }),
+  );
+  await recordAuditEvent(env, {
+    eventType: "review_recap.fanout",
+    outcome: "queued",
+    metadata: { repoCount: due.length, requestedBy },
   });
 }
 

@@ -149,13 +149,21 @@ export type JobMessage =
     }
   | {
       // Maintainer review recap digest (#1963): build the recap for one repo and post it to that repo's
-      // configured Discord webhook. Manually-triggerable only in this PR (`requestedBy: "api"`) -- the
-      // scheduled cron trigger ("schedule") is a scoped follow-up, listed here now so the union already
-      // documents the intended source without a later breaking change.
+      // configured Discord webhook. Manually-triggerable via internal routes; the scheduled sweep fans out
+      // one per opted-in repo (see "review-recap-sweep").
       type: "generate-review-recap";
       requestedBy: "schedule" | "api" | "test";
       repoFullName: string;
       windowDays?: number;
+    }
+  | {
+      // Scheduled maintainer review recap (#1963). No `repoFullName` = fan-out: enumerate every repo with
+      // `.gittensory.yml reviewRecap.enabled: true` whose cadence has elapsed and enqueue one
+      // `generate-review-recap` job each, mirroring "repo-doc-refresh-sweep". With `repoFullName` = run the
+      // recap for that one repo (same path as the per-repo child job the fan-out enqueues).
+      type: "review-recap-sweep";
+      requestedBy: "schedule" | "api" | "test";
+      repoFullName?: string;
     }
   | {
       // Scheduled re-gate sweep (#777). No `repoFullName` = fan-out: enqueue one per agent-configured repo.

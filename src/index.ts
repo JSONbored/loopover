@@ -215,6 +215,11 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   if (isHourly && hour === 9 && selfHostedReviews) {
     jobs.push({ type: "repo-doc-refresh-sweep", requestedBy: "schedule" });
   }
+  // Maintainer review recap sweep (#1963) -- once a day (10:00 UTC). The fan-out checks each opted-in repo's
+  // reviewRecap.cadenceDays before enqueuing generate-review-recap; default-off unless reviewRecap.enabled.
+  if (isHourly && hour === 10 && selfHostedReviews) {
+    jobs.push({ type: "review-recap-sweep", requestedBy: "schedule" });
+  }
   if (isFullSyncWindow) {
     jobs.push({ type: "generate-signal-snapshots", requestedBy: "schedule" });
     jobs.push({ type: "build-burden-forecasts", requestedBy: "schedule" });

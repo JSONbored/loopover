@@ -200,7 +200,7 @@ import {
   generateWeeklyValueReport,
   loadWeeklyValueReport,
 } from "../services/weekly-value-report";
-import { generateAndSendReviewRecap } from "../services/review-recap";
+import { performReviewRecap } from "../services/review-recap-runner";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
@@ -3682,9 +3682,8 @@ export function createApp() {
     return c.json({ ok: true, status: "queued", variant, days }, 202);
   });
 
-  // Maintainer review recap digest (#1963): manually-triggerable only in this PR (no scheduled cron trigger
-  // yet -- see the queue processor's "generate-review-recap" case). Config-gated on reviewRecap.enabled at
-  // the processor, so queuing a job for a repo that hasn't opted in is a documented no-op, not an error.
+  // Maintainer review recap digest (#1963): manually-triggerable internal job routes; the scheduled sweep runs
+  // daily via review-recap-sweep (see index.ts). Config-gated on reviewRecap.enabled at the processor layer.
   app.post("/v1/internal/jobs/generate-review-recap", async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const repoFullName = typeof body?.repoFullName === "string" ? body.repoFullName : undefined;
@@ -3734,7 +3733,7 @@ export function createApp() {
     if (!manifest?.reviewRecap.enabled) {
       return c.json({ ok: false, status: "skipped", reason: "reviewRecap is not enabled for this repository (.gittensory.yml reviewRecap.enabled)" }, 200);
     }
-    const { recap, delivery } = await generateAndSendReviewRecap(c.env, repoFullName, { windowDays: windowDays ?? manifest.reviewRecap.cadenceDays });
+    const { recap, delivery } = await performReviewRecap(c.env, repoFullName, { windowDays: windowDays ?? manifest.reviewRecap.cadenceDays });
     return c.json({ ok: true, recap, delivery });
   });
 

@@ -274,10 +274,9 @@ export type FocusManifestRepoDocGenerationConfig = {
 export type FocusManifestReviewRecapConfig = {
   present: boolean;
   enabled: boolean;
-  /** How many days of review activity each recap covers, and (once the scheduler follow-up lands) how often
-   *  it is posted. Default 7 (weekly). A purely descriptive/rate-limiting knob today — this PR ships only
-   *  the manually-triggerable builder + delivery, so `cadenceDays` currently just sets the report WINDOW;
-   *  the scheduled cron trigger is a scoped follow-up (see the PR description). */
+  /** How many days of review activity each recap covers, and how often the scheduled sweep re-posts after a
+   *  successful attempt (default weekly). The daily cron re-checks eligibility; a repo is skipped until
+   *  cadenceDays have elapsed since its last attempt marker. */
   cadenceDays: number;
 };
 

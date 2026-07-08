@@ -9304,6 +9304,19 @@
               "advisory",
               "block"
             ]
+          },
+          "copycatGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "warn",
+              "label",
+              "block"
+            ]
+          },
+          "copycatGateMinScore": {
+            "type": "number",
+            "nullable": true
           }
         },
         "required": [

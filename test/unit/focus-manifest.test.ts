@@ -274,6 +274,8 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     claCheckRunAppSlug: "checkRunAppSlug:",
     expectedCiContexts: "expectedCiContexts:",
     aiJudgmentBlockersMode: "aiJudgmentBlockers:",
+    copycatMode: "copycat:",
+    copycatMinScore: "copycat:",
   } satisfies Record<Exclude<keyof FocusManifestGateConfig, "present">, string>;
 
   it.each(Object.entries(GATE_FIELD_TOKENS))("documents gate.%s", (_field, token) => {
@@ -800,7 +802,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, checkMode: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, aiJudgmentBlockersMode: null },
+      gate: { present: false, enabled: null, checkMode: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null, grounding: null },
@@ -1110,7 +1112,7 @@ describe("parseFocusManifest gate config", () => {
     // the block→advisory deprecation-downgrade behavior itself is covered separately below.
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "advisory", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, checkMode: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, aiJudgmentBlockersMode: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, checkMode: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null });
   });
 
   it("parses gate.mergeReadiness + gate.firstTimeContributorGrace, round-trips them, and warns on bad values (#822)", () => {
@@ -1187,6 +1189,72 @@ describe("parseFocusManifest gate config", () => {
     const bad = parseFocusManifest({ gate: { slop: { aiAdvisory: "yes please" } } });
     expect(bad.gate.slopAiAdvisory).toBeNull();
     expect(bad.warnings.some((w) => /gate\.slop\.aiAdvisory/.test(w))).toBe(true);
+  });
+
+  it("parses the gate.copycat block, round-trips it, and warns on a non-mapping (#1969)", () => {
+    const m = parseFocusManifest({ gate: { copycat: { mode: "block", minScore: 55 } } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.copycatMode).toBe("block");
+    expect(m.gate.copycatMinScore).toBe(55);
+    expect(gateConfigToJson(m.gate)).toMatchObject({ copycat: { mode: "block", minScore: 55 } });
+
+    const bad = parseFocusManifest({ gate: { copycat: "block" } });
+    expect(bad.gate.copycatMode).toBeNull();
+    expect(bad.warnings.some((w) => /gate\.copycat/.test(w))).toBe(true);
+  });
+
+  it("gateConfigToJson round-trips gate.copycat with only ONE of mode/minScore set (#1969)", () => {
+    // Each field is independently optional in the source YML, so gateConfigToJson must not assume they always
+    // arrive together -- mode-only and minScore-only must each serialize without the other key present.
+    const modeOnly = parseFocusManifest({ gate: { copycat: { mode: "label" } } });
+    const modeOnlyJson = gateConfigToJson(modeOnly.gate) as Record<string, Record<string, unknown>>;
+    expect(modeOnlyJson).toMatchObject({ copycat: { mode: "label" } });
+    expect(modeOnlyJson.copycat).not.toHaveProperty("minScore");
+
+    const minScoreOnly = parseFocusManifest({ gate: { copycat: { minScore: 42 } } });
+    const minScoreOnlyJson = gateConfigToJson(minScoreOnly.gate) as Record<string, Record<string, unknown>>;
+    expect(minScoreOnlyJson).toMatchObject({ copycat: { minScore: 42 } });
+    expect(minScoreOnlyJson.copycat).not.toHaveProperty("mode");
+  });
+
+  it("accepts every gate.copycat.mode tier (off/warn/label/block) and warns on an unknown one (#1969)", () => {
+    for (const mode of ["off", "warn", "label", "block"] as const) {
+      expect(parseFocusManifest({ gate: { copycat: { mode } } }).gate.copycatMode).toBe(mode);
+    }
+    // Deliberately NOT the shared off/advisory/block scale -- "advisory" isn't a valid copycat tier.
+    const bad = parseFocusManifest({ gate: { copycat: { mode: "advisory" } } });
+    expect(bad.gate.copycatMode).toBeNull();
+    expect(bad.warnings.some((w) => /gate\.copycat\.mode/.test(w))).toBe(true);
+  });
+
+  it("clamps and rounds gate.copycat.minScore to 0-100 (#1969)", () => {
+    expect(parseFocusManifest({ gate: { copycat: { minScore: 250 } } }).gate.copycatMinScore).toBe(100);
+    expect(parseFocusManifest({ gate: { copycat: { minScore: -10 } } }).gate.copycatMinScore).toBe(0);
+    expect(parseFocusManifest({ gate: { copycat: { minScore: 59.6 } } }).gate.copycatMinScore).toBe(60);
+    const bad = parseFocusManifest({ gate: { copycat: { minScore: "high" } } });
+    expect(bad.gate.copycatMinScore).toBeNull();
+    expect(bad.warnings.some((w) => /gate\.copycat\.minScore/.test(w))).toBe(true);
+  });
+
+  it("gate.copycat is absent by default -- byte-identical to today when unset (#1969)", () => {
+    const m = parseFocusManifest({ gate: { slop: { mode: "off" } } });
+    expect(m.gate.copycatMode).toBeNull();
+    expect(m.gate.copycatMinScore).toBeNull();
+    expect(gateConfigToJson(m.gate)).not.toHaveProperty("copycat");
+  });
+
+  it("resolveEffectiveSettings projects gate.copycat onto copycatGateMode/copycatGateMinScore, and leaves the DB row's value alone when unset (#1969)", () => {
+    const m = parseFocusManifest({ gate: { copycat: { mode: "warn", minScore: 40 } } });
+    const eff = resolveEffectiveSettings({} as RepositorySettings, m);
+    expect(eff.copycatGateMode).toBe("warn");
+    expect(eff.copycatGateMinScore).toBe(40);
+
+    // Unset in the manifest -- the DB row's own value (if any) is left untouched, same as every other
+    // config-as-code-only gate field's "no override" branch.
+    const unsetManifest = parseFocusManifest({ gate: { slop: { mode: "off" } } });
+    const effUnset = resolveEffectiveSettings({ copycatGateMode: "label", copycatGateMinScore: 80 } as RepositorySettings, unsetManifest);
+    expect(effUnset.copycatGateMode).toBe("label");
+    expect(effUnset.copycatGateMinScore).toBe(80);
   });
 
   it("parses gate.pack and ignores an unknown pack with a warning (#692)", () => {

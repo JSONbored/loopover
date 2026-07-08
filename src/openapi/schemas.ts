@@ -651,6 +651,8 @@ export const RepositorySettingsSchema = z
     claCheckRunName: z.string().nullable().optional(),
     claCheckRunAppSlug: z.string().nullable().optional(),
     expectedCiContexts: z.array(z.string()).optional(),
+    copycatGateMode: z.enum(["off", "warn", "label", "block"]).optional(),
+    copycatGateMinScore: z.number().nullable().optional(),
     gateDryRun: z.boolean().optional(),
     premergeContentRecheck: z.boolean().optional(),
     requireFreshRebaseWindowMinutes: z.number().int().positive().nullable().optional(),

@@ -173,7 +173,24 @@ export type FocusManifestGateConfig = {
    *  hallucination can one-shot-close a structurally-clean PR) as an explicit, per-repo, documented
    *  trade-off — never the default. */
   aiJudgmentBlockersMode: "gate" | "advisory" | null;
+  /** `gate.copycat.mode` (#1969): off|warn|label|block, off by default. Config-as-code only -- no DB column
+   *  or dashboard toggle. Deliberately a DEDICATED 4-value enum, not the shared `GateRuleMode` tri-state: the
+   *  issue's tiered response is warn -> label -> block -> strikes, where "strikes" is a separate escalation
+   *  action (reusing the existing cross-repo banned-contributors ledger once wired) rather than a 5th mode
+   *  value. THIS FIELD IS CURRENTLY INERT -- the similarity/containment detection engine that would actually
+   *  compute a copycat finding does not exist yet (tracked as later, separate PRs against #1969); parsing and
+   *  threading this config end-to-end first proves the plumbing and lets an operator's `.gittensory.yml`
+   *  already declare intent without waiting on the detection engine. */
+  copycatMode: CopycatGateMode | null;
+  /** `gate.copycat.minScore` (#1969): containment/similarity score (0-100) at/above which `copycatMode` acts.
+   *  null (unset) ⇒ the (also currently inert) engine's own default threshold once it exists. Same 0-100
+   *  clamp-and-round normalization as `slopMinScore`/`readinessMinScore` above. */
+  copycatMinScore: number | null;
 };
+
+/** `gate.copycat.mode` (#1969) -- see {@link FocusManifestGateConfig.copycatMode}'s doc comment for why this
+ *  is a dedicated enum rather than the shared `GateRuleMode`. */
+export type CopycatGateMode = "off" | "warn" | "label" | "block";
 
 // The converged per-PR review features a self-host operator toggles PER-REPO under `features:` in the private
 // `.gittensory.yml`. Each feature ALSO has a GLOBAL env flag (GITTENSORY_REVIEW_*) that stays a master
@@ -857,6 +874,8 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   claCheckRunAppSlug: null,
   expectedCiContexts: null,
   aiJudgmentBlockersMode: null,
+  copycatMode: null,
+  copycatMinScore: null,
 };
 
 const EMPTY_FEATURES_CONFIG: FocusManifestFeaturesConfig = {
@@ -1142,6 +1161,11 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
   if (slop !== undefined && slop !== null && slopRecord === undefined) {
     warnings.push(`Manifest gate field "gate.slop" must be a mapping; ignoring it.`);
   }
+  const copycat = record.copycat;
+  const copycatRecord = copycat !== null && typeof copycat === "object" && !Array.isArray(copycat) ? (copycat as Record<string, JsonValue>) : undefined;
+  if (copycat !== undefined && copycat !== null && copycatRecord === undefined) {
+    warnings.push(`Manifest gate field "gate.copycat" must be a mapping; ignoring it.`);
+  }
   const size = record.size;
   const sizeRecord = size !== null && typeof size === "object" && !Array.isArray(size) ? (size as Record<string, JsonValue>) : undefined;
   if (size !== undefined && size !== null && sizeRecord === undefined) {
@@ -1189,6 +1213,8 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     claCheckRunAppSlug: parsePublicSafeText(claRecord?.checkRunAppSlug, "gate.cla.checkRunAppSlug", warnings),
     expectedCiContexts: normalizeOptionalStringList(record.expectedCiContexts, "gate.expectedCiContexts", warnings),
     aiJudgmentBlockersMode: normalizeOptionalEnum(record.aiJudgmentBlockers, "gate.aiJudgmentBlockers", ["gate", "advisory"] as const, warnings),
+    copycatMode: normalizeOptionalEnum(copycatRecord?.mode, "gate.copycat.mode", ["off", "warn", "label", "block"] as const, warnings),
+    copycatMinScore: normalizeOptionalScore(copycatRecord?.minScore, "gate.copycat.minScore", warnings),
   };
   // #2266: the flag is parsed, clamped, and threaded end-to-end, but the gate evaluator never reads it — a
   // maintainer who sets it to true believing it softens a blocker for newcomers gets no such effect. Surface
@@ -1232,7 +1258,9 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.claCheckRunName !== null ||
     gate.claCheckRunAppSlug !== null ||
     gate.expectedCiContexts !== null ||
-    gate.aiJudgmentBlockersMode !== null;
+    gate.aiJudgmentBlockersMode !== null ||
+    gate.copycatMode !== null ||
+    gate.copycatMinScore !== null;
   return gate;
 }
 
@@ -1308,6 +1336,12 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
   }
   if (gate.expectedCiContexts !== null) out.expectedCiContexts = gate.expectedCiContexts as JsonValue;
   if (gate.aiJudgmentBlockersMode !== null) out.aiJudgmentBlockers = gate.aiJudgmentBlockersMode;
+  if (gate.copycatMode !== null || gate.copycatMinScore !== null) {
+    const copycat: Record<string, JsonValue> = {};
+    if (gate.copycatMode !== null) copycat.mode = gate.copycatMode;
+    if (gate.copycatMinScore !== null) copycat.minScore = gate.copycatMinScore;
+    out.copycat = copycat;
+  }
   return out;
 }
 

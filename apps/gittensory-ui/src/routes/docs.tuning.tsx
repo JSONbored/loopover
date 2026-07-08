@@ -304,6 +304,13 @@ function Tuning() {
           or the gate.
         </li>
         <li>
+          <code>gate.copycat.mode</code> — code containment/similarity gate against prior art (repo
+          history, other PRs). Default <code>off</code>. Escalating tiers: <code>warn</code>,{" "}
+          <code>label</code>, <code>block</code>, plus a further strikes escalation for repeat
+          offenders. Pair it with <code>gate.copycat.minScore</code> (0–100). Config only today —
+          the detection engine has not shipped yet, so this has no effect until it does.
+        </li>
+        <li>
           <code>gate.mergeReadiness</code> — composite merge-readiness gate. Default{" "}
           <code>off</code>, no min score.
         </li>

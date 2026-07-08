@@ -586,6 +586,12 @@ export type BountyRecord = {
 
 export type GateRuleMode = "off" | "advisory" | "block";
 
+/** `gate.copycat.mode` (#1969) -- a dedicated 4-value enum rather than the shared {@link GateRuleMode}
+ *  tri-state, since the issue's tiered response is warn -> label -> block -> strikes (where "strikes" is a
+ *  separate escalation action reusing the existing cross-repo banned-contributors ledger, not a 5th mode
+ *  value). See {@link RepositorySettings.copycatGateMode}'s doc comment for the currently-inert status. */
+export type CopycatGateMode = "off" | "warn" | "label" | "block";
+
 /** Review-check publish surface (#2852). Controls ONLY whether/how the "Gittensory Orb Review Agent" check-run
  *  is created/updated -- never the underlying gate evaluation, disposition, comments, labels, audit, or
  *  autonomous merge/close, all of which run identically in every mode (the autonomous decision engine already
@@ -726,6 +732,17 @@ export type RepositorySettings = {
   /** `gate.cla.checkRunAppSlug`: the trusted GitHub App slug that must have produced `claCheckRunName`. Required
    *  for check-run detection so contributor-controlled same-name runs cannot satisfy a blocking CLA gate. */
   claCheckRunAppSlug?: string | null | undefined;
+  /** Copycat/plagiarism detection (#1969). `off` (default/absent) = no check; `warn`/`label`/`block` are
+   *  escalating tiers a future containment/similarity engine would act on (`block` additionally hard-blocks;
+   *  a further "strikes" escalation reuses the existing cross-repo banned-contributors ledger once wired).
+   *  Config-as-code only — no DB column or dashboard toggle; set via `.gittensory.yml gate.copycat.mode`.
+   *  CURRENTLY INERT: this field is parsed and threaded end-to-end, but no detection engine reads it yet —
+   *  see {@link CopycatGateMode}'s doc comment in packages/gittensory-engine for the tracked follow-up plan. */
+  copycatGateMode?: CopycatGateMode | undefined;
+  /** `gate.copycat.minScore`: containment/similarity score (0-100) at/above which `copycatGateMode` would act,
+   *  once the detection engine exists. `null`/absent ⇒ the engine's own default threshold. Config-as-code
+   *  only, alongside {@link copycatGateMode}. */
+  copycatGateMinScore?: number | null | undefined;
   /** `gate.expectedCiContexts` (#selfhost-ci-verification): maintainer-declared CI check/status context names to
    *  treat as required when GitHub branch protection returns no readable required-status-checks (unconfigured,
    *  or a 403 from a token lacking `administration:read` — common for GitHub App installations). Merged with any

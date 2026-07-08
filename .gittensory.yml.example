@@ -179,6 +179,20 @@ gate:
     # the gate. Bool. Default: false.
     aiAdvisory: false
 
+  # Copycat/plagiarism detection (#1969). CURRENTLY INERT — this config is parsed
+  # and threaded end-to-end, but the containment/similarity detection engine that
+  # would actually compute a copycat finding does not exist yet (tracked as
+  # separate, later PRs against #1969). Setting this today has no observable
+  # effect; it exists so an operator's config can already declare intent.
+  copycat:
+    # off | warn | label | block. Default: off. A dedicated 4-tier scale (not the
+    # shared off/advisory/block used elsewhere) — a further "strikes" escalation
+    # beyond block reuses the existing cross-repo banned-contributors ledger.
+    mode: off
+    # Containment/similarity threshold at/above which mode acts, once the
+    # detection engine exists. Number 0–100, or null for the engine default.
+    minScore: null
+
   # Oversized-PR gate. A PR at/above EITHER the file-count or line-count threshold
   # (engine defaults, not configurable here) gets a manual-review HOLD finding —
   # never a hard blocker; mode only turns this hold signal on or off.

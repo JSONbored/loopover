@@ -361,6 +361,7 @@ import { screenshotsAllowed } from "../review/visual-wire";
 import { isVisualPath } from "../review/visual/paths";
 import { buildCapture, hasSuccessfulBotCapture, resolveVisualRoutes, type CaptureRoute } from "../review/visual/capture";
 import {
+  clearFallbackDispatchMarker,
   fallbackShotFileName,
   fallbackShotR2Key,
   fetchFallbackArtifactShots,
@@ -4601,13 +4602,18 @@ async function maybeCaptureOnActionsFallbackWorkflowRun(
   ).workflow_run;
   if (run?.name !== FALLBACK_WORKFLOW_NAME || run?.event !== "workflow_dispatch") return false;
 
-  if (run.conclusion === "success" && run.id && isConvergenceRepoAllowed(env, repoFullName)) {
-    const correlation = parseFallbackRunCorrelation(run.display_title);
-    if (correlation) {
-      const admissionKey = githubRateLimitAdmissionKeyForInstallation(installationId);
-      await storeVisualCaptureFallbackShots(env, repoFullName, installationId, run.id, correlation.prNumber, correlation.headSha, admissionKey);
-      await reReviewStoredPullRequest(env, deliveryId, installationId, repoFullName, correlation.prNumber);
-    }
+  const correlation = parseFallbackRunCorrelation(run.display_title);
+  if (correlation) {
+    // The run has settled -- success, failure, cancelled, or timed_out all mean "no longer in flight," so
+    // clear the dispatch marker regardless of conclusion (#4112 review fix). Otherwise a genuinely failed run
+    // would leave the marker in place for the rest of FALLBACK_DISPATCH_MARKER_MAX_AGE_MS, blocking a retry
+    // that could otherwise succeed immediately.
+    await clearFallbackDispatchMarker(env, correlation.headSha);
+  }
+  if (run.conclusion === "success" && run.id && correlation && isConvergenceRepoAllowed(env, repoFullName)) {
+    const admissionKey = githubRateLimitAdmissionKeyForInstallation(installationId);
+    await storeVisualCaptureFallbackShots(env, repoFullName, installationId, run.id, correlation.prNumber, correlation.headSha, admissionKey);
+    await reReviewStoredPullRequest(env, deliveryId, installationId, repoFullName, correlation.prNumber);
   }
   await recordWebhookEvent(env, {
     deliveryId,

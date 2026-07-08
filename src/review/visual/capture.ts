@@ -12,7 +12,7 @@
 // default TanStack route convention; those hooks can return if a per-repo visual config is added.
 import { sha256Hex } from "../../utils/crypto";
 import type { GitHubRateLimitAdmissionKey } from "../../github/client";
-import { dispatchVisualCaptureFallback, fallbackShotR2Key, hasInFlightFallbackDispatch } from "./actions-fallback";
+import { dispatchVisualCaptureFallback, fallbackShotR2Key, isFallbackDispatchInFlight, markFallbackDispatched } from "./actions-fallback";
 import {
   findPreviewUrlFromChecks,
   findPreviewUrlFromPrComments,
@@ -408,12 +408,15 @@ export async function buildCapture(env: Env, token: string, target: CaptureTarge
     // Never re-dispatch onto an already in-flight run (#4112 review fix): the workflow's own `concurrency:
     // cancel-in-progress: true` group would CANCEL that run the instant a second dispatch for the same head
     // SHA lands, so a recapture-poll retry (every 90s -- see PREVIEW_POLL_SECONDS in processors.ts) firing
-    // before a slower build finishes could cancel-and-restart it forever and never complete. See
-    // hasInFlightFallbackDispatch's own doc comment for the full rationale.
-    const alreadyInFlight = await hasInFlightFallbackDispatch({ token, repo, prNumber: target.prNumber, headSha: target.headSha, rateLimitAdmissionKey });
-    const dispatched =
-      alreadyInFlight ||
-      (await dispatchVisualCaptureFallback({
+    // well within the workflow's 15-minute timeout could cancel-and-restart it on every poll and never
+    // complete. isFallbackDispatchInFlight checks a PERSISTED R2 marker rather than querying GitHub's runs
+    // API live, so there's no eventual-consistency gap right after a dispatch just succeeded -- see its own
+    // doc comment for the full rationale. markFallbackDispatched writes that marker on a successful dispatch;
+    // the webhook handler (processors.ts) clears it once the run settles.
+    const alreadyInFlight = await isFallbackDispatchInFlight(env, target.headSha);
+    let dispatched = alreadyInFlight;
+    if (!dispatched) {
+      dispatched = await dispatchVisualCaptureFallback({
         token,
         repo,
         ref: target.defaultBranchRef,
@@ -421,7 +424,9 @@ export async function buildCapture(env: Env, token: string, target: CaptureTarge
         headSha: target.headSha,
         routes,
         rateLimitAdmissionKey,
-      }));
+      });
+      if (dispatched) await markFallbackDispatched(env, target.headSha);
+    }
     if (dispatched) previewPending = true;
   }
 

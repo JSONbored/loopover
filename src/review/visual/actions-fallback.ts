@@ -144,42 +144,82 @@ export function parseFallbackRunCorrelation(displayTitle: string | undefined | n
   return { prNumber, headSha: (match[2] as string).toLowerCase() };
 }
 
-/** True when a fallback run for this EXACT (prNumber, headSha) is already queued or in progress -- checked
- *  by buildCapture before dispatching, so the existing recapture-poll retry (every 90s, up to 5 attempts,
- *  see PREVIEW_POLL_SECONDS/MAX_PREVIEW_POLLS in processors.ts) doesn't repeatedly re-dispatch while waiting
- *  for the SAME run's workflow_run completion. That matters because the workflow's own `concurrency: group:
+// ---------------------------------------------------------------------------------------------------------
+// Dispatch in-flight marker -- a persisted R2 sentinel, not a live GitHub API query (#4112 review fix).
+// ---------------------------------------------------------------------------------------------------------
+
+const FALLBACK_DISPATCH_MARKER_NAMESPACE = "gittensory/fallback-dispatch/";
+
+/** The workflow's own `timeout-minutes: 15` (visual-capture-fallback.yml) plus a buffer for GitHub's own
+ *  runner-queueing delay before the job even starts -- a marker older than this is treated as abandoned
+ *  (the run either finished without a webhook ever reaching us, or GitHub silently dropped the dispatch)
+ *  rather than blocking dispatch forever. */
+const FALLBACK_DISPATCH_MARKER_MAX_AGE_MS = 18 * 60 * 1000;
+
+async function fallbackDispatchMarkerR2Key(headSha: string): Promise<string> {
+  const fingerprint = await sha256Hex(`${headSha}:actions-fallback:dispatch-marker`);
+  return `${FALLBACK_DISPATCH_MARKER_NAMESPACE}${fingerprint.slice(0, 40)}.json`;
+}
+
+/** True when a fallback run for this head SHA was dispatched recently enough that it may still be
+ *  queued/in-progress -- checked by buildCapture BEFORE dispatching, so the existing recapture-poll retry
+ *  (every 90s, up to 5 attempts -- see PREVIEW_POLL_SECONDS/MAX_PREVIEW_POLLS in processors.ts, a 7.5-minute
+ *  window comfortably inside the workflow's own 15-minute timeout) doesn't repeatedly re-dispatch while a
+ *  build is still running. That matters because the workflow's own `concurrency: group:
  *  visual-capture-fallback-${{ inputs.head_sha }}` + `cancel-in-progress: true` means a second dispatch for
- *  the same head SHA CANCELS the first -- without this check, a poll firing before a slow build finishes
- *  would cancel-and-restart it every 90s and the fallback could never complete. Queries GitHub's own run
- *  list rather than persisting new dispatch-tracking state, mirroring this pipeline's existing
- *  live-query-don't-persist pattern (getLatestDeploymentStatus, findPreviewUrlFromChecks). Fails OPEN (false,
- *  "nothing in flight") on any error -- a transient list-runs failure should still let the existing
- *  concurrency group be the backstop dedup, not silently stop the fallback from ever being tried. */
-export async function hasInFlightFallbackDispatch(params: {
-  token: string;
-  repo: GitHubRepo;
-  prNumber: number;
-  headSha: string;
-  rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey | undefined;
-}): Promise<boolean> {
-  const base = `https://api.github.com/repos/${params.repo.owner}/${params.repo.repo}`;
+ *  the same head SHA CANCELS the first -- without this check, a poll firing well within the 15-minute budget
+ *  would cancel-and-restart the run on every single poll and the fallback could never complete.
+ *
+ *  A PERSISTED marker (not a live GitHub list-runs query) is deliberate: a freshly-dispatched run isn't
+ *  guaranteed to be visible via the Actions API the instant `dispatchVisualCaptureFallback` returns (GitHub's
+ *  own eventual consistency), so a live query taken right after dispatch could itself race and report
+ *  "nothing in flight" moments after a dispatch just succeeded. Writing the marker synchronously on a
+ *  successful dispatch closes that gap. Fails OPEN (false, "nothing in flight") on any read error -- a
+ *  transient R2 failure should still let the existing concurrency group be the backstop dedup, not silently
+ *  stop the fallback from ever being tried. */
+export async function isFallbackDispatchInFlight(env: Env, headSha: string): Promise<boolean> {
+  if (!env.REVIEW_AUDIT) return false;
   try {
-    const response = await timeoutFetch(`${base}/actions/workflows/${FALLBACK_WORKFLOW_FILE}/runs?event=workflow_dispatch&per_page=20`, {
-      headers: githubApiHeaders(params.token),
-      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
-      githubRateLimitAdmission: params.rateLimitAdmissionKey !== undefined,
-      ...(params.rateLimitAdmissionKey ? { githubRateLimitAdmissionKey: params.rateLimitAdmissionKey } : {}),
-    });
-    if (!response.ok) return false;
-    const payload = (await response.json().catch(() => null)) as { workflow_runs?: Array<{ status?: string; display_title?: string }> } | null;
-    const headSha = params.headSha.toLowerCase();
-    return (payload?.workflow_runs ?? []).some((run) => {
-      if (run.status !== "queued" && run.status !== "in_progress") return false;
-      const correlation = parseFallbackRunCorrelation(run.display_title);
-      return correlation !== null && correlation.prNumber === params.prNumber && correlation.headSha === headSha;
-    });
+    const object = await env.REVIEW_AUDIT.get(await fallbackDispatchMarkerR2Key(headSha));
+    if (!object) return false;
+    const text = await new Response(object.body).text();
+    const marker = JSON.parse(text) as { dispatchedAt?: number };
+    if (typeof marker.dispatchedAt !== "number") return false;
+    return Date.now() - marker.dispatchedAt < FALLBACK_DISPATCH_MARKER_MAX_AGE_MS;
   } catch {
     return false;
+  }
+}
+
+/** Record that a fallback dispatch just succeeded for this head SHA, so a subsequent buildCapture call
+ *  (e.g. the next recapture poll) sees it via isFallbackDispatchInFlight instead of re-dispatching. Best
+ *  effort -- a failed write just means the concurrency group's cancel-in-progress behavior is the only
+ *  remaining backstop, same as before this marker existed. */
+export async function markFallbackDispatched(env: Env, headSha: string): Promise<void> {
+  if (!env.REVIEW_AUDIT) return;
+  try {
+    const key = await fallbackDispatchMarkerR2Key(headSha);
+    await env.REVIEW_AUDIT.put(key, JSON.stringify({ dispatchedAt: Date.now() }), {
+      httpMetadata: { contentType: "application/json" },
+    });
+  } catch {
+    // best effort -- see doc comment above
+  }
+}
+
+/** Clear the in-flight marker once the dispatched run has settled (ANY conclusion -- success, failure,
+ *  cancelled, timed_out all mean "no longer in flight"), called from the workflow_run webhook handler in
+ *  processors.ts. Best effort -- if this never runs (a lost webhook delivery), FALLBACK_DISPATCH_MARKER_MAX_AGE_MS
+ *  is the fail-safe expiry so a genuinely stuck marker can't block retries forever. A try/catch (not just a
+ *  `.catch()` on the delete call) matters here: a minimal/partial R2Bucket implementation that doesn't
+ *  implement `delete` at all throws SYNCHRONOUSLY at the call site (`TypeError: ... is not a function`),
+ *  before any `.catch()` on its return value would even attach. */
+export async function clearFallbackDispatchMarker(env: Env, headSha: string): Promise<void> {
+  if (!env.REVIEW_AUDIT) return;
+  try {
+    await env.REVIEW_AUDIT.delete(await fallbackDispatchMarkerR2Key(headSha));
+  } catch {
+    // best effort -- see doc comment above
   }
 }
 

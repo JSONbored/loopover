@@ -4,7 +4,7 @@ import {
   githubRateLimitAdmissionKeyForInstallation,
   latestGitHubRestRateLimitObservation,
 } from "../../src/github/client";
-import { fallbackShotR2Key } from "../../src/review/visual/actions-fallback";
+import { fallbackShotR2Key, markFallbackDispatched } from "../../src/review/visual/actions-fallback";
 import { buildCapture, hasSuccessfulBotCapture, mapFilesToRoutes, resolvePreviewUrlTemplate, resolveVisualRoutes } from "../../src/review/visual/capture";
 import type { CaptureRoute } from "../../src/review/visual/capture";
 import * as pixelDiffModule from "../../src/review/visual/pixel-diff";
@@ -1289,14 +1289,11 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     expect(result.previewPending).toBe(true);
   });
 
-  it("skips dispatching a NEW run when one is already queued/in-progress for this exact pr+headSha, but still marks the capture pending (#4112 review fix)", async () => {
+  it("skips dispatching a NEW run when one was already dispatched for this exact headSha (persisted marker), but still marks the capture pending (#4112 review fix)", async () => {
     let dispatchCalled = false;
     vi.stubGlobal(
       "fetch",
       stubNoPreviewFound((url) => {
-        if (url.includes("/actions/workflows/visual-capture-fallback.yml/runs")) {
-          return Response.json({ workflow_runs: [{ status: "in_progress", display_title: "gittensory-visual-fallback pr=20 sha=cafebabecafebabecafebabecafebabecafebabe" }] });
-        }
         if (url.includes("/dispatches")) {
           dispatchCalled = true;
           return new Response(null, { status: 204 });
@@ -1304,9 +1301,11 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
         return null;
       }),
     );
+    const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "", REVIEW_AUDIT: memoryReviewAudit() });
+    await markFallbackDispatched(env, "cafebabecafebabecafebabecafebabecafebabe");
 
     const result = await buildCapture(
-      createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "" }),
+      env,
       "installation-token",
       { repoFullName: "owner/repo", prNumber: 20, headSha: "cafebabecafebabecafebabecafebabecafebabe", previewFromChecks: true, defaultBranchRef: "main" },
       ["apps/gittensory-ui/src/routes/app.index.tsx"],
@@ -1318,14 +1317,11 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     expect(result.previewPending).toBe(true);
   });
 
-  it("dispatches a NEW run when the only in-flight run found is for a DIFFERENT headSha (a later push)", async () => {
+  it("dispatches a NEW run when the persisted marker is for a DIFFERENT headSha (a later push)", async () => {
     let dispatchCalled = false;
     vi.stubGlobal(
       "fetch",
       stubNoPreviewFound((url) => {
-        if (url.includes("/actions/workflows/visual-capture-fallback.yml/runs")) {
-          return Response.json({ workflow_runs: [{ status: "in_progress", display_title: "gittensory-visual-fallback pr=20 sha=ffffffffffffffffffffffffffffffffffffffff" }] });
-        }
         if (url.includes("/dispatches")) {
           dispatchCalled = true;
           return new Response(null, { status: 204 });
@@ -1333,9 +1329,11 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
         return null;
       }),
     );
+    const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "", REVIEW_AUDIT: memoryReviewAudit() });
+    await markFallbackDispatched(env, "ffffffffffffffffffffffffffffffffffffffff");
 
     const result = await buildCapture(
-      createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "" }),
+      env,
       "installation-token",
       { repoFullName: "owner/repo", prNumber: 20, headSha: "cafebabecafebabecafebabecafebabecafebabe", previewFromChecks: true, defaultBranchRef: "main" },
       ["apps/gittensory-ui/src/routes/app.index.tsx"],

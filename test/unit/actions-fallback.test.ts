@@ -1,18 +1,44 @@
 import { deflateRawSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearGitHubResponseCacheForTest } from "../../src/github/client";
+import { sha256Hex } from "../../src/utils/crypto";
+import { createTestEnv } from "../helpers/d1";
 import {
+  clearFallbackDispatchMarker,
   dispatchVisualCaptureFallback,
   fallbackShotFileName,
   fallbackShotR2Key,
   fetchFallbackArtifactShots,
   FALLBACK_ARTIFACT_NAME,
-  hasInFlightFallbackDispatch,
+  isFallbackDispatchInFlight,
   isGithubArtifactStorageUrl,
+  markFallbackDispatched,
   parseFallbackRunCorrelation,
   parseZipEntries,
   slugifyRoutePath,
 } from "../../src/review/visual/actions-fallback";
+
+/** A minimal in-memory R2Bucket for the dispatch-marker tests -- get/put/delete only, with optional
+ *  per-operation failure injection, mirroring visual-capture.test.ts's own memoryReviewAudit() pattern. */
+function memoryFallbackMarkerStore(options: { failGet?: boolean; failPut?: boolean; failDelete?: boolean } = {}): R2Bucket {
+  const store = new Map<string, string>();
+  return {
+    async get(key: string) {
+      if (options.failGet) throw new Error("simulated marker read failure");
+      const value = store.get(key);
+      return value === undefined ? null : ({ body: new Response(value).body } as unknown as R2ObjectBody);
+    },
+    async put(key: string, value: unknown) {
+      if (options.failPut) throw new Error("simulated marker write failure");
+      store.set(key, await new Response(value as BodyInit).text());
+      return { key } as unknown as R2Object;
+    },
+    async delete(key: string) {
+      if (options.failDelete) throw new Error("simulated marker delete failure");
+      store.delete(key);
+    },
+  } as unknown as R2Bucket;
+}
 
 afterEach(() => {
   clearGitHubResponseCacheForTest();
@@ -350,79 +376,86 @@ describe("dispatchVisualCaptureFallback", () => {
   });
 });
 
-describe("hasInFlightFallbackDispatch (#4112 review fix -- avoid cancel-in-progress re-dispatch)", () => {
+describe("isFallbackDispatchInFlight / markFallbackDispatched / clearFallbackDispatchMarker (#4112 review fix -- persisted R2 sentinel, avoid cancel-in-progress re-dispatch)", () => {
   const HEAD_SHA = "cafebabecafebabecafebabecafebabecafebabe";
 
-  function runsResponse(runs: Array<{ status?: string; display_title?: string }>): Response {
-    return Response.json({ workflow_runs: runs });
-  }
-
-  it("true when a QUEUED run matches this exact pr+headSha", async () => {
-    vi.stubGlobal("fetch", async () => runsResponse([{ status: "queued", display_title: `gittensory-visual-fallback pr=7 sha=${HEAD_SHA}` }]));
-    const inFlight = await hasInFlightFallbackDispatch({ token: "tok", repo: { owner: "acme", repo: "widgets" }, prNumber: 7, headSha: HEAD_SHA });
-    expect(inFlight).toBe(true);
+  it("false when REVIEW_AUDIT isn't configured", async () => {
+    const env = createTestEnv();
+    await expect(isFallbackDispatchInFlight(env, HEAD_SHA)).resolves.toBe(false);
   });
 
-  it("true when an IN_PROGRESS run matches (case-insensitive headSha)", async () => {
-    vi.stubGlobal("fetch", async () => runsResponse([{ status: "in_progress", display_title: `gittensory-visual-fallback pr=7 sha=${HEAD_SHA}` }]));
-    const inFlight = await hasInFlightFallbackDispatch({ token: "tok", repo: { owner: "acme", repo: "widgets" }, prNumber: 7, headSha: HEAD_SHA.toUpperCase() });
-    expect(inFlight).toBe(true);
+  it("false when no marker has ever been written", async () => {
+    const env = createTestEnv({ REVIEW_AUDIT: memoryFallbackMarkerStore() });
+    await expect(isFallbackDispatchInFlight(env, HEAD_SHA)).resolves.toBe(false);
   });
 
-  it("false for an empty run list", async () => {
-    vi.stubGlobal("fetch", async () => runsResponse([]));
-    const inFlight = await hasInFlightFallbackDispatch({ token: "tok", repo: { owner: "acme", repo: "widgets" }, prNumber: 7, headSha: HEAD_SHA });
-    expect(inFlight).toBe(false);
+  it("true immediately after markFallbackDispatched", async () => {
+    const env = createTestEnv({ REVIEW_AUDIT: memoryFallbackMarkerStore() });
+    await markFallbackDispatched(env, HEAD_SHA);
+    await expect(isFallbackDispatchInFlight(env, HEAD_SHA)).resolves.toBe(true);
   });
 
-  it("false when the matching run has already COMPLETED (not queued/in_progress)", async () => {
-    vi.stubGlobal("fetch", async () => runsResponse([{ status: "completed", display_title: `gittensory-visual-fallback pr=7 sha=${HEAD_SHA}` }]));
-    const inFlight = await hasInFlightFallbackDispatch({ token: "tok", repo: { owner: "acme", repo: "widgets" }, prNumber: 7, headSha: HEAD_SHA });
-    expect(inFlight).toBe(false);
+  it("false once the marker is older than the max age (abandoned dispatch)", async () => {
+    const env = createTestEnv({ REVIEW_AUDIT: memoryFallbackMarkerStore() });
+    vi.useFakeTimers();
+    try {
+      await markFallbackDispatched(env, HEAD_SHA);
+      vi.advanceTimersByTime(19 * 60 * 1000); // past the 18-minute max age
+      await expect(isFallbackDispatchInFlight(env, HEAD_SHA)).resolves.toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it("false when an in-progress run exists for a DIFFERENT PR", async () => {
-    vi.stubGlobal("fetch", async () => runsResponse([{ status: "in_progress", display_title: `gittensory-visual-fallback pr=99 sha=${HEAD_SHA}` }]));
-    const inFlight = await hasInFlightFallbackDispatch({ token: "tok", repo: { owner: "acme", repo: "widgets" }, prNumber: 7, headSha: HEAD_SHA });
-    expect(inFlight).toBe(false);
+  it("false when the stored marker isn't valid JSON at all (caught by the outer try/catch)", async () => {
+    const store = memoryFallbackMarkerStore();
+    const env = createTestEnv({ REVIEW_AUDIT: store });
+    const fingerprint = await sha256Hex(`${HEAD_SHA}:actions-fallback:dispatch-marker`);
+    const key = `gittensory/fallback-dispatch/${fingerprint.slice(0, 40)}.json`;
+    await store.put(key, "not json");
+    await expect(isFallbackDispatchInFlight(env, HEAD_SHA)).resolves.toBe(false);
   });
 
-  it("false when an in-progress run exists for the same PR but a DIFFERENT headSha (new push)", async () => {
-    vi.stubGlobal("fetch", async () => runsResponse([{ status: "in_progress", display_title: `gittensory-visual-fallback pr=7 sha=${"f".repeat(40)}` }]));
-    const inFlight = await hasInFlightFallbackDispatch({ token: "tok", repo: { owner: "acme", repo: "widgets" }, prNumber: 7, headSha: HEAD_SHA });
-    expect(inFlight).toBe(false);
+  it("false when the stored marker parses as JSON but is missing dispatchedAt (the explicit shape check, not the catch)", async () => {
+    const store = memoryFallbackMarkerStore();
+    const env = createTestEnv({ REVIEW_AUDIT: store });
+    const fingerprint = await sha256Hex(`${HEAD_SHA}:actions-fallback:dispatch-marker`);
+    const key = `gittensory/fallback-dispatch/${fingerprint.slice(0, 40)}.json`;
+    await store.put(key, JSON.stringify({ someOtherField: true }));
+    await expect(isFallbackDispatchInFlight(env, HEAD_SHA)).resolves.toBe(false);
   });
 
-  it("false when the run's display_title doesn't match the expected correlation shape at all", async () => {
-    vi.stubGlobal("fetch", async () => runsResponse([{ status: "in_progress", display_title: "Manually triggered run" }]));
-    const inFlight = await hasInFlightFallbackDispatch({ token: "tok", repo: { owner: "acme", repo: "widgets" }, prNumber: 7, headSha: HEAD_SHA });
-    expect(inFlight).toBe(false);
+  it("false (never throws) when the R2 read itself fails", async () => {
+    const env = createTestEnv({ REVIEW_AUDIT: memoryFallbackMarkerStore({ failGet: true }) });
+    await expect(isFallbackDispatchInFlight(env, HEAD_SHA)).resolves.toBe(false);
   });
 
-  it("false on a non-ok response", async () => {
-    vi.stubGlobal("fetch", async () => new Response("nope", { status: 500 }));
-    const inFlight = await hasInFlightFallbackDispatch({ token: "tok", repo: { owner: "acme", repo: "widgets" }, prNumber: 7, headSha: HEAD_SHA });
-    expect(inFlight).toBe(false);
+  it("markFallbackDispatched never throws when REVIEW_AUDIT isn't configured", async () => {
+    const env = createTestEnv();
+    await expect(markFallbackDispatched(env, HEAD_SHA)).resolves.toBeUndefined();
   });
 
-  it("false (never throws) on a network failure", async () => {
-    vi.stubGlobal("fetch", async () => {
-      throw new Error("network down");
-    });
-    const inFlight = await hasInFlightFallbackDispatch({ token: "tok", repo: { owner: "acme", repo: "widgets" }, prNumber: 7, headSha: HEAD_SHA });
-    expect(inFlight).toBe(false);
+  it("markFallbackDispatched never throws (best-effort) when the R2 write itself fails", async () => {
+    const env = createTestEnv({ REVIEW_AUDIT: memoryFallbackMarkerStore({ failPut: true }) });
+    await expect(markFallbackDispatched(env, HEAD_SHA)).resolves.toBeUndefined();
   });
 
-  it("true when a rateLimitAdmissionKey is supplied and a match is found", async () => {
-    vi.stubGlobal("fetch", async () => runsResponse([{ status: "queued", display_title: `gittensory-visual-fallback pr=7 sha=${HEAD_SHA}` }]));
-    const inFlight = await hasInFlightFallbackDispatch({
-      token: "tok",
-      repo: { owner: "acme", repo: "widgets" },
-      prNumber: 7,
-      headSha: HEAD_SHA,
-      rateLimitAdmissionKey: "installation:1",
-    });
-    expect(inFlight).toBe(true);
+  it("clearFallbackDispatchMarker makes a subsequent isFallbackDispatchInFlight call false again", async () => {
+    const env = createTestEnv({ REVIEW_AUDIT: memoryFallbackMarkerStore() });
+    await markFallbackDispatched(env, HEAD_SHA);
+    await expect(isFallbackDispatchInFlight(env, HEAD_SHA)).resolves.toBe(true);
+    await clearFallbackDispatchMarker(env, HEAD_SHA);
+    await expect(isFallbackDispatchInFlight(env, HEAD_SHA)).resolves.toBe(false);
+  });
+
+  it("clearFallbackDispatchMarker never throws when REVIEW_AUDIT isn't configured", async () => {
+    const env = createTestEnv();
+    await expect(clearFallbackDispatchMarker(env, HEAD_SHA)).resolves.toBeUndefined();
+  });
+
+  it("clearFallbackDispatchMarker never throws (best-effort) when the R2 delete itself fails", async () => {
+    const env = createTestEnv({ REVIEW_AUDIT: memoryFallbackMarkerStore({ failDelete: true }) });
+    await expect(clearFallbackDispatchMarker(env, HEAD_SHA)).resolves.toBeUndefined();
   });
 });
 

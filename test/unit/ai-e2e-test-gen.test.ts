@@ -4,10 +4,12 @@ import {
   buildE2eTestGenDiffText,
   buildE2eTestGenPrompt,
   parseE2eTestGenResponse,
+  resolveE2eTestGenInstructions,
   runGittensoryE2eTestGeneration,
   type E2eTestGenInput,
 } from "../../src/services/ai-e2e-test-gen";
 import { recordAiUsageEvent } from "../../src/db/repositories";
+import type { FocusManifestReviewConfig } from "../../src/signals/focus-manifest";
 import { createTestEnv } from "../helpers/d1";
 
 const { runWorkersE2eTestGen } = __aiE2eTestGenInternals;
@@ -102,6 +104,61 @@ describe("buildE2eTestGenPrompt", () => {
     expect(prompt).toContain("Target test framework: Cypress");
     expect(prompt).toContain("Always cover the empty-cart case.");
     expect(prompt).toContain("--- x.ts ---\n+const x = 1;");
+  });
+});
+
+function reviewWith(over: Partial<Pick<FocusManifestReviewConfig, "instructions" | "pathInstructions">>) {
+  return { instructions: null, pathInstructions: [], ...over };
+}
+
+describe("resolveE2eTestGenInstructions", () => {
+  it("returns null when nothing is configured", () => {
+    expect(resolveE2eTestGenInstructions(reviewWith({}), ["src/a.ts"])).toBeNull();
+  });
+
+  it("returns null for a null/undefined review config (tolerates an absent manifest)", () => {
+    expect(resolveE2eTestGenInstructions(null, ["src/a.ts"])).toBeNull();
+    expect(resolveE2eTestGenInstructions(undefined, ["src/a.ts"])).toBeNull();
+  });
+
+  it("returns the repo-wide instructions alone when no path instructions match", () => {
+    const result = resolveE2eTestGenInstructions(
+      reviewWith({ instructions: "Use Playwright with our page-object pattern." }),
+      ["src/other.ts"],
+    );
+    expect(result).toBe("Use Playwright with our page-object pattern.");
+  });
+
+  it("returns matching path instructions alone when no repo-wide instructions are set", () => {
+    const result = resolveE2eTestGenInstructions(
+      reviewWith({ pathInstructions: [{ path: "src/checkout/**", instructions: "Always test the payment-failure retry path." }] }),
+      ["src/checkout/pay.ts"],
+    );
+    expect(result).toContain("Always test the payment-failure retry path.");
+  });
+
+  it("combines repo-wide and matching path instructions together", () => {
+    const result = resolveE2eTestGenInstructions(
+      reviewWith({
+        instructions: "Use Playwright with our page-object pattern.",
+        pathInstructions: [{ path: "src/checkout/**", instructions: "Always test the payment-failure retry path." }],
+      }),
+      ["src/checkout/pay.ts"],
+    );
+    expect(result).toContain("Use Playwright with our page-object pattern.");
+    expect(result).toContain("Always test the payment-failure retry path.");
+  });
+
+  it("omits a path instruction whose glob does not match any changed file", () => {
+    const result = resolveE2eTestGenInstructions(
+      reviewWith({
+        instructions: "Use Playwright.",
+        pathInstructions: [{ path: "src/checkout/**", instructions: "Payment-specific guidance." }],
+      }),
+      ["src/unrelated.ts"],
+    );
+    expect(result).toBe("Use Playwright.");
+    expect(result).not.toContain("Payment-specific guidance");
   });
 });
 

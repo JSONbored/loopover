@@ -896,10 +896,13 @@ settings:
 #   security_focus: false
 #   # A repo-level natural-language brief handed to the AI reviewer on EVERY review (vs the per-path
 #   # path_instructions below) -- the maintainer's conventions/voice. Bounded + public-safe at parse time.
-#   # String or null. Default: null (byte-identical prompt).
+#   # String or null. Default: null (byte-identical prompt). Also feeds AI-generated E2E test coverage
+#   # (features.e2eTests, #4190/#4189) when that feature is enabled -- the same conventions brief steers
+#   # both the AI reviewer and the AI test generator, so you only write it once.
 #   instructions: "Prefer small, focused PRs. Flag any missing test for a bug fix."
 #   # Per-path natural-language guidance handed to the AI reviewer when a changed file matches the glob.
-#   # Empty/default ⇒ byte-identical prompt.
+#   # Empty/default ⇒ byte-identical prompt. Also feeds AI-generated E2E test coverage the same way as
+#   # `instructions` above, for path-scoped rules ("always test the payment-failure retry path").
 #   path_instructions:
 #     - path: "src/db/**"
 #       instructions: "Flag any migration missing a matching down-path note."

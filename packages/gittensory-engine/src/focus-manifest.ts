@@ -527,11 +527,15 @@ export type FocusManifestReviewConfig = {
    *  (#1955) knobs. (#2047) */
   commentVerbosity: CommentVerbosity | null;
   /** `review.path_instructions`: per-path natural-language guidance handed to the AI reviewer when the PR's
-   *  changed files match the glob. Empty (default) ⇒ byte-identical reviewer prompt. (#review-path-instructions) */
+   *  changed files match the glob. Empty (default) ⇒ byte-identical reviewer prompt. Also consumed by
+   *  AI-generated E2E test coverage (`resolveE2eTestGenInstructions` in `ai-e2e-test-gen.ts`, #4200) when
+   *  that feature is enabled — the same maintainer-authored guidance steers both consumers, no separate
+   *  test-generation-specific instructions schema. (#review-path-instructions) */
   pathInstructions: ReviewPathInstruction[];
   /** `review.instructions`: a repo-level natural-language brief handed to the AI reviewer on EVERY review (vs the
    *  per-path path_instructions) — the maintainer's conventions/voice for this repo. Bounded + public-safe at parse
-   *  time (so it stays cost-cheap, unlike ingesting a whole CLAUDE.md). null (default, absent) ⇒ byte-identical
+   *  time (so it stays cost-cheap, unlike ingesting a whole CLAUDE.md). Also consumed by AI-generated E2E test
+   *  coverage (#4200) for the same reason as pathInstructions above. null (default, absent) ⇒ byte-identical
    *  reviewer prompt. (#review-instructions) */
   instructions: string | null;
   /** `review.exclude_paths`: globs whose matching files are EXCLUDED from the AI review (diff + grounding + RAG)

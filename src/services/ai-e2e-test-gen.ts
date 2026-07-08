@@ -1,4 +1,4 @@
-// Gittensory AI-generated E2E test coverage (the `e2eTests` capability, #4191, part of the #4189 epic).
+// Gittensory AI-generated E2E test coverage (the `e2eTests` capability, #4191/#4200, part of the #4189 epic).
 //
 // Turns a PR's changed-file diffs into a complete Playwright test file, following the SAME shape as
 // `ai-slop.ts`'s AI-assisted advisory: an opt-in, fail-safe second capability layered on top of the
@@ -25,6 +25,7 @@ import { countByokAiEventsForRepoSince, recordAiUsageEvent, sumAiEstimatedNeuron
 import { convergedFeatureActive } from "../review/feature-activation";
 import { defangReviewInput } from "../review/safety";
 import { isE2eTestGenerationEnabled } from "../review/e2e-test-gen-wire";
+import { resolveReviewPathInstructions, type FocusManifestReviewConfig } from "../signals/focus-manifest";
 import {
   type AiReviewActualUsage,
   type AiReviewProviderKey,
@@ -110,6 +111,27 @@ export function buildE2eTestGenDiffText(files: E2eTestGenChangedFile[]): string 
     .map((file) => `--- ${file.path} ---\n${file.patch}`)
     .join("\n\n")
     .slice(0, MAX_DIFF_CHARS);
+}
+
+/**
+ * Pure: combine a repo's general `review.instructions` (#4200) with any `review.pathInstructions` entries
+ * matching the PR's changed files into one instructions block for E2E test generation — reusing the
+ * EXISTING config-as-code mechanism the AI reviewer itself already consumes (`resolveReviewPathInstructions`),
+ * rather than inventing a second, e2e-test-gen-specific instructions schema. A maintainer's repo-wide
+ * conventions ("use Playwright with our page-object pattern under test/e2e/pages/") and path-scoped rules
+ * ("always test the payment-failure retry path for src/checkout/**") apply equally well to steering an AI
+ * reviewer or an AI test generator, so both draw from the same maintainer-authored brief. Returns null when
+ * nothing is configured (no repo-wide instructions, no matching path instructions) — never an empty string,
+ * so a caller can treat "no instructions" and "instructions" as a clean two-way branch.
+ */
+export function resolveE2eTestGenInstructions(
+  review: Pick<FocusManifestReviewConfig, "instructions" | "pathInstructions"> | null | undefined,
+  changedPaths: string[],
+): string | null {
+  const repoWide = review?.instructions?.trim() || "";
+  const pathGuidance = resolveReviewPathInstructions(review?.pathInstructions ?? [], changedPaths).trim();
+  const combined = [repoWide, pathGuidance].filter(Boolean).join("\n\n");
+  return combined || null;
 }
 
 /**

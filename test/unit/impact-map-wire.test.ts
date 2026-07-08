@@ -13,21 +13,33 @@ describe("isImpactMapEnabled", () => {
   });
 });
 
-describe("shouldComputeImpactMap", () => {
-  it("requires BOTH the operator env flag AND the per-repo manifest opt-in", () => {
+describe("shouldComputeImpactMap (#4102 precedence: env kill-switch, then manifestToggle === true fully decides)", () => {
+  it("is ON when the operator flag is on and the manifest explicitly opted in", () => {
     expect(shouldComputeImpactMap({ GITTENSORY_REVIEW_IMPACT_MAP: "true" }, true)).toBe(true);
   });
 
-  it("is OFF when the operator flag is on but the manifest didn't opt in", () => {
+  it("is OFF when the operator flag is on but the manifest explicitly opted out", () => {
     expect(shouldComputeImpactMap({ GITTENSORY_REVIEW_IMPACT_MAP: "true" }, false)).toBe(false);
   });
 
-  it("is OFF when the manifest opted in but the operator flag is off (repo cannot self-enable)", () => {
+  it("is OFF when the operator flag is on but the manifest toggle is unset (regression: preserves the ORIGINAL always-off default — there is no allowlist fallback for impactMap)", () => {
+    expect(shouldComputeImpactMap({ GITTENSORY_REVIEW_IMPACT_MAP: "true" }, undefined)).toBe(false);
+  });
+
+  it("is OFF when the manifest opted in but the operator flag is off — the env flag is an absolute master kill-switch no per-repo config can bypass", () => {
     expect(shouldComputeImpactMap({ GITTENSORY_REVIEW_IMPACT_MAP: "false" }, true)).toBe(false);
+  });
+
+  it("is OFF when the operator flag is unset and the manifest opted in — the kill-switch still wins", () => {
+    expect(shouldComputeImpactMap({}, true)).toBe(false);
   });
 
   it("is OFF when both are off", () => {
     expect(shouldComputeImpactMap({}, false)).toBe(false);
+  });
+
+  it("is OFF when both are unset", () => {
+    expect(shouldComputeImpactMap({}, undefined)).toBe(false);
   });
 });
 

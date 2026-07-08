@@ -1,9 +1,11 @@
-// Impact-map activation wiring (#2184, config slice of #1971). Mirrors rag-wire.ts's isRagEnabled: a single
-// GLOBAL env kill-switch the self-host operator controls, ANDed with the per-repo `.gittensory.yml
-// review.impact_map` manifest toggle (resolved via `resolveReviewPromptOverrides`'s `impactMap` field) — so a
-// repo can only ever NARROW what the operator has already turned on, never widen it. Both OFF by default:
-// with the env flag unset, impact-map computation is never invoked from the review path at all (the caller
-// guards on this flag before doing any RAG query or rendering), so the review stays byte-identical to today.
+// Impact-map activation wiring (#2184, config slice of #1971; activation precedence fixed for #4102). Default
+// OFF: the operator flag GITTENSORY_REVIEW_IMPACT_MAP is a master kill-switch, and the per-repo `.gittensory.yml
+// review.impactMap` toggle (resolved via `resolveReviewPromptOverrides`'s `impactMap` field) fully controls
+// activation by itself when explicitly set — impact-map has never had a `GITTENSORY_REVIEW_REPOS` cutover
+// allowlist fallback (unlike rag/reputation/grounding/safety/unifiedComment), so there is nothing for a repo
+// toggle to bypass. With the env flag unset, impact-map computation is never invoked from the review path at
+// all (the caller guards on this flag before doing any RAG query or rendering), so the review stays
+// byte-identical to today.
 //
 // Also hosts the AI-review grounding formatter (#2186): `formatImpactMapPromptSection` turns
 // `computeImpactMap`'s output into the bounded "IMPACT MAP" block spliced into the reviewer's user prompt via
@@ -20,14 +22,23 @@ export function isImpactMapEnabled(env: { GITTENSORY_REVIEW_IMPACT_MAP?: string 
   return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_IMPACT_MAP ?? "");
 }
 
-/** Resolve whether impact-map computation should run for THIS repo/PR: the operator's global env kill-switch
- *  AND the per-repo manifest opt-in. Neither alone is sufficient — mirrors every other converged-feature gate
- *  in this codebase (env kill-switch first, then the manifest narrows it further). */
+/** PURE (#4102): should impact-map computation run for THIS repo/PR? (1) The operator's
+ *  GITTENSORY_REVIEW_IMPACT_MAP flag is an absolute MASTER KILL-SWITCH — off ⇒ always false, regardless of the
+ *  manifest, and no per-repo config can bypass it (consistent with every other converged feature — see
+ *  `resolveConvergedFeature` in `feature-activation.ts`). (2) An explicit per-repo `.gittensory.yml`
+ *  `review.impactMap` override (`true`/`false`) FULLY controls the feature by itself once the kill-switch is
+ *  on — impact-map has never had a `GITTENSORY_REVIEW_REPOS` cutover-allowlist fallback, so there is no
+ *  allowlist for a repo toggle to bypass. (3) `manifestToggle` unset (`undefined`) preserves this feature's
+ *  ORIGINAL always-off-unless-both-set default exactly: with no allowlist to fall back to, an unset manifest
+ *  toggle stays `false`, byte-identical to every repo's behavior before this change. Exactly mirrors
+ *  `shouldRequestInlineFindings`/`shouldEmitFixHandoff`'s shape and precedence (src/review/inline-comments.ts,
+ *  src/review/fix-handoff.ts). */
 export function shouldComputeImpactMap(
   env: { GITTENSORY_REVIEW_IMPACT_MAP?: string | undefined },
-  manifestImpactMapEnabled: boolean,
+  manifestToggle: boolean | undefined,
 ): boolean {
-  return isImpactMapEnabled(env) && manifestImpactMapEnabled;
+  if (!isImpactMapEnabled(env)) return false;
+  return manifestToggle === true;
 }
 
 /** Hard cap on entries actually formatted into the AI-review prompt section — bounds prompt-token cost

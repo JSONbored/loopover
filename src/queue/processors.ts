@@ -6934,10 +6934,11 @@ export async function runAiReviewForAdvisory(
     // manifest. Self-host only — overrides that repo's claude-code/codex model+effort, taking priority over the
     // operator's global env vars. Absent/all-null ⇒ byte-identical (global env var, then provider default).
     reviewSelfHostAiModel?: SelfHostAiModelConfig | undefined;
-    // `.gittensory.yml` review.impact_map (#2184/#2186), resolved by the caller from the cached manifest. ANDed
-    // here with the operator's GITTENSORY_REVIEW_IMPACT_MAP flag (shouldComputeImpactMap) to decide whether to
-    // compute the deterministic impact map and splice it into the reviewer prompt as additive reference
-    // context. Absent/false ⇒ byte-identical reviewer prompt (no impact-map computation, no RAG query for it).
+    // `.gittensory.yml` review.impact_map (#2184/#2186), resolved by the caller from the cached manifest.
+    // Precedence (#4102): the operator's GITTENSORY_REVIEW_IMPACT_MAP flag is a master kill-switch, never
+    // bypassable by config (shouldComputeImpactMap); an explicit true/false here then fully controls whether to
+    // compute the deterministic impact map and splice it into the reviewer prompt. Absent ⇒ byte-identical
+    // reviewer prompt (no impact-map computation, no RAG query for it).
     reviewImpactMap?: boolean | undefined;
     // `.gittensory.yml` review.culture_profile (#2995), resolved by the caller from the cached manifest. ANDed
     // here with the GITTENSORY_REVIEW_CULTURE_PROFILE global flag to decide whether to append the repo's
@@ -7136,16 +7137,17 @@ export async function runAiReviewForAdvisory(
       : undefined;
     const ragTelemetry =
       ragContextResult?.telemetry ?? emptyReviewRagTelemetry(false);
-    // Deterministic impact map (#2184/#2186), ANDed operator env flag + per-repo review.impact_map opt-in
-    // (shouldComputeImpactMap). Reuses the SAME changed files this pass already resolved — no extra fetch.
-    // Flag-OFF (default) → NO new branch: no symbol extraction, no RAG query, and `impactMapContext` is left
-    // undefined so the prompt is byte-identical to today. Fully fail-safe (computeImpactMap never throws; a
-    // missing/cold RAG index degrades to an empty impact map, which formats to "" and appends nothing).
+    // Deterministic impact map (#2184/#2186): operator env kill-switch + per-repo review.impact_map opt-in
+    // (shouldComputeImpactMap, #4102 precedence). Reuses the SAME changed files this pass already resolved — no
+    // extra fetch. Flag-OFF (default) → NO new branch: no symbol extraction, no RAG query, and
+    // `impactMapContext` is left undefined so the prompt is byte-identical to today. Fully fail-safe
+    // (computeImpactMap never throws; a missing/cold RAG index degrades to an empty impact map, which formats
+    // to "" and appends nothing).
     let impactMapContext: string | undefined;
     // The computed entries are ALSO threaded out of this function (#1971) so the publish site can render the
     // "Impact map" collapsible from the exact same array — no second RAG query. Empty when the feature is off.
     let impactMapEntries: ImpactMapEntry[] = [];
-    if (shouldComputeImpactMap(env, args.reviewImpactMap === true)) {
+    if (shouldComputeImpactMap(env, args.reviewImpactMap)) {
       const [impactMapProject, impactMapRepo] = splitRepoForRag(args.repoFullName);
       const changedSymbols = extractChangedSymbols(
         files.map((file) => ({
@@ -9299,7 +9301,7 @@ async function maybePublishPrPublicSurface(
             // Impact map (#2182-#2186): queries the SAME live vector index RAG does (computeImpactMap issues
             // its own retrieveContextWithMetrics calls), so it can go stale for the SAME head SHA exactly like
             // RAG — a repo with it active also bypasses the AI-review result cache.
-            impactMap: shouldComputeImpactMap(env, reviewImpactMap === true),
+            impactMap: shouldComputeImpactMap(env, reviewImpactMap),
           };
           const dynamicReviewContextActive =
             dynamicReviewFeatures.grounding ||

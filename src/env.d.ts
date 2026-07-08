@@ -261,10 +261,11 @@ declare global {
      *  unreachable when off). Even when ON, retrieval is INERT until the self-host vector index is populated for
      *  the repo (a cold/missing index degrades to no context). */
     GITTENSORY_REVIEW_RAG?: string;
-    /** Deterministic impact map (#2184, part of #1971): operator-level kill-switch, ANDed with the per-repo
-     *  `.gittensory.yml review.impact_map` opt-in (see review/impact-map-wire's isImpactMapEnabled /
-     *  shouldComputeImpactMap). Default OFF — unset/false performs NO symbol extraction, NO RAG query, and adds
-     *  NO comment/prompt section, byte-identical to today. */
+    /** Deterministic impact map (#2184, part of #1971): operator-level master kill-switch; the per-repo
+     *  `.gittensory.yml review.impact_map` opt-in fully decides once this is on (#4102 precedence — see
+     *  review/impact-map-wire's isImpactMapEnabled / shouldComputeImpactMap). Default OFF — unset/false
+     *  performs NO symbol extraction, NO RAG query, and adds NO comment/prompt section, byte-identical to
+     *  today. */
     GITTENSORY_REVIEW_IMPACT_MAP?: string;
     /** Repo quality-culture profile (#2995): when truthy, the AI reviewer prompt gains an ADDITIVE "REPO
      *  QUALITY-CULTURE PROFILE" reference block — typical merged-PR size + common accepted labels, derived

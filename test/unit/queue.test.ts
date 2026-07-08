@@ -6247,10 +6247,10 @@ describe("queue processors", () => {
       AI_SUMMARIES_ENABLED: "true",
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
-      // Both gates on: the global capability switch, and (like culture-profile above, unlike
+      // Both gates on: the global kill-switch, and (like culture-profile above, unlike
       // grounding/enrichment/RAG/reputation which are env-only) the per-repo `.gittensory.yml` opt-in mocked
       // below, so `dynamicReviewFeatures.impactMap` (src/queue/processors.ts) actually evaluates
-      // shouldComputeImpactMap's `&&` right-hand side true, not just short-circuits.
+      // shouldComputeImpactMap's `manifestToggle === true` arm true, not just the kill-switch short-circuit.
       GITTENSORY_REVIEW_IMPACT_MAP: "true",
     });
     await persistRegistrySnapshot(

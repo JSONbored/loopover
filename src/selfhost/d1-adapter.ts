@@ -6,6 +6,14 @@
 // D1's API is async; the SQLite drivers are sync — sync calls are wrapped in resolved Promises. The driver is
 // INJECTED behind the tiny SqliteDriver interface, so this module has no hard SQLite dependency and the
 // Cloudflare Worker bundle never imports it. Default driver: node:sqlite (built into Node, no native build).
+//
+// `Statement` implements the shared `SelfHostD1PreparedStatement` contract (backend-contracts.ts, #4010) --
+// the same one pg-adapter.ts's `PgStatement` implements -- and `createD1Adapter`'s own return value is typed
+// `SelfHostD1Database` before the final `as unknown as D1Database` cast (D1Database is a `declare abstract
+// class`, so a plain object can only ever satisfy it via that cast; there is no way to avoid it). That
+// intermediate typed step is what's new: previously nothing checked this module's own shape against its
+// Postgres sibling's before the cast erased everything to `unknown`.
+import type { SelfHostD1Database, SelfHostD1PreparedStatement } from "./backend-contracts";
 
 /** A uniform sync SQLite primitive both node:sqlite and better-sqlite3 can satisfy via a thin wrapper. `query`
  *  ALWAYS returns rows (empty for a write) + the write metadata, so the adapter needs no reader-detection. */
@@ -20,7 +28,7 @@ function meta(changes = 0, lastRowId = 0): Record<string, unknown> {
 
 /** One prepared (and optionally bound) statement. bind() returns a fresh instance (D1 statements are immutable
  *  after bind). The SQLite statement is compiled per execution (drivers cache by SQL text). */
-class Statement {
+class Statement implements SelfHostD1PreparedStatement {
   constructor(
     private readonly driver: SqliteDriver,
     private readonly sql: string,
@@ -32,18 +40,18 @@ class Statement {
   }
 
   /** Sync core used by all()/run() (async wrappers) and batch() (inside a transaction). */
-  execSync(): { results: unknown[]; success: boolean; meta: Record<string, unknown> } {
+  execSync(): { results: unknown[]; success: true; meta: Record<string, unknown> } {
     const r = this.driver.query(this.sql, this.values);
     return { results: r.rows, success: true, meta: meta(r.changes, r.lastInsertRowid) };
   }
 
-  async all<T = unknown>(): Promise<{ results: T[]; success: boolean; meta: Record<string, unknown> }> {
-    return this.execSync() as { results: T[]; success: boolean; meta: Record<string, unknown> };
+  async all<T = unknown>(): Promise<{ results: T[]; success: true; meta: Record<string, unknown> }> {
+    return this.execSync() as { results: T[]; success: true; meta: Record<string, unknown> };
   }
 
   // D1's run() returns the same {results, meta} shape (results empty for a non-returning write).
-  async run<T = unknown>(): Promise<{ results: T[]; success: boolean; meta: Record<string, unknown> }> {
-    return this.execSync() as { results: T[]; success: boolean; meta: Record<string, unknown> };
+  async run<T = unknown>(): Promise<{ results: T[]; success: true; meta: Record<string, unknown> }> {
+    return this.execSync() as { results: T[]; success: true; meta: Record<string, unknown> };
   }
 
   async first<T = unknown>(colName?: string): Promise<T | null> {
@@ -60,16 +68,15 @@ class Statement {
 
 /** Wrap a synchronous SQLite driver as a D1Database. */
 export function createD1Adapter(driver: SqliteDriver): D1Database {
-  const adapter = {
+  const adapter: SelfHostD1Database = {
     prepare(sql: string) {
       return new Statement(driver, sql);
     },
-    async batch(statements: unknown[]) {
+    async batch(statements: Statement[]) {
       // D1 runs a batch atomically, one result per statement, in order.
-      const list = statements as Statement[];
       driver.exec("BEGIN");
       try {
-        const out = list.map((s) => s.execSync());
+        const out = statements.map((s) => s.execSync());
         driver.exec("COMMIT");
         return out;
       } catch (error) {

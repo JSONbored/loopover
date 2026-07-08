@@ -3,7 +3,20 @@
 // SQLite table with brute-force cosine similarity. For a repo's worth of chunks (hundreds–few-thousand
 // vectors per namespace) this is fast enough; namespaces (one per repo) keep each query's candidate set
 // small. Embeddings come from the OpenAI-compatible AI adapter's /embeddings path (e.g. Ollama bge-m3, 1024-d).
+//
+// VectorRecord/QueryOptions/Match are the shared backend-contracts.ts types (#4010) also used by
+// qdrant-vectorize.ts and pg-vectorize.ts -- this module previously redeclared its own private copies, the
+// only one of the three carrying `returnMetadata` (see backend-contracts.ts's SelfHostVectorizeQueryOptions
+// doc comment for why that field belongs on all three, not just this one). `adapter` is typed
+// `SelfHostVectorize` before the final `as unknown as Vectorize` cast (unavoidable: Vectorize is a `declare
+// abstract class`, so only that cast can bridge a plain object to it).
 import type { SqliteDriver } from "./d1-adapter";
+import type {
+  SelfHostVectorRecord as VectorRecord,
+  SelfHostVectorizeQueryOptions as QueryOptions,
+  SelfHostVectorizeMatch as Match,
+  SelfHostVectorize,
+} from "./backend-contracts";
 
 const TABLE = "_selfhost_vectors";
 const DDL = `
@@ -14,23 +27,6 @@ CREATE TABLE IF NOT EXISTS ${TABLE} (
   metadata TEXT
 );
 CREATE INDEX IF NOT EXISTS ${TABLE}_ns ON ${TABLE}(namespace);`;
-
-interface VectorRecord {
-  id: string;
-  values: number[];
-  namespace?: string;
-  metadata?: Record<string, unknown>;
-}
-interface QueryOptions {
-  topK?: number;
-  namespace?: string;
-  returnMetadata?: string;
-}
-interface Match {
-  id: string;
-  score: number;
-  metadata?: Record<string, unknown>;
-}
 
 export function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0;
@@ -50,7 +46,7 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 
 export function createSqliteVectorize(driver: SqliteDriver): Vectorize {
   driver.exec(DDL);
-  const adapter = {
+  const adapter: SelfHostVectorize = {
     async upsert(vectors: VectorRecord[]): Promise<{ count: number; ids: string[] }> {
       for (const v of vectors) {
         driver.query(

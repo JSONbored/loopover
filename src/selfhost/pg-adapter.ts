@@ -2,13 +2,19 @@
 // app + drizzle-orm/d1 use (prepare/bind/all/first/run/raw + batch + exec), translating each SQLite query to
 // Postgres (pg-dialect.ts) and running it via node-postgres. A shared Postgres DB makes multi-instance
 // self-host possible (vs the single-file SQLite default).
+//
+// `PgStatement` implements the shared `SelfHostD1PreparedStatement` contract (backend-contracts.ts, #4010) --
+// the same one d1-adapter.ts's `Statement` implements -- and `createPgAdapter`'s own return value is typed
+// `SelfHostD1Database` before the final `as unknown as D1Database` cast (unavoidable: D1Database is a
+// `declare abstract class`, so only that cast can bridge a plain object to it).
 import type { Pool, PoolClient } from "pg";
+import type { SelfHostD1Database, SelfHostD1PreparedStatement } from "./backend-contracts";
 import { translateDdl, translateSql } from "./pg-dialect";
 
 type Row = Record<string, unknown>;
 type Runner = Pool | PoolClient;
 
-class PgStatement {
+class PgStatement implements SelfHostD1PreparedStatement {
   constructor(
     private readonly pool: Pool,
     private readonly sql: string,
@@ -54,13 +60,13 @@ class PgStatement {
 }
 
 export function createPgAdapter(pool: Pool): D1Database {
-  const adapter = {
+  const adapter: SelfHostD1Database = {
     prepare: (sql: string) => new PgStatement(pool, sql),
     async batch(statements: PgStatement[]) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        const out: unknown[] = [];
+        const out: Array<{ results: Row[]; success: true; meta: Record<string, unknown> }> = [];
         for (const st of statements) out.push(await st.runOn(client));
         await client.query("COMMIT");
         return out;

@@ -5,25 +5,22 @@
 //
 // Enable: set DATABASE_URL to a postgres:// URI and use the pgvector/pgvector:pg16 Docker image. The
 // buildPostgresBackend path in server.ts calls init() at startup then injects this adapter as env.VECTORIZE.
+//
+// VectorRecord/QueryOptions/Match are the shared backend-contracts.ts types (#4010) also used by vectorize.ts
+// and qdrant-vectorize.ts -- see vectorize.ts's own header comment for why QueryOptions' `returnMetadata`
+// field belongs here too (this backend receives it identically to the other two through the same
+// reviewVectorAdapter call path; it just doesn't branch on it, same as the other two). `adapter` is typed
+// `SelfHostVectorize` before the final `as unknown as Vectorize` cast (unavoidable: Vectorize is a `declare
+// abstract class`, so only that cast can bridge a plain object to it).
 import type { Pool } from "pg";
+import type {
+  SelfHostVectorRecord as VectorRecord,
+  SelfHostVectorizeQueryOptions as QueryOptions,
+  SelfHostVectorizeMatch as Match,
+  SelfHostVectorize,
+} from "./backend-contracts";
 
 const TABLE = "_selfhost_vectors";
-
-interface VectorRecord {
-  id: string;
-  values: number[];
-  namespace?: string;
-  metadata?: Record<string, unknown>;
-}
-interface QueryOptions {
-  topK?: number;
-  namespace?: string;
-}
-interface Match {
-  id: string;
-  score: number;
-  metadata?: Record<string, unknown>;
-}
 
 export async function initPgVectorize(pool: Pool): Promise<void> {
   await pool.query("CREATE EXTENSION IF NOT EXISTS vector");
@@ -38,7 +35,7 @@ export async function initPgVectorize(pool: Pool): Promise<void> {
 }
 
 export function createPgVectorize(pool: Pool): Vectorize {
-  const adapter = {
+  const adapter: SelfHostVectorize = {
     async upsert(vectors: VectorRecord[]): Promise<{ count: number; ids: string[] }> {
       for (const v of vectors) {
         const embedding = `[${v.values.join(",")}]`;

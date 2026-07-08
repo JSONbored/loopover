@@ -4,6 +4,7 @@
 // backing store differs. Single-process model: node:sqlite is synchronous + serial, so claim (SELECT→UPDATE)
 // is atomic with no row-lock dance.
 import type { SqliteDriver } from "./d1-adapter";
+import type { DurableQueue } from "./backend-contracts";
 import { logAudit, extractPayloadType, extractPayloadContext } from "./audit";
 import { incr } from "./metrics";
 import { withReviewSpan } from "./tracing";
@@ -117,45 +118,6 @@ const JOB_KEY_INDEX_DDL = `
 CREATE INDEX IF NOT EXISTS ${TABLE}_pending_job_key ON ${TABLE}(job_key, status);`;
 const LANE_INDEX_DDL = `
 CREATE INDEX IF NOT EXISTS ${TABLE}_lane_claim ON ${TABLE}(status, foreground_lane, run_after);`;
-
-export interface DurableQueue {
-  binding: Queue;
-  start(): void;
-  stop(): Promise<void>;
-  drain(): Promise<void>;
-  size(): number;
-  deadCount(): number;
-  /** Jobs currently claimed and mid-flight (status='processing') -- distinct from size(), which also
-   *  includes still-pending work. See #selfhost-queue-liveness's own observability additions. */
-  processingCount(): number;
-  stats(): Record<string, number>;
-  snapshot(): SelfHostQueueSnapshot;
-  /** Live-vs-maintenance queue pressure, for the /metrics gauges (see server.ts) -- the SAME signals the
-   *  maintenance-admission policy itself consults at claim time. */
-  pressureSignals(): MaintenancePressureSignals;
-  /** Requeues dead-lettered jobs still under the auto-retry attempts ceiling. Called on a timer while
-   *  running (see start()), and exposed directly so tests and an operator-triggered repair path don't have
-   *  to wait for the real interval. Returns the number of jobs revived. */
-  reviveDeadLetterJobs(): number;
-  /** Foreground-liveness invariant (#selfhost-queue-liveness): pulls back any FOREGROUND-priority pending job
-   *  whose deferral has gone stale (see foreground-liveness.ts) regardless of what deferred it. Called once at
-   *  boot and on a timer while running (see the module-init block/start()), and exposed directly so tests and
-   *  an operator-triggered repair path don't have to wait for the real interval. Returns the number released. */
-  releaseStaleForegroundDeferrals(): number;
-  /** Top-N repos by backlog-convergence pending depth, for the observability dashboard's per-repo backlog panel
-   *  (#selfhost-lane-observability). */
-  topBacklogRepos(limit: number): BacklogRepoCount[];
-  /** Paginated dead-letter rows, newest-death-first, for the DLQ dashboard table (#2214). Also mirrored onto
-   *  `binding` (see queue-common.ts's SelfHostQueueDeadLetterAdmin) so Hono routes can reach it via env.JOBS. */
-  listDeadLetterJobs(limit: number, offset: number): DeadLetterJob[];
-  /** Manual, operator-initiated replay of ONE dead job with a FRESH retry budget (#2215) -- unlike the automatic
-   *  reviveDeadLetterJobs() sweep above, which deliberately preserves `attempts` under a ceiling. */
-  replayDeadLetterJob(id: number): boolean;
-  /** Manual, operator-initiated permanent delete of ONE dead job (#2215). */
-  deleteDeadLetterJob(id: number): boolean;
-  /** Manual, operator-initiated permanent delete of EVERY dead job (#2215). */
-  purgeDeadLetterJobs(): number;
-}
 
 interface JobRow {
   id: number;
@@ -319,9 +281,9 @@ export function createSqliteQueue(
   // foreground-liveness.ts) and logs + records its own metric when it finds work. MUST run after `active`/
   // `activeBackground` above are initialized -- a release calls kickAll(), which reads them, and both are
   // still in the temporal dead zone before this point (#selfhost-queue-liveness-tdz).
-  releaseStaleForegroundDeferrals();
+  void releaseStaleForegroundDeferrals();
 
-  function reviveDeadLetterJobs(): number {
+  async function reviveDeadLetterJobs(): Promise<number> {
     const revived = reviveEligibleDeadJobs(driver, maxRetries);
     if (revived) {
       recordQueueMetric(driver, "gittensory_jobs_dead_letter_revived_total", revived);
@@ -408,7 +370,7 @@ export function createSqliteQueue(
    *  always represented in `eligible` regardless of how large the older-blocked backlog grows, at the same
    *  total worst-case row/admission-check budget as before (still `maxReleasePerSweep * 2` candidates, just
    *  split fairly across both ends of the age spectrum instead of packed entirely into the oldest end). */
-  function releaseStaleForegroundDeferrals(): number {
+  async function releaseStaleForegroundDeferrals(): Promise<number> {
     if (!foregroundLivenessConfig.enabled) return 0;
     const now = Date.now();
     const candidateLimit = foregroundLivenessConfig.maxReleasePerSweep;
@@ -468,9 +430,9 @@ export function createSqliteQueue(
    *  reviveDeadLetterJobsSafely's own rationale: an uncaught exception here would surface as an unhandled
    *  exception and can terminate the process when SENTRY_DSN is unset. A failed sweep just waits for the next
    *  interval, same as a failed poll tick waits for the next poll. */
-  function releaseStaleForegroundDeferralsSafely(): void {
+  async function releaseStaleForegroundDeferralsSafely(): Promise<void> {
     try {
-      releaseStaleForegroundDeferrals();
+      await releaseStaleForegroundDeferrals();
     } catch (error) {
       console.error(
         JSON.stringify({
@@ -728,7 +690,7 @@ export function createSqliteQueue(
    *  The COUNT/GROUP BY/ORDER BY/LIMIT run IN SQL (gate review, #selfhost-lane-observability) -- a self-host
    *  install with a large real backlog must never pull every matching job_key into JS on every /metrics scrape
    *  just to throw away all but the top 10; only the final, already-bounded rows ever leave the DB. */
-  function topBacklogRepos(limit: number): BacklogRepoCount[] {
+  async function topBacklogRepos(limit: number): Promise<BacklogRepoCount[]> {
     const { rows } = driver.query(
       `WITH backlog_rest AS (
          SELECT substr(job_key, length(?) + 1) AS rest
@@ -750,13 +712,13 @@ export function createSqliteQueue(
     return (rows as Array<{ repo: string; cnt: number }>).map((row) => ({ repo: row.repo, count: Number(row.cnt) }));
   }
 
-  function deadCount(): number {
+  async function deadCount(): Promise<number> {
     return Number(
       (driver.query(`SELECT COUNT(*) AS c FROM ${TABLE} WHERE status='dead'`, []).rows[0] as { c: number }).c,
     );
   }
 
-  function listDeadLetterJobs(limit: number, offset: number): DeadLetterJob[] {
+  async function listDeadLetterJobs(limit: number, offset: number): Promise<DeadLetterJob[]> {
     const { rows } = driver.query(
       `SELECT id, payload, attempts, last_error, created_at, dead_at
          FROM ${TABLE}
@@ -792,7 +754,7 @@ export function createSqliteQueue(
   /** Manually requeues ONE dead job with a FRESH retry budget (attempts reset to 0) -- see the doc comment on
    *  SelfHostQueueDeadLetterAdmin.replayDeadLetterJob in queue-common.ts for the full rationale. Returns false
    *  if no row with that id is currently dead. */
-  function replayDeadLetterJob(id: number): boolean {
+  async function replayDeadLetterJob(id: number): Promise<boolean> {
     const { changes } = driver.query(
       `UPDATE ${TABLE} SET status='pending', run_after=?, last_error=NULL, dead_at=NULL, attempts=0 WHERE id=? AND status='dead'`,
       [Date.now(), id],
@@ -801,13 +763,13 @@ export function createSqliteQueue(
   }
 
   /** Permanently deletes ONE dead job by id. Returns false if no row with that id is currently dead. */
-  function deleteDeadLetterJob(id: number): boolean {
+  async function deleteDeadLetterJob(id: number): Promise<boolean> {
     const { changes } = driver.query(`DELETE FROM ${TABLE} WHERE id=? AND status='dead'`, [id]);
     return changes > 0;
   }
 
   /** Permanently deletes EVERY dead job. Returns the number of rows deleted. */
-  function purgeDeadLetterJobs(): number {
+  async function purgeDeadLetterJobs(): Promise<number> {
     const { changes } = driver.query(`DELETE FROM ${TABLE} WHERE status='dead'`, []);
     return changes;
   }
@@ -1227,7 +1189,7 @@ export function createSqliteQueue(
     ): Promise<void> {
       for (const m of messages) enqueue(m.body, m.delaySeconds ?? 0);
     },
-    snapshot() {
+    async snapshot() {
       return buildSelfHostQueueSnapshot(
         driver.query(
           `SELECT payload, status, run_after FROM ${TABLE} WHERE status IN ('pending','processing','dead')`,
@@ -1241,16 +1203,24 @@ export function createSqliteQueue(
     deleteDeadLetterJob,
     purgeDeadLetterJobs,
   } as unknown as Queue & {
-    snapshot(): SelfHostQueueSnapshot;
-    deadCount(): number;
-    listDeadLetterJobs(limit: number, offset: number): DeadLetterJob[];
-    replayDeadLetterJob(id: number): boolean;
-    deleteDeadLetterJob(id: number): boolean;
-    purgeDeadLetterJobs(): number;
+    snapshot(): Promise<SelfHostQueueSnapshot>;
+    deadCount(): Promise<number>;
+    listDeadLetterJobs(limit: number, offset: number): Promise<DeadLetterJob[]>;
+    replayDeadLetterJob(id: number): Promise<boolean>;
+    deleteDeadLetterJob(id: number): Promise<boolean>;
+    purgeDeadLetterJobs(): Promise<number>;
   };
 
   return {
     binding,
+    // Every setup step (DDL, column backfills, crash recovery, startup jitter, the foreground-liveness
+    // self-heal above) already ran SYNCHRONOUSLY above, inline in createSqliteQueue() itself -- node:sqlite
+    // has no connection to await, so by the time this object is returned there is nothing left to do. init()
+    // exists purely so callers that treat both queue backends uniformly (`await createXQueue(...).init()`,
+    // see server.ts's Postgres branch) get correct behavior regardless of which backend is active (#4010).
+    async init(): Promise<void> {
+      /* no-op: see comment above */
+    },
     start() {
       if (running) return;
       running = true;
@@ -1267,7 +1237,7 @@ export function createSqliteQueue(
       deadLetterReviveTimer = setInterval(() => void reviveDeadLetterJobsSafely(), queueDeadLetterReviveIntervalMs());
       // Foreground-liveness sweep (#selfhost-queue-liveness): also a separate, slow interval -- see
       // foreground-liveness.ts for why a per-tick check would busy-loop under sustained rate-limit pressure.
-      foregroundLivenessTimer = setInterval(releaseStaleForegroundDeferralsSafely, foregroundLivenessConfig.checkIntervalMs);
+      foregroundLivenessTimer = setInterval(() => void releaseStaleForegroundDeferralsSafely(), foregroundLivenessConfig.checkIntervalMs);
     },
     async stop() {
       running = false;
@@ -1281,7 +1251,7 @@ export function createSqliteQueue(
       while (active > 0) await new Promise((r) => setTimeout(r, 5));
       await pump();
     },
-    size() {
+    async size() {
       return Number(
         (
           driver.query(
@@ -1292,7 +1262,7 @@ export function createSqliteQueue(
       );
     },
     deadCount,
-    processingCount() {
+    async processingCount() {
       return Number(
         (
           driver.query(
@@ -1302,13 +1272,13 @@ export function createSqliteQueue(
         ).c,
       );
     },
-    stats() {
+    async stats() {
       return readQueueStats(driver);
     },
     snapshot: binding.snapshot,
     reviveDeadLetterJobs,
     releaseStaleForegroundDeferrals,
-    pressureSignals() {
+    async pressureSignals() {
       return maintenancePressureSignals(driver, Date.now());
     },
     topBacklogRepos,

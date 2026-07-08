@@ -10,27 +10,25 @@
 //
 // Set QDRANT_API_KEY for deployments that require Bearer token authentication (cloud Qdrant,
 // production on-prem). Omit for unauthenticated local/dev deployments.
+//
+// VectorRecord/QueryOptions/Match are the shared backend-contracts.ts types (#4010) also used by
+// vectorize.ts and pg-vectorize.ts -- see vectorize.ts's own header comment for why QueryOptions'
+// `returnMetadata` field belongs here too (this backend receives it identically to the other two through
+// the same reviewVectorAdapter call path; it just doesn't branch on it, same as the other two). `adapter` is
+// typed `SelfHostVectorize` before the final `as unknown as Vectorize` cast (unavoidable: Vectorize is a
+// `declare abstract class`, so only that cast can bridge a plain object to it).
 import { createHash } from "node:crypto";
 import { incr } from "./metrics";
+import type {
+  SelfHostVectorRecord as VectorRecord,
+  SelfHostVectorizeQueryOptions as QueryOptions,
+  SelfHostVectorizeMatch as Match,
+  SelfHostVectorize,
+} from "./backend-contracts";
 
 const DEFAULT_COLLECTION = "gittensory";
 const DEFAULT_DIM = 1024; // bge-m3 / mxbai-embed-large (1024-d); set QDRANT_DIM to override
 
-interface VectorRecord {
-  id: string;
-  values: number[];
-  namespace?: string;
-  metadata?: Record<string, unknown>;
-}
-interface QueryOptions {
-  topK?: number;
-  namespace?: string;
-}
-interface Match {
-  id: string;
-  score: number;
-  metadata?: Record<string, unknown>;
-}
 interface QdrantSearchResult {
   result: Array<{ id: string; score: number; payload: Record<string, unknown> }>;
 }
@@ -94,7 +92,7 @@ export async function initQdrantCollection(
 export function createQdrantVectorize(url: string, collection = DEFAULT_COLLECTION): Vectorize {
   const base = url.replace(/\/+$/, "");
 
-  const adapter = {
+  const adapter: SelfHostVectorize = {
     async upsert(vectors: VectorRecord[]): Promise<{ count: number; ids: string[] }> {
       const points = vectors.map((v) => ({
         id: idToUuid(v.id),

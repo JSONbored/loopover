@@ -3,6 +3,7 @@
 // app instances sharing one Postgres can claim jobs concurrently without double-processing. size()/deadCount()
 // are async (the metrics gauges accept async samplers).
 import type { Pool, QueryResult } from "pg";
+import type { DurableQueue } from "./backend-contracts";
 import { logAudit, extractPayloadType, extractPayloadContext } from "./audit";
 import { incr } from "./metrics";
 import { withReviewSpan } from "./tracing";
@@ -202,48 +203,6 @@ CREATE TABLE IF NOT EXISTS ${FAIRNESS_TABLE} (
   last_backlog_repo TEXT
 );`;
 
-export interface PgDurableQueue {
-  binding: Queue;
-  init(): Promise<void>;
-  start(): void;
-  stop(): Promise<void>;
-  drain(): Promise<void>;
-  size(): Promise<number>;
-  deadCount(): Promise<number>;
-  /** Jobs currently claimed and mid-flight (status='processing') -- distinct from size(), which also
-   *  includes still-pending work. See #selfhost-queue-liveness's own observability additions. */
-  processingCount(): Promise<number>;
-  stats(): Promise<Record<string, number>>;
-  snapshot(): Promise<SelfHostQueueSnapshot>;
-  /** Live-vs-maintenance queue pressure, for the /metrics gauges (see server.ts) -- the SAME signals the
-   *  maintenance-admission policy itself consults at claim time. */
-  pressureSignals(): Promise<MaintenancePressureSignals>;
-  /** Requeues dead-lettered jobs still under the auto-retry attempts ceiling. Called on a timer while
-   *  running (see start()), and exposed directly so tests and an operator-triggered repair path don't have
-   *  to wait for the real interval. Returns the number of jobs revived. */
-  reviveDeadLetterJobs(): Promise<number>;
-  /** Foreground-liveness invariant (#selfhost-queue-liveness): pulls back any FOREGROUND-priority pending job
-   *  whose deferral has gone stale (see foreground-liveness.ts) regardless of what deferred it. Called once at
-   *  boot and on a timer while running (see init()/start()), and exposed directly so tests and an
-   *  operator-triggered repair path don't have to wait for the real interval. Returns the number released. */
-  releaseStaleForegroundDeferrals(): Promise<number>;
-  /** Top-N repos by backlog-convergence pending depth, for the observability dashboard's per-repo backlog panel
-   *  (#selfhost-lane-observability). */
-  topBacklogRepos(limit: number): Promise<BacklogRepoCount[]>;
-  /** Paginated dead-letter rows, newest-death-first, for the DLQ dashboard table (#2214). Also mirrored onto
-   *  `binding` (see queue-common.ts's SelfHostQueueDeadLetterAdmin) so Hono routes can reach it via env.JOBS. */
-  listDeadLetterJobs(limit: number, offset: number): Promise<DeadLetterJob[]>;
-  /** Manually requeues ONE dead job by id with a fresh retry budget (#2215). Also mirrored onto `binding` (see
-   *  queue-common.ts's SelfHostQueueDeadLetterAdmin) so Hono routes can reach it via env.JOBS. */
-  replayDeadLetterJob(id: number): Promise<boolean>;
-  /** Permanently deletes ONE dead job by id (#2215). Also mirrored onto `binding` (see queue-common.ts's
-   *  SelfHostQueueDeadLetterAdmin) so Hono routes can reach it via env.JOBS. */
-  deleteDeadLetterJob(id: number): Promise<boolean>;
-  /** Permanently deletes EVERY dead job (#2215). Also mirrored onto `binding` (see queue-common.ts's
-   *  SelfHostQueueDeadLetterAdmin) so Hono routes can reach it via env.JOBS. */
-  purgeDeadLetterJobs(): Promise<number>;
-}
-
 interface JobRow {
   id: string;
   payload: string;
@@ -275,7 +234,7 @@ export function createPgQueue(
   pool: Pool,
   consume: (message: JobMessage) => Promise<void>,
   opts: PgQueueOptions = {},
-): PgDurableQueue {
+): DurableQueue {
   const maxRetries = opts.maxRetries ?? 5;
   const pollIntervalMs = opts.pollIntervalMs ?? 1000;
   const backoff =

@@ -87,7 +87,7 @@ describe("createSqliteQueue (durable #980)", () => {
     await q.binding.send(msg("b"));
     await q.drain();
     expect(seen).toEqual(["a", "b"]);
-    expect(q.size()).toBe(0);
+    expect(await q.size()).toBe(0);
   });
 
   it("REGRESSION: releases the reserved background slot when a background claim query throws (#selfhost-bg-slot-leak)", async () => {
@@ -232,7 +232,7 @@ describe("createSqliteQueue (durable #980)", () => {
         ["github rate-limit background admission"],
       ).rows[0] as { c: number };
       expect(pendingBackground.c).toBe(2);
-      expect(q.stats()).toMatchObject({ gittensory_jobs_rate_limit_deferred_total: 2 });
+      expect(await q.stats()).toMatchObject({ gittensory_jobs_rate_limit_deferred_total: 2 });
       const metrics = await renderMetrics();
       expect(metrics).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="agent-regate-pr",key_scope="installation",kind="background"} 1');
       expect(metrics).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="rag-index-repo",key_scope="public",kind="background"} 1');
@@ -389,7 +389,7 @@ describe("createSqliteQueue (durable #980)", () => {
         run_after: Date.parse("2026-06-24T12:10:15.000Z"),
         last_error: "github rate-limit webhook admission",
       });
-      expect(q.stats()).toMatchObject({ gittensory_jobs_rate_limit_deferred_total: 1 });
+      expect(await q.stats()).toMatchObject({ gittensory_jobs_rate_limit_deferred_total: 1 });
       expect(await renderMetrics()).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
@@ -441,7 +441,7 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.binding.send(installedWebhook("fresh", 123));
       await q.drain();
 
-      expect(q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+      expect(await q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
       expect(await renderMetrics()).not.toContain("gittensory_jobs_rate_limit_admission_deferred_total");
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
@@ -543,7 +543,7 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.drain();
 
       expect(seen).toEqual(["github-webhook"]);
-      expect(q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+      expect(await q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -647,7 +647,7 @@ describe("createSqliteQueue (durable #980)", () => {
     await q.drain();
 
     expect(seen).toEqual(["github-webhook"]);
-    expect(q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+    expect(await q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
   });
 
   it("does not keep webhook admission closed from stale legacy rows after a newer healthy exact observation", async () => {
@@ -686,7 +686,7 @@ describe("createSqliteQueue (durable #980)", () => {
     await q.drain();
 
     expect(seen).toEqual(["github-webhook"]);
-    expect(q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+    expect(await q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
   });
 
   it("does not pre-yield webhook jobs for another installation's persisted REST exhaustion", async () => {
@@ -720,7 +720,7 @@ describe("createSqliteQueue (durable #980)", () => {
     await q.drain();
 
     expect(seen).toEqual(["github-webhook"]);
-    expect(q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+    expect(await q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
   });
 
   it("skips the background-admission metric when the defer update changes no rows", async () => {
@@ -770,7 +770,7 @@ describe("createSqliteQueue (durable #980)", () => {
 
       expect(seen).toEqual([]);
       expect(warned).not.toHaveBeenCalled();
-      expect(q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+      expect(await q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -865,7 +865,7 @@ describe("createSqliteQueue (durable #980)", () => {
       `github-webhook:pr-refresh:jsonbored/gittensory#1629@${"a".repeat(40)}`,
     ]);
     expect(rows.map((row) => JSON.parse(row.payload).deliveryId).filter(Boolean).sort()).toEqual(["ci-2", "pr-2"]);
-    expect(q.stats()).toMatchObject({
+    expect(await q.stats()).toMatchObject({
       gittensory_jobs_enqueued_total: 3,
       gittensory_jobs_coalesced_total: 3,
     });
@@ -985,7 +985,7 @@ describe("createSqliteQueue (durable #980)", () => {
       requestedBy: "schedule",
       repoFullName: "JSONbored/gittensory",
     });
-    expect(q.stats()).toMatchObject({
+    expect(await q.stats()).toMatchObject({
       gittensory_jobs_enqueued_total: 1,
       gittensory_jobs_coalesced_total: 1,
     });
@@ -1025,7 +1025,7 @@ describe("createSqliteQueue (durable #980)", () => {
     });
     // The two incrementals now MERGE into one row before the full job supersedes it (#selfhost-maintenance-self-pin):
     // 1 insert (the first incremental) + 2 coalesces (the merge, then the supersede), not 2 inserts + 1 coalesce.
-    expect(q.stats()).toMatchObject({
+    expect(await q.stats()).toMatchObject({
       gittensory_jobs_enqueued_total: 1,
       gittensory_jobs_coalesced_total: 2,
     });
@@ -1062,7 +1062,7 @@ describe("createSqliteQueue (durable #980)", () => {
       paths: ["src/a.ts", "src/b.ts"],
     });
     expect(rows[0]?.job_key).toBe(jobCoalesceKey(rows[0]!.payload));
-    expect(q.stats()).toMatchObject({
+    expect(await q.stats()).toMatchObject({
       gittensory_jobs_enqueued_total: 1,
       gittensory_jobs_coalesced_total: 1,
     });
@@ -1153,7 +1153,7 @@ describe("createSqliteQueue (durable #980)", () => {
       [JSON.stringify(msg("rag-index-repo")), Date.now()],
     );
 
-    const snapshot = q.snapshot();
+    const snapshot = await q.snapshot();
     const bindingSnapshot = await queueSnapshotFromBinding(q.binding);
 
     expect(snapshot.totals).toMatchObject({ pending: 2, processing: 1, dead: 1 });
@@ -1262,7 +1262,7 @@ describe("createSqliteQueue (durable #980)", () => {
       "api",
       "schedule",
     ]);
-    expect(q.stats()).toMatchObject({
+    expect(await q.stats()).toMatchObject({
       gittensory_jobs_enqueued_total: 5,
       gittensory_jobs_coalesced_total: 4,
     });
@@ -1298,7 +1298,7 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(rows[0]?.id).toBe(first.id);
       expect(rows[0]?.created_at).toBe(first.created_at); // NOT reset to the re-enqueue time
       expect(rows[0]?.run_after).toBeGreaterThan(first.run_after); // still advances with the new request
-      expect(q.stats()).toMatchObject({ gittensory_jobs_coalesced_total: 1 });
+      expect(await q.stats()).toMatchObject({ gittensory_jobs_coalesced_total: 1 });
     } finally {
       vi.useRealTimers();
     }
@@ -1761,7 +1761,7 @@ describe("createSqliteQueue (durable #980)", () => {
     it("returns an empty array when no backlog-lane row is pending", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
-      expect(q.topBacklogRepos(10)).toEqual([]);
+      expect(await q.topBacklogRepos(10)).toEqual([]);
     });
 
     it("counts pending AND processing backlog-lane rows, grouped by repo, sorted by depth", async () => {
@@ -1779,7 +1779,7 @@ describe("createSqliteQueue (durable #980)", () => {
           [JSON.stringify(backlogJob(repo, prNumber)), status, `agent-regate-pr:${repo}#${prNumber}`],
         );
       }
-      expect(q.topBacklogRepos(10)).toEqual([
+      expect(await q.topBacklogRepos(10)).toEqual([
         { repo: "owner/b", count: 3 },
         { repo: "owner/a", count: 1 },
       ]);
@@ -1798,7 +1798,7 @@ describe("createSqliteQueue (durable #980)", () => {
           [JSON.stringify(backlogJob(repo, 1)), `agent-regate-pr:${repo}#1`],
         );
       }
-      expect(q.topBacklogRepos(2)).toHaveLength(2);
+      expect(await q.topBacklogRepos(2)).toHaveLength(2);
     });
 
     it("excludes a terminal (dead/cancelled) backlog-lane row", async () => {
@@ -1808,18 +1808,18 @@ describe("createSqliteQueue (durable #980)", () => {
         "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane) VALUES (?, 'dead', 0, 0, 1000, 9, ?, 'backlog')",
         [JSON.stringify(backlogJob("owner/repo", 1)), "agent-regate-pr:owner/repo#1"],
       );
-      expect(q.topBacklogRepos(10)).toEqual([]);
+      expect(await q.topBacklogRepos(10)).toEqual([]);
     });
   });
 
   describe("listDeadLetterJobs (#2214)", () => {
-    it("returns an empty array when there are no dead-letter rows", () => {
+    it("returns an empty array when there are no dead-letter rows", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
-      expect(q.listDeadLetterJobs(10, 0)).toEqual([]);
+      expect(await q.listDeadLetterJobs(10, 0)).toEqual([]);
     });
 
-    it("maps dead rows newest-death-first, extracting job type/attempts/error, and excludes non-dead rows", () => {
+    it("maps dead rows newest-death-first, extracting job type/attempts/error, and excludes non-dead rows", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
       driver.query(
@@ -1834,13 +1834,13 @@ describe("createSqliteQueue (durable #980)", () => {
         "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES (?, 'pending', 0, 0, 500)",
         [JSON.stringify(msg("agent-regate-sweep"))],
       );
-      expect(q.listDeadLetterJobs(10, 0)).toEqual([
+      expect(await q.listDeadLetterJobs(10, 0)).toEqual([
         { id: 2, jobType: "github-webhook", attempts: 1, lastError: "kaboom", createdAtMs: 2000, deadAtMs: 9000 },
         { id: 1, jobType: "agent-regate-pr", attempts: 3, lastError: "boom", createdAtMs: 1000, deadAtMs: 5000 },
       ]);
     });
 
-    it("falls back to created_at ordering and reports deadAtMs null for a legacy row with no dead_at", () => {
+    it("falls back to created_at ordering and reports deadAtMs null for a legacy row with no dead_at", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
       // Legacy row: no dead_at, but its created_at (7000) is newer than the other row's real dead_at (3000) --
@@ -1853,25 +1853,25 @@ describe("createSqliteQueue (durable #980)", () => {
         "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, last_error, dead_at) VALUES (?, 'dead', 1, 0, 1000, 'recent failure', 3000)",
         [JSON.stringify(msg("agent-regate-pr"))],
       );
-      expect(q.listDeadLetterJobs(10, 0)).toEqual([
+      expect(await q.listDeadLetterJobs(10, 0)).toEqual([
         { id: 1, jobType: "agent-regate-pr", attempts: 2, lastError: "legacy failure", createdAtMs: 7000, deadAtMs: null },
         { id: 2, jobType: "agent-regate-pr", attempts: 1, lastError: "recent failure", createdAtMs: 1000, deadAtMs: 3000 },
       ]);
     });
 
-    it("reports jobType 'unknown' for an unparseable payload", () => {
+    it("reports jobType 'unknown' for an unparseable payload", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
       driver.query(
         "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, last_error, dead_at) VALUES ('not-json', 'dead', 0, 0, 1000, 'unparseable payload', 1000)",
         [],
       );
-      expect(q.listDeadLetterJobs(10, 0)).toEqual([
+      expect(await q.listDeadLetterJobs(10, 0)).toEqual([
         { id: 1, jobType: "unknown", attempts: 0, lastError: "unparseable payload", createdAtMs: 1000, deadAtMs: 1000 },
       ]);
     });
 
-    it("paginates via limit/offset", () => {
+    it("paginates via limit/offset", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
       for (let i = 0; i < 3; i++) {
@@ -1880,19 +1880,19 @@ describe("createSqliteQueue (durable #980)", () => {
           [JSON.stringify(msg("agent-regate-pr")), 1000 + i, 1000 + i],
         );
       }
-      expect(q.listDeadLetterJobs(1, 1).map((job) => job.createdAtMs)).toEqual([1001]);
+      expect((await q.listDeadLetterJobs(1, 1)).map((job) => job.createdAtMs)).toEqual([1001]);
     });
   });
 
   describe("replay/delete/purge dead-letter jobs (#2215)", () => {
-    it("replayDeadLetterJob requeues an existing dead row with a fresh retry budget", () => {
+    it("replayDeadLetterJob requeues an existing dead row with a fresh retry budget", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
       driver.query(
         "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, last_error, dead_at) VALUES (?, 'dead', 3, 0, 1000, 'boom', 5000)",
         [JSON.stringify(msg("agent-regate-pr"))],
       );
-      expect(q.replayDeadLetterJob(1)).toBe(true);
+      expect(await q.replayDeadLetterJob(1)).toBe(true);
       const row = driver.query("SELECT status, attempts, last_error, dead_at, run_after FROM _selfhost_jobs WHERE id=1", [])
         .rows[0] as { status: string; attempts: number; last_error: string | null; dead_at: number | null; run_after: number };
       expect(row.status).toBe("pending");
@@ -1902,20 +1902,20 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(row.run_after).toBeGreaterThan(0);
     });
 
-    it("replayDeadLetterJob returns false for a non-existent id", () => {
+    it("replayDeadLetterJob returns false for a non-existent id", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
-      expect(q.replayDeadLetterJob(999)).toBe(false);
+      expect(await q.replayDeadLetterJob(999)).toBe(false);
     });
 
-    it("replayDeadLetterJob returns false and leaves a non-dead row untouched", () => {
+    it("replayDeadLetterJob returns false and leaves a non-dead row untouched", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
       driver.query(
         "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES (?, 'pending', 0, 42, 1000)",
         [JSON.stringify(msg("agent-regate-pr"))],
       );
-      expect(q.replayDeadLetterJob(1)).toBe(false);
+      expect(await q.replayDeadLetterJob(1)).toBe(false);
       const row = driver.query("SELECT status, run_after FROM _selfhost_jobs WHERE id=1", []).rows[0] as {
         status: string;
         run_after: number;
@@ -1924,35 +1924,35 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(row.run_after).toBe(42);
     });
 
-    it("deleteDeadLetterJob removes an existing dead row", () => {
+    it("deleteDeadLetterJob removes an existing dead row", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
       driver.query(
         "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, dead_at) VALUES (?, 'dead', 1, 0, 1000, 1000)",
         [JSON.stringify(msg("agent-regate-pr"))],
       );
-      expect(q.deleteDeadLetterJob(1)).toBe(true);
+      expect(await q.deleteDeadLetterJob(1)).toBe(true);
       expect(driver.query("SELECT id FROM _selfhost_jobs WHERE id=1", []).rows).toEqual([]);
     });
 
-    it("deleteDeadLetterJob returns false for a non-existent id", () => {
+    it("deleteDeadLetterJob returns false for a non-existent id", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
-      expect(q.deleteDeadLetterJob(999)).toBe(false);
+      expect(await q.deleteDeadLetterJob(999)).toBe(false);
     });
 
-    it("deleteDeadLetterJob returns false and does not delete a non-dead row", () => {
+    it("deleteDeadLetterJob returns false and does not delete a non-dead row", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
       driver.query(
         "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES (?, 'processing', 0, 0, 1000)",
         [JSON.stringify(msg("agent-regate-pr"))],
       );
-      expect(q.deleteDeadLetterJob(1)).toBe(false);
+      expect(await q.deleteDeadLetterJob(1)).toBe(false);
       expect(driver.query("SELECT id FROM _selfhost_jobs WHERE id=1", []).rows).toHaveLength(1);
     });
 
-    it("purgeDeadLetterJobs deletes every dead row and leaves non-dead rows untouched", () => {
+    it("purgeDeadLetterJobs deletes every dead row and leaves non-dead rows untouched", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
       for (let i = 0; i < 3; i++) {
@@ -1969,19 +1969,19 @@ describe("createSqliteQueue (durable #980)", () => {
         "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES (?, 'processing', 0, 0, 3000)",
         [JSON.stringify(msg("agent-regate-pr"))],
       );
-      expect(q.purgeDeadLetterJobs()).toBe(3);
+      expect(await q.purgeDeadLetterJobs()).toBe(3);
       expect((driver.query("SELECT COUNT(*) AS c FROM _selfhost_jobs WHERE status='dead'", []).rows[0] as { c: number }).c).toBe(0);
       expect((driver.query("SELECT COUNT(*) AS c FROM _selfhost_jobs WHERE status!='dead'", []).rows[0] as { c: number }).c).toBe(2);
     });
 
-    it("purgeDeadLetterJobs returns 0 and touches nothing when there are no dead rows", () => {
+    it("purgeDeadLetterJobs returns 0 and touches nothing when there are no dead rows", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
       driver.query(
         "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES (?, 'pending', 0, 0, 1000)",
         [JSON.stringify(msg("agent-regate-pr"))],
       );
-      expect(q.purgeDeadLetterJobs()).toBe(0);
+      expect(await q.purgeDeadLetterJobs()).toBe(0);
       expect((driver.query("SELECT COUNT(*) AS c FROM _selfhost_jobs", []).rows[0] as { c: number }).c).toBe(1);
     });
   });
@@ -2000,10 +2000,10 @@ describe("createSqliteQueue (durable #980)", () => {
     await q.binding.send(msg("x"));
     await q.drain(); // backoff 0 → all 3 attempts run within one drain, then dead-lettered
     expect(calls).toBe(3);
-    expect(q.deadCount()).toBe(1);
-    expect(q.size()).toBe(0);
+    expect(await q.deadCount()).toBe(1);
+    expect(await q.size()).toBe(0);
     // #2214: a max-retries death also stamps dead_at, so the DLQ table can sort/report a real death time.
-    const [row] = q.listDeadLetterJobs(10, 0);
+    const [row] = await q.listDeadLetterJobs(10, 0);
     expect(row).toMatchObject({ jobType: "x", attempts: 3, lastError: "boom" });
     expect(row!.deadAtMs).not.toBeNull();
   });
@@ -2035,10 +2035,10 @@ describe("createSqliteQueue (durable #980)", () => {
       );
       await q.binding.send(msg("x"));
       await q.drain(); // dies at attempts=1 (maxRetries=1)
-      expect(q.deadCount()).toBe(1);
+      expect(await q.deadCount()).toBe(1);
       calls = 0;
 
-      const revived = q.reviveDeadLetterJobs();
+      const revived = await q.reviveDeadLetterJobs();
 
       expect(revived).toBe(1);
       const { rows } = driver.query("SELECT status, attempts, last_error FROM _selfhost_jobs", []);
@@ -2056,7 +2056,7 @@ describe("createSqliteQueue (durable #980)", () => {
 
       await q.drain(); // the one extra attempt the revival granted
       expect(calls).toBe(1);
-      expect(q.deadCount()).toBe(1); // failed again -- back to dead, attempts now 2
+      expect(await q.deadCount()).toBe(1); // failed again -- back to dead, attempts now 2
     });
 
     it("stops reviving a job once it reaches the auto-retry ceiling (maxRetries + extra attempts)", async () => {
@@ -2066,17 +2066,17 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.binding.send(msg("x"));
       await q.drain(); // attempts=1, dead (ceiling = maxRetries(1) + extra(1) = 2)
 
-      expect(q.reviveDeadLetterJobs()).toBe(1); // attempts(1) < ceiling(2) -- eligible
+      expect(await q.reviveDeadLetterJobs()).toBe(1); // attempts(1) < ceiling(2) -- eligible
       await q.drain(); // fails again -- attempts=2, dead again
 
-      expect(q.reviveDeadLetterJobs()).toBe(0); // attempts(2) is NOT < ceiling(2) -- exhausted, stays dead
-      expect(q.deadCount()).toBe(1);
+      expect(await q.reviveDeadLetterJobs()).toBe(0); // attempts(2) is NOT < ceiling(2) -- exhausted, stays dead
+      expect(await q.deadCount()).toBe(1);
     });
 
-    it("is a no-op when there are no dead jobs", () => {
+    it("is a no-op when there are no dead jobs", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
-      expect(q.reviveDeadLetterJobs()).toBe(0);
+      expect(await q.reviveDeadLetterJobs()).toBe(0);
     });
 
     // REGRESSION (#2581 review defect, parity with the same fix in pg-queue.ts): the SELECT that finds eligible
@@ -2091,7 +2091,7 @@ describe("createSqliteQueue (durable #980)", () => {
       const q = createSqliteQueue(driver, async () => { throw new Error("boom"); }, { maxRetries: 1, backoffMs: () => 0 });
       await q.binding.send(msg("x"));
       await q.drain(); // dies at attempts=1 (maxRetries=1)
-      expect(q.deadCount()).toBe(1);
+      expect(await q.deadCount()).toBe(1);
 
       vi.spyOn(driver, "query").mockImplementation((sql: string, params: unknown[]) => {
         if (sql.includes("SET status='pending', run_after=?, last_error=NULL")) {
@@ -2100,7 +2100,7 @@ describe("createSqliteQueue (durable #980)", () => {
         return realQuery(sql, params);
       });
 
-      const revived = q.reviveDeadLetterJobs();
+      const revived = await q.reviveDeadLetterJobs();
 
       expect(revived).toBe(0); // the UPDATE's "AND status='dead'" matched zero rows -- not counted as revived
       const { rows } = driver.query("SELECT status FROM _selfhost_jobs", []);
@@ -2122,7 +2122,7 @@ describe("createSqliteQueue (durable #980)", () => {
       );
       await q.binding.send(msg("x"));
       await vi.advanceTimersByTimeAsync(200); // dies at attempts=1
-      expect(q.deadCount()).toBe(1);
+      expect(await q.deadCount()).toBe(1);
       calls = 0;
 
       q.start();
@@ -2281,7 +2281,7 @@ describe("createSqliteQueue (durable #980)", () => {
       const now = Date.now();
       seedForegroundPendingRow(driver, { createdAt: now - 5 * 60_000, runAfter: now + 60 * 60_000 });
 
-      const released = q.releaseStaleForegroundDeferrals();
+      const released = await q.releaseStaleForegroundDeferrals();
 
       expect(released).toBe(1);
       const row = driver.query("SELECT run_after FROM _selfhost_jobs", []).rows[0] as { run_after: number };
@@ -2312,7 +2312,7 @@ describe("createSqliteQueue (durable #980)", () => {
         ],
       );
 
-      const released = q.releaseStaleForegroundDeferrals();
+      const released = await q.releaseStaleForegroundDeferrals();
 
       expect(released).toBe(0);
       const row = driver.query("SELECT run_after FROM _selfhost_jobs", []).rows[0] as { run_after: number };
@@ -2346,7 +2346,7 @@ describe("createSqliteQueue (durable #980)", () => {
         );
       }
 
-      const released = q.releaseStaleForegroundDeferrals();
+      const released = await q.releaseStaleForegroundDeferrals();
 
       expect(released).toBe(0);
       const admissionReads = querySpy.mock.calls.filter(([sql]) => String(sql).includes("FROM github_rate_limit_observations"));
@@ -2370,7 +2370,7 @@ describe("createSqliteQueue (durable #980)", () => {
         [JSON.stringify({ type: "github-webhook", deliveryId: "now-clear", eventName: "x", payload: {} }), futureRunAfter, now - 1_000],
       );
 
-      const released = q.releaseStaleForegroundDeferrals();
+      const released = await q.releaseStaleForegroundDeferrals();
 
       expect(released).toBe(1);
       expect(await renderMetrics()).toContain("gittensory_jobs_foreground_liveness_released_total 1");
@@ -2391,7 +2391,7 @@ describe("createSqliteQueue (durable #980)", () => {
         ["not valid json", futureRunAfter, now - 1_000],
       );
 
-      const released = q.releaseStaleForegroundDeferrals();
+      const released = await q.releaseStaleForegroundDeferrals();
 
       expect(released).toBe(0);
     });
@@ -2414,7 +2414,7 @@ describe("createSqliteQueue (durable #980)", () => {
         type: "build-contributor-evidence",
       });
 
-      const released = q.releaseStaleForegroundDeferrals();
+      const released = await q.releaseStaleForegroundDeferrals();
 
       expect(released).toBe(0);
       const row = driver.query("SELECT run_after FROM _selfhost_jobs", []).rows[0] as { run_after: number };
@@ -2428,7 +2428,7 @@ describe("createSqliteQueue (durable #980)", () => {
       const now = Date.now();
       seedForegroundPendingRow(driver, { createdAt: now - 60 * 60_000, runAfter: now + 60 * 60_000 });
 
-      const released = q.releaseStaleForegroundDeferrals();
+      const released = await q.releaseStaleForegroundDeferrals();
 
       expect(released).toBe(0);
       const row = driver.query("SELECT run_after FROM _selfhost_jobs", []).rows[0] as { run_after: number };
@@ -2457,7 +2457,7 @@ describe("createSqliteQueue (durable #980)", () => {
         seedForegroundPendingRow(driver, { createdAt: staleAge, runAfter: farFuture });
       }
 
-      const released = q.releaseStaleForegroundDeferrals();
+      const released = await q.releaseStaleForegroundDeferrals();
 
       expect(released).toBe(3);
       expect(await renderMetrics()).toContain("gittensory_jobs_foreground_liveness_released_total 3");
@@ -2485,7 +2485,7 @@ describe("createSqliteQueue (durable #980)", () => {
         seedForegroundPendingRow(driver, { createdAt: now - ageMs, runAfter: farFuture });
       }
 
-      const released = q.releaseStaleForegroundDeferrals();
+      const released = await q.releaseStaleForegroundDeferrals();
 
       expect(released).toBe(2);
       expect(await renderMetrics()).toContain("gittensory_jobs_foreground_liveness_released_total 2");
@@ -2527,7 +2527,7 @@ describe("createSqliteQueue (durable #980)", () => {
         );
       }
 
-      const released = q.releaseStaleForegroundDeferrals();
+      const released = await q.releaseStaleForegroundDeferrals();
 
       expect(released).toBe(2);
       const releasedIds = driver.query(`SELECT payload FROM _selfhost_jobs WHERE run_after<?`, [farFuture]).rows.map((row) =>
@@ -2571,7 +2571,7 @@ describe("createSqliteQueue (durable #980)", () => {
         [JSON.stringify({ type: "github-webhook", deliveryId: "clear-newer", eventName: "x", payload: { installation: { id: 222 } } }), farFuture, now - 1_000],
       );
 
-      const released = q.releaseStaleForegroundDeferrals();
+      const released = await q.releaseStaleForegroundDeferrals();
 
       const releasedIds = driver.query(`SELECT payload FROM _selfhost_jobs WHERE run_after<?`, [farFuture]).rows.map((row) =>
         JSON.parse((row as { payload: string }).payload).deliveryId,
@@ -2635,13 +2635,13 @@ describe("createSqliteQueue (durable #980)", () => {
         "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'pending', 0, 0, 0, 0)",
         [JSON.stringify(msg("y"))],
       );
-      expect(q.processingCount()).toBe(1);
+      expect(await q.processingCount()).toBe(1);
     });
 
     it("returns 0 when no job is processing", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
-      expect(q.processingCount()).toBe(0);
+      expect(await q.processingCount()).toBe(0);
     });
   });
 
@@ -2671,7 +2671,7 @@ describe("createSqliteQueue (durable #980)", () => {
       last_error: string;
     };
     expect(calls).toBe(1);
-    expect(q.deadCount()).toBe(0);
+    expect(await q.deadCount()).toBe(0);
     expect(row.status).toBe("pending");
     expect(row.attempts).toBe(0);
     expect(row.run_after).toBeGreaterThan(Date.now());
@@ -2703,11 +2703,11 @@ describe("createSqliteQueue (durable #980)", () => {
       attempts: 2,
       last_error: "openai api rate limit exceeded",
     });
-    expect(q.stats()).toMatchObject({
+    expect(await q.stats()).toMatchObject({
       gittensory_jobs_failed_total: 2,
       gittensory_jobs_dead_total: 1,
     });
-    expect(q.stats()).not.toHaveProperty("gittensory_jobs_rate_limited_total");
+    expect(await q.stats()).not.toHaveProperty("gittensory_jobs_rate_limited_total");
   });
 
   it("does not defer GitHub work when a non-GitHub job throws a GitHub-looking rate limit", async () => {
@@ -2745,8 +2745,8 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(pending).toHaveLength(1);
     expect(JSON.parse(pending[0]!.payload)).toMatchObject({ type: "refresh-registry" });
     expect(pending[0]!.last_error).toBe("API rate limit exceeded for installation ID 123");
-    expect(q.stats()).toMatchObject({ gittensory_jobs_rate_limited_total: 1 });
-    expect(q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+    expect(await q.stats()).toMatchObject({ gittensory_jobs_rate_limited_total: 1 });
+    expect(await q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
     expect(await renderMetrics()).toContain('gittensory_jobs_rate_limited_by_type_total{job_type="refresh-registry",key_scope="unknown",kind="unknown"} 1');
   });
 
@@ -2823,7 +2823,7 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(byType.get("blocked-installation")?.last_error).toBe("API rate limit exceeded for installation ID 123");
     expect(byType.get("agent-regate-pr:9")?.last_error).toBe("github rate-limit budget deferred");
     expect(byType.has("agent-regate-pr:10")).toBe(false);
-    expect(q.stats()).toMatchObject({
+    expect(await q.stats()).toMatchObject({
       gittensory_jobs_processed_total: 3,
       gittensory_jobs_rate_limited_total: 1,
       gittensory_jobs_rate_limit_deferred_total: 1,
@@ -2868,7 +2868,7 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(JSON.parse(rows[0]!.payload).deliveryId).toBe("ci-existing");
     expect(rows[0]!.attempts).toBe(0);
     expect(rows[0]!.last_error).toContain("secondary rate limit");
-    expect(q.stats()).toMatchObject({ gittensory_jobs_coalesced_total: 1 });
+    expect(await q.stats()).toMatchObject({ gittensory_jobs_coalesced_total: 1 });
   });
 
   it("reschedules a keyed rate-limited job when no pending duplicate exists", async () => {
@@ -2908,7 +2908,7 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(row.attempts).toBe(0);
     expect(row.run_after).toBeGreaterThan(Date.now());
     expect(row.last_error).toContain("secondary rate limit");
-    expect(q.stats()).toMatchObject({ gittensory_jobs_rate_limited_total: 1 });
+    expect(await q.stats()).toMatchObject({ gittensory_jobs_rate_limited_total: 1 });
   });
 
   it("consumes retryable incomplete review attempts and dead-letters after maxRetries", async () => {
@@ -2940,7 +2940,7 @@ describe("createSqliteQueue (durable #980)", () => {
       last_error: string;
     };
     expect(calls).toBe(1);
-    expect(q.deadCount()).toBe(0);
+    expect(await q.deadCount()).toBe(0);
     expect(row.status).toBe("pending");
     expect(row.attempts).toBe(1);
     expect(row.run_after).toBeGreaterThanOrEqual(before + 5_000);
@@ -2953,7 +2953,7 @@ describe("createSqliteQueue (durable #980)", () => {
       [],
     ).rows[0] as { status: string; attempts: number; last_error: string };
     expect(calls).toBe(2);
-    expect(q.deadCount()).toBe(1);
+    expect(await q.deadCount()).toBe(1);
     expect(dead.status).toBe("dead");
     expect(dead.attempts).toBe(2);
     expect(dead.last_error).toContain("AI review did not produce");
@@ -2995,7 +2995,7 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(JSON.parse(rows[1]!.payload).deliveryId).toBe("ci-existing");
     expect(rows[1]!.attempts).toBe(0);
     expect(rows[1]!.last_error).toBeNull();
-    expect(q.stats().gittensory_jobs_coalesced_total ?? 0).toBe(0);
+    expect((await q.stats()).gittensory_jobs_coalesced_total ?? 0).toBe(0);
   });
 
   it("SURVIVES A RESTART: a fresh queue over the same DB processes a persisted pending job", async () => {
@@ -3022,7 +3022,7 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.drain();
 
       expect(driver.query("SELECT status FROM _selfhost_jobs", []).rows[0]).toMatchObject({ status: "processing" });
-      expect(q.stats().gittensory_jobs_recovered_total ?? 0).toBe(0);
+      expect((await q.stats()).gittensory_jobs_recovered_total ?? 0).toBe(0);
     } finally {
       if (old === undefined) delete process.env.QUEUE_PROCESSING_TIMEOUT_MS;
       else process.env.QUEUE_PROCESSING_TIMEOUT_MS = old;
@@ -3155,7 +3155,7 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.drain();
 
       expect(seen).toEqual(["lease-expired"]);
-      expect(q.stats()).toMatchObject({
+      expect(await q.stats()).toMatchObject({
         gittensory_jobs_recovered_total: 1,
         gittensory_jobs_processed_total: 1,
       });
@@ -3201,7 +3201,7 @@ describe("createSqliteQueue (durable #980)", () => {
         await new Promise((r) => setTimeout(r, 10));
 
       expect(seen.filter((type) => type === "slow")).toHaveLength(1);
-      expect(queue.stats().gittensory_jobs_recovered_total ?? 0).toBe(0);
+      expect((await queue.stats()).gittensory_jobs_recovered_total ?? 0).toBe(0);
     } finally {
       for (const release of releases) release();
       if (q) await q.stop();
@@ -3263,7 +3263,7 @@ describe("createSqliteQueue (durable #980)", () => {
     );
     await q.binding.send(msg("x"));
     await q.drain();
-    expect(q.deadCount()).toBe(1);
+    expect(await q.deadCount()).toBe(1);
   });
 
   it("dead-letters an unparseable payload", async () => {
@@ -3271,9 +3271,9 @@ describe("createSqliteQueue (durable #980)", () => {
     const q = createSqliteQueue(driver, async () => undefined);
     driver.query("INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES ('not-json','pending',0,0,0)", []);
     await q.drain();
-    expect(q.deadCount()).toBe(1);
+    expect(await q.deadCount()).toBe(1);
     // #2214: an unparseable payload has no `type` field to extract -- the DLQ table falls back to "unknown".
-    const [row] = q.listDeadLetterJobs(10, 0);
+    const [row] = await q.listDeadLetterJobs(10, 0);
     expect(row).toMatchObject({ jobType: "unknown", lastError: "unparseable payload" });
     expect(row!.deadAtMs).not.toBeNull();
     // A malformed payload consumes the same bounded retry budget as a normal failure (previously left `attempts`
@@ -3296,13 +3296,13 @@ describe("createSqliteQueue (durable #980)", () => {
     await q2.binding.send(msg("f"));
     await q2.drain();
     expect(calls).toBe(1);
-    expect(q2.size()).toBe(1);
+    expect(await q2.size()).toBe(1);
   });
 
   it("stop() is a no-op when start() was never called (timer is null)", async () => {
     const q = createSqliteQueue(makeDriver(), async () => undefined);
     await q.stop(); // timer=null → the false branch of `if (timer) clearTimeout(timer)` is taken
-    expect(q.size()).toBe(0); // still usable after a spurious stop()
+    expect(await q.size()).toBe(0); // still usable after a spurious stop()
   });
 
   it("concurrency=1 saturates after one active pump (active >= concurrency → early return)", async () => {
@@ -3319,7 +3319,7 @@ describe("createSqliteQueue (durable #980)", () => {
     await new Promise((r) => setTimeout(r, 60));
     await q.stop();
     expect(maxConcurrent).toBe(1);
-    expect(q.size()).toBe(0);
+    expect(await q.size()).toBe(0);
   });
 
   it("concurrency=2 allows two jobs to run simultaneously", async () => {
@@ -3335,7 +3335,7 @@ describe("createSqliteQueue (durable #980)", () => {
     await new Promise((r) => setTimeout(r, 60));
     await q.stop();
     expect(maxConcurrent).toBe(2);
-    expect(q.size()).toBe(0);
+    expect(await q.size()).toBe(0);
   });
 
   it("start() is idempotent and stop() waits for an in-flight pump", async () => {
@@ -3408,7 +3408,7 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(row.status).toBe("pending");
       expect(row.run_after).toBeGreaterThan(before);
       expect(row.last_error).toContain("live_pending_high");
-      expect(q.stats()).toMatchObject({ gittensory_jobs_maintenance_admission_deferred_total: 1 });
+      expect(await q.stats()).toMatchObject({ gittensory_jobs_maintenance_admission_deferred_total: 1 });
       expect(await renderMetrics()).toContain(
         'gittensory_jobs_maintenance_admission_deferred_by_reason_total{job_type="build-contributor-evidence",reason="live_pending_high"} 1',
       );
@@ -3441,7 +3441,7 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.binding.send(msg("build-contributor-evidence"));
       await q.drain();
       expect(started).toEqual(["build-contributor-evidence"]);
-      expect(q.size()).toBe(0);
+      expect(await q.size()).toBe(0);
     });
 
     it("never defers live/foreground work, even under the same pressure that defers maintenance work", async () => {
@@ -3598,7 +3598,7 @@ describe("createSqliteQueue (durable #980)", () => {
       );
       await q.drain();
       expect(started).toEqual(["build-contributor-evidence"]);
-      expect(q.stats()).toMatchObject({ gittensory_jobs_maintenance_trickle_admitted_total: 1 });
+      expect(await q.stats()).toMatchObject({ gittensory_jobs_maintenance_trickle_admitted_total: 1 });
       const metrics = await renderMetrics();
       expect(metrics).toContain('gittensory_jobs_maintenance_trickle_admitted_by_type_total{job_type="build-contributor-evidence"} 1');
       expect(metrics).toContain('gittensory_jobs_maintenance_admission_granted_under_pressure_total{job_type="build-contributor-evidence",reason="trickle_max_defer_age"} 1');
@@ -3611,7 +3611,7 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.binding.send(msg("build-contributor-evidence"));
       await q.drain();
       expect(started).toEqual(["build-contributor-evidence"]);
-      expect(q.stats()).not.toHaveProperty("gittensory_jobs_maintenance_trickle_admitted_total");
+      expect(await q.stats()).not.toHaveProperty("gittensory_jobs_maintenance_trickle_admitted_total");
       expect(await renderMetrics()).not.toContain("gittensory_jobs_maintenance_trickle_admitted");
     });
 
@@ -3635,7 +3635,7 @@ describe("createSqliteQueue (durable #980)", () => {
          VALUES (?, 'pending', 0, ?, ?, 0, NULL, 1)`,
         [JSON.stringify({ type: "rollup-product-usage", requestedBy: "test" }), now + 3_600_000, now - 5_000],
       );
-      const signals = q.pressureSignals();
+      const signals = await q.pressureSignals();
       expect(signals.livePendingCount).toBe(2);
       expect(signals.oldestLivePendingAgeMs).toBeGreaterThanOrEqual(0);
       expect(signals.maintenancePendingCount).toBe(1);
@@ -3646,7 +3646,7 @@ describe("createSqliteQueue (durable #980)", () => {
     it("pressureSignals() reports null oldest ages when a lane has no pending work", async () => {
       const driver = makeDriver();
       const q = createSqliteQueue(driver, async () => undefined);
-      const signals = q.pressureSignals();
+      const signals = await q.pressureSignals();
       expect(signals.livePendingCount).toBe(0);
       expect(signals.oldestLivePendingAgeMs).toBeNull();
       expect(signals.maintenancePendingCount).toBe(0);
@@ -3671,7 +3671,7 @@ describe("createSqliteQueue (durable #980)", () => {
       } as unknown as JobMessage);
       // A fresh-intake row (foreground_lane='fresh') must NOT count toward the backlog-convergence signal.
       await q.binding.send(prWebhook("fresh-unrelated"));
-      const signals = q.pressureSignals();
+      const signals = await q.pressureSignals();
       expect(signals.backlogConvergencePendingCount).toBe(1);
     });
 
@@ -3687,7 +3687,7 @@ describe("createSqliteQueue (durable #980)", () => {
         prNumber: 1,
         installationId: 1,
       } as unknown as JobMessage);
-      const signals = q.pressureSignals();
+      const signals = await q.pressureSignals();
       expect(signals.freshIntakePendingCount).toBe(1);
     });
 
@@ -3713,7 +3713,7 @@ describe("createSqliteQueue (durable #980)", () => {
          VALUES (?, 'pending', 0, ?, ?, 9, NULL, 0)`,
         [JSON.stringify(msg("agent-regate-pr")), now - 1_000, now - 10_000],
       );
-      const signals = q.pressureSignals();
+      const signals = await q.pressureSignals();
       expect(signals.livePendingCount).toBe(2);
       expect(signals.oldestLivePendingAgeMs).toBeGreaterThanOrEqual(500_000);
       expect(signals.liveRunnableNowCount).toBe(1);
@@ -3735,7 +3735,7 @@ describe("createSqliteQueue (durable #980)", () => {
           [JSON.stringify(msg("agent-regate-pr")), now + 3_600_000, now - 60_000],
         );
       }
-      const signals = q.pressureSignals();
+      const signals = await q.pressureSignals();
       expect(signals.livePendingCount).toBe(3);
       expect(signals.liveRunnableNowCount).toBe(0);
       expect(signals.oldestLiveRunnableAgeMs).toBeNull();
@@ -3834,7 +3834,7 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.binding.send(msg("build-contributor-evidence"));
       await q.drain();
       expect(started).not.toContain("build-contributor-evidence");
-      expect(q.stats()).not.toHaveProperty("gittensory_jobs_maintenance_admission_deferred_total");
+      expect(await q.stats()).not.toHaveProperty("gittensory_jobs_maintenance_admission_deferred_total");
       expect(await renderMetrics()).not.toContain("gittensory_jobs_maintenance_admission_deferred_by_reason_total");
     });
   });

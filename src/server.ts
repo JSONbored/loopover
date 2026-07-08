@@ -58,9 +58,8 @@ import { runSelfHostMigrations } from "./selfhost/migrate";
 import { createPgAdapter, tuneGithubRateLimitObservationsAutovacuum } from "./selfhost/pg-adapter";
 import { createPgQueue } from "./selfhost/pg-queue";
 import { createPgVectorize, initPgVectorize } from "./selfhost/pg-vectorize";
-import { resolvePostgresPoolMax, type SelfHostQueueSnapshot } from "./selfhost/queue-common";
-import type { BacklogRepoCount } from "./selfhost/queue-fairness";
-import type { MaintenancePressureSignals } from "./selfhost/maintenance-admission";
+import { resolvePostgresPoolMax } from "./selfhost/queue-common";
+import type { DurableQueue } from "./selfhost/backend-contracts";
 import { createSqliteQueue } from "./selfhost/sqlite-queue";
 import { createSqliteVectorize } from "./selfhost/vectorize";
 import { createFsBlobStore } from "./selfhost/blob-store";
@@ -129,18 +128,11 @@ function loadFileSecrets(): void {
 
 interface Backend {
   db: D1Database;
-  queue: {
-    binding: Queue;
-    start(): void;
-    stop(): Promise<void>;
-    size(): number | Promise<number>;
-    deadCount(): number | Promise<number>;
-    processingCount(): number | Promise<number>;
-    stats(): Record<string, number> | Promise<Record<string, number>>;
-    pressureSignals(): MaintenancePressureSignals | Promise<MaintenancePressureSignals>;
-    snapshot(): SelfHostQueueSnapshot | Promise<SelfHostQueueSnapshot>;
-    topBacklogRepos(limit: number): BacklogRepoCount[] | Promise<BacklogRepoCount[]>;
-  };
+  // Unified DurableQueue (backend-contracts.ts, #4010) -- previously an inline type papering over the sqlite
+  // and Postgres queue backends' independently-declared interfaces with a loose `T | Promise<T>` union on
+  // every method. Both createSqliteQueue and createPgQueue now return the same fully-async DurableQueue, so
+  // this can reference it directly instead of re-declaring a looser subset by hand.
+  queue: DurableQueue;
   vectorize?: Vectorize;
   shutdown(): Promise<void>;
 }

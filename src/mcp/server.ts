@@ -149,6 +149,7 @@ import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
 import { loadUpstreamStatus } from "../upstream/ruleset";
 import { simulateOpenPrPressure, type OpenPrPressureInput } from "../services/open-pr-pressure-scenarios";
+import { buildTestEvidenceReport } from "../signals/test-evidence-report";
 
 type AppContext = Context<{ Bindings: Env }>;
 type ToolPayload = {
@@ -1103,6 +1104,23 @@ const simulateOpenPrPressureOutputSchema = {
   scenarios: z.array(z.unknown()).optional(),
   summary: z.string().optional(),
 };
+
+// #2235 - deterministic, source-free test-evidence self-check. Plain path arrays (not opaque engine objects),
+// capped like the other path-list MCP inputs (suggestBoundaryTestsShape); the tool reveals nothing beyond a
+// computation on the caller's own changed-path metadata (no source content, no repo access).
+const checkTestEvidenceShape = {
+  changedPaths: z.array(z.string().max(400)).max(2000),
+  testFiles: z.array(z.string().max(400)).max(2000).optional(),
+};
+const checkTestEvidenceOutputSchema = {
+  coverageBand: z.string().optional(),
+  changedPathCount: z.number().optional(),
+  testPathCount: z.number().optional(),
+  hasCodeChanges: z.boolean().optional(),
+  hasTestEvidence: z.boolean().optional(),
+  guidance: z.string().optional(),
+  summary: z.string().optional(),
+};
 const preflightCurrentBranchOutputSchema = {
   login: z.string().optional(),
   repoFullName: z.string().optional(),
@@ -1331,6 +1349,17 @@ export class GittensoryMcp {
         outputSchema: simulateOpenPrPressureOutputSchema,
       },
       async (input) => this.toolResult(this.simulateOpenPrPressureTool(input)),
+    );
+
+    server.registerTool(
+      "gittensory_check_test_evidence",
+      {
+        description:
+          "Check whether a planned change carries enough test evidence, from changed-path metadata alone (paths + optional test paths; no source content) - an agent-native, source-free pre-submission self-check. Returns the coverage band (strong/adequate/weak/absent) plus actionable guidance. Deterministic and read-only - no repo access required and no GitHub writes.",
+        inputSchema: checkTestEvidenceShape,
+        outputSchema: checkTestEvidenceOutputSchema,
+      },
+      async (input) => this.toolResult(this.checkTestEvidence(input)),
     );
 
     server.registerTool(
@@ -2383,6 +2412,17 @@ export class GittensoryMcp {
     return {
       summary: simulation.summary,
       data: simulation as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #2235 - surface the deterministic test-evidence classifier over MCP. Pure and read-only: the caller supplies
+  // the changed-path metadata, so nothing beyond a computation on that input is revealed and no repo access is
+  // required (mirrors gittensory_run_local_scorer / gittensory_check_slop_risk). Report is branchless, path-only.
+  private checkTestEvidence(input: z.infer<z.ZodObject<typeof checkTestEvidenceShape>>): ToolPayload {
+    const report = buildTestEvidenceReport(input.changedPaths, input.testFiles);
+    return {
+      summary: report.summary,
+      data: report as unknown as Record<string, unknown>,
     };
   }
 

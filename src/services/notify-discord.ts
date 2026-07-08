@@ -1,5 +1,6 @@
 import { recordAuditEvent } from "../db/repositories";
 import { errorMessage } from "../utils/json";
+import type { RecapReport } from "../types";
 
 // Per-repo Discord notifications (reviewbot parity). Each repo notifies its OWN channel on a terminal action —
 // merged / closed / changes-requested(manual) — so the operator sees what the bot did, like the old Reviewbott
@@ -146,6 +147,56 @@ export async function notifyActionToDiscord(
   } catch (error) {
     console.warn(JSON.stringify({ event: "discord_notify_failed", repo: params.repoFullName, pull: params.pullNumber, message: errorMessage(error).slice(0, 120) }));
     await auditExternalNotification(env, params, "discord", "error", errorMessage(error).slice(0, 160), { source: resolved.source });
+  }
+}
+
+/**
+ * Deliver a maintainer recap digest (#2245, the Discord channel of #1963) as an embed. Unlike the per-repo
+ * `ReviewRecap` sender {@link sendReviewRecapToDiscord} (review-recap.ts) — which resolves a per-repo channel via
+ * {@link resolveDiscordWebhook}, exactly like {@link notifyActionToDiscord} — a maintainer `RecapReport` is ONE
+ * operator-level digest spanning many repos (`report.repos`), so there is no single repo to route by: it posts to
+ * the flat global `DISCORD_WEBHOOK_URL`. Best-effort and observable, mirroring `sendReviewRecapToDiscord`: an
+ * unset/invalid webhook or a send failure is recorded to the audit ledger (`maintainer_recap_notification.discord`)
+ * and returned as `{ sent: false, reason }` but never thrown, so a Discord outage never breaks the recap job. The
+ * `RecapReport` is already public-safe (buildMaintainerRecap sanitizes every free-text field), so no re-scrub here.
+ */
+export async function deliverRecapToDiscord(env: Env, report: RecapReport): Promise<{ sent: boolean; reason?: string }> {
+  const targetKey = `maintainer-recap:${report.windowDays}d`;
+  const auditMeta = { windowDays: report.windowDays, repoCount: report.repos.length };
+  const url = envString(env, "DISCORD_WEBHOOK_URL");
+  if (!url || !isValidDiscordWebhook(url)) {
+    const reason = url ? "invalid_global_webhook" : "missing_global_webhook";
+    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.discord", actor: "gittensory", targetKey, outcome: "denied", detail: reason, metadata: auditMeta });
+    return { sent: false, reason };
+  }
+  const body = {
+    username: "Gittensory",
+    embeds: [
+      {
+        title: `Maintainer recap · ${report.repos.length} repo(s) · ${report.windowDays}d`,
+        description: report.summary.join("\n").slice(0, 1800),
+        color: 0x0969da,
+        fields: [
+          { name: "Reviewed", value: `${report.totals.reviewed}`, inline: true },
+          { name: "Merged", value: `${report.totals.merged}`, inline: true },
+          { name: "Closed", value: `${report.totals.closed}`, inline: true },
+          { name: "Gate false positives", value: `${report.totals.gateFalsePositives}/${report.totals.blocked}`, inline: true },
+          { name: "Overrides", value: `${report.totals.gateOverrides}`, inline: true },
+          { name: "Reversals", value: `${report.totals.reversals}`, inline: true },
+        ],
+        footer: { text: `Gittensory · generated ${report.generatedAt}` },
+      },
+    ],
+  };
+  try {
+    await postWebhook(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) }, "discord");
+    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.discord", actor: "gittensory", targetKey, outcome: "completed", detail: "sent", metadata: auditMeta });
+    return { sent: true };
+  } catch (error) {
+    const detail = errorMessage(error).slice(0, 160);
+    console.warn(JSON.stringify({ event: "maintainer_recap_discord_failed", message: detail }));
+    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.discord", actor: "gittensory", targetKey, outcome: "error", detail, metadata: auditMeta });
+    return { sent: false, reason: detail };
   }
 }
 

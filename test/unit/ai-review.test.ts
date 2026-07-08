@@ -3107,9 +3107,10 @@ describe("pure helpers", () => {
         line: 12,
         severity: "blocker",
         body: "Null deref.",
+        category: "maintainability",
         suggestion: "const value = input ?? fallback;",
       },
-      { path: "src/b.ts", line: 3, severity: "nit", body: "Rename x." },
+      { path: "src/b.ts", line: 3, severity: "nit", body: "Rename x.", category: "maintainability" },
     ]);
   });
 
@@ -3147,9 +3148,9 @@ describe("pure helpers", () => {
       ],
     });
     expect(parseModelReview(json)?.inlineFindings).toEqual([
-      { path: "src/a.ts", line: 2, severity: "nit", body: "Keep me." },
-      { path: "src/b.ts", line: 4, severity: "nit", body: "Keep me too." },
-      { path: "src/c.ts", line: 6, severity: "nit", body: "Bad suggestion type." },
+      { path: "src/a.ts", line: 2, severity: "nit", body: "Keep me.", category: "maintainability" },
+      { path: "src/b.ts", line: 4, severity: "nit", body: "Keep me too.", category: "maintainability" },
+      { path: "src/c.ts", line: 6, severity: "nit", body: "Bad suggestion type.", category: "maintainability" },
     ]);
   });
 
@@ -3166,9 +3167,9 @@ describe("pure helpers", () => {
       ],
     });
     expect(parseModelReview(json)?.inlineFindings).toEqual([
-      { path: "src/a.ts", line: 1, endLine: 3, severity: "nit", body: "Multi." },
-      { path: "src/b.ts", line: 5, severity: "nit", body: "Inverted." },
-      { path: "src/c.ts", line: 2, severity: "nit", body: "Equal." },
+      { path: "src/a.ts", line: 1, endLine: 3, severity: "nit", body: "Multi.", category: "maintainability" },
+      { path: "src/b.ts", line: 5, severity: "nit", body: "Inverted.", category: "maintainability" },
+      { path: "src/c.ts", line: 2, severity: "nit", body: "Equal.", category: "maintainability" },
     ]);
   });
 
@@ -3194,7 +3195,7 @@ describe("pure helpers", () => {
       ],
     });
     expect(parseModelReview(json)?.inlineFindings).toEqual([
-      { path: "src/a.ts", line: 2, severity: "nit", body: "kept (truncated)" },
+      { path: "src/a.ts", line: 2, severity: "nit", body: "kept (truncated)", category: "maintainability" },
     ]);
   });
 
@@ -3373,6 +3374,7 @@ describe("pure helpers", () => {
           line: 3,
           severity: "nit",
           body: "Guard the empty case.",
+          category: "maintainability",
           suggestion: "if \\(\\!items.length\\) return;",
         },
       ]);

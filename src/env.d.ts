@@ -192,12 +192,6 @@ declare global {
      *  inline comments on specific changed lines, layered on top of the decision summary. Default OFF —
      *  unset/false keeps the review path byte-identical (the model is never asked for inline findings). */
     GITTENSORY_REVIEW_INLINE_COMMENTS?: string;
-    /** Boundary-safe test generation (#2189, config slice of #1972): when truthy (AND the repo's `.gittensory.yml`
-     *  sets `review.test_generation: true`), a missing-test-evidence finding is ALSO accompanied by a
-     *  `gittensory_generate_tests` local-write action spec — criteria/content supplied by gittensory, execution
-     *  on the contributor's own machine (no source upload, no server-side write). Default OFF — unset/false
-     *  keeps the review path byte-identical (no spec is ever built). */
-    GITTENSORY_REVIEW_TEST_GENERATION?: string;
     /** Fix-handoff blocks (#2176, config slice of #1962): when truthy (AND the repo is in GITTENSORY_REVIEW_REPOS
      *  AND the repo's `.gittensory.yml` sets `review.fixHandoff: true`), a review finding is ALSO rendered as a
      *  structured, machine-readable "apply this fix" block (src/review/fix-handoff-render.ts) for the

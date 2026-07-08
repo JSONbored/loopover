@@ -273,19 +273,10 @@ export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { 
   return { profile: manifest?.review.profile ?? null, tone: manifest?.review.tone ?? null, securityFocus: manifest?.review.securityFocus === true, inlineComments: manifest?.review.inlineComments === true, suggestions: manifest?.review.suggestions === true, changedFilesSummary: manifest?.review.changedFilesSummary === true, effortScore: manifest?.review.effortScore === true, impactMap: manifest?.review.impactMap === true, cultureProfile: manifest?.review.cultureProfile === true, findingCategories: manifest?.review.findingCategories === true, inlineCommentsPerCategory: manifest?.review.inlineCommentsPerCategory ?? null, minFindingSeverity: manifest?.review.minFindingSeverity ?? null, maxFindings: manifest?.review.maxFindings ?? { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: manifest?.review.commentVerbosity ?? null, pathInstructions: manifest?.review.pathInstructions ?? [], instructions: manifest?.review.instructions ?? null, excludePaths: manifest?.review.excludePaths ?? [], pathFilters: manifest?.review.pathFilters ?? [], selfHostAiModel: resolveReviewSelfHostAiModel(manifest) };
 }
 
-/** Resolve `review.test_generation` (#2189, config slice of #1972) from a possibly-null manifest (null = load
- *  failure ⇒ manifest toggle reads as unset/false). Mirrors resolveReviewPromptOverrides's inlineComments
- *  resolution — true ONLY when the manifest explicitly set review.test_generation: true; null/false/absent ⇒
- *  false. The caller further ANDs this with the operator's GITTENSORY_REVIEW_TEST_GENERATION kill-switch via
- *  shouldOfferTestGenerationSpec (src/review/test-generation.ts) before ever building a test-gen spec. */
-export function resolveTestGenerationManifestToggle(manifest: FocusManifest | null): boolean {
-  return manifest?.review.testGeneration === true;
-}
-
 /** Resolve `review.memory` (#2179, config slice of #1964) from a possibly-null manifest (null = load failure ⇒
- *  manifest toggle reads as unset/false). Mirrors resolveTestGenerationManifestToggle's shape exactly — true
- *  ONLY when the manifest explicitly set review.memory: true; null/false/absent ⇒ false. The caller further
- *  ANDs this with the operator's GITTENSORY_REVIEW_MEMORY kill-switch via isReviewMemoryEnabled
+ *  manifest toggle reads as unset/false). Mirrors resolveReviewPromptOverrides's inlineComments resolution
+ *  exactly — true ONLY when the manifest explicitly set review.memory: true; null/false/absent ⇒ false. The
+ *  caller further ANDs this with the operator's GITTENSORY_REVIEW_MEMORY kill-switch via isReviewMemoryEnabled
  *  (src/review/review-memory-wire.ts) before ever reading the suppression store. */
 export function resolveReviewMemoryManifestToggle(manifest: FocusManifest | null): boolean {
   return manifest?.review.reviewMemory === true;

@@ -92,7 +92,6 @@ GITTENSORY_REVIEW_REPUTATION="true"              # submitter-reputation spend co
 GITTENSORY_REVIEW_UNIFIED_COMMENT="true"         # one in-place unified PR comment
 GITTENSORY_REVIEW_ENRICHMENT="true"              # external analyzer registry (REES) findings
 GITTENSORY_REVIEW_INLINE_COMMENTS="true"         # diff-anchored inline PR review comments
-GITTENSORY_REVIEW_TEST_GENERATION="true"         # boundary-safe test-gen action spec (contributor-run)
 GITTENSORY_REVIEW_FIX_HANDOFF="true"             # machine-readable fix-handoff block (contributor-run)
 GITTENSORY_REVIEW_PLANNER="true"                 # @gittensory plan on-demand implementation plan
 GITTENSORY_REVIEW_SCREENSHOTS="true"             # before/after visual capture for UI changes

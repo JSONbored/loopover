@@ -47,11 +47,6 @@
     // the decision summary. Requires the repo in GITTENSORY_REVIEW_REPOS AND review.inline_comments in its
     // .gittensory.yml. Default OFF — flag-OFF the model is never asked for inline findings (byte-identical).
     "GITTENSORY_REVIEW_INLINE_COMMENTS": "false",
-    // Boundary-safe test generation (#2189, config slice of #1972): when a missing-test-evidence finding fires,
-    // also offer a gittensory_generate_tests local-write action spec (criteria supplied by gittensory, executed
-    // by the contributor's own agent). Requires the repo's .gittensory.yml to also set
-    // review.test_generation: true. Default OFF — flag-OFF no spec is ever built (byte-identical).
-    "GITTENSORY_REVIEW_TEST_GENERATION": "false",
     // Convergence (safety): run the ported safety scan in the review path — defang untrusted PR
     // title/body/diff before the AI reviewer sees it, and surface a secret-leak blocker from the diff.
     // Default OFF — flag-OFF keeps the review path byte-identical.

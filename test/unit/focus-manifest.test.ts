@@ -34,7 +34,6 @@ import {
   resolveReviewSelfHostAiModel,
   resolveReviewVisualConfig,
   repoDocGenerationConfigToJson,
-  resolveTestGenerationManifestToggle,
   resolveReviewMemoryManifestToggle,
   reviewConfigToJson,
   overlayReviewConfig,
@@ -367,7 +366,6 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     suggestions: "suggestions:",
     changedFilesSummary: "changed_files_summary:",
     effortScore: "effort_score:",
-    testGeneration: "test_generation:",
     impactMap: "impact_map:",
     cultureProfile: "culture_profile:",
     selftune: "selftune:",
@@ -802,7 +800,7 @@ describe("compileFocusManifestPolicy", () => {
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
       gate: { present: false, enabled: null, checkMode: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null },
       settings: {},
-      review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, testGeneration: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
+      review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null, grounding: null },
       contentLane: { present: false, entryFileGlob: null, providerFileGlob: null, artifactGlob: null, collectionField: null, maxAppendedEntries: null, duplicateKeyFields: [], validatorId: null },
       repoDocGeneration: { present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 },
@@ -3131,23 +3129,6 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
     expect(bad.warnings.some((w) => /review\.effort_score.*must be a boolean/.test(w))).toBe(true);
   });
 
-  it("parses review.test_generation (default OFF), marks present, round-trips, and warns on a non-boolean (#1972)", () => {
-    expect(parseFocusManifest({ review: { test_generation: true } }).review.testGeneration).toBe(true);
-    const on = parseFocusManifest({ review: { test_generation: true } });
-    expect(on.review.present).toBe(true); // a test-generation-only manifest IS present
-    expect(parseFocusManifest({ review: reviewConfigToJson(on.review) }).review).toEqual(on.review); // survives round-trip
-    // Explicit false is retained (and marks present, since the maintainer set it).
-    const off = parseFocusManifest({ review: { test_generation: false } });
-    expect(off.review.testGeneration).toBe(false);
-    expect(off.review.present).toBe(true);
-    // Absent ⇒ null (the byte-identical default), config not present.
-    expect(parseFocusManifest({ review: {} }).review.testGeneration).toBeNull();
-    // A non-boolean is ignored with a warning.
-    const bad = parseFocusManifest({ review: { test_generation: "yes" } });
-    expect(bad.review.testGeneration).toBeNull();
-    expect(bad.warnings.some((w) => /review\.test_generation.*must be a boolean/.test(w))).toBe(true);
-  });
-
   it("parses review.impact_map (default OFF), marks present, round-trips, and warns on a non-boolean (#2184)", () => {
     expect(parseFocusManifest({ review: { impact_map: true } }).review.impactMap).toBe(true);
     const on = parseFocusManifest({ review: { impact_map: true } });
@@ -3228,13 +3209,6 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
     expect(parseFocusManifest({ review: { inline_comments_per_category: "nope" } }).review.inlineCommentsPerCategory).toBeNull();
     expect(resolveReviewPromptOverrides(on).inlineCommentsPerCategory).toBe(3);
     expect(resolveReviewPromptOverrides(parseFocusManifest({})).inlineCommentsPerCategory).toBeNull();
-  });
-
-  it("resolves review.test_generation's manifest toggle to a strict boolean (#2189)", () => {
-    expect(resolveTestGenerationManifestToggle(null)).toBe(false); // null manifest (load failure) ⇒ false
-    expect(resolveTestGenerationManifestToggle(parseFocusManifest({}))).toBe(false); // absent ⇒ false
-    expect(resolveTestGenerationManifestToggle(parseFocusManifest({ review: { test_generation: false } }))).toBe(false);
-    expect(resolveTestGenerationManifestToggle(parseFocusManifest({ review: { test_generation: true } }))).toBe(true);
   });
 
   it("resolves review.memory's manifest toggle to a strict boolean (#2179)", () => {

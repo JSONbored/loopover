@@ -112,21 +112,6 @@ describe("config/examples review templates (#1682)", () => {
     expect(reviewConfigToJson(on.review)).toEqual({ inline_comments_per_category: 2 });
   });
 
-  it("locks in review.test_generation via manifest parse + JSON round-trip and documents it in gittensory.full.yml (#2189)", () => {
-    // test_generation is a kill-switch that gates the boundary-safe test-generation advisory (#1972); it is NOT a
-    // review prompt override, so it is exercised through the manifest parse + reviewConfigToJson round-trip rather
-    // than resolveReviewPromptOverrides (which does not surface it).
-    const full = readConfigExample("gittensory.full.yml");
-    expect(full).toMatch(/# test_generation:/);
-    expect(parseFocusManifest({}).review.testGeneration).toBeNull();
-    const on = parseFocusManifest({ review: { test_generation: true } });
-    expect(on.review.testGeneration).toBe(true);
-    expect(reviewConfigToJson(on.review)).toEqual({ test_generation: true });
-    const off = parseFocusManifest({ review: { test_generation: false } });
-    expect(off.review.testGeneration).toBe(false);
-    expect(reviewConfigToJson(off.review)).toEqual({ test_generation: false });
-  });
-
   it("parses gittensory.minimal.yml with zero warnings and enables no agent actions", () => {
     const manifest = parseFocusManifestContent(readConfigExample("gittensory.minimal.yml"), "repo_file");
     expect(manifest.warnings).toEqual([]);

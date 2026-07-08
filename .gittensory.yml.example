@@ -484,15 +484,6 @@ review:
   # (CI green, gate passing, mergeable-clean, valid linked issue). SURFACE ONLY — never changes the decision.
   # auto_merge_summary: false
 
-  # Boundary-safe test-generation advisory (#1972, kill-switch config slice #2189). Bool | null. Default:
-  # null/false — byte-identical (no boundary scan runs at all). Requires the operator's
-  # GITTENSORY_REVIEW_TEST_GENERATION flag to be on AND this toggle. When both are on, a diff that touches a
-  # small, precise set of boundary-condition patterns (off-by-one array/index bounds, null/undefined branches,
-  # empty-collection checks) with NO test evidence anywhere in the PR gets an advisory finding plus a
-  # LOCAL-execution test-generation action spec (criteria/hints for your OWN agent to scaffold tests with —
-  # gittensory never writes or runs test code).
-  # test_generation: false
-
   # Deterministic label suggestions (#2045). Each rule SUGGESTS a non-scoring label when a PR matches ALL of the
   # `when` criteria it sets (at least one is required): when_paths (any changed path matches a glob), title_contains,
   # description_contains (both case-insensitive). Suggestions are advisory; they are auto-applied only when the repo's
@@ -913,12 +904,6 @@ settings:
 #   # fallback for whatever it omits. Only takes effect when inline_comments is already on. Bool or null.
 #   # Default: null/false.
 #   finding_categories: false
-#   # When true, a diff touching a small, precise set of boundary-condition patterns (off-by-one array/index
-#   # bounds, null/undefined branches, empty-collection checks) with no test evidence in the PR gets an
-#   # advisory finding plus a LOCAL-execution test-generation action spec (criteria/hints only -- never
-#   # generated test code; your own agent scaffolds it). Also requires the operator flag
-#   # GITTENSORY_REVIEW_TEST_GENERATION. Bool or null. Default: null/false (byte-identical).
-#   test_generation: false
 #   # How strictly a linked issue must actually be SATISFIED by the PR (distinct from linkedIssuePolicy,
 #   # which only checks a link EXISTS). off = not evaluated; advisory = surface a finding; block = can
 #   # become a hard blocker (confirmed-contributor-gated). This is the config knob only — parsed and

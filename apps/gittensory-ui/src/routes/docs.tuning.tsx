@@ -184,12 +184,6 @@ function Tuning() {
           diff-anchored PR review comments instead of (or alongside) the summary comment. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_TEST_GENERATION</code> — offers a boundary-safe local-write action
-          spec alongside a missing-test-evidence finding, describing what test cases should exist
-          for the repo's detected framework; the contributor's own agent scaffolds and runs the
-          tests locally. Per-PR.
-        </li>
-        <li>
           <code>GITTENSORY_REVIEW_FIX_HANDOFF</code> — renders a review finding as a structured,
           machine-readable "apply this fix" block for the contributor's own local agent to consume —
           content only, no server-side write, no execution. Per-PR.

@@ -542,7 +542,8 @@ import {
   recordReversalSignals,
   runSelfTuneBreaker,
 } from "../review/outcomes-wire";
-import { neutralHoldReasonCode, recordNativeGateDecision } from "../review/parity-wire";
+import { neutralHoldReasonCode, nativeGateActionFromConclusion, recordNativeGateDecision } from "../review/parity-wire";
+import { recordContributorGateDecision } from "../review/contributor-calibration";
 import { getSubmitterReputation, type SubmissionOutcome } from "../review/submitter-reputation";
 import type {
   AdvisoryFinding,
@@ -3078,6 +3079,16 @@ async function runAgentMaintenancePlanAndExecute(
     conclusion: gate.conclusion,
     action: disposition.actionClass,
     reasonCode: disposition.blockerClass === "none" ? gate.conclusion : disposition.blockerClass,
+  });
+  // #2349 (PR 1): additive per-contributor calibration data, gated identically to recordNativeGateDecision
+  // above -- see src/review/contributor-calibration.ts's doc comment. Currently write-only; nothing reads
+  // contributor_gate_history yet.
+  await recordContributorGateDecision(env, {
+    login: pr.authorLogin,
+    project: repoFullName,
+    pullNumber: pr.number,
+    headSha: pr.headSha,
+    decision: disposition.actionClass,
   });
   if (disposition.actionClass === "hold") {
     const gateBlockerCodes = gate.blockers.map((blocker) => blocker.code);
@@ -9923,6 +9934,26 @@ async function maybePublishPrPublicSurface(
         conclusion: gateEvaluation.conclusion,
         reasonCode,
       });
+      // #2349 (PR 1): additive per-contributor calibration data, mirroring recordNativeGateDecision's own
+      // action derivation above so both writers agree on whether this conclusion is a comparable decision --
+      // see src/review/contributor-calibration.ts's doc comment. Currently write-only.
+      const contributorDecision = nativeGateActionFromConclusion(gateEvaluation.conclusion);
+      // unreachable implicit-else at THIS call site: gateEvaluation is only "skipped" (the one conclusion
+      // nativeGateActionFromConclusion maps to null) when shouldEvaluateGate is false, which leaves
+      // gateEvaluation itself undefined and never reaches this branch (see the outer `if (gateEvaluation)`
+      // above) -- neither evaluateGateCheck/evaluateGateCheckCore nor evaluateWithSurfaceLane ever construct
+      // a "skipped" conclusion object. Kept as a real (not asserted-away) null check for robustness against a
+      // future caller that does produce one, mirroring recordNativeGateDecision's own defensive null-check.
+      /* v8 ignore else */
+      if (contributorDecision !== null) {
+        await recordContributorGateDecision(env, {
+          login: pr.authorLogin,
+          project: repoFullName,
+          pullNumber: pr.number,
+          headSha: pr.headSha,
+          decision: contributorDecision,
+        });
+      }
     }
     // Review-evasion protection (#review-evasion-protection): the cost-bearing review pass for this head has
     // now concluded (the gate decision is made) -- terminalize the active-review row so a close/draft-convert

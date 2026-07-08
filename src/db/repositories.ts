@@ -7379,18 +7379,24 @@ export function extractLinkedIssueNumbersWithOverflow(text: string, repoFullName
   const normalizedLimit = Math.max(0, Math.floor(limit));
   const target = repoFullName.toLowerCase();
 
-  // Strip inline code spans before scanning: GitHub's own native closing-keyword linker does not treat
-  // backtick-wrapped text as a real "Closes #N" directive, and this repo's own PR template checklist item
-  // contains the literal example text "(e.g. `Closes #123`)" -- without this, every PR that keeps the
-  // unmodified template checklist would spuriously link to issue #123.
-  const withoutCodeSpans = text.replace(/`[^`\n]*`/g, " ");
+  // GitHub's native closing-keyword linker does not treat backtick-wrapped text as a real
+  // "Closes #N" directive, and this repo's own PR template contains "(e.g. `Closes #123`)".
+  // Keep the original text while rejecting regex hits that occur inside inline code spans; replacing
+  // spans with whitespace would let text on either side combine into a fake closing reference.
+  const inlineCodeSpanRanges = [...text.matchAll(/`[^`\n]*`/g)].map((match) => ({
+    start: match.index!,
+    end: match.index! + match[0].length,
+  }));
 
   const linkedIssues: number[] = [];
   const seen = new Set<number>();
   // Matches both GitHub's bare `KEYWORD #N` and fully-qualified `KEYWORD owner/repo#N` closing syntax (#3862) --
   // the qualified form only counts when owner/repo case-insensitively matches THIS repo; a reference to a
   // different repo closes an issue there, not here, and must not spoof a same-repo linked-issue match.
-  for (const match of withoutCodeSpans.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:([\w.-]+\/[\w.-]+)#|#)(\d+)\b/gi)) {
+  for (const match of text.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:([\w.-]+\/[\w.-]+)#|#)(\d+)\b/gi)) {
+    const matchStart = match.index!;
+    const matchEnd = matchStart + match[0].length;
+    if (inlineCodeSpanRanges.some((range) => matchStart < range.end && matchEnd > range.start)) continue;
     const owner = match[1];
     if (owner && owner.toLowerCase() !== target) continue;
     const value = Number(match[2]);

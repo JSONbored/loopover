@@ -68,6 +68,12 @@ describe("database row parser hardening", () => {
     expect(extractLinkedIssueNumbers(`Closes #42\n\n${templateLine}`, "owner/repo")).toEqual([42]);
   });
 
+  it("REGRESSION: does not join closing keywords to issue references across inline code spans", () => {
+    expect(extractLinkedIssueNumbers("Fixes `not a directive` #42", "owner/repo")).toEqual([]);
+    expect(extractLinkedIssueNumbers("Resolves `not a directive` owner/repo#43", "owner/repo")).toEqual([]);
+    expect(extractLinkedIssueNumbers("Fixes #7, not `Fixes #8`, and closes #9", "owner/repo")).toEqual([7, 9]);
+  });
+
   it("recognizes the fully-qualified `Fixes owner/repo#N` closing syntax when owner/repo matches this repo (#3862)", () => {
     expect(extractLinkedIssueNumbers("Closes owner/repo#42", "owner/repo")).toEqual([42]);
     // Case-insensitive, matching GitHub's own repo-name matching.

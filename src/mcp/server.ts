@@ -94,6 +94,7 @@ import { computeFleetAnalytics } from "../orb/analytics";
 import { loadMaintainerNoiseReport, maintainerNoiseSummary } from "../services/maintainer-noise";
 import { loadLabelAudit, labelAuditSummary } from "../services/label-audit";
 import { loadMaintainerLaneReport, maintainerLaneSummary } from "../services/maintainer-lane";
+import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import {
   applyMcpPlanningChoices,
@@ -750,6 +751,14 @@ const maintainerLaneOutputSchema = {
   summary: z.string().optional(),
 };
 
+const repoOnboardingPackOutputSchema = {
+  repoFullName: z.string().optional(),
+  accepted: z.boolean().optional(),
+  preview: z.unknown().optional(),
+  policySource: z.string().optional(),
+  error: z.string().optional(),
+};
+
 const freshnessResponseOutputSchema = {
   status: z.string().optional(),
   repoFullName: z.string().optional(),
@@ -1314,6 +1323,17 @@ export class GittensoryMcp {
         outputSchema: maintainerLaneOutputSchema,
       },
       async (input) => this.toolResult(await this.getMaintainerLane(input)),
+    );
+
+    server.registerTool(
+      "gittensory_get_repo_onboarding_pack",
+      {
+        description:
+          "Preview-only onboarding pack for a repository owner (contribution lanes, label policy, and public-safe guidance). Not published to GitHub.",
+        inputSchema: ownerRepoShape,
+        outputSchema: repoOnboardingPackOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getRepoOnboardingPack(input)),
     );
 
     server.registerTool(
@@ -2280,6 +2300,22 @@ export class GittensoryMcp {
     return {
       summary: maintainerLaneSummary(report),
       data: report as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async getRepoOnboardingPack(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(fullName);
+    const response = await buildRepoOnboardingPackPreviewForRepo(this.env, fullName);
+    if ("error" in response) {
+      return {
+        summary: `Onboarding pack preview unavailable for ${fullName}: repository is not accepted.`,
+        data: response as unknown as Record<string, unknown>,
+      };
+    }
+    return {
+      summary: `Gittensory onboarding pack preview for ${fullName} (preview-only, not published).`,
+      data: response as unknown as Record<string, unknown>,
     };
   }
 

@@ -5146,6 +5146,7 @@ describe("api routes", () => {
     expect(toolNames).toContain("gittensory_get_maintainer_noise");
     expect(toolNames).toContain("gittensory_get_label_audit");
     expect(toolNames).toContain("gittensory_get_maintainer_lane");
+    expect(toolNames).toContain("gittensory_get_repo_onboarding_pack");
     expect(toolNames).toContain("gittensory_get_issue_quality");
     expect(toolNames).toContain("gittensory_get_burden_forecast");
     expect(toolNames).toContain("gittensory_get_contributor_profile");

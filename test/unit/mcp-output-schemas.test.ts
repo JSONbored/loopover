@@ -15,6 +15,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_get_maintainer_noise",
   "gittensory_get_label_audit",
   "gittensory_get_maintainer_lane",
+  "gittensory_get_repo_onboarding_pack",
   "gittensory_get_burden_forecast",
   "gittensory_get_repo_outcome_patterns",
   "gittensory_get_outcome_calibration",
@@ -292,6 +293,22 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(data.lane).toBeTruthy();
     expect(data.contributorIntakeHealth).toBeTruthy();
     expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
+  });
+
+  it("gittensory_get_repo_onboarding_pack returns a structured preview for a registered repo", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" } });
+    await env.DB.prepare("UPDATE repositories SET is_registered = 1 WHERE full_name = ?").bind("octo/demo").run();
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({ name: "gittensory_get_repo_onboarding_pack", arguments: { owner: "octo", repo: "demo" } });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data).toMatchObject({
+      repoFullName: "octo/demo",
+      accepted: true,
+      policySource: "policy_compiler",
+      preview: { previewOnly: true, publicSafe: true },
+    });
   });
 
   it("gittensory_validate_linked_issue reports multiplier eligibility for an uncached issue", async () => {

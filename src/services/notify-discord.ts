@@ -149,8 +149,10 @@ export async function notifyActionToDiscord(
   }
 }
 
-/** Slack incoming-webhook URL validation — only `https://hooks.slack.com/services/…`. */
-function isValidSlackWebhook(url: string): boolean {
+/** Slack incoming-webhook URL validation — only `https://hooks.slack.com/services/…`. Exported so other
+ *  Slack senders (e.g. the recap digest's {@link deliverRecapToSlack}, review-recap.ts) reuse the SAME
+ *  validation instead of re-typing the host/path allowlist. */
+export function isValidSlackWebhook(url: string): boolean {
   try {
     const parsed = new URL(url);
     return parsed.protocol === "https:" && parsed.hostname.toLowerCase() === "hooks.slack.com" && parsed.pathname.startsWith("/services/");
@@ -159,7 +161,8 @@ function isValidSlackWebhook(url: string): boolean {
   }
 }
 
-function escapeSlackMrkdwnText(value: string): string {
+/** Exported alongside {@link isValidSlackWebhook} so any Slack Block Kit sender escapes mrkdwn the same way. */
+export function escapeSlackMrkdwnText(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 

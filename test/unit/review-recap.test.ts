@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildReviewRecap, generateAndSendReviewRecap, loadReviewRecap, sendReviewRecapToDiscord } from "../../src/services/review-recap";
+import { buildReviewRecap, deliverRecapToSlack, generateAndSendReviewRecap, loadReviewRecap, sendReviewRecapToDiscord } from "../../src/services/review-recap";
 import { createTestEnv } from "../helpers/d1";
 
 const NOW = "2026-07-06T00:00:00Z";
@@ -289,6 +289,107 @@ describe("sendReviewRecapToDiscord (#1963, reuses resolveDiscordWebhook)", () =>
     const result = await sendReviewRecapToDiscord(env, recap);
     expect(result.sent).toBe(false);
     expect(result.reason).toBe("discord_webhook_http_429");
+  });
+});
+
+const SLACK_HOOK = "https://hooks.slack.com/services/T0/B0/xyz";
+
+function envWithSlackWebhook(): Env {
+  return Object.assign(createTestEnv(), { SLACK_WEBHOOK_URL: SLACK_HOOK }) as Env;
+}
+
+async function slackAuditRows(env: Env): Promise<Array<{ outcome: string; detail: string }>> {
+  const rows = await env.DB.prepare("select outcome, detail from audit_events where event_type = 'review_recap_notification.slack' order by created_at").all<{ outcome: string; detail: string }>();
+  return rows.results ?? [];
+}
+
+describe("deliverRecapToSlack (#2246, reuses isValidSlackWebhook/escapeSlackMrkdwnText)", () => {
+  const recap = buildReviewRecap({
+    repoFullName: "JSONbored/gittensory",
+    generatedAt: NOW,
+    windowDays: 7,
+    pullRequests: [],
+    gateMergePrecision: 0.95,
+    gateDecided: 20,
+  });
+
+  it("posts a Block Kit mrkdwn section and records a completed audit event when a webhook IS configured (isValidSlackWebhook true side)", async () => {
+    const calls: Array<{ url: string; body: string }> = [];
+    vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), body: String(init?.body ?? "") });
+      return new Response(null, { status: 200 });
+    });
+    const env = envWithSlackWebhook();
+    const result = await deliverRecapToSlack(env, recap);
+    expect(result.sent).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe(SLACK_HOOK);
+    const body = JSON.parse(calls[0]?.body ?? "{}");
+    expect(body.blocks[0].text.text).toContain("JSONbored/gittensory");
+    const rows = await slackAuditRows(env);
+    expect(rows.some((r) => r.outcome === "completed")).toBe(true);
+  });
+
+  it("escapes &, <, and > in both the repo name and the summary text (mrkdwn escaping)", async () => {
+    const calls: Array<{ body: string }> = [];
+    vi.stubGlobal("fetch", async (_url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ body: String(init?.body ?? "") });
+      return new Response(null, { status: 200 });
+    });
+    const unsafeRecap = buildReviewRecap({
+      repoFullName: "acme/widgets <b> & co",
+      generatedAt: NOW,
+      windowDays: 7,
+      pullRequests: [],
+      gateMergePrecision: null,
+      gateDecided: 0,
+    });
+    const env = envWithSlackWebhook();
+    await deliverRecapToSlack(env, unsafeRecap);
+    const text = JSON.parse(calls[0]?.body ?? "{}").blocks[0].text.text as string;
+    expect(text).not.toContain("<b>");
+    expect(text).toContain("&lt;b&gt;");
+    expect(text).toContain("&amp;");
+  });
+
+  it("denies delivery with missing_webhook and records it when SLACK_WEBHOOK_URL is unset (typeof webhookUrl !== string side)", async () => {
+    const env = createTestEnv();
+    const result = await deliverRecapToSlack(env, recap);
+    expect(result.sent).toBe(false);
+    expect(result.reason).toBe("missing_webhook");
+    const rows = await slackAuditRows(env);
+    expect(rows.some((r) => r.outcome === "denied" && r.detail === "missing_webhook")).toBe(true);
+  });
+
+  it("denies delivery with invalid_webhook when SLACK_WEBHOOK_URL is set but fails isValidSlackWebhook (isValidSlackWebhook false side)", async () => {
+    const env = Object.assign(createTestEnv(), { SLACK_WEBHOOK_URL: "https://evil.example/services/x" }) as Env;
+    const result = await deliverRecapToSlack(env, recap);
+    expect(result.sent).toBe(false);
+    expect(result.reason).toBe("invalid_webhook");
+    const rows = await slackAuditRows(env);
+    expect(rows.some((r) => r.outcome === "denied" && r.detail === "invalid_webhook")).toBe(true);
+  });
+
+  it("degrades to a recorded error result when the webhook POST throws (fail-safe path, never throws)", async () => {
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("network down");
+    });
+    const env = envWithSlackWebhook();
+    const result = await deliverRecapToSlack(env, recap);
+    expect(result.sent).toBe(false);
+    expect(result.reason).toBe("network down");
+    const rows = await slackAuditRows(env);
+    expect(rows.some((r) => r.outcome === "error")).toBe(true);
+  });
+
+  it("treats a non-2xx webhook response as a failure (mirrors notifyActionToSlack's http-status guard)", async () => {
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 403 }));
+    const env = envWithSlackWebhook();
+    const result = await deliverRecapToSlack(env, recap);
+    expect(result.sent).toBe(false);
+    expect(result.reason).toBe("slack_webhook_http_403");
+    const rows = await slackAuditRows(env);
+    expect(rows.some((r) => r.outcome === "error" && r.detail === "slack_webhook_http_403")).toBe(true);
   });
 });
 

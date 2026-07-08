@@ -11,9 +11,16 @@
 // (generateAndSendReviewRecap, reusing resolveDiscordWebhook from notify-discord.ts — no second webhook
 // resolution mechanism). The scheduled cron trigger (mirroring the weekly-value-report cron wiring in
 // src/index.ts) is a clear, scoped follow-up — see the PR description.
+//
+// #2246 adds deliverRecapToSlack, the Slack sibling of sendReviewRecapToDiscord: same recap, same
+// best-effort/never-throws contract, delivered to SLACK_WEBHOOK_URL as a Block Kit mrkdwn section instead of
+// a Discord embed. It reuses isValidSlackWebhook + escapeSlackMrkdwnText from notify-discord.ts — the SAME
+// validation/escaping notifyActionToSlack's per-event notifier uses — so there is only one Slack webhook
+// allowlist and one mrkdwn escaper in the codebase. Fanning both channels out together (#2252) is a
+// follow-up; this PR only adds the standalone Slack delivery function.
 import { listPullRequests, recordAuditEvent } from "../db/repositories";
 import { computeGateEval } from "../review/parity";
-import { resolveDiscordWebhook } from "./notify-discord";
+import { escapeSlackMrkdwnText, isValidSlackWebhook, resolveDiscordWebhook } from "./notify-discord";
 import type { ReviewRecap } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN } from "../signals/redaction";
@@ -183,6 +190,65 @@ export async function sendReviewRecapToDiscord(env: Env, recap: ReviewRecap): Pr
     console.warn(JSON.stringify({ event: "review_recap_discord_failed", repo: recap.repoFullName, message: detail }));
     await recordAuditEvent(env, {
       eventType: "review_recap_notification.discord",
+      actor: "gittensory",
+      targetKey: `review-recap:${recap.repoFullName}:${recap.windowDays}`,
+      outcome: "error",
+      detail,
+      metadata: { repoFullName: recap.repoFullName, windowDays: recap.windowDays },
+    });
+    return { sent: false, reason: detail };
+  }
+}
+
+/** Post the recap to `SLACK_WEBHOOK_URL` as a Block Kit mrkdwn section, reusing {@link isValidSlackWebhook} +
+ *  {@link escapeSlackMrkdwnText} from notify-discord.ts — the SAME validation/escaping notifyActionToSlack's
+ *  per-event notifier uses (#2246, sibling of {@link sendReviewRecapToDiscord}). Best-effort: a delivery
+ *  failure is recorded to the audit ledger but never thrown, mirroring notifyActionToSlack's fail-safe
+ *  contract. */
+export async function deliverRecapToSlack(env: Env, recap: ReviewRecap): Promise<{ sent: boolean; reason?: string }> {
+  const webhookUrl = (env as unknown as Record<string, unknown>).SLACK_WEBHOOK_URL;
+  if (typeof webhookUrl !== "string" || !isValidSlackWebhook(webhookUrl)) {
+    const reason = typeof webhookUrl === "string" ? "invalid_webhook" : "missing_webhook";
+    await recordAuditEvent(env, {
+      eventType: "review_recap_notification.slack",
+      actor: "gittensory",
+      targetKey: `review-recap:${recap.repoFullName}:${recap.windowDays}`,
+      outcome: "denied",
+      detail: reason,
+      metadata: { repoFullName: recap.repoFullName, windowDays: recap.windowDays },
+    });
+    return { sent: false, reason };
+  }
+  const lines = [
+    `*${escapeSlackMrkdwnText(recap.repoFullName)} · review recap (${recap.windowDays}d)*`,
+    escapeSlackMrkdwnText(formatRecapDescription(recap)),
+  ];
+  const body = {
+    text: `${recap.repoFullName} review recap (${recap.windowDays}d)`,
+    blocks: [{ type: "section", text: { type: "mrkdwn", text: lines.join("\n") } }],
+  };
+  try {
+    const response = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`slack_webhook_http_${response.status}`);
+    await recordAuditEvent(env, {
+      eventType: "review_recap_notification.slack",
+      actor: "gittensory",
+      targetKey: `review-recap:${recap.repoFullName}:${recap.windowDays}`,
+      outcome: "completed",
+      detail: "sent",
+      metadata: { repoFullName: recap.repoFullName, windowDays: recap.windowDays },
+    });
+    return { sent: true };
+  } catch (error) {
+    const detail = errorMessage(error).slice(0, 160);
+    console.warn(JSON.stringify({ event: "review_recap_slack_failed", repo: recap.repoFullName, message: detail }));
+    await recordAuditEvent(env, {
+      eventType: "review_recap_notification.slack",
       actor: "gittensory",
       targetKey: `review-recap:${recap.repoFullName}:${recap.windowDays}`,
       outcome: "error",

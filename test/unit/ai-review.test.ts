@@ -3107,13 +3107,14 @@ describe("pure helpers", () => {
         line: 12,
         severity: "blocker",
         body: "Null deref.",
+        category: "maintainability",
         suggestion: "const value = input ?? fallback;",
       },
-      { path: "src/b.ts", line: 3, severity: "nit", body: "Rename x." },
+      { path: "src/b.ts", line: 3, severity: "nit", body: "Rename x.", category: "maintainability" },
     ]);
   });
 
-  it("parseModelReview parses a valid category, drops one outside the fixed enum, and leaves it absent when omitted (#1958)", () => {
+  it("parseModelReview parses a valid category and defaults unknown or absent values to maintainability (#2147)", () => {
     const json = JSON.stringify({
       assessment: "ok",
       blockers: [],
@@ -3123,12 +3124,14 @@ describe("pure helpers", () => {
         { path: "src/a.ts", line: 2, severity: "nit", body: "SQL injection risk.", category: "security" },
         { path: "src/b.ts", line: 4, severity: "nit", body: "Made up category.", category: "readability" },
         { path: "src/c.ts", line: 6, severity: "nit", body: "No category at all." },
+        { path: "src/d.ts", line: 8, severity: "nit", body: "Performance hint.", category: "performance" },
       ],
     });
     expect(parseModelReview(json)?.inlineFindings).toEqual([
       { path: "src/a.ts", line: 2, severity: "nit", body: "SQL injection risk.", category: "security" },
-      { path: "src/b.ts", line: 4, severity: "nit", body: "Made up category." },
-      { path: "src/c.ts", line: 6, severity: "nit", body: "No category at all." },
+      { path: "src/b.ts", line: 4, severity: "nit", body: "Made up category.", category: "maintainability" },
+      { path: "src/c.ts", line: 6, severity: "nit", body: "No category at all.", category: "maintainability" },
+      { path: "src/d.ts", line: 8, severity: "nit", body: "Performance hint.", category: "performance" },
     ]);
   });
 
@@ -3145,9 +3148,9 @@ describe("pure helpers", () => {
       ],
     });
     expect(parseModelReview(json)?.inlineFindings).toEqual([
-      { path: "src/a.ts", line: 2, severity: "nit", body: "Keep me." },
-      { path: "src/b.ts", line: 4, severity: "nit", body: "Keep me too." },
-      { path: "src/c.ts", line: 6, severity: "nit", body: "Bad suggestion type." },
+      { path: "src/a.ts", line: 2, severity: "nit", body: "Keep me.", category: "maintainability" },
+      { path: "src/b.ts", line: 4, severity: "nit", body: "Keep me too.", category: "maintainability" },
+      { path: "src/c.ts", line: 6, severity: "nit", body: "Bad suggestion type.", category: "maintainability" },
     ]);
   });
 
@@ -3164,9 +3167,9 @@ describe("pure helpers", () => {
       ],
     });
     expect(parseModelReview(json)?.inlineFindings).toEqual([
-      { path: "src/a.ts", line: 1, endLine: 3, severity: "nit", body: "Multi." },
-      { path: "src/b.ts", line: 5, severity: "nit", body: "Inverted." },
-      { path: "src/c.ts", line: 2, severity: "nit", body: "Equal." },
+      { path: "src/a.ts", line: 1, endLine: 3, severity: "nit", body: "Multi.", category: "maintainability" },
+      { path: "src/b.ts", line: 5, severity: "nit", body: "Inverted.", category: "maintainability" },
+      { path: "src/c.ts", line: 2, severity: "nit", body: "Equal.", category: "maintainability" },
     ]);
   });
 
@@ -3192,7 +3195,7 @@ describe("pure helpers", () => {
       ],
     });
     expect(parseModelReview(json)?.inlineFindings).toEqual([
-      { path: "src/a.ts", line: 2, severity: "nit", body: "kept (truncated)" },
+      { path: "src/a.ts", line: 2, severity: "nit", body: "kept (truncated)", category: "maintainability" },
     ]);
   });
 
@@ -3371,6 +3374,7 @@ describe("pure helpers", () => {
           line: 3,
           severity: "nit",
           body: "Guard the empty case.",
+          category: "maintainability",
           suggestion: "if \\(\\!items.length\\) return;",
         },
       ]);

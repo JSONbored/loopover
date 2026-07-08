@@ -33,7 +33,8 @@ import { errorMessage } from "../utils/json";
 import type { ReviewProfile } from "../signals/focus-manifest";
 import { isCodeFile } from "../signals/local-branch";
 import { isTestPath } from "../signals/test-evidence";
-import { isFindingCategory, type FindingCategory } from "../review/finding-category-classify";
+import { type FindingCategory } from "../review/finding-category-classify";
+import { parseInlineFindingCategory } from "../review/inline-finding-category-parse";
 import type { AiContentBlock, CombineStrategy, OnMerge } from "../types";
 
 /**
@@ -658,9 +659,10 @@ export function parseModelReview(text: string): ModelReview | null {
     // Fail-safe: a malformed/absent inlineFindings field degrades to []; each item missing a usable path / a
     // positive line / a body is skipped, never partial. Severity defaults to "nit" unless it's exactly "blocker";
     // a bad/blank suggestion is simply dropped while keeping the finding itself. (#2138)
-    // `category` (#1958) is parsed ONLY when it's one of the fixed enum values — an absent/mis-emitted category
-    // is left OFF the finding (not defaulted here) so a caller that didn't ask for categories at all sees no
-    // field, and a caller that DID ask can apply its own deterministic fallback (classifyFindingCategory).
+    // `category` (#1958 / #2147) is normalized to a fixed enum literal — a valid model value is kept verbatim;
+    // unknown or absent values degrade to `maintainability` so downstream analytics always see a tagged finding.
+    // Rendering still gates on `review.finding_categories` and may apply `classifyFindingCategory` when absent on
+    // hand-built findings, but parsed model output is never uncategorized.
     const toInlineFindings = (value: unknown): InlineFinding[] =>
       Array.isArray(value)
         ? value
@@ -678,7 +680,7 @@ export function parseModelReview(text: string): ModelReview | null {
                 typeof o.suggestion === "string" ? o.suggestion.trim() : "";
               const severity: "blocker" | "nit" =
                 o.severity === "blocker" ? "blocker" : "nit";
-              const category = isFindingCategory(o.category) ? o.category : undefined;
+              const category = parseInlineFindingCategory(o.category);
               return path && line > 0 && body
                 ? [
                     {
@@ -686,8 +688,8 @@ export function parseModelReview(text: string): ModelReview | null {
                       line,
                       severity,
                       body,
+                      category,
                       ...(suggestion ? { suggestion } : {}),
-                      ...(category ? { category } : {}),
                       ...(endLine != null ? { endLine } : {}),
                     },
                   ]

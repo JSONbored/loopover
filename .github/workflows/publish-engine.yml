@@ -1,0 +1,217 @@
+name: Publish Engine Package
+
+# workflow_dispatch-only, mirroring npm-publish.yml's design exactly (see that file for the fuller
+# rationale): a GITHUB_TOKEN-created tag doesn't fire push-triggered workflows, so the release
+# automation must explicitly dispatch this after tagging. A bare manual dispatch (
+# released_by_release_please left false) is the human override path and self-tags HEAD from
+# packages/gittensory-engine/package.json's version.
+#
+# NOTE: this workflow cannot run successfully until @jsonbored/gittensory-engine has been bootstrap
+# -published to npm once from a maintainer's own authenticated `npm login` session (npm's trusted
+# publishing/OIDC cannot create a brand-new package -- the package must already exist before a
+# Trusted Publisher can be configured in npmjs.com's package settings). Until that one-time manual
+# step happens, `npm publish` below will fail with a 404/permission error. See the gittensory-mcp
+# release skill / project memory for the exact bootstrap steps.
+on:
+  workflow_dispatch:
+    inputs:
+      released_by_release_please:
+        description: "Internal: set by the release automation's dispatch so this run skips re-creating the GitHub release it already made."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-engine-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  # Unprivileged: resolves the version, runs the package's own test suite, and packs the tarball --
+  # all with contents: read only. Same privilege-separation reasoning as npm-publish.yml's validate
+  # job (Superagent P2 / mirrors metagraphed's publish-client.yml).
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24.18.0
+
+      - name: Resolve release version
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./packages/gittensory-engine/package.json').version")"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid package version: $VERSION"
+            exit 1
+          fi
+          TAG="engine-v${VERSION}"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            HEAD_SHA="$(git rev-parse HEAD)"
+            TAG_SHA="$(git rev-list -n 1 "$TAG")"
+            if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
+              echo "::error::Tag $TAG already exists but points at $TAG_SHA, not the dispatched commit $HEAD_SHA"
+              exit 1
+            fi
+            echo "Tag $TAG already exists and matches HEAD."
+          else
+            echo "Tag $TAG does not exist yet; the publish job will create it."
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Engine test suite
+        run: npm run test --workspace @jsonbored/gittensory-engine
+
+      # Build + pack happen in THIS unprivileged job (no id-token). The privileged publish job below
+      # never runs npm install/build, so a compromised build dependency can't reach the OIDC token.
+      - name: Pack and smoke-test the tarball
+        run: |
+          set -euo pipefail
+          PACK_JSON="$(npm pack --workspace @jsonbored/gittensory-engine --pack-destination "$RUNNER_TEMP" --json)"
+          TARBALL="$(node -e 'const fs=require("fs"); const input=fs.readFileSync(0,"utf8"); process.stdout.write(JSON.parse(input)[0].filename)' <<< "$PACK_JSON")"
+          TARBALL_PATH="$RUNNER_TEMP/$TARBALL"
+          UNEXPECTED_FILES="$(tar -tzf "$TARBALL_PATH" | grep -Ev '^(package/dist/.+|package/(package.json|README.md|CHANGELOG.md|LICENSE))$' || true)"
+          if [ -n "$UNEXPECTED_FILES" ]; then
+            printf '%s\n' "$UNEXPECTED_FILES"
+            echo "Unexpected file in package tarball"
+            exit 1
+          fi
+          if tar -xOf "$TARBALL_PATH" | grep -qE '(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|github_pat_|gh[pousr]_|gts_[0-9a-f]{64}|[A-Z0-9_]*(TOKEN|SECRET|PRIVATE_KEY)=)'; then
+            echo "Secret-like content found in package tarball"
+            exit 1
+          fi
+          TMP="$(mktemp -d)"
+          npm --prefix "$TMP" init -y >/dev/null
+          npm --prefix "$TMP" install "$TARBALL_PATH" >/dev/null
+          node --input-type=module -e "
+            import { ENGINE_VERSION } from '$TMP/node_modules/@jsonbored/gittensory-engine/dist/index.js';
+            import { isTestPath, isCodeFile } from '$TMP/node_modules/@jsonbored/gittensory-engine/dist/signals/test-evidence.js';
+            if (typeof ENGINE_VERSION !== 'string' || !ENGINE_VERSION) throw new Error('ENGINE_VERSION smoke test failed');
+            if (isTestPath('test/foo.test.ts') !== true) throw new Error('isTestPath smoke test failed');
+            if (isCodeFile('src/foo.ts') !== true) throw new Error('isCodeFile smoke test failed');
+          "
+
+      - name: Upload package tarball
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gittensory-engine-tarball
+          path: ${{ runner.temp }}/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  # Privileged: tags + publishes the EXACT tarball the unprivileged job already tested. environment:
+  # release requires reviewer approval per repo Settings > Environments, same gate npm-publish.yml
+  # and release-selfhost.yml already use.
+  publish:
+    runs-on: ubuntu-latest
+    needs: validate
+    environment: release
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24.18.0
+          registry-url: https://registry.npmjs.org
+
+      - name: Create or verify release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Tag $TAG already exists (verified against HEAD by the validate job)."
+          else
+            echo "Creating tag $TAG at HEAD ($HEAD_SHA)."
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "@jsonbored/gittensory-engine v${VERSION}"
+            git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
+            gh auth setup-git
+            git push origin "$TAG"
+          fi
+
+      - name: Download package tarball
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: gittensory-engine-tarball
+          path: ${{ runner.temp }}/gittensory-engine-package
+
+      - name: Publish to npm (OIDC trusted publishing)
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+        run: |
+          set -euo pipefail
+          count=$(find "$RUNNER_TEMP/gittensory-engine-package" -maxdepth 1 -type f -name "*.tgz" | wc -l | tr -d ' ')
+          if [ "$count" != "1" ]; then
+            echo "Expected exactly one tarball, found $count" >&2
+            find "$RUNNER_TEMP/gittensory-engine-package" -maxdepth 1 -type f -name "*.tgz" -print >&2
+            exit 1
+          fi
+          tarball=$(find "$RUNNER_TEMP/gittensory-engine-package" -maxdepth 1 -type f -name "*.tgz" -print -quit)
+          npx -y npm@11.15.0 publish "$tarball" --access public --provenance
+
+  github-release:
+    runs-on: ubuntu-latest
+    needs: [validate, publish]
+    # Skip when the release automation dispatched this run: it already created the GitHub release
+    # with its own generated changelog notes before dispatching, so running this unconditionally
+    # would overwrite those richer notes with the generic blurb below.
+    if: ${{ inputs.released_by_release_please != true }}
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          NOTES_FILE="$(mktemp)"
+          cat > "$NOTES_FILE" <<EOF
+          Published [@jsonbored/gittensory-engine v${RELEASE_VERSION}](https://www.npmjs.com/package/@jsonbored/gittensory-engine/v/${RELEASE_VERSION}) to npm with provenance.
+
+          Install:
+
+          \`\`\`sh
+          npm install @jsonbored/gittensory-engine@${RELEASE_VERSION}
+          \`\`\`
+          EOF
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --title "@jsonbored/gittensory-engine v${RELEASE_VERSION}" --notes-file "$NOTES_FILE"
+          else
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --title "@jsonbored/gittensory-engine v${RELEASE_VERSION}" --notes-file "$NOTES_FILE" --verify-tag
+          fi

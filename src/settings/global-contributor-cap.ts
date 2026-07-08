@@ -8,20 +8,17 @@
 // whole, mirroring how global_contributor_blacklist is a tenant-free singleton rather than a per-repo column.
 // Off by default (unset/invalid ⇒ null ⇒ no cap): zero behavior change for a single-repo install or one that
 // hasn't opted in.
-import { MAX_CONTRIBUTOR_OPEN_ITEM_CAP } from "../types";
-
 const GLOBAL_ENV_KEY = "GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP";
 
 /** Parse+validate the install-wide open-item cap from env. Same non-rounding shape as the per-repo caps'
  *  normalizeOpenItemCap (db/repositories.ts): a discrete count of open items, not a score, so a
  *  fractional/non-positive/non-numeric value is a malformed cap and is dropped to `null` (no cap) rather than
- *  coerced into a nonsensical threshold. Never throws. Clamped to {@link MAX_CONTRIBUTOR_OPEN_ITEM_CAP} for the
- *  same reason normalizeOpenItemCap is: live enforcement only ever samples a fixed 100-row budget, so a
- *  configured value above that is silently unenforceable. */
+ *  coerced into a nonsensical threshold. Never throws. Unlike the per-repo cap, this install-wide cap is not clamped to the
+ *  per-repo live-check budget because the install-wide verifier loads and verifies a larger row set. */
 export function resolveGlobalContributorOpenItemCap(env: { GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP?: string | undefined }): number | null {
   const raw = env[GLOBAL_ENV_KEY];
   if (typeof raw !== "string" || raw.trim() === "") return null;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) return null;
-  return Math.min(parsed, MAX_CONTRIBUTOR_OPEN_ITEM_CAP);
+  return parsed;
 }

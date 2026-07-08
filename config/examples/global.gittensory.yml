@@ -68,3 +68,11 @@ settings:
   reviewNagCooldownDays: 5
   reviewNagMonitoredMentions:
     - your-maintainer-login
+
+# Converged-feature activation shared by every repo unless a per-repo file overrides a key (#4190). Each key
+# still needs its own deployment-wide GITTENSORY_REVIEW_* env flag ON before this block has any effect at all
+# — this section only controls the PER-REPO default once the operator has already turned a feature on
+# fleet-wide. `e2eTests` gates the opt-in AI-generated E2E test coverage feature (epic #4189); leaving it
+# false/omitted here keeps every repo dark by default until a per-repo file opts in.
+features:
+  e2eTests: false

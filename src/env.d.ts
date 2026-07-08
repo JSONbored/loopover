@@ -219,6 +219,10 @@ declare global {
      *  claims against reality instead of predicting CI / flagging symbols defined just outside the hunk.
      *  Default OFF — unset/false keeps the reviewer prompt byte-identical and makes no extra GitHub fetch. */
     GITTENSORY_REVIEW_GROUNDING?: string;
+    /** Convergence (e2eTests, #4190/#4189): master kill-switch for the opt-in, maintainer-triggered AI-generated
+     *  E2E test coverage feature. Default OFF — unset/false the feature is never active for any repo regardless
+     *  of a per-repo `features.e2eTests` override. */
+    GITTENSORY_REVIEW_E2E_TESTS?: string;
     /** Convergence (reputation): when truthy, the INTERNAL-only ported submitter-reputation signal extends the
      *  AI-spend gate — a new / burst / low-reputation submitter is downgraded to a deterministic-only review
      *  (the AI neurons are skipped), and the per-(project, submitter) outcome is recorded after the gate

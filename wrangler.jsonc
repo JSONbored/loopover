@@ -59,6 +59,10 @@
     // post-change content of the changed files, so a non-frontier model verifies claims instead of guessing.
     // Default OFF — flag-OFF keeps the reviewer prompt byte-identical and makes no extra GitHub fetch.
     "GITTENSORY_REVIEW_GROUNDING": "false",
+    // Convergence (e2eTests, #4190/#4189): master kill-switch for the opt-in, maintainer-triggered AI-generated
+    // E2E test coverage feature. Default OFF — flag-OFF the feature is never active for any repo regardless of
+    // a per-repo features.e2eTests override.
+    "GITTENSORY_REVIEW_E2E_TESTS": "false",
     // Convergence (reputation): factor the INTERNAL-only ported submitter-reputation signal into the AI-spend
     // gate — a new / burst / low-reputation submitter is downgraded to a deterministic-only review (AI neurons
     // skipped), and the per-(project, submitter) outcome is recorded after the gate decides. The reputation is

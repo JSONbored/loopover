@@ -43,3 +43,10 @@ settings:
   # `autonomy.close: auto`) but applies no label when doing so, e.g. because this repo's own
   # `gittensor:*` label taxonomy already covers it. Omit to inherit the global/default label name.
   contributorCapLabel: null
+
+# Unlike wantedPaths above, `features:` is a nested MAPPING, not an array — it deep-merges KEY BY KEY over the
+# global default, so overriding e2eTests here doesn't disturb any other converged-feature key the global file
+# sets. This repo opts into AI-generated E2E test coverage (#4190/#4189); still requires the operator's
+# GITTENSORY_REVIEW_E2E_TESTS env flag to be on fleet-wide, or this override has no effect (master kill-switch).
+features:
+  e2eTests: true

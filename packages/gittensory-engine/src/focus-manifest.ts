@@ -207,8 +207,11 @@ export type CopycatGateMode = "off" | "warn" | "label" | "block";
 // outside this block, as its own top-level `review.selftune` field below — it has no `GITTENSORY_REVIEW_REPOS`
 // allowlist to fall back to (its own repo scoping is `isAgentConfigured`, a different consent boundary), so it
 // doesn't fit this resolver's env-kill-switch → override → allowlist-default shape; see `selfTuneRepos` in
-// `review/selftune-wire.ts`.
-export const CONVERGED_FEATURE_KEYS = ["rag", "reputation", "unifiedComment", "safety", "grounding"] as const;
+// `review/selftune-wire.ts`. `e2eTests` (#4190, part of the #4189 E2E-test-generation epic) fits this shape
+// exactly as a plain symmetric override — unlike `safety`/`grounding` it has no force-on-only or force-off-only
+// floor/ceiling, since AI-generated test content carries no security-hardening or full-file-fetch rationale to
+// protect from a repo-controlled override.
+export const CONVERGED_FEATURE_KEYS = ["rag", "reputation", "unifiedComment", "safety", "grounding", "e2eTests"] as const;
 export type ConvergedFeatureKey = (typeof CONVERGED_FEATURE_KEYS)[number];
 
 /** Per-repo activation overrides for the converged review features (`features:` block). `true`/`false` force the
@@ -885,6 +888,7 @@ const EMPTY_FEATURES_CONFIG: FocusManifestFeaturesConfig = {
   unifiedComment: null,
   safety: null,
   grounding: null,
+  e2eTests: null,
 };
 
 const EMPTY_CONTENT_LANE_CONFIG: FocusManifestContentLaneConfig = {

@@ -77,7 +77,7 @@
     "test:smoke:browser": "node scripts/smoke-ui-browser.mjs",
     "test:ci": "git diff --check && npm run actionlint && npm run db:migrations:check && npm run db:schema-drift:check && npm run selfhost:env-reference:check && npm run selfhost:validate-observability && npm run cf-typegen:check && npm run typecheck && npm run test:coverage && npm run test:engine-parity && npm run test --workspace @jsonbored/gittensory-engine && npm run test:workers && npm run build:mcp && npm run test:mcp-pack && npm run build:miner && npm run test:miner-pack && npm run rees:test && npm run ui:openapi:check && npm run ui:openapi:settings-parity && npm run ui:version-audit && npm run docs:drift-check && npm run manifest:drift-check && npm run command-reference:check && npm run ui:lint && npm run ui:typecheck && npm run ui:test && npm run ui:build",
     "test:release": "npm run test:ci && npm run changelog:check",
-    "test:release:mcp": "npm run test:ci && npm run changelog:check:mcp",
+    "test:release:mcp": "npm run test:ci",
     "test:watch": "vitest",
     "validate": "npm run typecheck && npm run test:coverage"
   },

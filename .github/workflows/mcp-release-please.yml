@@ -1,0 +1,71 @@
+name: MCP/Engine Release Please
+
+# Conventional-commit-driven release automation for the two published npm packages in this monorepo
+# (packages/gittensory-mcp, packages/gittensory-engine). release-please maintains a Release PR per
+# component that bumps its SemVer + regenerates its CHANGELOG.md from conventional commits touching
+# that package's own subtree. Merging a Release PR tags the component (mcp-v<semver> /
+# engine-v<semver>, matching this repo's existing mcp-v* tag convention) and creates the GitHub
+# Release. release-please then explicitly dispatches the matching publish workflow
+# (npm-publish.yml / publish-engine.yml) via workflow_dispatch -- a tag-push trigger can't be used
+# here: GITHUB_TOKEN-created tags don't fire push-triggered workflows (proven the hard way cutting
+# v0.7.0 manually -- see #4132/#4135/#4154's tag-move dance).
+#
+# separate-pull-requests: true (release-please-config.json) -- unlike metagraphed's combined-PR
+# default, these two packages have genuinely independent release cadences and separate publish
+# targets/workflows, and bundling them would work against this repo's small-focused-PR convention.
+#
+# Runs on a schedule rather than every push to main: release-please is idempotent (it recomputes
+# purely from conventional-commit history since each component's last release tag), so batching has
+# zero functional impact -- it only reduces how often the Release PR(s) refresh against this repo's
+# push volume. workflow_dispatch stays available for an on-demand run.
+on:
+  schedule:
+    - cron: "0 16 */2 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write # dispatch npm-publish.yml / publish-engine.yml after a release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Run release-please
+        id: release
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # release-please creates the component tag + GitHub Release with GITHUB_TOKEN, which (by
+      # GitHub's recursion-prevention rule) does NOT fire push/tag-based workflows. workflow_dispatch
+      # IS exempt from that rule, so dispatch the OIDC publish workflow explicitly, telling it
+      # release-please already created the tag/release (released_by_release_please=true skips both
+      # workflows' own tag-creation and GitHub-release steps). Without this, merging a Release PR
+      # would silently never publish.
+      - name: Dispatch MCP publish
+        if: ${{ steps.release.outputs['packages/gittensory-mcp--release_created'] == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run npm-publish.yml --ref main -f released_by_release_please=true
+
+      - name: Dispatch Engine publish
+        if: ${{ steps.release.outputs['packages/gittensory-engine--release_created'] == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run publish-engine.yml --ref main -f released_by_release_please=true

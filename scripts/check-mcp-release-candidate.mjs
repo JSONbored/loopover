@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   buildReleaseCandidateReport,
-  checkChangelog,
   checkTag,
   checkTarball,
   checkTokenlessPublish,
@@ -100,12 +99,11 @@ function main() {
   const tag = arg("tag") ?? (version ? expectedReleaseTag(version) : "mcp-v<version>");
 
   const tagCheck = { ...checkTag({ tag, packageVersion: version }), tag };
-  const changelogCheck = checkChangelog({ changelog: readMaybe(join(PACKAGE_DIR, "CHANGELOG.md")), version: version ?? "" });
   const { check: tarball } = tarballFileCheck();
   const tokenless = checkTokenlessPublish(readMaybe(PUBLISH_WORKFLOW));
   const cliSmoke = packedCliSmoke();
 
-  const report = buildReleaseCandidateReport({ tag: tagCheck, changelog: changelogCheck, tarball, cliSmoke, tokenless });
+  const report = buildReleaseCandidateReport({ tag: tagCheck, tarball, cliSmoke, tokenless });
 
   if (wantsJson) {
     process.stdout.write(`${redactSensitive(JSON.stringify(report, null, 2))}\n`);

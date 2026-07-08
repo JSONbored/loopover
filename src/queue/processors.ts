@@ -9033,8 +9033,9 @@ async function maybePublishPrPublicSurface(
     inlineCommentsPerCategoryForReview = deterministicReviewOverrides.inlineCommentsPerCategory;
     // review.memory (#2179, part of #1964): deterministic, no-AI -- resolved the same unconditional way as
     // changed_files_summary/effort_score above (must apply even when the AI review itself is skipped this
-    // pass). ANDed with the operator's GITTENSORY_REVIEW_MEMORY kill-switch at the actual apply site below
-    // (shouldApplyReviewMemory) — this flag alone only carries the per-repo manifest opt-in.
+    // pass). The operator's GITTENSORY_REVIEW_MEMORY kill-switch at the actual apply site below
+    // (shouldApplyReviewMemory) is absolute; an explicit `review.memory` manifest toggle then fully decides
+    // (#4101, same precedence as shouldEmitFixHandoff) — this flag alone only carries the per-repo manifest opt-in.
     reviewMemoryEnabledForReview = shouldApplyReviewMemory(env, resolveReviewMemoryManifestToggle(reviewManifestForAutoReview));
     // review.fixHandoff emission (#1962): resolved the same unconditional way as the deterministic sections above,
     // ANDing the per-repo `review.fixHandoff` manifest opt-in with the operator's GITTENSORY_REVIEW_FIX_HANDOFF

@@ -14,21 +14,25 @@ describe("isReviewMemoryEnabled", () => {
   });
 });
 
-describe("shouldApplyReviewMemory", () => {
-  it("requires BOTH the operator env flag AND the per-repo manifest opt-in", () => {
-    expect(shouldApplyReviewMemory({ GITTENSORY_REVIEW_MEMORY: "true" }, true)).toBe(true);
-  });
-
-  it("is OFF when the operator flag is on but the manifest didn't opt in", () => {
-    expect(shouldApplyReviewMemory({ GITTENSORY_REVIEW_MEMORY: "true" }, false)).toBe(false);
-  });
-
-  it("is OFF when the manifest opted in but the operator flag is off (repo cannot self-enable)", () => {
+describe("shouldApplyReviewMemory (#4101)", () => {
+  it("operator flag is a master kill-switch — off ⇒ always false regardless of the manifest toggle", () => {
     expect(shouldApplyReviewMemory({ GITTENSORY_REVIEW_MEMORY: "false" }, true)).toBe(false);
   });
 
+  it("REGRESSION (#4101): unset manifest toggle stays false — byte-identical to the ORIGINAL required-AND behavior (review memory has never had a GITTENSORY_REVIEW_REPOS cutover allowlist to fall back to)", () => {
+    expect(shouldApplyReviewMemory({ GITTENSORY_REVIEW_MEMORY: "true" }, undefined)).toBe(false);
+  });
+
+  it("(#4101) an explicit manifest toggle: true fully controls the feature", () => {
+    expect(shouldApplyReviewMemory({ GITTENSORY_REVIEW_MEMORY: "true" }, true)).toBe(true);
+  });
+
+  it("(#4101) an explicit manifest toggle: false forces the feature off, even with the operator flag on", () => {
+    expect(shouldApplyReviewMemory({ GITTENSORY_REVIEW_MEMORY: "true" }, false)).toBe(false);
+  });
+
   it("is OFF when both are off", () => {
-    expect(shouldApplyReviewMemory({}, false)).toBe(false);
+    expect(shouldApplyReviewMemory({}, undefined)).toBe(false);
   });
 });
 

@@ -1,10 +1,11 @@
-// Review-memory activation wiring (#2179, config slice of #1964). Mirrors impact-map-wire.ts's
-// isImpactMapEnabled: a single GLOBAL env kill-switch the self-host operator controls, ANDed with the per-repo
-// `.gittensory.yml review.memory` manifest toggle (resolved via `resolveReviewMemoryManifestToggle`,
-// src/signals/focus-manifest.ts) — so a repo can only ever NARROW what the operator has already turned on,
-// never widen it. Both OFF by default: with the env flag unset, the suppression store is never read from the
-// review path at all (the caller guards on this flag before doing any D1 read or matching), so the review
-// stays byte-identical to today.
+// Review-memory activation wiring (#2179, config slice of #1964). Default OFF: the operator flag
+// GITTENSORY_REVIEW_MEMORY is a master kill-switch, and the per-repo `.gittensory.yml` review.memory toggle
+// (#4101, same shape as inlineComments/fixHandoff, #4099) fully controls activation by itself when explicitly
+// set — there has never been a GITTENSORY_REVIEW_REPOS cutover allowlist for this feature (an unset manifest
+// toggle preserves the ORIGINAL always-off default; it was never sufficient to be allowlisted alone, and in
+// fact no allowlist fallback ever existed for review memory in the first place). With the env flag unset, the
+// suppression store is never read from the review path at all (the caller guards on this flag before doing any
+// D1 read or matching), so the review stays byte-identical to today.
 
 import { matchSuppressions, type ReviewMemoryFindingInput } from "./review-memory-match";
 import type { AdvisoryFinding, ReviewSuppressionRecord } from "../types";
@@ -17,14 +18,22 @@ export function isReviewMemoryEnabled(env: { GITTENSORY_REVIEW_MEMORY?: string |
   return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_MEMORY ?? "");
 }
 
-/** Resolve whether review-memory suppression should apply for THIS repo/PR: the operator's global env
- *  kill-switch AND the per-repo manifest opt-in. Neither alone is sufficient — mirrors every other
- *  converged-feature gate in this codebase (env kill-switch first, then the manifest narrows it further). */
+/** PURE (#4101): should review-memory suppression apply for THIS repo/PR? (1) The operator's
+ *  GITTENSORY_REVIEW_MEMORY flag is an absolute MASTER KILL-SWITCH — off ⇒ always false, regardless of the
+ *  manifest, and no per-repo config can bypass it (consistent with every other converged feature — see
+ *  `resolveConvergedFeature` in `feature-activation.ts`). (2) An explicit per-repo `.gittensory.yml`
+ *  `review.memory` override (`true`/`false`) now FULLY controls the feature by itself — a repo can turn this on
+ *  without needing any allowlist at all. (3) `manifestToggle` unset (`undefined`) preserves this feature's
+ *  ORIGINAL design exactly: review memory has never had a GITTENSORY_REVIEW_REPOS cutover allowlist to fall
+ *  back to (unlike rag/reputation/safety/unifiedComment/grounding), so this stays `false` regardless, byte-
+ *  identical to every repo's behavior before this change. Exactly mirrors `shouldEmitFixHandoff`'s shape and
+ *  precedence. */
 export function shouldApplyReviewMemory(
   env: { GITTENSORY_REVIEW_MEMORY?: string | undefined },
-  manifestReviewMemoryEnabled: boolean,
+  manifestToggle: boolean | undefined,
 ): boolean {
-  return isReviewMemoryEnabled(env) && manifestReviewMemoryEnabled;
+  if (!isReviewMemoryEnabled(env)) return false;
+  return manifestToggle === true;
 }
 const RESOLVE_FINDING_CODE = /^[a-z][a-z0-9_]{0,199}$/;
 export function normalizeResolveFindingRef(raw: string | null | undefined): { ok: true; scope: "whole_pr" } | { ok: true; scope: "single"; findingCode: string } | { ok: false; reason: "malformed_finding_id" } { const trimmed = (raw ?? "").trim(); if (trimmed.length === 0) return { ok: true, scope: "whole_pr" }; const normalized = trimmed.toLowerCase().replace(/^finding-/, ""); if (!RESOLVE_FINDING_CODE.test(normalized)) return { ok: false, reason: "malformed_finding_id" }; return { ok: true, scope: "single", findingCode: normalized }; }

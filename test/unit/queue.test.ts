@@ -4259,7 +4259,7 @@ describe("queue processors", () => {
       expect(skipAudit).toBeUndefined();
     });
 
-    it("does not publish the re-review surface once a PR has an autoreview pause marker (#2164 regression)", async () => {
+    it("skips AI review but still enforces the gate once a PR has an autoreview pause marker (#2164 regression)", async () => {
       let aiCalls = 0;
       let commentPosted = false;
       let checkRunWritten = false;
@@ -4318,7 +4318,7 @@ describe("queue processors", () => {
       ).resolves.toBeUndefined();
       expect(aiCalls).toBe(0);
       expect(commentPosted).toBe(false);
-      expect(checkRunWritten).toBe(false);
+      expect(checkRunWritten).toBe(true);
     });
 
     it("threads review.ai_model through the full webhook pipeline into ai.run's options (#selfhost-ai-model-override)", async () => {

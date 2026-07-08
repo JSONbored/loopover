@@ -3246,7 +3246,7 @@ async function reReviewStoredPullRequest(
   ]);
   let pr = await getPullRequest(env, repoFullName, prNumber);
   if (!pr || pr.state !== "open") return;
-  if (await hasAutoreviewPausedMarker(env, repoFullName, prNumber)) return;
+  const autoreviewPaused = await hasAutoreviewPausedMarker(env, repoFullName, prNumber);
   const liveFacts = createLiveGithubFacts();
   // #sweep-resync: RESYNC the stored PR to its LIVE head before reviewing. The self-host relay can drop the
   // `synchronize` webhook (relay down), so a push/rebase never refreshes the stored head SHA + cached files; the
@@ -3381,7 +3381,7 @@ async function reReviewStoredPullRequest(
           baseSha: live?.base?.sha ?? null,
           liveFacts,
           ...(previewPollAttempt !== undefined ? { previewPollAttempt } : {}),
-          ...(options.skipAiReview ? { skipAiReview: true } : {}),
+          ...(options.skipAiReview || autoreviewPaused ? { skipAiReview: true } : {}),
           ...(options.force ? { forceAiReview: true } : {}),
           hasPendingRefreshSignal: otherRefreshReasons || reviewsCacheStale,
         },

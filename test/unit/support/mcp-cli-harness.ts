@@ -327,6 +327,24 @@ export async function startFixtureServer(
       );
       return;
     }
+    if (request.url === "/v1/repos/owner/repo/intelligence" && request.method === "GET") {
+      response.end(
+        JSON.stringify({
+          status: "ready",
+          source: "computed",
+          repoFullName: "owner/repo",
+          generatedAt: "2026-05-30T00:00:00.000Z",
+          labelAudit: {
+            configuredLabels: ["gittensor:feature", "gittensor:bug"],
+            liveLabels: ["gittensor:feature", "visual"],
+            missingConfiguredLabels: ["gittensor:bug"],
+            suspiciousLabels: ["visual"],
+            trustedLabelPipelineReady: false,
+          },
+        }),
+      );
+      return;
+    }
     response.statusCode = 404;
     response.end(JSON.stringify({ error: "not_found" }));
   });

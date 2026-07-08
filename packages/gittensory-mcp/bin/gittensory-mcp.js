@@ -518,6 +518,24 @@ server.registerTool(
 );
 
 server.registerTool(
+  "gittensory_get_label_audit",
+  {
+    description:
+      "Return the repo's label-policy audit (configured-vs-live labels, missing configured labels, suspicious status/source-style labels, and trusted-label-pipeline readiness) from the private Gittensory API.",
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }) => {
+    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const intelligence = await apiGet(`${prefix}/intelligence`);
+    return toolResult("Gittensory label audit.", {
+      repoFullName: intelligence?.repoFullName ?? `${owner}/${repo}`,
+      generatedAt: intelligence?.generatedAt,
+      labelAudit: intelligence?.labelAudit ?? null,
+    });
+  },
+);
+
+server.registerTool(
   "gittensory_preview_local_pr_score",
   {
     description: "Inspect local diff metadata and request a private Gittensory scoring preview. No source contents are uploaded.",

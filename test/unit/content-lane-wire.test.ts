@@ -130,6 +130,32 @@ describe("applySurfaceGate", () => {
     expect(out?.conclusion).toBe("failure");
     expect(out?.blockers).toEqual([split, ...surfaceClose.blockers]); // union — the AI-only exception only applies to a surface MERGE
   });
+  it("#3907: aiJudgmentBlockersMode 'gate' skips the AI-judgment-only override — the finding survives into the failure union, reproducing PR #3910's shape", () => {
+    // The exact repro this issue is about: a confidently-flagged, correct AI-judgment finding (a registry
+    // provider slug semantically wrong for its domain) that the deterministic surface lane's own schema/shape
+    // scan can never catch, so only AI judgment ever surfaces it.
+    const providerMisattribution: AdvisoryFinding = {
+      code: "ai_consensus_defect",
+      title: "AI reviewers agree on a likely critical defect",
+      severity: "critical",
+      detail: "provider is set to \"gittensory\" (an unrelated tool's slug) instead of \"gittensor\"",
+    };
+    const genericAiOnly = gate({ conclusion: "failure", blockers: [providerMisattribution], warnings: [] });
+    const surfaceMerge = gate({ conclusion: "success", title: "Surface", summary: "structurally valid entry" });
+    const out = applySurfaceGate(genericAiOnly, surfaceMerge, { aiJudgmentBlockersMode: "gate" });
+    // Opted in: the AI-judgment finding is NOT overridden — decision is no longer merge.
+    expect(out?.conclusion).toBe("failure");
+    expect(out?.blockers).toEqual([providerMisattribution]);
+  });
+  it("#3907: aiJudgmentBlockersMode 'advisory' (explicit) behaves identically to the default (unset) — byte-identical override", () => {
+    const aiConsensusDefect: AdvisoryFinding = { code: "ai_consensus_defect", title: "AI defect", severity: "critical", detail: "" };
+    const genericAiOnly = gate({ conclusion: "failure", blockers: [aiConsensusDefect], warnings: [] });
+    const surfaceMerge = gate({ conclusion: "success", title: "Surface", summary: "valid entry" });
+    const withExplicitAdvisory = applySurfaceGate(genericAiOnly, surfaceMerge, { aiJudgmentBlockersMode: "advisory" });
+    const withDefault = applySurfaceGate(genericAiOnly, surfaceMerge);
+    expect(withExplicitAdvisory).toEqual(withDefault);
+    expect(withExplicitAdvisory?.conclusion).toBe("success");
+  });
   it("a MIXED generic failure (an AI-judgment code plus a real blocker) is not AI-judgment-only — still overrides a surface merge", () => {
     const secret: AdvisoryFinding = { code: "secret_leak", title: "Secret", severity: "critical", detail: "leaked key" };
     const aiConsensusDefect: AdvisoryFinding = { code: "ai_consensus_defect", title: "AI defect", severity: "critical", detail: "" };
@@ -364,6 +390,85 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
     // The overridden ai_consensus_defect must be gone from advisory.findings too — otherwise the unified-comment
     // bridge would still recover it via consensusDefectFromFindings and render "Concerns raised" over a merge.
     expect(advisory.findings).toEqual([otherWarning]);
+  });
+
+  it("#3907 REGRESSION: on an opted-in repo (gate.aiJudgmentBlockers: 'gate'), a confident AI-judgment-only finding survives a decisive surface merge — decision is no longer merge, and the finding stays in advisory.findings for the public comment", async () => {
+    const bodies: Record<string, string> = {
+      "HEAD:registry/subnets/foo.json": doc([existing, newEntry]),
+      "BASE:registry/subnets/foo.json": doc([existing]),
+    };
+    vi.stubGlobal("fetch", async (url: string | URL) => {
+      const m = /\/contents\/(.+)\?ref=(.+)$/.exec(String(url));
+      if (!m) return new Response("nope", { status: 404 });
+      const path = m[1]!.split("/").map(decodeURIComponent).join("/");
+      const body = bodies[`${decodeURIComponent(m[2]!)}:${path}`];
+      return body === undefined ? new Response("missing", { status: 404 }) : new Response(body);
+    });
+    const providerMisattribution: AdvisoryFinding = {
+      code: "ai_consensus_defect",
+      title: "AI reviewers agree on a likely critical defect",
+      severity: "critical",
+      detail: "provider is set to \"gittensory\" instead of \"gittensor\"",
+    };
+    const advisory = { findings: [providerMisattribution] };
+    const genericAiOnly = gate({ conclusion: "failure", blockers: [providerMisattribution], warnings: [] });
+    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const optedInManifest = (): Promise<FocusManifest> =>
+      Promise.resolve(parseFocusManifest({ wantedPaths: ["src/"], gate: { aiJudgmentBlockers: "gate" } }));
+    const out = await evaluateWithSurfaceLane(
+      wiredEnv,
+      REPO,
+      true,
+      genericAiOnly,
+      {
+        installationId: null,
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory,
+        getChangedFiles: async () => [{ path: SUBNET, status: "modified" }],
+      },
+      optedInManifest,
+    );
+    // The core deliverable: opted in, the AI-judgment finding is no longer overridden by the clean surface merge.
+    expect(out?.conclusion).not.toBe("success");
+    expect(out?.blockers).toEqual([providerMisattribution]);
+    // Unlike the opted-out REGRESSION test above, the finding must NOT be stripped from advisory.findings —
+    // it's now a real blocker, so the public comment needs to keep showing it.
+    expect(advisory.findings).toEqual([providerMisattribution]);
+  });
+
+  it("#3907: an opted-OUT repo (no gate.aiJudgmentBlockers configured) is unaffected — byte-identical to the pre-#3907 REGRESSION test above", async () => {
+    const bodies: Record<string, string> = {
+      "HEAD:registry/subnets/foo.json": doc([existing, newEntry]),
+      "BASE:registry/subnets/foo.json": doc([existing]),
+    };
+    vi.stubGlobal("fetch", async (url: string | URL) => {
+      const m = /\/contents\/(.+)\?ref=(.+)$/.exec(String(url));
+      if (!m) return new Response("nope", { status: 404 });
+      const path = m[1]!.split("/").map(decodeURIComponent).join("/");
+      const body = bodies[`${decodeURIComponent(m[2]!)}:${path}`];
+      return body === undefined ? new Response("missing", { status: 404 }) : new Response(body);
+    });
+    const aiConsensusDefect: AdvisoryFinding = { code: "ai_consensus_defect", title: "AI defect", severity: "critical", detail: "hallucinated" };
+    const advisory = { findings: [aiConsensusDefect] };
+    const genericAiOnly = gate({ conclusion: "failure", blockers: [aiConsensusDefect], warnings: [] });
+    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const out = await evaluateWithSurfaceLane(
+      wiredEnv,
+      REPO,
+      true,
+      genericAiOnly,
+      {
+        installationId: null,
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory,
+        getChangedFiles: async () => [{ path: SUBNET, status: "modified" }],
+      },
+      noConfigManifest, // same zero-config manifest as the default-behavior tests above
+    );
+    expect(out?.conclusion).toBe("success"); // default advisory behavior: override still fires
+    expect(advisory.findings).toEqual([]); // stripped, same as the pre-#3907 REGRESSION test
   });
 
   it("does NOT touch advisory.findings when the surface lane defers or the generic gate isn't AI-judgment-only", async () => {

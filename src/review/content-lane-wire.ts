@@ -102,6 +102,12 @@ export function surfaceVerdictToGate(result: SurfaceReviewResult): {
  *  result rather than silently dropped — see `evaluateWithSurfaceLane` for the companion `advisory.findings`
  *  cleanup that keeps the public comment from re-surfacing the overridden AI defect via a separate path.
  *
+ *  `opts.aiJudgmentBlockersMode` (#3907): a per-repo `.gittensory.yml` `gate.aiJudgmentBlockers` opt-in that
+ *  SKIPS this exception when set to `"gate"` — an AI-judgment-only failure then falls through to the union
+ *  below like any other blocker, letting a confidently-flagged content-correctness defect actually gate the
+ *  merge. Default (`null`/`undefined`/`"advisory"`) preserves this exception exactly as documented above,
+ *  byte-identical to pre-#3907 behavior for every repo that doesn't opt in.
+ *
  *  A second, analogous exception (guard #4) applies when the generic gate's blockers are ALL duplicate-only
  *  (a same-linked-issue `duplicate_pr_risk` finding escalated into a blocker by `duplicatePrGateMode: "block"`,
  *  see `isDuplicateOnlyFailure`): a decisive surface merge downgrades that failure to a HOLD (neutral) rather than
@@ -117,6 +123,7 @@ export function surfaceVerdictToGate(result: SurfaceReviewResult): {
 export function applySurfaceGate(
   generic: GateCheckEvaluation | undefined,
   surface: GateCheckEvaluation | null,
+  opts?: { aiJudgmentBlockersMode?: "gate" | "advisory" | null | undefined },
 ): GateCheckEvaluation | undefined {
   if (surface === null) return generic;
   if (!generic) return surface; // gate off → surface stands
@@ -127,7 +134,11 @@ export function applySurfaceGate(
     if (surface.conclusion === "success") return generic;
     return surface;
   }
-  if (isAiJudgmentOnlyFailure(generic) && surface.conclusion === "success") {
+  // #3907: opt-in escape hatch from guard #3 below. Default (null/undefined/"advisory") preserves today's
+  // behavior byte-identically. "gate" skips the override entirely, so an AI-judgment-only failure falls
+  // through to the unconditional union+failure return at the bottom of this function like any other
+  // blocker — the opted-in repo's own AI reviewer becomes a real, deterministic-gate-blocking signal.
+  if (opts?.aiJudgmentBlockersMode !== "gate" && isAiJudgmentOnlyFailure(generic) && surface.conclusion === "success") {
     return { ...surface, warnings: [...generic.warnings, ...surface.warnings] };
   }
   if (isDuplicateOnlyFailure(generic) && surface.conclusion === "success") {
@@ -295,8 +306,16 @@ export async function evaluateWithSurfaceLane(
     advisory: args.advisory,
     files: await args.getChangedFiles(),
   });
-  const result = applySurfaceGate(gateEvaluation, surfaceGate);
-  if (gateEvaluation && surfaceGate?.conclusion === "success" && isAiJudgmentOnlyFailure(gateEvaluation)) {
+  // #3907: null/undefined manifest.gate is treated the same as an explicit "advisory" — see
+  // applySurfaceGate's own doc comment for what "gate" mode does.
+  const aiJudgmentBlockersMode = manifest?.gate.aiJudgmentBlockersMode ?? undefined;
+  const result = applySurfaceGate(gateEvaluation, surfaceGate, { aiJudgmentBlockersMode });
+  if (
+    aiJudgmentBlockersMode !== "gate" &&
+    gateEvaluation &&
+    surfaceGate?.conclusion === "success" &&
+    isAiJudgmentOnlyFailure(gateEvaluation)
+  ) {
     args.advisory.findings = args.advisory.findings.filter((finding) => !AI_JUDGMENT_BLOCKER_CODES.has(finding.code));
   }
   return result;

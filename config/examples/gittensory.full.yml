@@ -243,6 +243,19 @@ gate:
     - build
     - test
 
+  # Promote a confident AI-judgment-only finding (one the reviewer itself placed under "Blockers", never
+  # a "Nit") into a real, deterministic gate blocker instead of leaving it advisory (#3907). Only matters
+  # for repos already running the registry content lane (see contentLane below) — content/registry repos
+  # have no schema/lint/codecov net to catch a semantically-wrong-but-structurally-valid defect, so their
+  # own AI reviewer's judgment is the only thing that ever catches it.
+  #   advisory — today's behavior: a decisive deterministic content-lane merge overrides an AI-judgment-only
+  #              failure (an AI opinion alone never one-shot-closes a structurally-clean submission).
+  #   gate     — the AI-judgment finding survives into the gate's own blockers, demoting the decision away
+  #              from merge. Reopens the risk an AI hallucination can one-shot-close a clean PR — an
+  #              explicit, per-repo trade-off, never the default.
+  # gate | advisory. Default: advisory. Config-as-code only — no DB column or dashboard toggle.
+  aiJudgmentBlockers: advisory
+
   # Composite merge-readiness gate (no min score).
   # off | advisory | block. Default: off.
   mergeReadiness: off

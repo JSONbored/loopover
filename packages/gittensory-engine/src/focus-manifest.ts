@@ -162,6 +162,17 @@ export type FocusManifestGateConfig = {
    *  (unset) ⇒ no generic fallback configured — the live-CI aggregate keeps today's fold-all behavior
    *  when branch protection is also unreadable. See {@link RepositorySettings.expectedCiContexts}. */
   expectedCiContexts: ReadonlyArray<string> | null;
+  /** `gate.aiJudgmentBlockers` (#3907): "gate" | "advisory", null (unset) ⇒ "advisory" (byte-identical to
+   *  today everywhere that doesn't opt in). Config-as-code only, YML-only (no DB column, no dashboard
+   *  toggle) — mirrors `contentLane`'s own YML-only shape, since this only has an effect for repos already
+   *  running the registry content lane. When "gate", a confident AI-judgment-only finding that
+   *  applySurfaceGate's default "advisory" behavior would otherwise let a decisive surface merge override
+   *  instead SURVIVES into the deterministic gate's own blockers array, demoting `decision` away from
+   *  `merge` — see content-lane-wire.ts's `applySurfaceGate` guard #3 and `evaluateWithSurfaceLane` for the
+   *  wiring. This deliberately reopens exactly the risk #2592 accepted for the general case (an AI
+   *  hallucination can one-shot-close a structurally-clean PR) as an explicit, per-repo, documented
+   *  trade-off — never the default. */
+  aiJudgmentBlockersMode: "gate" | "advisory" | null;
 };
 
 // The converged per-PR review features a self-host operator toggles PER-REPO under `features:` in the private
@@ -845,6 +856,7 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   claCheckRunName: null,
   claCheckRunAppSlug: null,
   expectedCiContexts: null,
+  aiJudgmentBlockersMode: null,
 };
 
 const EMPTY_FEATURES_CONFIG: FocusManifestFeaturesConfig = {
@@ -1176,6 +1188,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     claCheckRunName: parsePublicSafeText(claRecord?.checkRunName, "gate.cla.checkRunName", warnings),
     claCheckRunAppSlug: parsePublicSafeText(claRecord?.checkRunAppSlug, "gate.cla.checkRunAppSlug", warnings),
     expectedCiContexts: normalizeOptionalStringList(record.expectedCiContexts, "gate.expectedCiContexts", warnings),
+    aiJudgmentBlockersMode: normalizeOptionalEnum(record.aiJudgmentBlockers, "gate.aiJudgmentBlockers", ["gate", "advisory"] as const, warnings),
   };
   // #2266: the flag is parsed, clamped, and threaded end-to-end, but the gate evaluator never reads it — a
   // maintainer who sets it to true believing it softens a blocker for newcomers gets no such effect. Surface
@@ -1218,7 +1231,8 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.claConsentPhrase !== null ||
     gate.claCheckRunName !== null ||
     gate.claCheckRunAppSlug !== null ||
-    gate.expectedCiContexts !== null;
+    gate.expectedCiContexts !== null ||
+    gate.aiJudgmentBlockersMode !== null;
   return gate;
 }
 
@@ -1293,6 +1307,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     out.cla = cla;
   }
   if (gate.expectedCiContexts !== null) out.expectedCiContexts = gate.expectedCiContexts as JsonValue;
+  if (gate.aiJudgmentBlockersMode !== null) out.aiJudgmentBlockers = gate.aiJudgmentBlockersMode;
   return out;
 }
 

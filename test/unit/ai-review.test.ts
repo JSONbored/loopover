@@ -3113,7 +3113,7 @@ describe("pure helpers", () => {
     ]);
   });
 
-  it("parseModelReview parses a valid category, drops one outside the fixed enum, and leaves it absent when omitted (#1958)", () => {
+  it("parseModelReview parses a valid category and defaults unknown or absent values to maintainability (#2147)", () => {
     const json = JSON.stringify({
       assessment: "ok",
       blockers: [],
@@ -3123,12 +3123,14 @@ describe("pure helpers", () => {
         { path: "src/a.ts", line: 2, severity: "nit", body: "SQL injection risk.", category: "security" },
         { path: "src/b.ts", line: 4, severity: "nit", body: "Made up category.", category: "readability" },
         { path: "src/c.ts", line: 6, severity: "nit", body: "No category at all." },
+        { path: "src/d.ts", line: 8, severity: "nit", body: "Performance hint.", category: "performance" },
       ],
     });
     expect(parseModelReview(json)?.inlineFindings).toEqual([
       { path: "src/a.ts", line: 2, severity: "nit", body: "SQL injection risk.", category: "security" },
-      { path: "src/b.ts", line: 4, severity: "nit", body: "Made up category." },
-      { path: "src/c.ts", line: 6, severity: "nit", body: "No category at all." },
+      { path: "src/b.ts", line: 4, severity: "nit", body: "Made up category.", category: "maintainability" },
+      { path: "src/c.ts", line: 6, severity: "nit", body: "No category at all.", category: "maintainability" },
+      { path: "src/d.ts", line: 8, severity: "nit", body: "Performance hint.", category: "performance" },
     ]);
   });
 

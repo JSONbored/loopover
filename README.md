@@ -122,6 +122,20 @@ npm run ui:dev
 npm run ui:build
 ```
 
+## Gittensor Contributor Impact
+
+<p align="center">
+  <a href="https://gittensor.io/miners/repository?name=JSONbored/gittensory">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/JSONbored/gittensory/gittensor-impact-assets/gittensor-impact-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/JSONbored/gittensory/gittensor-impact-assets/gittensor-impact-light.svg">
+      <img src="https://raw.githubusercontent.com/JSONbored/gittensory/gittensor-impact-assets/gittensor-impact-light.svg" alt="Gittensor contributor impact" width="600">
+    </picture>
+  </a>
+</p>
+
+Refreshed weekly by [`.github/workflows/gittensor-impact.yml`](.github/workflows/gittensor-impact.yml).
+
 ## Project Links
 
 | Need         | Link                               |

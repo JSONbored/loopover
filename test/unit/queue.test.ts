@@ -18241,6 +18241,172 @@ describe("queue processors", () => {
     }
   });
 
+  // #2044: `.gittensory.yml` `review.tone` is folded into the AI reviewer's system prompt by
+  // composeManifestReviewInstructions (src/signals/focus-manifest.ts), consumed by
+  // src/queue/processors.ts's aiReviewCacheReadDecideAndRun. That composition is unit-tested in isolation
+  // (focus-manifest.test.ts), but nothing previously drove the full webhook -> processJob -> runGittensoryAiReview
+  // pipeline to confirm the resolved tone text actually reaches env.AI.run's system message. Mirrors the
+  // changed_files_summary/effort_score tests above but captures the AI system prompt instead of the posted body.
+  it("threads review.tone from .gittensory.yml into the AI reviewer's system prompt (#2044)", async () => {
+    let capturedSystem = "";
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: {
+        run: async (_model: string, options: { messages: Array<{ role: string; content: string }> }) => {
+          capturedSystem = options.messages[0]?.content ?? "";
+          return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) };
+        },
+      } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "block",
+      gatePack: "oss-anti-slop",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/7/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/7/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      // The repo's own review.tone opt-in (#2044) -- a maintainer voice brief, distinct from review.instructions.
+      if (url === "https://raw.githubusercontent.com/JSONbored/gittensory/HEAD/.gittensory.yml") {
+        return new Response("review:\n  tone: Keep findings terse and skip pleasantries\n");
+      }
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "review-tone-system-prompt",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" },
+      },
+    });
+
+    // The composed tone section (composeManifestReviewInstructions) really reached env.AI.run's system message --
+    // not just the pure-function assertion in focus-manifest.test.ts.
+    expect(capturedSystem).toContain(
+      "Review tone (maintainer voice brief — complements review.profile): Keep findings terse and skip pleasantries",
+    );
+  });
+
+  // #review-exclude-paths / #2043: `review.exclude_paths`/`review.path_filters` are resolved by
+  // resolveReviewPromptOverrides and applied by filterReviewFilesForAi (src/signals/focus-manifest.ts), consumed
+  // by src/queue/processors.ts's runAiReviewForAdvisory -- but ONLY in advisory mode (block mode intentionally
+  // reviews the full diff so a filtered path can never bypass an AI consensus blocker). filterReviewFilesForAi
+  // itself is unit-tested as a pure function (focus-manifest.test.ts); every existing e2e assertion of this field
+  // elsewhere in this file only ever passes EMPTY excludePaths/pathFilters arrays (cache-fingerprint checks), so
+  // nothing previously proved a NON-EMPTY glob genuinely removes a matching file from what the AI reviewer sees.
+  it("genuinely removes a review.exclude_paths match from the AI reviewer's diff in advisory mode (#review-exclude-paths)", async () => {
+    let capturedUser = "";
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: {
+        run: async (_model: string, options: { messages: Array<{ role: string; content: string }> }) => {
+          capturedUser = options.messages[1]?.content ?? "";
+          return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) };
+        },
+      } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      // advisory (NOT block): block mode always reviews the full diff, ignoring exclude_paths/path_filters, so
+      // only advisory mode exercises the filterReviewFilesForAi branch (src/queue/processors.ts).
+      aiReviewMode: "advisory",
+      // The PR author below is an unconfirmed contributor; aiReviewAllAuthors is the documented per-repo opt-in
+      // that widens the AI-spend gate to every author (already unit-tested in ai-review-advisory.test.ts) so this
+      // test doesn't also have to stand up the full miner-confirmation registry mocks just to reach the AI call.
+      aiReviewAllAuthors: true,
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/7/files"))
+        return Response.json([
+          { filename: "src/real-change.ts", status: "modified", additions: 3, deletions: 0, patch: "@@ -1,1 +1,4 @@\n+export const real = 1;\n+export const two = 2;\n+export const three = 3;" },
+          { filename: "src/schema.generated.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -1,1 +1,2 @@\n+export const generatedMarker = true;" },
+        ]);
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/7/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/7/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      // The repo's own review.exclude_paths opt-in -- a NON-EMPTY glob (#review-exclude-paths), unlike every
+      // existing fingerprint-only assertion of this field elsewhere in this file.
+      if (url === "https://raw.githubusercontent.com/JSONbored/gittensory/HEAD/.gittensory.yml") {
+        return new Response('review:\n  exclude_paths:\n    - "**/*.generated.ts"\n');
+      }
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "review-exclude-paths-ai-diff",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" },
+      },
+    });
+
+    // The non-excluded file's diff genuinely reached the AI reviewer's user prompt...
+    expect(capturedUser).toContain("src/real-change.ts");
+    // ...but the exclude_paths match is genuinely ABSENT -- not merely uncounted -- from what the AI reviewer
+    // sees: neither its path nor its patch content leaked into the prompt.
+    expect(capturedUser).not.toContain("schema.generated.ts");
+    expect(capturedUser).not.toContain("generatedMarker");
+  });
+
   // #2049: with the unified comment on AND `.gittensory.yml` setting `review.max_findings`, the processor wires
   // manifest caps into `buildUnifiedCommentBody` and the renderer truncates blocker/nit lists with a "+N more"
   // footer. Mirrors the effort_score test above but asserts display-only truncation instead.

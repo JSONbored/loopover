@@ -38,12 +38,13 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    # Environment gate. Only an actual `-beta.N` version routes to `release-beta` (no required
-    # reviewers -- see orb-beta-release.yml, which dispatches daily with no human in the loop); every
-    # other version (stable X.Y.Z or an -rc.N) stays on `release`, which requires reviewer approval
-    # under repo Settings > Environments. The check reads the raw version string directly (not a step
-    # output), since a job's `environment:` is resolved before any step runs.
-    environment: ${{ ((github.event_name == 'push' && contains(github.ref_name, '-beta.')) || (github.event_name == 'workflow_dispatch' && contains(inputs.version, '-beta.'))) && 'release-beta' || 'release' }}
+    # Environment gate. Only the trusted orb-beta-release automation may use `release-beta` (no
+    # required reviewers): it dispatches this workflow as github-actions[bot], asks to create the
+    # GitHub Release, and the validation below requires that exact beta tag to already point at this
+    # commit. Human workflow_dispatch runs and direct beta tag pushes stay on `release`, which requires
+    # reviewer approval under repo Settings > Environments. This expression reads only event fields
+    # because a job's `environment:` is resolved before any step runs.
+    environment: ${{ github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.create_github_release && contains(inputs.version, '-beta.') && 'release-beta' || 'release' }}
     env:
       SENTRY_ORG: jsonbored
       SENTRY_PROJECT: gittensory
@@ -67,9 +68,12 @@ jobs:
       - name: Resolve version
         id: version
         env:
+          CREATE_GITHUB_RELEASE: ${{ github.event.inputs.create_github_release || 'false' }}
           EVENT_NAME: ${{ github.event_name }}
           INPUT_VERSION: ${{ github.event.inputs.version }}
           REF_NAME: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ github.sha }}
+          RUN_ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
@@ -91,6 +95,17 @@ jobs:
           PRERELEASE=false
           if printf '%s' "$VERSION" | grep -Eq -- '-(rc|beta)\.[0-9]+$'; then
             PRERELEASE=true
+          fi
+          if printf '%s' "$VERSION" | grep -Eq -- '-beta\.[0-9]+$' \
+            && [ "$EVENT_NAME" = "workflow_dispatch" ] \
+            && [ "$RUN_ACTOR" = "github-actions[bot]" ] \
+            && [ "$CREATE_GITHUB_RELEASE" = "true" ]; then
+            git fetch --force --tags origin "refs/tags/orb-v${VERSION}:refs/tags/orb-v${VERSION}"
+            TAG_SHA="$(git rev-list -n 1 "refs/tags/orb-v${VERSION}")"
+            if [ "$TAG_SHA" != "$RELEASE_SHA" ]; then
+              echo "automated beta releases must dispatch the tag that was just created for this commit" >&2
+              exit 1
+            fi
           fi
           {
             echo "v=${VERSION}"

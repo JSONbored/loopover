@@ -10232,55 +10232,57 @@ async function maybePublishPrPublicSurface(
           // behavior is byte-identical to pre-#3609.
           const reviewVisualConfig = await resolveVisualCaptureConfig(env, repoFullName);
           // review.visual.enabled (#4083): a config-as-code override layered on top of the screenshotsAllowed
-          // env-var gate above, not a replacement for it. Unset/true ⇒ defer to that gate's decision (this line
-          // is a no-op, matching every repo today); explicit `false` (global default or per-repo, VPS-only) ⇒
-          // force capture off for this repo even though the coarser env-var gate says on.
-          if (reviewVisualConfig.enabled !== false) {
-            const capture = await buildCapture(
-              env,
-              token,
+          // env-var gate above, not a replacement for it. Unset/true ⇒ defer to that gate's decision (buildCapture
+          // runs exactly as before); explicit `false` (global default or per-repo, VPS-only) ⇒ force capture off
+          // for this repo -- a no-routes, non-pending sentinel result, so every line below behaves exactly as an
+          // ordinary "nothing found" capture would, with no separate code path to maintain.
+          const capture =
+            reviewVisualConfig.enabled === false
+              ? { routes: [], previewPending: false }
+              : await buildCapture(
+                  env,
+                  token,
+                  {
+                    repoFullName,
+                    prNumber: pr.number,
+                    ...(pr.headSha ? { headSha: pr.headSha } : {}),
+                    ...(pr.headRef ? { headRef: pr.headRef } : {}),
+                    previewFromChecks: true,
+                  },
+                  visualFiles,
+                  githubRateLimitAdmissionKeyForInstallation(installationId),
+                  reviewVisualConfig,
+                );
+          beforeAfter = capture.routes;
+          // Visual self-poll: the FIRST capture returns a "loading" placeholder for the AFTER shot when the
+          // preview deploy isn't live yet (capture.previewPending). Schedule a delayed re-review to re-capture
+          // the now-ready shot — bounded by `attempt` so a never-resolving preview can't loop (the deployment_status
+          // webhook also refills it; this is the backstop when that event is missed/late).
+          const previewPollAttempt = webhook.previewPollAttempt ?? 0;
+          if (
+            capture.previewPending &&
+            previewPollAttempt < MAX_PREVIEW_POLLS
+          ) {
+            await env.JOBS.send(
               {
+                type: "recapture-preview",
+                deliveryId: webhook.deliveryId,
                 repoFullName,
                 prNumber: pr.number,
-                ...(pr.headSha ? { headSha: pr.headSha } : {}),
-                ...(pr.headRef ? { headRef: pr.headRef } : {}),
-                previewFromChecks: true,
+                installationId,
+                attempt: previewPollAttempt + 1,
               },
-              visualFiles,
-              githubRateLimitAdmissionKeyForInstallation(installationId),
-              reviewVisualConfig,
-            );
-            beforeAfter = capture.routes;
-            // Visual self-poll: the FIRST capture returns a "loading" placeholder for the AFTER shot when the
-            // preview deploy isn't live yet (capture.previewPending). Schedule a delayed re-review to re-capture
-            // the now-ready shot — bounded by `attempt` so a never-resolving preview can't loop (the deployment_status
-            // webhook also refills it; this is the backstop when that event is missed/late).
-            const previewPollAttempt = webhook.previewPollAttempt ?? 0;
-            if (
-              capture.previewPending &&
-              previewPollAttempt < MAX_PREVIEW_POLLS
-            ) {
-              await env.JOBS.send(
-                {
-                  type: "recapture-preview",
-                  deliveryId: webhook.deliveryId,
+              { delaySeconds: PREVIEW_POLL_SECONDS },
+            ).catch((error) =>
+              console.log(
+                JSON.stringify({
+                  event: "recapture_enqueue_failed",
                   repoFullName,
-                  prNumber: pr.number,
-                  installationId,
-                  attempt: previewPollAttempt + 1,
-                },
-                { delaySeconds: PREVIEW_POLL_SECONDS },
-              ).catch((error) =>
-                console.log(
-                  JSON.stringify({
-                    event: "recapture_enqueue_failed",
-                    repoFullName,
-                    pull: pr.number,
-                    message: errorMessage(error).slice(0, 120),
-                  }),
-                ),
-              );
-            }
+                  pull: pr.number,
+                  message: errorMessage(error).slice(0, 120),
+                }),
+              ),
+            );
           }
         } catch (error) {
           console.log(

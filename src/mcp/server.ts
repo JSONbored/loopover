@@ -88,6 +88,7 @@ import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
 import { buildRepoOutcomeCalibration, outcomeCalibrationSummary } from "../services/outcome-calibration";
+import { loadGatePrecisionReport } from "../services/gate-precision";
 import { computeFleetAnalytics } from "../orb/analytics";
 import { loadMaintainerNoiseReport, maintainerNoiseSummary } from "../services/maintainer-noise";
 import { loadLabelAudit, labelAuditSummary } from "../services/label-audit";
@@ -742,6 +743,16 @@ const maintainerMeasurementReportOutputSchema = {
   status: z.string().optional(),
 };
 
+const gatePrecisionReportOutputSchema = {
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  windowDays: z.number().nullable().optional(),
+  perGateType: z.array(z.unknown()).optional(),
+  overall: z.unknown().optional(),
+  signals: z.array(z.string()).optional(),
+  status: z.string().optional(),
+};
+
 const contributorProfileOutputSchema = {
   login: z.string().optional(),
   github: z.unknown().optional(),
@@ -1288,6 +1299,17 @@ export class GittensoryMcp {
         outputSchema: maintainerMeasurementReportOutputSchema,
       },
       async (input) => this.toolResult(await this.getOutcomeCalibration(input)),
+    );
+
+    server.registerTool(
+      "gittensory_get_gate_precision",
+      {
+        description:
+          "Return gate-precision measurement for a repo: per-gate-type block counts, blocked-then-merged false positives, and the overall gate false-positive rate. Maintainer-authenticated; measurement only.",
+        inputSchema: ownerRepoWindowShape,
+        outputSchema: gatePrecisionReportOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getGatePrecision(input)),
     );
 
     server.registerTool(
@@ -2338,6 +2360,16 @@ export class GittensoryMcp {
     const report = await buildRepoOutcomeCalibration(this.env, fullName, input.windowDays);
     return {
       summary: outcomeCalibrationSummary(fullName, report.slop),
+      data: report as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async getGatePrecision(input: { owner: string; repo: string; windowDays?: number | undefined }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(fullName);
+    const report = await loadGatePrecisionReport(this.env, fullName, input.windowDays !== undefined ? { windowDays: input.windowDays } : {});
+    return {
+      summary: `Gate precision for ${fullName} over ${report.windowDays ?? "all"} day(s): ${report.overall.blocked} block(s), ${report.overall.blockedThenMerged} later merged.`,
       data: report as unknown as Record<string, unknown>,
     };
   }

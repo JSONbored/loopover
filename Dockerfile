@@ -60,7 +60,11 @@ RUN if [ "$INSTALL_AI_CLIS" = "true" ]; then npm install -g --foreground-scripts
 USER root
 # Optional: enable visual review via an external Chrome sidecar (docker-compose --profile visual-review
 # bundles `ghcr.io/browserless/chromium:latest`, or point at your own browserless-compatible instance).
-# Build with `--build-arg INSTALL_VISUAL_REVIEW=true` then set BROWSER_WS_ENDPOINT=<ws-url> at runtime.
+# Every official release image ships with this dependency installed (release-selfhost.yml passes
+# --build-arg INSTALL_VISUAL_REVIEW=true) -- just set BROWSER_WS_ENDPOINT=<ws-url> at runtime to use it.
+# The default here stays `false` for a LOCAL/custom build (`docker build .` with no build-arg) so building
+# straight from this Dockerfile without the release workflow doesn't silently install an unrequested
+# dependency.
 ARG INSTALL_VISUAL_REVIEW=false
 COPY package*.json ./
 RUN if [ "$INSTALL_VISUAL_REVIEW" = "true" ]; then npm install puppeteer-core@22.13.1 --ignore-scripts; fi

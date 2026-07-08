@@ -213,8 +213,14 @@ jobs:
           target: runtime-prebuilt
           platforms: linux/amd64,linux/arm64
           push: true
+          # Visual-capture convergence (#3607/#4111): every official image ships puppeteer-core so a
+          # self-hoster can turn on before/after screenshot capture with just BROWSER_WS_ENDPOINT +
+          # GITTENSORY_REVIEW_SCREENSHOTS=true at runtime -- no custom image build required. Inert either
+          # way until those runtime flags are set (Dockerfile's INSTALL_VISUAL_REVIEW only controls
+          # whether the dependency is installed, never whether the feature runs).
           build-args: |
             GITTENSORY_VERSION=${{ steps.version.outputs.release }}
+            INSTALL_VISUAL_REVIEW=true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: true

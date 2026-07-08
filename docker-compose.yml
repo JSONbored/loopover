@@ -361,9 +361,10 @@ services:
   # it in two places — the server reads TOKEN below, the app embeds the same value in the client URL):
   #   BROWSERLESS_TOKEN=<a-strong-random-value>
   #   BROWSER_WS_ENDPOINT=ws://browserless:3000?token=<the-same-value>
-  # Then rebuild the app image with --build-arg INSTALL_VISUAL_REVIEW=true (installs puppeteer-core;
-  # see Dockerfile) and set GITTENSORY_REVIEW_SCREENSHOTS=true. Unset/default = fully inert, no
-  # container, no screenshots, no error — this whole feature is opt-in end to end.
+  # Then set GITTENSORY_REVIEW_SCREENSHOTS=true. Official release images already have puppeteer-core
+  # installed (release-selfhost.yml builds with --build-arg INSTALL_VISUAL_REVIEW=true) — a rebuild is
+  # only needed for a LOCAL/custom image build from this Dockerfile directly (see Dockerfile). Unset/
+  # default = fully inert, no container, no screenshots, no error — this whole feature is opt-in end to end.
   browserless:
     image: ghcr.io/browserless/chromium:latest
     restart: unless-stopped

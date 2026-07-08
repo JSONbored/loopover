@@ -115,6 +115,19 @@ describe("MCP gittensory_find_opportunities", () => {
     expect(JSON.stringify(data)).not.toMatch(/wallet|hotkey|reward estimate|trust score/i);
   });
 
+  it("rejects oversized target lists before authorization", async () => {
+    const env = createTestEnv();
+    const client = await connect(env);
+
+    const result = await client.callTool({
+      name: "gittensory_find_opportunities",
+      arguments: { targets: Array.from({ length: 26 }, () => ({ owner: "acme", repo: "allowed" })) },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toMatch(/Too big|maximum|25/i);
+  });
+
   it("rejects cross-repo search for non-operator sessions", async () => {
     const env = createTestEnv();
     const { session } = await createSessionForGitHubUser(env, { login: "miner1", id: 1 });

@@ -55,6 +55,11 @@ export type FindOpportunitiesResult = {
 
 const DEFAULT_LIMIT = 5;
 const MAX_LIMIT = 50;
+export const MAX_FIND_OPPORTUNITIES_TARGETS = 25;
+export const MAX_FIND_OPPORTUNITIES_OWNER_LENGTH = 39;
+export const MAX_FIND_OPPORTUNITIES_REPO_LENGTH = 100;
+export const MAX_FIND_OPPORTUNITIES_LANGUAGES = 20;
+export const MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH = 30;
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -81,14 +86,34 @@ export function validateFindOpportunitiesInput(
   if (!hasTargets && !hasSearch) {
     return { ok: false, reason: "targets_or_search_query_required" };
   }
+  let normalizedTargets: FindOpportunitiesTarget[] | undefined;
   if (hasTargets) {
+    if (targets!.length > MAX_FIND_OPPORTUNITIES_TARGETS) return { ok: false, reason: "too_many_targets" };
+    const seenTargets = new Set<string>();
+    normalizedTargets = [];
     for (const target of targets!) {
       const owner = typeof target?.owner === "string" ? target.owner.trim() : "";
       const repo = typeof target?.repo === "string" ? target.repo.trim() : "";
       if (!owner || !repo) return { ok: false, reason: "invalid_target" };
+      if (owner.length > MAX_FIND_OPPORTUNITIES_OWNER_LENGTH) return { ok: false, reason: "owner_too_long" };
+      if (repo.length > MAX_FIND_OPPORTUNITIES_REPO_LENGTH) return { ok: false, reason: "repo_too_long" };
+      const key = `${owner.toLowerCase()}/${repo.toLowerCase()}`;
+      if (seenTargets.has(key)) continue;
+      seenTargets.add(key);
+      normalizedTargets.push({ owner, repo });
     }
   }
   if (hasSearch && searchQuery.length > 500) return { ok: false, reason: "search_query_too_long" };
+  const languages = input.goalSpec?.languages;
+  if (languages !== undefined) {
+    if (!Array.isArray(languages) || languages.length > MAX_FIND_OPPORTUNITIES_LANGUAGES) {
+      return { ok: false, reason: "invalid_languages" };
+    }
+    for (const language of languages) {
+      const value = typeof language === "string" ? language.trim() : "";
+      if (!value || value.length > MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH) return { ok: false, reason: "invalid_languages" };
+    }
+  }
   const minRankScore = input.goalSpec?.minRankScore;
   if (minRankScore !== undefined && (!Number.isFinite(minRankScore) || minRankScore < 0 || minRankScore > 100)) {
     return { ok: false, reason: "invalid_min_rank_score" };
@@ -96,7 +121,7 @@ export function validateFindOpportunitiesInput(
   return {
     ok: true,
     value: {
-      ...(hasTargets ? { targets } : {}),
+      ...(normalizedTargets ? { targets: normalizedTargets } : {}),
       ...(hasSearch ? { searchQuery } : {}),
       ...(input.goalSpec ? { goalSpec: input.goalSpec } : {}),
       ...(input.limit !== undefined ? { limit: input.limit } : {}),

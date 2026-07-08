@@ -3,6 +3,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH,
+  MAX_FIND_OPPORTUNITIES_LANGUAGES,
+  MAX_FIND_OPPORTUNITIES_OWNER_LENGTH,
+  MAX_FIND_OPPORTUNITIES_REPO_LENGTH,
+  MAX_FIND_OPPORTUNITIES_TARGETS,
   normalizeFindOpportunitiesLimit,
   publicRankScore,
   runFindOpportunities,
@@ -61,10 +66,33 @@ describe("validateFindOpportunitiesInput", () => {
 
   it("rejects invalid targets and oversized search queries", () => {
     expect(validateFindOpportunitiesInput({ targets: [{ owner: "", repo: "demo" }] })).toEqual({ ok: false, reason: "invalid_target" });
+    expect(validateFindOpportunitiesInput({ targets: [{ owner: 123 as unknown as string, repo: "demo" }] })).toEqual({
+      ok: false,
+      reason: "invalid_target",
+    });
+    expect(validateFindOpportunitiesInput({ targets: [{ owner: "acme", repo: 456 as unknown as string }] })).toEqual({
+      ok: false,
+      reason: "invalid_target",
+    });
+    expect(
+      validateFindOpportunitiesInput({
+        targets: Array.from({ length: MAX_FIND_OPPORTUNITIES_TARGETS + 1 }, () => ({ owner: "acme", repo: "demo" })),
+      }),
+    ).toEqual({ ok: false, reason: "too_many_targets" });
+    expect(
+      validateFindOpportunitiesInput({ targets: [{ owner: "x".repeat(MAX_FIND_OPPORTUNITIES_OWNER_LENGTH + 1), repo: "demo" }] }),
+    ).toEqual({ ok: false, reason: "owner_too_long" });
+    expect(
+      validateFindOpportunitiesInput({ targets: [{ owner: "acme", repo: "x".repeat(MAX_FIND_OPPORTUNITIES_REPO_LENGTH + 1) }] }),
+    ).toEqual({ ok: false, reason: "repo_too_long" });
     expect(validateFindOpportunitiesInput({ searchQuery: "x".repeat(501) })).toEqual({ ok: false, reason: "search_query_too_long" });
     expect(
       validateFindOpportunitiesInput({ searchQuery: "docs", goalSpec: { minRankScore: 101 } }),
     ).toEqual({ ok: false, reason: "invalid_min_rank_score" });
+    expect(validateFindOpportunitiesInput({ searchQuery: "docs", goalSpec: { languages: [""] } })).toEqual({
+      ok: false,
+      reason: "invalid_languages",
+    });
   });
 
   it("accepts trimmed targets and search queries", () => {
@@ -75,10 +103,74 @@ describe("validateFindOpportunitiesInput", () => {
     });
     expect(parsed.ok).toBe(true);
     if (parsed.ok) {
-      expect(parsed.value.targets?.[0]).toEqual({ owner: " acme ", repo: " widgets " });
+      expect(parsed.value.targets?.[0]).toEqual({ owner: "acme", repo: "widgets" });
       expect(parsed.value.goalSpec).toEqual({ lane: "docs", minRankScore: 40 });
       expect(parsed.value.limit).toBe(3);
     }
+  });
+
+  it("deduplicates targets before downstream authorization and lookup work", () => {
+    const parsed = validateFindOpportunitiesInput({
+      targets: [
+        { owner: " acme ", repo: " widgets " },
+        { owner: "ACME", repo: "widgets" },
+        { owner: "acme", repo: "other" },
+      ],
+    });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value.targets).toEqual([
+        { owner: "acme", repo: "widgets" },
+        { owner: "acme", repo: "other" },
+      ]);
+    }
+  });
+
+  it("accepts exactly MAX_FIND_OPPORTUNITIES_TARGETS targets (boundary, not just the +1 overflow)", () => {
+    const parsed = validateFindOpportunitiesInput({
+      targets: Array.from({ length: MAX_FIND_OPPORTUNITIES_TARGETS }, (_, i) => ({ owner: "acme", repo: `demo${i}` })),
+    });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.value.targets).toHaveLength(MAX_FIND_OPPORTUNITIES_TARGETS);
+  });
+
+  it("rejects a non-array goalSpec.languages", () => {
+    expect(
+      validateFindOpportunitiesInput({ searchQuery: "docs", goalSpec: { languages: "typescript" as unknown as string[] } }),
+    ).toEqual({ ok: false, reason: "invalid_languages" });
+  });
+
+  it("rejects a non-string language entry", () => {
+    expect(
+      validateFindOpportunitiesInput({ searchQuery: "docs", goalSpec: { languages: [123 as unknown as string] } }),
+    ).toEqual({ ok: false, reason: "invalid_languages" });
+  });
+
+  it("rejects more than MAX_FIND_OPPORTUNITIES_LANGUAGES languages", () => {
+    expect(
+      validateFindOpportunitiesInput({
+        searchQuery: "docs",
+        goalSpec: { languages: Array.from({ length: MAX_FIND_OPPORTUNITIES_LANGUAGES + 1 }, (_, i) => `lang${i}`) },
+      }),
+    ).toEqual({ ok: false, reason: "invalid_languages" });
+  });
+
+  it("rejects a language entry longer than MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH", () => {
+    expect(
+      validateFindOpportunitiesInput({
+        searchQuery: "docs",
+        goalSpec: { languages: ["x".repeat(MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH + 1)] },
+      }),
+    ).toEqual({ ok: false, reason: "invalid_languages" });
+  });
+
+  it("accepts a valid languages list at or under the boundary", () => {
+    const parsed = validateFindOpportunitiesInput({
+      searchQuery: "docs",
+      goalSpec: { languages: ["typescript", "x".repeat(MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH)] },
+    });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.value.goalSpec).toEqual({ languages: ["typescript", "x".repeat(MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH)] });
   });
 });
 
@@ -130,6 +222,38 @@ describe("runFindOpportunities", () => {
       totalCandidates: 0,
       reason: "github_token_unavailable",
     });
+  });
+
+  it("checks access only once for duplicate targets", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "test-token" });
+    const allowedPolicy = readFixture("allowed-silent.md");
+    const accessChecks: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/repos/acme/allowed/contents/AI-USAGE.md")) return jsonResponse({}, { status: 404 });
+      if (url.includes("/repos/acme/allowed/contents/CONTRIBUTING.md")) return contentResponse(allowedPolicy);
+      if (url.includes("/repos/acme/allowed/issues?")) return jsonResponse([issue(5)]);
+      return jsonResponse({}, { status: 404 });
+    });
+
+    const result = await runFindOpportunities(
+      env,
+      {
+        targets: [
+          { owner: "acme", repo: "allowed" },
+          { owner: "ACME", repo: "allowed" },
+        ],
+      },
+      {
+        canAccessRepo: async (repoFullName) => {
+          accessChecks.push(repoFullName);
+          return true;
+        },
+      },
+    );
+
+    expect(result.status).toBe("ok");
+    expect(accessChecks).toEqual(["acme/allowed"]);
   });
 
   it("filters inaccessible targets via canAccessRepo", async () => {

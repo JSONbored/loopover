@@ -4,7 +4,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import { ElicitResultSchema, type ServerNotification, type ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { runFindOpportunities, validateFindOpportunitiesInput } from "./find-opportunities";
+import {
+  MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH,
+  MAX_FIND_OPPORTUNITIES_LANGUAGES,
+  MAX_FIND_OPPORTUNITIES_OWNER_LENGTH,
+  MAX_FIND_OPPORTUNITIES_REPO_LENGTH,
+  MAX_FIND_OPPORTUNITIES_TARGETS,
+  runFindOpportunities,
+  validateFindOpportunitiesInput,
+} from "./find-opportunities";
 import {
   authenticatePrivateToken,
   extractBearerToken,
@@ -216,17 +224,18 @@ const findOpportunitiesShape = {
   targets: z
     .array(
       z.object({
-        owner: z.string().min(1),
-        repo: z.string().min(1),
+        owner: z.string().min(1).max(MAX_FIND_OPPORTUNITIES_OWNER_LENGTH),
+        repo: z.string().min(1).max(MAX_FIND_OPPORTUNITIES_REPO_LENGTH),
       }),
     )
+    .max(MAX_FIND_OPPORTUNITIES_TARGETS)
     .optional(),
   searchQuery: z.string().min(1).max(500).optional(),
   goalSpec: z
     .object({
       lane: z.string().min(1).optional(),
       minRankScore: z.number().min(0).max(100).optional(),
-      languages: z.array(z.string().min(1)).optional(),
+      languages: z.array(z.string().min(1).max(MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH)).max(MAX_FIND_OPPORTUNITIES_LANGUAGES).optional(),
     })
     .optional(),
   limit: z.number().int().min(1).max(50).optional(),

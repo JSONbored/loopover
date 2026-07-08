@@ -30,10 +30,16 @@ concurrency:
   group: mcp-release-please
   cancel-in-progress: false
 
+# Deliberately no `environment: release` on the job below. The approval boundary lives at the
+# actual npm publish step (npm-publish.yml / publish-engine.yml's `publish` job), not here --
+# gating this job too would pause EVERY cron tick for manual approval, including the near-all
+# no-op runs that just check for new commits, defeating unattended automation entirely. This was
+# tried (#4182) and reverted for exactly that reason. release-please creating a tag/
+# GitHub Release unattended is accepted as within the automation's scope ("fully unattended
+# through npm publish"); only the registry-affecting, irreversible step is gated.
 jobs:
   release-please:
     runs-on: ubuntu-latest
-    environment: release
     timeout-minutes: 15
     permissions:
       contents: write
@@ -92,14 +98,21 @@ jobs:
       # release-please already created the tag/release (released_by_release_please=true skips both
       # workflows' own tag-creation and GitHub-release steps). Without this, merging a Release PR
       # would silently never publish.
+      #
+      # Dispatched against the release tag itself, NOT main: main can move between this step and
+      # the dispatched run actually starting (anything else merging in that window), and the
+      # publish workflow's own safety check hard-fails if the commit it's building doesn't match
+      # the tag release-please just created (confirmed live: engine-v0.2.0's first dry run hit
+      # exactly this race when an unrelated PR merged seconds apart). A tag doesn't move, so
+      # dispatching against it makes the publish deterministic regardless of main's activity.
       - name: Dispatch MCP publish
         if: ${{ steps.release.outputs['packages/gittensory-mcp--release_created'] == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run npm-publish.yml --ref main -f released_by_release_please=true
+        run: gh workflow run npm-publish.yml --ref "${{ steps.release.outputs['packages/gittensory-mcp--tag_name'] }}" -f released_by_release_please=true
 
       - name: Dispatch Engine publish
         if: ${{ steps.release.outputs['packages/gittensory-engine--release_created'] == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run publish-engine.yml --ref main -f released_by_release_please=true
+        run: gh workflow run publish-engine.yml --ref "${{ steps.release.outputs['packages/gittensory-engine--tag_name'] }}" -f released_by_release_please=true

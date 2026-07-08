@@ -133,6 +133,12 @@ function Tuning() {
           symbols defined just outside the diff hunk. Per-PR.
         </li>
         <li>
+          <code>GITTENSORY_REVIEW_E2E_TESTS</code> — master kill-switch for the opt-in,
+          maintainer-triggered AI-generated E2E test coverage feature. Off by default; a repo also
+          needs its own <code>features.e2eTests: true</code> override in{" "}
+          <code>.gittensory.yml</code> before the feature is active for it. Per-PR.
+        </li>
+        <li>
           <code>GITTENSORY_REVIEW_RAG</code> — retrieval-augmented context: queries the codebase
           vector index for related code and docs (callers, related modules, existing conventions)
           and appends a "Relevant existing code / docs" section to the reviewer prompt. Additive

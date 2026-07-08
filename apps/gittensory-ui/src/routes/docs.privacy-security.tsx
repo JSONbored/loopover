@@ -95,6 +95,7 @@ GITTENSORY_REVIEW_INLINE_COMMENTS="true"         # diff-anchored inline PR revie
 GITTENSORY_REVIEW_FIX_HANDOFF="true"             # machine-readable fix-handoff block (contributor-run)
 GITTENSORY_REVIEW_PLANNER="true"                 # @gittensory plan on-demand implementation plan
 GITTENSORY_REVIEW_SCREENSHOTS="true"             # before/after visual capture for UI changes
+GITTENSORY_REVIEW_E2E_TESTS="true"               # AI-generated E2E test coverage (needs features.e2eTests too)
 
 # Global (cron / endpoint) flags, not scoped by GITTENSORY_REVIEW_REPOS.
 GITTENSORY_REVIEW_OPS="true"                     # read-only anomaly scan + outcome stats endpoint

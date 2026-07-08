@@ -207,8 +207,11 @@ export type CopycatGateMode = "off" | "warn" | "label" | "block";
 // outside this block, as its own top-level `review.selftune` field below — it has no `GITTENSORY_REVIEW_REPOS`
 // allowlist to fall back to (its own repo scoping is `isAgentConfigured`, a different consent boundary), so it
 // doesn't fit this resolver's env-kill-switch → override → allowlist-default shape; see `selfTuneRepos` in
-// `review/selftune-wire.ts`.
-export const CONVERGED_FEATURE_KEYS = ["rag", "reputation", "unifiedComment", "safety", "grounding"] as const;
+// `review/selftune-wire.ts`. `e2eTests` (#4190, part of the #4189 E2E-test-generation epic) fits this shape
+// exactly as a plain symmetric override — unlike `safety`/`grounding` it has no force-on-only or force-off-only
+// floor/ceiling, since AI-generated test content carries no security-hardening or full-file-fetch rationale to
+// protect from a repo-controlled override.
+export const CONVERGED_FEATURE_KEYS = ["rag", "reputation", "unifiedComment", "safety", "grounding", "e2eTests"] as const;
 export type ConvergedFeatureKey = (typeof CONVERGED_FEATURE_KEYS)[number];
 
 /** Per-repo activation overrides for the converged review features (`features:` block). `true`/`false` force the
@@ -523,11 +526,15 @@ export type FocusManifestReviewConfig = {
    *  (#1955) knobs. (#2047) */
   commentVerbosity: CommentVerbosity | null;
   /** `review.path_instructions`: per-path natural-language guidance handed to the AI reviewer when the PR's
-   *  changed files match the glob. Empty (default) ⇒ byte-identical reviewer prompt. (#review-path-instructions) */
+   *  changed files match the glob. Empty (default) ⇒ byte-identical reviewer prompt. Also consumed by
+   *  AI-generated E2E test coverage (`resolveE2eTestGenInstructions` in `ai-e2e-test-gen.ts`, #4200) when
+   *  that feature is enabled — the same maintainer-authored guidance steers both consumers, no separate
+   *  test-generation-specific instructions schema. (#review-path-instructions) */
   pathInstructions: ReviewPathInstruction[];
   /** `review.instructions`: a repo-level natural-language brief handed to the AI reviewer on EVERY review (vs the
    *  per-path path_instructions) — the maintainer's conventions/voice for this repo. Bounded + public-safe at parse
-   *  time (so it stays cost-cheap, unlike ingesting a whole CLAUDE.md). null (default, absent) ⇒ byte-identical
+   *  time (so it stays cost-cheap, unlike ingesting a whole CLAUDE.md). Also consumed by AI-generated E2E test
+   *  coverage (#4200) for the same reason as pathInstructions above. null (default, absent) ⇒ byte-identical
    *  reviewer prompt. (#review-instructions) */
   instructions: string | null;
   /** `review.exclude_paths`: globs whose matching files are EXCLUDED from the AI review (diff + grounding + RAG)
@@ -884,6 +891,7 @@ const EMPTY_FEATURES_CONFIG: FocusManifestFeaturesConfig = {
   unifiedComment: null,
   safety: null,
   grounding: null,
+  e2eTests: null,
 };
 
 const EMPTY_CONTENT_LANE_CONFIG: FocusManifestContentLaneConfig = {

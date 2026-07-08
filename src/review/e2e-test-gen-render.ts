@@ -12,17 +12,32 @@
 import { AGENT_COMMAND_COMMENT_MARKER } from "../github/comments";
 import { gittensoryFooter } from "../github/footer";
 
+/** Outcome of an attempted `commit`-mode delivery (#4197), or its absence entirely (comment-only mode, or
+ *  generation itself produced nothing usable — see `buildE2eTestGenCommentBody`'s own null-testSource
+ *  branch). `blocked` is distinct from `declined`: it means commit delivery was never attempted because the
+ *  PR author is a confirmed Gittensor miner (#4201's scoring-integrity safeguard), not a GitHub-side failure. */
+export type E2eTestGenCommitOutcome =
+  | { status: "committed"; commitSha: string; htmlUrl: string }
+  | { status: "declined"; reason: string }
+  | { status: "blocked" };
+
 export type E2eTestGenCommentInput = {
   actor: string;
   /** The generated test source, or null when generation ran but produced nothing usable. */
   testSource: string | null;
   framework?: string | undefined;
+  /** Present only when `commit` delivery mode was configured AND generation produced a usable test. Absent
+   *  for comment-only delivery — the generated test always renders as a suggestion in that case. */
+  commit?: E2eTestGenCommitOutcome | undefined;
 };
 
 /**
  * Build the PR-comment body for a `@gittensory generate-tests` result. A null `testSource` renders a
  * clear "nothing usable" note rather than silently posting no comment at all — the maintainer who invoked
- * the command should always get a response, even a negative one.
+ * the command should always get a response, even a negative one. When `commit` delivery succeeded, the
+ * comment links to the pushed commit instead of repeating its content (the commit IS the deliverable); when
+ * it was declined or blocked, the comment explains why AND still renders the generated test as a suggestion,
+ * so a maintainer never loses the generated content just because the heavier delivery mode didn't apply.
  */
 export function buildE2eTestGenCommentBody(input: E2eTestGenCommentInput): string {
   const framework = input.framework?.trim() || "Playwright";
@@ -38,12 +53,34 @@ export function buildE2eTestGenCommentBody(input: E2eTestGenCommentInput): strin
       gittensoryFooter(),
     ].join("\n");
   }
+  if (input.commit?.status === "committed") {
+    return [
+      AGENT_COMMAND_COMMENT_MARKER,
+      "",
+      "> [!NOTE]",
+      `> **AI-generated ${framework} test for @${input.actor} — pushed as a commit**`,
+      `> [View the commit](${input.commit.htmlUrl}) (\`${input.commit.commitSha.slice(0, 7)}\`). This is a suggestion, not a guarantee — review it like any other test before merging.`,
+      "",
+      "---",
+      gittensoryFooter(),
+    ].join("\n");
+  }
+  const declineNote =
+    input.commit?.status === "declined"
+      ? [`> Commit delivery was requested but declined: ${input.commit.reason}. Posting it as a suggestion instead.`, ""]
+      : input.commit?.status === "blocked"
+        ? [
+            "> Commit delivery was requested, but this PR's author is a confirmed Gittensor miner — a maintainer-authored commit is never pushed onto a scored contribution's branch, to keep the externally-computed score honest. Posting it as a suggestion instead.",
+            "",
+          ]
+        : [];
   return [
     AGENT_COMMAND_COMMENT_MARKER,
     "",
     "> [!NOTE]",
     `> **AI-generated ${framework} test for @${input.actor}**`,
     "> This is a suggestion, not a guarantee — review it like any other test before merging.",
+    ...declineNote,
     "",
     "```typescript",
     input.testSource,

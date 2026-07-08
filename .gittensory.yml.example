@@ -493,6 +493,16 @@ review:
   # quiet | normal | detailed. Default: null/normal (byte-identical).
   # comment_verbosity: normal
 
+  # How a `@gittensory generate-tests` result is delivered, once features.e2eTests is on (#4197, part of
+  # the #4189 E2E-test-generation epic). `comment` (default, null/absent) posts the generated test as a
+  # reply comment only. `commit` pushes it as a real commit onto the PR's own head branch instead -- a
+  # bigger blast radius, so it stays opt-in even with e2eTests already enabled. `commit` mode is ALSO
+  # blocked at runtime (regardless of this setting) for a PR whose author is a confirmed Gittensor miner,
+  # to protect the externally-computed score from ever including a maintainer-authored line the miner
+  # didn't write themselves.
+  # comment | commit. Default: null/comment (byte-identical -- no write access to any PR branch).
+  # e2e_test_delivery: comment
+
   # Inline-comment layer toggles (#1956 / #1958). Bool | null. Default: null/false — byte-identical.
   # Requires operator flag GITTENSORY_REVIEW_INLINE_COMMENTS + cutover allowlist + review.inline_comments: true.
   # inline_comments: false

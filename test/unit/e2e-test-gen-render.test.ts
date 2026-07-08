@@ -26,4 +26,42 @@ describe("buildE2eTestGenCommentBody", () => {
     const body = buildE2eTestGenCommentBody({ actor: "maintainer", testSource: null, framework: "Cypress" });
     expect(body).toContain("didn't parse as valid Cypress source");
   });
+
+  it("links to the commit instead of repeating the code when commit delivery succeeded", () => {
+    const body = buildE2eTestGenCommentBody({
+      actor: "maintainer",
+      testSource: "test('x', () => {});",
+      commit: { status: "committed", commitSha: "abcdef1234567890", htmlUrl: "https://github.com/o/r/commit/abcdef1234567890" },
+    });
+    expect(body).toContain("pushed as a commit");
+    expect(body).toContain("[View the commit](https://github.com/o/r/commit/abcdef1234567890)");
+    expect(body).toContain("`abcdef1`"); // short sha
+    expect(body).not.toContain("```typescript"); // the commit IS the deliverable, not repeated inline
+  });
+
+  it("still renders the suggestion, with a reason, when commit delivery was declined", () => {
+    const body = buildE2eTestGenCommentBody({
+      actor: "maintainer",
+      testSource: "test('x', () => {});",
+      commit: { status: "declined", reason: "no write access to the PR branch" },
+    });
+    expect(body).toContain("Commit delivery was requested but declined: no write access to the PR branch");
+    expect(body).toContain("```typescript\ntest('x', () => {});\n```"); // falls back to the suggestion
+  });
+
+  it("still renders the suggestion, with the scoring-integrity reason, when commit delivery was blocked for a confirmed miner", () => {
+    const body = buildE2eTestGenCommentBody({
+      actor: "maintainer",
+      testSource: "test('x', () => {});",
+      commit: { status: "blocked" },
+    });
+    expect(body).toContain("confirmed Gittensor miner");
+    expect(body).toContain("```typescript\ntest('x', () => {});\n```");
+  });
+
+  it("renders exactly like comment-only mode when commit is omitted entirely", () => {
+    const withoutCommit = buildE2eTestGenCommentBody({ actor: "maintainer", testSource: "test('x', () => {});" });
+    const withUndefinedCommit = buildE2eTestGenCommentBody({ actor: "maintainer", testSource: "test('x', () => {});", commit: undefined });
+    expect(withUndefinedCommit).toBe(withoutCommit);
+  });
 });

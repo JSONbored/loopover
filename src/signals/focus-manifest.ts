@@ -6,6 +6,7 @@
 export {
   COMMENT_VERBOSITY_LEVELS,
   CONVERGED_FEATURE_KEYS,
+  E2E_TEST_DELIVERY_MODES,
   EMPTY_AUTO_REVIEW_CONFIG,
   EMPTY_MAX_FINDINGS_CONFIG,
   EMPTY_SELF_HOST_AI_MODEL_CONFIG,
@@ -34,6 +35,7 @@ export {
   type AutoReviewConfig,
   type CommentVerbosity,
   type ConvergedFeatureKey,
+  type E2eTestDeliveryMode,
   type FocusManifest,
   type FocusManifestContentLaneConfig,
   type FocusManifestFeaturesConfig,
@@ -85,6 +87,7 @@ import {
   matchesManifestPath,
   type AutoReviewConfig,
   type CommentVerbosity,
+  type E2eTestDeliveryMode,
   type FocusManifest,
   type FocusManifestFinding,
   type FocusManifestGateConfig,
@@ -247,7 +250,7 @@ export function composeManifestReviewInstructions(instructions: string | null, t
  *  failure). A null manifest yields the byte-identical defaults. Centralized so the AI-review caller threads them
  *  in one place with the null-manifest branch covered here (unit-tested) rather than inline in the processor.
  *  (#review-profile / #review-tone / #review-security-focus / #review-path-instructions / #review-exclude-paths / #2043 / #selfhost-ai-model-override / #1956) */
-export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { profile: ReviewProfile | null; tone: string | null; securityFocus: boolean; inlineComments: boolean; suggestions: boolean; changedFilesSummary: boolean; effortScore: boolean; impactMap: boolean; cultureProfile: boolean; findingCategories: boolean; inlineCommentsPerCategory: number | null; minFindingSeverity: ReviewFindingSeverity | null; maxFindings: MaxFindingsConfig; commentVerbosity: CommentVerbosity | null; pathInstructions: ReviewPathInstruction[]; instructions: string | null; excludePaths: string[]; pathFilters: string[]; selfHostAiModel: SelfHostAiModelConfig } {
+export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { profile: ReviewProfile | null; tone: string | null; securityFocus: boolean; inlineComments: boolean; suggestions: boolean; changedFilesSummary: boolean; effortScore: boolean; impactMap: boolean; cultureProfile: boolean; findingCategories: boolean; inlineCommentsPerCategory: number | null; minFindingSeverity: ReviewFindingSeverity | null; maxFindings: MaxFindingsConfig; commentVerbosity: CommentVerbosity | null; e2eTestDelivery: E2eTestDeliveryMode | null; pathInstructions: ReviewPathInstruction[]; instructions: string | null; excludePaths: string[]; pathFilters: string[]; selfHostAiModel: SelfHostAiModelConfig } {
   // inlineComments resolves to a strict boolean — true ONLY when the manifest explicitly set review.inline_comments:
   // true; null/false/absent ⇒ false. `shouldRequestInlineFindings` (#4099) only ever checks `=== true`, so null
   // and false are functionally identical to it — collapsing here (matching every sibling field below) is simpler
@@ -270,7 +273,7 @@ export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { 
   // cultureProfile resolves the same way (#2995) — true ONLY when the manifest explicitly set
   // review.culture_profile: true. The caller ANDs this per-repo opt-in with the GITTENSORY_REVIEW_CULTURE_PROFILE
   // global kill-switch (mirrors how RAG/reputation/grounding compose a global flag with a per-repo override).
-  return { profile: manifest?.review.profile ?? null, tone: manifest?.review.tone ?? null, securityFocus: manifest?.review.securityFocus === true, inlineComments: manifest?.review.inlineComments === true, suggestions: manifest?.review.suggestions === true, changedFilesSummary: manifest?.review.changedFilesSummary === true, effortScore: manifest?.review.effortScore === true, impactMap: manifest?.review.impactMap === true, cultureProfile: manifest?.review.cultureProfile === true, findingCategories: manifest?.review.findingCategories === true, inlineCommentsPerCategory: manifest?.review.inlineCommentsPerCategory ?? null, minFindingSeverity: manifest?.review.minFindingSeverity ?? null, maxFindings: manifest?.review.maxFindings ?? { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: manifest?.review.commentVerbosity ?? null, pathInstructions: manifest?.review.pathInstructions ?? [], instructions: manifest?.review.instructions ?? null, excludePaths: manifest?.review.excludePaths ?? [], pathFilters: manifest?.review.pathFilters ?? [], selfHostAiModel: resolveReviewSelfHostAiModel(manifest) };
+  return { profile: manifest?.review.profile ?? null, tone: manifest?.review.tone ?? null, securityFocus: manifest?.review.securityFocus === true, inlineComments: manifest?.review.inlineComments === true, suggestions: manifest?.review.suggestions === true, changedFilesSummary: manifest?.review.changedFilesSummary === true, effortScore: manifest?.review.effortScore === true, impactMap: manifest?.review.impactMap === true, cultureProfile: manifest?.review.cultureProfile === true, findingCategories: manifest?.review.findingCategories === true, inlineCommentsPerCategory: manifest?.review.inlineCommentsPerCategory ?? null, minFindingSeverity: manifest?.review.minFindingSeverity ?? null, maxFindings: manifest?.review.maxFindings ?? { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: manifest?.review.commentVerbosity ?? null, e2eTestDelivery: manifest?.review.e2eTestDelivery ?? null, pathInstructions: manifest?.review.pathInstructions ?? [], instructions: manifest?.review.instructions ?? null, excludePaths: manifest?.review.excludePaths ?? [], pathFilters: manifest?.review.pathFilters ?? [], selfHostAiModel: resolveReviewSelfHostAiModel(manifest) };
 }
 
 /** Resolve `review.memory` (#2179, config slice of #1964) from a possibly-null manifest (null = load failure ⇒

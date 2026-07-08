@@ -30,6 +30,9 @@ export const ENGINE_DECISION_GUARDRAIL_GLOBS = [
   "src/github/pr-actions.ts",
   "src/github/app.ts",
   "src/github/backfill.ts",
+  // #4197: writes a real commit onto a CONTRIBUTOR's own PR branch (not a branch gittensory owns) — the same
+  // guardrail tier as pr-actions.ts/app.ts for the same reason, a new GitHub-write surface.
+  "src/github/e2e-test-commit.ts",
   "src/scoring/**",
   "src/auth/**",
   "src/review/safety.ts",

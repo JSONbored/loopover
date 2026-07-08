@@ -488,8 +488,9 @@ import { computeImpactMap, type ImpactMapEntry } from "../review/impact-map";
 import { formatImpactMapPromptSection, shouldComputeImpactMap } from "../review/impact-map-wire";
 import { shouldEmitFixHandoff } from "../review/fix-handoff";
 import { buildFixHandoffBlocks } from "../review/fix-handoff-render";
-import { buildE2eTestGenCommentBody } from "../review/e2e-test-gen-render";
+import { buildE2eTestGenCommentBody, type E2eTestGenCommitOutcome } from "../review/e2e-test-gen-render";
 import { resolveE2eTestGenInstructions, runGittensoryE2eTestGeneration } from "../services/ai-e2e-test-gen";
+import { commitE2eTestToPrBranch } from "../github/e2e-test-commit";
 import {
   buildRepoCultureProfileContext,
   isRepoCultureProfileEnabled,
@@ -11447,6 +11448,14 @@ async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, pa
     await recordGenerateTestsSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "feature_disabled");
     return true;
   }
+  // Same dry-run/paused gate every other action command respects (mirrors maybeProcessResolveCommand's own
+  // resolveAgentActionMode check) — an agent-paused or dry-run repo gets no generated content posted at all.
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
+  if (mode !== "live") {
+    const skipReason = mode === "dry_run" ? "dry_run" : "agent_paused";
+    await recordGenerateTestsSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, skipReason);
+    return true;
+  }
   const files = await listPullRequestFiles(env, req.repoFullName, req.pr.number);
   const changedPaths = files.map((file) => file.path);
   // BYOK resolution mirrors runAiReviewForAdvisory's own (re-resolved per-caller is this codebase's
@@ -11467,7 +11476,41 @@ async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, pa
     providerKey,
   });
   const testSource = result.status === "ok" ? result.testSource : null;
-  const body = buildE2eTestGenCommentBody({ actor: req.actor, testSource });
+
+  // Delivery escalation (#4197): "comment" (default) never attempts a write; "commit" pushes the generated
+  // test onto the PR's own head branch, UNLESS the PR author is a confirmed Gittensor miner (#4201's
+  // scoring-integrity safeguard) — that check runs regardless of this repo's own delivery config, since the
+  // external, upstream-computed score must never be able to include a maintainer-authored line a miner didn't
+  // write themselves.
+  const deliveryMode = resolveReviewPromptOverrides(manifest).e2eTestDelivery ?? "comment";
+  let commitOutcome: E2eTestGenCommitOutcome | undefined;
+  if (testSource && deliveryMode === "commit") {
+    const minerDetection = pr.authorLogin
+      ? await getCachedOfficialMinerDetection(env, pr.authorLogin, { targetKey, deliveryId })
+      : ({ status: "not_found" } as const);
+    if (minerDetection.status === "confirmed") {
+      commitOutcome = { status: "blocked" };
+    } else if (pr.headSha && pr.headRef) {
+      const attempt = await commitE2eTestToPrBranch(env, {
+        installationId: req.installationId,
+        repoFullName: req.repoFullName,
+        prNumber: req.pr.number,
+        headRef: pr.headRef,
+        headSha: pr.headSha,
+        testSource,
+        actor: req.actor,
+        mode,
+      });
+      // The render layer only distinguishes committed/declined/blocked -- an "error" (unexpected failure,
+      // vs. an expected can-never-work case) is still surfaced to the maintainer as "declined", with its
+      // real reason, so the generated test is never silently dropped just because the write failed oddly.
+      commitOutcome = attempt.status === "error" ? { status: "declined", reason: attempt.reason } : attempt;
+    } else {
+      commitOutcome = { status: "declined", reason: "the PR's head branch/commit is not cached" };
+    }
+  }
+
+  const body = buildE2eTestGenCommentBody({ actor: req.actor, testSource, commit: commitOutcome });
   try {
     await createIssueComment(env, req.installationId, req.repoFullName, req.pr.number, sanitizePublicComment(body));
   } catch (error) {
@@ -11489,9 +11532,9 @@ async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, pa
     targetKey,
     outcome: "completed",
     detail: testSource ? "Generated an E2E test." : `No usable test generated (${result.status}).`,
-    metadata: { deliveryId, repoFullName: req.repoFullName, status: result.status, byok: Boolean(providerKey) },
+    metadata: { deliveryId, repoFullName: req.repoFullName, status: result.status, byok: Boolean(providerKey), deliveryMode, ...(commitOutcome ? { commitStatus: commitOutcome.status } : {}) },
   });
-  await recordGithubProductUsage(env, "e2e_tests_generation", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: { status: result.status, generated: Boolean(testSource) } });
+  await recordGithubProductUsage(env, "e2e_tests_generation", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: { status: result.status, generated: Boolean(testSource), deliveryMode, ...(commitOutcome ? { commitStatus: commitOutcome.status } : {}) } });
   return true;
 }
 

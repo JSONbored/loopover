@@ -3182,6 +3182,159 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 222 },
+      "id": 200,
+      "title": "Cloudflare D1 (Central Cloud, #3810)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 7000000000 },
+              { "color": "red", "value": 9000000000 }
+            ]
+          },
+          "unit": "decbytes"
+        }
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 223 },
+      "id": 201,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "title": "D1 Database Size (-1 = probe disabled/no sample yet)",
+      "description": "Cloudflare D1 file size for the monitored database, from the opt-in Management API probe (src/selfhost/d1-size-probe.ts, CLOUDFLARE_D1_MONITOR_* env vars). -1 means the probe is disabled or has never completed a successful sample. D1's known per-database cap is ~10GB (#3810).",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "gittensory_d1_database_size_bytes",
+          "legendFormat": "size",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 50 }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 223 },
+      "id": 202,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "title": "signal_snapshots Rows per Dedup Key (-1 = unavailable)",
+      "description": "signal_snapshots row count divided by its distinct (signal_type, target_key) count, scoped to the latest-only-dedup signal types dedupeSignalSnapshots (src/db/retention.ts) converges to ~1 row per key. A climbing value means the daily dedup job has stopped running or its allowlist regressed -- the 2026-07-06 incident ratio was ~157 (342243 rows / 2183 keys).",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "gittensory_signal_snapshots_rows_per_key",
+          "legendFormat": "rows/key",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 223 },
+      "id": 203,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "title": "D1 Probe Errors (total)",
+      "description": "Cloudflare Management API probe failures (src/selfhost/d1-size-probe.ts), labeled by part (database_info/table_row_count). Climbing while the size/row-count panels stay flat means the PROBE is broken (bad/expired token, wrong account or database id), not that the database stopped growing.",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(gittensory_d1_probe_errors_total) or vector(0)",
+          "legendFormat": "errors",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 227 },
+      "id": 204,
+      "options": {
+        "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "D1 Database Size & Monitored Table Row Counts",
+      "description": "Trend view of the same D1 size/row-count probe as the stat panels above -- database bytes on the left axis scale, monitored-table row counts (RETENTION_POLICY's tables, src/db/retention.ts) labeled by table.",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "gittensory_d1_database_size_bytes",
+          "legendFormat": "database bytes",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "gittensory_d1_table_row_count",
+          "legendFormat": "{{table}} rows",
+          "refId": "B"
+        }
+      ]
     }
   ],
   "refresh": "30s",
@@ -3206,5 +3359,5 @@
   "timezone": "browser",
   "title": "Gittensory Self-Host",
   "uid": "gittensory-selfhost",
-  "version": 9
+  "version": 10
 }

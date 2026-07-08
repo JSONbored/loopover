@@ -134,6 +134,10 @@ const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["gittensory_pr_state_cache_total", { help: "Pull-request state cache outcomes.", type: "counter" }],
   ["gittensory_ci_state_cache_total", { help: "CI-state snapshot cache outcomes.", type: "counter" }],
   ["gittensory_ops_anomaly_total", { help: "Ops anomaly scan detections (review burst / review failure burst), by repo and kind.", type: "counter" }],
+  ["gittensory_d1_database_size_bytes", { help: "Cloudflare D1 database file size in bytes, from the opt-in Management API size/row-count probe (#3810); -1 when the probe is disabled or has never completed a successful sample.", type: "gauge" }],
+  ["gittensory_d1_table_row_count", { help: "Row count for a monitored D1 table, from the same probe as gittensory_d1_database_size_bytes, labeled by table.", type: "gauge" }],
+  ["gittensory_signal_snapshots_rows_per_key", { help: "signal_snapshots row count divided by its distinct (signal_type, target_key) count, scoped to the latest-only-dedup signal types dedupeSignalSnapshots converges to ~1 row per key; -1 when the probe is disabled or has never completed a successful sample.", type: "gauge" }],
+  ["gittensory_d1_probe_errors_total", { help: "D1 size/row-count Management API probe failures, by part (database_info/table_row_count).", type: "counter" }],
 ];
 const metricMeta = new Map<string, MetricMeta>(DEFAULT_METRIC_META);
 

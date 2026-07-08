@@ -66,6 +66,18 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/ai.ts",
   },
   {
+    name: "CLOUDFLARE_D1_MONITOR_ACCOUNT_ID",
+    firstReference: "src/selfhost/d1-size-probe.ts",
+  },
+  {
+    name: "CLOUDFLARE_D1_MONITOR_API_TOKEN",
+    firstReference: "src/selfhost/d1-size-probe.ts",
+  },
+  {
+    name: "CLOUDFLARE_D1_MONITOR_DATABASE_ID",
+    firstReference: "src/selfhost/d1-size-probe.ts",
+  },
+  {
     name: "CODEX_AI_EFFORT",
     firstReference: "src/selfhost/ai.ts",
   },
@@ -409,6 +421,9 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `CLAUDE_AI_EFFORT` | `src/selfhost/ai.ts` |",
   "| `CLAUDE_AI_MODEL` | `src/selfhost/ai.ts` |",
   "| `CLAUDE_AI_TIMEOUT_MS` | `src/selfhost/ai.ts` |",
+  "| `CLOUDFLARE_D1_MONITOR_ACCOUNT_ID` | `src/selfhost/d1-size-probe.ts` |",
+  "| `CLOUDFLARE_D1_MONITOR_API_TOKEN` | `src/selfhost/d1-size-probe.ts` |",
+  "| `CLOUDFLARE_D1_MONITOR_DATABASE_ID` | `src/selfhost/d1-size-probe.ts` |",
   "| `CODEX_AI_EFFORT` | `src/selfhost/ai.ts` |",
   "| `CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS` | `src/selfhost/ai.ts` |",
   "| `CODEX_AI_MODEL` | `src/selfhost/ai.ts` |",

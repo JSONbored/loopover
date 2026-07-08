@@ -94,7 +94,12 @@ export async function pruneExpiredRecords(
 
 export type SignalSnapshotDedupeResult = { signalType: string; deleted: number };
 
-const LATEST_ONLY_SIGNAL_SNAPSHOT_TYPES = [
+/** Exported so the D1 size/row-count observability probe (#3810, src/selfhost/d1-size-probe.ts) can scope its
+ *  signal_snapshots "rows per dedup key" ratio to exactly the population this dedup job converges to ~1 row
+ *  per key -- NOT the whole table, which intentionally keeps bounded multi-row history for other signal
+ *  types (queue-health, contributor-decision-pack, ...). Single source of truth: if this list changes, the
+ *  probe's ratio scope changes with it automatically. */
+export const LATEST_ONLY_SIGNAL_SNAPSHOT_TYPES = [
   "repo-culture-profile",
   "repo-doc-refresh-attempt",
   "repo-focus-manifest",

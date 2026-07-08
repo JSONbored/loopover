@@ -379,6 +379,19 @@ declare global {
      *  flagged (see the same-author guard in buildCollisionReport). Default OFF — unset/false leaves every
      *  PullRequestRecord's changedFiles unset, byte-identical to today. See src/signals/engine.ts prItem. */
     GITTENSORY_OPEN_PR_FILE_COLLISION?: string;
+    /** D1 size/row-count observability probe (#3810): the Cloudflare account id that owns the D1 database to
+     *  monitor. Presence of this AND the two vars below IS the enablement switch (see isD1SizeProbeEnabled,
+     *  src/selfhost/d1-size-probe.ts) -- unset/blank ⇒ the probe never runs, byte-identical to today. Most
+     *  self-host operators run their own SQLite/Postgres backend and have no Cloudflare D1 to watch; this is
+     *  for whichever deployment owns a real D1 worth monitoring (including gittensory's own central cloud
+     *  database, the one that hit its ~10GB cap on 2026-07-06). */
+    CLOUDFLARE_D1_MONITOR_ACCOUNT_ID?: string;
+    /** The D1 database id (uuid) to monitor. See CLOUDFLARE_D1_MONITOR_ACCOUNT_ID. */
+    CLOUDFLARE_D1_MONITOR_DATABASE_ID?: string;
+    /** A Cloudflare API token with read access to D1 for the account above (a scoped, read-only custom
+     *  token is sufficient — this probe never writes). A secret — never commit a real value. See
+     *  CLOUDFLARE_D1_MONITOR_ACCOUNT_ID. */
+    CLOUDFLARE_D1_MONITOR_API_TOKEN?: string;
   }
 }
 

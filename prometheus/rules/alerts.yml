@@ -552,3 +552,66 @@ groups:
           summary: "gittensory host clock skew is CRITICAL ({{ $value | printf \"%.0f\" }}s) -- GitHub App auth is likely failing"
           description: "Clock skew has exceeded 120s (sustained 2m), well past the point GitHub App JWT auth (\"Bad credentials\") is expected to start failing fleet-wide."
           runbook: "Same as GittensoryClockSkewWarning, but treat as urgent: fix NTP sync immediately (chronyc sources, chronyc makestep, restart chrony if every source stays at Reach: 0). Check for github_app_jwt_rejected logs to confirm auth impact."
+
+  # ── Cloudflare D1 (central cloud) size + signal_snapshots dedup regression (#3810) ────
+  # gittensory_d1_* metrics come from the OPT-IN Cloudflare Management API probe (src/selfhost/
+  # d1-size-probe.ts, CLOUDFLARE_D1_MONITOR_* env vars) -- absent/disabled reads -1 on every gauge below,
+  # comfortably under every threshold here, so these rules never fire on an install that hasn't configured
+  # the probe (most self-host installs run their own SQLite/Postgres backend and have nothing to monitor).
+  - name: gittensory-d1-storage
+    rules:
+      - alert: GittensoryD1DatabaseSizeWarning
+        # 7e9 bytes is ~70% of D1's known ~10GB per-database cap that was hit on 2026-07-06 (#3810), which
+        # caused real D1 writes (including an Orb relay registration handshake) to start failing/timing out.
+        expr: gittensory_d1_database_size_bytes > 7000000000
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Cloudflare D1 database size is approaching its cap"
+          description: "The monitored D1 database is {{ $value | humanize }}B, over 70% of the ~10GB per-database cap (sustained 30m)."
+          runbook: "Check the D1 panel's per-table row counts (Cloudflare D1 (Central Cloud) row) and confirm the daily signal_snapshots dedup job (dedupeSignalSnapshots, wired into prune-retention) is actually running. See #3810 for the 2026-07-06 incident this guards against."
+
+      - alert: GittensoryD1DatabaseSizeCritical
+        # 9e9 bytes is ~90% of the ~10GB cap -- D1 writes started failing fleet-wide the last time the
+        # database actually hit the cap, so this is meant to fire well before that happens again.
+        expr: gittensory_d1_database_size_bytes > 9000000000
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cloudflare D1 database size is CRITICAL -- writes may start failing soon"
+          description: "The monitored D1 database is {{ $value | humanize }}B, over 90% of the ~10GB per-database cap (sustained 10m). D1 writes failed fleet-wide the last time this cap was hit (2026-07-06)."
+          runbook: "Immediate: verify the signal_snapshots dedup job is running (POST /v1/internal/retention/preview, or check audit_events for its record) and identify + trim/archive any other unbounded table from the row-count panel. Contact Cloudflare to raise the account storage limit if cleanup alone doesn't recover enough headroom."
+
+      - alert: GittensorySignalSnapshotsDedupRegression
+        # gittensory_signal_snapshots_rows_per_key is rows-per-distinct-key scoped ONLY to the four
+        # latest-only-dedup signal types dedupeSignalSnapshots (src/db/retention.ts) actually converges to
+        # ~1 row per key -- NOT the whole signal_snapshots table, which intentionally keeps bounded
+        # multi-row history for other signal types (queue-health, contributor-decision-pack, ...). Healthy
+        # steady-state stays a small multiple of 1 (rows can accumulate for up to a day between the daily
+        # dedup run); 10 is a wide margin above that, while the actual 2026-07-06 incident ratio (342243
+        # rows / 2183 keys) was ~157 -- so a value anywhere near double digits means the dedup job has
+        # stopped running, started erroring, or its allowlist regressed.
+        expr: gittensory_signal_snapshots_rows_per_key > 10
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "signal_snapshots dedup-by-key ratio is climbing"
+          description: "signal_snapshots has {{ $value | printf \"%.1f\" }} rows per distinct dedup key (sustained 30m) -- the daily dedupeSignalSnapshots job may not be running."
+          runbook: "Confirm the prune-retention cron (03:00 UTC daily) is completing (audit_events around that time) and that dedupeSignalSnapshots isn't throwing. See #3810 and src/db/retention.ts."
+
+      - alert: GittensoryD1ProbeFailing
+        # The probe itself (a Cloudflare Management API call) can fail independently of the database it
+        # monitors -- an expired/rotated API token, a wrong account/database id, or a Cloudflare API outage.
+        # Without this, an operator would see a flat/stale D1 panel and could mistake "the probe broke" for
+        # "the database stopped growing".
+        expr: increase(gittensory_d1_probe_errors_total[1h]) > 3
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "the Cloudflare D1 size/row-count probe is failing"
+          description: "{{ $value | printf \"%.0f\" }} D1 Management API probe failure(s) over the last 1h (sustained 15m, part={{ $labels.part }}). The size/row-count gauges below may be stale."
+          runbook: "Check CLOUDFLARE_D1_MONITOR_API_TOKEN is still valid and CLOUDFLARE_D1_MONITOR_ACCOUNT_ID/DATABASE_ID are correct. Tail logs for level=error event=d1_size_probe_error."

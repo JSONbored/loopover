@@ -52,6 +52,7 @@ import {
   type ReadinessProbe,
 } from "./selfhost/health";
 import { clockSkewSecondsSample } from "./selfhost/clock-skew";
+import { d1DatabaseSizeBytesSample, d1SignalSnapshotsRowsPerKeySample, d1TableRowCountSamples, isD1SizeProbeEnabled, runD1SizeProbe } from "./selfhost/d1-size-probe";
 import { gauge, gaugeVector, incr, observe, renderMetrics, setSelfHostedMetricsMode } from "./selfhost/metrics";
 import { runSelfHostMigrations } from "./selfhost/migrate";
 import { createPgAdapter, tuneGithubRateLimitObservationsAutovacuum } from "./selfhost/pg-adapter";
@@ -673,6 +674,13 @@ async function main(): Promise<void> {
   // from "no signal on this platform" (see host-pressure.ts).
   gauge("gittensory_host_load_avg1_per_core", async () => (await maintenancePressure()).hostLoadAvg1PerCore ?? -1);
   gauge("gittensory_clock_skew_seconds", () => clockSkewSecondsSample());
+  // D1 size/row-count observability probe (#3810): opt-in Cloudflare Management API poll for the shared
+  // cloud D1's file size and monitored-table row counts. Always registered (byte-identical -1/empty samples
+  // when the probe is disabled or has never completed) so the metric names/HELP/TYPE lines are present on
+  // the very first scrape, matching the seeded-counter convention below.
+  gauge("gittensory_d1_database_size_bytes", () => d1DatabaseSizeBytesSample());
+  gaugeVector("gittensory_d1_table_row_count", () => d1TableRowCountSamples());
+  gauge("gittensory_signal_snapshots_rows_per_key", () => d1SignalSnapshotsRowsPerKeySample());
   // Backlog-vs-fresh-intake fairness lanes (#selfhost-lane-observability, see queue-fairness.ts): the SAME
   // `foreground_lane` classification the claim-time fairness mechanism itself consults, so an operator can see
   // whether a stuck-looking queue is actually a real, unresolved PR-review backlog (high backlog-convergence
@@ -713,6 +721,9 @@ async function main(): Promise<void> {
   // first scrape (keeping the metric consistently labeled — never mix labeled and unlabeled samples).
   for (const status of ["2xx", "3xx", "4xx", "5xx"])
     incr("gittensory_http_requests_total", { status }, 0);
+  // Same seeding for the D1 probe's error counter (#3810) -- byte-identical to 0 whether or not the probe is
+  // even enabled, so its stat panel reads "0" rather than "No data" before any failure has ever occurred.
+  for (const part of ["database_info", "table_row_count"]) incr("gittensory_d1_probe_errors_total", { part }, 0);
 
   const ctx = {
     waitUntil: (p: Promise<unknown>) =>
@@ -998,6 +1009,24 @@ async function main(): Promise<void> {
     relayDrainState?.lastDrainAtMs == null ? -1 : Math.floor((Date.now() - relayDrainState.lastDrainAtMs) / 1000),
   );
   /* v8 ignore stop */
+
+  // D1 size/row-count observability probe (#3810): a no-op everywhere until an operator sets all three
+  // CLOUDFLARE_D1_MONITOR_* vars (see isD1SizeProbeEnabled) -- most self-host installs run their own
+  // SQLite/Postgres backend and have no Cloudflare D1 to watch. 15-minute cadence: the underlying figures
+  // (a multi-GB database's file size, monitored-table row counts) move slowly, so this stays well clear of
+  // Cloudflare Management API rate limits even across a large monitored-table list.
+  const d1ProbeEnv = {
+    CLOUDFLARE_D1_MONITOR_ACCOUNT_ID: process.env.CLOUDFLARE_D1_MONITOR_ACCOUNT_ID,
+    CLOUDFLARE_D1_MONITOR_DATABASE_ID: process.env.CLOUDFLARE_D1_MONITOR_DATABASE_ID,
+    CLOUDFLARE_D1_MONITOR_API_TOKEN: process.env.CLOUDFLARE_D1_MONITOR_API_TOKEN,
+  };
+  if (isD1SizeProbeEnabled(d1ProbeEnv)) {
+    /* v8 ignore start -- self-host entrypoint timer; probe logic itself is unit-tested in d1-size-probe.test.ts. */
+    const runD1Probe = () => runD1SizeProbe(d1ProbeEnv).catch((error) => captureError(error, { kind: "d1_size_probe" }));
+    void runD1Probe();
+    setInterval(runD1Probe, 900_000);
+    /* v8 ignore stop */
+  }
 
   // Pull-mode relay drain (#secure-relay): when ORB_RELAY_MODE=pull, the engine DRAINS its events from the Orb on a
   // timer instead of exposing an inbound endpoint — the right fit behind NAT/tailnet. Acks the previous batch so the

@@ -509,6 +509,15 @@ server.registerTool(
 );
 
 server.registerTool(
+  "gittensory_get_upstream_drift",
+  {
+    description: "Return the latest cached Gittensor upstream ruleset drift status (stale/drift warnings) for MCP planning.",
+    inputSchema: {},
+  },
+  async () => toolResult("Gittensory upstream drift status.", await apiGet("/v1/upstream/drift")),
+);
+
+server.registerTool(
   "gittensory_preview_local_pr_score",
   {
     description: "Inspect local diff metadata and request a private Gittensory scoring preview. No source contents are uploaded.",

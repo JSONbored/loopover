@@ -317,6 +317,16 @@ export async function startFixtureServer(
       response.end(JSON.stringify({ repoFullName: "owner/repo", agentPaused: body.agentPaused === true, ...(body.autonomy ? { autonomy: body.autonomy } : {}) }));
       return;
     }
+    if (request.url === "/v1/upstream/drift" && request.method === "GET") {
+      response.end(
+        JSON.stringify({
+          generatedAt: "2026-05-30T00:00:00.000Z",
+          upstreamDrift: { status: "ok", ruleset: "gittensor-core", lastCheckedAt: "2026-05-30T00:00:00.000Z", warnings: [] },
+          reports: [{ id: "drift-1", severity: "info", summary: "no drift detected", detectedAt: "2026-05-30T00:00:00.000Z" }],
+        }),
+      );
+      return;
+    }
     response.statusCode = 404;
     response.end(JSON.stringify({ error: "not_found" }));
   });

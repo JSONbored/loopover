@@ -132,7 +132,7 @@ describe("selectInlineComments (#inline-comments)", () => {
     expect(selectInlineComments(many, bigFiles)).toHaveLength(10);
   });
 
-  describe("suggestion blocks (#1956)", () => {
+  describe("suggestion blocks (#1956 / #2139)", () => {
     const withSuggestion: InlineFinding = { path: "src/a.ts", line: 2, severity: "nit", body: "Use const.", suggestion: "const x = 1;" };
 
     it("defaults to OFF (backward compatible) — a suggestion is never rendered when the third argument is omitted", () => {
@@ -148,6 +148,21 @@ describe("selectInlineComments (#inline-comments)", () => {
     it("renders a GitHub-native suggested-change block when enabled and the finding carries a suggestion", () => {
       const out = selectInlineComments([withSuggestion], files, true);
       expect(out[0]?.body).toBe("**Nit:** Use const.\n\n```suggestion\nconst x = 1;\n```");
+    });
+
+    it("preserves multi-line suggestion text verbatim inside the fence and keeps the severity label first (#2139)", () => {
+      const multiLine: InlineFinding = {
+        path: "src/a.ts",
+        line: 2,
+        severity: "blocker",
+        body: "Split this statement.",
+        suggestion: "const x = 1;\nconst y = 2;",
+      };
+      const out = selectInlineComments([multiLine], files, true);
+      expect(out[0]?.body).toBe(
+        "**Blocker:** Split this statement.\n\n```suggestion\nconst x = 1;\nconst y = 2;\n```",
+      );
+      expect(out[0]?.body.startsWith("**Blocker:**")).toBe(true);
     });
 
     it("renders no suggestion block (finding text only) when enabled but the finding has none", () => {

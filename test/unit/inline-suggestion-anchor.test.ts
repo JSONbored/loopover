@@ -90,5 +90,10 @@ describe("anchoredSuggestionBlock (#2140)", () => {
       anchoredSuggestionBlock({ ...withSuggestion, suggestion: "```\nescape\n```" }, true, addedLines),
     ).toBe("");
     expect(safeSuggestionBlock(undefined)).toBe("");
+    expect(safeSuggestionBlock("")).toBe("");
+  });
+
+  it("preserves multi-line suggestion text verbatim inside the fence (#2139)", () => {
+    expect(safeSuggestionBlock("line1\nline2")).toBe("\n\n```suggestion\nline1\nline2\n```");
   });
 });

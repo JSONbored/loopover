@@ -92,7 +92,7 @@ export type ReviewInlineComment = {
  *  {@link anchoredSuggestionBlock} for anchor-safety and fence validation (#2140 / #1956). */
 
 /** The inline comment body: a compact severity (+ optional category) label + the finding, plus a one-click GitHub
- *  suggested-change block when the finding carries a `suggestion` AND the caller has suggestions enabled (#1956).
+ *  suggested-change block when the finding carries a `suggestion` AND the caller has suggestions enabled (#1956 / #2139).
  *  When `categoriesEnabled` (#1958 / #2149), the label carries a title-cased category tag (`Blocker · Security`) —
  *  the model's own `category` when it emitted one in the fixed enum, else the deterministic fallback
  *  (`classifyFindingCategory`), so the tag is never sometimes-present. Public-safe by construction — both the body

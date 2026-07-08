@@ -202,6 +202,7 @@ import {
 } from "../services/weekly-value-report";
 import { generateAndSendReviewRecap } from "../services/review-recap";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
+import { loadMaintainerNoiseReport } from "../services/maintainer-noise";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
@@ -2502,6 +2503,15 @@ export function createApp() {
     const windowDaysRaw = Number(c.req.query("windowDays"));
     const windowDays = windowDaysRaw > 0 ? windowDaysRaw : undefined;
     return c.json(await loadGatePrecisionReport(c.env, fullName, windowDays !== undefined ? { windowDays } : {}));
+  });
+
+  // #2228 maintainer queue-noise triage: read-only report for MCP stdio proxy + maintainer tooling.
+  // Maintainer-authenticated, repo-scoped; replaces the removed legacy public route with the same path shape.
+  app.get("/v1/repos/:owner/:repo/maintainer-noise", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    return c.json(await loadMaintainerNoiseReport(c.env, fullName));
   });
 
   // One-click "enable advisory mode" — turns on the gate + deterministic rules in advisory (non-blocking)
@@ -5258,6 +5268,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoActivationPath(path)) return true;
   if (isRepoOutcomeCalibrationPath(path)) return true;
   if (isRepoGatePrecisionPath(path)) return true;
+  if (isRepoMaintainerNoisePath(path)) return true;
   if (isRepoSettingsPreviewPath(path)) return true;
   if (isRepoOnboardingPackPreviewPath(path)) return true;
   if (isRepoFocusManifestPath(path)) return true;
@@ -5291,6 +5302,10 @@ function isRepoOutcomeCalibrationPath(path: string): boolean {
 
 function isRepoGatePrecisionPath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/gate-precision$/.test(path);
+}
+
+function isRepoMaintainerNoisePath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/maintainer-noise$/.test(path);
 }
 
 function isRepoSettingsPreviewPath(path: string): boolean {

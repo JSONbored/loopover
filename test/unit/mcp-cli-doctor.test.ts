@@ -146,7 +146,7 @@ describe("gittensory-mcp CLI — doctor", () => {
 
   it("reports a current install without upgrade guidance", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
-    const url = await startFixtureServer({ latestVersion: "0.6.0", minMcpVersion: "0.5.0" });
+    const url = await startFixtureServer({ latestVersion: "0.7.0", minMcpVersion: "0.5.0" });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: url,
@@ -166,7 +166,7 @@ describe("gittensory-mcp CLI — doctor", () => {
       status: "compatible",
       source: "compatibility_endpoint",
       minVersion: "0.5.0",
-      latestRecommendedVersion: "0.6.0",
+      latestRecommendedVersion: "0.7.0",
       apiVersion: "0.1.0",
     });
   });
@@ -186,8 +186,8 @@ describe("gittensory-mcp CLI — doctor", () => {
     expect(ahead.package).toMatchObject({ state: "ahead", updateAvailable: false });
     await closeFixtureServer();
 
-    // Local 0.6.0 vs a higher-core prerelease 0.7.0-rc.1 -> stale.
-    const staleUrl = await startFixtureServer({ latestVersion: "0.7.0-rc.1" });
+    // Local 0.7.0 vs a higher-core prerelease 0.8.0-rc.1 -> stale.
+    const staleUrl = await startFixtureServer({ latestVersion: "0.8.0-rc.1" });
     const stale = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: staleUrl,
@@ -282,7 +282,7 @@ describe("gittensory-mcp CLI — doctor", () => {
 
   it("uses API recommended package metadata when the npm registry is unavailable", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
-    const url = await startFixtureServer({ npmStatus: 500, latestRecommendedMcpVersion: "0.7.0" });
+    const url = await startFixtureServer({ npmStatus: 500, latestRecommendedMcpVersion: "0.8.0" });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: url,
@@ -294,7 +294,7 @@ describe("gittensory-mcp CLI — doctor", () => {
     expect(payload.package).toMatchObject({
       state: "stale",
       latestStatus: "api",
-      latestVersion: "0.7.0",
+      latestVersion: "0.8.0",
       upgradeCommand: "npm install -g @jsonbored/gittensory-mcp@latest",
     });
   });

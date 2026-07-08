@@ -11,7 +11,7 @@ import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadat
 const defaultApiUrl = "https://gittensory-api.aethereal.dev";
 const legacyDefaultApiUrls = new Set(["https://gittensory-api.zeronode.workers.dev"]);
 const packageName = "@jsonbored/gittensory-mcp";
-const packageVersion = "0.6.0";
+const packageVersion = "0.7.0";
 const npmRegistryUrl = (process.env.GITTENSORY_NPM_REGISTRY_URL ?? "https://registry.npmjs.org").replace(/\/+$/, "");
 const upgradeCommand = `npm install -g ${packageName}@latest`;
 const npxFallbackCommand = `npx ${packageName}@latest <command>`;

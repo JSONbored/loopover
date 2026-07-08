@@ -73,7 +73,7 @@ function readCommitFiles(sha) {
 }
 
 function git(args) {
-  return execFileSync("git", args, { encoding: "utf8" });
+  return execFileSync("git", args, { encoding: "utf8", maxBuffer: 1024 * 1024 * 200 });
 }
 
 async function upsertIssue(report) {

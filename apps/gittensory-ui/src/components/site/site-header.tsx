@@ -52,10 +52,11 @@ export function SiteHeader() {
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-4 px-4 sm:px-6 lg:gap-6">
         <Link
           to="/"
-          className="flex items-center gap-2 text-token-sm font-medium tracking-tight text-foreground transition-opacity hover:opacity-80 focus-ring rounded-token"
+          aria-label="Gittensory"
+          className="flex items-center gap-0.5 text-token-sm font-medium tracking-tight text-foreground transition-opacity hover:opacity-80 focus-ring rounded-token"
         >
-          <GittensoryMark className="size-4 text-foreground" />
-          <span>Gittensory</span>
+          <GittensoryMark className="size-4" />
+          <span aria-hidden>ittensory</span>
         </Link>
 
         <nav className="hidden flex-1 items-center gap-4 md:flex lg:gap-5">

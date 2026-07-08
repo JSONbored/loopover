@@ -4,14 +4,20 @@
   "start_url": "/app",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#0a1714",
-  "theme_color": "#0a1714",
+  "background_color": "#0e100d",
+  "theme_color": "#0e100d",
   "description": "Control-panel workflows for maintainer and operator checks with opt-in browser notifications.",
   "icons": [
     {
       "src": "/favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any"
     }
   ]

@@ -1,34 +1,20 @@
 import { cn } from "@/lib/utils";
 
+// The mark is always brand citron, regardless of theme — only surrounding
+// text (e.g. the "ittensory" wordmark half) follows currentColor.
 export function GittensoryMark({ className }: { className?: string }) {
   return (
     <svg
-      viewBox="0 0 32 32"
+      viewBox="0 0 512 512"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className={cn(className)}
       aria-hidden
     >
-      <defs>
-        <linearGradient id="gm-g" x1="0" x2="1" y1="0" y2="1">
-          <stop offset="0%" stopColor="currentColor" stopOpacity="1" />
-          <stop offset="100%" stopColor="currentColor" stopOpacity="0.4" />
-        </linearGradient>
-      </defs>
       <path
-        d="M16 2 L29 9 V23 L16 30 L3 23 V9 Z"
-        stroke="url(#gm-g)"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
+        d="M100.00,260.00 Q100.00,250.00 107.07,242.93 L242.93,107.07 Q250.00,100.00 260.00,100.00 L362.00,100.00 Q372.00,100.00 379.07,107.07 L404.93,132.93 Q412.00,140.00 412.00,150.00 L412.00,198.00 Q412.00,208.00 402.00,208.00 L252.00,208.00 Q224.00,208.00 224.00,236.00 L224.00,274.28 Q224.00,288.00 237.72,288.00 L243.18,288.00 Q252.00,288.00 252.00,279.18 L252.00,278.82 Q252.00,270.00 260.82,270.00 L408.08,270.00 Q412.00,270.00 412.00,266.08 L412.00,265.92 Q412.00,262.00 409.23,264.77 L269.07,404.93 Q262.00,412.00 252.00,412.00 L150.00,412.00 Q140.00,412.00 132.93,404.93 L107.07,379.07 Q100.00,372.00 100.00,362.00 L100.00,260.00 Z"
+        fill="#d5e43f"
       />
-      <path
-        d="M10 12 L16 16 L22 12 M16 16 V23"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx="16" cy="16" r="1.6" fill="currentColor" />
     </svg>
   );
 }

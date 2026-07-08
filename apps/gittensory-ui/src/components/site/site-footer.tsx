@@ -50,9 +50,11 @@ export function SiteFooter() {
         <div>
           <Link
             to="/"
-            className="flex items-center gap-2 font-display text-token-base font-semibold"
+            aria-label="Gittensory"
+            className="flex items-center gap-0.5 font-display text-token-base font-semibold"
           >
-            <GittensoryMark className="size-6 text-mint" /> Gittensory
+            <GittensoryMark className="size-6" />
+            <span aria-hidden>ittensory</span>
           </Link>
           <p className="mt-3 max-w-sm text-token-sm text-muted-foreground">
             Deterministic base-agent layer for Gittensor OSS contribution mining. Built for the

@@ -199,10 +199,14 @@ export function AppShell() {
     <SidebarProvider defaultOpen={sidebarOpen}>
       <Sidebar collapsible="icon" className="border-r border-border">
         <SidebarHeader className="border-b border-border">
-          <div className="flex items-center gap-2 px-2 py-1.5">
-            <GittensoryMark className="size-4 text-foreground" />
-            <span className="truncate font-display text-token-sm font-semibold group-data-[collapsible=icon]:hidden">
-              Gittensory
+          <div className="flex items-center gap-0.5 px-2 py-1.5">
+            <GittensoryMark className="size-4" />
+            <span className="sr-only">Gittensory</span>
+            <span
+              aria-hidden
+              className="truncate font-display text-token-sm font-semibold group-data-[collapsible=icon]:hidden"
+            >
+              ittensory
             </span>
           </div>
         </SidebarHeader>

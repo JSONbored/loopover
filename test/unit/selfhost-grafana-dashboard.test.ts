@@ -16,6 +16,7 @@ type DashboardTarget = {
 type DashboardPanel = {
   id?: number;
   title?: string;
+  description?: string;
   targets?: DashboardTarget[];
 };
 
@@ -251,6 +252,22 @@ describe("maintainer Reviews & PRs Grafana dashboard", () => {
       expect(target.queryText).toContain("unixepoch(updated_at)");
       expect(target.queryText).toContain(timeFrom);
       expect(target.queryText).toContain(timeTo);
+    }
+  });
+
+  it("explains the latest-update-in-window (not lifetime) semantics on Manual/Commented/Ignored (#3717)", () => {
+    const dashboard = readDashboard();
+    const panelsById = new Map(dashboard.panels.map((panel) => [panel.id, panel]));
+
+    for (const [id, title] of [
+      [5, "Manual review"],
+      [6, "Commented (advisory)"],
+      [7, "Ignored"],
+    ] as const) {
+      const panel = panelsById.get(id);
+      expect(panel?.title).toBe(title);
+      expect(panel?.description?.length ?? 0).toBeGreaterThan(0);
+      expect(panel?.description).toContain("window");
     }
   });
 

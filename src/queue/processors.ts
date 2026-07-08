@@ -261,6 +261,7 @@ import {
 } from "../settings/agent-execution";
 import {
   ISSUE_WAKE_MAX_PRS,
+  MERGE_WAKE_MAX_PRS,
   SWEEP_FANOUT_DEDUP_MS,
   SWEEP_MAX_PRS,
   isRegateSweepDraining,
@@ -1728,6 +1729,55 @@ async function maybeEnqueueRagReindexForMergedPr(
     // public-token traffic even though its own budget has headroom.
     installationId,
   });
+}
+
+/**
+ * Event-driven re-gate trigger on sibling PR merge (#4005): companion to the merge-train gate. When a PR
+ * MERGES, every OTHER open PR's gate verdict can be invalidated by it (a newly-conflicting base, a duplicate
+ * cluster now missing its winner, a linked-issue cap that just freed up) with nothing proactively re-checking
+ * it -- the scheduled sweep is bounded to SWEEP_MAX_PRS per repo per ~2-minute tick and can take several
+ * cycles to reach a given sibling. Enqueue a bounded, staggered `agent-regate-pr` job per sibling right away
+ * instead of waiting for the next sweep pass to notice the drift.
+ *
+ * Fires ONLY on a genuine merge -- `action === "closed"` AND a `merged_at` timestamp (an ordinary close changed
+ * nothing on the base branch, so siblings have nothing new to react to; mirrors maybeEnqueueRagReindexForMergedPr's
+ * own merge check just above). Scoped to the SAME repos the re-gate sweep already covers (self-host convergence-
+ * allowlisted OR hosted agent-configured) -- this closes the "stale sibling" latency gap for repos already
+ * getting proactive re-gates, not a scope expansion to repos that never were. `otherOpenPullRequests` is the
+ * caller's already-fetched, already-bounded (100-row, ascending-by-number) sibling list — reused as-is rather than
+ * re-querying, so the lowest-numbered open siblings are re-gated first, same tie-break the duplicate-winner
+ * election uses elsewhere. Best-effort: enqueue failures are logged by the caller, never surfaced to the gate.
+ */
+async function maybeEnqueueSiblingRegateForMergedPr(
+  env: Env,
+  deliveryId: string,
+  repoFullName: string,
+  action: string | undefined,
+  mergedAt: string | null | undefined,
+  installationId: number,
+  settings: RepositorySettings,
+  otherOpenPullRequests: readonly PullRequestRecord[],
+): Promise<void> {
+  // action is only ever undefined before shouldProcessPullRequestPublicSurface's own action-set check has
+  // already passed at the call site, so a direct comparison (no nullish fallback needed) keeps this line's
+  // branches exhaustively reachable -- unlike maybeEnqueueRagReindexForMergedPr's `?? ""`, which predates this.
+  if (action !== "closed" || !mergedAt) return;
+  if (!(isConvergenceRepoAllowed(env, repoFullName) || isAgentConfigured(settings.autonomy))) return;
+  const siblings = otherOpenPullRequests.slice(0, MERGE_WAKE_MAX_PRS);
+  for (const [index, sibling] of siblings.entries()) {
+    const job: JobMessage = {
+      type: "agent-regate-pr",
+      deliveryId,
+      repoFullName,
+      prNumber: sibling.number,
+      installationId,
+      ...(sibling.createdAt ? { prCreatedAt: sibling.createdAt } : {}),
+    };
+    const delaySeconds = Math.min(index * 10, 600);
+    await (delaySeconds > 0
+      ? env.JOBS.send(job, { delaySeconds })
+      : env.JOBS.send(job));
+  }
 }
 
 // Recompute the DETERMINISTIC gate verdict for a repo's stalest open PRs and record it as an audit event —
@@ -6158,6 +6208,31 @@ async function processGitHubWebhook(
             JSON.stringify({
               level: "warn",
               event: "rag_reindex_enqueue_failed",
+              deliveryId,
+              repository: repoFullName,
+              pullNumber: pr.number,
+              error: errorMessage(error),
+            }),
+          );
+        });
+        // Event-driven sibling re-gate (#4005): a merge can invalidate every OTHER open PR's gate verdict, and
+        // otherwise nothing re-checks them until the next bounded sweep tick reaches each one. Enqueued (not run
+        // inline), same shape as the RAG re-index just above. Best-effort.
+        await maybeEnqueueSiblingRegateForMergedPr(
+          env,
+          deliveryId,
+          repoFullName,
+          payload.action,
+          payload.pull_request.merged_at,
+          installationId,
+          settings,
+          otherOpenPullRequests,
+        ).catch((error) => {
+          /* v8 ignore next -- best-effort: a sibling re-gate enqueue failure is logged, never surfaced to the gate. */
+          console.error(
+            JSON.stringify({
+              level: "warn",
+              event: "sibling_regate_enqueue_failed",
               deliveryId,
               repository: repoFullName,
               pullNumber: pr.number,

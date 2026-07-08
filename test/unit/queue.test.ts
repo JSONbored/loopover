@@ -67,7 +67,7 @@ import {
   fetchPullRequestFreshness,
 } from "../../src/github/pr-freshness";
 import { createTestEnv } from "../helpers/d1";
-import { ISSUE_WAKE_MAX_PRS, SWEEP_MAX_PRS } from "../../src/settings/agent-sweep";
+import { ISSUE_WAKE_MAX_PRS, MERGE_WAKE_MAX_PRS, SWEEP_MAX_PRS } from "../../src/settings/agent-sweep";
 import { AGENT_LABEL_PENDING_CLOSURE, DEFAULT_LINKED_ISSUE_HARD_RULES } from "../../src/review/linked-issue-hard-rules";
 
 vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
@@ -3284,6 +3284,145 @@ describe("queue processors", () => {
     expect(sent).toHaveLength(ISSUE_WAKE_MAX_PRS);
     expect(sent.map(({ message }) => (message as { prNumber: number }).prNumber)).toEqual(
       Array.from({ length: ISSUE_WAKE_MAX_PRS }, (_, index) => index + 1),
+    );
+  });
+
+  it("sibling re-gate fan-out (#4005): a merged PR enqueues a bounded agent-regate-pr job for each open sibling PR", async () => {
+    const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
+          sent.push(options ? { message, options } : { message });
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    for (const number of [10, 11, 12]) {
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number, title: `Sibling PR ${number}`, state: "open", user: { login: "contributor" }, head: { sha: `sib${number}` }, labels: [], body: "No linked issue.", created_at: `2026-07-0${number - 9}T00:00:00.000Z` });
+    }
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/check-runs")) return Response.json({ id: 900 }, { status: 201 });
+      if (url.includes("/files")) return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "sibling-merge-fanout",
+      eventName: "pull_request",
+      payload: {
+        action: "closed",
+        installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" } },
+        repository: { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } },
+        pull_request: { number: 999, title: "Merged PR", state: "closed", merged_at: "2026-07-08T00:00:00.000Z", user: { login: "contributor" }, head: { sha: "mergedsha" }, labels: [], body: "No linked issue." },
+      } as never,
+    });
+
+    // Bounded, staggered fan-out for each OTHER open PR — never for the merged PR's own number.
+    const regateJobs = sent.filter(({ message }) => message.type === "agent-regate-pr");
+    expect(regateJobs.map(({ message }) => message)).toEqual([
+      expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: 10, installationId: 9001, prCreatedAt: "2026-07-01T00:00:00.000Z" }),
+      expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: 11, installationId: 9001, prCreatedAt: "2026-07-02T00:00:00.000Z" }),
+      expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: 12, installationId: 9001, prCreatedAt: "2026-07-03T00:00:00.000Z" }),
+    ]);
+    expect(regateJobs.map(({ options }) => options)).toEqual([undefined, { delaySeconds: 10 }, { delaySeconds: 20 }]);
+  });
+
+  it("sibling re-gate fan-out (#4005): closing a PR WITHOUT a merge does not enqueue any sibling re-gate", async () => {
+    const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
+          sent.push(options ? { message, options } : { message });
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    for (const number of [10, 11, 12]) {
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number, title: `Sibling PR ${number}`, state: "open", user: { login: "contributor" }, head: { sha: `sib${number}` }, labels: [], body: "No linked issue." });
+    }
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/check-runs")) return Response.json({ id: 900 }, { status: 201 });
+      if (url.includes("/files")) return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "sibling-close-no-merge",
+      eventName: "pull_request",
+      payload: {
+        action: "closed",
+        installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" } },
+        repository: { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } },
+        pull_request: { number: 999, title: "Closed without merge", state: "closed", merged_at: null, user: { login: "contributor" }, head: { sha: "closedsha" }, labels: [], body: "No linked issue." },
+      } as never,
+    });
+
+    // An ordinary close changed nothing on the base branch — no sibling has anything new to react to.
+    const regateJobs = sent.filter(({ message }) => message.type === "agent-regate-pr");
+    expect(regateJobs).toEqual([]);
+  });
+
+  it("sibling re-gate fan-out (#4005): the fan-out is capped at MERGE_WAKE_MAX_PRS even with more open siblings", async () => {
+    const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
+          sent.push(options ? { message, options } : { message });
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    for (let number = 1; number <= MERGE_WAKE_MAX_PRS + 2; number += 1) {
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number, title: `Sibling PR ${number}`, state: "open", user: { login: "contributor" }, head: { sha: `sib${number}` }, labels: [], body: "No linked issue." });
+    }
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/check-runs")) return Response.json({ id: 900 }, { status: 201 });
+      if (url.includes("/files")) return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "sibling-merge-fanout-bounded",
+      eventName: "pull_request",
+      payload: {
+        action: "closed",
+        installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" } },
+        repository: { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } },
+        pull_request: { number: 999, title: "Merged PR", state: "closed", merged_at: "2026-07-08T00:00:00.000Z", user: { login: "contributor" }, head: { sha: "mergedsha" }, labels: [], body: "No linked issue." },
+      } as never,
+    });
+
+    // MERGE_WAKE_MAX_PRS + 2 siblings are open, but only the first MERGE_WAKE_MAX_PRS (lowest-numbered, same
+    // ordering listOtherOpenPullRequests already returns) are enqueued -- a repo with many open PRs must not be
+    // able to turn one merge into an unbounded burst of ~9-REST-GET re-gates.
+    const regateJobs = sent.filter(({ message }) => message.type === "agent-regate-pr");
+    expect(regateJobs).toHaveLength(MERGE_WAKE_MAX_PRS);
+    expect(regateJobs.map(({ message }) => (message as { prNumber: number }).prNumber)).toEqual(
+      Array.from({ length: MERGE_WAKE_MAX_PRS }, (_, index) => index + 1),
     );
   });
 

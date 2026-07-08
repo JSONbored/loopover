@@ -26,6 +26,16 @@ export const SWEEP_MAX_PRS = 3;
 // worst case ~25 x 9 = 225 REST calls, staggered by the same delaySeconds window the caller already uses.
 export const ISSUE_WAKE_MAX_PRS = 25;
 
+// Sibling-merge wake budget (#4005): companion to the merge-train gate -- when a PR MERGES, every OTHER open PR's
+// verdict can be invalidated (a newly-conflicting base, a duplicate cluster missing its winner, a linked-issue cap
+// that just freed up) with nothing proactively re-checking it until the next sweep tick. This handler fires ONCE
+// per merge, same one-shot shape as ISSUE_WAKE_MAX_PRS, but a merge is a far MORE common trigger than an issue
+// label/assignment change -- a busy repo can merge many PRs an hour, each firing this fan-out, so reusing
+// ISSUE_WAKE_MAX_PRS's 25 would let repeated merges inside one rate-limit window compound in a way the rarer
+// issue-wake trigger never does. 15 keeps each merge's worst case at 15 x 9 ≈ 135 REST calls (same ~9-REST-GET
+// per-PR re-review cost as the other agent-regate-pr fan-outs), staggered by the same delaySeconds window.
+export const MERGE_WAKE_MAX_PRS = 15;
+
 // Skip-if-fresh window: a PR touched within this span was almost certainly just gated by its webhook, so the
 // sweep leaves it alone for that brief moment to avoid racing the in-flight webhook review. Kept SHORT (2 min)
 // because the sweep is now LIGHT (re-gate + act, no AI) and runs every ~2 min — a just-approved PR must be

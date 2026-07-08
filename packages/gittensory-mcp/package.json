@@ -38,6 +38,7 @@
     "build": "node --check bin/gittensory-mcp.js && node --check lib/local-branch.js && node --check scripts/gittensor-score-preview.mjs"
   },
   "dependencies": {
+    "@jsonbored/gittensory-engine": "^0.1.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "zod": "^4.4.3"
   },

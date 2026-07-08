@@ -1,30 +1,7 @@
 #!/usr/bin/env node
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-
-function isTestFile(file) {
-  return (
-    /(^|\/)(test|tests|spec|__tests__)\//i.test(file) ||
-    /(^|\/)src\/test\//i.test(file) ||
-    /(^|\/)[^/]+_test\.(go|py|rb|dart)$/i.test(file) || // Dart/Flutter `foo_test.dart` co-located with source
-    /(^|\/)test_[^/]*\.py$/i.test(file) || // pytest's default `test_*.py` prefix (the suffix rule above only catches `*_test.py`)
-    /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
-    /\.(test|spec)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs)$/i.test(file) ||
-    /(^|\/)[^/]+\.(cy|e2e)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/i.test(file) ||
-    // JVM/.NET/Swift/PHP PascalCase test-class suffix (case-sensitive, matching the
-    // signal classifiers) so C#/Swift/Groovy/PHP tests aren't counted as source.
-    /(^|\/)\w*(Tests?|Spec)\.(java|kt|kts|scala|cs|swift|groovy|php)$/.test(file) ||
-    /(^|\/)__snapshots__\//i.test(file)
-  );
-}
-
-function isGeneratedCodeFile(file) {
-  return /\.(g|freezed|gr)\.dart$/i.test(file);
-}
-
-function isCodeFile(file) {
-  return /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs|kt|scala|java|go|sql|cs|swift|groovy|php|cpp|cc|c|h|hpp|m|vue|svelte|astro|dart)$/i.test(file) && !isTestFile(file) && !isGeneratedCodeFile(file);
-}
+import { isCodeFile, isTestPath as isTestFile } from "@jsonbored/gittensory-engine/signals/test-evidence";
 
 function lineCount(file) {
   const additions = Number(file.additions ?? 0);

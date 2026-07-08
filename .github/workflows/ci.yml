@@ -101,7 +101,10 @@ jobs:
             # their shared test/unit/support/mcp-cli-harness.ts import nothing but node:* builtins + vitest,
             # and mcp-discovery.test.ts spawns packages/gittensory-mcp/bin/gittensory-mcp.js as a real
             # subprocess via StdioClientTransport -- none of the 6 ever load root src/ in-process. This mirrors
-            # the `mcp` filter's own established trust boundary above (a self-contained package build).
+            # the `mcp` filter's own established trust boundary above (a self-contained package build). They are
+            # NOT self-contained w.r.t. packages/gittensory-engine/**, though: gittensory-mcp now has a real
+            # dependency on @jsonbored/gittensory-engine (isTestFile/isCodeFile), which the bin subprocess and
+            # local-branch.js load at runtime -- hence that path below, alongside the mcp package's own.
             # test/unit/mcp-output-schemas.test.ts is DELIBERATELY NOT in this filter: unlike the other 6, it
             # imports src/mcp/server.ts in-process, and server.ts alone directly imports ~40 other src/ modules
             # (src/github/app.ts, src/signals/slop.ts, src/settings/autonomy.ts, src/orb/analytics.ts, and
@@ -121,6 +124,7 @@ jobs:
               - 'migrations/**'
               - '.github/workflows/**'
               - 'packages/gittensory-mcp/**'
+              - 'packages/gittensory-engine/**'
               - 'test/helpers/**'
               - 'test/unit/mcp-cli-*.test.ts'
               - 'test/unit/mcp-discovery.test.ts'
@@ -396,11 +400,14 @@ jobs:
       - name: Worker runtime tests
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run test:workers
+      # gittensory-mcp now depends on @jsonbored/gittensory-engine for real (isTestFile/isCodeFile), so a
+      # PR that only touches packages/gittensory-engine/** must also rebuild + pack-check the mcp package,
+      # not just the mcp filter's own (deliberately narrower) path list.
       - name: Build MCP
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.mcp == 'true' }}
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' }}
         run: npm run build:mcp
       - name: MCP package check
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.mcp == 'true' }}
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' }}
         run: npm run test:mcp-pack
       - name: Build miner CLI
         if: ${{ github.event_name == 'push' || needs.changes.outputs.miner == 'true' }}

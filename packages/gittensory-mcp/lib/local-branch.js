@@ -2,6 +2,9 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isCodeFile, isTestPath as isTestFile } from "@jsonbored/gittensory-engine/signals/test-evidence";
+
+export { isCodeFile, isTestFile };
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -585,36 +588,6 @@ function titleFromBranch(branchName) {
 
 function firstCommitTitle(messages) {
   return messages.find((message) => message.trim().length > 0)?.split("\n")[0]?.trim();
-}
-
-// Must mirror the canonical server-side matcher in src/signals/test-evidence.ts (isTestPath); the
-// server local-branch analysis delegates to it, so this client copy classifies the same diff and must
-// agree. The last two branches (Cypress/e2e `*.cy.*`/`*.e2e.*` and `__snapshots__/`) were missing here,
-// so a changed `Button.cy.ts` / snapshot file was misclassified as source (isCodeFile) and dropped from
-// testFiles, inflating source-line/token counts and under-reporting test evidence in the local packet.
-export function isTestFile(file) {
-  return (
-    /(^|\/)(test|tests|spec|__tests__)\//i.test(file) ||
-    /(^|\/)src\/test\//i.test(file) ||
-    /(^|\/)[^/]+_test\.(go|py|rb|dart)$/i.test(file) || // Dart/Flutter `foo_test.dart` co-located with source
-    /(^|\/)test_[^/]*\.py$/i.test(file) || // pytest's default `test_*.py` prefix convention (the suffix rule above only catches `*_test.py`)
-    /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
-    /\.(test|spec)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs)$/i.test(file) ||
-    /(^|\/)[^/]+\.(cy|e2e)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/i.test(file) ||
-    // JVM / C# / Swift / PHP `SomethingTest(s)`/`SomethingSpec` class-suffix convention (JUnit, Kotlin/ScalaTest,
-    // Spock, xUnit/NUnit, XCTest, PHPUnit/PHPSpec). Case-sensitive on the PascalCase suffix so it can't false-positive on words
-    // that merely end in "test"/"spec" (Latest.java, Contest.cs, manifest.scala, Latest.php).
-    /(^|\/)\w*(Tests?|Spec)\.(java|kt|kts|scala|cs|swift|groovy|php)$/.test(file) ||
-    /(^|\/)__snapshots__\//i.test(file)
-  );
-}
-
-function isGeneratedCodeFile(file) {
-  return /\.(g|freezed|gr)\.dart$/i.test(file);
-}
-
-export function isCodeFile(file) {
-  return /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs|kt|scala|java|go|sql|cs|swift|groovy|php|cpp|cc|c|h|hpp|m|vue|svelte|astro|dart)$/i.test(file) && !isTestFile(file) && !isGeneratedCodeFile(file);
 }
 
 function numberValue(value) {

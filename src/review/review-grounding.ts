@@ -172,7 +172,21 @@ export function diffFullyCoversFile(file: PullRequestFile): boolean {
   const newStart = Number.parseInt(match[3]!, 10);
   const newCount = match[4] !== undefined ? Number.parseInt(match[4], 10) : 1;
   if (oldStart > 1 || newStart > 1) return false; // leading unchanged lines exist before the hunk
-  return oldCount - file.deletions < DIFF_CONTEXT_LINES && newCount - file.additions < DIFF_CONTEXT_LINES;
+
+  const observed = countObservedHunkChanges(file.patch);
+  if (observed.additions !== file.additions || observed.deletions !== file.deletions) return false;
+
+  return oldCount - observed.deletions < DIFF_CONTEXT_LINES && newCount - observed.additions < DIFF_CONTEXT_LINES;
+}
+
+function countObservedHunkChanges(patch: string): { additions: number; deletions: number } {
+  let additions = 0;
+  let deletions = 0;
+  for (const line of patch.split("\n").slice(1)) {
+    if (line.startsWith("+")) additions += 1;
+    else if (line.startsWith("-")) deletions += 1;
+  }
+  return { additions, deletions };
 }
 
 /** Centrally fetch the FULL post-change content of changed files (the one grounding input no lane fetches

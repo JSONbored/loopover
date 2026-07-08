@@ -296,6 +296,52 @@ describe("review-grounding: fetchFullFileContents (injected FileFetcher, fail-sa
       ).toBe(true);
     });
 
+    it("returns false when file-level totals include changes omitted from a truncated patch", () => {
+      expect(
+        diffFullyCoversFile({
+          filename: "src/truncated.ts",
+          status: "modified",
+          patch: "@@ -1,5 +1,5 @@\n-old1\n-old2\n+new1\n+new2\n line3\n line4\n line5",
+          additions: 50,
+          deletions: 50,
+        }),
+      ).toBe(false);
+    });
+
+    it("fetches a modified file when the visible patch omits later changed hunks", async () => {
+      const reads: string[] = [];
+      const fetcher: FileFetcher = {
+        getFileContent: async (path) => {
+          reads.push(path);
+          return "export const hiddenTail = true;";
+        },
+      };
+      const truncated: PullRequestFile = {
+        filename: "src/truncated.ts",
+        status: "modified",
+        patch: "@@ -1,5 +1,5 @@\n-old1\n-old2\n+new1\n+new2\n line3\n line4\n line5",
+        additions: 50,
+        deletions: 50,
+      };
+
+      const out = await fetchFullFileContents({ ciGrounding: false, fullFileContext: true }, "sha", [truncated], fetcher);
+
+      expect(reads).toEqual(["src/truncated.ts"]);
+      expect(out).toEqual([{ path: "src/truncated.ts", text: "export const hiddenTail = true;" }]);
+    });
+
+    it("returns false when trailing context is ambiguous on the post-change side", () => {
+      expect(
+        diffFullyCoversFile({
+          filename: "src/ambiguous-tail.ts",
+          status: "modified",
+          patch: "@@ -1,4 +1,5 @@\n-old\n+new1\n+new2\n line2\n line3\n line4",
+          additions: 2,
+          deletions: 1,
+        }),
+      ).toBe(false);
+    });
+
     it("returns false when the hunk does not start at line 1 on either side (leading unchanged lines exist)", () => {
       expect(
         diffFullyCoversFile({

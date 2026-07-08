@@ -888,6 +888,18 @@ describe("handleDraftCreate — nested body.fields branch + title fallbacks", ()
     expect(authUrl.searchParams.get("redirect_uri")).toBe("http://localhost/v1/drafts/auth/callback");
   });
 
+  it("falls back to 127.0.0.1 request origin when PUBLIC_API_ORIGIN is undefined (dev-only path)", async () => {
+    const env = draftEnv({ PUBLIC_API_ORIGIN: undefined });
+    const res = await handleDraftCreate(
+      new Request("http://127.0.0.1:8787/v1/drafts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(SAMPLE_FIELDS) }),
+      env,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { authUrl: string };
+    const authUrl = new URL(body.authUrl);
+    expect(authUrl.searchParams.get("redirect_uri")).toBe("http://127.0.0.1:8787/v1/drafts/auth/callback");
+  });
+
   it("returns 503 when PUBLIC_API_ORIGIN is unset for non-localhost origins", async () => {
     const env = draftEnv({ PUBLIC_API_ORIGIN: "" });
     const res = await handleDraftCreate(
@@ -1234,6 +1246,26 @@ describe("handleDraftOAuthCallback — extra guards", () => {
     const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=abc&state=${id}.anytoken`), env);
     expect(res.status).toBe(400);
     expect(await res.text()).toBe("Invalid or expired submission state.");
+  });
+
+  it("returns 400 when the cookie matches but the state token hash does not", async () => {
+    const app = createApp();
+    const env = draftEnv();
+    const createdResponse = await app.request("/v1/drafts", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }, env);
+    const created = (await createdResponse.json()) as { draftId: string; authUrl: string };
+    const draftId = created.draftId;
+    const forgedState = `${draftId}.forged-state-token`;
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const res = await handleDraftOAuthCallback(
+      new Request(`${ORIGIN}/v1/drafts/auth/callback?code=valid&state=${encodeURIComponent(forgedState)}`, {
+        headers: { cookie: `gittensory_draft_oauth=${encodeURIComponent(forgedState)}` },
+      }),
+      env,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Invalid or expired submission state.");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 
   it("returns 400 when the draft id in the state does not match any row", async () => {

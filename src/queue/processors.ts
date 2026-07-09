@@ -12,6 +12,7 @@ import {
   getRepoAuthorPullRequestHistory,
   getRepository,
   getDecryptedRepositoryAiKey,
+  countByokAiEventsForRepoSince,
   getRepositorySettings,
   listCheckSummaries,
   listAllIssues,
@@ -76,6 +77,7 @@ import {
   terminalizeActiveReviewTracking,
   bumpPullRequestDraftConversionCount,
   recordProductUsageEvent,
+  recordAiUsageEvent,
   persistSignalSnapshot,
   recordWebhookEvent,
   replaceCollisionEdges,
@@ -439,9 +441,13 @@ import { isRepoDocRefreshDue } from "../review/repo-doc-refresh-schedule";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import {
   callAiProvider,
+  clampNumber,
+  DEFAULT_BYOK_DAILY_REPO_LIMIT,
   hasPublicReviewAssessment,
   isEnabled,
   runGittensoryAiReview,
+  utcDayStartIso,
+  type AiReviewActualUsage,
   type InlineFinding,
 } from "../services/ai-review";
 import {
@@ -8151,6 +8157,22 @@ export async function runVisualVisionForAdvisory(
     // callAiProvider call below, not a reachable false case.
     /* v8 ignore next -- see comment above */
     if (!visionProviderKey) return;
+    const byokDailyLimit = clampNumber(
+      Number(env.AI_BYOK_DAILY_REPO_LIMIT || DEFAULT_BYOK_DAILY_REPO_LIMIT),
+      0,
+      10_000,
+    );
+    const byokUsed = await countByokAiEventsForRepoSince(env, args.repoFullName, utcDayStartIso());
+    if (byokUsed >= byokDailyLimit) {
+      await recordVisualVisionUsage(
+        env,
+        args,
+        visionProviderKey,
+        "quota_exceeded",
+        "BYOK daily repo limit reached",
+      );
+      return;
+    }
     const images: AiContentBlock[] = [];
     for (const route of visionGate.routes) {
       // Show the model the viewport that actually crossed the pixel-diff threshold — a route can qualify via
@@ -8176,9 +8198,28 @@ export async function runVisualVisionForAdvisory(
       600,
       images,
     );
-    if (!visionResponse.text) return;
+    if (!visionResponse.text) {
+      await recordVisualVisionUsage(
+        env,
+        args,
+        visionProviderKey,
+        "ok",
+        visionResponse.failure ? `provider failure: ${String(visionResponse.failure)}` : "no usable output",
+        visionResponse.usage,
+      );
+      return;
+    }
     const visionFindings = parseVisualVisionResponse(visionResponse.text);
-    args.advisory.findings.push(...buildVisualRegressionFindings(visionFindings));
+    const findings = buildVisualRegressionFindings(visionFindings);
+    args.advisory.findings.push(...findings);
+    await recordVisualVisionUsage(
+      env,
+      args,
+      visionProviderKey,
+      "ok",
+      findings.length > 0 ? `advisory findings (${findings.length})` : "no usable output",
+      visionResponse.usage,
+    );
   } catch (error) {
     console.log(
       JSON.stringify({
@@ -8189,6 +8230,32 @@ export async function runVisualVisionForAdvisory(
       }),
     );
   }
+}
+
+async function recordVisualVisionUsage(
+  env: Env,
+  args: { repoFullName: string; pr: { number: number }; author: string | null },
+  providerKey: { provider: string },
+  status: string,
+  detail: string,
+  usage?: AiReviewActualUsage | undefined,
+): Promise<void> {
+  await recordAiUsageEvent(env, {
+    feature: "visual_vision",
+    actor: args.author ?? null,
+    route: "github_app.visual_vision",
+    model: `byok:${providerKey.provider}`,
+    status,
+    estimatedNeurons: 0,
+    provider: usage?.provider,
+    effort: usage?.effort,
+    inputTokens: usage?.inputTokens,
+    outputTokens: usage?.outputTokens,
+    totalTokens: usage?.totalTokens,
+    costUsd: usage?.costUsd,
+    detail,
+    metadata: { repoFullName: args.repoFullName, pullNumber: args.pr.number },
+  });
 }
 
 async function maybePublishPrPublicSurface(

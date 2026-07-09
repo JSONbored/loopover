@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runVisualVisionForAdvisory } from "../../src/queue/processors";
 import * as repositories from "../../src/db/repositories";
-import { upsertRepositoryAiKey } from "../../src/db/repositories";
+import { countByokAiEventsForRepoSince, upsertRepositoryAiKey } from "../../src/db/repositories";
 import * as submitterReputation from "../../src/review/submitter-reputation";
 import type { CaptureRoute } from "../../src/review/visual/capture";
 import type { AdvisoryFinding, RepositorySettings } from "../../src/types";
+import { utcDayStartIso } from "../../src/services/ai-review";
 import { createTestEnv } from "../helpers/d1";
 
 afterEach(() => {
@@ -93,7 +94,12 @@ describe("runVisualVisionForAdvisory", () => {
 
   it("declines when no route crossed the pixel-diff threshold (no_confirmed_regression) -- never resolves BYOK", async () => {
     const env = byokEnv();
-    await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-vision-key", model: null });
+    await upsertRepositoryAiKey(env, {
+      repoFullName,
+      provider: "anthropic",
+      key: "sk-ant-vision-key",
+      model: null,
+    });
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
@@ -193,6 +199,66 @@ describe("runVisualVisionForAdvisory", () => {
     });
     expect(adv.findings).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("enforces the shared BYOK daily cap before fetching screenshots or calling the vision provider", async () => {
+    const env = createTestEnv({
+      TOKEN_ENCRYPTION_SECRET: "vision-test-encryption-secret-32b",
+      AI_BYOK_DAILY_REPO_LIMIT: "0",
+    });
+    await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-vision-key", model: null });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const adv = findingsHolder();
+    await runVisualVisionForAdvisory(env, {
+      repoFullName,
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      settings: byokSettings(),
+      advisory: adv,
+      routes: [
+        route({
+          path: "/app",
+          diffUrl: "https://x/gittensory/shot?key=diff",
+          beforeUrl: "https://x/gittensory/shot?key=before",
+          afterUrl: "https://x/gittensory/shot?key=after",
+        }),
+      ],
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(adv.findings).toEqual([]);
+    expect(await countByokAiEventsForRepoSince(env, repoFullName, utcDayStartIso())).toBe(0);
+  });
+
+  it("records successful visual BYOK calls so later passes count toward the shared daily cap", async () => {
+    const env = byokEnv();
+    await upsertRepositoryAiKey(env, {
+      repoFullName,
+      provider: "anthropic",
+      key: "sk-ant-vision-key",
+      model: null,
+    });
+    stubShotsAndProvider(findingsResponse([]));
+    const adv = findingsHolder();
+    await runVisualVisionForAdvisory(env, {
+      repoFullName,
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      settings: byokSettings(),
+      advisory: adv,
+      routes: [
+        route({
+          path: "/app",
+          diffUrl: "https://x/gittensory/shot?key=diff",
+          beforeUrl: "https://x/gittensory/shot?key=before",
+          afterUrl: "https://x/gittensory/shot?key=after",
+        }),
+      ],
+    });
+    expect(adv.findings).toEqual([]);
+    expect(await countByokAiEventsForRepoSince(env, repoFullName, utcDayStartIso())).toBe(1);
   });
 
   it("calls the BYOK vision provider with before+after images and publishes a returned finding (desktop route)", async () => {

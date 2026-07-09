@@ -60,8 +60,9 @@ function normalizeMapping(input: unknown, index: number, warnings: string[]): Li
       warnings.push(`settings.linkedIssueLabelPropagation.mappings[${index}].trustMaintainerAuthoredIssue must be a boolean; ignoring it.`);
     }
   }
-  // Same parse contract as trustMaintainerAuthoredIssue just above (#priority-reward-maintainer-trust).
-  // Mirrors `src/review/linked-issue-label-propagation.ts`'s copy of this normalizer.
+  // Same parse contract as trustMaintainerAuthoredIssue just above (#priority-reward-maintainer-trust):
+  // malformed is warned-and-defaulted to undefined/strict, never silently coerced, never a reason to drop
+  // an otherwise-valid mapping.
   let trustMaintainerAuthoredIssueForReward: boolean | undefined;
   if (record.trustMaintainerAuthoredIssueForReward !== undefined) {
     if (typeof record.trustMaintainerAuthoredIssueForReward === "boolean") {

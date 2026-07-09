@@ -19,6 +19,7 @@ test("DEFAULT_MINER_GOAL_SPEC carries the documented safe defaults", () => {
     blockedLabels: [],
     maxConcurrentClaims: 1,
     issueDiscoveryPolicy: "neutral",
+    feasibilityGate: { minFeasibilityScore: 0, suppressedAvoidReasons: [] }, // inert gate — additive default
   });
 });
 
@@ -28,12 +29,15 @@ test("DEFAULT_MINER_GOAL_SPEC is deep-frozen so the shared singleton can't be mu
   assert.ok(Object.isFrozen(DEFAULT_MINER_GOAL_SPEC.blockedPaths));
   assert.ok(Object.isFrozen(DEFAULT_MINER_GOAL_SPEC.preferredLabels));
   assert.ok(Object.isFrozen(DEFAULT_MINER_GOAL_SPEC.blockedLabels));
+  assert.ok(Object.isFrozen(DEFAULT_MINER_GOAL_SPEC.feasibilityGate));
+  assert.ok(Object.isFrozen(DEFAULT_MINER_GOAL_SPEC.feasibilityGate.suppressedAvoidReasons));
 });
 
 test("DEFAULT_MINER_GOAL_SPEC exposes exactly the specified field surface", () => {
   assert.deepEqual(Object.keys(DEFAULT_MINER_GOAL_SPEC).sort(), [
     "blockedLabels",
     "blockedPaths",
+    "feasibilityGate",
     "issueDiscoveryPolicy",
     "maxConcurrentClaims",
     "minerEnabled",

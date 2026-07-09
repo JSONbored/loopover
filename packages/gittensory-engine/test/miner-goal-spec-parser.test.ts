@@ -45,8 +45,44 @@ test("parseMinerGoalSpec: valid raw config normalizes every field and keeps non-
     blockedLabels: ["duplicate"],
     maxConcurrentClaims: 2,
     issueDiscoveryPolicy: "encouraged",
+    feasibilityGate: { minFeasibilityScore: 0, suppressedAvoidReasons: [] }, // omitted → inert default
   });
   assert.deepEqual(parsed.warnings, []);
+});
+
+test("parseMinerGoalSpec: a feasibilityGate block normalizes score + suppressed reasons and marks the spec present", () => {
+  const parsed = parseMinerGoalSpec({
+    feasibilityGate: {
+      minFeasibilityScore: 0.4,
+      suppressedAvoidReasons: ["missing_local_test_harness", " missing_local_test_harness ", "", "no_ci"],
+    },
+  });
+  assert.equal(parsed.present, true); // a feasibilityGate-only config is still a non-default (present) spec
+  assert.deepEqual(parsed.spec.feasibilityGate, {
+    minFeasibilityScore: 0.4,
+    suppressedAvoidReasons: ["missing_local_test_harness", "no_ci"], // trimmed, de-duped, blanks dropped
+  });
+  assert.deepEqual(parsed.warnings, []);
+});
+
+test("parseMinerGoalSpec: feasibilityGate.minFeasibilityScore clamps out-of-range and rejects non-numbers with a warning", () => {
+  const high = parseMinerGoalSpec({ feasibilityGate: { minFeasibilityScore: 1.5 } });
+  assert.equal(high.spec.feasibilityGate.minFeasibilityScore, 1);
+  assert.match(high.warnings.join(" "), /minFeasibilityScore.*clamped to 1/i);
+
+  const low = parseMinerGoalSpec({ feasibilityGate: { minFeasibilityScore: -2 } });
+  assert.equal(low.spec.feasibilityGate.minFeasibilityScore, 0);
+  assert.match(low.warnings.join(" "), /minFeasibilityScore.*clamped to 0/i);
+
+  const bad = parseMinerGoalSpec({ feasibilityGate: { minFeasibilityScore: "high" } });
+  assert.equal(bad.spec.feasibilityGate.minFeasibilityScore, 0);
+  assert.match(bad.warnings.join(" "), /minFeasibilityScore.*must be a number/i);
+});
+
+test("parseMinerGoalSpec: a non-mapping feasibilityGate degrades to the inert default with a warning", () => {
+  const parsed = parseMinerGoalSpec({ feasibilityGate: ["nope"] });
+  assert.deepEqual(parsed.spec.feasibilityGate, DEFAULT_MINER_GOAL_SPEC.feasibilityGate);
+  assert.match(parsed.warnings.join(" "), /feasibilityGate.*must be a mapping/i);
 });
 
 test("parseMinerGoalSpec: exactly 100 unique entries are accepted without a cap warning", () => {

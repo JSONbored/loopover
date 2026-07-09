@@ -46,6 +46,26 @@
       "enum": ["encouraged", "neutral", "discouraged"],
       "default": "neutral",
       "description": "How strongly opening discovery issues is encouraged. Default: neutral."
+    },
+    "feasibilityGate": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Per-repo feasibility-gate tuning. Additive and inert by default. See packages/gittensory-miner/docs/miner-goal-spec.md.",
+      "properties": {
+        "minFeasibilityScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0,
+          "description": "Minimum feasibility score a candidate must reach for a miner to pursue it. Default: 0 (no floor)."
+        },
+        "suppressedAvoidReasons": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": [],
+          "description": "Feasibility avoid-reason keys this repo downgrades from blocking to advisory. Default: []."
+        }
+      }
     }
   }
 }

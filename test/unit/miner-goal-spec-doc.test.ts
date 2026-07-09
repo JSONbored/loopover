@@ -17,6 +17,7 @@ const SPEC_FIELDS = [
   "blockedLabels",
   "maxConcurrentClaims",
   "issueDiscoveryPolicy",
+  "feasibilityGate",
 ] as const;
 
 describe("miner goal spec docs (#2300)", () => {

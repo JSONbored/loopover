@@ -142,6 +142,7 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
           blockedLabels: [],
           maxConcurrentClaims: 2,
           issueDiscoveryPolicy: "neutral",
+          feasibilityGate: { minFeasibilityScore: 0, suppressedAvoidReasons: [] },
         },
       },
     });
@@ -160,6 +161,7 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
           blockedLabels: [],
           maxConcurrentClaims: 2,
           issueDiscoveryPolicy: "neutral",
+          feasibilityGate: { minFeasibilityScore: 0, suppressedAvoidReasons: [] },
         },
       },
     });
@@ -217,6 +219,7 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
             blockedLabels: [],
             maxConcurrentClaims: 2,
             issueDiscoveryPolicy: "neutral",
+            feasibilityGate: { minFeasibilityScore: 0, suppressedAvoidReasons: [] },
           },
         },
       },

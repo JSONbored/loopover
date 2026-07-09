@@ -73,6 +73,7 @@ describe("opportunity branch internals", () => {
             blockedLabels: [],
             maxConcurrentClaims: 1,
             issueDiscoveryPolicy: "encouraged",
+            feasibilityGate: { minFeasibilityScore: 0, suppressedAvoidReasons: [] },
           },
         },
       }).preferredLabels,

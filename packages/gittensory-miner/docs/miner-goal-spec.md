@@ -49,3 +49,21 @@ Maximum issues one miner may hold claimed on this repo at once.
 ### `issueDiscoveryPolicy` (`encouraged` | `neutral` | `discouraged`, default: `neutral`)
 
 How strongly this repo encourages a miner to open discovery issues.
+
+### `feasibilityGate` (mapping, default: inert)
+
+Per-repo tuning for the miner's feasibility gate — how selective a miner is about which candidate issues it deems workable before spending effort. Additive and OFF by default: with the defaults below the gate never blocks, so a repo that omits this block behaves exactly as before.
+
+| Sub-field | Type | Default | Meaning |
+|-----------|------|---------|---------|
+| `minFeasibilityScore` | number in `[0, 1]` | `0` | Minimum feasibility score a candidate must reach for a miner to pursue it. `0` means no floor. Out-of-range or non-finite values clamp into `[0, 1]` with a warning. |
+| `suppressedAvoidReasons` | string list | `[]` | Feasibility "avoid" reason keys this repo downgrades from blocking to advisory ("that reason does not apply here"). Free-form; unknown keys are tolerated. |
+
+```yaml
+feasibilityGate:
+  minFeasibilityScore: 0.4
+  suppressedAvoidReasons:
+    - missing_local_test_harness
+```
+
+The feasibility-gate composer (a separate change) is the consumer of this block; this is only the config surface a maintainer tunes.

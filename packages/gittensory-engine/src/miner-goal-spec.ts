@@ -10,6 +10,27 @@ import { parse as parseYaml } from "yaml";
 /** How strongly opening discovery issues is encouraged for this repo. Mirrors the review-side policy vocabulary. */
 export type MinerIssueDiscoveryPolicy = "encouraged" | "neutral" | "discouraged";
 
+/**
+ * Per-repo tuning for the miner's feasibility gate — how selective a miner is about which candidate issues it
+ * deems workable before spending effort. Additive and OFF by default: with {@link DEFAULT_MINER_GOAL_SPEC}'s
+ * values the gate never blocks, so a repo with no `feasibilityGate` block behaves exactly as before. The gate's
+ * composer (a separate issue) is the consumer; this is only the config surface a maintainer tunes.
+ */
+export type MinerFeasibilityGate = {
+  /**
+   * Minimum feasibility score, in `[0, 1]`, a candidate must reach for a miner to pursue it. Default: `0` — no
+   * floor, so the gate stays inert until a maintainer opts in. The parser clamps out-of-range or non-finite input
+   * into `[0, 1]` (with a warning) rather than rejecting it.
+   */
+  minFeasibilityScore: number;
+  /**
+   * Feasibility "avoid" reason keys this repo opts to DOWNGRADE from blocking to advisory — a maintainer's way to
+   * say "that reason does not apply here." Free-form string list; the composer owns the reason vocabulary, so the
+   * config stays tolerant of unknown keys. Default: `[]` (suppress nothing).
+   */
+  suppressedAvoidReasons: readonly string[];
+};
+
 /** Per-repo miner configuration parsed from `.gittensory-miner.yml`. See {@link DEFAULT_MINER_GOAL_SPEC}. */
 export type MinerGoalSpec = {
   /**
@@ -49,6 +70,11 @@ export type MinerGoalSpec = {
    * Default: neutral.
    */
   issueDiscoveryPolicy: MinerIssueDiscoveryPolicy;
+  /**
+   * Per-repo feasibility-gate tuning. Default: an inert gate (score floor `0`, nothing suppressed), so the field
+   * is fully additive — a repo that omits it behaves exactly as before. See {@link MinerFeasibilityGate}.
+   */
+  feasibilityGate: MinerFeasibilityGate;
 };
 
 /** The tolerant parser result for `.gittensory-miner.yml`: the normalized spec plus parse warnings and whether the
@@ -77,6 +103,7 @@ export const DEFAULT_MINER_GOAL_SPEC: Readonly<MinerGoalSpec> = Object.freeze({
   blockedLabels: Object.freeze([]),
   maxConcurrentClaims: 1,
   issueDiscoveryPolicy: "neutral",
+  feasibilityGate: Object.freeze({ minFeasibilityScore: 0, suppressedAvoidReasons: Object.freeze([]) }),
 });
 
 const MAX_MINER_GOAL_SPEC_BYTES = 32_768;
@@ -90,6 +117,14 @@ function cloneDefaultMinerGoalSpec(): MinerGoalSpec {
     blockedPaths: [...DEFAULT_MINER_GOAL_SPEC.blockedPaths],
     preferredLabels: [...DEFAULT_MINER_GOAL_SPEC.preferredLabels],
     blockedLabels: [...DEFAULT_MINER_GOAL_SPEC.blockedLabels],
+    feasibilityGate: cloneDefaultFeasibilityGate(),
+  };
+}
+
+function cloneDefaultFeasibilityGate(): MinerFeasibilityGate {
+  return {
+    minFeasibilityScore: DEFAULT_MINER_GOAL_SPEC.feasibilityGate.minFeasibilityScore,
+    suppressedAvoidReasons: [...DEFAULT_MINER_GOAL_SPEC.feasibilityGate.suppressedAvoidReasons],
   };
 }
 
@@ -173,6 +208,46 @@ function utf8ByteLength(value: string): number {
   return bytes;
 }
 
+function normalizeFeasibilityGate(value: unknown, warnings: string[]): MinerFeasibilityGate {
+  if (value === undefined || value === null) return cloneDefaultFeasibilityGate();
+  if (typeof value !== "object" || Array.isArray(value)) {
+    warnings.push(
+      `MinerGoalSpec field "feasibilityGate" must be a mapping; ignoring a ${Array.isArray(value) ? "array" : typeof value} value.`,
+    );
+    return cloneDefaultFeasibilityGate();
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    minFeasibilityScore: normalizeUnitScore(
+      record.minFeasibilityScore,
+      "feasibilityGate.minFeasibilityScore",
+      DEFAULT_MINER_GOAL_SPEC.feasibilityGate.minFeasibilityScore,
+      warnings,
+    ),
+    suppressedAvoidReasons: normalizeStringList(
+      record.suppressedAvoidReasons,
+      "feasibilityGate.suppressedAvoidReasons",
+      warnings,
+    ),
+  };
+}
+
+/** Normalize a `[0, 1]` score: a non-finite/non-number value falls back to `fallback`; an out-of-range finite value
+ *  clamps into `[0, 1]`. Both cases warn, matching the tolerant "degrade, don't throw" convention of this parser. */
+function normalizeUnitScore(value: unknown, field: string, fallback: number, warnings: string[]): number {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    warnings.push(`MinerGoalSpec field "${field}" must be a number in [0, 1]; falling back to ${fallback}.`);
+    return fallback;
+  }
+  if (value < 0 || value > 1) {
+    const clamped = Math.min(1, Math.max(0, value));
+    warnings.push(`MinerGoalSpec field "${field}" was outside [0, 1]; clamped to ${clamped}.`);
+    return clamped;
+  }
+  return value;
+}
+
 function hasConfiguredGoalFields(spec: MinerGoalSpec): boolean {
   return (
     spec.minerEnabled !== DEFAULT_MINER_GOAL_SPEC.minerEnabled ||
@@ -181,7 +256,9 @@ function hasConfiguredGoalFields(spec: MinerGoalSpec): boolean {
     spec.preferredLabels.length > 0 ||
     spec.blockedLabels.length > 0 ||
     spec.maxConcurrentClaims !== DEFAULT_MINER_GOAL_SPEC.maxConcurrentClaims ||
-    spec.issueDiscoveryPolicy !== DEFAULT_MINER_GOAL_SPEC.issueDiscoveryPolicy
+    spec.issueDiscoveryPolicy !== DEFAULT_MINER_GOAL_SPEC.issueDiscoveryPolicy ||
+    spec.feasibilityGate.minFeasibilityScore !== DEFAULT_MINER_GOAL_SPEC.feasibilityGate.minFeasibilityScore ||
+    spec.feasibilityGate.suppressedAvoidReasons.length > 0
   );
 }
 
@@ -222,6 +299,7 @@ export function parseMinerGoalSpec(raw: unknown): ParsedMinerGoalSpec {
       DEFAULT_MINER_GOAL_SPEC.issueDiscoveryPolicy,
       warnings,
     ),
+    feasibilityGate: normalizeFeasibilityGate(record.feasibilityGate, warnings),
   };
   if (!hasConfiguredGoalFields(spec)) {
     warnings.push("MinerGoalSpec contained no recognized non-default goal fields; falling back to safe defaults.");

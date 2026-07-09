@@ -44,11 +44,35 @@ export type AttemptMeterVerdict = {
 
 const ZERO_USAGE: AttemptUsage = { tokens: 0, turns: 0, wallClockMs: 0, costUsd: 0 };
 
+function assertNonNegativeFiniteNumber(name: string, value: number): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new RangeError(`${name} must be a finite, non-negative number`);
+  }
+}
+
+function assertAttemptUsage(name: string, usage: AttemptUsage): void {
+  assertNonNegativeFiniteNumber(`${name}.tokens`, usage.tokens);
+  assertNonNegativeFiniteNumber(`${name}.turns`, usage.turns);
+  assertNonNegativeFiniteNumber(`${name}.wallClockMs`, usage.wallClockMs);
+  assertNonNegativeFiniteNumber(`${name}.costUsd`, usage.costUsd);
+}
+
+function assertAttemptBudget(budget: AttemptBudget): void {
+  if (budget.maxTokens !== undefined) assertNonNegativeFiniteNumber("budget.maxTokens", budget.maxTokens);
+  if (budget.maxTurns !== undefined) assertNonNegativeFiniteNumber("budget.maxTurns", budget.maxTurns);
+  if (budget.maxWallClockMs !== undefined) {
+    assertNonNegativeFiniteNumber("budget.maxWallClockMs", budget.maxWallClockMs);
+  }
+  if (budget.maxCostUsd !== undefined) assertNonNegativeFiniteNumber("budget.maxCostUsd", budget.maxCostUsd);
+}
+
 /** Fold one usage increment into a running total. Pure — returns a new total, mutates nothing. */
 export function accumulateAttemptUsage(
   total: AttemptMeterTotals,
   next: AttemptUsage,
 ): AttemptMeterTotals {
+  assertAttemptUsage("total", total);
+  assertAttemptUsage("next", next);
   return {
     tokens: total.tokens + next.tokens,
     turns: total.turns + next.turns,
@@ -71,6 +95,8 @@ export function evaluateAttemptBudget(
   totals: AttemptMeterTotals,
   budget: AttemptBudget,
 ): AttemptMeterVerdict {
+  assertAttemptUsage("totals", totals);
+  assertAttemptBudget(budget);
   const breaches: AttemptBudgetAxis[] = [];
   if (budget.maxTokens !== undefined && totals.tokens >= budget.maxTokens) breaches.push("tokens");
   if (budget.maxTurns !== undefined && totals.turns >= budget.maxTurns) breaches.push("turns");

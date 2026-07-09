@@ -97,6 +97,12 @@ describe("MCP resource discovery", () => {
     }
   });
 
+  it("does not expose deterministic slop weights as a discoverable resource", async () => {
+    const { resources } = await client.listResources();
+    const uris = resources.map((r) => r.uri);
+    expect(uris).not.toContain("gittensory://slop-rules");
+  });
+
   it("can read the changelog resource without authentication", async () => {
     const result = await client.readResource({ uri: "gittensory://changelog" });
     expect(result.contents).toHaveLength(1);

@@ -155,7 +155,6 @@ import { loadUpstreamStatus } from "../upstream/ruleset";
 import { simulateOpenPrPressure, type OpenPrPressureInput } from "../services/open-pr-pressure-scenarios";
 import { buildFindingTaxonomyDocument, FINDING_TAXONOMY_URI } from "../review/finding-taxonomy";
 import { buildEnrichmentAnalyzersTaxonomyDocument, ENRICHMENT_ANALYZERS_URI } from "../review/enrichment-analyzers-taxonomy";
-import { buildSlopRulesDocument, SLOP_RULES_URI } from "../review/slop-rules-taxonomy";
 
 type AppContext = Context<{ Bindings: Env }>;
 type ToolPayload = {
@@ -2203,26 +2202,6 @@ export class GittensoryMcp {
             uri: ENRICHMENT_ANALYZERS_URI,
             mimeType: "application/json",
             text: JSON.stringify(buildEnrichmentAnalyzersTaxonomyDocument(), null, 2),
-          },
-        ],
-      }),
-    );
-
-    // #2237 — read-only catalog of the deterministic slop rule codes + score bands for MCP discovery.
-    server.registerResource(
-      "gittensory_slop_rules",
-      SLOP_RULES_URI,
-      {
-        title: "Gittensory Slop Rules",
-        description: "Deterministic slop-signal catalog: rule codes with their point weights (PR + issue) and the clean/low/elevated/high score bands.",
-        mimeType: "application/json",
-      },
-      async () => ({
-        contents: [
-          {
-            uri: SLOP_RULES_URI,
-            mimeType: "application/json",
-            text: JSON.stringify(buildSlopRulesDocument(), null, 2),
           },
         ],
       }),

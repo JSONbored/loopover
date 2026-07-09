@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { processJob } from "../../src/queue/processors";
+import * as decisionPackModule from "../../src/services/decision-pack";
 import {
   createFlagStore,
   isCloseHoldOnly,
@@ -230,6 +231,155 @@ describe("recordPrOutcome — realized merge/close ground truth", () => {
     });
     expect(await reviewAuditRows(env, "pr_outcome")).toHaveLength(0);
     expect(await auditEventRows(env, "pr_outcome")).toHaveLength(0);
+  });
+});
+
+describe("recordPrOutcome — decision-pack rebuild on pr_outcome (#4283)", () => {
+  async function rebuildEnqueueActors(env: Env): Promise<string[]> {
+    const res = await env.DB.prepare(
+      "SELECT actor FROM audit_events WHERE event_type = 'decision_pack.rebuild_enqueued'",
+    ).all<{ actor: string | null }>();
+    return (res.results ?? []).map((row) => row.actor).filter((actor): actor is string => Boolean(actor));
+  }
+
+  it("enqueues a decision-pack rebuild for the PR author after a maintainer close records pr_outcome", async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: Record<string, unknown>) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    await recordPrOutcome(env, "pull_request", {
+      action: "closed",
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
+      pull_request: pullRequestPayload({
+        number: 43,
+        merged_at: null,
+        user: { login: "contributor", type: "User" },
+      }),
+      sender: { login: "owner", type: "User" },
+    });
+    expect(await rebuildEnqueueActors(env)).toEqual(["contributor"]);
+    expect(sent).toContainEqual({
+      type: "build-contributor-decision-packs",
+      requestedBy: "api",
+      login: "contributor",
+    });
+  });
+
+  it("enqueues a decision-pack rebuild for the PR author after a merged close records pr_outcome", async () => {
+    const env = createTestEnv({
+      JOBS: {
+        async send() {},
+      } as unknown as Queue,
+    });
+    await recordPrOutcome(env, "pull_request", {
+      action: "closed",
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
+      pull_request: pullRequestPayload({
+        number: 42,
+        merged_at: "2026-06-20T00:00:00.000Z",
+        user: { login: "contributor", type: "User" },
+      }),
+      sender: { login: "owner", type: "User" },
+    });
+    expect(await rebuildEnqueueActors(env)).toEqual(["contributor"]);
+  });
+
+  it("does not enqueue when the PR author login is missing, even though pr_outcome is recorded", async () => {
+    const env = createTestEnv({
+      JOBS: {
+        async send() {
+          throw new Error("should not send");
+        },
+      } as unknown as Queue,
+    });
+    await recordPrOutcome(env, "pull_request", {
+      action: "closed",
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
+      pull_request: pullRequestPayload({
+        number: 42,
+        merged_at: "2026-06-20T00:00:00.000Z",
+      }),
+      sender: { login: "owner", type: "User" },
+    });
+    expect(await reviewAuditRows(env, "pr_outcome")).toHaveLength(1);
+    expect(await rebuildEnqueueActors(env)).toEqual([]);
+  });
+
+  it("does not enqueue for a contributor self-close (no pr_outcome, consistent with anti-poisoning)", async () => {
+    const env = createTestEnv({
+      JOBS: {
+        async send() {
+          throw new Error("should not send");
+        },
+      } as unknown as Queue,
+    });
+    await recordPrOutcome(env, "pull_request", {
+      action: "closed",
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
+      pull_request: pullRequestPayload({
+        number: 43,
+        merged_at: null,
+        user: { login: "contributor", type: "User" },
+      }),
+      sender: { login: "contributor", type: "User" },
+    });
+    expect(await reviewAuditRows(env, "pr_outcome")).toHaveLength(0);
+    expect(await rebuildEnqueueActors(env)).toEqual([]);
+  });
+
+  it("still records pr_outcome when decision-pack rebuild enqueue throws", async () => {
+    const env = createTestEnv();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(decisionPackModule, "tryEnqueueDecisionPackRebuild").mockRejectedValue(
+      new Error("queue unavailable"),
+    );
+    await expect(
+      recordPrOutcome(env, "pull_request", {
+        action: "closed",
+        repository: {
+          name: "repo",
+          full_name: "owner/repo",
+          owner: { login: "owner" },
+        },
+        pull_request: pullRequestPayload({
+          number: 44,
+          merged_at: null,
+          user: { login: "contributor", type: "User" },
+        }),
+        sender: { login: "owner", type: "User" },
+      }),
+    ).resolves.toBeUndefined();
+    expect((await reviewAuditRows(env, "pr_outcome"))[0]).toMatchObject({
+      target_id: "owner/repo#44",
+      decision: "closed",
+    });
+    expect(
+      warn.mock.calls.some((call) =>
+        String(call[0]).includes("pr_outcome_decision_pack_rebuild_error"),
+      ),
+    ).toBe(true);
+    warn.mockRestore();
+    vi.restoreAllMocks();
   });
 });
 

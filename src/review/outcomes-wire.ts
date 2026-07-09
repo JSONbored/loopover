@@ -24,6 +24,7 @@
 // once a repo's merge precision actually drops below the floor over a real sample.
 
 import { recordAuditEvent } from "../db/repositories";
+import { tryEnqueueDecisionPackRebuild } from "../services/decision-pack";
 import { incr } from "../selfhost/metrics";
 import type { GitHubWebhookPayload } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
@@ -328,7 +329,7 @@ export async function recordPrOutcome(
     outcome: "completed",
     detail: decision,
     metadata: { repoFullName, pullNumber: pr.number, merged, botWasActor },
-  }).catch((error) =>
+  }  ).catch((error) =>
     console.warn(
       JSON.stringify({
         event: "pr_outcome_audit_error",
@@ -336,6 +337,21 @@ export async function recordPrOutcome(
       }),
     ),
   );
+
+  // #4283: proactively refresh the PR author's decision pack once ground truth lands — the passive
+  // DECISION_PACK_MAX_AGE_MS staleness check at serving time remains the fallback for contributors who
+  // have not closed a PR yet. Best-effort only: a rebuild enqueue failure must never break pr_outcome recording.
+  if (authorLogin) {
+    await tryEnqueueDecisionPackRebuild(env, authorLogin).catch((error) =>
+      console.warn(
+        JSON.stringify({
+          event: "pr_outcome_decision_pack_rebuild_error",
+          login: authorLogin,
+          message: errorMessage(error).slice(0, 160),
+        }),
+      ),
+    );
+  }
 
   // Discord/Slack action notifications are emitted by the action executor, which knows the exact bot action that
   // was attempted and can audit the delivery. This outcome recorder only stores realized ground truth. Emitting

@@ -613,6 +613,14 @@ interface LiveGithubFacts {
   requiredContexts: Map<string, Promise<RequiredStatusContextsLookup>>;
   ciAggregates: Map<string, Promise<LiveCiAggregate>>;
   mergeStates: Map<string, Promise<string | undefined>>;
+  // #4498: which ciAggregates/mergeStates keys were populated by a FORCED (refreshLiveCiAggregate/
+  // refreshLiveMergeState) write THIS pass, as opposed to a cached* reader's write -- the cached* variants can
+  // populate the SAME map/key from the DURABLE cross-webhook cache (potentially stale, e.g. readiness's own
+  // cachedLiveCiAggregate check), so a plain "is there anything in the map for this key" check cannot tell a
+  // genuinely-fresh forced value apart from a possibly-stale cached one. reuseOrRefreshLiveCiAggregate/
+  // reuseOrRefreshLiveMergeState only ever reuse a memoized value when its key is ALSO in these sets.
+  forcedCiAggregateKeys: Set<string>;
+  forcedMergeStateKeys: Set<string>;
 }
 
 function createLiveGithubFacts(): LiveGithubFacts {
@@ -620,6 +628,8 @@ function createLiveGithubFacts(): LiveGithubFacts {
     requiredContexts: new Map(),
     ciAggregates: new Map(),
     mergeStates: new Map(),
+    forcedCiAggregateKeys: new Set(),
+    forcedMergeStateKeys: new Set(),
   };
 }
 
@@ -873,6 +883,7 @@ function refreshLiveCiAggregate(
     ),
   );
   facts.ciAggregates.set(key, next);
+  facts.forcedCiAggregateKeys.add(key);
   return next;
 }
 
@@ -920,7 +931,51 @@ function refreshLiveMergeState(
     fetchLivePullRequestMergeState(env, repoFullName, prNumber, token, admissionKey),
   );
   facts.mergeStates.set(key, next);
+  facts.forcedMergeStateKeys.add(key);
   return next;
+}
+
+// #4498: reuses THIS PASS's own already-FORCED-live-refreshed value when an earlier refreshLiveMergeState/
+// refreshLiveCiAggregate call in the SAME webhook pass (sharing the SAME `facts` object and key -- e.g.
+// maybePublishPrPublicSurface's own post-gate-publish refresh) already populated the request-local memo,
+// instead of re-fetching the identical resource from GitHub a second time. Deliberately NOT a plain "is
+// something in facts.mergeStates/ciAggregates for this key" check: cachedLiveMergeState/cachedLiveCiAggregate
+// (the READINESS-path reader) populate the SAME map/key from the DURABLE cross-webhook cache on their own
+// request-local miss -- a durable-cache HIT there can be an OLDER webhook's snapshot, exactly what
+// refreshLiveMergeState's #4220 doc comment above prohibits for this act-boundary-adjacent disposition input.
+// So this only reuses a memoized value when its key is ALSO in forcedMergeStateKeys/forcedCiAggregateKeys --
+// i.e. it was written by a FORCED (genuinely-live-this-pass) call, never by a cached-path reader. On a genuine
+// miss (no forced call ran yet this pass, e.g. unifiedCommentAllowed was false) this falls through to a REAL
+// live refresh, so behavior can only ever improve (fewer calls) over the pre-fix code, never go staler.
+function reuseOrRefreshLiveMergeState(
+  env: Env,
+  repoFullName: string,
+  facts: LiveGithubFacts,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const key = liveFactKey(repoFullName, prNumber, liveFactTokenPart(token));
+  const cached = facts.forcedMergeStateKeys.has(key) ? facts.mergeStates.get(key) : undefined;
+  if (cached) return cached;
+  return refreshLiveMergeState(env, repoFullName, facts, prNumber, token, admissionKey);
+}
+
+function reuseOrRefreshLiveCiAggregate(
+  env: Env,
+  repoFullName: string,
+  facts: LiveGithubFacts,
+  prNumber: number,
+  headSha: string | null | undefined,
+  baseRef: string | null | undefined,
+  token: string | undefined,
+  expectedCiContexts: ReadonlyArray<string> | null | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<LiveCiAggregate> {
+  const key = liveFactKey(repoFullName, headSha, baseRef, liveFactTokenPart(token), expectedCiContextsKeyPart(expectedCiContexts));
+  const cached = facts.forcedCiAggregateKeys.has(key) ? facts.ciAggregates.get(key) : undefined;
+  if (cached) return cached;
+  return refreshLiveCiAggregate(env, repoFullName, facts, prNumber, headSha, baseRef, token, expectedCiContexts, admissionKey);
 }
 
 /**
@@ -2705,8 +2760,10 @@ async function runAgentMaintenancePlanAndExecute(
       admissionKey,
     ),
     // Live mergeable_state after the gate's own publish/review/check mutations. Readiness may have seen the PR as
-    // blocked before the bot approval/check landed, so this boundary must refresh instead of replaying the cache.
-    refreshLiveMergeState(env, repoFullName, args.liveFacts, pr.number, token, admissionKey),
+    // blocked before the bot approval/check landed, so this boundary must never replay the durable cross-webhook
+    // cache -- but maybePublishPrPublicSurface's OWN post-publish refresh (same pass, same liveFacts object) has
+    // typically already paid for this exact live read moments earlier (#4498); reuse it instead of fetching twice.
+    reuseOrRefreshLiveMergeState(env, repoFullName, args.liveFacts, pr.number, token, admissionKey),
     // RC1: live reviewDecision so the approve/request-changes dedup is accurate. The STORED reviewDecision is
     // only written by the open-PR backfill and goes stale → the planner re-posted a review every cycle (the
     // re-review loop with 14-23 stacked reviews). With the live value, an already-approved/changes-requested PR
@@ -2714,7 +2771,8 @@ async function runAgentMaintenancePlanAndExecute(
     fetchLivePullRequestReviewDecision(env, repoFullName, pr.number, token, admissionKey),
   ]);
   const requiredContexts = requiredContextsLookup.requiredContexts;
-  const ciAggregate = await refreshLiveCiAggregate(
+  // Same reuse-this-pass-else-refresh-live rationale as reuseOrRefreshLiveMergeState above (#4498).
+  const ciAggregate = await reuseOrRefreshLiveCiAggregate(
     env,
     repoFullName,
     args.liveFacts,
@@ -8688,6 +8746,10 @@ async function maybePublishPrPublicSurface(
               installationId,
               prAuthorLogin: pr.authorLogin,
               mappings: propagation.mappings,
+              // #4528: lets a closed linked issue still count when THIS PR's own merge is what closed it
+              // (the standard "Closes #N" auto-close), instead of losing propagation authority the instant
+              // the merge that's supposed to earn the label also closes its evidence.
+              prMergedAt: pr.mergedAt ?? null,
             })
           : [];
       const decisionResult = resolvePrTypeLabel({

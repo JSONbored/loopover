@@ -320,6 +320,25 @@ const DEFAULT_LIMITS: BackfillLimits = {
 
 const FRESH_SYNC_MS = 6 * 60 * 60 * 1000;
 const ERROR_BACKOFF_MS = 60 * 60 * 1000;
+
+/** Shared freshness/error-backoff decision (#4497): a repo whose last sync is either a fresh success (within
+ *  FRESH_SYNC_MS) or a recent error (within ERROR_BACKOFF_MS) should be skipped rather than re-synced, unless
+ *  the caller explicitly forces a refresh. Returns null when a sync should proceed (never synced, no completed
+ *  timestamp, or the existing sync is stale enough to redo). Shared by backfillRegisteredRepositories (the
+ *  admin-endpoint/test path) and enqueueRepositoryOpenDataBackfill (the real scheduled-cron path) so both
+ *  respect the SAME cadence -- previously only the former checked this, so the scheduled path re-synced every
+ *  registered repo every 30 minutes forever regardless of freshness or a permanent error state. */
+function syncFreshnessSkipReason(
+  syncState: RepoSyncStateRecord | null,
+  force: boolean | undefined,
+): { freshSuccess: boolean; recentError: boolean } | null {
+  if (force || !syncState?.lastCompletedAt || syncState.status === "never_synced") return null;
+  const ageMs = Date.now() - Date.parse(syncState.lastCompletedAt);
+  const freshSuccess =
+    (syncState.status === "success" || syncState.status === "partial" || syncState.status === "capped") && Number.isFinite(ageMs) && ageMs < FRESH_SYNC_MS;
+  const recentError = syncState.status === "error" && Number.isFinite(ageMs) && ageMs < ERROR_BACKOFF_MS;
+  return freshSuccess || recentError ? { freshSuccess, recentError } : null;
+}
 const SEGMENT_PAGE_BUDGET: Record<BackfillMode, number> = { light: 2, full: 10, resume: 10 };
 const PR_DETAIL_BATCH_SIZE: Record<BackfillMode, number> = { light: 12, full: 40, resume: 40 };
 // Caps how many NOT-yet-hydrated merged PRs get a `/pulls/{n}/files` fetch per `recent_merged_pull_requests`
@@ -422,26 +441,21 @@ export async function backfillRegisteredRepositories(
       };
     }
     const syncState = await getRepoSyncState(env, repo.fullName);
-    if (!options.force && syncState?.lastCompletedAt && syncState.status !== "never_synced") {
-      const ageMs = Date.now() - Date.parse(syncState.lastCompletedAt);
-      const freshSuccess =
-        (syncState.status === "success" || syncState.status === "partial" || syncState.status === "capped") && Number.isFinite(ageMs) && ageMs < FRESH_SYNC_MS;
-      const recentError = syncState.status === "error" && Number.isFinite(ageMs) && ageMs < ERROR_BACKOFF_MS;
-      if (freshSuccess || recentError) {
-        return {
-          repoFullName: repo.fullName,
-          status: "skipped",
-          openIssues: syncState.openIssuesCount,
-          openPullRequests: syncState.openPullRequestsCount,
-          recentMergedPullRequests: syncState.recentMergedPullRequestsCount,
-          warnings: [
-            freshSuccess
-              ? `Recent GitHub sync completed at ${syncState.lastCompletedAt}; use force=true for a manual refresh.`
-              : `Recent GitHub sync error recorded at ${syncState.lastCompletedAt}; backing off unless force=true.`,
-          ],
-          ...(recentError && syncState.errorSummary ? { errorSummary: syncState.errorSummary } : {}),
-        };
-      }
+    const skipReason = syncFreshnessSkipReason(syncState, options.force);
+    if (skipReason && syncState) {
+      return {
+        repoFullName: repo.fullName,
+        status: "skipped",
+        openIssues: syncState.openIssuesCount,
+        openPullRequests: syncState.openPullRequestsCount,
+        recentMergedPullRequests: syncState.recentMergedPullRequestsCount,
+        warnings: [
+          skipReason.freshSuccess
+            ? `Recent GitHub sync completed at ${syncState.lastCompletedAt}; use force=true for a manual refresh.`
+            : `Recent GitHub sync error recorded at ${syncState.lastCompletedAt}; backing off unless force=true.`,
+        ],
+        ...(skipReason.recentError && syncState.errorSummary ? { errorSummary: syncState.errorSummary } : {}),
+      };
     }
     return backfillRepository(env, repo, limits, mode);
   });
@@ -457,11 +471,28 @@ export async function enqueueRepositoryOpenDataBackfill(
   const mode = options.mode ?? "light";
   const settings = await resolveRepositorySettings(env, repo.fullName);
   if (!settings.backfillEnabled) return { ok: true, repoFullName: repo.fullName, status: "skipped", warnings: ["Backfill is disabled for this repository."] };
+  // #4497: checked BEFORE any GitHub/DB work below, mirroring backfillRegisteredRepositories's own freshness
+  // gate -- this is the path the real scheduled cron actually dispatches through (see that function's own
+  // routing comment), which previously had NO freshness/error-backoff check at all and re-synced every
+  // registered repo every 30 minutes forever, backing off neither for a fresh success nor a permanent error.
+  const previous = await getRepoSyncState(env, repo.fullName);
+  const skipReason = syncFreshnessSkipReason(previous, options.force);
+  if (skipReason && previous) {
+    return {
+      ok: true,
+      repoFullName: repo.fullName,
+      status: "skipped",
+      warnings: [
+        skipReason.freshSuccess
+          ? `Recent GitHub sync completed at ${previous.lastCompletedAt}; use force=true for a manual refresh.`
+          : `Recent GitHub sync error recorded at ${previous.lastCompletedAt}; backing off unless force=true.`,
+      ],
+    };
+  }
   const token = await tokenForRepo(env, repo);
   const sourceKind: RepoSyncSegmentRecord["sourceKind"] = repo.installationId && token !== env.GITHUB_PUBLIC_TOKEN ? "installation" : "github";
   const totals = await repoGithubTotalsForBackfill(env, repo, token, sourceKind);
   const startedAt = nowIso();
-  const previous = await getRepoSyncState(env, repo.fullName);
   await upsertRepoSyncState(env, {
     repoFullName: repo.fullName,
     status: "running",
@@ -3839,6 +3870,10 @@ export type LinkedIssueFactsResult = {
   authorLogin: string | null;
   title?: string | null;
   body?: string | null;
+  /** GitHub's `closed_at` for this issue, or `null` while open (#4528: label-propagation callers use this
+   *  to trust an issue closed by THIS PR's own merge, without granting authority to one closed earlier
+   *  for an unrelated reason). Same REST payload as every other field here -- no extra call. */
+  closedAt: string | null;
 };
 
 /** Tri-state outcome of fetching one linked issue's facts (#2136). `not_found` is a CONFIRMED 404 seen with a
@@ -3884,6 +3919,7 @@ export async function fetchLinkedIssueFacts(
       user?: { login?: string | null } | null;
       title?: string | null;
       body?: string | null;
+      closed_at?: string | null;
     }>(env, repoFullName, `/issues/${issueNumber}`, token, githubRateLimitOptions(admissionKey));
   } catch (error) {
     if (!(error instanceof GitHubApiError) || error.statusCode !== 404) return { status: "fetch_error" };
@@ -3906,6 +3942,7 @@ export async function fetchLinkedIssueFacts(
       authorLogin: data.user?.login ?? null,
       title: typeof data.title === "string" && data.title.length > 0 ? data.title : null,
       body: typeof data.body === "string" && data.body.length > 0 ? data.body : null,
+      closedAt: typeof data.closed_at === "string" ? data.closed_at : null,
     },
   };
 }

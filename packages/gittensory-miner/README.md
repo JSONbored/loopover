@@ -54,6 +54,30 @@ Additive only: the existing `rows` JSON key and PR table are unchanged; `runPort
 after the existing table. A real GUI dashboard surface is out of scope here — `apps/gittensory-miner-ui/` is
 Phase 6 of the same roadmap tracker and hasn't been scaffolded yet. (#4279)
 
+## Local storage
+
+Four independent local SQLite stores back the commands above. Each keeps its own file, its own table, and its own
+env-var override — this is a DRY pass over their shared path-resolution/open boilerplate (`local-store.js`), not a
+merge into one database. (#4272)
+
+| Store | File | Table | Module | Env var override |
+| --- | --- | --- | --- | --- |
+| Run state | `run-state.sqlite3` | `miner_run_state` | `run-state.js` | `GITTENSORY_MINER_RUN_STATE_DB` |
+| Claim ledger | `claim-ledger.sqlite3` | `miner_claims` | `claim-ledger.js` | `GITTENSORY_MINER_CLAIM_LEDGER_DB` |
+| Portfolio queue | `portfolio-queue.sqlite3` | `miner_portfolio_queue` | `portfolio-queue.js` | `GITTENSORY_MINER_PORTFOLIO_QUEUE_DB` |
+| Event ledger | `event-ledger.sqlite3` | `miner_event_ledger` | `event-ledger.js` | `GITTENSORY_MINER_EVENT_LEDGER_DB` |
+
+Every store resolves its file the same way: the store-specific env var above, else `GITTENSORY_MINER_CONFIG_DIR`,
+else `XDG_CONFIG_HOME` (falling back to `~/.config`), joined with `gittensory-miner/<file>`. Every store also opens
+its file with `0700`/`0600` permissions and a shared `PRAGMA busy_timeout` so two instances on the same file
+serialize writes instead of racing.
+
+The "PR portfolio" `manage status` renders is currently a **read-time join**, not a dedicated table:
+`collectManageStatus` reads `portfolio-queue.js` rows (via the `pr:{number}` identifier convention) and joins them
+against `event-ledger.js`'s free-form `manage_pr_update` JSON events at query time, on every read. Decision: keep
+this as a read-time join for now; revisit a dedicated indexed table only if/when PR-portfolio reads become frequent
+enough (e.g. a live-polling dashboard) that the per-read linear event-ledger scan becomes a measured bottleneck.
+
 ## Install
 
 See [`docs/miner-goal-spec.md`](docs/miner-goal-spec.md) for the `.gittensory-miner.yml` field reference and [`.gittensory-miner.yml.example`](../../.gittensory-miner.yml.example) at the repo root.

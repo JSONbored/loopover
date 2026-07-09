@@ -1370,6 +1370,32 @@ describe("assign — auto-assign PR opener (#3182)", () => {
     expect(classes(plan)).not.toContain("assign");
     expect(classes(plan)).toContain("close");
   });
+
+  describe("#priority-linked-issue-gate-ownership: also assigns the PR's linked issues", () => {
+    it("threads linkedIssues into assignLinkedIssues when present", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { assign: "auto" }, pr: { labels: [], authorLogin: "alice", linkedIssues: [42, 43] } }));
+      expect(plan).toContainEqual(expect.objectContaining({ actionClass: "assign", assignee: "alice", assignLinkedIssues: [42, 43] }));
+    });
+
+    it("omits assignLinkedIssues when linkedIssues is absent", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { assign: "auto" }, pr: { labels: [], authorLogin: "alice" } }));
+      const assign = plan.find((a) => a.actionClass === "assign");
+      expect(assign).not.toHaveProperty("assignLinkedIssues");
+    });
+
+    it("omits assignLinkedIssues when linkedIssues is an empty array", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { assign: "auto" }, pr: { labels: [], authorLogin: "alice", linkedIssues: [] } }));
+      const assign = plan.find((a) => a.actionClass === "assign");
+      expect(assign).not.toHaveProperty("assignLinkedIssues");
+    });
+
+    it("caps assignLinkedIssues at ASSIGN_LINKED_ISSUES_MAX (10) — a PR cannot fan out unbounded assignee writes", () => {
+      const linkedIssues = Array.from({ length: 15 }, (_, i) => i + 1);
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { assign: "auto" }, pr: { labels: [], authorLogin: "alice", linkedIssues } }));
+      const assign = plan.find((a) => a.actionClass === "assign");
+      expect(assign?.assignLinkedIssues).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    });
+  });
 });
 
 describe("isProtectedAutomationAuthor", () => {

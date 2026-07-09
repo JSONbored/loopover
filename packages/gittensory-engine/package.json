@@ -46,6 +46,10 @@
     "./signals/test-evidence": {
       "types": "./dist/signals/test-evidence.d.ts",
       "default": "./dist/signals/test-evidence.js"
+    },
+    "./signals/check-summary": {
+      "types": "./dist/signals/check-summary.d.ts",
+      "default": "./dist/signals/check-summary.js"
     }
   },
   "files": [

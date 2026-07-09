@@ -11,6 +11,23 @@ import { initPortfolioQueueStore } from "./portfolio-queue.js";
 const DISCOVER_USAGE =
   "Usage: gittensory-miner discover <owner/repo> [<owner/repo>...] | --search <query> [--json]";
 
+const MAX_DISCOVER_TITLE_DISPLAY_LENGTH = 240;
+const OSC_SEQUENCE_PATTERN = /\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g;
+const ANSI_ESCAPE_PATTERN = /\u001b(?:\[[0-?]*[ -/]*[@-~]|[@-_])/g;
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/g;
+const BIDI_CONTROL_PATTERN = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+
+export function sanitizeDiscoverDisplayText(value) {
+  return String(value ?? "")
+    .replace(OSC_SEQUENCE_PATTERN, "")
+    .replace(ANSI_ESCAPE_PATTERN, "")
+    .replace(CONTROL_CHARACTER_PATTERN, " ")
+    .replace(BIDI_CONTROL_PATTERN, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_DISCOVER_TITLE_DISPLAY_LENGTH);
+}
+
 function parseRepoTarget(value) {
   const trimmed = typeof value === "string" ? value.trim() : "";
   const [owner, repo, extra] = trimmed.split("/");
@@ -69,7 +86,8 @@ export function renderDiscoverSummary(result) {
   }
   lines.push("", "top candidates:");
   for (const entry of result.ranked.slice(0, 10)) {
-    lines.push(`  ${entry.repoFullName}#${entry.issueNumber}  score=${entry.rankScore.toFixed(4)}  ${entry.title}`);
+    const title = sanitizeDiscoverDisplayText(entry.title);
+    lines.push(`  ${entry.repoFullName}#${entry.issueNumber}  score=${entry.rankScore.toFixed(4)}  ${title}`);
   }
   return lines.join("\n");
 }

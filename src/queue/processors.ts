@@ -9213,15 +9213,9 @@ async function maybePublishPrPublicSurface(
         "manifest_linked_issue_required",
         "manifest_missing_tests",
       ]);
-      // Bot-author exemption (gate-review finding, #4719): mirrors review.auto_review.ignore_authors,
-      // already resolved above as `reviewEligibility` for the AI-review skip -- a fully-automated bot PR
-      // (e.g. a scheduled README/docs regen) should not be held to "did you demonstrate test evidence"
-      // scrutiny meant for human contributors, the same way it's already exempted from AI review. Filtered
-      // out of `guidance.findings` itself, not just the push loop below, so the e2e-test-generation
-      // auto-trigger further down -- which reads the SAME findings -- is exempted too.
-      const policyFindings = reviewEligibility.eligible
-        ? guidance.findings
-        : guidance.findings.filter((finding) => finding.code !== "manifest_missing_tests");
+      // Keep deterministic manifest policy findings independent from AI-review eligibility: ignored authors
+      // suppress review/public output only, never maintainer-configured gate blockers or their downstream triggers.
+      const policyFindings = guidance.findings;
       for (const finding of policyFindings) {
         if (!policyCodes.has(finding.code)) continue;
         advisory.findings.push(publicSafeManifestPolicyFinding(finding));

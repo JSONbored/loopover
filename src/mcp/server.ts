@@ -1179,15 +1179,49 @@ const variantsOutputSchema = {
   variants: z.array(z.unknown()).optional(),
 };
 
-// #2224 - pure, read-only open-PR pressure simulator surfaced over MCP. queueHealth/roleContext use the same
-// permissive z.unknown() convention as the other engine-shaped MCP inputs (the simulator is the single source
-// of truth for their structure); the tool reveals nothing beyond a computation on the caller-supplied context.
+const SIMULATE_OPEN_PR_PRESSURE_MAX_COUNT = 1_000_000;
+const simulateOpenPrPressureCountSchema = z.number().int().min(0).max(SIMULATE_OPEN_PR_PRESSURE_MAX_COUNT);
+const simulateOpenPrPressureQueueHealthSchema = z
+  .object({
+    repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
+    generatedAt: z.string().min(1).max(100),
+    burdenScore: z.number().finite(),
+    level: z.enum(["low", "medium", "high", "critical"]),
+    summary: z.string().max(1_000),
+    signals: z
+      .object({
+        openIssues: simulateOpenPrPressureCountSchema,
+        openPullRequests: simulateOpenPrPressureCountSchema,
+        unlinkedPullRequests: simulateOpenPrPressureCountSchema,
+        stalePullRequests: simulateOpenPrPressureCountSchema,
+        draftPullRequests: simulateOpenPrPressureCountSchema,
+        maintainerAuthoredPullRequests: simulateOpenPrPressureCountSchema,
+        collisionClusters: simulateOpenPrPressureCountSchema,
+        ageBuckets: z
+          .object({
+            under7Days: simulateOpenPrPressureCountSchema,
+            days7To30: simulateOpenPrPressureCountSchema,
+            over30Days: simulateOpenPrPressureCountSchema,
+          })
+          .passthrough(),
+        likelyReviewablePullRequests: simulateOpenPrPressureCountSchema,
+        cachedOpenPullRequests: simulateOpenPrPressureCountSchema.optional(),
+        likelyReviewablePullRequestsSource: z.enum(["cache", "sampled_cache", "authoritative"]).optional(),
+      })
+      .passthrough(),
+    findings: z.array(z.unknown()).max(100),
+  })
+  .passthrough()
+  .nullable();
+
+// #2224 - pure, read-only open-PR pressure simulator surfaced over MCP. The simulator only reads
+// bounded queue counts and maintainer-lane state, so validate those fields at the MCP boundary.
 const simulateOpenPrPressureShape = {
-  repoFullName: z.string(),
-  generatedAt: z.string(),
-  queueHealth: z.unknown(),
-  roleContext: z.unknown(),
-  contributorOpenPrCount: z.number().optional(),
+  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
+  generatedAt: z.string().min(1).max(100),
+  queueHealth: simulateOpenPrPressureQueueHealthSchema,
+  roleContext: z.object({ maintainerLane: z.boolean() }).passthrough(),
+  contributorOpenPrCount: simulateOpenPrPressureCountSchema.optional(),
 };
 const simulateOpenPrPressureOutputSchema = {
   repoFullName: z.string().optional(),

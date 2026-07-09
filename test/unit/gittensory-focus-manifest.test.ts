@@ -109,6 +109,7 @@ describe("Gittensory repo focus manifest", () => {
     expect(byIssueLabel["gittensor:feature"]).toMatchObject({ prLabel: "gittensor:feature", trustMaintainerAuthoredIssue: true });
     expect(byIssueLabel["gittensor:priority"]).toMatchObject({ prLabel: "gittensor:priority" });
     expect(byIssueLabel["gittensor:priority"]?.trustMaintainerAuthoredIssue).toBeUndefined();
+    expect(byIssueLabel["gittensor:priority"]?.trustMaintainerAuthoredIssueForReward).toBeUndefined();
   });
 
   it("loads bundled manifest for the Gittensory repo when fetch is unavailable", async () => {

@@ -71,13 +71,9 @@ review:
 # reward at stake, and the title-based fallback already has zero equivalent verification) so they propagate
 # even when the PR author isn't a formal GitHub assignee of the issue — our issues are almost always
 # maintainer-authored for open pickup and rarely formally assigned. priority is a scarce, maintainer-hand-
-# picked reward label, so it defaults to the strict author-or-assignee-only bar everywhere in this codebase
-# EXCEPT here, where we explicitly opt it into the SAME relaxation via `trustMaintainerAuthoredIssueForReward:
-# true`: our issues are open-pickup by design (see the flag's own doc comment in types.ts), so requiring a
-# literal GitHub assignee relationship -- which GitHub silently refuses for a contributor lacking push/triage
-# access -- meant this label could structurally never reach the external contributors it exists to reward. The
-# maintainer's hand-picking already happened when the issue was labeled `gittensor:priority`, not gated on
-# which contributor later closes it. priority is also `removeOtherTypeLabels: false` (additive) -- unlike
+# picked reward label, so this public repo config keeps the strict author-or-assignee-only bar: a PR author
+# controls closing-keyword text and must not be able to farm the reward label by citing an unrelated open
+# maintainer issue. priority is also `removeOtherTypeLabels: false` (additive) -- unlike
 # bug/feature, which are mutually-exclusive TYPE categories, priority is a separate reward dimension that
 # coexists WITH whichever type already applies (an issue is routinely both gittensor:feature AND
 # gittensor:priority at once); resolvePrTypeLabel composes every additive match alongside the one exclusive
@@ -103,7 +99,6 @@ settings:
       - issueLabel: "gittensor:priority"
         prLabel: "gittensor:priority"
         removeOtherTypeLabels: false
-        trustMaintainerAuthoredIssueForReward: true
   reviewEvasionProtection: close
 
 # Repo-doc generation roadmap (#2993/#3002) — opt-in only, off by default. Uncomment to let Gittensory open a

@@ -746,6 +746,7 @@ const maintainerSettingsSchema = z
     publicQualityMetrics: z.boolean(),
     agentPaused: z.boolean(),
     agentDryRun: z.boolean(),
+    agentGlobalFreezeOverride: z.boolean(),
     requireFreshRebaseWindowMinutes: z.number().int().positive().nullable(),
     commandAuthorization: z.object({
       default: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4).optional(),

@@ -116,6 +116,10 @@ export const repositorySettings = sqliteTable("repository_settings", {
   autoMaintainJson: text("auto_maintain_json").notNull().default("{}"),
   agentPaused: integer("agent_paused", { mode: "boolean" }).notNull().default(false),
   agentDryRun: integer("agent_dry_run", { mode: "boolean" }).notNull().default(false),
+  // Per-repo override of the global DB-backed agent freeze (#4372): when true, THIS repo bypasses
+  // isGlobalAgentFrozen while the global kill-switch stays frozen for every other repo. Never bypasses the
+  // AGENT_ACTIONS_PAUSED env var, and agentPaused above still wins over this if both are set. Default false.
+  agentGlobalFreezeOverride: integer("agent_global_freeze_override", { mode: "boolean" }).notNull().default(false),
   // Per-contributor open PR/issue caps (#2270, anti-abuse): null = no cap (default). Enforcement lands separately.
   contributorOpenPrCap: integer("contributor_open_pr_cap"),
   contributorOpenIssueCap: integer("contributor_open_issue_cap"),

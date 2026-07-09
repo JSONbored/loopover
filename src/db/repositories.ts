@@ -540,6 +540,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       publicQualityMetrics: false,
       agentPaused: false,
       agentDryRun: false,
+      agentGlobalFreezeOverride: false,
       commandAuthorization: normalizeCommandAuthorizationPolicy(DEFAULT_COMMAND_AUTHORIZATION_POLICY).policy,
       contributorBlacklist: [],
       autonomy: {},
@@ -619,6 +620,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     publicQualityMetrics: row.publicQualityMetrics,
     agentPaused: row.agentPaused,
     agentDryRun: row.agentDryRun,
+    agentGlobalFreezeOverride: row.agentGlobalFreezeOverride,
     commandAuthorization: parseCommandAuthorizationPolicy(row.commandAuthorizationJson),
     contributorBlacklist: parseContributorBlacklist(row.contributorBlacklistJson),
     autonomy: parseAutonomyPolicy(row.autonomyJson),
@@ -740,6 +742,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     publicQualityMetrics: settings.publicQualityMetrics ?? false,
     agentPaused: settings.agentPaused ?? false,
     agentDryRun: settings.agentDryRun ?? false,
+    agentGlobalFreezeOverride: settings.agentGlobalFreezeOverride ?? false,
     commandAuthorization: normalizeCommandAuthorizationPolicy(settings.commandAuthorization).policy,
     contributorBlacklist: normalizeContributorBlacklist(settings.contributorBlacklist).entries,
     autonomy: normalizeAutonomyPolicy(settings.autonomy),
@@ -820,6 +823,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       publicQualityMetrics: resolved.publicQualityMetrics,
       agentPaused: resolved.agentPaused,
       agentDryRun: resolved.agentDryRun,
+      agentGlobalFreezeOverride: resolved.agentGlobalFreezeOverride,
       commandAuthorizationJson: jsonString(resolved.commandAuthorization),
       contributorBlacklistJson: jsonString(resolved.contributorBlacklist),
       autonomyJson: jsonString(resolved.autonomy),
@@ -905,6 +909,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         publicQualityMetrics: resolved.publicQualityMetrics,
         agentPaused: resolved.agentPaused,
         agentDryRun: resolved.agentDryRun,
+        agentGlobalFreezeOverride: resolved.agentGlobalFreezeOverride,
         commandAuthorizationJson: jsonString(resolved.commandAuthorization),
         contributorBlacklistJson: jsonString(resolved.contributorBlacklist),
         autonomyJson: jsonString(resolved.autonomy),
@@ -2496,6 +2501,18 @@ export async function isGlobalAgentFrozen(env: Env): Promise<boolean> {
     if (processLocalGlobalAgentFrozen === true) { console.warn(JSON.stringify({ event: "global_kill_switch_read_error_fail_closed", message: "process-local cache shows frozen=1 — halting agent actions despite the read error" })); return true; }
     return false;
   }
+}
+
+/** Per-repo override of the DB-backed global kill-switch (#4372, incident follow-up): lets an operator keep
+ *  `global_agent_controls.frozen` ON as the fleet-wide safe default while opting ONE repo at a time back into
+ *  live execution via that repo's `agentGlobalFreezeOverride` setting — the same global-default +
+ *  per-repo-override shape every other gittensory setting already uses. Deliberately does NOT take the
+ *  `AGENT_ACTIONS_PAUSED` env var into account: callers must still OR this result with {@link isGlobalAgentPause}
+ *  themselves (matching every existing `resolveAgentActionMode({ globalPaused: ... })` call site), so the env
+ *  var stays an absolute, non-overridable hard stop no repo setting can ever bypass. */
+export async function isDbFrozenForRepo(env: Env, agentGlobalFreezeOverride: boolean | null | undefined): Promise<boolean> {
+  if (agentGlobalFreezeOverride === true) return false;
+  return isGlobalAgentFrozen(env);
 }
 
 /** Atomic re-gate fan-out dedup (#audit-fanout-dedup): claim the global fan-out slot for this window. The

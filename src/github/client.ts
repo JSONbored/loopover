@@ -1,5 +1,5 @@
 import { Octokit } from "@octokit/core";
-import { isGlobalAgentFrozen, recordAuditEvent } from "../db/repositories";
+import { isDbFrozenForRepo, recordAuditEvent } from "../db/repositories";
 import { isGlobalAgentPause, resolveAgentActionMode, type AgentActionMode } from "../settings/agent-execution";
 import { incr } from "../selfhost/metrics";
 import type { RepositorySettings } from "../types";
@@ -582,12 +582,13 @@ const WRITE_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
 
 /**
  * Resolve a repo's agent action mode the SAME way the executor does: the env emergency brake OR the DB global
- * freeze OR the per-repo pause/dry-run. Call this ONCE per review and thread the result into every surface write
- * — it performs one isGlobalAgentFrozen() read, so it must never sit on a per-write hot path.
+ * freeze (unless THIS repo's `agentGlobalFreezeOverride` opts out of it) OR the per-repo pause/dry-run. Call
+ * this ONCE per review and thread the result into every surface write — it performs one isDbFrozenForRepo()
+ * read, so it must never sit on a per-write hot path.
  */
-export async function resolveRepoActionMode(env: Env, settings: Pick<RepositorySettings, "agentPaused" | "agentDryRun"> | null | undefined): Promise<AgentActionMode> {
+export async function resolveRepoActionMode(env: Env, settings: Pick<RepositorySettings, "agentPaused" | "agentDryRun" | "agentGlobalFreezeOverride"> | null | undefined): Promise<AgentActionMode> {
   return resolveAgentActionMode({
-    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings?.agentGlobalFreezeOverride)),
     agentPaused: settings?.agentPaused,
     agentDryRun: settings?.agentDryRun,
   });

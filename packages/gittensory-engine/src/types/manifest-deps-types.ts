@@ -461,6 +461,11 @@ export type RepositorySettings = {
   /** Per-repo dry-run/shadow mode (#776): when true, the action layer records what it WOULD do without
    *  performing any GitHub mutation. Default false. */
   agentDryRun?: boolean | undefined;
+  /** Per-repo override of the global DB-backed agent freeze (#4372): when true, this repo's actions execute
+   *  even while `global_agent_controls.frozen` is set, so an operator can re-activate one repo at a time
+   *  without lifting the fleet-wide brake. Never overrides the `AGENT_ACTIONS_PAUSED` env var, and
+   *  {@link agentPaused} on this same repo still wins over it. Default false. */
+  agentGlobalFreezeOverride?: boolean | undefined;
   /** Moderation-rules engine (#selfhost-mod-engine): whether the whole layer runs on THIS repo. `"inherit"`
    *  (the DB default) defers to `global_moderation_config.enabled`; `"off"`/`"enabled"` force this repo
    *  regardless of the global default. Always populated by the DB layer; optional so existing settings

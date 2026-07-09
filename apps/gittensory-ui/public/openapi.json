@@ -9317,6 +9317,9 @@
           "copycatGateMinScore": {
             "type": "number",
             "nullable": true
+          },
+          "agentGlobalFreezeOverride": {
+            "type": "boolean"
           }
         },
         "required": [

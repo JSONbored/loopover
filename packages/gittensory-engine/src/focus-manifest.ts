@@ -329,6 +329,7 @@ export type FocusManifestSettings = Partial<
     | "autoMaintain"
     | "agentPaused"
     | "agentDryRun"
+    | "agentGlobalFreezeOverride"
     | "commandAuthorization"
     | "contributorBlacklist"
     | "blacklistLabel"
@@ -1654,7 +1655,7 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   }
   const publicSurface = normalizeOptionalEnum(r.publicSurface, "settings.publicSurface", ["off", "comment_and_label", "comment_only", "label_only"] as const, warnings);
   if (publicSurface !== null) out.publicSurface = publicSurface;
-  for (const key of ["aiReviewByok", "aiReviewAllAuthors", "closeOwnerAuthors", "autoLabelEnabled", "typeLabelsEnabled", "badgeEnabled", "publicQualityMetrics", "createMissingLabel", "includeMaintainerAuthors", "requireLinkedIssue", "backfillEnabled", "agentPaused", "agentDryRun"] as const) {
+  for (const key of ["aiReviewByok", "aiReviewAllAuthors", "closeOwnerAuthors", "autoLabelEnabled", "typeLabelsEnabled", "badgeEnabled", "publicQualityMetrics", "createMissingLabel", "includeMaintainerAuthors", "requireLinkedIssue", "backfillEnabled", "agentPaused", "agentDryRun", "agentGlobalFreezeOverride"] as const) {
     const flag = normalizeOptionalBoolean(r[key], `settings.${key}`, warnings);
     if (flag !== null) out[key] = flag;
   }

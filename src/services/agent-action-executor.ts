@@ -5,7 +5,7 @@ import {
   getGlobalContributorBlacklist,
   getGlobalModerationConfig,
   insertNotificationDeliveryIfAbsent,
-  isGlobalAgentFrozen,
+  isDbFrozenForRepo,
   listOtherOpenPullRequests,
   listRepoPullRequestFilePaths,
   markPullRequestApproved,
@@ -157,6 +157,9 @@ export type AgentActionExecutionContext = {
   autonomy: AutonomyPolicy | null | undefined;
   agentPaused?: boolean | undefined;
   agentDryRun?: boolean | undefined;
+  // Per-repo override of the DB-backed global freeze (#4372) -- resolved by the CALLER from
+  // RepositorySettings, same "the executor has no settings access" shape as agentPaused/agentDryRun above.
+  agentGlobalFreezeOverride?: boolean | undefined;
   installationPermissions: Record<string, string> | null | undefined;
   // PR author login — surfaced as the "Submitter" in the per-repo Discord action notification.
   authorLogin?: string | null | undefined;
@@ -253,7 +256,7 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
   const targetKey = `${ctx.repoFullName}#${ctx.pullNumber}`;
   // globalPaused folds the env-var brake AND the DB-backed kill-switch (#audit-§5.2) so an operator can halt the
   // fleet instantly via one DB row, without a redeploy.
-  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: ctx.agentPaused, agentDryRun: ctx.agentDryRun });
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, ctx.agentGlobalFreezeOverride)), agentPaused: ctx.agentPaused, agentDryRun: ctx.agentDryRun });
 
   for (const action of planned) {
     // #label-scoping: a `label` action may be authorized by a class OTHER than `label` itself (an anti-abuse
@@ -731,6 +734,9 @@ export type IssueActionExecutionContext = {
   autonomy: AutonomyPolicy | null | undefined;
   agentPaused?: boolean | undefined;
   agentDryRun?: boolean | undefined;
+  // Per-repo override of the DB-backed global freeze (#4372) -- resolved by the CALLER from
+  // RepositorySettings, same "the executor has no settings access" shape as agentPaused/agentDryRun above.
+  agentGlobalFreezeOverride?: boolean | undefined;
   // Issue author login -- needed for the moderation-rules engine's violation ledger (#selfhost-mod-engine).
   authorLogin?: string | null | undefined;
   moderationSettings?: ModerationContextSettings | undefined;
@@ -753,7 +759,7 @@ export type IssueActionExecutionContext = {
 export async function executeIssueMaintenanceActions(env: Env, ctx: IssueActionExecutionContext, planned: PlannedAgentAction[]): Promise<AgentActionOutcome[]> {
   const outcomes: AgentActionOutcome[] = [];
   const targetKey = `${ctx.repoFullName}#${ctx.issueNumber}`;
-  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: ctx.agentPaused, agentDryRun: ctx.agentDryRun });
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, ctx.agentGlobalFreezeOverride)), agentPaused: ctx.agentPaused, agentDryRun: ctx.agentDryRun });
 
   for (const action of planned) {
     // #label-scoping: a `label` action may be authorized by a class OTHER than `label` itself (an anti-abuse

@@ -304,6 +304,12 @@ describe("data spine repositories", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/saferepo", agentPaused: false });
     expect((await getRepositorySettings(env, "owner/saferepo")).agentPaused).toBe(false); // update persists
     expect(await getRepositorySettings(env, "owner/defaultpack")).toMatchObject({ agentPaused: false, agentDryRun: false }); // defaults
+    // #4372 per-repo global-freeze-override round-trip (insert + update) and default false.
+    await upsertRepositorySettings(env, { repoFullName: "owner/saferepo", agentGlobalFreezeOverride: true });
+    expect((await getRepositorySettings(env, "owner/saferepo")).agentGlobalFreezeOverride).toBe(true);
+    await upsertRepositorySettings(env, { repoFullName: "owner/saferepo", agentGlobalFreezeOverride: false });
+    expect((await getRepositorySettings(env, "owner/saferepo")).agentGlobalFreezeOverride).toBe(false); // update persists
+    expect((await getRepositorySettings(env, "owner/defaultpack")).agentGlobalFreezeOverride).toBe(false); // default
     // #2270 per-contributor open PR/issue caps: no row and no cap set both default to null (disabled).
     expect(await getRepositorySettings(env, "missing/repo")).toMatchObject({ contributorOpenPrCap: null, contributorOpenIssueCap: null });
     expect(await getRepositorySettings(env, "owner/defaultpack")).toMatchObject({ contributorOpenPrCap: null, contributorOpenIssueCap: null });

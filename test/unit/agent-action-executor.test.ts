@@ -72,7 +72,7 @@ import {
 import type { PlannedAgentAction } from "../../src/settings/agent-actions";
 import { STRUCTURED_CLOSE_REASONS_MAX_COUNT } from "../../src/settings/agent-execution";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
-import { clearProcessLocalGlobalAgentFrozenCacheForTest, getGlobalContributorBlacklist, isGlobalAgentFrozen, setGlobalAgentFrozen, upsertGlobalModerationConfig, upsertPullRequestFile, upsertPullRequestFromGitHub } from "../../src/db/repositories";
+import { clearProcessLocalGlobalAgentFrozenCacheForTest, getGlobalContributorBlacklist, isDbFrozenForRepo, isGlobalAgentFrozen, setGlobalAgentFrozen, upsertGlobalModerationConfig, upsertPullRequestFile, upsertPullRequestFromGitHub } from "../../src/db/repositories";
 import * as repositoriesModule from "../../src/db/repositories";
 import * as sentryModule from "../../src/selfhost/sentry";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
@@ -910,6 +910,40 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(mergePullRequest).toHaveBeenCalled();
   });
 
+  it("REGRESSION (#4372): a repo's agentGlobalFreezeOverride lets IT execute while the global DB freeze stays on", async () => {
+    const env = createTestEnv({}); // env-var brake OFF
+    await setGlobalAgentFrozen(env, true, "operator");
+    const overridden = await executeAgentMaintenanceActions(env, ctx({ agentPaused: false, agentGlobalFreezeOverride: true }), [merge]);
+    expect(overridden[0]?.outcome).toBe("completed");
+    expect(mergePullRequest).toHaveBeenCalled();
+  });
+
+  it("REGRESSION (#4372): a sibling repo WITHOUT the override stays denied while the global DB freeze is on, even though another repo opted out of it", async () => {
+    const env = createTestEnv({}); // env-var brake OFF
+    await setGlobalAgentFrozen(env, true, "operator");
+    // The incident this override exists to prevent recurring: an operator meant only ONE repo to resume, so a
+    // sibling repo with no override (or an explicit false) must stay fully halted by the same global freeze.
+    const stillFrozen = await executeAgentMaintenanceActions(env, ctx({ agentPaused: false, agentGlobalFreezeOverride: false }), [merge]);
+    expect(stillFrozen[0]?.outcome).toBe("denied");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION (#4372): the AGENT_ACTIONS_PAUSED env var stays absolute -- no per-repo override can bypass it", async () => {
+    const env = createTestEnv({ AGENT_ACTIONS_PAUSED: "true" });
+    await setGlobalAgentFrozen(env, false); // DB freeze OFF -- only the env var is on
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ agentPaused: false, agentGlobalFreezeOverride: true }), [merge]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION (#4372): a repo's OWN agentPaused still wins over its agentGlobalFreezeOverride", async () => {
+    const env = createTestEnv({});
+    await setGlobalAgentFrozen(env, false);
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ agentPaused: true, agentGlobalFreezeOverride: true }), [merge]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+  });
+
   it("isGlobalAgentFrozen fails open (false) on a read error — a D1 hiccup never freezes the fleet by itself", async () => {
     clearProcessLocalGlobalAgentFrozenCacheForTest();
     const broken = { ...createTestEnv({}), DB: null } as unknown as Env;
@@ -963,6 +997,31 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     await setGlobalAgentFrozen(env, false, "operator");
     const broken = { ...env, DB: null } as unknown as Env;
     expect(await isGlobalAgentFrozen(broken)).toBe(false);
+  });
+
+  describe("isDbFrozenForRepo (#4372, incident follow-up)", () => {
+    it("agentGlobalFreezeOverride=true bypasses the DB freeze entirely, without even reading it", async () => {
+      const env = createTestEnv({});
+      await setGlobalAgentFrozen(env, true, "operator");
+      // Poison the DB so a read would throw/fail-closed if it were attempted -- the override must short-circuit.
+      const poisoned = { ...env, DB: null } as unknown as Env;
+      expect(await isDbFrozenForRepo(poisoned, true)).toBe(false);
+    });
+
+    it("agentGlobalFreezeOverride=false still reflects the DB freeze state", async () => {
+      const env = createTestEnv({});
+      await setGlobalAgentFrozen(env, true, "operator");
+      expect(await isDbFrozenForRepo(env, false)).toBe(true);
+      await setGlobalAgentFrozen(env, false, "operator");
+      expect(await isDbFrozenForRepo(env, false)).toBe(false);
+    });
+
+    it("agentGlobalFreezeOverride=null/undefined (unset) still reflects the DB freeze state, same as false", async () => {
+      const env = createTestEnv({});
+      await setGlobalAgentFrozen(env, true, "operator");
+      expect(await isDbFrozenForRepo(env, null)).toBe(true);
+      expect(await isDbFrozenForRepo(env, undefined)).toBe(true);
+    });
   });
 
   it("auto_with_approval: stages the action (queued) instead of executing", async () => {

@@ -37,7 +37,7 @@ import {
   getPendingAgentAction,
   getPullRequest,
   getRepository,
-  isGlobalAgentFrozen,
+  isDbFrozenForRepo,
   getRepoQueueTrendSnapshot,
   listAgentAuditEvents,
   listCheckSummaries,
@@ -3097,7 +3097,7 @@ export class GittensoryMcp {
     const autonomy = settings.autonomy;
     const actingActionClasses = AGENT_ACTION_CLASSES.filter((actionClass) => isActingAutonomyLevel(resolveAutonomy(autonomy, actionClass)));
     const installation = repo?.installationId ? await getInstallation(this.env, repo.installationId) : null;
-    const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(this.env) || (await isGlobalAgentFrozen(this.env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
+    const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(this.env) || (await isDbFrozenForRepo(this.env, settings.agentGlobalFreezeOverride)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
     const permissionReadiness = resolveAgentPermissionReadiness({ autonomy, installationPermissions: installation?.permissions ?? null });
     return {
       summary: `Agent automation for ${fullName}: mode=${mode}, ${actingActionClasses.length} acting class(es), ${pendingActionCount} pending approval(s).`,

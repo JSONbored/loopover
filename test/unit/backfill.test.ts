@@ -4211,7 +4211,7 @@ describe("GitHub backfill", () => {
       expect(aggregate.failingDetails).toEqual([]);
     });
 
-    it("a third-party app's COMPLETED action_required check-run is settled, not pending (Superagent Contributor Trust regression, #4728)", async () => {
+    it("a third-party app's COMPLETED action_required check-run fails closed as a manual-hold verdict", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         const url = input.toString();
@@ -4230,11 +4230,11 @@ describe("GitHub backfill", () => {
 
       const aggregate = await fetchLiveCiAggregate(env, "JSONbored/awesome-claude", "sha4728", "public-token", new Set(["coverage", "Contributor trust"]));
 
-      expect(aggregate.ciState).toBe("passed");
+      expect(aggregate.ciState).toBe("failed");
       expect(aggregate.hasPending).toBe(false);
       expect(aggregate.hasVisiblePending).toBe(false);
       expect(aggregate.hasMissingRequiredContext).toBe(false);
-      expect(aggregate.failingDetails).toEqual([]);
+      expect(aggregate.failingDetails).toEqual([{ name: "Contributor trust" }]);
     });
 
     it("a github-actions workflow awaiting 'Approve and run' (action_required) is still treated as pending, not settled (#fork-action-required)", async () => {

@@ -2460,8 +2460,7 @@ async function fetchPullRequestChecks(
 // ever ran. Excluded here, a github-actions action_required check falls through to anyPending → ciState="pending"
 // → the PR is DEFERRED/held (never closed) until its runs are approved (manually, or auto-approved by fork CI
 // auto-approval). (#fork-action-required) — a THIRD-PARTY app's own COMPLETED action_required verdict (e.g. a
-// security/trust-scan tool) is handled separately below (isSettledThirdPartyActionRequired) and does NOT fall
-// through to pending: it is a settled result, not an in-progress workflow awaiting approval to run.
+// security/check tool) is handled separately below and fails closed as a manual-hold signal, not green CI.
 const CI_FAILING_CONCLUSIONS = new Set(["failure", "timed_out", "cancelled", "startup_failure"]);
 const CI_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 // The bot's OWN check-runs — it posts these (in_progress, then concluded) as PART OF reviewing. They are NOT
@@ -2784,22 +2783,16 @@ async function reduceLiveCiAggregate(
     total += 1;
     const conclusion = (run.conclusion ?? "").toLowerCase();
     const status = (run.status ?? "").toLowerCase();
-    // A THIRD-PARTY app's OWN action_required verdict on an already-COMPLETED check-run (e.g. Superagent
-    // Security's "Contributor trust") is a settled, terminal result -- it ran, and its own business logic
-    // says "a human should look at this", which is informational, not "still executing". This is NOT the
-    // github-actions "awaiting maintainer Approve and run" case the action_required exclusion above exists
-    // for (that one is scoped to appSlug === "github-actions" specifically) -- a non-Actions app's completed
-    // action_required check can never transition to any other state via a CI event gittensory observes, so
-    // treating it as pending made prReadyForReview defer the review FOREVER (#superagent-action-required-stuck:
-    // confirmed live, JSONbored/awesome-claude#4728 stuck 30+ minutes across 8 outage-repair attempts before
-    // exhausting REGATE_REPAIR_MAX_ATTEMPTS_PER_SHA and falling back to slow passive sweep cadence, never
-    // actually reviewed). Conservative: an unknown/absent app slug is NOT treated as settled here, only a
-    // confirmed non-Actions app.
-    const isSettledThirdPartyActionRequired = conclusion === "action_required" && status === "completed" && appSlug !== "" && appSlug !== "github-actions";
-    if (conclusion ? CI_FAILING_CONCLUSIONS.has(conclusion) : false) {
+    // A THIRD-PARTY app's OWN action_required verdict on an already-COMPLETED check-run (for example, a
+    // security/check tool asking for human review) is a settled, terminal adverse result. This is NOT the
+    // github-actions "awaiting maintainer Approve and run" case the action_required exclusion above exists for:
+    // non-Actions apps use their own conclusion as a policy signal, so fail closed instead of treating it as
+    // green CI. Conservative: an unknown/absent app slug is NOT treated as third-party here.
+    const isThirdPartyActionRequiredFailure = conclusion === "action_required" && status === "completed" && appSlug !== "" && appSlug !== "github-actions";
+    if (isThirdPartyActionRequiredFailure || (conclusion ? CI_FAILING_CONCLUSIONS.has(conclusion) : false)) {
       const summary = [run.output?.title, run.output?.summary].find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim().slice(0, 200);
       failingDetails.push({ name: run.name, ...(summary ? { summary } : {}), ...(run.details_url ? { detailsUrl: run.details_url } : {}) });
-    } else if (isSettledThirdPartyActionRequired || (conclusion ? CI_PASSING_CONCLUSIONS.has(conclusion) : status === "completed")) {
+    } else if (conclusion ? CI_PASSING_CONCLUSIONS.has(conclusion) : status === "completed") {
       // concluded and not failing → passing
     } else {
       anyVisiblePending = true;

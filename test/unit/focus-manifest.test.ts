@@ -312,7 +312,6 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     autoMaintain: "autoMaintain:",
     agentPaused: "agentPaused:",
     agentDryRun: "agentDryRun:",
-    agentGlobalFreezeOverride: "agentGlobalFreezeOverride:",
     commandAuthorization: "commandAuthorization:",
     contributorBlacklist: "contributorBlacklist:",
     blacklistLabel: "blacklistLabel:",
@@ -1856,11 +1855,10 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
       includeMaintainerAuthors: true,
       requireLinkedIssue: true,
       backfillEnabled: false,
-      agentGlobalFreezeOverride: true,
     });
-    // #4372: the yml override wins over the DB value via resolveEffectiveSettings's spread, same as every
-    // other generic settings: field.
-    expect(resolveEffectiveSettings({ agentGlobalFreezeOverride: false } as unknown as RepositorySettings, m).agentGlobalFreezeOverride).toBe(true);
+    // Operator-only freeze overrides are deliberately not config-as-code fields; a maintainer-owned
+    // manifest must not be able to bypass the DB-backed global freeze.
+    expect(resolveEffectiveSettings({ agentGlobalFreezeOverride: false } as unknown as RepositorySettings, m).agentGlobalFreezeOverride).toBe(false);
   });
 
   it("drops invalid settings values with warnings and keeps the valid ones", () => {

@@ -668,13 +668,6 @@ settings:
   # Bool. Default: false.
   agentDryRun: false
 
-  # Per-repo override of the GLOBAL DB-backed agent freeze (the operator kill-switch an operator flips with
-  # one row, no redeploy): when true, THIS repo's actions execute even while the global freeze is on, so an
-  # operator can re-activate one repo at a time without lifting the fleet-wide brake. Never overrides the
-  # AGENT_ACTIONS_PAUSED env var (that hard stop always wins), and agentPaused above on this same repo still
-  # wins over this too. Bool. Default: false.
-  agentGlobalFreezeOverride: false
-
   # Four independent label families, none of which gates or silently disables another (#label-decoupling,
   # #label-scoping):
   #   1. Context label (`gittensorLabel`, gated by `autoLabelEnabled` above) — the base per-PR marker shown

@@ -117,6 +117,19 @@ describe("createOpenAiCompatibleAi (#979)", () => {
     expect(first?.body.model).toBe("llama3.1");
   });
 
+  it("only sends an Authorization header when this OpenAI-compatible provider has its own apiKey", async () => {
+    const authHeaders: Array<string | null> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init?: RequestInit) => {
+      authHeaders.push(new Headers(init?.headers).get("authorization"));
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 });
+    }));
+
+    await createOpenAiCompatibleAi({ baseUrl: "http://advisory.local/v1" }).run("m", { prompt: "x" });
+    await createOpenAiCompatibleAi({ baseUrl: "http://advisory.local/v1", apiKey: "sk-advisory" }).run("m", { prompt: "x" });
+
+    expect(authHeaders).toEqual([null, "Bearer sk-advisory"]);
+  });
+
   it("forwards providerOptions verbatim as the request's `options` field (#4327/#4335 num_ctx capping)", async () => {
     let body: Record<string, unknown> | undefined;
     vi.stubGlobal("fetch", vi.fn(async (_u: string, init: { body: string }) => {

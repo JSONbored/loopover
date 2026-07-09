@@ -164,6 +164,7 @@ export {
   type PromptPacketTextField,
 } from "./prompt-packet.js";
 export * from "./portfolio/queue.js";
+export * from "./miner/subprocess-env.js";
 export {
   applyAiPolicyFatigueToRankInput,
   createAiPolicyFatigueCacheEntry,

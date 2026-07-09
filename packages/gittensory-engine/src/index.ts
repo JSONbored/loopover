@@ -176,6 +176,7 @@ export {
   type CreateCodingAgentDriverOptions,
   type RunCodingAgentAttemptOptions,
 } from "./miner/driver-factory.js";
+export * from "./miner/subprocess-env.js";
 export * from "./plan-export.js";
 export { countPlanStepsByStatus } from "./plan-step-stats.js";
 export { countPlanSteps } from "./plan-step-count.js";

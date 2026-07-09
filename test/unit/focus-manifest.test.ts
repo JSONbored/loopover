@@ -287,6 +287,14 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
   // silently vanishing from the exhaustiveness check.
   const SETTINGS_GATE_ALIASED_FIELDS = ["gateCheckMode", "linkedIssueGateMode", "duplicatePrGateMode", "selfAuthoredLinkedIssueGateMode", "qualityGateMode", "qualityGateMinScore", "aiReviewMode", "aiReviewByok", "aiReviewProvider", "aiReviewModel", "aiReviewAllAuthors"] as const;
 
+  // Settings fields that are DELIBERATELY absent from `.gittensory.yml.example` (unlike the gate-aliased fields
+  // above, these are never documented anywhere in the public template): agentGlobalFreezeOverride is an
+  // operator-only emergency lever, settable only from the operator's own private self-host config (source:
+  // "api_record" in parseSettingsOverride, focus-manifest.ts) -- never from a repo's own committed, maintainer-
+  // owned manifest (#4391's scope-leak fix). Documenting it in the PUBLIC example would misleadingly suggest a
+  // repo maintainer can set it themselves.
+  const SETTINGS_OPERATOR_ONLY_FIELDS = ["agentGlobalFreezeOverride"] as const;
+
   const SETTINGS_FIELD_TOKENS = {
     commentMode: "commentMode:",
     publicAudienceMode: "publicAudienceMode:",
@@ -312,7 +320,6 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     autoMaintain: "autoMaintain:",
     agentPaused: "agentPaused:",
     agentDryRun: "agentDryRun:",
-    agentGlobalFreezeOverride: "agentGlobalFreezeOverride:",
     commandAuthorization: "commandAuthorization:",
     contributorBlacklist: "contributorBlacklist:",
     blacklistLabel: "blacklistLabel:",
@@ -352,7 +359,7 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     unlinkedIssueGuardrail: "unlinkedIssueGuardrail:",
     screenshotTableGate: "screenshotTableGate:",
     advisoryAiRouting: "advisoryAiRouting:",
-  } satisfies Record<Exclude<keyof FocusManifestSettings, (typeof SETTINGS_GATE_ALIASED_FIELDS)[number]>, string>;
+  } satisfies Record<Exclude<keyof FocusManifestSettings, (typeof SETTINGS_GATE_ALIASED_FIELDS)[number] | (typeof SETTINGS_OPERATOR_ONLY_FIELDS)[number]>, string>;
 
   it.each(Object.entries(SETTINGS_FIELD_TOKENS))("documents settings.%s", (_field, token) => {
     expect(exampleContent).toContain(token);
@@ -1858,9 +1865,31 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
       backfillEnabled: false,
       agentGlobalFreezeOverride: true,
     });
-    // #4372: the yml override wins over the DB value via resolveEffectiveSettings's spread, same as every
-    // other generic settings: field.
+    // parseFocusManifest with no explicit `source` (and no `record.source` field, as here) defaults to
+    // "api_record" (normalizeSource, focus-manifest.ts) -- the operator-private-config trust level -- so
+    // agentGlobalFreezeOverride parses through and can overlay the DB value. See the dedicated
+    // "agentGlobalFreezeOverride: operator-only" describe block below for the source-gating itself (an
+    // explicit source: "repo_file" manifest, mirroring a real repo-owned `.gittensory.yml`, drops it instead).
     expect(resolveEffectiveSettings({ agentGlobalFreezeOverride: false } as unknown as RepositorySettings, m).agentGlobalFreezeOverride).toBe(true);
+  });
+
+  describe("agentGlobalFreezeOverride: operator-only, never settable from a repo-owned manifest (#4391)", () => {
+    it("source: api_record (the operator's own private self-host config) — parses it and lets it overlay the DB value", () => {
+      const m = parseFocusManifest({ source: "api_record", settings: { agentGlobalFreezeOverride: true } });
+      expect(m.settings.agentGlobalFreezeOverride).toBe(true);
+      expect(m.warnings).toEqual([]);
+      expect(resolveEffectiveSettings({ agentGlobalFreezeOverride: false } as unknown as RepositorySettings, m).agentGlobalFreezeOverride).toBe(true);
+    });
+
+    it("source: repo_file (a real repo-owned .gittensory.yml) — drops it with an operator-only warning; the DB value survives", () => {
+      const m = parseFocusManifest({ source: "repo_file", settings: { agentGlobalFreezeOverride: true } });
+      expect(m.settings.agentGlobalFreezeOverride).toBeUndefined();
+      expect(m.warnings).toContain("Ignored settings.agentGlobalFreezeOverride: operator-only, not settable from a repo-owned manifest.");
+      // A repo maintainer's own committed manifest must never be able to grant an exemption from the operator's
+      // fleet-wide freeze (the #4391 scope-leak this field's source-gating exists to prevent) -- the DB's `false`
+      // (fleet-wide frozen, no repo-level override) survives untouched.
+      expect(resolveEffectiveSettings({ agentGlobalFreezeOverride: false } as unknown as RepositorySettings, m).agentGlobalFreezeOverride).toBe(false);
+    });
   });
 
   it("drops invalid settings values with warnings and keeps the valid ones", () => {

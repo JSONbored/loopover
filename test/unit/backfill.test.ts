@@ -4211,6 +4211,89 @@ describe("GitHub backfill", () => {
       expect(aggregate.failingDetails).toEqual([]);
     });
 
+    it("a third-party app's COMPLETED action_required check-run fails closed as a manual-hold verdict", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [
+              { name: "coverage", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+              { name: "Contributor trust", status: "completed", conclusion: "action_required", app: { slug: "superagent-security" } },
+            ],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites?")) return Response.json({ check_suites: [{ status: "completed", app: { slug: "github-actions" } }] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/awesome-claude", "sha4728", "public-token", new Set(["coverage", "Contributor trust"]));
+
+      expect(aggregate.ciState).toBe("failed");
+      expect(aggregate.hasPending).toBe(false);
+      expect(aggregate.hasVisiblePending).toBe(false);
+      expect(aggregate.hasMissingRequiredContext).toBe(false);
+      expect(aggregate.failingDetails).toEqual([{ name: "Contributor trust" }]);
+    });
+
+    it("a github-actions workflow awaiting 'Approve and run' (action_required) is still treated as pending, not settled (#fork-action-required)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [{ name: "build", status: "completed", conclusion: "action_required", app: { slug: "github-actions" } }],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/metagraphed", "forksha", "public-token", new Set(["build"]));
+
+      expect(aggregate.ciState).toBe("pending");
+      expect(aggregate.hasPending).toBe(true);
+      expect(aggregate.hasVisiblePending).toBe(true);
+      expect(aggregate.failingDetails).toEqual([]);
+    });
+
+    it("an app-less check-run reporting action_required is conservatively treated as pending (unconfirmed app, not settled)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({ check_runs: [{ name: "legacy-status-check", status: "completed", conclusion: "action_required" }] });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", new Set(["legacy-status-check"]));
+
+      expect(aggregate.hasPending).toBe(true);
+      expect(aggregate.hasVisiblePending).toBe(true);
+    });
+
+    it("a third-party app's action_required check-run that hasn't completed yet is still pending (not yet a settled verdict)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [{ name: "Contributor trust", status: "in_progress", conclusion: "action_required", app: { slug: "superagent-security" } }],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/awesome-claude", "sha", "public-token", new Set(["Contributor trust"]));
+
+      expect(aggregate.hasPending).toBe(true);
+      expect(aggregate.hasVisiblePending).toBe(true);
+    });
+
     it("keeps an observed failure failed while still reporting pending CI separately", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

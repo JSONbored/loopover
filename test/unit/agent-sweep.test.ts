@@ -142,7 +142,12 @@ describe("selectRegateCandidates (#777 re-gate sweep selection)", () => {
       expect(picked.map((p) => p.number)).toEqual([2, 3]); // stalest re-gate (600m), then 300m; 120m dropped by cap
     });
 
-    it("REGRESSION (repair priority): missing public surfaces are selected before ordinary stale PRs", () => {
+    it("#selfhost-fifo-ordering: a repair-flagged PR does NOT jump ahead of staler ordinary PRs — same orderKey for everyone", () => {
+      // #2 has a missing public surface (surfaceRepairPriorityPullNumbers would flag it) but is also the LEAST
+      // stale of the three by lastRegatedAt. An earlier revision sorted repair candidates first regardless of
+      // staleness — this pinned #2 ahead of #1/#3 and was observed live as PRs dispatching out of their
+      // creation/staleness order ("spraying") whenever a repo had a mixed repair/ordinary backlog. Repair status
+      // must only affect eligibility (see the freshness-bypass + oldest-first-pool tests below), never order.
       const pulls = [
         pr({ number: 1, lastRegatedAt: minutesAgo(900) }),
         pr({ number: 2, lastRegatedAt: minutesAgo(10) }),
@@ -154,7 +159,7 @@ describe("selectRegateCandidates (#777 re-gate sweep selection)", () => {
         max: 2,
         priorityPullNumbers: new Set([2]),
       });
-      expect(picked.map((p) => p.number)).toEqual([2, 1]);
+      expect(picked.map((p) => p.number)).toEqual([1, 3]); // stalest-by-regate first, same as with no priority set at all
     });
 
     it("REGRESSION (repair priority): priority repairs can bypass webhook freshness when the current Gate check is missing", () => {
@@ -328,7 +333,11 @@ describe("selectRegateCandidates (#777 re-gate sweep selection)", () => {
       expect(picked.map((p) => p.number)).toEqual([2, 3]); // oldest-created (600m), then 300m; 120m dropped by cap
     });
 
-    it("REGRESSION (repair priority): priority repairs still sort before ordinary oldest-first candidates", () => {
+    it("#selfhost-fifo-ordering: a repair-flagged PR does NOT jump ahead of older oldest-first candidates", () => {
+      // #1 is flagged as a repair (e.g. opened during an extended agent pause, so it never published anything)
+      // but is by far the NEWEST-created of the three. It stays eligible (see the initial-drain test below) but
+      // must not cut ahead of #2/#3, which were created long before it — creation order is the same for every
+      // candidate regardless of repair status.
       const pulls = [
         pr({ number: 1, createdAt: minutesAgo(10) }),
         pr({ number: 2, createdAt: minutesAgo(900) }),
@@ -341,12 +350,14 @@ describe("selectRegateCandidates (#777 re-gate sweep selection)", () => {
         max: 2,
         priorityPullNumbers: new Set([1]),
       });
-      expect(picked.map((p) => p.number)).toEqual([1, 2]); // #1 (priority) wins despite being newest-created
+      expect(picked.map((p) => p.number)).toEqual([2, 3]); // oldest-created first, same as with no priority set at all; #1 (newest) dropped by the cap
     });
 
     it("REGRESSION (repair priority): a priority repair stays eligible during the oldest-first initial drain", () => {
       // #1 is a priority repair AND has already been regated, while #2 is still in the never-regated initial
-      // drain. Priority work remains eligible so a repair can preempt the ordinary creation-order backlog.
+      // drain. Priority work remains ELIGIBLE (not excluded by the initial-drain pool narrowing just because it
+      // already has a regate stamp) — but, per #selfhost-fifo-ordering, it no longer preempts the ordinary
+      // creation-order backlog: #2 is older-created than #1, so #2 still sorts first.
       const pulls = [
         pr({
           number: 1,
@@ -362,7 +373,7 @@ describe("selectRegateCandidates (#777 re-gate sweep selection)", () => {
         priorityPullNumbers: new Set([1]),
         priorityBypassesFreshness: true,
       });
-      expect(picked.map((p) => p.number)).toEqual([1, 2]); // #1 (priority) included despite already having a regate stamp
+      expect(picked.map((p) => p.number)).toEqual([2, 1]); // #1 (priority) included despite already having a regate stamp, but #2 (older-created) still sorts first
     });
 
     it("a just-regated PR is excluded while any never-regated PR remains, not re-selected forever by fixed createdAt", () => {

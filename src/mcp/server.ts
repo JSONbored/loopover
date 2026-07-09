@@ -424,6 +424,7 @@ export const rawPlanStepSchema = z
     actionClass: z.string().min(1).max(60).optional(),
     dependsOn: z.array(z.string().min(1).max(100)).max(50).optional(),
     maxAttempts: z.number().int().min(1).max(10).optional(),
+    codingAgentMode: z.enum(["paused", "dry_run", "live"]).optional(),
   })
   .strict();
 const planStepSchema = z

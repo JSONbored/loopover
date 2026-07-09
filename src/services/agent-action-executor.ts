@@ -932,6 +932,17 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
       const login = action.assignee ?? "";
       if (!login) return undefined;
       const result = await ensurePullRequestAssignee(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, login);
+      // Best-effort mirror the same assignment onto every linked issue (#priority-linked-issue-gate-ownership):
+      // gittensor:priority propagation requires the PR author to be the linked issue's own author OR assignee,
+      // so without this a contributor who picks up a maintainer-authored issue can never actually satisfy that
+      // check (see maybePlanAssign's doc comment, agent-actions.ts). Independent per-issue call: one issue's
+      // write failing (permissions, deleted issue, rate limit) must not affect another issue's assignment or the
+      // PR-assign outcome already computed above.
+      await Promise.all(
+        (action.assignLinkedIssues ?? []).map((issueNumber) =>
+          ensurePullRequestAssignee(env, ctx.installationId, ctx.repoFullName, issueNumber, login).catch(() => undefined),
+        ),
+      );
       if (!result.applied) {
         // GitHub silently drops an assignee lacking push/triage access to the repo -- the common case for an
         // external contributor. Fall back to a per-login label instead of a comment: ensurePullRequestLabel's
@@ -959,6 +970,7 @@ export function actionParams(action: PlannedAgentAction): AgentPendingActionPara
     ...(action.reviewBody !== undefined ? { reviewBody: action.reviewBody } : {}),
     ...(action.mergeMethod !== undefined ? { mergeMethod: action.mergeMethod } : {}),
     ...(action.assignee !== undefined ? { assignee: action.assignee } : {}),
+    ...(action.assignLinkedIssues !== undefined ? { assignLinkedIssues: action.assignLinkedIssues } : {}),
     ...(action.closeComment !== undefined ? { closeComment: action.closeComment } : {}),
     ...(action.closeReasons !== undefined ? { closeReasons: [...boundStructuredCloseReasonsForPersistence(action.closeReasons)] } : {}),
     ...(action.expectedHeadSha !== undefined ? { expectedHeadSha: action.expectedHeadSha } : {}),

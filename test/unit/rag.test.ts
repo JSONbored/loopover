@@ -10,6 +10,7 @@ import {
   embedTexts,
   filePriority,
   formatRetrievedContext,
+  getStoredChunkMeta,
   type InferenceAdapter,
   isIndexablePath,
   type RagChunk,
@@ -169,6 +170,7 @@ describe("ragEmbedBatchFromEnv", () => {
     expect(ragEmbedBatchFromEnv("")).toBe(96);
     expect(ragEmbedBatchFromEnv("not-a-number")).toBe(96);
     expect(ragEmbedBatchFromEnv("0")).toBe(96);
+    expect(ragEmbedBatchFromEnv("0.5")).toBe(96);
     expect(ragEmbedBatchFromEnv("-5")).toBe(96);
   });
 });
@@ -512,6 +514,52 @@ describe("rag: upsertChunks (embed + vector upsert + chunk-text store)", () => {
     expect(batchSizes).toEqual([4, 4, 2]); // proves infra.embedBatch (4) drove the batching, not the 96 default
   });
 
+  it("stamps the provided blobSha (#4365) onto every chunk row written for that file", async () => {
+    const vector = { upsert: async () => undefined } as unknown as VectorAdapter;
+    const bindCalls: unknown[][] = [];
+    const storage = {
+      prepare: () => ({
+        bind: (...args: unknown[]) => {
+          bindCalls.push(args);
+          return { run: async () => undefined } as unknown as BoundStatement;
+        },
+      }),
+      batch: async () => undefined,
+    } as unknown as StorageAdapter;
+    const twoChunks: RagChunk[] = [
+      { id: "ns|src/a.ts::0", path: "src/a.ts", chunkIndex: 0, kind: "code", text: "a" },
+      { id: "ns|src/a.ts::1", path: "src/a.ts", chunkIndex: 1, kind: "code", text: "b" },
+    ];
+    // ai1024 always returns exactly ONE vector regardless of input — fine for the other tests' single-chunk
+    // calls, but embedTexts' count-validation would reject it for this test's two-chunk batch. Return one
+    // vector per input text instead.
+    const inference: InferenceAdapter = { run: async (_model, opts) => ({ data: (opts.text as string[]).map(() => Array(1024).fill(0.1)) }) };
+
+    await upsertChunks({ storage, vector, inference }, "gittensory", "o/r", twoChunks, "sha-123");
+
+    expect(bindCalls).toHaveLength(2);
+    expect(bindCalls[0]?.at(-1)).toBe("sha-123");
+    expect(bindCalls[1]?.at(-1)).toBe("sha-123"); // both chunks of the same file share one blob SHA
+  });
+
+  it("stores NULL for blob_sha when it is omitted (the incremental reindexChangedPaths caller)", async () => {
+    const vector = { upsert: async () => undefined } as unknown as VectorAdapter;
+    const bindCalls: unknown[][] = [];
+    const storage = {
+      prepare: () => ({
+        bind: (...args: unknown[]) => {
+          bindCalls.push(args);
+          return { run: async () => undefined } as unknown as BoundStatement;
+        },
+      }),
+      batch: async () => undefined,
+    } as unknown as StorageAdapter;
+
+    await upsertChunks({ storage, vector, inference: ai1024 }, "gittensory", "o/r", chunks); // no blobSha arg
+
+    expect(bindCalls[0]?.at(-1)).toBeNull();
+  });
+
   it("returns 0 with no vector / no inference / empty chunks (the fail-safe guard)", async () => {
     const vector = { upsert: async () => undefined } as unknown as VectorAdapter;
     const storage = storageStub();
@@ -592,6 +640,44 @@ describe("rag: deleteChunksForPaths (incremental re-index of changed files)", ()
     } as unknown as StorageAdapter;
     await expect(deleteChunksForPaths({ storage, vector }, "p", "o/r", ["src/a.ts"])).resolves.toBeUndefined();
     expect(deleted).toBe(false); // no ids → nothing deleted
+  });
+});
+
+// ── getStoredChunkMeta (#4365 embedding-cache lookup) ───────────────────────────────────────────────
+describe("rag: getStoredChunkMeta", () => {
+  it("groups stored chunk rows by path, returning the blob SHA + chunk count per path", async () => {
+    const storage = {
+      prepare: () => ({
+        bind: () => ({
+          all: async () => ({
+            results: [
+              { path: "src/a.ts", blob_sha: "sha-a", cnt: 3 },
+              { path: "src/b.ts", blob_sha: null, cnt: 1 }, // a pre-migration / incrementally-updated row
+            ],
+          }),
+        }),
+      }),
+      batch: async () => undefined,
+    } as unknown as StorageAdapter;
+
+    const meta = await getStoredChunkMeta(storage, "p", "o/r");
+
+    expect(meta.get("src/a.ts")).toEqual({ blobSha: "sha-a", count: 3 });
+    expect(meta.get("src/b.ts")).toEqual({ blobSha: null, count: 1 });
+    expect(meta.get("src/missing.ts")).toBeUndefined();
+  });
+
+  it("tolerates an absent result set (the `?? []` defensive arm)", async () => {
+    const storage = {
+      prepare: () => ({ bind: () => ({ all: async () => ({}) }) }),
+      batch: async () => undefined,
+    } as unknown as StorageAdapter;
+    expect((await getStoredChunkMeta(storage, "p", "o/r")).size).toBe(0);
+  });
+
+  it("returns an empty Map when the storage read throws (fail-safe — a full reindex just treats everything as changed)", async () => {
+    const storage = { prepare: () => { throw new Error("d1 down"); }, batch: async () => undefined } as unknown as StorageAdapter;
+    expect((await getStoredChunkMeta(storage, "p", "o/r")).size).toBe(0);
   });
 });
 
@@ -731,6 +817,16 @@ describe("rag: embedTexts validation branches", () => {
     expect(out).not.toBeNull();
     expect(out?.length).toBe(150);
     expect(calls).toEqual([96, 54]); // proves the batching loop ran twice
+  });
+
+  it("rejects an invalid batchSize before embedding so a zero step cannot hang", async () => {
+    const inference: InferenceAdapter = {
+      run: async () => {
+        throw new Error("must not call embedding provider for an invalid batch size");
+      },
+    };
+    expect(await embedTexts(inference, ["hi"], RAG_DIMENSIONS, 0)).toBeNull();
+    expect(await embedTexts(inference, ["hi"], RAG_DIMENSIONS, Number.NaN)).toBeNull();
   });
 
   it("honors a configured batchSize override instead of the EMBED_BATCH=96 default (self-host GPU tuning)", async () => {

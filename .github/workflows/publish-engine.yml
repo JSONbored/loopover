@@ -51,8 +51,8 @@ jobs:
           RELEASE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor "$RELEASE_SHA" origin/main; then
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main; then
             echo "::error::Engine package releases must be cut from a commit reachable from main."
             exit 1
           fi
@@ -152,8 +152,8 @@ jobs:
           RELEASE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor "$RELEASE_SHA" origin/main; then
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main; then
             echo "::error::Engine package releases must be cut from a commit reachable from main."
             exit 1
           fi

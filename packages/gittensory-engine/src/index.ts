@@ -136,6 +136,45 @@ export {
   type GovernorLedgerEventType,
   type NormalizedGovernorLedgerEvent,
 } from "./governor-ledger.js";
+export {
+  ATTEMPT_LOG_EVENT_TYPES,
+  createAttemptLogBuffer,
+  formatAttemptLogJsonl,
+  normalizeAttemptLogEvent,
+  type AttemptLogEvent,
+  type AttemptLogEventType,
+  type NormalizedAttemptLogEvent,
+} from "./miner/attempt-log.js";
+export {
+  codingAgentModeExecutes,
+  isGlobalMinerCodingAgentPause,
+  resolveCodingAgentExecutionMode,
+  resolveCodingAgentModeFromConfig,
+  type CodingAgentExecutionMode,
+} from "./miner/coding-agent-mode.js";
+export {
+  createFakeCodingAgentDriver,
+  createNoopCodingAgentDriver,
+  type CodingAgentDriver,
+  type CodingAgentDriverResult,
+  type CodingAgentDriverTask,
+} from "./miner/coding-agent-driver.js";
+export {
+  invokeCodingAgentDriver,
+  type AttemptLogSink,
+} from "./miner/coding-agent-invoke.js";
+export {
+  CODING_AGENT_DRIVER_CONFIG_ENV,
+  CODING_AGENT_DRIVER_NAMES,
+  createCodingAgentDriver,
+  createFakeCodingAgentDriverForFactory,
+  isConfiguredCodingAgentDriver,
+  resolveConfiguredCodingAgentDriverNames,
+  runCodingAgentAttempt,
+  type CodingAgentDriverName,
+  type CreateCodingAgentDriverOptions,
+  type RunCodingAgentAttemptOptions,
+} from "./miner/driver-factory.js";
 export * from "./plan-export.js";
 export { countPlanStepsByStatus } from "./plan-step-stats.js";
 export { countPlanSteps } from "./plan-step-count.js";

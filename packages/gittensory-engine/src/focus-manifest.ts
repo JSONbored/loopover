@@ -1598,7 +1598,7 @@ const MAX_REVIEW_NAG_COOLDOWN_DAYS = 365;
  * Parse the optional `settings:` mapping — a partial repository-settings override. Only recognized
  * fields are kept; unknown/invalid values are dropped with a warning and never throw.
  */
-function parseSettingsOverride(value: JsonValue | undefined, warnings: string[]): FocusManifestSettings {
+function parseSettingsOverride(value: JsonValue | undefined, warnings: string[], source?: FocusManifestSource): FocusManifestSettings {
   if (value === undefined || value === null) return {};
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "settings" must be a mapping; ignoring it.`);
@@ -1660,9 +1660,32 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   }
   const publicSurface = normalizeOptionalEnum(r.publicSurface, "settings.publicSurface", ["off", "comment_and_label", "comment_only", "label_only"] as const, warnings);
   if (publicSurface !== null) out.publicSurface = publicSurface;
-  for (const key of ["aiReviewByok", "aiReviewAllAuthors", "closeOwnerAuthors", "autoLabelEnabled", "typeLabelsEnabled", "badgeEnabled", "publicQualityMetrics", "createMissingLabel", "includeMaintainerAuthors", "requireLinkedIssue", "backfillEnabled", "agentPaused", "agentDryRun", "agentGlobalFreezeOverride"] as const) {
+  for (const key of ["aiReviewByok", "aiReviewAllAuthors", "closeOwnerAuthors", "autoLabelEnabled", "typeLabelsEnabled", "badgeEnabled", "publicQualityMetrics", "createMissingLabel", "includeMaintainerAuthors", "requireLinkedIssue", "backfillEnabled", "agentPaused", "agentDryRun"] as const) {
     const flag = normalizeOptionalBoolean(r[key], `settings.${key}`, warnings);
     if (flag !== null) out[key] = flag;
+  }
+  // agentGlobalFreezeOverride is deliberately NOT in the generic boolean loop above (#4372/#4391/operator-only-
+  // freeze-fix): it is an OPERATOR-ONLY emergency lever ("re-activate this one repo while the fleet-wide kill-
+  // switch stays on elsewhere"), and every OTHER settings field in that loop is readable from BOTH the public,
+  // maintainer-owned `.gittensory.yml` committed in the repo's own git history (source: "repo_file") AND the
+  // operator's private, container-local self-host config (source: "api_record") -- see loadRepoFocusManifestWithCachePolicy
+  // in focus-manifest-loader.ts for how each source is produced. A repo MAINTAINER must never be able to grant
+  // their own repo an exemption from the operator's fleet-wide freeze via their own committed yml (that is
+  // exactly the "scope leak" #4391 closed by stripping this field from the shared loop entirely). But the
+  // OPERATOR's own private config source is a fundamentally different trust boundary -- it is edited only by
+  // whoever has filesystem access to the container's private config directory, not by any repo's maintainers --
+  // and #4391 over-corrected by also removing the operator's own legitimate, config-as-code path for this lever,
+  // forcing raw undocumented DB writes as the only remaining mechanism (violating this project's config-as-code
+  // convention: every operator-facing control belongs in the global-default + per-repo-override config files,
+  // env vars are for bootstrap only). Restore it, gated STRICTLY to the private source.
+  if (source === "api_record") {
+    const agentGlobalFreezeOverride = normalizeOptionalBoolean(r.agentGlobalFreezeOverride, "settings.agentGlobalFreezeOverride", warnings);
+    if (agentGlobalFreezeOverride !== null) out.agentGlobalFreezeOverride = agentGlobalFreezeOverride;
+  } else if (r.agentGlobalFreezeOverride !== undefined) {
+    // A public/maintainer-owned manifest attempting to set this is silently dropped, not surfaced as a normal
+    // "invalid value" warning -- warnings are public-safe text that can reach a contributor-facing preview, and
+    // this should not teach a non-operator that the field exists or that they almost bypassed the fleet freeze.
+    warnings.push("Ignored settings.agentGlobalFreezeOverride: operator-only, not settable from a repo-owned manifest.");
   }
   // Agent-layer autonomy dial (#773): `settings.autonomy` maps each action class to a level. Only set it
   // when at least one valid class→level pair survives normalization, so a malformed block never blanks the
@@ -2890,9 +2913,10 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
   }
   const record = raw as Record<string, JsonValue>;
   const warnings: string[] = [];
+  const resolvedSource = normalizeSource(source, record.source, warnings);
   const manifest: FocusManifest = {
     present: true,
-    source: normalizeSource(source, record.source, warnings),
+    source: resolvedSource,
     wantedPaths: normalizeStringList(record.wantedPaths, "wantedPaths", warnings),
     preferredLabels: normalizeStringList(record.preferredLabels, "preferredLabels", warnings),
     linkedIssuePolicy: normalizeEnum(record.linkedIssuePolicy, "linkedIssuePolicy", ["required", "preferred", "optional"] as const, "optional", warnings),
@@ -2901,7 +2925,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     maintainerNotes: normalizeStringList(record.maintainerNotes, "maintainerNotes", warnings),
     publicNotes: normalizeStringList(record.publicNotes, "publicNotes", warnings).filter(isFocusManifestPublicSafe),
     gate: parseGateConfig(record.gate, warnings),
-    settings: parseSettingsOverride(record.settings, warnings),
+    settings: parseSettingsOverride(record.settings, warnings, resolvedSource),
     review: parseReviewConfig(record.review, warnings),
     features: parseFeaturesConfig(record.features, warnings),
     contentLane: parseContentLaneConfig(record.contentLane, warnings),

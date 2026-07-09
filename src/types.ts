@@ -1253,6 +1253,9 @@ export type AgentPendingActionParams = {
   mergeMethod?: AutoMergeMethod;
   // For an `assign` action (#3182): the GitHub login to assign when a staged action is accepted.
   assignee?: string;
+  // For an `assign` action (#priority-linked-issue-gate-ownership): the linked issue numbers to ALSO assign
+  // `assignee` to when a staged action is accepted (see PlannedAgentAction.assignLinkedIssues).
+  assignLinkedIssues?: number[];
   closeComment?: string;
   // Individual close reasons, persisted for approval-queue replay so the eventual audit row keeps the structured
   // reason list rather than only the flattened `reason` field.

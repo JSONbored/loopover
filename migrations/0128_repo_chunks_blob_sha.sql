@@ -1,0 +1,16 @@
+-- Convergence (RAG / codebase index, #4365): per-file change detection so a FULL re-index (the cron fan-out,
+-- rag-index.ts's indexRepo) stops unconditionally re-fetching + re-embedding every indexable file on every
+-- cycle. Git's tree API already returns a content-addressed blob SHA per file for free (indexRepo already
+-- fetches the tree) -- persisting the SHA we last indexed a path AT lets the next full reindex skip any file
+-- whose blob SHA is unchanged, entirely (no GitHub content fetch, no chunk, no embed call), while still
+-- re-processing anything genuinely new/changed/deleted exactly as today.
+--
+-- WHO WRITES IT -- upsertChunks (src/review/rag.ts): the new optional blobSha param is stamped onto every
+-- chunk row belonging to that upsert call (all chunks of one file share one SHA). WHO READS IT -- the new
+-- getStoredChunkMeta (src/review/rag.ts), one grouped query returning {path -> {blobSha, count}} that
+-- indexRepo (src/review/rag-index.ts) consults before deciding to fetch a file.
+--
+-- Nullable + no backfill: existing rows get blob_sha=NULL, which never matches a fresh tree SHA, so the
+-- FIRST post-migration full reindex re-embeds every file once (as it already does today) and then converges
+-- to the cheap steady state from then on. Additive + idempotent, matching the 0051 repo_chunks convention.
+ALTER TABLE repo_chunks ADD COLUMN blob_sha TEXT;

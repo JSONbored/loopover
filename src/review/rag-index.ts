@@ -36,6 +36,7 @@ import {
   countRepoChunks,
   deleteChunksForPaths,
   filePriority,
+  getStoredChunkMeta,
   isIndexablePath,
   MAX_CHUNKS_PER_REPO,
   MAX_FILE_BYTES,
@@ -44,8 +45,10 @@ import {
   upsertChunks,
 } from "./rag";
 
-/** A single indexable entry from the repo git tree (path + size, used by isIndexablePath's size guard). */
-type TreeEntry = { path: string; size?: number | undefined };
+/** A single indexable entry from the repo git tree (path + size, used by isIndexablePath's size guard, + the
+ *  blob SHA (#4365) — git's own content hash, free on the tree response — used to skip re-embedding a file
+ *  whose content hasn't changed since the last full index). */
+type TreeEntry = { path: string; size?: number | undefined; sha?: string | undefined };
 
 /**
  * Sort key that puts small, high-value manifest/config files (package.json, tsconfig*.json,
@@ -109,11 +112,15 @@ async function fetchRepoTree(env: Env, repoFullName: string, ref: string, token:
       ...(admissionKey ? { githubRateLimitAdmissionKey: admissionKey } : {}),
     });
     if (!response.ok) return null;
-    const body = (await response.json()) as { tree?: Array<{ path?: string; type?: string; size?: number }> } | null;
+    const body = (await response.json()) as { tree?: Array<{ path?: string; type?: string; size?: number; sha?: string }> } | null;
     const entries: TreeEntry[] = [];
     for (const node of body?.tree ?? []) {
       if (node.type !== "blob" || typeof node.path !== "string" || node.path.length === 0) continue;
-      entries.push(typeof node.size === "number" ? { path: node.path, size: node.size } : { path: node.path });
+      entries.push({
+        path: node.path,
+        ...(typeof node.size === "number" ? { size: node.size } : {}),
+        ...(typeof node.sha === "string" && node.sha.length > 0 ? { sha: node.sha } : {}),
+      });
     }
     return entries;
   } catch (error) {
@@ -192,8 +199,9 @@ function indexRef(defaultBranch: string | null | undefined): string {
 }
 
 /** Upsert a set of chunks to the index in bounded batches, honoring the per-repo cap. Returns the number
- *  actually upserted. Each batch is independent: a failed batch (upsertChunks returns 0) doesn't abort the rest. */
-async function upsertChunksCapped(env: Env, project: string, repo: string, chunks: RagChunk[], alreadyStored: number): Promise<number> {
+ *  actually upserted. Each batch is independent: a failed batch (upsertChunks returns 0) doesn't abort the rest.
+ *  `blobSha` (#4365) is threaded straight through to upsertChunks — see its doc comment. */
+async function upsertChunksCapped(env: Env, project: string, repo: string, chunks: RagChunk[], alreadyStored: number, blobSha?: string): Promise<number> {
   const infra = createReviewAdapters(env);
   let stored = alreadyStored;
   let upserted = 0;
@@ -201,7 +209,7 @@ async function upsertChunksCapped(env: Env, project: string, repo: string, chunk
     const remaining = MAX_CHUNKS_PER_REPO - stored;
     const batch = chunks.slice(i, i + Math.min(UPSERT_BATCH, remaining));
     if (batch.length === 0) break;
-    const n = await upsertChunks(infra, project, repo, batch);
+    const n = await upsertChunks(infra, project, repo, batch, blobSha);
     upserted += n;
     stored += n;
   }
@@ -256,6 +264,13 @@ export type IndexRepoResult = { indexed: number; files: number; capped: boolean 
  * (manifestPriority), fetches each file's content, chunks it (chunkFile), and upserts (embed + Vectorize +
  * repo_chunks via upsertChunks) up to MAX_CHUNKS_PER_REPO.
  *
+ * Embedding cache (#4365): a file whose git blob SHA (free on the tree response) matches what we stored the
+ * last time we indexed that path is skipped ENTIRELY — no content fetch, no chunk, no embed call — since its
+ * content provably hasn't changed. This is what keeps the cron fan-out cheap on repeat runs: only genuinely
+ * new/changed files ever reach the embedding model. A changed file's old chunks are deleted before its new
+ * ones are upserted (mirrors reindexChangedPaths), which also prevents stale trailing chunks when a file
+ * shrinks to fewer chunks than it had before.
+ *
  * Idempotent: chunk ids are stable (namespace|path::idx) so re-running upserts (ON CONFLICT updates) the same
  * rows rather than duplicating. Fully FAIL-SAFE — any error (no infra, GitHub down, bad file) degrades to
  * "indexed fewer / nothing"; this NEVER throws.
@@ -290,13 +305,22 @@ export async function indexRepo(
     await pruneMissingPaths(infra, project, repoName, new Set(tree.map((entry) => entry.path)));
     if (tree.length === 0) return empty;
 
-    // 2. Fetch + chunk + upsert, stopping once the per-repo vector cap is reached.
-    let stored = 0;
+    // 2. Fetch + chunk + upsert, stopping once the per-repo vector cap is reached. `stored` seeds from the
+    //    real post-prune total (not 0) so a run that skips most files still caps correctly against everything
+    //    already retained, not just what THIS run touches.
+    const knownChunks = await getStoredChunkMeta(infra.storage, project, repoName);
+    let stored = await countRepoChunks(infra.storage, project, repoName);
     let upserted = 0;
     let filesIndexed = 0;
+    let skipped = 0;
     let capped = false;
     for (const entry of tree) {
-      if (stored >= MAX_CHUNKS_PER_REPO) {
+      const known = knownChunks.get(entry.path);
+      if (entry.sha && known?.blobSha && known.blobSha === entry.sha) {
+        skipped += 1;
+        continue; // unchanged since the last full index — skip the fetch/chunk/embed entirely
+      }
+      if (stored >= MAX_CHUNKS_PER_REPO && (!known || known.count <= 0)) {
         capped = true;
         break;
       }
@@ -304,7 +328,11 @@ export async function indexRepo(
       if (text === null) continue;
       const chunks = chunkFile(entry.path, text, namespace);
       if (chunks.length === 0) continue;
-      const n = await upsertChunksCapped(env, project, repoName, chunks, stored);
+      if (known && known.count > 0) {
+        await deleteChunksForPaths(infra, project, repoName, [entry.path]);
+        stored -= known.count;
+      }
+      const n = await upsertChunksCapped(env, project, repoName, chunks, stored, entry.sha);
       if (n > 0) {
         upserted += n;
         stored += n;
@@ -312,7 +340,7 @@ export async function indexRepo(
       }
     }
     console.log(
-      JSON.stringify({ event: "rag_index_repo", project, repo: repoFullName, files: filesIndexed, indexed: upserted, capped }),
+      JSON.stringify({ event: "rag_index_repo", project, repo: repoFullName, files: filesIndexed, indexed: upserted, skipped, capped }),
     );
     return { indexed: upserted, files: filesIndexed, capped };
   } catch (error) {

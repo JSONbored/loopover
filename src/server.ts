@@ -518,7 +518,7 @@ async function main(): Promise<void> {
   const advisoryAi = process.env.AI_ADVISORY_BASE_URL
     ? createOpenAiCompatibleAi({
         baseUrl: process.env.AI_ADVISORY_BASE_URL,
-        apiKey: process.env.AI_ADVISORY_API_KEY ?? process.env.OPENAI_API_KEY,
+        apiKey: process.env.AI_ADVISORY_API_KEY,
         model: process.env.AI_ADVISORY_MODEL,
       })
     : undefined;

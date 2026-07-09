@@ -79,6 +79,17 @@ export type RegateSweepOrderMode = "staleness" | "oldest-first";
  * staleness key so continued periodic re-gating keeps converging instead of pinning the oldest PRs forever.
  * Selection-time only: real-time webhook-driven review is not gated by this sort and can still process any PR
  * out of order at any moment.
+ *
+ * `priorityPullNumbers` (outage repair -- surfaceRepairPriorityPullNumbers, processors.ts) affects ELIGIBILITY
+ * only, never final order (#selfhost-fifo-ordering): a repair candidate bypasses the freshness guard
+ * (`priorityBypassesFreshness`) and stays in the oldest-first pool even once it already has a `lastRegatedAt`
+ * stamp (`hasRepairPriority` in the pool filter below) -- but it is NOT sorted ahead of the rest of the queue.
+ * An earlier revision additionally sorted repair candidates first, which let a newer PR needing repair (e.g.
+ * opened during an extended pause, so it has never published anything) jump ahead of older PRs that merely
+ * went stale -- observed live as PRs dispatching out of their creation/staleness order ("spraying") whenever a
+ * repo had a mixed backlog of repaired and ordinary candidates. Every eligible PR -- repair or not -- is now
+ * ordered by the SAME `orderKey` (+ PR-number tiebreak), so a sweep processes its queue in one deterministic
+ * order every time, regardless of how many candidates happen to need repair.
  */
 export function selectRegateCandidates(input: {
   pulls: PullRequestRecord[];
@@ -125,8 +136,6 @@ export function selectRegateCandidates(input: {
     input.priorityPullNumbers instanceof Set
       ? input.priorityPullNumbers
       : new Set(input.priorityPullNumbers ?? []);
-  const repairPriority = (pr: PullRequestRecord): number =>
-    priorityPullNumbers.has(pr.number) ? 0 : 1;
   const eligible = input.pulls
     .filter((pr) => pr.state === "open" && !pr.isDraft)
     .filter((pr) => {
@@ -154,12 +163,7 @@ export function selectRegateCandidates(input: {
       ? creationOrder
       : regateProgress;
   return candidates
-    .sort(
-      (a, b) =>
-        repairPriority(a) - repairPriority(b) ||
-        orderKey(a) - orderKey(b) ||
-        a.number - b.number,
-    )
+    .sort((a, b) => orderKey(a) - orderKey(b) || a.number - b.number)
     .slice(0, Math.max(0, max));
 }
 

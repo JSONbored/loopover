@@ -438,6 +438,48 @@ describe("runVisualVisionForAdvisory: self-host local vision provider (#4335)", 
     ]);
   });
 
+  it("does not let an unconfirmed contributor spend self-host vision resources unless all-authors is enabled", async () => {
+    const runMock = vi.fn(async () => ({ response: findingsResponse([{ path: "/app", body: "should not run" }]) }));
+    const env = byokEnv();
+    (env as unknown as { AI_VISION: unknown }).AI_VISION = { run: runMock };
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const adv = findingsHolder();
+    await runVisualVisionForAdvisory(env, {
+      repoFullName,
+      pr,
+      author: "alice",
+      confirmedContributor: false,
+      settings: byokSettings({ aiReviewByok: false, aiReviewAllAuthors: false }),
+      advisory: adv,
+      routes: selfHostVisionRoutes(),
+    });
+    expect(runMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(adv.findings).toEqual([]);
+  });
+
+  it("allows self-host vision for an unconfirmed contributor when all-authors is explicitly enabled", async () => {
+    const runMock = vi.fn(async () => ({
+      response: findingsResponse([{ path: "/app", body: "All-authors opt-in covers this self-host call." }]),
+    }));
+    const env = byokEnv();
+    (env as unknown as { AI_VISION: unknown }).AI_VISION = { run: runMock };
+    stubShots();
+    const adv = findingsHolder();
+    await runVisualVisionForAdvisory(env, {
+      repoFullName,
+      pr,
+      author: "alice",
+      confirmedContributor: false,
+      settings: byokSettings({ aiReviewByok: false, aiReviewAllAuthors: true }),
+      advisory: adv,
+      routes: selfHostVisionRoutes(),
+    });
+    expect(runMock).toHaveBeenCalledTimes(1);
+    expect(adv.findings[0]).toMatchObject({ detail: "All-authors opt-in covers this self-host call." });
+  });
+
   it("prefers a configured BYOK key over env.AI_VISION when both are available", async () => {
     const env = byokEnv();
     await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-vision-key", model: null });

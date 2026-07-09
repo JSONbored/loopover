@@ -75,7 +75,11 @@ review:
 # fallback already has zero equivalent verification) so they propagate even when the PR author isn't a
 # formal GitHub assignee of the issue — our issues are almost always maintainer-authored for open pickup and
 # rarely formally assigned. priority intentionally omits the flag: it is the scarce, maintainer-hand-picked
-# reward label, and must still require the PR author to be the issue's actual author/assignee.
+# reward label, and must still require the PR author to be the issue's actual author/assignee. priority is
+# also \`removeOtherTypeLabels: false\` (additive) -- unlike bug/feature, which are mutually-exclusive TYPE
+# categories, priority is a separate reward dimension that coexists WITH whichever type already applies (an
+# issue is routinely both gittensor:feature AND gittensor:priority at once); resolvePrTypeLabel composes every
+# additive match alongside the one exclusive winner, rather than the two categories competing for a single slot.
 #
 # Review-evasion protection: closing or converting-to-draft your OWN PR while gittensory has an active
 # review pass running, a prior recorded gate failure, or a repeated ready<->draft cycle on this PR, is
@@ -96,7 +100,7 @@ settings:
         trustMaintainerAuthoredIssue: true
       - issueLabel: "gittensor:priority"
         prLabel: "gittensor:priority"
-        removeOtherTypeLabels: true
+        removeOtherTypeLabels: false
   reviewEvasionProtection: close
 
 # Repo-doc generation roadmap (#2993/#3002) — opt-in only, off by default. Uncomment to let Gittensory open a

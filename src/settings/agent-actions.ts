@@ -150,6 +150,12 @@ export type PlannedAgentAction = {
   // contributor. GitHub silently drops an assignee lacking push/triage access rather than erroring, so the
   // executor falls back to a per-login label when the real assignment doesn't stick.
   assignee?: string;
+  // For an `assign` action (#priority-linked-issue-gate-ownership): the SAME login also best-effort-assigned to
+  // each of these linked issue numbers (already capped, see maybePlanAssign). Without this, a contributor is
+  // assigned to their own PR but never to the issue(s) it closes -- and gittensor:priority propagation
+  // (resolveIssueLabelsForPropagation, linked-issue-label-propagation-fetch.ts) requires the PR author to be the
+  // linked issue's own author OR assignee, which an issue-opened-for-open-pickup contributor otherwise never is.
+  assignLinkedIssues?: number[];
 };
 
 // Gate-blocker codes backed by CONCRETE, non-judgment evidence: a committed secret, a deterministic
@@ -381,6 +387,9 @@ export type AgentActionPlanInput = {
     // is harmless -- those all set `conclusion: "skipped"` or hit an earlier short-circuit `return`, so the
     // `assign` block below is unreachable from them regardless.
     authorLogin?: string | null | undefined;
+    // The PR's linked/closing issue numbers (#priority-linked-issue-gate-ownership), threaded through ONLY for
+    // the `assign` disposition below -- same "harmless when absent" reasoning as authorLogin just above.
+    linkedIssues?: number[] | undefined;
   };
 };
 
@@ -549,21 +558,39 @@ function screenshotTableCloseMessage(reason: string): string {
   return `${reason} This is an automated maintenance action.`;
 }
 
+// Best-effort assign-to-linked-issue fan-out cap (#priority-linked-issue-gate-ownership): a PR overwhelmingly
+// closes 1 (rarely 2-3) issues. `pr.linkedIssues` is already capped much higher (50, MAX_LINKED_ISSUE_NUMBERS)
+// for extraction/storage purposes only -- this narrower cap bounds the number of extra GitHub assignee-WRITE
+// calls the executor makes for one `assign` action.
+const ASSIGN_LINKED_ISSUES_MAX = 10;
+
 /**
  * Plan best-effort assignment of the PR's opening contributor (#3182), independent of merge/close/CI outcome.
  * MUST run before the CI-pending settle-before-decide return below (#assign-before-ci-pending) — a PR that has
  * already been reviewed/evaluated (conclusion isn't "skipped") should get an assignee for triage even while an
  * unrelated check is still pending; assign has no bearing on mergeability so it never needs CI to settle first.
  * Gated purely on its own `assign` autonomy class, same as every other independent action here.
+ *
+ * Also best-effort assigns the SAME contributor to the PR's own linked issues (#priority-linked-issue-gate-
+ * ownership), capped at ASSIGN_LINKED_ISSUES_MAX. Without this, gittensor:priority propagation could never fire
+ * in practice for a contributor's PR: resolveIssueLabelsForPropagation only unlocks that label when the PR
+ * author is the linked issue's own author OR a GitHub assignee of it, but our issues are almost always opened
+ * for open pickup and rarely formally assigned (see the propagation config's own comment in
+ * gittensory-repo-focus-manifest.ts) -- so before this, only the PR itself ever got an assignee, never the
+ * issue it closes.
  */
 function maybePlanAssign(actions: PlannedAgentAction[], input: AgentActionPlanInput): void {
   const level = resolveAutonomy(input.autonomy, "assign");
   if (!isActingAutonomyLevel(level) || !input.pr.authorLogin) return;
+  const linkedIssues = input.pr.linkedIssues;
   actions.push({
     actionClass: "assign",
     requiresApproval: autonomyRequiresApproval(level),
     reason: "auto-assign PR opener",
     assignee: input.pr.authorLogin,
+    ...(linkedIssues && linkedIssues.length > 0
+      ? { assignLinkedIssues: linkedIssues.slice(0, ASSIGN_LINKED_ISSUES_MAX) }
+      : {}),
   });
 }
 

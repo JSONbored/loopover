@@ -100,6 +100,14 @@ describe("plan-templates", () => {
     expect(steps.find((s) => s.id === "local-test")?.dependsOn).toEqual(["coding-agent"]);
   });
 
+  it("surfaces codingAgentMode on the prepare-phase coding-agent step (#4313)", () => {
+    const steps = preparePlanTemplate({ subject: "fix flaky retry", codingAgentMode: "dry_run" });
+    expect(steps.find((s) => s.id === "coding-agent")).toMatchObject({ codingAgentMode: "dry_run" });
+    expect(rawPlanStepSchema.parse(steps.find((s) => s.id === "coding-agent"))).toMatchObject({
+      codingAgentMode: "dry_run",
+    });
+  });
+
   it("encodes the real plan ordering: readiness depends on the built DAG", () => {
     const steps = planPlanTemplate();
     expect(steps.map((s) => s.id)).toEqual(["packet-validate", "plan-dag-build", "readiness-check"]);

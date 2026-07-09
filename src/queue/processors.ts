@@ -3087,6 +3087,7 @@ async function runAgentMaintenancePlanAndExecute(
       mergeBlockedSha: pr.mergeBlockedSha,
       approvedHeadSha: pr.approvedHeadSha,
       authorLogin: pr.authorLogin,
+      linkedIssues: pr.linkedIssues,
     },
   });
   // Accuracy circuit-breakers (#self-improve / GAP-4): two INDEPENDENT, fail-open precision breakers, chained.
@@ -8261,10 +8262,11 @@ export async function runVisualVisionForAdvisory(
             model: args.settings.aiReviewModel ?? storedVisionKey.model,
           }
         : null;
-    // Self-host local vision (#4335): a dedicated ollama+VLM binding lets vision run WITHOUT a maintainer
-    // BYOK key -- see evaluateVisualVisionGate's header for why only an HTTP-capable provider (BYOK or this)
-    // can see the screenshots at all.
-    const selfHostVisionAvailable = Boolean(env.AI_VISION);
+    // Self-host local vision (#4335) still consumes operator resources, so mirror the AI-spend gate used by
+    // the other self-host review paths: confirmed contributors only unless the repo explicitly opts in to all
+    // authors. BYOK remains checked above because it also requires a confirmed contributor-owned repo key.
+    const selfHostVisionAllowed = args.confirmedContributor || args.settings.aiReviewAllAuthors;
+    const selfHostVisionAvailable = selfHostVisionAllowed && Boolean(env.AI_VISION);
     const visionGate = evaluateVisualVisionGate({
       routes: args.routes,
       reputationSignal: visionReputation.signal,
@@ -8318,6 +8320,59 @@ export async function runVisualVisionForAdvisory(
       }),
     );
   }
+}
+
+/**
+ * Resolve `manifest_missing_tests`' `passedValidationCount` signal (gate-review finding, #4719): a PR-body
+ * validation-note match (`hasValidationNote`) is checked FIRST since it's free; only when that misses, AND
+ * the manifest actually configured `testExpectations`, AND no test file changed does this consult the PR's
+ * live CI state -- via the SAME `cachedLiveCiAggregate` the disposition/unified-comment already read this
+ * pass from -- so a fully-green required CI rollup counts as evidence too. Without this, a fully-automated,
+ * CI-green, docs-only regen PR (the #4719 false positive) fails this check merely because its templated
+ * body never happens to contain a "tested"/"validated" word. `ciState === "passed"` already excludes
+ * gittensory's own Gate/Context check-runs (`BOT_OWNED_CHECK_NAMES`, github/backfill.ts), so this can never
+ * be satisfied by the very check-run this signal feeds into.
+ */
+async function resolveManifestPassedValidationCount(
+  env: Env,
+  args: {
+    repoFullName: string;
+    installationId: number;
+    prNumber: number;
+    headSha: string | null | undefined;
+    baseRef: string | null | undefined;
+    body: string | null | undefined;
+    expectedCiContexts: ReadonlyArray<string> | null | undefined;
+    liveFacts: LiveGithubFacts;
+    testExpectationsConfigured: boolean;
+    testFileCount: number;
+  },
+): Promise<number> {
+  if (hasValidationNote(args.body ?? "")) return 1;
+  if (!args.testExpectationsConfigured || args.testFileCount > 0) return 0;
+  const installationToken = await createInstallationToken(env, args.installationId).catch(
+    () => undefined,
+  );
+  /* v8 ignore next -- installation-token failure fallback is covered by public-token fetch paths (see
+   * resolvePullRequestFilesForReview above); this branch depends on token-cache timing. */
+  const token = installationToken ?? env.GITHUB_PUBLIC_TOKEN;
+  const admissionKey = githubAdmissionKeyForToken(env, args.installationId, token);
+  // No outer .catch() here: cachedLiveCiAggregate's own chain (fetchRequiredStatusContexts,
+  // fetchLiveCiAggregatePreferGraphQl, and the durable-cache read/write) is already fail-open at every
+  // internal step (see their own doc comments), so it never rejects -- an extra catch here would just be
+  // dead, uncoverable code.
+  const liveCi = await cachedLiveCiAggregate(
+    env,
+    args.repoFullName,
+    args.liveFacts,
+    args.prNumber,
+    args.headSha,
+    args.baseRef,
+    token,
+    args.expectedCiContexts,
+    admissionKey,
+  );
+  return liveCi.ciState === "passed" ? 1 : 0;
 }
 
 async function maybePublishPrPublicSurface(
@@ -9132,14 +9187,26 @@ async function maybePublishPrPublicSurface(
     if (settings.manifestPolicyGateMode !== "off") {
       const manifestFiles = gateFiles ?? [];
       const manifest = await loadRepoFocusManifest(env, repoFullName);
+      const testFileCount = manifestFiles.filter((file) => isTestPath(file.path)).length;
+      const passedValidationCount = await resolveManifestPassedValidationCount(env, {
+        repoFullName,
+        installationId,
+        prNumber: pr.number,
+        headSha: pr.headSha,
+        baseRef: pr.baseRef ?? repo?.defaultBranch,
+        body: pr.body,
+        expectedCiContexts: settings.expectedCiContexts,
+        liveFacts: webhook.liveFacts,
+        testExpectationsConfigured: manifest.testExpectations.length > 0,
+        testFileCount,
+      });
       const guidance = buildFocusManifestGuidance({
         manifest,
         changedPaths: manifestFiles.map((file) => file.path),
         labels: pr.labels,
         linkedIssueCount: pr.linkedIssues.length,
-        testFileCount: manifestFiles.filter((file) => isTestPath(file.path))
-          .length,
-        passedValidationCount: hasValidationNote(pr.body ?? "") ? 1 : 0,
+        testFileCount,
+        passedValidationCount,
         hasNoIssueRationale: hasClearNoIssueRationale(pr),
       });
       const policyCodes = new Set([
@@ -9147,7 +9214,10 @@ async function maybePublishPrPublicSurface(
         "manifest_linked_issue_required",
         "manifest_missing_tests",
       ]);
-      for (const finding of guidance.findings) {
+      // Keep deterministic manifest policy findings independent from AI-review eligibility: ignored authors
+      // suppress review/public output only, never maintainer-configured gate blockers or their downstream triggers.
+      const policyFindings = guidance.findings;
+      for (const finding of policyFindings) {
         if (!policyCodes.has(finding.code)) continue;
         advisory.findings.push(publicSafeManifestPolicyFinding(finding));
       }
@@ -9155,11 +9225,11 @@ async function maybePublishPrPublicSurface(
       // manifest_missing_tests finding above from advisory-only text into an actual trigger for #4192/#4194's
       // generation-and-render path -- additive to, never a replacement for, the explicit `@gittensory
       // generate-tests` command (#4195), which stays available regardless of whether this signal fired.
-      // Filters the SAME guidance.findings just computed above rather than re-deriving "PR probably needs
+      // Filters the SAME policyFindings just computed above rather than re-deriving "PR probably needs
       // tests" from scratch, per the issue's own requirement -- this is why the auto-trigger lives inside this
       // exact manifestPolicyGateMode-gated block instead of a parallel code path: that is the only place this
       // finding is computed at all today.
-      if (pr.headSha && guidance.findings.some((finding) => finding.code === "manifest_missing_tests") && resolveConvergedFeature(env, manifest, "e2eTests", repoFullName)) {
+      if (pr.headSha && policyFindings.some((finding) => finding.code === "manifest_missing_tests") && resolveConvergedFeature(env, manifest, "e2eTests", repoFullName)) {
         const e2eTargetKey = `${repoFullName}#${pr.number}`;
         // Double-generation guard: an unchanged head SHA re-entering this pass (a re-review/sweep tick, not a
         // new push) must never re-spend an LLM call or repost a duplicate suggestion. A genuinely NEW push

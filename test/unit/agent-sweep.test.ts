@@ -272,6 +272,60 @@ describe("selectRegateCandidates (#777 re-gate sweep selection)", () => {
     );
   });
 
+  it("INVARIANT (#never-endless-reregate, incident 2026-07-09): once regated (and not repair-priority), a PR never reappears on any later sweep, across every order mode -- the exact property the endless-reregate-sweep incident broke", () => {
+    // A deliberately mixed, randomized-shape backlog: some PRs already regated (at varying ages), some never
+    // regated, a handful flagged repair-priority (the ONLY sanctioned bypass). Every PR's GitHub updatedAt is
+    // pinned far outside the freshness window so the freshness guard never masks this property. Simulates a
+    // real multi-sweep drain (mirroring the "REGRESSION (convergence)" test above): each sweep's picks get
+    // stamped with lastRegatedAt = now and feed into the next sweep, so the invariant is checked against
+    // genuinely evolving state, not a single static snapshot.
+    const TOTAL = 30;
+    const repairPullNumbers = new Set([5, 17, 23]);
+    const basePulls = Array.from({ length: TOTAL }, (_, i) => {
+      const number = i + 1;
+      const alreadyRegated = number % 3 !== 0 && !repairPullNumbers.has(number);
+      return pr({
+        number,
+        createdAt: minutesAgo(2000 - number),
+        updatedAt: minutesAgo(1000), // always stale relative to the freshness window
+        ...(alreadyRegated ? { lastRegatedAt: minutesAgo(500 + (number % 400)) } : {}),
+      });
+    });
+    const alreadyRegatedNonRepair = new Set(
+      basePulls.filter((p) => Boolean(p.lastRegatedAt)).map((p) => p.number),
+    );
+    for (const orderMode of ["staleness", "oldest-first"] as const) {
+      const stampedAt = new Map<number, string>();
+      let sweepNow = nowMs;
+      for (let sweep = 0; sweep < 8; sweep++) {
+        sweepNow += 10 * 60 * 1000;
+        const now = new Date(sweepNow).toISOString();
+        const view = basePulls.map((p) => ({
+          ...p,
+          lastRegatedAt: stampedAt.get(p.number) ?? p.lastRegatedAt,
+        }));
+        const picked = selectRegateCandidates({
+          pulls: view,
+          now,
+          orderMode,
+          priorityPullNumbers: repairPullNumbers,
+        });
+        for (const p of picked) {
+          expect(
+            alreadyRegatedNonRepair.has(p.number),
+            `orderMode=${orderMode} sweep=${sweep}: PR #${p.number} was already regated pre-test and is not repair-priority, yet was re-selected`,
+          ).toBe(false);
+          // A repair-priority PR CAN legitimately be picked more than once (its bypass is deliberate); any
+          // other PR picked on THIS sweep must not already carry a stamp from an earlier sweep in this run.
+          if (!repairPullNumbers.has(p.number)) {
+            expect(stampedAt.has(p.number)).toBe(false);
+          }
+          stampedAt.set(p.number, now);
+        }
+      }
+    }
+  });
+
   describe("orderMode: oldest-first (#3815)", () => {
     it("orders by createdAt ascending when neither PR has ever been regated", () => {
       const pulls = [

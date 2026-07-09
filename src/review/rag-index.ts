@@ -315,14 +315,14 @@ export async function indexRepo(
     let skipped = 0;
     let capped = false;
     for (const entry of tree) {
-      if (stored >= MAX_CHUNKS_PER_REPO) {
-        capped = true;
-        break;
-      }
       const known = knownChunks.get(entry.path);
       if (entry.sha && known?.blobSha && known.blobSha === entry.sha) {
         skipped += 1;
         continue; // unchanged since the last full index — skip the fetch/chunk/embed entirely
+      }
+      if (stored >= MAX_CHUNKS_PER_REPO && (!known || known.count <= 0)) {
+        capped = true;
+        break;
       }
       const text = await fetchFileText(env, repoFullName, entry.path, ref, token, admissionKey);
       if (text === null) continue;

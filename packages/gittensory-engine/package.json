@@ -50,6 +50,10 @@
     "./signals/check-summary": {
       "types": "./dist/signals/check-summary.d.ts",
       "default": "./dist/signals/check-summary.js"
+    },
+    "./signals/path-matchers": {
+      "types": "./dist/signals/path-matchers.d.ts",
+      "default": "./dist/signals/path-matchers.js"
     }
   },
   "files": [

@@ -75,6 +75,8 @@ describe("gittensory-miner status/doctor (#2288)", () => {
       "state-dir-writable",
       "laptop-state-sqlite",
       "docker-present",
+      "claude-cli-present",
+      "codex-cli-present",
     ]);
     expect(runDoctor([], env)).toBe(0);
     expect(log).toHaveBeenCalled();

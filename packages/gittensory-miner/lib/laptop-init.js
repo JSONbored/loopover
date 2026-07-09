@@ -95,6 +95,55 @@ export function checkDockerPresent(options = {}) {
   };
 }
 
+// Codex stores credentials at `$CODEX_HOME/auth.json`, else `$HOME/.codex/auth.json` — mirrors
+// resolveCodexAuthPath in src/selfhost/ai.ts, kept local so the offline miner package never imports the
+// Worker AI module.
+function resolveCodexAuthPath(env = process.env) {
+  const base = env.CODEX_HOME ?? join(env.HOME ?? homedir(), ".codex");
+  return join(base, "auth.json");
+}
+
+/** Informational only — a coding-agent CLI is only needed once a driver provider is configured (#4289), so a
+ *  missing or unauthenticated CLI is advisory (`ok: true`), mirroring checkDockerPresent's optional tone. The
+ *  auth probe is read-only and never spawns the CLI: it surfaces, proactively, the SAME condition claude
+ *  checks at call time — `CLAUDE_CODE_OAUTH_TOKEN` present (see createClaudeCodeAi, src/selfhost/ai.ts). */
+export function checkClaudeCliPresent(options = {}) {
+  const env = options.env ?? process.env;
+  const claudePath = (options.resolveClaudePath ?? (() => findExecutableOnPath("claude", env)))();
+  if (!claudePath) {
+    return { name: "claude-cli-present", ok: true, detail: "not installed (optional until a coding-agent driver is configured)" };
+  }
+  const authed = typeof env.CLAUDE_CODE_OAUTH_TOKEN === "string" && env.CLAUDE_CODE_OAUTH_TOKEN.length > 0;
+  return {
+    name: "claude-cli-present",
+    ok: true,
+    detail: authed ? `found at ${claudePath} (authenticated)` : `found at ${claudePath} (not authenticated: set CLAUDE_CODE_OAUTH_TOKEN)`,
+  };
+}
+
+/** Informational only — mirrors {@link checkClaudeCliPresent} for the codex CLI. The auth probe checks the
+ *  same read-only condition assertCodexAuthConfigured uses at call time: codex's `auth.json` is readable. */
+export function checkCodexCliPresent(options = {}) {
+  const env = options.env ?? process.env;
+  const codexPath = (options.resolveCodexPath ?? (() => findExecutableOnPath("codex", env)))();
+  if (!codexPath) {
+    return { name: "codex-cli-present", ok: true, detail: "not installed (optional until a coding-agent driver is configured)" };
+  }
+  const authPath = (options.resolveCodexAuthPath ?? (() => resolveCodexAuthPath(env)))();
+  let authed = false;
+  try {
+    accessSync(authPath, constants.R_OK);
+    authed = true;
+  } catch {
+    // auth.json missing or unreadable — codex would fail for lack of credentials at call time.
+  }
+  return {
+    name: "codex-cli-present",
+    ok: true,
+    detail: authed ? `found at ${codexPath} (authenticated)` : `found at ${codexPath} (not authenticated: run \`codex auth\`)`,
+  };
+}
+
 export function runInit(args = [], env = process.env) {
   const result = initLaptopState(env);
   if (args.includes("--json")) {

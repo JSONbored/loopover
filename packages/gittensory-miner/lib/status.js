@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { checkDockerPresent, checkLaptopStateSqlite } from "./laptop-init.js";
+import { checkClaudeCliPresent, checkCodexCliPresent, checkDockerPresent, checkLaptopStateSqlite } from "./laptop-init.js";
 import { resolveMinerVersion } from "./version.js";
 
 // Slim laptop-mode CLI commands (#2288): `status` (what's installed + where local state lives) and `doctor` (is
@@ -125,6 +125,8 @@ export function runDoctorChecks(env = process.env) {
     checkStateDirWritable(resolveMinerStateDir(env)),
     checkLaptopStateSqlite(env),
     checkDockerPresent(),
+    checkClaudeCliPresent({ env }),
+    checkCodexCliPresent({ env }),
   ];
 }
 

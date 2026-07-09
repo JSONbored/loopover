@@ -10,7 +10,7 @@
 // Distinct from services/review-recap.ts's buildReviewRecap: that is SINGLE-repo and sourced from gate merge-
 // PREDICTION precision; this is MULTI-repo and sourced from the realized gate-block + recommendation-outcome
 // calibration ledgers (blocked-then-merged false positives, maintainer overrides, recommendation reversals).
-import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN } from "../signals/redaction";
+import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN, PUBLIC_UNSAFE_PATTERN } from "../signals/redaction";
 import type { GatePrecisionReport } from "./gate-precision";
 import type { OutcomeCalibration } from "./outcome-calibration";
 import type { MaintainerRecapRepo, RecapReport } from "../types";
@@ -98,4 +98,55 @@ export function buildMaintainerRecap(args: MaintainerRecapInputs): RecapReport {
     `${totals.gateOverrides} maintainer override(s), ${totals.reversals} recommendation reversal(s).`,
   ].map(sanitizeRecapText);
   return { generatedAt: args.generatedAt, windowDays, repos, totals, summary };
+}
+
+/** Redact one free-text line bound for the public digest body. Two arms mirroring weekly-value-report.ts's
+ *  sanitizeReportText: scrub any absolute local path to `<redacted-path>`, then blank the WHOLE line to
+ *  `<redacted>` if any economic/identity term (reward/score/wallet/payout/…) survives. Defense in depth — the
+ *  builder already sanitizes free-text fields, but the formatter re-guards every emitted line so a hand-built
+ *  or future report can never leak a private term into a digest. Capped at 240 chars like sanitizeRecapText. */
+function redactRecapLine(value: string): string {
+  const scrubbed = value.replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<redacted-path>").slice(0, 240);
+  return PUBLIC_UNSAFE_PATTERN.test(scrubbed) ? "<redacted>" : scrubbed;
+}
+
+/** Render a titled section's body: one `- ` bullet per redacted item, or a single italic fallback line when the
+ *  section is empty so a header never dangles over a blank body. */
+function recapSectionLines(items: string[], fallback: string): string[] {
+  return items.length === 0 ? [fallback] : items.map((item) => `- ${redactRecapLine(item)}`);
+}
+
+/** Render a {@link RecapReport} into a formatted maintainer-digest body: a header plus titled sections
+ *  (Summary, Totals, Per-repo), mirroring formatWeeklyValueReportMarkdown at weekly-value-report.ts. PURE
+ *  string function — no delivery, no I/O. Every free-text value is routed through {@link redactRecapLine} so no
+ *  reward/trust/score/path term can leak into the digest even if the input report was hand-built. (#2240) */
+export function formatMaintainerRecap(report: RecapReport): string {
+  const { totals } = report;
+  const rate = totals.gateFalsePositiveRate !== null ? `${Math.round(totals.gateFalsePositiveRate * 100)}%` : "n/a";
+  const perRepoLines = report.repos.map(
+    (repo) =>
+      `${redactRecapLine(repo.repoFullName)} — ${repo.reviewed} reviewed, ${repo.merged} merged, ${repo.closed} closed, ${repo.gateFalsePositives} gate false-positive(s), ${repo.gateOverrides} override(s), ${repo.reversals} reversal(s)`,
+  );
+  const lines = [
+    "# Maintainer recap",
+    "",
+    `- Generated: ${redactRecapLine(report.generatedAt)}`,
+    `- Window: ${report.windowDays} day(s)`,
+    `- Repos: ${report.repos.length}`,
+    "",
+    "## Summary",
+    ...recapSectionLines(report.summary, "_No summary lines for this window._"),
+    "",
+    "## Totals",
+    `- Reviewed: ${totals.reviewed}`,
+    `- Merged: ${totals.merged}`,
+    `- Closed: ${totals.closed}`,
+    `- Gate false positives: ${totals.gateFalsePositives}/${totals.blocked} (${rate})`,
+    `- Overrides: ${totals.gateOverrides}`,
+    `- Reversals: ${totals.reversals}`,
+    "",
+    "## Per-repo",
+    ...recapSectionLines(perRepoLines, "_No repositories in this window._"),
+  ];
+  return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`;
 }

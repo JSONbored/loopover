@@ -190,6 +190,17 @@ export {
   type AttemptLogSink,
 } from "./miner/coding-agent-invoke.js";
 export {
+  classifyLintGuardPackage,
+  guardChangedFiles,
+  guardCodingAgentDriverResult,
+  type LintGuardCheckResult,
+  type LintGuardedDriverResult,
+  type LintGuardOptions,
+  type LintGuardPackage,
+  type LintGuardResult,
+  type LintGuardSpawnFn,
+} from "./miner/lint-guard.js";
+export {
   CODING_AGENT_DRIVER_CONFIG_ENV,
   CODING_AGENT_DRIVER_NAMES,
   createCodingAgentDriver,

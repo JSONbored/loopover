@@ -3,6 +3,7 @@ import {
   ATTEMPT_LOG_EVENT_TYPES,
   CODING_AGENT_DRIVER_CONFIG_ENV,
   CODING_AGENT_DRIVER_NAMES,
+  classifyLintGuardPackage,
   codingAgentModeExecutes,
   createAttemptLogBuffer,
   createCodingAgentDriver,
@@ -10,6 +11,8 @@ import {
   createFakeCodingAgentDriverForFactory,
   createNoopCodingAgentDriver,
   formatAttemptLogJsonl,
+  guardChangedFiles,
+  guardCodingAgentDriverResult,
   invokeCodingAgentDriver,
   isConfiguredCodingAgentDriver,
   isGlobalMinerCodingAgentPause,
@@ -18,7 +21,9 @@ import {
   resolveCodingAgentModeFromConfig,
   resolveConfiguredCodingAgentDriverNames,
   runCodingAgentAttempt,
+  type CodingAgentDriverResult,
   type CodingAgentDriverTask,
+  type LintGuardSpawnFn,
 } from "../../packages/gittensory-engine/src/index";
 
 const task: CodingAgentDriverTask = {
@@ -357,5 +362,175 @@ describe("coding-agent driver factory (#4289)", () => {
     });
     expect(paused.mode).toBe("paused");
     expect(fake.lastTask).toBeNull();
+  });
+});
+
+describe("lint-guarded edit wrapper (#4276)", () => {
+  it("classifyLintGuardPackage routes each file to the check that actually governs it", () => {
+    expect(classifyLintGuardPackage("apps/gittensory-ui/src/App.tsx")).toBe("ui");
+    expect(classifyLintGuardPackage("packages/gittensory-engine/src/miner/lint-guard.ts")).toBe("engine");
+    expect(classifyLintGuardPackage("packages/gittensory-miner/lib/cli.js")).toBe("miner-js");
+    expect(classifyLintGuardPackage("packages/gittensory-mcp/bin/gittensory-mcp.js")).toBe("mcp-js");
+    expect(classifyLintGuardPackage("src/review/ops-wire.ts")).toBe("root");
+    // A hand-written .d.ts under miner/mcp is type-checked by the root tsc, not node --check.
+    expect(classifyLintGuardPackage("packages/gittensory-miner/lib/cli.d.ts")).toBe("root");
+    expect(classifyLintGuardPackage("packages/gittensory-mcp/lib/local-branch.d.ts")).toBe("root");
+  });
+
+  it("classifyLintGuardPackage normalizes Windows-style backslash paths and a leading ./", () => {
+    expect(classifyLintGuardPackage("packages\\gittensory-miner\\lib\\cli.js")).toBe("miner-js");
+    expect(classifyLintGuardPackage("./src/review/ops-wire.ts")).toBe("root");
+  });
+
+  function recordingSpawn(outcomes: Record<string, { code: number; output: string }>): {
+    spawn: LintGuardSpawnFn;
+    calls: Array<{ cmd: string; args: readonly string[] }>;
+  } {
+    const calls: Array<{ cmd: string; args: readonly string[] }> = [];
+    const spawn: LintGuardSpawnFn = async (cmd, args) => {
+      calls.push({ cmd, args });
+      const key = [cmd, ...args].join(" ");
+      const outcome = outcomes[key] ?? { code: 0, output: "" };
+      return outcome;
+    };
+    return { spawn, calls };
+  }
+
+  it("guardChangedFiles reports a root typecheck failure as a structured (not thrown) result", async () => {
+    const { spawn } = recordingSpawn({
+      "npm run typecheck": { code: 2, output: "src/review/ops-wire.ts(10,3): error TS2322" },
+    });
+    const result = await guardChangedFiles(["src/review/ops-wire.ts"], { spawn, cwd: "/repo" });
+    expect(result.ok).toBe(false);
+    expect(result.checks).toEqual([
+      { package: "root", file: "src/review/ops-wire.ts", command: "npm run typecheck", ok: false, output: "src/review/ops-wire.ts(10,3): error TS2322" },
+    ]);
+  });
+
+  it("guardChangedFiles reports a node --check syntax error in a gittensory-miner JS file", async () => {
+    const { spawn } = recordingSpawn({
+      "node --check packages/gittensory-miner/lib/cli.js": {
+        code: 1,
+        output: "SyntaxError: Unexpected token '}'",
+      },
+    });
+    const result = await guardChangedFiles(["packages/gittensory-miner/lib/cli.js"], { spawn, cwd: "/repo" });
+    expect(result.ok).toBe(false);
+    expect(result.checks).toEqual([
+      {
+        package: "miner-js",
+        file: "packages/gittensory-miner/lib/cli.js",
+        command: "node --check packages/gittensory-miner/lib/cli.js",
+        ok: false,
+        output: "SyntaxError: Unexpected token '}'",
+      },
+    ]);
+  });
+
+  it("guardChangedFiles reports ok: true for a fully clean change", async () => {
+    const { spawn } = recordingSpawn({});
+    const result = await guardChangedFiles(["src/review/ops-wire.ts"], { spawn, cwd: "/repo" });
+    expect(result.ok).toBe(true);
+    expect(result.checks).toEqual([
+      { package: "root", file: "src/review/ops-wire.ts", command: "npm run typecheck", ok: true, output: "" },
+    ]);
+  });
+
+  it("guardChangedFiles checks a changeset spanning multiple packages against each file's OWN rule, once per package", async () => {
+    const { spawn, calls } = recordingSpawn({
+      "npm run typecheck": { code: 0, output: "" },
+      "npm run build --workspace @jsonbored/gittensory-engine": { code: 1, output: "engine build failed" },
+      "node --check packages/gittensory-miner/lib/cli.js": { code: 0, output: "" },
+      "npm run ui:typecheck": { code: 0, output: "" },
+    });
+    const result = await guardChangedFiles(
+      [
+        "src/review/ops-wire.ts",
+        "packages/gittensory-engine/src/miner/lint-guard.ts",
+        "packages/gittensory-miner/lib/cli.js",
+        "apps/gittensory-ui/src/App.tsx",
+      ],
+      { spawn, cwd: "/repo" },
+    );
+    expect(result.ok).toBe(false);
+    // Exactly one check per package group -- the root/ui/engine commands are NOT re-run per file.
+    expect(result.checks).toHaveLength(4);
+    expect(result.checks.find((check) => check.package === "root")?.ok).toBe(true);
+    expect(result.checks.find((check) => check.package === "engine")?.ok).toBe(false);
+    expect(result.checks.find((check) => check.package === "miner-js")?.ok).toBe(true);
+    expect(result.checks.find((check) => check.package === "ui")?.ok).toBe(true);
+    expect(calls.filter((call) => call.cmd === "npm" && call.args.join(" ") === "run typecheck")).toHaveLength(1);
+  });
+
+  it("guardChangedFiles groups multiple files in the same package into a single check", async () => {
+    const { spawn } = recordingSpawn({
+      "node --check packages/gittensory-miner/lib/a.js": { code: 0, output: "" },
+      "node --check packages/gittensory-miner/lib/b.js": { code: 0, output: "" },
+    });
+    const result = await guardChangedFiles(
+      ["packages/gittensory-miner/lib/a.js", "packages/gittensory-miner/lib/b.js"],
+      { spawn, cwd: "/repo" },
+    );
+    expect(result.ok).toBe(true);
+    expect(result.checks).toHaveLength(2);
+    expect(result.checks.map((check) => check.file)).toEqual([
+      "packages/gittensory-miner/lib/a.js",
+      "packages/gittensory-miner/lib/b.js",
+    ]);
+  });
+
+  it("guardChangedFiles defaults cwd to process.cwd() when omitted", async () => {
+    const seenCwds: Array<{ cwd: string }> = [];
+    const spawn: LintGuardSpawnFn = async (_cmd, _args, opts) => {
+      seenCwds.push(opts);
+      return { code: 0, output: "" };
+    };
+    await guardChangedFiles(["src/review/ops-wire.ts"], { spawn });
+    expect(seenCwds).toEqual([{ cwd: process.cwd() }]);
+  });
+
+  function driverResult(overrides: Partial<CodingAgentDriverResult> = {}): CodingAgentDriverResult {
+    return { ok: true, changedFiles: [], summary: "ok", turnsUsed: 1, ...overrides };
+  }
+
+  it("guardCodingAgentDriverResult skips the guard when the driver itself failed", async () => {
+    const { spawn, calls } = recordingSpawn({});
+    const decorated = await guardCodingAgentDriverResult(driverResult({ ok: false, error: "boom" }), { spawn });
+    expect(decorated.ok).toBe(false);
+    expect(decorated.lintGuard).toEqual({ ok: true, checks: [] });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("guardCodingAgentDriverResult skips the guard when no files changed", async () => {
+    const { spawn, calls } = recordingSpawn({});
+    const decorated = await guardCodingAgentDriverResult(driverResult({ changedFiles: [] }), { spawn });
+    expect(decorated.ok).toBe(true);
+    expect(decorated.lintGuard).toEqual({ ok: true, checks: [] });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("guardCodingAgentDriverResult runs the guard and downgrades ok when a check fails", async () => {
+    const { spawn } = recordingSpawn({
+      "npm run typecheck": { code: 2, output: "type error" },
+    });
+    const decorated = await guardCodingAgentDriverResult(
+      driverResult({ changedFiles: ["src/review/ops-wire.ts"] }),
+      { spawn },
+    );
+    expect(decorated.ok).toBe(false);
+    expect(decorated.lintGuard.ok).toBe(false);
+    expect(decorated.lintGuard.checks).toHaveLength(1);
+  });
+
+  it("guardCodingAgentDriverResult keeps ok: true and preserves driver fields when every check passes", async () => {
+    const { spawn } = recordingSpawn({});
+    const decorated = await guardCodingAgentDriverResult(
+      driverResult({ changedFiles: ["src/review/ops-wire.ts"], summary: "did the thing", turnsUsed: 3 }),
+      { spawn },
+    );
+    expect(decorated.ok).toBe(true);
+    expect(decorated.summary).toBe("did the thing");
+    expect(decorated.turnsUsed).toBe(3);
+    expect(decorated.lintGuard.ok).toBe(true);
   });
 });

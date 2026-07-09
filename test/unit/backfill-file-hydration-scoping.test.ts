@@ -519,4 +519,33 @@ describe("GitHub PR file hydration scoping (#audit-rate-headroom)", () => {
       expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 91)).toMatchObject({ headSha: null });
     });
   });
+
+  describe("listPullRequestFiles ordering (#linked-issue-satisfaction-cache-fingerprint-stability)", () => {
+    it("REGRESSION: returns files in a stable path order regardless of write order, so a downstream content fingerprint never flips for an unchanged PR", async () => {
+      const env = createTestEnv();
+      // Written deliberately out of path order -- without an explicit ORDER BY, a query planner is free to
+      // return rows in ITS OWN order, which is not guaranteed to match write order or stay stable call to
+      // call. buildUnifiedReviewDiff only fully orders by (priority bucket, added-line count); files tied on
+      // both (as these three are: all source, all 0 additions/0 deletions) fall through to this function's
+      // own order, so an unstable order here silently reorders the diff string and flips any hash built from
+      // it (e.g. linkedIssueSatisfactionCacheInputFingerprint) even though nothing about the diff changed.
+      const paths = ["src/z.ts", "src/a.ts", "src/m.ts"];
+      for (const path of paths) {
+        await upsertPullRequestFile(env, {
+          repoFullName: "JSONbored/gittensory",
+          pullNumber: 200,
+          path,
+          status: "modified",
+          additions: 0,
+          deletions: 0,
+          changes: 0,
+          payload: {},
+        });
+      }
+      const first = await listPullRequestFiles(env, "JSONbored/gittensory", 200);
+      const second = await listPullRequestFiles(env, "JSONbored/gittensory", 200);
+      expect(first.map((file) => file.path)).toEqual(["src/a.ts", "src/m.ts", "src/z.ts"]);
+      expect(second.map((file) => file.path)).toEqual(first.map((file) => file.path));
+    });
+  });
 });

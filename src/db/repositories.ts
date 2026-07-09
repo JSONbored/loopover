@@ -4097,12 +4097,23 @@ export async function deletePullRequestFiles(env: Env, fullName: string, pullNum
   await db.delete(pullRequestFiles).where(and(eq(pullRequestFiles.repoFullName, fullName), eq(pullRequestFiles.pullNumber, pullNumber)));
 }
 
+// #linked-issue-satisfaction-cache-fingerprint-stability: an explicit deterministic order is load-bearing,
+// not cosmetic. Without it, row order is whatever the query planner happens to return -- unstable across
+// otherwise-identical repeat calls for the SAME unchanged PR -- and downstream diff building
+// (buildUnifiedReviewDiff) only fully orders files by (priority bucket, added-line count); two files tied on
+// both fall back to THIS function's own (undefined) order. That untied order then flows straight into a
+// SHA-256 content fingerprint (linkedIssueSatisfactionCacheInputFingerprint and friends), so a silent reorder
+// alone changes the hash and defeats the cache even though the diff's actual content never changed --
+// confirmed live: JSONbored/metagraphed#4532 re-ran its linked-issue-satisfaction LLM call 12 times across 7
+// hours on one unchanged head SHA. `path` is unique per (repoFullName, pullNumber) (see the table's own
+// unique index), so it alone is a total, stable order -- no secondary tie-break needed.
 export async function listPullRequestFiles(env: Env, fullName: string, pullNumber: number): Promise<PullRequestFileRecord[]> {
   const db = getDb(env.DB);
   const rows = await db
     .select()
     .from(pullRequestFiles)
-    .where(and(eq(pullRequestFiles.repoFullName, fullName), eq(pullRequestFiles.pullNumber, pullNumber)));
+    .where(and(eq(pullRequestFiles.repoFullName, fullName), eq(pullRequestFiles.pullNumber, pullNumber)))
+    .orderBy(pullRequestFiles.path);
   return rows.map(toPullRequestFileRecord);
 }
 

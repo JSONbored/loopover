@@ -138,6 +138,15 @@ export {
   type NormalizedGovernorLedgerEvent,
 } from "./governor-ledger.js";
 export {
+  MINER_TELEMETRY_EVENT_TYPES,
+  MINER_TELEMETRY_OUTCOME_BUCKETS,
+  normalizeMinerTelemetryEvent,
+  type MinerTelemetryEvent,
+  type MinerTelemetryEventType,
+  type MinerTelemetryOutcomeBucket,
+  type NormalizedMinerTelemetryEvent,
+} from "./miner-telemetry.js";
+export {
   ATTEMPT_LOG_EVENT_TYPES,
   createAttemptLogBuffer,
   formatAttemptLogJsonl,

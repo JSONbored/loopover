@@ -31,6 +31,12 @@ export type E2eTestGenCommentInput = {
   commit?: E2eTestGenCommitOutcome | undefined;
 };
 
+function markdownFenceFor(source: string): string {
+  const backtickRunLengths = Array.from(source.matchAll(/`+/g), (match) => match[0]!.length);
+  const longestBacktickRun = Math.max(0, ...backtickRunLengths);
+  return "`".repeat(Math.max(3, longestBacktickRun + 1));
+}
+
 /**
  * Build the PR-comment body for a `@gittensory generate-tests` result. A null `testSource` renders a
  * clear "nothing usable" note rather than silently posting no comment at all — the maintainer who invoked
@@ -74,6 +80,7 @@ export function buildE2eTestGenCommentBody(input: E2eTestGenCommentInput): strin
             "",
           ]
         : [];
+  const fence = markdownFenceFor(input.testSource);
   return [
     AGENT_COMMAND_COMMENT_MARKER,
     "",
@@ -82,9 +89,9 @@ export function buildE2eTestGenCommentBody(input: E2eTestGenCommentInput): strin
     "> This is a suggestion, not a guarantee — review it like any other test before merging.",
     ...declineNote,
     "",
-    "```typescript",
+    `${fence}typescript`,
     input.testSource,
-    "```",
+    fence,
     "",
     "---",
     gittensoryFooter(),

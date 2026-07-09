@@ -714,6 +714,14 @@ export const RepositorySettingsSchema = z
         minConfidence: z.number().min(0).max(1),
       })
       .optional(),
+    advisoryAiRouting: z
+      .object({
+        slop: z.boolean(),
+        e2eTestGen: z.boolean(),
+        planner: z.boolean(),
+        summaries: z.boolean(),
+      })
+      .optional(),
     gittensorLabel: z.string(),
     blacklistLabel: z.string().nullable(),
     createMissingLabel: z.boolean(),
@@ -743,6 +751,7 @@ export const RepositorySettingsSchema = z
     autoMaintain: z.object({ requireApprovals: z.number().int(), mergeMethod: z.enum(["merge", "squash", "rebase"]) }).optional(),
     agentPaused: z.boolean().optional(),
     agentDryRun: z.boolean().optional(),
+    agentGlobalFreezeOverride: z.boolean().optional(),
     contributorOpenPrCap: z.number().int().positive().max(MAX_CONTRIBUTOR_OPEN_ITEM_CAP).nullable().optional(),
     contributorOpenIssueCap: z.number().int().positive().max(MAX_CONTRIBUTOR_OPEN_ITEM_CAP).nullable().optional(),
     contributorCapLabel: z.string().nullable().optional(),

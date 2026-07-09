@@ -6,6 +6,22 @@ export type SelfHostEnvReferenceRow = {
 
 export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   {
+    name: "AI_ADVISORY",
+    firstReference: "src/selfhost/ai.ts",
+  },
+  {
+    name: "AI_ADVISORY_API_KEY",
+    firstReference: "src/server.ts",
+  },
+  {
+    name: "AI_ADVISORY_BASE_URL",
+    firstReference: "src/server.ts",
+  },
+  {
+    name: "AI_ADVISORY_MODEL",
+    firstReference: "src/server.ts",
+  },
+  {
     name: "AI_COMBINE",
     firstReference: "src/selfhost/ai.ts",
   },
@@ -446,6 +462,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
 export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| Name | First reference |",
   "| --- | --- |",
+  "| `AI_ADVISORY` | `src/selfhost/ai.ts` |",
+  "| `AI_ADVISORY_API_KEY` | `src/server.ts` |",
+  "| `AI_ADVISORY_BASE_URL` | `src/server.ts` |",
+  "| `AI_ADVISORY_MODEL` | `src/server.ts` |",
   "| `AI_COMBINE` | `src/selfhost/ai.ts` |",
   "| `AI_DUAL_REVIEW` | `src/selfhost/ai.ts` |",
   "| `AI_EMBED_API_KEY` | `src/server.ts` |",

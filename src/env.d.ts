@@ -16,6 +16,13 @@ declare global {
      *  model). Built at boot from AI_VISION_BASE_URL/AI_VISION_MODEL. Absent ⇒ visual-vision advisory falls
      *  back to requiring a maintainer BYOK key (the only option before this binding existed). */
     AI_VISION?: Ai;
+    /** Self-host (advisory-tier, #4364): a DEDICATED local-inference provider shared by every capability that is
+     *  NEVER gate-blocking (slop advisory, e2e test-gen, issue planner, AI summaries) — separate from the review
+     *  chain, the embed provider, and the vision provider, since none of these need frontier-model accuracy.
+     *  Built at boot from AI_ADVISORY_BASE_URL/AI_ADVISORY_MODEL. Which capability actually routes through it is
+     *  config-driven (`.gittensory.yml`, global default + per-repo override), not hardcoded here. Absent ⇒ every
+     *  advisory capability falls back to `env.AI` (byte-identical to before this binding existed). */
+    AI_ADVISORY?: Ai;
     /** Self-host RAG vector adapter. Cloudflare no longer binds Vectorize for hosted reviews; the Node runtime
      *  injects Qdrant/sqlite/pg adapters here when configured. Absent ⇒ no RAG, review proceeds with no retrieved
      *  context. */

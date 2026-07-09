@@ -30,16 +30,13 @@ concurrency:
   group: mcp-release-please
   cancel-in-progress: false
 
-# Deliberately no `environment: release` on the job below. The approval boundary lives at the
-# actual npm publish step (npm-publish.yml / publish-engine.yml's `publish` job), not here --
-# gating this job too would pause EVERY cron tick for manual approval, including the near-all
-# no-op runs that just check for new commits, defeating unattended automation entirely. This was
-# tried (#4182) and reverted for exactly that reason. release-please creating a tag/
-# GitHub Release unattended is accepted as within the automation's scope ("fully unattended
-# through npm publish"); only the registry-affecting, irreversible step is gated.
+# The release-please action can create public tags and GitHub Releases before it dispatches
+# the package publish workflows. Keep the whole job behind the protected release environment
+# so those release artifacts have the same approval boundary as the npm publish jobs.
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    environment: release
     timeout-minutes: 15
     permissions:
       contents: write

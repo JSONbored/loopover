@@ -11339,6 +11339,8 @@ describe("queue processors", () => {
     expect(completed?.outcome).toBe("completed");
     const denied = await env.DB.prepare("select 1 from audit_events where event_type = ?").bind("github_app.review_command_denied").first();
     expect(denied).toBeFalsy();
+    const forceBypass = await env.DB.prepare("select 1 from audit_events where event_type = ? and target_key = ?").bind("github_app.ai_review_force_bypass", "JSONbored/gittensory#78").first();
+    expect(forceBypass).toBeFalsy();
   });
 
   it("review: respects agentPaused and agentDryRun without dispatching re-review", async () => {

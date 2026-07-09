@@ -1,0 +1,14 @@
+-- Per-repo override of the DB-backed global agent freeze (#4372, incident follow-up): `global_agent_controls`
+-- (migrations/0044-adjacent singleton, see isGlobalAgentFrozen/setGlobalAgentFrozen in src/db/repositories.ts)
+-- has no per-repo scoping today -- flipping it affects every repo at once, which is what caused a real
+-- multi-repo incident (live merges/closes fired for repos that were meant to stay paused). This column lets an
+-- operator keep the global DB kill-switch ON as the safe default while opting ONE repo at a time back into live
+-- execution via that repo's `.gittensory.yml` (`settings.agentGlobalFreezeOverride: true`), the same
+-- global-default + per-repo-override shape every other gittensory setting already uses.
+--
+-- Deliberately does NOT touch `AGENT_ACTIONS_PAUSED` (isGlobalAgentPause): that env-var hard stop is checked
+-- independently and remains absolute -- no per-repo setting may ever bypass it. A repo's own `agent_paused =
+-- true` also still always wins over this override (the pausing direction stays deny-toward-safety; only the
+-- un-pausing direction becomes something a repo can opt into). Default 0 (off) -- additive, every existing repo
+-- keeps today's behavior (global frozen ⇒ frozen everywhere) until explicitly opted in.
+ALTER TABLE repository_settings ADD COLUMN agent_global_freeze_override INTEGER NOT NULL DEFAULT 0;

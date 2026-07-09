@@ -907,6 +907,20 @@ describe("api routes", () => {
     const settingsMalformed = await app.request("/v1/repos/entrius/allways-ui/settings", { method: "PUT", headers: apiHeaders(env), body: "{" }, env);
     expect(settingsMalformed.status).toBe(400);
 
+    // REGRESSION (#4372 security finding): agentGlobalFreezeOverride is an operator-only emergency lever
+    // (set via the private .gittensory.yml, never the maintainer-facing settings API) — a maintainer PUT
+    // must silently strip it, not persist it, even when explicitly sent alongside otherwise-valid fields.
+    const freezeOverrideAttempt = await app.request(
+      "/v1/repos/entrius/allways-ui/settings",
+      { method: "PUT", headers: apiHeaders(env), body: JSON.stringify({ firstTimeContributorGrace: false, agentGlobalFreezeOverride: true }) },
+      env,
+    );
+    expect(freezeOverrideAttempt.status).toBe(200);
+    const freezeOverrideBody = (await freezeOverrideAttempt.json()) as Record<string, unknown>;
+    expect(freezeOverrideBody.agentGlobalFreezeOverride).not.toBe(true);
+    const freezeOverrideRefetch = await app.request("/v1/repos/entrius/allways-ui/settings", { headers: apiHeaders(env) }, env);
+    await expect(freezeOverrideRefetch.json()).resolves.toMatchObject({ agentGlobalFreezeOverride: false });
+
     const registrationReadiness = await app.request("/v1/repos/entrius/allways-ui/registration-readiness", { headers: apiHeaders(env) }, env);
     expect(registrationReadiness.status).toBe(200);
     await expect(registrationReadiness.json()).resolves.toMatchObject({

@@ -152,6 +152,15 @@ describe("resolveRepoActionMode", () => {
     await setGlobalAgentFrozen(env, true);
     expect(await resolveRepoActionMode(env, { agentPaused: false, agentDryRun: false })).toBe("paused"); // DB freeze wins
   });
+
+  it("REGRESSION (#4372): agentGlobalFreezeOverride lets a repo bypass the DB freeze but never the env brake, and its own agentPaused still wins", async () => {
+    const env = createTestEnv();
+    await setGlobalAgentFrozen(env, true);
+    expect(await resolveRepoActionMode(env, { agentPaused: false, agentDryRun: false, agentGlobalFreezeOverride: true })).toBe("live");
+    expect(await resolveRepoActionMode(env, { agentPaused: false, agentDryRun: false, agentGlobalFreezeOverride: false })).toBe("paused");
+    expect(await resolveRepoActionMode({ ...env, AGENT_ACTIONS_PAUSED: "true" }, { agentPaused: false, agentDryRun: false, agentGlobalFreezeOverride: true })).toBe("paused"); // env brake still wins
+    expect(await resolveRepoActionMode(env, { agentPaused: true, agentDryRun: false, agentGlobalFreezeOverride: true })).toBe("paused"); // own pause still wins
+  });
 });
 
 describe("githubRateLimitAdmissionKeyForToken — the single token→admission-key resolver (no duplication, no drift)", () => {

@@ -2,10 +2,10 @@
 
 import { isFindingCategory, type FindingCategory } from "./finding-category-classify";
 
-/** Safe parser default when the model omits `category` or emits a value outside the fixed enum. */
-export const DEFAULT_INLINE_FINDING_CATEGORY: FindingCategory = "maintainability";
-
-/** Normalize a model-emitted `category` to a fixed enum literal — never leaves a finding uncategorized after parse. */
-export function parseInlineFindingCategory(value: unknown): FindingCategory {
-  return isFindingCategory(value) ? value : DEFAULT_INLINE_FINDING_CATEGORY;
+/**
+ * Normalize a model-emitted `category` to a fixed enum literal when possible.
+ * Unknown or absent values stay uncategorized so deterministic path/body fallback can run downstream.
+ */
+export function parseInlineFindingCategory(value: unknown): FindingCategory | undefined {
+  return isFindingCategory(value) ? value : undefined;
 }

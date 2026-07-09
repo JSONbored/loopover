@@ -312,6 +312,7 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     autoMaintain: "autoMaintain:",
     agentPaused: "agentPaused:",
     agentDryRun: "agentDryRun:",
+    agentGlobalFreezeOverride: "agentGlobalFreezeOverride:",
     commandAuthorization: "commandAuthorization:",
     contributorBlacklist: "contributorBlacklist:",
     blacklistLabel: "blacklistLabel:",
@@ -350,6 +351,7 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     linkedIssueHardRules: "linkedIssueHardRules:",
     unlinkedIssueGuardrail: "unlinkedIssueGuardrail:",
     screenshotTableGate: "screenshotTableGate:",
+    advisoryAiRouting: "advisoryAiRouting:",
   } satisfies Record<Exclude<keyof FocusManifestSettings, (typeof SETTINGS_GATE_ALIASED_FIELDS)[number]>, string>;
 
   it.each(Object.entries(SETTINGS_FIELD_TOKENS))("documents settings.%s", (_field, token) => {
@@ -1832,6 +1834,7 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
         includeMaintainerAuthors: true,
         requireLinkedIssue: true,
         backfillEnabled: false,
+        agentGlobalFreezeOverride: true,
       },
     });
     expect(m.present).toBe(true);
@@ -1853,7 +1856,11 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
       includeMaintainerAuthors: true,
       requireLinkedIssue: true,
       backfillEnabled: false,
+      agentGlobalFreezeOverride: true,
     });
+    // #4372: the yml override wins over the DB value via resolveEffectiveSettings's spread, same as every
+    // other generic settings: field.
+    expect(resolveEffectiveSettings({ agentGlobalFreezeOverride: false } as unknown as RepositorySettings, m).agentGlobalFreezeOverride).toBe(true);
   });
 
   it("drops invalid settings values with warnings and keeps the valid ones", () => {
@@ -2805,6 +2812,36 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     const parsed = parseFocusManifest({ settings: { screenshotTableGate: "oops" } });
     expect(parsed.settings.screenshotTableGate).toBeUndefined();
     expect(parsed.warnings).toContain(`Manifest "settings.screenshotTableGate" must be an object; ignoring it and keeping any existing policy.`);
+  });
+
+  it("wires settings.advisoryAiRouting into the manifest parser as a sparse override (#4364)", () => {
+    const parsed = parseFocusManifest({ settings: { advisoryAiRouting: { slop: true, summaries: true } } });
+    expect(parsed.settings.advisoryAiRouting).toEqual({ slop: true, summaries: true });
+    expect(parsed.warnings).toEqual([]);
+  });
+
+  it("resolveEffectiveSettings merges a partial advisoryAiRouting override without clearing the lower-layer fields (#4364)", () => {
+    const db = { advisoryAiRouting: { slop: false, e2eTestGen: true, planner: false, summaries: true } } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { advisoryAiRouting: { slop: true } } }));
+    expect(eff.advisoryAiRouting).toEqual({ slop: true, e2eTestGen: true, planner: false, summaries: true });
+  });
+
+  it("resolveEffectiveSettings falls back to the all-off built-in default when the DB layer has no advisoryAiRouting at all (#4364)", () => {
+    const db = {} as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { advisoryAiRouting: { planner: true } } }));
+    expect(eff.advisoryAiRouting).toEqual({ slop: false, e2eTestGen: false, planner: true, summaries: false });
+  });
+
+  it("drops a malformed advisoryAiRouting.slop field instead of replacing existing policy with defaults (#4364)", () => {
+    const parsed = parseFocusManifest({ settings: { advisoryAiRouting: { slop: "yes", planner: true } } });
+    expect(parsed.settings.advisoryAiRouting).toEqual({ planner: true });
+    expect(parsed.warnings.some((w) => w.includes("settings.advisoryAiRouting.slop"))).toBe(true);
+  });
+
+  it("warns and ignores a malformed top-level advisoryAiRouting value (#4364)", () => {
+    const parsed = parseFocusManifest({ settings: { advisoryAiRouting: "oops" } });
+    expect(parsed.settings.advisoryAiRouting).toBeUndefined();
+    expect(parsed.warnings).toContain(`Manifest "settings.advisoryAiRouting" must be an object; ignoring it and keeping any existing policy.`);
   });
 
   it("parses aiReview from settings: and lets gate.aiReview win in resolveEffectiveSettings", () => {

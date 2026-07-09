@@ -508,6 +508,28 @@ async function main(): Promise<void> {
         model: process.env.AI_VISION_MODEL,
       }),
     );
+  // Dedicated advisory-tier provider (#4364): several capabilities (slop advisory, e2e test-gen, issue
+  // planner, AI summaries) are NEVER gate-blocking and share the review chain's frontier-only env.AI today
+  // purely because no cheaper alternative existed -- unlike AI_EMBED/AI_VISION, which each back a single
+  // narrow capability, this one binding is shared across all four, gated per-capability by
+  // `.gittensory.yml` (global default + per-repo override, see focus-manifest.ts) so routing stays
+  // config-driven, not hardcoded. Unset ⇒ absent ⇒ every advisory capability falls back to env.AI, byte-
+  // identical to before this binding existed.
+  const advisoryAi = process.env.AI_ADVISORY_BASE_URL
+    ? createOpenAiCompatibleAi({
+        baseUrl: process.env.AI_ADVISORY_BASE_URL,
+        apiKey: process.env.AI_ADVISORY_API_KEY ?? process.env.OPENAI_API_KEY,
+        model: process.env.AI_ADVISORY_MODEL,
+      })
+    : undefined;
+  if (advisoryAi)
+    console.log(
+      JSON.stringify({
+        event: "selfhost_advisory_provider",
+        baseUrl: process.env.AI_ADVISORY_BASE_URL,
+        model: process.env.AI_ADVISORY_MODEL,
+      }),
+    );
   // Dual-review plan (#dual-ai-combiner): resolve which provider(s) review + how to combine, attached to env
   // below so the review call site uses it. Undefined for a single provider's default review or no AI.
   const aiReviewPlan = resolveAiReviewerPlan(process.env);
@@ -615,6 +637,7 @@ async function main(): Promise<void> {
     AI: ai,
     ...(embedAi ? { AI_EMBED: embedAi as unknown as Ai } : {}),
     ...(visionAi ? { AI_VISION: visionAi as unknown as Ai } : {}),
+    ...(advisoryAi ? { AI_ADVISORY: advisoryAi as unknown as Ai } : {}),
     ...(aiReviewPlan ? { AI_REVIEW_PLAN: aiReviewPlan } : {}),
     SELFHOST_TRANSIENT_CACHE: webhookCache,
     // Qdrant takes priority; falls back to the backend's built-in vectorize (pgvector or sqlite-vec)

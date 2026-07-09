@@ -29,6 +29,8 @@ import { buildContributorFit, buildContributorOutcomeHistory, buildContributorPr
 import { buildContributorOpenPrMonitor, type ContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest, type LocalBranchAnalysis, type LocalBranchAnalysisInput } from "../signals/local-branch";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
+import { resolveRepositorySettings } from "../settings/repository-settings";
+import { withAdvisoryAiEnv } from "../selfhost/ai";
 import { withAgentActionExplanationCard } from "./agent-action-explanation-card";
 import { attachRecommendationSnapshots } from "./recommendation-snapshots";
 import type {
@@ -223,7 +225,12 @@ export async function executeAgentRun(env: Env, runId: string): Promise<AgentRun
 }
 
 async function attachPrivateAiSummary(env: Env, bundle: AgentRunBundle): Promise<AgentRunBundle> {
-  const summary = await summarizeAgentBundleWithAi(env, bundle, "private");
+  // Advisory-AI routing (#4364): this summary is never gate-blocking, so it's a routing candidate like
+  // slop/e2e-test-gen/planner. repoFullName can be absent for a cross-repo run (e.g. plan_next_work) --
+  // falls back to the plain env (byte-identical) rather than resolving settings for an empty key.
+  const repoFullName = String(bundle.run.payload.repoFullName ?? "");
+  const routeThroughAdvisory = repoFullName ? (await resolveRepositorySettings(env, repoFullName)).advisoryAiRouting?.summaries === true : false;
+  const summary = await summarizeAgentBundleWithAi(withAdvisoryAiEnv(env, routeThroughAdvisory), bundle, "private");
   if (summary.status === "disabled" || summary.status === "unavailable") return bundle;
   await updateAgentRun(env, bundle.run.id, {
     payload: {

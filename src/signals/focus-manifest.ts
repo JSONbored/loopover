@@ -76,6 +76,7 @@ import { DEFAULT_TYPE_LABELS } from "../settings/pr-type-label";
 import { DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION } from "../review/linked-issue-label-propagation";
 import { DEFAULT_LINKED_ISSUE_HARD_RULES } from "../review/linked-issue-hard-rules-config";
 import { DEFAULT_UNLINKED_ISSUE_GUARDRAIL } from "../review/unlinked-issue-guardrail-config";
+import { DEFAULT_ADVISORY_AI_ROUTING } from "../review/advisory-ai-routing-config";
 import { DEFAULT_SCREENSHOT_TABLE_GATE } from "../review/screenshot-table-gate";
 import { classifyChangedFile } from "./path-matchers";
 import {
@@ -501,6 +502,7 @@ export function resolveEffectiveSettings(
     linkedIssueHardRules: linkedIssueHardRulesOverride,
     unlinkedIssueGuardrail: unlinkedIssueGuardrailOverride,
     screenshotTableGate: screenshotTableGateOverride,
+    advisoryAiRouting: advisoryAiRoutingOverride,
     ...restManifestSettings
   } = manifest.settings;
   const effective: RepositorySettings = { ...dbSettings, ...restManifestSettings };
@@ -555,6 +557,15 @@ export function resolveEffectiveSettings(
       whenPaths: screenshotTableGateOverride.whenPaths ?? base.whenPaths,
       action: screenshotTableGateOverride.action ?? base.action,
       message: screenshotTableGateOverride.message ?? base.message,
+    };
+  }
+  if (advisoryAiRoutingOverride !== undefined) {
+    const base = dbSettings.advisoryAiRouting ?? DEFAULT_ADVISORY_AI_ROUTING;
+    effective.advisoryAiRouting = {
+      slop: advisoryAiRoutingOverride.slop ?? base.slop,
+      e2eTestGen: advisoryAiRoutingOverride.e2eTestGen ?? base.e2eTestGen,
+      planner: advisoryAiRoutingOverride.planner ?? base.planner,
+      summaries: advisoryAiRoutingOverride.summaries ?? base.summaries,
     };
   }
   applyGateConfigOverrides(effective, manifest.gate);

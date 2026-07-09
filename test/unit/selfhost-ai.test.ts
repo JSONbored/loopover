@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveCodexAuthPath, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveCodexFirstOutputTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, subscriptionCliEnv } from "../../src/selfhost/ai";
+import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveCodexAuthPath, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveCodexFirstOutputTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, subscriptionCliEnv, withAdvisoryAiEnv } from "../../src/selfhost/ai";
 import { labelSelfHostReviewerModel, labelSelfHostReviewerModels } from "../../src/selfhost/ai-config";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 
@@ -1776,5 +1776,32 @@ describe("redactSecrets — strip credentials from untrusted CLI stderr before i
     expect(redactSecrets("Invalid API key · auth_error")).toBe("Invalid API key · auth_error");
     // "disk-usage-report-2024-summary" must survive — the \b anchor prevents an in-word `sk-` false positive
     expect(redactSecrets("disk-usage-report-2024-summary failed")).toBe("disk-usage-report-2024-summary failed");
+  });
+});
+
+describe("withAdvisoryAiEnv (#4364 — per-capability local-inference routing)", () => {
+  const frontierAi = { run: async () => ({ response: "frontier" }) };
+  const advisoryAi = { run: async () => ({ response: "advisory" }) };
+
+  it("swaps .AI to AI_ADVISORY when the capability opted in AND the binding is configured", () => {
+    const env = { AI: frontierAi, AI_ADVISORY: advisoryAi } as unknown as Env;
+    const result = withAdvisoryAiEnv(env, true);
+    expect(result.AI).toBe(advisoryAi);
+    // every other field is untouched (shallow spread, not a new unrelated object)
+    expect(result.AI_ADVISORY).toBe(advisoryAi);
+  });
+
+  it("leaves .AI unchanged when the capability did not opt in, even though the binding is configured", () => {
+    const env = { AI: frontierAi, AI_ADVISORY: advisoryAi } as unknown as Env;
+    const result = withAdvisoryAiEnv(env, false);
+    expect(result).toBe(env); // same reference — no-op, not just an equal value
+    expect(result.AI).toBe(frontierAi);
+  });
+
+  it("falls back to the shared frontier chain when opted in but AI_ADVISORY is unconfigured (byte-identical fail-safe)", () => {
+    const env = { AI: frontierAi } as unknown as Env;
+    const result = withAdvisoryAiEnv(env, true);
+    expect(result).toBe(env);
+    expect(result.AI).toBe(frontierAi);
   });
 });

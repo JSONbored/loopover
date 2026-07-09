@@ -9,6 +9,7 @@
  */
 import { parse as parseYaml } from "yaml";
 import type {
+  AdvisoryAiRoutingConfig,
   CombineStrategy,
   GatePolicyPack,
   GateRuleMode,
@@ -42,6 +43,7 @@ import {
   isUnlinkedIssueGuardrailMode,
   normalizeUnlinkedIssueGuardrailConfig,
 } from "./review/unlinked-issue-guardrail-config.js";
+import { normalizeAdvisoryAiRoutingConfig } from "./review/advisory-ai-routing-config.js";
 import {
   DEFAULT_SCREENSHOT_TABLE_GATE,
   isScreenshotTableGateAction,
@@ -329,6 +331,7 @@ export type FocusManifestSettings = Partial<
     | "autoMaintain"
     | "agentPaused"
     | "agentDryRun"
+    | "agentGlobalFreezeOverride"
     | "commandAuthorization"
     | "contributorBlacklist"
     | "blacklistLabel"
@@ -385,6 +388,9 @@ export type FocusManifestSettings = Partial<
   // unlinkedIssueGuardrail above -- a manifest naming only `enabled` must not silently reset `whenLabels`/
   // `whenPaths`/`action`/`message` back to their defaults.
   screenshotTableGate?: Partial<ScreenshotTableGateConfig> | undefined;
+  // Advisory-AI routing (#4364): same sparse-partial merge reasoning -- a manifest naming only `slop` must
+  // not silently reset `e2eTestGen`/`planner`/`summaries` back to their (false) defaults.
+  advisoryAiRouting?: Partial<AdvisoryAiRoutingConfig> | undefined;
 };
 
 /** Field keys for the public review-panel rows a maintainer can show/hide via `review.fields`. */
@@ -1654,7 +1660,7 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   }
   const publicSurface = normalizeOptionalEnum(r.publicSurface, "settings.publicSurface", ["off", "comment_and_label", "comment_only", "label_only"] as const, warnings);
   if (publicSurface !== null) out.publicSurface = publicSurface;
-  for (const key of ["aiReviewByok", "aiReviewAllAuthors", "closeOwnerAuthors", "autoLabelEnabled", "typeLabelsEnabled", "badgeEnabled", "publicQualityMetrics", "createMissingLabel", "includeMaintainerAuthors", "requireLinkedIssue", "backfillEnabled", "agentPaused", "agentDryRun"] as const) {
+  for (const key of ["aiReviewByok", "aiReviewAllAuthors", "closeOwnerAuthors", "autoLabelEnabled", "typeLabelsEnabled", "badgeEnabled", "publicQualityMetrics", "createMissingLabel", "includeMaintainerAuthors", "requireLinkedIssue", "backfillEnabled", "agentPaused", "agentDryRun", "agentGlobalFreezeOverride"] as const) {
     const flag = normalizeOptionalBoolean(r[key], `settings.${key}`, warnings);
     if (flag !== null) out[key] = flag;
   }
@@ -1797,6 +1803,20 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
     out.screenshotTableGate = sparseGate;
   } else if (r.screenshotTableGate !== undefined) {
     warnings.push(`Manifest "settings.screenshotTableGate" must be an object; ignoring it and keeping any existing policy.`);
+  }
+  // Advisory-AI routing (#4364): same sparse-partial overlay contract as screenshotTableGate above -- a repo
+  // naming only `slop` must not silently reset `e2eTestGen`/`planner`/`summaries` back to their defaults.
+  if (typeof r.advisoryAiRouting === "object" && r.advisoryAiRouting !== null && !Array.isArray(r.advisoryAiRouting)) {
+    const rawRouting = r.advisoryAiRouting as Record<string, unknown>;
+    const validated = normalizeAdvisoryAiRoutingConfig(rawRouting, warnings);
+    const sparseRouting: Partial<AdvisoryAiRoutingConfig> = {};
+    if (typeof rawRouting.slop === "boolean") sparseRouting.slop = validated.slop;
+    if (typeof rawRouting.e2eTestGen === "boolean") sparseRouting.e2eTestGen = validated.e2eTestGen;
+    if (typeof rawRouting.planner === "boolean") sparseRouting.planner = validated.planner;
+    if (typeof rawRouting.summaries === "boolean") sparseRouting.summaries = validated.summaries;
+    out.advisoryAiRouting = sparseRouting;
+  } else if (r.advisoryAiRouting !== undefined) {
+    warnings.push(`Manifest "settings.advisoryAiRouting" must be an object; ignoring it and keeping any existing policy.`);
   }
   // Contributor blacklist (#1425): `settings.contributorBlacklist` is a list of banned-login entries. Only set it
   // when at least one VALID entry survives normalization, so a malformed block never blanks the DB-configured

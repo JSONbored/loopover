@@ -12,6 +12,7 @@ import {
 } from "../../src/services/ai-review";
 import { createTestEnv } from "../helpers/d1";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
+import { inlineFindingCategory } from "../../src/review/inline-comments-select";
 
 const {
   parseModelReview,
@@ -3107,14 +3108,13 @@ describe("pure helpers", () => {
         line: 12,
         severity: "blocker",
         body: "Null deref.",
-        category: "maintainability",
         suggestion: "const value = input ?? fallback;",
       },
-      { path: "src/b.ts", line: 3, severity: "nit", body: "Rename x.", category: "maintainability" },
+      { path: "src/b.ts", line: 3, severity: "nit", body: "Rename x." },
     ]);
   });
 
-  it("parseModelReview parses a valid category and defaults unknown or absent values to maintainability (#2147)", () => {
+  it("parseModelReview keeps valid categories and leaves unknown or absent values for fallback (#2147)", () => {
     const json = JSON.stringify({
       assessment: "ok",
       blockers: [],
@@ -3127,12 +3127,38 @@ describe("pure helpers", () => {
         { path: "src/d.ts", line: 8, severity: "nit", body: "Performance hint.", category: "performance" },
       ],
     });
-    expect(parseModelReview(json)?.inlineFindings).toEqual([
+    const inlineFindings = parseModelReview(json)?.inlineFindings;
+    expect(inlineFindings).toEqual([
       { path: "src/a.ts", line: 2, severity: "nit", body: "SQL injection risk.", category: "security" },
-      { path: "src/b.ts", line: 4, severity: "nit", body: "Made up category.", category: "maintainability" },
-      { path: "src/c.ts", line: 6, severity: "nit", body: "No category at all.", category: "maintainability" },
+      { path: "src/b.ts", line: 4, severity: "nit", body: "Made up category." },
+      { path: "src/c.ts", line: 6, severity: "nit", body: "No category at all." },
       { path: "src/d.ts", line: 8, severity: "nit", body: "Performance hint.", category: "performance" },
     ]);
+    expect(inlineFindings).toHaveLength(4);
+    expect(inlineFindingCategory(inlineFindings![1]!)).toBe("correctness");
+  });
+
+  it("parseModelReview lets fallback classify invalid security-like model categories as security (regression)", () => {
+    const json = JSON.stringify({
+      assessment: "ok",
+      blockers: [],
+      nits: [],
+      suggestions: [],
+      inlineFindings: [
+        {
+          path: "src/query.ts",
+          line: 4,
+          severity: "nit",
+          body: "This SQL injection risk also exposes authentication secrets.",
+          category: "readability",
+        },
+      ],
+    });
+    const inlineFindings = parseModelReview(json)!.inlineFindings;
+    expect(inlineFindings).toHaveLength(1);
+    const finding = inlineFindings[0]!;
+    expect(finding.category).toBeUndefined();
+    expect(inlineFindingCategory(finding)).toBe("security");
   });
 
   it("parseModelReview keeps findings but drops empty, whitespace-only, and malformed suggestions (#2138)", () => {
@@ -3148,9 +3174,9 @@ describe("pure helpers", () => {
       ],
     });
     expect(parseModelReview(json)?.inlineFindings).toEqual([
-      { path: "src/a.ts", line: 2, severity: "nit", body: "Keep me.", category: "maintainability" },
-      { path: "src/b.ts", line: 4, severity: "nit", body: "Keep me too.", category: "maintainability" },
-      { path: "src/c.ts", line: 6, severity: "nit", body: "Bad suggestion type.", category: "maintainability" },
+      { path: "src/a.ts", line: 2, severity: "nit", body: "Keep me." },
+      { path: "src/b.ts", line: 4, severity: "nit", body: "Keep me too." },
+      { path: "src/c.ts", line: 6, severity: "nit", body: "Bad suggestion type." },
     ]);
   });
 
@@ -3167,9 +3193,9 @@ describe("pure helpers", () => {
       ],
     });
     expect(parseModelReview(json)?.inlineFindings).toEqual([
-      { path: "src/a.ts", line: 1, endLine: 3, severity: "nit", body: "Multi.", category: "maintainability" },
-      { path: "src/b.ts", line: 5, severity: "nit", body: "Inverted.", category: "maintainability" },
-      { path: "src/c.ts", line: 2, severity: "nit", body: "Equal.", category: "maintainability" },
+      { path: "src/a.ts", line: 1, endLine: 3, severity: "nit", body: "Multi." },
+      { path: "src/b.ts", line: 5, severity: "nit", body: "Inverted." },
+      { path: "src/c.ts", line: 2, severity: "nit", body: "Equal." },
     ]);
   });
 
@@ -3195,7 +3221,7 @@ describe("pure helpers", () => {
       ],
     });
     expect(parseModelReview(json)?.inlineFindings).toEqual([
-      { path: "src/a.ts", line: 2, severity: "nit", body: "kept (truncated)", category: "maintainability" },
+      { path: "src/a.ts", line: 2, severity: "nit", body: "kept (truncated)" },
     ]);
   });
 
@@ -3374,7 +3400,6 @@ describe("pure helpers", () => {
           line: 3,
           severity: "nit",
           body: "Guard the empty case.",
-          category: "maintainability",
           suggestion: "if \\(\\!items.length\\) return;",
         },
       ]);

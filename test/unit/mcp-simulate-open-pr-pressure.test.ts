@@ -134,4 +134,53 @@ describe("MCP gittensory_simulate_open_pr_pressure (#2224)", () => {
     expect(data.recommendedOption).toBe("wait");
     expect(data.summary).toMatch(/conservative default|unavailable/i);
   });
+
+  it("rejects a null role context at the MCP boundary", async () => {
+    const client = await connect();
+    const result = await client.callTool({
+      name: "gittensory_simulate_open_pr_pressure",
+      arguments: {
+        repoFullName: "acme/widgets",
+        generatedAt: "2026-07-08T00:00:00.000Z",
+        queueHealth: queueHealth("low"),
+        roleContext: null,
+      },
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  it("rejects queue health without bounded numeric signals at the MCP boundary", async () => {
+    const client = await connect();
+    const result = await client.callTool({
+      name: "gittensory_simulate_open_pr_pressure",
+      arguments: {
+        repoFullName: "acme/widgets",
+        generatedAt: "2026-07-08T00:00:00.000Z",
+        queueHealth: { level: "low" },
+        roleContext: { maintainerLane: false },
+      },
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  it("rejects oversized string queue counts before they can be reflected in output", async () => {
+    const client = await connect();
+    const result = await client.callTool({
+      name: "gittensory_simulate_open_pr_pressure",
+      arguments: {
+        repoFullName: "acme/widgets",
+        generatedAt: "2026-07-08T00:00:00.000Z",
+        queueHealth: {
+          ...queueHealth("low"),
+          signals: {
+            ...queueHealth("low").signals,
+            openPullRequests: "x".repeat(1024),
+          },
+        },
+        roleContext: { maintainerLane: false },
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("x".repeat(512));
+  });
 });

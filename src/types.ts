@@ -888,6 +888,10 @@ export type RepositorySettings = {
    *  `.gittensory.yml settings.unlinkedIssueGuardrail` in private/global or per-repo config. Defaults
    *  all-off so a self-hoster opts into their own credibility-gate-farming defense. */
   unlinkedIssueGuardrail?: UnlinkedIssueGuardrailConfig | undefined;
+  /** Per-capability local-inference routing (#4364). Config-as-code only; set with `.gittensory.yml
+   *  settings.advisoryAiRouting` in shared/global or per-repo config. Defaults all-false so every advisory
+   *  capability stays on the shared frontier env.AI chain until an operator opts each one in. */
+  advisoryAiRouting?: AdvisoryAiRoutingConfig | undefined;
   publicSurface: "off" | "comment_and_label" | "comment_only" | "label_only";
   includeMaintainerAuthors: boolean;
   requireLinkedIssue: boolean;
@@ -1035,6 +1039,11 @@ export type RepositorySettings = {
   /** Per-repo dry-run/shadow mode (#776): when true, the action layer records what it WOULD do without
    *  performing any GitHub mutation. Default false. */
   agentDryRun?: boolean | undefined;
+  /** Per-repo override of the global DB-backed agent freeze (#4372): when true, this repo's actions execute
+   *  even while `global_agent_controls.frozen` is set, so an operator can re-activate one repo at a time
+   *  without lifting the fleet-wide brake. Never overrides the `AGENT_ACTIONS_PAUSED` env var, and
+   *  {@link agentPaused} on this same repo still wins over it. Default false. */
+  agentGlobalFreezeOverride?: boolean | undefined;
   /** Moderation-rules engine (#selfhost-mod-engine): whether the whole layer runs on THIS repo. `"inherit"`
    *  (the DB default) defers to `global_moderation_config.enabled`; `"off"`/`"enabled"` force this repo
    *  regardless of the global default. Always populated by the DB layer; optional so existing settings
@@ -1170,6 +1179,18 @@ export type UnlinkedIssueGuardrailMode = "hold" | "off";
 export type UnlinkedIssueGuardrailConfig = {
   mode: UnlinkedIssueGuardrailMode;
   minConfidence: number;
+};
+
+/** Per-capability opt-in to the local-inference AI_ADVISORY binding (#4364): each of these four ADVISORY-ONLY
+ *  (never gate-blocking) capabilities independently decides whether it routes through env.AI_ADVISORY (when
+ *  configured) instead of the shared frontier env.AI chain. Config-as-code only, `.gittensory.yml
+ *  settings.advisoryAiRouting` (global default in shared/root config, per-repo override); defaults all-false
+ *  so an operator must deliberately opt each capability in. */
+export type AdvisoryAiRoutingConfig = {
+  slop: boolean;
+  e2eTestGen: boolean;
+  planner: boolean;
+  summaries: boolean;
 };
 
 /** A blocked contributor (#1425, anti-abuse): a GitHub `login` plus optional maintainer metadata. The converged

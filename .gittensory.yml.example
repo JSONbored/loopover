@@ -668,6 +668,13 @@ settings:
   # Bool. Default: false.
   agentDryRun: false
 
+  # Per-repo override of the GLOBAL DB-backed agent freeze (the operator kill-switch an operator flips with
+  # one row, no redeploy): when true, THIS repo's actions execute even while the global freeze is on, so an
+  # operator can re-activate one repo at a time without lifting the fleet-wide brake. Never overrides the
+  # AGENT_ACTIONS_PAUSED env var (that hard stop always wins), and agentPaused above on this same repo still
+  # wins over this too. Bool. Default: false.
+  agentGlobalFreezeOverride: false
+
   # Four independent label families, none of which gates or silently disables another (#label-decoupling,
   # #label-scoping):
   #   1. Context label (`gittensorLabel`, gated by `autoLabelEnabled` above) — the base per-PR marker shown
@@ -868,6 +875,18 @@ settings:
   #   whenPaths: ["apps/ui/**", "src/**/*.tsx"]  # Default: [] (no path scoping).
   #   action: close                          # close is the only supported value. Default: close.
   #   message: "Custom close reason..."      # Default: null (built-in message).
+
+  # Advisory-AI routing (#4364): per-capability opt-in to the local-inference AI_ADVISORY binding for these
+  # four capabilities, none of which are ever gate-blocking, so none need frontier-model accuracy. Set a
+  # global default here (or in the shared/root config) and override per-repo; a capability only actually
+  # routes through AI_ADVISORY when BOTH this is true AND the AI_ADVISORY_BASE_URL binding is configured --
+  # absent either one, it stays on the shared frontier env.AI chain (byte-identical to before). All off by
+  # default.
+  # advisoryAiRouting:
+  #   slop: false          # gate.slop.aiAdvisory's second opinion. Default: false.
+  #   e2eTestGen: false    # Auto-generated E2E test scaffolding. Default: false.
+  #   planner: false       # The @gittensory plan / issue-planner completion. Default: false.
+  #   summaries: false     # AI summaries/rewrite text. Default: false.
 
 # Maintainer AI review tuning (`.gittensory.yml` top-level `review:` block). These knobs shape the advisory AI
 # review prompt and file selection only — gate/slop/secret-scan are unaffected.

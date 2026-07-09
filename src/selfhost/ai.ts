@@ -1278,3 +1278,16 @@ export function resolveAiReviewerPlan(
   const onMerge = ON_MERGE_RULES.has(rawOnMerge) ? rawOnMerge : undefined;
   return { reviewers: names.slice(0, 2).map((model) => ({ model })), combine, onMerge };
 }
+
+/**
+ * Advisory-AI routing (#4364): return an `env` view whose `.AI` binding is `env.AI_ADVISORY` instead of the
+ * shared frontier chain, for a single ADVISORY-ONLY capability (slop, e2e test-gen, planner, summaries) that
+ * opted in via `settings.advisoryAiRouting`. A shallow spread — every other `env` field (including
+ * `AI_ADVISORY` itself, `AI_GATEWAY_ID`, the enablement flags) is untouched, so the capability's own
+ * fail-safe checks keep working unmodified. Falls back to the real `env` (unchanged `.AI`) whenever the
+ * capability didn't opt in OR the binding itself is unconfigured — byte-identical to before this existed in
+ * either case, exactly like `AI_EMBED`/`AI_VISION`'s own "absent ⇒ falls back" contract.
+ */
+export function withAdvisoryAiEnv(env: Env, useAdvisory: boolean): Env {
+  return useAdvisory && env.AI_ADVISORY ? { ...env, AI: env.AI_ADVISORY } : env;
+}

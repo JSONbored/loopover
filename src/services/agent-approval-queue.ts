@@ -406,6 +406,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       autonomy: settings.autonomy,
       agentPaused: settings.agentPaused,
       agentDryRun: settings.agentDryRun,
+      agentGlobalFreezeOverride: settings.agentGlobalFreezeOverride,
       installationPermissions: installation ? installation.permissions : null,
       mergeTrainMode: settings.mergeTrainMode,
       pullRequestCreatedAt: pr?.createdAt,

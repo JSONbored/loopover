@@ -659,10 +659,8 @@ export function parseModelReview(text: string): ModelReview | null {
     // Fail-safe: a malformed/absent inlineFindings field degrades to []; each item missing a usable path / a
     // positive line / a body is skipped, never partial. Severity defaults to "nit" unless it's exactly "blocker";
     // a bad/blank suggestion is simply dropped while keeping the finding itself. (#2138)
-    // `category` (#1958 / #2147) is normalized to a fixed enum literal — a valid model value is kept verbatim;
-    // unknown or absent values degrade to `maintainability` so downstream analytics always see a tagged finding.
-    // Rendering still gates on `review.finding_categories` and may apply `classifyFindingCategory` when absent on
-    // hand-built findings, but parsed model output is never uncategorized.
+    // `category` (#1958 / #2147) keeps valid model enum values verbatim. Unknown or absent values stay absent so
+    // downstream path/body fallback can classify security-keyword findings before lower-priority buckets.
     const toInlineFindings = (value: unknown): InlineFinding[] =>
       Array.isArray(value)
         ? value
@@ -688,7 +686,7 @@ export function parseModelReview(text: string): ModelReview | null {
                       line,
                       severity,
                       body,
-                      category,
+                      ...(category != null ? { category } : {}),
                       ...(suggestion ? { suggestion } : {}),
                       ...(endLine != null ? { endLine } : {}),
                     },

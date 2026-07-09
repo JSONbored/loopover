@@ -10,6 +10,27 @@ describe("buildE2eTestGenCommentBody", () => {
     expect(body).toContain("```typescript\ntest('x', () => {});\n```");
   });
 
+  it("uses a longer markdown fence when generated source contains backtick fences", () => {
+    const source = [
+      "import { test, expect } from '@playwright/test';",
+      "",
+      "test('injected markdown stays inside the code block', async ({ page }) => {",
+      "  const attackerMarkdown = `",
+      "```",
+      "# rendered outside the fence before the fix",
+      "```",
+      "  `;",
+      "  expect(attackerMarkdown).toContain('# rendered outside');",
+      "});",
+    ].join("\n");
+
+    const body = buildE2eTestGenCommentBody({ actor: "maintainer", testSource: source });
+
+    expect(body).toContain("````typescript\n");
+    expect(body).toContain(source + "\n````");
+    expect(body.split("\n")).not.toContain("```typescript");
+  });
+
   it("uses a custom framework name when provided", () => {
     const body = buildE2eTestGenCommentBody({ actor: "maintainer", testSource: "it('x', () => {});", framework: "Cypress" });
     expect(body).toContain("AI-generated Cypress test for @maintainer");

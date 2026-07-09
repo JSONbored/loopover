@@ -1462,6 +1462,9 @@ export const groundingFileContentCache = sqliteTable(
     path: text("path").notNull(),
     headSha: text("head_sha").notNull(),
     content: text("content").notNull(),
+    /* v8 ignore next -- this default only fires for a Drizzle query-builder insert omitting fetchedAt;
+     * putCachedGroundingFileContent always writes via raw SQL with an explicit fetched_at value, so this
+     * callback is never actually invoked by the real code path (defensive schema-level default only). */
     fetchedAt: text("fetched_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({

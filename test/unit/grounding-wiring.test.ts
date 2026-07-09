@@ -8,7 +8,7 @@ import {
   isGroundingEnabled,
   makeGithubFileFetcher,
 } from "../../src/review/grounding-wire";
-import { upsertCheckSummary, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { getCachedGroundingFileContent, putCachedGroundingFileContent, upsertCheckSummary, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import * as githubApp from "../../src/github/app";
 import { githubRateLimitAdmissionKeyForInstallation, latestGitHubRestRateLimitObservation } from "../../src/github/client";
 import type { Advisory, CheckSummaryRecord, JsonValue, PullRequestFileRecord, RepositorySettings } from "../../src/types";
@@ -463,6 +463,44 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
     fetchSpy.mockRestore();
   });
 
+  it("a throwing cache READ degrades to a fresh live fetch (fail-safe, never blocks the file fetch)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
+    const prepareSpy = vi.spyOn(env.DB, "prepare").mockImplementation(() => {
+      throw new Error("cache read boom");
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("export const ok = true;", { status: 200 }));
+    try {
+      const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+      expect(await fetcher.getFileContent("cacheread.ts", "sha7")).toBe("export const ok = true;");
+    } finally {
+      prepareSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("a throwing cache WRITE is swallowed (fail-safe) -- the fetched content is still returned even though it couldn't be cached", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    const prepareSpy = vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (/INSERT INTO grounding_file_content_cache/i.test(sql)) throw new Error("cache write boom");
+      return realPrepare(sql);
+    });
+    // A fresh Response each call -- mockResolvedValue would reuse ONE Response instance across both calls, and
+    // a Response body can only be read once, which would make the second call's read return empty regardless
+    // of caching behavior.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("export const ok = true;", { status: 200 }));
+    try {
+      const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+      expect(await fetcher.getFileContent("cachewrite.ts", "sha7")).toBe("export const ok = true;");
+      // The write failed, so a SECOND call must still fetch live rather than (incorrectly) finding a cached row.
+      expect(await fetcher.getFileContent("cachewrite.ts", "sha7")).toBe("export const ok = true;");
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      prepareSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("never throws — a fetch rejection resolves to null", async () => {
     const env = createTestEnv();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("boom"));
@@ -652,6 +690,31 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
       tokenSpy.mockRestore();
       vi.useRealTimers();
     }
+  });
+});
+
+// ── getCachedGroundingFileContent / putCachedGroundingFileContent (#4499) ───────────────────────────
+
+describe("grounding_file_content_cache repository helpers", () => {
+  it("getCachedGroundingFileContent is a miss for a nullish head SHA, without touching the DB", async () => {
+    const env = createTestEnv();
+    expect(await getCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", null)).toBeNull();
+    expect(await getCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", undefined)).toBeNull();
+  });
+
+  it("putCachedGroundingFileContent is a no-op for a nullish head SHA -- a later real-headSha read still misses", async () => {
+    const env = createTestEnv();
+    await putCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", null, "should not be stored");
+    await putCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", undefined, "should not be stored either");
+    expect(await getCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", "sha7")).toBeNull();
+  });
+
+  it("round-trips a genuinely stored value for a real (repo, path, head SHA), and a write overwrites an existing row for the SAME key", async () => {
+    const env = createTestEnv();
+    await putCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", "sha7", "export const a = 1;");
+    expect(await getCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", "sha7")).toBe("export const a = 1;");
+    await putCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", "sha7", "export const a = 2; // updated");
+    expect(await getCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", "sha7")).toBe("export const a = 2; // updated");
   });
 });
 

@@ -169,6 +169,10 @@ export async function makeGithubFileFetcher(env: Env, repoFullName: string, inst
         } finally {
           clearTimeout(timeout);
         }
+        /* v8 ignore next -- readTextWithLimit's `string | null` return type is defensive; both of its actual
+         * return paths (text.slice(...) / text) always produce a string, never null, so this guard's false
+         * side is unreachable via the current implementation. Kept so a future readTextWithLimit change that
+         * legitimately returns null can never get cached as if it were real fetched content. */
         if (content !== null) {
           await putCachedGroundingFileContent(env, repoFullName, path, ref, content).catch(() => undefined);
         }

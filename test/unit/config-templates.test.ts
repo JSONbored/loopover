@@ -126,6 +126,20 @@ describe("config/examples review templates (#1682)", () => {
     expect(resolveReviewPromptOverrides(off).impactMap).toBe(false);
   });
 
+  it("resolves review.culture_profile via manifest parse + boolean helper (#1683)", () => {
+    const full = readConfigExample("gittensory.full.yml");
+    expect(full).toMatch(/# culture_profile:/);
+    expect(parseFocusManifest({}).review.cultureProfile).toBeNull();
+    expect(resolveReviewPromptOverrides(parseFocusManifest({})).cultureProfile).toBe(false);
+    const on = parseFocusManifest({ review: { culture_profile: true } });
+    expect(on.review.cultureProfile).toBe(true);
+    expect(resolveReviewPromptOverrides(on).cultureProfile).toBe(true);
+    expect(reviewConfigToJson(on.review)).toEqual({ culture_profile: true });
+    const off = parseFocusManifest({ review: { culture_profile: false } });
+    expect(off.review.cultureProfile).toBe(false);
+    expect(resolveReviewPromptOverrides(off).cultureProfile).toBe(false);
+  });
+
   it("parses gittensory.minimal.yml with zero warnings and enables no agent actions", () => {
     const manifest = parseFocusManifestContent(readConfigExample("gittensory.minimal.yml"), "repo_file");
     expect(manifest.warnings).toEqual([]);

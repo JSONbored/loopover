@@ -26979,6 +26979,77 @@ describe("queue processors", () => {
       expect(seen.removed).toEqual(["gittensor:feature"]);
     });
 
+    it("REGRESSION (#4528, PR #4494 shape): keeps the propagated labels on the PR's own merge-closed webhook, instead of falling back to the title guess", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "widget", full_name: "acme/widget", private: false, owner: { login: "acme" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "acme/widget",
+        commentMode: "off",
+        publicSurface: "label_only",
+        autoLabelEnabled: true,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "off",
+        reviewCheckMode: "disabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+        // Real-world shape: the type-label decision runs regardless of the check-run/gate publish mode, but
+        // the SURROUNDING function only reaches that far for an already-closed PR when the agent layer is
+        // configured (autonomyNeedsGateEvaluation) -- an unconfigured repo's closed-PR pass has nothing else
+        // to do and bails before the label block. `label: "auto"` is the minimal opt-in that reproduces this
+        // without pulling in merge/close autonomy's own CI-wait/rebase machinery.
+        autonomy: { label: "auto" },
+        linkedIssueLabelPropagation: {
+          enabled: true,
+          mode: "exclusive_type_label",
+          mappings: [
+            { issueLabel: "gittensor:feature", prLabel: "gittensor:feature", removeOtherTypeLabels: true },
+            { issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: false },
+          ],
+        },
+      });
+      const seen = { posted: [] as string[], removed: [] as string[], issueFetches: 0 };
+      // The linked issue is CLOSED, at a timestamp at/after this PR's own merge -- GitHub's standard "Closes #N"
+      // auto-close, fired by this very merge. Title deliberately uses a verb ("fold") absent from the
+      // feature-action-verb whitelist, so a title-only fallback would misclassify this as gittensor:bug --
+      // this only stays gittensor:feature/gittensor:priority if the merge-closed issue is still trusted.
+      stubPropagationFetch(4494, 4279, seen, () =>
+        Response.json({
+          number: 4279,
+          state: "closed",
+          closed_at: "2026-07-09T22:15:14Z",
+          user: { login: "contributor" },
+          labels: ["gittensor:feature", "gittensor:priority"],
+        }),
+      );
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "merge-close-race-4528",
+        eventName: "pull_request",
+        payload: {
+          action: "closed",
+          installation: { id: 123, account: { login: "acme", id: 1, type: "User" } },
+          repository: { name: "widget", full_name: "acme/widget", private: false, owner: { login: "acme" } },
+          pull_request: {
+            number: 4494,
+            title: "feat(x): fold run-state into the status panel",
+            state: "closed",
+            merged_at: "2026-07-09T22:15:13Z",
+            user: { login: "contributor" },
+            author_association: "NONE",
+            head: { sha: "sha4494" },
+            labels: [],
+            body: "Closes #4279",
+          },
+        },
+      });
+
+      expect(seen.issueFetches).toBe(1);
+      expect(seen.posted.sort()).toEqual(["gittensor:feature", "gittensor:priority"]);
+      expect(seen.removed).toEqual(["gittensor:bug"]);
+    });
+
     it("fails open to the normal title-based label when the linked issue's fetch fails (#priority-linked-issue-gate)", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);

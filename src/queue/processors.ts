@@ -8688,6 +8688,10 @@ async function maybePublishPrPublicSurface(
               installationId,
               prAuthorLogin: pr.authorLogin,
               mappings: propagation.mappings,
+              // #4528: lets a closed linked issue still count when THIS PR's own merge is what closed it
+              // (the standard "Closes #N" auto-close), instead of losing propagation authority the instant
+              // the merge that's supposed to earn the label also closes its evidence.
+              prMergedAt: pr.mergedAt ?? null,
             })
           : [];
       const decisionResult = resolvePrTypeLabel({

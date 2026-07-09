@@ -6089,7 +6089,7 @@ describe("GitHub backfill", () => {
       const result = await fetchLinkedIssueFacts(env, "JSONbored/gittensory", 42, "tok");
       expect(result).toEqual({
         status: "found",
-        facts: { number: 42, labels: ["bug", "manual-string-label"], assignees: ["maintainer"], state: "open", authorLogin: "reporter", title: null, body: null },
+        facts: { number: 42, labels: ["bug", "manual-string-label"], assignees: ["maintainer"], state: "open", authorLogin: "reporter", title: null, body: null, closedAt: null },
       });
     });
 
@@ -6117,8 +6117,25 @@ describe("GitHub backfill", () => {
           authorLogin: "reporter",
           title: "Enrich SN74 Gittensor — add SSE stream",
           body: "We need a live SSE stream surface for SN74 Gittensor.",
+          closedAt: null,
         },
       });
+    });
+
+    it("extracts closedAt (#4528) from the same REST payload when the issue is closed", async () => {
+      const env = createTestEnv({});
+      vi.stubGlobal("fetch", async () =>
+        Response.json({ number: 4279, state: "closed", closed_at: "2026-07-09T22:15:14Z" }),
+      );
+      const result = await fetchLinkedIssueFacts(env, "JSONbored/gittensory", 4279, "tok");
+      expect(result.status === "found" && result.facts.closedAt).toBe("2026-07-09T22:15:14Z");
+    });
+
+    it("falls back to null for closedAt (#4528) when the payload omits it or it isn't a string", async () => {
+      const env = createTestEnv({});
+      vi.stubGlobal("fetch", async () => Response.json({ number: 4279, state: "open", closed_at: null }));
+      const result = await fetchLinkedIssueFacts(env, "JSONbored/gittensory", 4279, "tok");
+      expect(result.status === "found" && result.facts.closedAt).toBeNull();
     });
 
     it("falls back to null for title/body when the payload omits them or they are empty strings", async () => {

@@ -3839,6 +3839,10 @@ export type LinkedIssueFactsResult = {
   authorLogin: string | null;
   title?: string | null;
   body?: string | null;
+  /** GitHub's `closed_at` for this issue, or `null` while open (#4528: label-propagation callers use this
+   *  to trust an issue closed by THIS PR's own merge, without granting authority to one closed earlier
+   *  for an unrelated reason). Same REST payload as every other field here -- no extra call. */
+  closedAt: string | null;
 };
 
 /** Tri-state outcome of fetching one linked issue's facts (#2136). `not_found` is a CONFIRMED 404 seen with a
@@ -3884,6 +3888,7 @@ export async function fetchLinkedIssueFacts(
       user?: { login?: string | null } | null;
       title?: string | null;
       body?: string | null;
+      closed_at?: string | null;
     }>(env, repoFullName, `/issues/${issueNumber}`, token, githubRateLimitOptions(admissionKey));
   } catch (error) {
     if (!(error instanceof GitHubApiError) || error.statusCode !== 404) return { status: "fetch_error" };
@@ -3906,6 +3911,7 @@ export async function fetchLinkedIssueFacts(
       authorLogin: data.user?.login ?? null,
       title: typeof data.title === "string" && data.title.length > 0 ? data.title : null,
       body: typeof data.body === "string" && data.body.length > 0 ? data.body : null,
+      closedAt: typeof data.closed_at === "string" ? data.closed_at : null,
     },
   };
 }

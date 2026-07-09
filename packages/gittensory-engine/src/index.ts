@@ -78,6 +78,13 @@ export {
   type ReplayHarnessStatus,
 } from "./phase7-calibration-loop.js";
 export {
+  buildCalibrationDashboardView,
+  resolveCalibrationDashboardStatus,
+  type CalibrationDashboardRow,
+  type CalibrationDashboardStatus,
+  type CalibrationDashboardView,
+} from "./calibration-dashboard.js";
+export {
   computeFindingSeverityCompositeCalibrationScore,
   ingestFindingSeverityCalibrationSignals,
   renderFindingSeverityCalibrationAuditMarkdown,

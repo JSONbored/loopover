@@ -9,6 +9,8 @@ import {
   ProductUsageBreakdownPanel,
   WeeklyValueMetricsPanel,
 } from "@/components/site/usage-analytics-panels";
+import { AcceptanceRateCard } from "@/components/site/app-panels/acceptance-rate-card";
+import type { AcceptanceRateReport } from "@/components/site/app-panels/acceptance-rate-card-model";
 import { GatePrecisionCard } from "@/components/site/app-panels/gate-precision-card";
 import type { GateEvalReport } from "@/components/site/app-panels/gate-precision-card-model";
 import { useApiResource } from "@/lib/api/use-api-resource";
@@ -101,6 +103,7 @@ type OperatorDashboard = {
   };
   upstreamDrift?: { status?: string; openReportCount?: number } | null;
   gateEval?: GateEvalReport;
+  acceptance?: AcceptanceRateReport;
 };
 
 function ProductAnalytics() {
@@ -182,6 +185,8 @@ function ProductAnalytics() {
           ) : null}
 
           {data.gateEval ? <GatePrecisionCard report={data.gateEval} /> : null}
+
+          <AcceptanceRateCard report={data.acceptance} />
 
           {data.usageSummary ? (
             <ProductUsageBreakdownPanel

@@ -140,6 +140,18 @@ describe("config/examples review templates (#1682)", () => {
     expect(resolveReviewPromptOverrides(off).cultureProfile).toBe(false);
   });
 
+  it("resolves review.max_findings via manifest parse + helper (#2211)", () => {
+    const full = readConfigExample("gittensory.full.yml");
+    expect(full).toMatch(/# max_findings:/);
+    const empty = { blockers: null, nits: null };
+    expect(parseFocusManifest({}).review.maxFindings).toEqual(empty);
+    expect(resolveReviewPromptOverrides(parseFocusManifest({})).maxFindings).toEqual(empty);
+    const on = parseFocusManifest({ review: { max_findings: { blockers: 5, nits: 8 } } });
+    expect(on.review.maxFindings).toEqual({ blockers: 5, nits: 8 });
+    expect(resolveReviewPromptOverrides(on).maxFindings).toEqual({ blockers: 5, nits: 8 });
+    expect(reviewConfigToJson(on.review)).toEqual({ max_findings: { blockers: 5, nits: 8 } });
+  });
+
   it("parses gittensory.minimal.yml with zero warnings and enables no agent actions", () => {
     const manifest = parseFocusManifestContent(readConfigExample("gittensory.minimal.yml"), "repo_file");
     expect(manifest.warnings).toEqual([]);

@@ -1471,3 +1471,25 @@ export const groundingFileContentCache = sqliteTable(
     primary: primaryKey({ columns: [table.repoFullName, table.path, table.headSha] }),
   }),
 );
+
+// Impact-map query cache (#4500): computeImpactMap issues one retrieveContextWithMetrics call per
+// changed-symbol file with no result cache -- only a 60-second cold-index existence check is memoized. Unlike
+// linkedIssueSatisfactionCache, this DOES need a TTL (checked at the read site, not a schema constraint): the
+// underlying vector index can change as new commits get embedded, so an identical query issued later could
+// legitimately have a different correct answer.
+export const impactMapQueryCache = sqliteTable(
+  "impact_map_query_cache",
+  {
+    project: text("project").notNull(),
+    repo: text("repo").notNull(),
+    // Hashes every input that affects the result (queryText, excludePaths, topK, minScore, reranker) -- all of
+    // them vary meaningfully; excludePaths in particular varies per changed file (each excludes itself).
+    queryFingerprint: text("query_fingerprint").notNull(),
+    context: text("context").notNull(),
+    metricsJson: text("metrics_json").notNull(),
+    fetchedAt: text("fetched_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    primary: primaryKey({ columns: [table.project, table.repo, table.queryFingerprint] }),
+  }),
+);

@@ -9,8 +9,10 @@
 // FAIL-SAFE (mirrors rag.ts's own guarantee): a missing/cold RAG index, no changed symbols, or any retrieval
 // error degrades to an EMPTY impact map — this computation can never break or block a review.
 
+import { sha256Hex } from "../utils/crypto";
+import { nowIso } from "../utils/json";
 import type { FileChangedSymbols } from "./impact-symbols";
-import { retrieveContextWithMetrics, type RagInfra } from "./rag";
+import { retrieveContextWithMetrics, type RagInfra, type RagRetrievalResult } from "./rag";
 
 export type ImpactMapEntry = {
   /** The file whose changed exported symbol(s) triggered this entry. */
@@ -53,6 +55,71 @@ function buildSymbolQueryText(file: FileChangedSymbols): string {
   return `Changed symbols: ${file.symbols.join(", ")}\nFile: ${file.path}`;
 }
 
+// #4500: a query-result cache, distinct from grounding_file_content_cache -- the underlying vector index can
+// change as new commits get embedded, so (unlike file content at an immutable head SHA) an identical query
+// issued later could legitimately have a different correct answer. Matches
+// AI_REVIEW_NON_CACHEABLE_RETRY_COOLDOWN_MS (processors.ts), the SAME cooldown that throttles how often this
+// whole computation is even re-attempted -- a cache TTL any shorter would never actually prevent a redundant
+// re-embed within that window, and any longer would risk masking a real index update for no added benefit.
+const IMPACT_MAP_QUERY_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
+
+/** One query's cache key: every input that affects retrieveContextWithMetrics' result. topK/minScore/reranker
+ *  are constants for this module's own calls, but are still hashed (not assumed) so this function stays
+ *  correct if a future caller ever varies them. excludePaths is sorted before hashing so argument order never
+ *  causes a spurious cache miss. */
+async function impactMapQueryFingerprint(input: {
+  queryText: string;
+  excludePaths: string[];
+  topK: number;
+  minScore: number;
+  reranker: string;
+}): Promise<string> {
+  const payload = [input.queryText, [...input.excludePaths].sort().join(","), String(input.topK), String(input.minScore), input.reranker].join("|");
+  return sha256Hex(payload);
+}
+
+async function getCachedImpactMapQuery(
+  storage: RagInfra["storage"],
+  project: string,
+  repo: string,
+  fingerprint: string,
+): Promise<RagRetrievalResult | null> {
+  try {
+    const row = await storage
+      .prepare("SELECT context, metrics_json AS metricsJson, fetched_at AS fetchedAt FROM impact_map_query_cache WHERE project = ? AND repo = ? AND query_fingerprint = ?")
+      .bind(project, repo, fingerprint)
+      .first<{ context: string; metricsJson: string; fetchedAt: string }>();
+    if (!row) return null;
+    const ageMs = Date.now() - Date.parse(row.fetchedAt);
+    if (!Number.isFinite(ageMs) || ageMs >= IMPACT_MAP_QUERY_CACHE_MAX_AGE_MS) return null;
+    return { context: row.context, metrics: JSON.parse(row.metricsJson) as RagRetrievalResult["metrics"] };
+  } catch {
+    return null; // fail-safe: a storage error degrades to "no cache", never blocks the query
+  }
+}
+
+async function putCachedImpactMapQuery(
+  storage: RagInfra["storage"],
+  project: string,
+  repo: string,
+  fingerprint: string,
+  result: RagRetrievalResult,
+): Promise<void> {
+  try {
+    await storage
+      .prepare(
+        `INSERT INTO impact_map_query_cache (project, repo, query_fingerprint, context, metrics_json, fetched_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(project, repo, query_fingerprint) DO UPDATE SET
+           context = excluded.context, metrics_json = excluded.metrics_json, fetched_at = excluded.fetched_at`,
+      )
+      .bind(project, repo, fingerprint, result.context, JSON.stringify(result.metrics), nowIso())
+      .run();
+  } catch {
+    // fail-safe: a write failure only means this ONE result isn't cached -- never blocks the review
+  }
+}
+
 /**
  * Compute the deterministic impact map for a PR's changed symbols. One entry per changed file that has at
  * least one extracted symbol (files with none contribute no entry — there's nothing symbol-driven to query
@@ -71,17 +138,26 @@ export async function computeImpactMap(
   const queryableFiles = symbols.filter((file) => file.symbols.length > 0).slice(0, MAX_IMPACT_MAP_INPUT_FILES);
   for (const file of queryableFiles) {
     const queryText = buildSymbolQueryText(file);
+    const excludePaths = [file.path];
     let affectedModules: string[];
     try {
-      const result = await retrieveContextWithMetrics(ragContext.infra, {
-        project: ragContext.project,
-        repo: ragContext.repo,
-        queryText,
-        topK: IMPACT_MAP_TOP_K,
-        minScore: IMPACT_MAP_MIN_SCORE,
-        excludePaths: [file.path],
-        reranker: "bm25",
-      });
+      // #4500: reuse a still-fresh prior result for the IDENTICAL query instead of re-embedding + re-querying
+      // the vector index -- a real cost this loop pays up to MAX_IMPACT_MAP_INPUT_FILES times per pass, with
+      // nothing else memoizing it (impact-map is a dynamic feature that bypasses the durable ai_review cache).
+      const fingerprint = await impactMapQueryFingerprint({ queryText, excludePaths, topK: IMPACT_MAP_TOP_K, minScore: IMPACT_MAP_MIN_SCORE, reranker: "bm25" });
+      const cached = await getCachedImpactMapQuery(ragContext.infra.storage, ragContext.project, ragContext.repo, fingerprint);
+      const result =
+        cached ??
+        (await retrieveContextWithMetrics(ragContext.infra, {
+          project: ragContext.project,
+          repo: ragContext.repo,
+          queryText,
+          topK: IMPACT_MAP_TOP_K,
+          minScore: IMPACT_MAP_MIN_SCORE,
+          excludePaths,
+          reranker: "bm25",
+        }));
+      if (!cached) await putCachedImpactMapQuery(ragContext.infra.storage, ragContext.project, ragContext.repo, fingerprint, result);
       affectedModules = result.metrics.paths.slice(0, MAX_AFFECTED_MODULES_PER_ENTRY);
       // Defense in depth: retrieveContextWithMetrics is itself fail-safe (its own try/catch degrades a
       // throwing vector/inference adapter to an empty result internally — never throws out to us), but this

@@ -30,6 +30,38 @@ function storageStubWithText(count: number): StorageAdapter {
   } as unknown as StorageAdapter;
 }
 
+/** A storage stub that actually backs impact_map_query_cache's INSERT/SELECT/ON CONFLICT semantics in an
+ *  in-memory Map (keyed by "project|repo|fingerprint"), while still answering repo_chunks' COUNT/chunk-text
+ *  queries like storageStubWithText above -- lets the invariant/regression tests below assert genuine cache
+ *  hit/miss/expiry behavior instead of the other stubs' fixed canned responses (which always read as a miss). */
+function cachingStorageStub(count: number, fetchedAtOverride?: string): { storage: StorageAdapter; rows: Map<string, { context: string; metricsJson: string; fetchedAt: string }> } {
+  const rows = new Map<string, { context: string; metricsJson: string; fetchedAt: string }>();
+  const storage: StorageAdapter = {
+    prepare: (sql: string) => ({
+      bind: (...args: unknown[]) => ({
+        first: async () => {
+          if (/FROM impact_map_query_cache/i.test(sql)) {
+            const [project, repo, fingerprint] = args as [string, string, string];
+            return rows.get(`${project}|${repo}|${fingerprint}`) ?? null;
+          }
+          return { n: count };
+        },
+        all: async () =>
+          /SELECT id, text/i.test(sql) ? { results: args.map((id) => ({ id: String(id), text: `body for ${String(id)}` })) } : { results: [] },
+        run: async () => {
+          if (/INSERT INTO impact_map_query_cache/i.test(sql)) {
+            const [project, repo, fingerprint, context, metricsJson, fetchedAt] = args as [string, string, string, string, string, string];
+            rows.set(`${project}|${repo}|${fingerprint}`, { context, metricsJson, fetchedAt: fetchedAtOverride ?? fetchedAt });
+          }
+          return undefined;
+        },
+      }),
+    }),
+    batch: async () => undefined,
+  } as unknown as StorageAdapter;
+  return { storage, rows };
+}
+
 function vectorStub(matches: Array<{ id: string; score: number; metadata: { path: string } }>): VectorAdapter {
   return {
     query: async () => ({ matches }),
@@ -214,5 +246,108 @@ describe("computeImpactMap", () => {
       { changedModule: "src/review/impact-symbols.ts", affectedModules: ["src/review/x.ts"], callers: ["extractChangedSymbols"] },
       { changedModule: "src/review/impact-map.ts", affectedModules: ["src/review/y.ts"], callers: ["computeImpactMap"] },
     ]);
+  });
+
+  it("INVARIANT (#4500): a second computeImpactMap call with the IDENTICAL changed-symbol set makes ZERO additional embed/vector-query calls", async () => {
+    let embedCalls = 0;
+    let queryCalls = 0;
+    const countingInference: InferenceAdapter = {
+      run: async () => {
+        embedCalls += 1;
+        return { data: [Array(1024).fill(0.1)] };
+      },
+    };
+    const countingVector: VectorAdapter = {
+      query: async () => {
+        queryCalls += 1;
+        return { matches: [{ id: "src/review/caller.ts::0", score: 0.9, metadata: { path: "src/review/caller.ts" } }] };
+      },
+      upsert: async () => undefined,
+      deleteByIds: async () => undefined,
+    } as unknown as VectorAdapter;
+    const { storage } = cachingStorageStub(5);
+    const infra: RagInfra = { storage, vector: countingVector, inference: countingInference };
+    const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }];
+
+    const first = await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
+    const second = await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
+
+    expect(first).toEqual(second);
+    expect(embedCalls).toBe(1);
+    expect(queryCalls).toBe(1);
+  });
+
+  it("REGRESSION (#4500, impact-map-refetch incident): repeated cooldown-driven computeImpactMap calls on an unchanged head only embed/query once per file, not once per call", async () => {
+    let embedCalls = 0;
+    let queryCalls = 0;
+    const countingInference: InferenceAdapter = {
+      run: async () => {
+        embedCalls += 1;
+        return { data: [Array(1024).fill(0.1)] };
+      },
+    };
+    const countingVector: VectorAdapter = {
+      query: async () => {
+        queryCalls += 1;
+        return { matches: [{ id: "src/review/caller.ts::0", score: 0.9, metadata: { path: "src/review/caller.ts" } }] };
+      },
+      upsert: async () => undefined,
+      deleteByIds: async () => undefined,
+    } as unknown as VectorAdapter;
+    const { storage } = cachingStorageStub(5);
+    const infra: RagInfra = { storage, vector: countingVector, inference: countingInference };
+    const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }];
+
+    // Simulates 5 separate scheduled-sweep-tick passes for the SAME unchanged PR head past the 30-minute
+    // non-cacheable cooldown -- previously each one re-embedded and re-queried the vector index from scratch.
+    for (let i = 0; i < 5; i += 1) {
+      // eslint-disable-next-line no-await-in-loop -- sequential passes, mirroring separate review invocations
+      await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
+    }
+
+    expect(embedCalls).toBe(1);
+    expect(queryCalls).toBe(1);
+  });
+
+  it("a genuinely different query (different changed symbols) still triggers a fresh embed+query, never masked by another file's cached entry", async () => {
+    let queryCalls = 0;
+    const countingVector: VectorAdapter = {
+      query: async () => {
+        queryCalls += 1;
+        return { matches: [{ id: "src/review/caller.ts::0", score: 0.9, metadata: { path: "src/review/caller.ts" } }] };
+      },
+      upsert: async () => undefined,
+      deleteByIds: async () => undefined,
+    } as unknown as VectorAdapter;
+    const { storage } = cachingStorageStub(5);
+    const infra: RagInfra = { storage, vector: countingVector, inference: ai1024 };
+
+    await computeImpactMap([{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }], { infra, project: "acme", repo: "widgets" });
+    // A different changed file with different symbols -- a genuinely different query, even though it shares
+    // the same project/repo as the first call.
+    await computeImpactMap([{ path: "src/review/rag.ts", symbols: ["retrieveContextWithMetrics"] }], { infra, project: "acme", repo: "widgets" });
+
+    expect(queryCalls).toBe(2);
+  });
+
+  it("a cache entry older than the TTL is treated as a miss, re-embedding and re-querying instead of serving a possibly-stale answer", async () => {
+    let queryCalls = 0;
+    const countingVector: VectorAdapter = {
+      query: async () => {
+        queryCalls += 1;
+        return { matches: [{ id: "src/review/caller.ts::0", score: 0.9, metadata: { path: "src/review/caller.ts" } }] };
+      },
+      upsert: async () => undefined,
+      deleteByIds: async () => undefined,
+    } as unknown as VectorAdapter;
+    // Every row this stub returns is stamped an hour old -- past the 30-minute TTL.
+    const { storage } = cachingStorageStub(5, new Date(Date.now() - 60 * 60 * 1000).toISOString());
+    const infra: RagInfra = { storage, vector: countingVector, inference: ai1024 };
+    const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }];
+
+    await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
+    await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
+
+    expect(queryCalls).toBe(2);
   });
 });

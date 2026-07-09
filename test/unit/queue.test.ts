@@ -26673,9 +26673,15 @@ describe("queue processors", () => {
         },
       });
 
+      // JSONbored/gittensory falls back to its own bundled manifest (GITTENSORY_REPO_FOCUS_MANIFEST_YAML) when
+      // no other manifest source responds, which REPLACES this test's DB-configured single-mapping override
+      // with its own bug/feature (exclusive) + priority (additive) mapping list -- so the linked issue's
+      // gittensor:priority label composes with the title-derived "fix" -> gittensor:bug, rather than replacing
+      // it. Priority is additive (not a type of its own; see resolvePrTypeLabel's composition fix), so bug
+      // still applies from the title and only feature (never matched) needs removing.
       expect(seen.issueFetches).toBe(1);
-      expect(seen.posted).toEqual(["gittensor:priority"]);
-      expect(seen.removed.sort()).toEqual(["gittensor:bug", "gittensor:feature"]);
+      expect(seen.posted).toEqual(["gittensor:bug", "gittensor:priority"]);
+      expect(seen.removed).toEqual(["gittensor:feature"]);
     });
 
     it("fails open to the normal title-based label when the linked issue's fetch fails (#priority-linked-issue-gate)", async () => {

@@ -8287,11 +8287,13 @@ export async function runVisualVisionForAdvisory(
     // BYOK (a maintainer's own anthropic/openai key) takes priority when both are configured -- matches
     // every other dual-path AI call site's convention (BYOK bills the maintainer's own account, so it's
     // preferred over the shared/free local resource when the operator has explicitly set one up).
-    const visionText = visionProviderKey
-      ? (
-          await callAiProvider(visionProviderKey, VISUAL_VISION_SYSTEM_PROMPT, buildVisualVisionUserPrompt(visionGate.routes), 600, images)
-        ).text
-      : await runSelfHostVisualVision(env, VISUAL_VISION_SYSTEM_PROMPT, buildVisualVisionUserPrompt(visionGate.routes), images);
+    let visionText: string | null;
+    if (visionProviderKey) {
+      const visionResponse = await callAiProvider(visionProviderKey, VISUAL_VISION_SYSTEM_PROMPT, buildVisualVisionUserPrompt(visionGate.routes), 600, images);
+      visionText = visionResponse.text;
+    } else {
+      visionText = await runSelfHostVisualVision(env, VISUAL_VISION_SYSTEM_PROMPT, buildVisualVisionUserPrompt(visionGate.routes), images);
+    }
     if (!visionText) return;
     const visionFindings = parseVisualVisionResponse(visionText);
     args.advisory.findings.push(...buildVisualRegressionFindings(visionFindings));

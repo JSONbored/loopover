@@ -11274,10 +11274,11 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
 
 /**
  * `@gittensory review` (#2163, part of #1960, alias `re-review`): a maintainer/collaborator/confirmed-miner
- * asks for a fresh AUTO-REVIEW pass on this PR. AUTO-REVIEW SCOPE ONLY, same hard constraint as pause/resolve/
- * explain (#1960): this dispatches to the EXISTING reReviewStoredPullRequest path with `force: true` (bypasses
- * the AI-review cache/dedup, since a maintainer explicitly typing the command wants a fresh verdict, not a
- * cached one) — it never touches the Gate check-run, the AgentActionMode, or the one-shot disposition directly;
+ * asks for an AUTO-REVIEW pass on this PR. AUTO-REVIEW SCOPE ONLY, same hard constraint as pause/resolve/
+ * explain (#1960): this dispatches to the EXISTING reReviewStoredPullRequest path. Maintainers and
+ * collaborators keep the explicit fresh-review behavior; author/miner self-reruns intentionally reuse the
+ * normal cached path so a low-privilege actor cannot repeatedly spend provider budget or re-roll findings.
+ * It never touches the Gate check-run, the AgentActionMode, or the one-shot disposition directly;
  * whatever reReviewStoredPullRequest's own gate evaluation produces is exactly what a scheduled sweep pass
  * would produce. If the PR is currently paused (hasAutoreviewPausedMarker), reReviewStoredPullRequest's own
  * existing skipAiReview-on-pause behavior still applies — this command does not special-case or bypass pause;
@@ -11318,7 +11319,8 @@ async function maybeProcessReviewCommand(env: Env, deliveryId: string, payload: 
   }
   const confirmation = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **Re-review triggered by @${req.actor}**`, "> Re-running auto-review for this PR. The Gate check-run and one-shot disposition are produced the same way a scheduled pass would.", "", "---", gittensoryFooter()].join("\n"));
   await createIssueComment(env, req.installationId, req.repoFullName, req.pr.number, confirmation);
-  await reReviewStoredPullRequest(env, deliveryId, req.installationId, req.repoFullName, req.pr.number, undefined, { force: true });
+  const forceFreshReview = authorization.actorKind === "maintainer";
+  await reReviewStoredPullRequest(env, deliveryId, req.installationId, req.repoFullName, req.pr.number, undefined, forceFreshReview ? { force: true } : undefined);
   await recordAuditEvent(env, { eventType: "github_app.review_command_completed", actor: req.actor, targetKey, outcome: "completed", detail: "Re-review dispatched.", metadata: { deliveryId, repoFullName: req.repoFullName } });
   await recordGithubProductUsage(env, "review_command_completed", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: { actorKind: authorization.actorKind } });
   return true;

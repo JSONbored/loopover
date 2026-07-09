@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { printHelp, printVersion, runCli } from "../lib/cli.js";
 import { runDenyCheck } from "../lib/deny-check.js";
+import { runDiscover } from "../lib/discover-cli.js";
 import { runGovernorCli } from "../lib/governor-ledger-cli.js";
 import { runLedgerCli } from "../lib/event-ledger-cli.js";
 import { runManagePoll } from "../lib/manage-poll.js";
@@ -105,6 +106,12 @@ if (cliArgs[0] === "state") {
 
 if (cliArgs[0] === "manage" && cliArgs[1] === "poll") {
   const exitCode = await runManagePoll(cliArgs.slice(2));
+  await awaitOpportunisticUpdateCheck(updateCheck);
+  process.exit(exitCode);
+}
+
+if (cliArgs[0] === "discover") {
+  const exitCode = await runDiscover(cliArgs.slice(1));
   await awaitOpportunisticUpdateCheck(updateCheck);
   process.exit(exitCode);
 }

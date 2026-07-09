@@ -2270,6 +2270,76 @@ describe("GitHub backfill", () => {
     expect(await listRepoSyncStates(env)).toMatchObject([{ status: "success" }]);
   });
 
+  it("INVARIANT (#4497): a syncState row stamped never_synced (distinct from no row at all) still proceeds with a real sync on the scheduled path", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    await seedRegisteredRepo(env);
+    // A row EXISTS (unlike the "no prior state at all" case above) but its status is the placeholder
+    // "never_synced" -- e.g. stamped by an unrelated write that only carries over display fields (see
+    // fetchAndCachePrStateFields-style callers) before any real sync ever completed. This must never be
+    // mistaken for "a completed sync just happened."
+    await upsertRepoSyncState(env, {
+      repoFullName: "JSONbored/gittensory",
+      status: "never_synced",
+      sourceKind: "github",
+      openIssuesCount: 0,
+      openPullRequestsCount: 0,
+      recentMergedPullRequestsCount: 0,
+      lastCompletedAt: new Date().toISOString(),
+      warnings: [],
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString() === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 1, openPullRequests: 1, mergedPullRequests: 1, closedPullRequests: 0, labels: 0 });
+      return Response.json([]);
+    });
+
+    const result = await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light" });
+
+    expect(result.status).toBe("queued");
+    expect(sent.filter((message) => message.type === "backfill-repo-segment").length).toBeGreaterThan(0);
+  });
+
+  it("INVARIANT (#4497): a syncState past BOTH the fresh-success and error-backoff windows proceeds with a real sync, not a skip", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    await seedRegisteredRepo(env);
+    // 7 hours ago: past FRESH_SYNC_MS (6h) for a success AND past ERROR_BACKOFF_MS (1h) were this an error --
+    // stale enough that the backfill must proceed normally rather than skip.
+    await upsertRepoSyncState(env, {
+      repoFullName: "JSONbored/gittensory",
+      status: "success",
+      sourceKind: "github",
+      openIssuesCount: 2,
+      openPullRequestsCount: 1,
+      recentMergedPullRequestsCount: 3,
+      lastCompletedAt: new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString(),
+      warnings: [],
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString() === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 2, openPullRequests: 1, mergedPullRequests: 3, closedPullRequests: 0, labels: 0 });
+      return Response.json([]);
+    });
+
+    const result = await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light" });
+
+    expect(result.status).toBe("queued");
+    expect(sent.filter((message) => message.type === "backfill-repo-segment").length).toBeGreaterThan(0);
+  });
+
   it("INVARIANT (#4497): backs off the scheduled per-repo backfill when the prior sync errored recently, instead of retrying every tick", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({

@@ -45,6 +45,7 @@ test("parseMinerGoalSpec: valid raw config normalizes every field and keeps non-
     blockedLabels: ["duplicate"],
     maxConcurrentClaims: 2,
     issueDiscoveryPolicy: "encouraged",
+    feasibilityGate: { suppressReasons: [] },
   });
   assert.deepEqual(parsed.warnings, []);
 });
@@ -130,6 +131,7 @@ test("parseMinerGoalSpec: malformed fields fall back independently with targeted
     blockedLabels: ["wontfix"],
     maxConcurrentClaims: 1,
     issueDiscoveryPolicy: "neutral",
+    feasibilityGate: { suppressReasons: [] },
   });
   const warningText = parsed.warnings.join(" ");
   assert.match(warningText, /minerEnabled/i);

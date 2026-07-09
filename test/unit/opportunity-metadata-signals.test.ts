@@ -66,6 +66,7 @@ describe("opportunity metadata signals", () => {
             blockedLabels: [],
             maxConcurrentClaims: 1,
             issueDiscoveryPolicy: "encouraged",
+            feasibilityGate: { suppressReasons: [] },
           },
         },
       },

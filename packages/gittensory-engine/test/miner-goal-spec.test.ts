@@ -19,6 +19,7 @@ test("DEFAULT_MINER_GOAL_SPEC carries the documented safe defaults", () => {
     blockedLabels: [],
     maxConcurrentClaims: 1,
     issueDiscoveryPolicy: "neutral",
+    feasibilityGate: { suppressReasons: [] },
   });
 });
 
@@ -34,6 +35,7 @@ test("DEFAULT_MINER_GOAL_SPEC exposes exactly the specified field surface", () =
   assert.deepEqual(Object.keys(DEFAULT_MINER_GOAL_SPEC).sort(), [
     "blockedLabels",
     "blockedPaths",
+    "feasibilityGate",
     "issueDiscoveryPolicy",
     "maxConcurrentClaims",
     "minerEnabled",

@@ -235,6 +235,7 @@ export {
   discoverMinerGoalSpecPath,
   MINER_GOAL_SPEC_FILENAMES,
   type MinerGoalSpec,
+  type MinerFeasibilityGatePolicy,
   type MinerIssueDiscoveryPolicy,
   type ParsedMinerGoalSpec,
 } from "./miner-goal-spec.js";

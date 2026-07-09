@@ -5,7 +5,8 @@
 // deterministic engine, never blocking, never throwing, and BYOK-aware.
 //
 // Hard guarantees:
-//   • Gated on `isE2eTestGenerationEnabled` (the `e2eTests` converged-feature kill-switch, #4190) PLUS the
+//   • Gated on the `e2eTests` converged feature (#4190): the global kill-switch AND the
+//     repo-specific manifest/allowlist activation must both permit generation, PLUS the
 //     same two generic AI toggles every AI-generated artifact in this codebase already respects
 //     (AI_SUMMARIES_ENABLED, AI_PUBLIC_COMMENTS_ENABLED) — defense in depth, byte-identical to today when
 //     any of the three is off.
@@ -249,6 +250,9 @@ async function record(
  */
 export async function runGittensoryE2eTestGeneration(env: Env, input: E2eTestGenInput): Promise<E2eTestGenResult> {
   if (!isE2eTestGenerationEnabled(env)) return { status: "disabled", reason: "E2E test generation is disabled." };
+  if (!(await convergedFeatureActive(env, input.repoFullName, "e2eTests"))) {
+    return { status: "disabled", reason: "E2E test generation is not enabled for this repository." };
+  }
   if (!isEnabled(env.AI_SUMMARIES_ENABLED)) return { status: "disabled", reason: "AI summaries are disabled." };
   if (!isEnabled(env.AI_PUBLIC_COMMENTS_ENABLED)) return { status: "disabled", reason: "Public AI comments are disabled." };
   if (!input.providerKey && !env.AI) return { status: "unavailable", reason: "AI provider is not configured." };

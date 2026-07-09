@@ -24,8 +24,13 @@ gittensory-config
 **/.codex
 auth.json
 **/auth.json
-# The review-enrichment service (REES) is a separate Railway service with its own Dockerfile — keep it out of the engine image.
+# The review-enrichment service (REES) is a separate Railway service with its own Dockerfile — keep it out of
+# the engine image. EXCEPT analyzer-metadata.json: the main engine's own code (src/review/enrichment-analyzers-
+# taxonomy.ts) imports it directly, so excluding it wholesale breaks `scripts/build-selfhost.mjs`'s esbuild
+# bundle (module resolution failure at build time, not a runtime gap -- caught by the "build + boot smoke test"
+# workflow, which is path-gated and doesn't run on every PR).
 review-enrichment
+!review-enrichment/analyzer-metadata.json
 .DS_Store
 *.tsbuildinfo
 # Never ship secrets into the build context

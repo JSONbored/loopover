@@ -65,8 +65,8 @@ const D1_PROBE_FETCH_TIMEOUT_MS = 10_000;
 export function resolveD1SizeProbeConfig(env: D1SizeProbeEnv): D1SizeProbeConfig | null {
   const accountId = env.CLOUDFLARE_D1_MONITOR_ACCOUNT_ID;
   const databaseId = env.CLOUDFLARE_D1_MONITOR_DATABASE_ID;
-  const apiToken = env.CLOUDFLARE_D1_MONITOR_API_TOKEN;
-  if (!accountId || !databaseId || !apiToken) return null;
+  const apiToken = env.CLOUDFLARE_D1_MONITOR_API_TOKEN?.trim();
+  if (!accountId || !databaseId || !apiToken || /[\x00-\x1f\x7f]/.test(apiToken)) return null;
   return { accountId, databaseId, apiToken, tables: DEFAULT_MONITORED_TABLES };
 }
 
@@ -175,9 +175,21 @@ interface D1ProbeSample {
 
 let lastSample: D1ProbeSample | null = null;
 
-function logD1ProbeError(part: "database_info" | "table_row_count", error: unknown, table?: string): void {
+function redactD1ProbeSecret(message: string, apiToken: string): string {
+  return message.split(apiToken).join("[redacted]");
+}
+
+function logD1ProbeError(config: D1SizeProbeConfig, part: "database_info" | "table_row_count", error: unknown, table?: string): void {
   incr("gittensory_d1_probe_errors_total", { part });
-  console.error(JSON.stringify({ level: "error", event: "d1_size_probe_error", part, ...(table ? { table } : {}), message: errorMessage(error).slice(0, 200) }));
+  console.error(
+    JSON.stringify({
+      level: "error",
+      event: "d1_size_probe_error",
+      part,
+      ...(table ? { table } : {}),
+      message: redactD1ProbeSecret(errorMessage(error), config.apiToken).slice(0, 200),
+    }),
+  );
 }
 
 /**
@@ -195,13 +207,13 @@ export async function runD1SizeProbe(env: D1SizeProbeEnv, fetchImpl: typeof fetc
 
   const [freshInfo, freshRowCounts] = await Promise.all([
     fetchD1DatabaseInfo(config, fetchImpl).catch((error: unknown) => {
-      logD1ProbeError("database_info", error);
+      logD1ProbeError(config, "database_info", error);
       return null;
     }),
     Promise.all(
       config.tables.map((table) =>
         fetchD1TableRowCount(config, table, fetchImpl).catch((error: unknown) => {
-          logD1ProbeError("table_row_count", error, table);
+          logD1ProbeError(config, "table_row_count", error, table);
           return null;
         }),
       ),

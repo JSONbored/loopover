@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { LATEST_ONLY_SIGNAL_SNAPSHOT_TYPES } from "../../src/db/retention";
 import {
   d1DatabaseSizeBytesSample,
@@ -16,6 +16,7 @@ import {
 import { renderMetrics, resetMetrics, gauge, gaugeVector, counterValue } from "../../src/selfhost/metrics";
 
 afterEach(() => {
+  vi.restoreAllMocks();
   resetD1SizeProbeForTest();
   resetMetrics();
 });
@@ -77,6 +78,18 @@ describe("resolveD1SizeProbeConfig / isD1SizeProbeEnabled", () => {
     expect(isD1SizeProbeEnabled(FULL_ENV)).toBe(true);
   });
 
+  it("trims the api token before building authorization headers", async () => {
+    const config = resolveD1SizeProbeConfig({ ...FULL_ENV, CLOUDFLARE_D1_MONITOR_API_TOKEN: "  token-1  " });
+    expect(config).not.toBeNull();
+    expect(config?.apiToken).toBe("token-1");
+
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer token-1");
+      return new Response(envelope({ file_size: 1, num_tables: 1 }));
+    };
+    await expect(fetchD1DatabaseInfo(config!, fetchImpl)).resolves.toEqual({ fileSizeBytes: 1, numTables: 1 });
+  });
+
   it("returns null (disabled) when the account id is missing", () => {
     expect(resolveD1SizeProbeConfig({ ...FULL_ENV, CLOUDFLARE_D1_MONITOR_ACCOUNT_ID: undefined })).toBeNull();
   });
@@ -87,6 +100,10 @@ describe("resolveD1SizeProbeConfig / isD1SizeProbeEnabled", () => {
 
   it("returns null (disabled) when the api token is missing", () => {
     expect(resolveD1SizeProbeConfig({ ...FULL_ENV, CLOUDFLARE_D1_MONITOR_API_TOKEN: "" })).toBeNull();
+  });
+
+  it("returns null (disabled) when the api token contains a control character", () => {
+    expect(resolveD1SizeProbeConfig({ ...FULL_ENV, CLOUDFLARE_D1_MONITOR_API_TOKEN: "token-1\nTAIL" })).toBeNull();
   });
 
   it("isD1SizeProbeEnabled is false with no config at all", () => {
@@ -222,6 +239,21 @@ describe("runD1SizeProbe", () => {
     await runD1SizeProbe(FULL_ENV, failingFetch);
     expect(d1DatabaseSizeBytesSample()).toBe(-1);
     expect(d1TableRowCountSamples()).toEqual([]);
+  });
+
+  it("redacts the Cloudflare api token from logged probe errors", async () => {
+    const secretToken = "cf-secret-token";
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const failingFetch: typeof fetch = async (_input, init) => {
+      throw new TypeError(`Headers.append: ${new Headers(init?.headers).get("authorization")} is an invalid header value.`);
+    };
+
+    await runD1SizeProbe({ ...FULL_ENV, CLOUDFLARE_D1_MONITOR_API_TOKEN: secretToken }, failingFetch);
+
+    expect(consoleError).toHaveBeenCalled();
+    const logged = consoleError.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(logged).not.toContain(secretToken);
+    expect(logged).toContain("Bearer [redacted]");
   });
 
   it("isolates a single failing table: other tables still update and the failed one keeps its stale value", async () => {

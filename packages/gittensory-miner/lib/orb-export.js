@@ -7,7 +7,7 @@
 //   ORB_AIR_GAP=true               — air-gapped/offline: compute locally, never send (symmetry with self-host)
 //   ORB_ANONYMIZE=true             — HMAC-hash repo/PR before export (default: true)
 //   ORB_COLLECTOR_URL=<url>        — endpoint (default: gittensory's hosted collector)
-//   ORB_COLLECTOR_TOKEN=<secret>   — bearer credential for the hosted collector
+//   ORB_COLLECTOR_TOKEN          — bearer credential for the hosted collector (env var)
 //
 // Source rows are miner-local {@link MINER_PR_OUTCOME_EVENT} entries from the injected event ledger (the sibling
 // pr-outcome.js writer), polled via readEvents({ since }) — the same seq cursor pattern as event-ledger.js. A

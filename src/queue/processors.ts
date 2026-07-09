@@ -8181,6 +8181,35 @@ class RetryablePublicSurfacePublishFailedError extends RetryableJobError {
   }
 }
 
+/** A vision-capable self-host provider's `.run()` — mirrors ai-slop.ts's `AiRunner` (same loose shape for a
+ *  `env.AI`-family binding called outside the SelfHostAi/RagInfra type boundaries), scoped locally since it
+ *  is not exported. */
+type SelfHostVisionRunner = { run?: (model: string, options: Record<string, unknown>) => Promise<unknown> };
+
+/** Self-host local vision (#4335): calls the dedicated `env.AI_VISION` binding (ollama + a vision-language
+ *  model) the SAME way `env.AI_EMBED` is called for embeddings — a binding kept separate from the review
+ *  chain so a vision request never competes with/degrades review-model routing. The `model` argument is a
+ *  placeholder: `createOpenAiCompatibleAi`'s chat path prefers its own construction-time-configured model
+ *  (AI_VISION_MODEL) over whatever string is passed here (see `resolveModel` in `selfhost/ai.ts`). Fail-safe
+ *  on every path, exactly like `callAiProvider`'s BYOK sibling: no binding / no `.run` / a thrown error / an
+ *  unparseable response all degrade to `null`, never a thrown error reaching the caller. */
+async function runSelfHostVisualVision(env: Env, system: string, user: string, images: readonly AiContentBlock[]): Promise<string | null> {
+  const ai = env.AI_VISION as unknown as SelfHostVisionRunner | undefined;
+  if (!ai || typeof ai.run !== "function") return null;
+  try {
+    const result = (await ai.run("visual-vision", {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: [{ type: "text", text: user }, ...images] },
+      ],
+      max_tokens: 600,
+    })) as { response?: string } | null;
+    return result?.response?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * AI-vision analysis of a confirmed visual regression (#4111 wiring): the existing pixel-diff threshold can
  * tell "the pixels changed" but not "does it look broken" — a route the capture pipeline already flagged
@@ -8221,17 +8250,22 @@ export async function runVisualVisionForAdvisory(
             model: args.settings.aiReviewModel ?? storedVisionKey.model,
           }
         : null;
+    // Self-host local vision (#4335): a dedicated ollama+VLM binding lets vision run WITHOUT a maintainer
+    // BYOK key -- see evaluateVisualVisionGate's header for why only an HTTP-capable provider (BYOK or this)
+    // can see the screenshots at all.
+    const selfHostVisionAvailable = Boolean(env.AI_VISION);
     const visionGate = evaluateVisualVisionGate({
       routes: args.routes,
       reputationSignal: visionReputation.signal,
       providerKey: visionProviderKey,
+      selfHostVisionAvailable,
     });
     if (!visionGate.run) return;
-    // evaluateVisualVisionGate only ever returns run:true when its own providerKey input (the SAME
-    // visionProviderKey resolved above) was non-null -- this is a defensive type-narrowing guard for the
-    // callAiProvider call below, not a reachable false case.
-    /* v8 ignore next -- see comment above */
-    if (!visionProviderKey) return;
+    // evaluateVisualVisionGate only ever returns run:true when providerKey OR selfHostVisionAvailable (the
+    // SAME two values resolved above) was truthy -- this is a defensive type-narrowing guard, not a reachable
+    // false case: if neither is set here, the gate itself would already have returned run:false above.
+    /* v8 ignore next 2 -- see comment above */
+    if (!visionProviderKey && !selfHostVisionAvailable) return;
     const images: AiContentBlock[] = [];
     for (const route of visionGate.routes) {
       // Show the model the viewport that actually crossed the pixel-diff threshold — a route can qualify via
@@ -8250,15 +8284,16 @@ export async function runVisualVisionForAdvisory(
       if (afterBlock) images.push(afterBlock);
     }
     if (images.length === 0) return;
-    const visionResponse = await callAiProvider(
-      visionProviderKey,
-      VISUAL_VISION_SYSTEM_PROMPT,
-      buildVisualVisionUserPrompt(visionGate.routes),
-      600,
-      images,
-    );
-    if (!visionResponse.text) return;
-    const visionFindings = parseVisualVisionResponse(visionResponse.text);
+    // BYOK (a maintainer's own anthropic/openai key) takes priority when both are configured -- matches
+    // every other dual-path AI call site's convention (BYOK bills the maintainer's own account, so it's
+    // preferred over the shared/free local resource when the operator has explicitly set one up).
+    const visionText = visionProviderKey
+      ? (
+          await callAiProvider(visionProviderKey, VISUAL_VISION_SYSTEM_PROMPT, buildVisualVisionUserPrompt(visionGate.routes), 600, images)
+        ).text
+      : await runSelfHostVisualVision(env, VISUAL_VISION_SYSTEM_PROMPT, buildVisualVisionUserPrompt(visionGate.routes), images);
+    if (!visionText) return;
+    const visionFindings = parseVisualVisionResponse(visionText);
     args.advisory.findings.push(...buildVisualRegressionFindings(visionFindings));
   } catch (error) {
     console.log(

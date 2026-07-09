@@ -11,6 +11,11 @@ declare global {
      *  local/openai-compatible endpoint (ollama). Built at boot from AI_EMBED_BASE_URL/AI_EMBED_MODEL. Absent ⇒
      *  `createReviewAdapters` falls back to `env.AI` (byte-identical to before). */
     AI_EMBED?: Ai;
+    /** Self-host (visual-vision, #4111/#4335): a DEDICATED vision-capable provider, separate from both the
+     *  review chain and the embed provider — a local/openai-compatible endpoint (ollama + a vision-language
+     *  model). Built at boot from AI_VISION_BASE_URL/AI_VISION_MODEL. Absent ⇒ visual-vision advisory falls
+     *  back to requiring a maintainer BYOK key (the only option before this binding existed). */
+    AI_VISION?: Ai;
     /** Self-host RAG vector adapter. Cloudflare no longer binds Vectorize for hosted reviews; the Node runtime
      *  injects Qdrant/sqlite/pg adapters here when configured. Absent ⇒ no RAG, review proceeds with no retrieved
      *  context. */

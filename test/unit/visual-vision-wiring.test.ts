@@ -389,3 +389,140 @@ describe("runVisualVisionForAdvisory", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+/** Only the shot-fetch side of stubShotsAndProvider — the self-host vision path never calls `fetch` for the
+ *  AI call itself (it calls `env.AI_VISION.run` directly), so no provider URL needs mocking here. */
+function stubShots() {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = input.toString();
+    if (url.includes("/gittensory/shot")) return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "image/png" } });
+    return new Response("not found", { status: 404 });
+  }));
+}
+
+function selfHostVisionRoutes() {
+  return [route({ path: "/app", diffUrl: "https://x/gittensory/shot?key=diff", beforeUrl: "https://x/gittensory/shot?key=before", afterUrl: "https://x/gittensory/shot?key=after" })];
+}
+
+describe("runVisualVisionForAdvisory: self-host local vision provider (#4335)", () => {
+  it("runs via env.AI_VISION when NO BYOK key is configured at all", async () => {
+    const runMock = vi.fn(async (_model: string, _options: { messages: Array<{ role: string; content: unknown }> }) => ({
+      response: findingsResponse([{ path: "/app", body: "Nav bar overlaps the logo on the AFTER screenshot." }]),
+    }));
+    const env = byokEnv();
+    (env as unknown as { AI_VISION: unknown }).AI_VISION = { run: runMock };
+    stubShots();
+    const adv = findingsHolder();
+    await runVisualVisionForAdvisory(env, {
+      repoFullName,
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      settings: byokSettings({ aiReviewByok: false }), // no BYOK configured
+      advisory: adv,
+      routes: selfHostVisionRoutes(),
+    });
+    expect(runMock).toHaveBeenCalledTimes(1);
+    const [, options] = runMock.mock.calls[0]!;
+    expect(options.messages[0]).toMatchObject({ role: "system" });
+    expect(options.messages[1]).toMatchObject({ role: "user" });
+    expect(adv.findings).toEqual([
+      {
+        code: "visual_regression_finding",
+        severity: "warning",
+        title: "Possible visual regression: /app",
+        detail: "Nav bar overlaps the logo on the AFTER screenshot.",
+        action: "Advisory only — verify against the Visual preview screenshots before deciding.",
+      },
+    ]);
+  });
+
+  it("prefers a configured BYOK key over env.AI_VISION when both are available", async () => {
+    const env = byokEnv();
+    await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-vision-key", model: null });
+    const runMock = vi.fn(async () => ({ response: findingsResponse([{ path: "/app", body: "should not be used" }]) }));
+    (env as unknown as { AI_VISION: unknown }).AI_VISION = { run: runMock };
+    stubShotsAndProvider(findingsResponse([{ path: "/app", body: "BYOK finding wins." }]));
+    const adv = findingsHolder();
+    await runVisualVisionForAdvisory(env, {
+      repoFullName,
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      settings: byokSettings(),
+      advisory: adv,
+      routes: selfHostVisionRoutes(),
+    });
+    expect(runMock).not.toHaveBeenCalled();
+    expect(adv.findings[0]).toMatchObject({ detail: "BYOK finding wins." });
+  });
+
+  it("adds no finding (fail-safe) when env.AI_VISION.run throws", async () => {
+    const env = byokEnv();
+    (env as unknown as { AI_VISION: unknown }).AI_VISION = { run: vi.fn(async () => { throw new Error("ollama connection refused"); }) };
+    stubShots();
+    const adv = findingsHolder();
+    await runVisualVisionForAdvisory(env, {
+      repoFullName,
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      settings: byokSettings({ aiReviewByok: false }),
+      advisory: adv,
+      routes: selfHostVisionRoutes(),
+    });
+    expect(adv.findings).toEqual([]);
+  });
+
+  it("adds no finding when env.AI_VISION.run resolves to an empty/whitespace-only response", async () => {
+    const env = byokEnv();
+    (env as unknown as { AI_VISION: unknown }).AI_VISION = { run: vi.fn(async () => ({ response: "   " })) };
+    stubShots();
+    const adv = findingsHolder();
+    await runVisualVisionForAdvisory(env, {
+      repoFullName,
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      settings: byokSettings({ aiReviewByok: false }),
+      advisory: adv,
+      routes: selfHostVisionRoutes(),
+    });
+    expect(adv.findings).toEqual([]);
+  });
+
+  it("adds no finding when env.AI_VISION is present but has no callable .run (a malformed binding)", async () => {
+    const env = byokEnv();
+    (env as unknown as { AI_VISION: unknown }).AI_VISION = {};
+    stubShots();
+    const adv = findingsHolder();
+    await runVisualVisionForAdvisory(env, {
+      repoFullName,
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      settings: byokSettings({ aiReviewByok: false }),
+      advisory: adv,
+      routes: selfHostVisionRoutes(),
+    });
+    expect(adv.findings).toEqual([]);
+  });
+
+  it("still declines entirely when NEITHER BYOK nor env.AI_VISION is configured", async () => {
+    const env = byokEnv();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const adv = findingsHolder();
+    await runVisualVisionForAdvisory(env, {
+      repoFullName,
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      settings: byokSettings({ aiReviewByok: false }),
+      advisory: adv,
+      routes: selfHostVisionRoutes(),
+    });
+    expect(adv.findings).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

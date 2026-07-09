@@ -62,20 +62,23 @@ export type VisualVisionGateResult =
  *      exactly like the other AI neurons already skip for a low-reputation/burst submitter
  *      (`shouldSkipAiForReputation`, `../reputation-wire.ts`); checked FIRST so a low-reputation submitter is
  *      never even told which reason applies to their capture.
- *   3. BYOK — vision rides the maintainer's OWN provider key (`providerKey` non-null): Workers AI is fully
- *      retired (no free vision-capable path exists) and the self-host subscription CLIs (claude-code/codex)
- *      cannot consume inline image bytes through their stdin-JSON invocation (see `../../selfhost/ai.ts`'s
- *      `contentText`), so only an HTTP BYOK provider (anthropic/openai) can actually see the screenshots.
- * Pure + total: the caller resolves the reputation signal / provider key (D1 + decryption both live outside
- * this file) and passes the results in.
+ *   3. a provider that can actually SEE the screenshots — either BYOK (`providerKey` non-null: the
+ *      maintainer's own anthropic/openai key) or a self-host local vision provider (`selfHostVisionAvailable`,
+ *      #4335: a dedicated ollama+VLM binding, `env.AI_VISION`). Workers AI is fully retired (no free
+ *      vision-capable path exists) and the self-host subscription CLIs (claude-code/codex) cannot consume
+ *      inline image bytes through their stdin-JSON invocation (see `../../selfhost/ai.ts`'s `contentText`),
+ *      so only an HTTP-capable provider — BYOK or self-host's dedicated AI_VISION binding — can see them.
+ * Pure + total: the caller resolves the reputation signal / provider key / self-host vision availability (D1,
+ * decryption, and env all live outside this file) and passes the results in.
  */
 export function evaluateVisualVisionGate(input: {
   routes: readonly CaptureRoute[];
   reputationSignal: ReputationSignal;
   providerKey: AiReviewProviderKey | null;
+  selfHostVisionAvailable?: boolean;
 }): VisualVisionGateResult {
   if (input.reputationSignal === "low") return { run: false, reason: "low_reputation" };
-  if (!input.providerKey) return { run: false, reason: "byok_not_configured" };
+  if (!input.providerKey && !input.selfHostVisionAvailable) return { run: false, reason: "byok_not_configured" };
   const routes = selectRoutesForVisualVision(input.routes);
   if (routes.length === 0) return { run: false, reason: "no_confirmed_regression" };
   return { run: true, routes };

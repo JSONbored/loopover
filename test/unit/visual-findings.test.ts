@@ -91,6 +91,18 @@ describe("evaluateVisualVisionGate", () => {
       routes: [changedRoute("/a")],
     });
   });
+
+  it("runs via a self-host local vision provider even with NO BYOK key configured (#4335)", () => {
+    expect(
+      evaluateVisualVisionGate({ routes: [changedRoute("/a")], reputationSignal: "neutral", providerKey: null, selfHostVisionAvailable: true }),
+    ).toEqual({ run: true, routes: [changedRoute("/a")] });
+  });
+
+  it("still skips when self-host vision is explicitly unavailable and there is no BYOK key either", () => {
+    expect(
+      evaluateVisualVisionGate({ routes: [changedRoute("/a")], reputationSignal: "neutral", providerKey: null, selfHostVisionAvailable: false }),
+    ).toEqual({ run: false, reason: "byok_not_configured" });
+  });
 });
 
 describe("buildVisualVisionUserPrompt", () => {

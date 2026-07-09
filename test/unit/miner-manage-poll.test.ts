@@ -182,7 +182,11 @@ describe("gittensory-miner manage poll (#2323/#2325)", () => {
 
     const result = await recordManagePollSnapshot(
       { repoFullName: "acme/widgets", prNumber: 16 },
-      { eventLedger, portfolioQueue: undefined, ensurePortfolioRow: false, pollCheckRuns },
+      {
+        eventLedger,
+        ensurePortfolioRow: false,
+        pollCheckRuns,
+      },
     );
 
     expect(result.payload).toEqual(

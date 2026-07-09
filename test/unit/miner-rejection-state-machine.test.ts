@@ -8,6 +8,7 @@ import {
   initEventLedger,
 } from "../../packages/gittensory-miner/lib/event-ledger.js";
 import { MINER_PR_OUTCOME_EVENT } from "../../packages/gittensory-miner/lib/pr-outcome.js";
+import type { PullRequestSnapshot } from "../../packages/gittensory-miner/lib/ci-poller.d.ts";
 import {
   MANAGE_POLL_OUTCOMES,
   buildDisengagedRejectionSnapshot,
@@ -15,6 +16,17 @@ import {
   isClosedWithoutMerge,
   recordDisengagedPrOutcome,
 } from "../../packages/gittensory-miner/lib/rejection-state-machine.js";
+
+function closedPullRequest(overrides: Partial<PullRequestSnapshot> = {}): PullRequestSnapshot {
+  return {
+    headSha: "abc123",
+    state: "closed",
+    merged: false,
+    mergedAt: null,
+    closedAt: "2026-07-08T12:00:00.000Z",
+    ...overrides,
+  };
+}
 
 const roots: string[] = [];
 const ledgers: Array<{ close(): void }> = [];
@@ -40,9 +52,9 @@ describe("gittensory-miner rejection state machine (#4278)", () => {
   });
 
   it("detects closed-without-merge pull requests", () => {
-    expect(isClosedWithoutMerge({ state: "open", merged: false })).toBe(false);
-    expect(isClosedWithoutMerge({ state: "closed", merged: true })).toBe(false);
-    expect(isClosedWithoutMerge({ state: "closed", merged: false })).toBe(true);
+    expect(isClosedWithoutMerge({ ...closedPullRequest(), state: "open" })).toBe(false);
+    expect(isClosedWithoutMerge({ ...closedPullRequest(), merged: true })).toBe(false);
+    expect(isClosedWithoutMerge(closedPullRequest())).toBe(true);
     expect(isClosedWithoutMerge(null)).toBe(false);
   });
 
@@ -63,7 +75,7 @@ describe("gittensory-miner rejection state machine (#4278)", () => {
     const snapshot = buildDisengagedRejectionSnapshot({
       repoFullName: "acme/widgets",
       prNumber: 12,
-      pullRequest: { state: "closed", merged: false, closedAt: "2026-07-08T12:00:00.000Z" },
+      pullRequest: closedPullRequest(),
       gateVerdict: "block",
       ciState: "failure",
     });
@@ -82,7 +94,7 @@ describe("gittensory-miner rejection state machine (#4278)", () => {
       {
         repoFullName: "acme/widgets",
         prNumber: 9,
-        pullRequest: { state: "closed", merged: false, closedAt: "2026-07-08T12:00:00.000Z" },
+        pullRequest: closedPullRequest(),
         supersededByDuplicate: true,
       },
       { eventLedger },
@@ -111,14 +123,14 @@ describe("gittensory-miner rejection state machine (#4278)", () => {
       buildDisengagedRejectionSnapshot({
         repoFullName: "bad",
         prNumber: 1,
-        pullRequest: { state: "closed", merged: false },
+        pullRequest: closedPullRequest(),
       }),
     ).toThrow("invalid_repo_full_name");
     expect(() =>
       buildDisengagedRejectionSnapshot({
         repoFullName: "acme/widgets",
         prNumber: 0,
-        pullRequest: { state: "closed", merged: false },
+        pullRequest: closedPullRequest(),
       }),
     ).toThrow("invalid_pr_number");
   });

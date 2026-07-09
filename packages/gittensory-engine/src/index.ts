@@ -220,6 +220,13 @@ export {
   type RunCodingAgentAttemptOptions,
 } from "./miner/driver-factory.js";
 export * from "./miner/attempt-metering.js";
+export {
+  createAgentSdkCodingAgentDriver,
+  type AgentSdkHooks,
+  type AgentSdkQueryFn,
+  type AgentSdkQueryOptions,
+  type CreateAgentSdkDriverOptions,
+} from "./miner/agent-sdk-driver.js";
 export * from "./plan-export.js";
 export { countPlanStepsByStatus } from "./plan-step-stats.js";
 export { countPlanSteps } from "./plan-step-count.js";

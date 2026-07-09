@@ -65,6 +65,7 @@
     "test": "npm run build && rm -rf dist-test && tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\""
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.205",
     "yaml": "^2.9.0"
   },
   "devDependencies": {

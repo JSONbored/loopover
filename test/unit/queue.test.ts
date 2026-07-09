@@ -7245,7 +7245,7 @@ describe("queue processors", () => {
     expect(typeof after?.last_regated_at).toBe("string"); // stamped via a D1 write at dispatch — convergence does not need a GitHub write
   });
 
-  it("agent re-gate sweep prioritizes PRs missing the current Gate check even when their surface marker is current", async () => {
+  it("agent re-gate sweep processes strict staleness order even when a PR is missing its current Gate check (#selfhost-fifo-ordering)", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
     await upsertInstallation(env, { action: "created", installation: { id: 9400, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
@@ -7286,7 +7286,15 @@ describe("queue processors", () => {
     await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
 
     const fanned = sent.filter((job) => job.type === "agent-regate-pr");
-    expect(fanned.map((job) => (job as Extract<import("../../src/types").JobMessage, { type: "agent-regate-pr" }>).prNumber)).toEqual([2, 1, 3]);
+    // PR2 is missing its current Gate check (surfaceRepairPriorityPullNumbers would flag it as a repair
+    // candidate) but is also the LEAST stale by lastRegatedAt (10 min ago vs. 23-25h for the others). An earlier
+    // revision sorted repair candidates first regardless of staleness, jumping PR2 to the front of this batch --
+    // that let a PR needing repair cut ahead of older PRs that merely went stale, observed live as PRs
+    // dispatching out of order ("spraying") whenever a repo had a mixed repair/ordinary backlog. Repair status
+    // now only affects ELIGIBILITY (staying in the pool, bypassing the freshness guard), never final order, so
+    // PR2 takes its rightful (last, since it's the freshest-regated) place and is dropped by the max:3 cap this
+    // round -- same as it would be with no repair flag at all.
+    expect(fanned.map((job) => (job as Extract<import("../../src/types").JobMessage, { type: "agent-regate-pr" }>).prNumber)).toEqual([1, 3, 4]);
   });
 
   it("REGRESSION (#3815): regateSweepOrderMode 'oldest-first' fans out per-PR jobs in creation order with a monotonic delaySeconds stagger", async () => {

@@ -1,15 +1,27 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   closeDefaultWorktreeAllocator,
   openWorktreeAllocator,
 } from "../../packages/gittensory-miner/lib/worktree-allocator.js";
 
+const acquireChildScript = fileURLToPath(
+  new URL("../fixtures/miner-worktree-allocator/acquire-child.mjs", import.meta.url),
+);
+
 const roots: string[] = [];
 const allocators: Array<{ close(): void }> = [];
+
+type AcquireChildResult = {
+  ok: boolean;
+  allocation?: { worktreePath: string; attemptId: string; status: string };
+  message?: string;
+};
 
 function tempPaths() {
   const root = mkdtempSync(join(tmpdir(), "gittensory-miner-worktree-collisions-"));
@@ -35,6 +47,85 @@ function openAllocator(
   return allocator;
 }
 
+function bootstrapSharedStore(paths: ReturnType<typeof tempPaths>, maxConcurrency: number) {
+  const bootstrap = openWorktreeAllocator({
+    dbPath: paths.dbPath,
+    worktreeBaseDir: paths.worktreeBaseDir,
+    maxConcurrency,
+  });
+  bootstrap.close();
+}
+
+function spawnAcquireChild(
+  paths: ReturnType<typeof tempPaths>,
+  attemptId: string,
+  maxConcurrency: number,
+): ChildProcessWithoutNullStreams {
+  return spawn(
+    process.execPath,
+    [
+      acquireChildScript,
+      paths.dbPath,
+      paths.worktreeBaseDir,
+      String(maxConcurrency),
+      attemptId,
+      "acme/widgets",
+    ],
+    { stdio: ["pipe", "pipe", "pipe"] },
+  );
+}
+
+async function waitForReady(child: ChildProcessWithoutNullStreams): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let buffer = "";
+    const onData = (chunk: Buffer | string) => {
+      buffer += chunk.toString();
+      if (buffer.includes("READY\n")) {
+        child.stdout.off("data", onData);
+        resolve();
+      }
+    };
+    child.stdout.on("data", onData);
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code !== 0 && code !== null) reject(new Error(`child exited before READY (${code})`));
+    });
+  });
+}
+
+async function runBarrieredAcquires(
+  paths: ReturnType<typeof tempPaths>,
+  attemptIds: string[],
+  maxConcurrency: number,
+): Promise<AcquireChildResult[]> {
+  const children = attemptIds.map((attemptId) => spawnAcquireChild(paths, attemptId, maxConcurrency));
+  await Promise.all(children.map((child) => waitForReady(child)));
+  for (const child of children) child.stdin.write("go\n");
+  return Promise.all(
+    children.map(
+      (child) =>
+        new Promise<AcquireChildResult>((resolve, reject) => {
+          let stdout = "";
+          child.stdout.on("data", (chunk) => {
+            stdout += chunk.toString();
+          });
+          child.once("error", reject);
+          child.once("exit", () => {
+            const line = stdout
+              .split("\n")
+              .map((entry) => entry.trim())
+              .find((entry) => entry.startsWith("{"));
+            if (!line) {
+              reject(new Error(`child produced no JSON result: ${stdout}`));
+              return;
+            }
+            resolve(JSON.parse(line) as AcquireChildResult);
+          });
+        }),
+    ),
+  );
+}
+
 afterEach(() => {
   for (const allocator of allocators.splice(0)) allocator.close();
   closeDefaultWorktreeAllocator();
@@ -42,33 +133,34 @@ afterEach(() => {
 });
 
 describe("gittensory-miner worktree allocator collisions (#4298)", () => {
-  it("returns distinct worktree paths for simultaneous acquire calls", async () => {
+  it("returns distinct worktree paths when multiple processes acquire simultaneously", async () => {
     const paths = tempPaths();
-    const allocator = openAllocator(paths, { maxConcurrency: 5 });
-    const results = await Promise.all(
-      Array.from({ length: 5 }, (_, index) =>
-        Promise.resolve().then(() => allocator.acquire(`attempt-${index}`, "acme/widgets")),
-      ),
+    const maxConcurrency = 5;
+    bootstrapSharedStore(paths, maxConcurrency);
+    const results = await runBarrieredAcquires(
+      paths,
+      Array.from({ length: maxConcurrency }, (_, index) => `attempt-${index}`),
+      maxConcurrency,
     );
-    const worktreePaths = results.map((allocation) => allocation.worktreePath);
-    expect(new Set(worktreePaths).size).toBe(5);
+    expect(results.every((result) => result.ok)).toBe(true);
+    const worktreePaths = results.map((result) => result.allocation?.worktreePath ?? "");
+    expect(new Set(worktreePaths).size).toBe(maxConcurrency);
   });
 
-  it("rejects simultaneous acquire calls beyond the configured concurrency cap", async () => {
+  it("rejects excess simultaneous cross-process acquire calls at the concurrency cap", async () => {
     const paths = tempPaths();
-    const allocator = openAllocator(paths, { maxConcurrency: 2 });
-    const results = await Promise.allSettled([
-      Promise.resolve().then(() => allocator.acquire("attempt-1", "acme/widgets")),
-      Promise.resolve().then(() => allocator.acquire("attempt-2", "acme/widgets")),
-      Promise.resolve().then(() => allocator.acquire("attempt-3", "acme/widgets")),
-    ]);
-    const fulfilled = results.filter((result) => result.status === "fulfilled");
-    const rejected = results.filter((result) => result.status === "rejected");
+    const maxConcurrency = 2;
+    bootstrapSharedStore(paths, maxConcurrency);
+    const results = await runBarrieredAcquires(
+      paths,
+      ["attempt-1", "attempt-2", "attempt-3"],
+      maxConcurrency,
+    );
+    const fulfilled = results.filter((result) => result.ok);
+    const rejected = results.filter((result) => !result.ok);
     expect(fulfilled).toHaveLength(2);
     expect(rejected).toHaveLength(1);
-    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
-      message: "worktree_capacity_exceeded",
-    });
+    expect(rejected[0]?.message).toBe("worktree_capacity_exceeded");
   });
 
   it("reuses a worktree path after release", () => {

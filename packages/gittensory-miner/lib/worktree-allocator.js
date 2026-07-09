@@ -84,9 +84,10 @@ export function isProcessAlive(pid) {
     process.kill(pid, 0);
     return true;
   } catch (error) {
+    // ESRCH = no such process; EPERM (or similar) means the process exists but we lack signal rights.
     return typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH"
       ? false
-      : false;
+      : true;
   }
 }
 

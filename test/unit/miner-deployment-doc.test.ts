@@ -25,7 +25,7 @@ describe("miner deployment guide (#2330)", () => {
   it("ships a fleet Dockerfile with non-root runtime and no baked secrets (#4295)", () => {
     const dockerfile = readFileSync(join(process.cwd(), "packages/gittensory-miner/Dockerfile"), "utf8");
     expect(dockerfile).toContain("COPY . .");
-    expect(dockerfile).toContain("npm ci");
+    expect(dockerfile).toContain("npm prune --omit=dev --ignore-scripts");
     expect(dockerfile).toContain("@jsonbored/gittensory-engine");
     expect(dockerfile).toContain("USER node");
     expect(dockerfile).toContain("GITTENSORY_MINER_CONFIG_DIR=/data/miner");

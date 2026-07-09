@@ -15,7 +15,7 @@ COPY . .
 RUN npm ci --ignore-scripts
 RUN npm --workspace @jsonbored/gittensory-engine run build
 RUN npm --workspace @jsonbored/gittensory-miner run build
-RUN npm prune --omit=dev
+RUN npm prune --omit=dev --ignore-scripts
 
 # --- runtime: non-root CLI image with a mounted config volume -----------------------------------
 FROM public.ecr.aws/docker/library/node:24-slim AS runtime

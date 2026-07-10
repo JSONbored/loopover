@@ -1012,11 +1012,74 @@ const RULES: Rule[] = [
     confidence: "medium",
   },
   {
+    // Captures the VALUE (group 1) so ruleMatches below can reject an obvious non-secret filler before
+    // counting this as a hit -- see isPlaceholderSecretValue.
     kind: "generic_secret_assignment",
-    re: /(?:api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret)["']?\s*[:=]\s*["'][A-Za-z0-9+/=_-]{16,}["']/i,
+    re: /(?:api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret)["']?\s*[:=]\s*["']([A-Za-z0-9+/=_-]{16,})["']/i,
     confidence: "medium",
   },
 ];
+
+const PLACEHOLDER_VALUE_PATTERN = /placeholder|change[_-]?me|your[_-]|<[^>]*>|\bexample\b|redacted|dummy|\bsample\b|\btodo\b|\bfixme\b|\binsert\b|replace[_-]?me|\bfake\b/i;
+
+// A string with NO repeated characters (e.g. "abcdefghijklmnop123") has HIGH Shannon entropy by raw
+// character-frequency counting, but is obviously not a real secret -- entropy alone only measures frequency,
+// not ORDER, so a keyboard-sequential/alphabetical run slips past a pure distinct-character-count check. Detect
+// the longest run of consecutive ascending or descending character codes and treat a long one as a
+// human-constructed test value, not a randomly generated credential -- real API keys/tokens essentially never
+// contain a 6+ character monotonic run. (Mirrors src/review/secrets-scan.ts and
+// src/review/content-lane/security-scan.ts in the main Worker repo -- REES deploys standalone so this is a
+// deliberate third copy, not a cross-package import; see this repo's own header comment for why.)
+const MIN_SEQUENTIAL_RUN_LENGTH = 6;
+function hasLongSequentialRun(value: string): boolean {
+  let ascendingRun = 1;
+  let descendingRun = 1;
+  for (let i = 1; i < value.length; i += 1) {
+    const diff = value.charCodeAt(i) - value.charCodeAt(i - 1);
+    ascendingRun = diff === 1 ? ascendingRun + 1 : 1;
+    descendingRun = diff === -1 ? descendingRun + 1 : 1;
+    if (ascendingRun >= MIN_SEQUENTIAL_RUN_LENGTH || descendingRun >= MIN_SEQUENTIAL_RUN_LENGTH) return true;
+  }
+  return false;
+}
+
+// Lowercase hyphenated mock names are fixtures; mixed-case/digit-bearing values containing "mock" remain
+// plausible credentials and must still be reported.
+const LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN = /^(?:[a-z]+-)*mock(?:-[a-z]+)*$/;
+
+// All-lowercase-letters value check, shared by the self-naming-suffix exclusion below.
+const ALL_LOWERCASE_SEGMENTS_PATTERN = /^[a-z]+(?:[-_][a-z]+)*$/;
+
+// #4579-followup (confirmed live false positives: metagraphed/gittensory#4524 "token = default-session-token"/
+// "beta-session-token", awesome-claude#4758 "embedded_secret: unsafe_install_or_secret" -- none a real secret):
+// a value whose OWN last hyphen/underscore-separated segment is itself one of the same secret-shaped trigger
+// words reads as a NAME for a concept ("this is a kind of token/secret"), not an opaque credential -- a real
+// generated token/key value never ends by literally restating what kind of thing it is. Deliberately NARROWER
+// than "any multi-segment lowercase phrase": a Diceware-style passphrase like "alpha-bravo-charlie-delta"
+// doesn't end in a trigger word, so it still correctly flags -- only values that self-identify as a
+// token/secret/key/password NAME are excluded.
+const SELF_NAMING_FIXTURE_SUFFIX_PATTERN = /[-_](?:token|secret|key|password|passwd)$/i;
+
+/** True for an obvious non-secret filler value: a known placeholder phrase, a string built from at most 2
+ *  distinct characters, a long monotonic character-code run, a lowercase hyphenated mock fixture name, or a
+ *  lowercase identifier whose own last segment self-names as a secret kind (e.g. "default-session-token"). */
+function isPlaceholderSecretValue(value: string): boolean {
+  if (PLACEHOLDER_VALUE_PATTERN.test(value)) return true;
+  if (new Set(value.toLowerCase()).size <= 2) return true;
+  if (LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN.test(value)) return true;
+  if (ALL_LOWERCASE_SEGMENTS_PATTERN.test(value) && SELF_NAMING_FIXTURE_SUFFIX_PATTERN.test(value)) return true;
+  return hasLongSequentialRun(value);
+}
+
+/** True when `rule` actually matches `text` -- for every format-specific rule this is a plain `.test()`, but
+ *  `generic_secret_assignment` also requires its captured VALUE to clear {@link isPlaceholderSecretValue}
+ *  first, since a keyword-plus-quoted-value SHAPE also matches plenty of non-secrets (a Zod schema field, a
+ *  TypeScript type declaration, a test fixture, an enum/category label). */
+function ruleMatches(rule: Rule, text: string): boolean {
+  if (rule.kind !== "generic_secret_assignment") return rule.re.test(text);
+  const match = rule.re.exec(text);
+  return match !== null && !isPlaceholderSecretValue(match[1]!);
+}
 
 /** Extract the inner text of every quoted string literal (single/double/backtick) on a line. Used to catch a
  *  secret whose literal value is split across two adjacent added lines and joined at runtime (e.g.
@@ -1054,7 +1117,7 @@ export function scanPatch(path: string, patch: string): SecretFinding[] {
       const content = line.slice(1);
       let matched = false;
       for (const rule of RULES) {
-        if (rule.re.test(content)) {
+        if (ruleMatches(rule, content)) {
           findings.push({ file: path, line: newLine, kind: rule.kind, confidence: rule.confidence });
           matched = true;
           break; // one finding per line — first (most specific) rule wins
@@ -1068,7 +1131,7 @@ export function scanPatch(path: string, patch: string): SecretFinding[] {
       if (!matched && lastPrevious !== undefined && firstCurrent !== undefined) {
         const joined = lastPrevious + firstCurrent;
         for (const rule of RULES) {
-          if (rule.re.test(joined)) {
+          if (ruleMatches(rule, joined)) {
             // "medium" regardless of the rule's own confidence — a joined pair is a heuristic, not a direct match.
             findings.push({ file: path, line: newLine, kind: rule.kind, confidence: "medium" });
             break;
@@ -1095,7 +1158,7 @@ export function scanAddedLinesForSecrets(
   const findings: SecretFinding[] = [];
   for (const line of addedLines) {
     for (const rule of RULES) {
-      if (rule.re.test(line.text)) {
+      if (ruleMatches(rule, line.text)) {
         findings.push({
           file: line.file,
           line: line.line,

@@ -582,6 +582,15 @@ export type FocusManifestReviewConfig = {
    *  is a confirmed Gittensor miner, to protect the external, upstream-computed score from ever including a
    *  maintainer-authored line the miner didn't write themselves — see `src/github/e2e-test-commit.ts`. */
   e2eTestDelivery: E2eTestDeliveryMode | null;
+  /** `review.e2e_test_auto_trigger` (#4196, part of the #4189 epic): opts THIS repo into the `manifest_missing_tests`
+   *  auto-trigger, which promotes that advisory finding into an actual unprompted generation run whenever a PR looks
+   *  like it needs tests -- separate from `features.e2eTests`, which only unlocks the maintainer-initiated paths
+   *  (the `@gittensory generate-tests` command and the PR-panel checkbox). Deliberately independent and OFF by
+   *  default: enabling `e2eTests` for on-demand use must never, by itself, start firing generation unprompted on
+   *  every under-tested PR (the exact loophole this field closes) -- a maintainer who *wants* the auto-trigger opts
+   *  in explicitly per repo. null/false (default, absent) ⇒ the auto-trigger never fires, even with e2eTests on;
+   *  true additionally requires e2eTests to already be enabled (this field alone does nothing). */
+  e2eTestAutoTrigger: boolean | null;
   /** `review.path_instructions`: per-path natural-language guidance handed to the AI reviewer when the PR's
    *  changed files match the glob. Empty (default) ⇒ byte-identical reviewer prompt. Also consumed by
    *  AI-generated E2E test coverage (`resolveE2eTestGenInstructions` in `ai-e2e-test-gen.ts`, #4200) when
@@ -1034,7 +1043,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   publicNotes: [],
   gate: { ...EMPTY_GATE_CONFIG },
   settings: {},
-  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
+  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
   features: { ...EMPTY_FEATURES_CONFIG },
   contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
   repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -1065,7 +1074,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     warnings,
     gate: { ...EMPTY_GATE_CONFIG },
     settings: {},
-    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
+    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
     features: { ...EMPTY_FEATURES_CONFIG },
     contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
     repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -2170,7 +2179,7 @@ function parsePublicSafeText(value: JsonValue | undefined, field: string, warnin
  * throws; invalid/unsafe values are dropped with warnings.
  */
 function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewConfig {
-  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null };
+  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null };
   if (value === undefined || value === null) return empty;
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "review" must be a mapping; ignoring it.`);
@@ -2231,6 +2240,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
   const maxFindings = parseMaxFindingsConfig(r.max_findings, warnings);
   const commentVerbosity = normalizeOptionalEnum(r.comment_verbosity, "review.comment_verbosity", COMMENT_VERBOSITY_LEVELS, warnings);
   const e2eTestDelivery = normalizeOptionalEnum(r.e2e_test_delivery, "review.e2e_test_delivery", E2E_TEST_DELIVERY_MODES, warnings);
+  const e2eTestAutoTrigger = normalizeOptionalBoolean(r.e2e_test_auto_trigger, "review.e2e_test_auto_trigger", warnings);
   const pathInstructions = parseReviewPathInstructions(r.path_instructions, warnings);
   const instructions = parsePublicSafeText(r.instructions, "review.instructions", warnings);
   const excludePaths = parseReviewExcludePaths(r.exclude_paths, warnings);
@@ -2264,6 +2274,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
       maxFindingsPresent(maxFindings) ||
       commentVerbosity !== null ||
       e2eTestDelivery !== null ||
+      e2eTestAutoTrigger !== null ||
       pathInstructions.length > 0 ||
       instructions !== null ||
       excludePaths.length > 0 ||
@@ -2303,6 +2314,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
     maxFindings,
     commentVerbosity,
     e2eTestDelivery,
+    e2eTestAutoTrigger,
     pathInstructions,
     instructions,
     excludePaths,
@@ -2402,6 +2414,7 @@ function computeReviewConfigPresent(review: Omit<FocusManifestReviewConfig, "pre
     maxFindingsPresent(review.maxFindings) ||
     review.commentVerbosity !== null ||
     review.e2eTestDelivery !== null ||
+    review.e2eTestAutoTrigger !== null ||
     review.pathInstructions.length > 0 ||
     review.instructions !== null ||
     review.excludePaths.length > 0 ||
@@ -2447,6 +2460,7 @@ export function overlayReviewConfig(
     maxFindings: overlayMaxFindingsConfig(base.maxFindings, override.maxFindings),
     commentVerbosity: pickOverlayNullable(override.commentVerbosity, base.commentVerbosity),
     e2eTestDelivery: pickOverlayNullable(override.e2eTestDelivery, base.e2eTestDelivery),
+    e2eTestAutoTrigger: pickOverlayNullable(override.e2eTestAutoTrigger, base.e2eTestAutoTrigger),
     pathInstructions: override.pathInstructions.length > 0 ? [...override.pathInstructions] : [...base.pathInstructions],
     instructions: pickOverlayNullable(override.instructions, base.instructions),
     excludePaths: pickOverlayStringList(override.excludePaths, base.excludePaths),
@@ -2972,6 +2986,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   }
   if (review.commentVerbosity !== null) out.comment_verbosity = review.commentVerbosity;
   if (review.e2eTestDelivery !== null) out.e2e_test_delivery = review.e2eTestDelivery;
+  if (review.e2eTestAutoTrigger !== null) out.e2e_test_auto_trigger = review.e2eTestAutoTrigger;
   if (review.instructions !== null) out.instructions = review.instructions;
   if (review.pathInstructions.length > 0) out.path_instructions = review.pathInstructions.map((entry) => ({ path: entry.path, instructions: entry.instructions }));
   if (review.excludePaths.length > 0) out.exclude_paths = [...review.excludePaths];

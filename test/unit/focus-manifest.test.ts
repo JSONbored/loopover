@@ -35,6 +35,7 @@ import {
   resolveReviewVisualConfig,
   repoDocGenerationConfigToJson,
   resolveReviewMemoryManifestToggle,
+  resolveE2eTestAutoTriggerManifestToggle,
   reviewConfigToJson,
   overlayReviewConfig,
   parseReviewConfigMapping,
@@ -392,6 +393,7 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     maxFindings: "max_findings:",
     commentVerbosity: "comment_verbosity:",
     e2eTestDelivery: "e2e_test_delivery:",
+    e2eTestAutoTrigger: "e2e_test_auto_trigger:",
     pathInstructions: "path_instructions:",
     instructions: "instructions:",
     excludePaths: "exclude_paths:",
@@ -830,7 +832,7 @@ describe("compileFocusManifestPolicy", () => {
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
       gate: { present: false, enabled: null, checkMode: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null },
       settings: {},
-      review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: null, e2eTestDelivery: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
+      review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null, grounding: null, e2eTests: null, screenshots: null, improvementSignal: null },
       contentLane: { present: false, entryFileGlob: null, providerFileGlob: null, artifactGlob: null, collectionField: null, maxAppendedEntries: null, duplicateKeyFields: [], validatorId: null },
       repoDocGeneration: { present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 },
@@ -3568,6 +3570,35 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
     expect(resolveReviewMemoryManifestToggle(parseFocusManifest({}))).toBe(false); // absent ⇒ false
     expect(resolveReviewMemoryManifestToggle(parseFocusManifest({ review: { memory: false } }))).toBe(false);
     expect(resolveReviewMemoryManifestToggle(parseFocusManifest({ review: { memory: true } }))).toBe(true);
+  });
+
+  it("parses review.e2e_test_auto_trigger (default OFF), marks present, round-trips, and warns on a non-boolean (#4196)", () => {
+    expect(parseFocusManifest({ review: { e2e_test_auto_trigger: true } }).review.e2eTestAutoTrigger).toBe(true);
+    const on = parseFocusManifest({ review: { e2e_test_auto_trigger: true } });
+    expect(on.review.present).toBe(true); // an auto-trigger-only manifest IS present
+    expect(parseFocusManifest({ review: reviewConfigToJson(on.review) }).review).toEqual(on.review); // survives round-trip
+    // Explicit false is retained (and marks present, since the maintainer set it).
+    const off = parseFocusManifest({ review: { e2e_test_auto_trigger: false } });
+    expect(off.review.e2eTestAutoTrigger).toBe(false);
+    expect(off.review.present).toBe(true);
+    // Absent ⇒ null (the byte-identical default), config not present.
+    expect(parseFocusManifest({ review: {} }).review.e2eTestAutoTrigger).toBeNull();
+    // A non-boolean is ignored with a warning.
+    const bad = parseFocusManifest({ review: { e2e_test_auto_trigger: "yes" } });
+    expect(bad.review.e2eTestAutoTrigger).toBeNull();
+    expect(bad.warnings.some((w) => /review\.e2e_test_auto_trigger.*must be a boolean/.test(w))).toBe(true);
+  });
+
+  it("resolves review.e2e_test_auto_trigger's manifest toggle to a strict boolean, independent of features.e2eTests (#4196)", () => {
+    expect(resolveE2eTestAutoTriggerManifestToggle(null)).toBe(false); // null manifest (load failure) ⇒ false
+    expect(resolveE2eTestAutoTriggerManifestToggle(parseFocusManifest({}))).toBe(false); // absent ⇒ false
+    expect(resolveE2eTestAutoTriggerManifestToggle(parseFocusManifest({ review: { e2e_test_auto_trigger: false } }))).toBe(false);
+    expect(resolveE2eTestAutoTriggerManifestToggle(parseFocusManifest({ review: { e2e_test_auto_trigger: true } }))).toBe(true);
+    // The toggle reads purely off review.e2e_test_auto_trigger -- features.e2eTests being on has no bearing on it
+    // (the two are ANDed together by the caller, not merged here).
+    expect(
+      resolveE2eTestAutoTriggerManifestToggle(parseFocusManifest({ features: { e2eTests: true }, review: {} })),
+    ).toBe(false);
   });
 
   it("parses review.min_finding_severity, round-trips, and warns on invalid values (#2048)", () => {

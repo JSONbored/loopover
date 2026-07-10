@@ -530,6 +530,13 @@ review:
   # comment | commit. Default: null/comment (byte-identical -- no write access to any PR branch).
   # e2e_test_delivery: comment
 
+  # Opts THIS repo into the manifest_missing_tests AUTO-TRIGGER (#4196, part of the #4189 epic) -- an
+  # unprompted generation run whenever a PR looks like it needs tests. Separate from features.e2eTests, which
+  # only unlocks the maintainer-initiated paths (the `@gittensory generate-tests` command and the PR-panel
+  # checkbox). Bool | null. Default: null/false -- the auto-trigger never fires, even with e2eTests already
+  # on; a maintainer who wants unprompted generation opts in here explicitly, per repo.
+  # e2e_test_auto_trigger: false
+
   # Inline-comment layer toggles (#1956 / #1958). Bool | null. Default: null/false — byte-identical.
   # Requires operator flag GITTENSORY_REVIEW_INLINE_COMMENTS + cutover allowlist + review.inline_comments: true.
   # inline_comments: false

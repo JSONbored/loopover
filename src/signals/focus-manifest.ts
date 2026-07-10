@@ -298,6 +298,16 @@ export function resolveReviewMemoryManifestToggle(manifest: FocusManifest | null
   return manifest?.review.reviewMemory === true;
 }
 
+/** Resolve `review.e2e_test_auto_trigger` (#4196, part of the #4189 epic) from a possibly-null manifest (null =
+ *  load failure ⇒ reads as unset/false). Mirrors `resolveReviewMemoryManifestToggle` exactly — true ONLY when the
+ *  manifest explicitly set `review.e2e_test_auto_trigger: true`; null/false/absent ⇒ false. The caller ADDITIONALLY
+ *  requires `features.e2eTests` to already be enabled for this repo (via `resolveConvergedFeature`) — this toggle
+ *  alone never activates generation, it only decides whether an already-enabled repo also gets the unprompted
+ *  `manifest_missing_tests` auto-trigger on top of the maintainer-initiated command/checkbox paths. */
+export function resolveE2eTestAutoTriggerManifestToggle(manifest: FocusManifest | null): boolean {
+  return manifest?.review.e2eTestAutoTrigger === true;
+}
+
 /** Resolve `review.pre_merge_checks` from a possibly-null manifest (null = load failure ⇒ no checks). Centralized
  *  so the gate caller resolves them in one place with the null-manifest branch covered here (unit-tested) rather
  *  than inline in the processor. (#review-pre-merge-checks) */

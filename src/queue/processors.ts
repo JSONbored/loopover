@@ -433,6 +433,7 @@ import {
   resolveReviewPreMergeChecks,
   resolveReviewPromptOverrides,
   resolveReviewMemoryManifestToggle,
+  resolveE2eTestAutoTriggerManifestToggle,
   resolveReviewVisualConfig,
   type AiReviewCadence,
   type FocusManifestFinding,
@@ -623,15 +624,6 @@ const SWEEP_OPEN_PULL_REQUEST_SYNC_MAX_AGE_MS = 10 * 60 * 1000;
 const PR_PANEL_RETRIGGER_COMMAND_AUTHORIZATION: RepositoryCommandAuthorizationPolicy = {
   default: ["maintainer", "collaborator"],
   commands: { "review-now": ["maintainer", "collaborator"] },
-};
-// #4589: the generate-tests checkbox is hardcoded to maintainer-only regardless of what a repo's own
-// .gittensory.yml commandAuthorization might configure for the text-command version of generate-tests (which
-// CAN be widened to collaborator/confirmed_miner) -- a one-click checkbox is meaningfully lower-friction than
-// typing a command, so it gets a hard floor that can't be misconfigured away. Mirrors
-// PR_PANEL_RETRIGGER_COMMAND_AUTHORIZATION's exact same override pattern, one tier narrower (no collaborator).
-const PR_PANEL_GENERATE_TESTS_COMMAND_AUTHORIZATION: RepositoryCommandAuthorizationPolicy = {
-  default: ["maintainer"],
-  commands: { "generate-tests": ["maintainer"] },
 };
 const PR_PUBLIC_SURFACE_ACTIONS = new Set([
   "opened",
@@ -9285,7 +9277,12 @@ async function maybeApplyManifestPolicyGate(
     // tests" from scratch, per the issue's own requirement -- this is why the auto-trigger lives inside this
     // exact manifestPolicyGateMode-gated block instead of a parallel code path: that is the only place this
     // finding is computed at all today.
-    if (args.pr.headSha && policyFindings.some((finding) => finding.code === "manifest_missing_tests") && e2eTestGenAvailable) {
+    // Deliberately gated by its OWN separate manifest toggle (review.e2e_test_auto_trigger) on top of
+    // e2eTestGenAvailable -- enabling features.e2eTests only unlocks the maintainer-initiated command/checkbox
+    // paths below; it must never, by itself, start firing generation unprompted on every under-tested PR. A
+    // repo opts into the auto-trigger explicitly, in addition to the base feature.
+    const e2eAutoTriggerOptedIn = resolveE2eTestAutoTriggerManifestToggle(manifest);
+    if (args.pr.headSha && policyFindings.some((finding) => finding.code === "manifest_missing_tests") && e2eTestGenAvailable && e2eAutoTriggerOptedIn) {
       const e2eTargetKey = `${args.repoFullName}#${args.pr.number}`;
       // Double-generation guard: an unchanged head SHA re-entering this pass (a re-review/sweep tick, not a
       // new push) must never re-spend an LLM call or repost a duplicate suggestion. A genuinely NEW push
@@ -11874,7 +11871,7 @@ async function maybePublishPrPublicSurface(
         // #4589: only rendered when there's an actual gap AND the checkbox would work for this repo -- same
         // condition testCoverageBody gates its own (informational) collapsible on, so the two always agree.
         ...(missingTestsFinding && e2eTestGenAvailable
-          ? { generateTestsLabel: `${PR_PANEL_GENERATE_TESTS_MARKER} Generate an AI Playwright test for this PR` }
+          ? { generateTestsLabel: `${PR_PANEL_GENERATE_TESTS_MARKER} **[BETA]** Generate an AI Playwright test for this PR` }
           : {}),
         ...(beforeAfter.length > 0 ? { beforeAfter } : {}),
         ...(changedFilesSummaryEnabledForReview
@@ -13337,12 +13334,15 @@ async function maybeProcessPrPanelRetrigger(
  * `runE2eTestGenerationAndDeliver` core `@gittensory generate-tests` (#4195) and the `manifest_missing_tests`
  * auto-trigger (#4196) already use, rather than a full panel re-render.
  *
- * Hardcoded to `commandAuthorization: PR_PANEL_GENERATE_TESTS_COMMAND_AUTHORIZATION` (maintainer-only, one
- * tier narrower than the retrigger's own maintainer+collaborator floor) regardless of what a repo's own
- * `.gittensory.yml` might configure for the text-command version of `generate-tests` — a one-click checkbox
- * must never be wider than the deliberately narrow default the text command itself already has. An
- * unauthorized click is a SILENT no-op (no comment fetch, no patch, no revert, no explanation) — audit-logged
- * only, exactly mirroring `maybeProcessPrPanelRetrigger`'s own denial behavior above.
+ * Authorization uses the repo's OWN `settings.commandAuthorization` — same as the text-command version of
+ * `generate-tests` above, and configurable like every other command (#4589 follow-up: this used to hardcode a
+ * maintainer-only override here, overriding whatever `.gittensory.yml` configured; a self-hoster who wants
+ * contributors/confirmed miners to trigger test generation can now widen it there instead). Out of the box —
+ * no override configured — this still resolves to maintainer-only, since `DEFAULT_COMMAND_AUTHORIZATION_POLICY`
+ * already restricts `generate-tests` to `["maintainer"]` and `normalizeCommandRoleList` clamps any configured
+ * widening to `maintainer`/`collaborator`/`confirmed_miner` (the spoofable raw `pr_author` role is always
+ * dropped for this command). An unauthorized click is a SILENT no-op (no comment fetch, no patch, no revert, no
+ * explanation) — audit-logged only, exactly mirroring `maybeProcessPrPanelRetrigger`'s own denial behavior above.
  */
 async function maybeProcessPrPanelGenerateTests(
   env: Env,
@@ -13389,7 +13389,7 @@ async function maybeProcessPrPanelGenerateTests(
     issue,
     actor,
     commandName: "generate-tests" as GittensoryMentionCommandName,
-    settings: { ...settings, commandAuthorization: PR_PANEL_GENERATE_TESTS_COMMAND_AUTHORIZATION },
+    settings,
     pr,
     needsMinerDetection: false,
   });
@@ -13404,7 +13404,7 @@ async function maybeProcessPrPanelGenerateTests(
         deliveryId,
         repoFullName,
         commentId: comment.id,
-        allowedRoles: commandAuthorizationAllowedRoles(PR_PANEL_GENERATE_TESTS_COMMAND_AUTHORIZATION, "generate-tests"),
+        allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "generate-tests"),
       },
     });
     await recordGithubProductUsage(env, "e2e_tests_generation_denied", {

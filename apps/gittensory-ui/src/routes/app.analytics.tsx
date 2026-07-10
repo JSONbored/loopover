@@ -4,6 +4,7 @@ import { Download } from "lucide-react";
 import { BoundaryBadge, Stat, StatusPill } from "@/components/site/control-primitives";
 import { RefreshMeta } from "@/components/site/refresh-meta";
 import { StateActionButton, StateBoundary } from "@/components/site/state-views";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { TrendChart } from "@/components/site/trend-chart";
 import {
   AdoptionRetentionPanel,
@@ -32,8 +33,17 @@ import {
   SlopBandCalibrationCard,
   type SlopOutcomeCalibration,
 } from "@/components/site/app-panels/slop-band-calibration-card";
+import {
+  ANALYTICS_WINDOW_OPTIONS,
+  ANALYTICS_WINDOW_STORAGE_KEY,
+  DEFAULT_ANALYTICS_WINDOW_DAYS,
+  operatorDashboardPath,
+  parseAnalyticsWindowDays,
+  type AnalyticsWindowDays,
+} from "@/lib/analytics-window";
 import { useApiResource } from "@/lib/api/use-api-resource";
 import { exportOperatorDashboardCsv } from "@/lib/csv-export";
+import { useLocalStorage } from "@/lib/use-local-storage";
 
 export const Route = createFileRoute("/app/analytics")({
   component: ProductAnalytics,
@@ -132,8 +142,13 @@ type OperatorDashboard = {
 };
 
 function ProductAnalytics() {
+  const [windowDays, setWindowDays, windowHydrated] = useLocalStorage<AnalyticsWindowDays>(
+    ANALYTICS_WINDOW_STORAGE_KEY,
+    DEFAULT_ANALYTICS_WINDOW_DAYS,
+  );
+  const selectedWindow = parseAnalyticsWindowDays(windowDays);
   const dashboard = useApiResource<OperatorDashboard>(
-    "/v1/app/operator-dashboard",
+    operatorDashboardPath(selectedWindow),
     "Product analytics",
   );
   const data = dashboard.status === "ready" ? dashboard.data : null;
@@ -169,7 +184,30 @@ function ProductAnalytics() {
                 usage rollups — not security audit logs or private source data.
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {windowHydrated ? (
+                <ToggleGroup
+                  type="single"
+                  size="sm"
+                  variant="outline"
+                  value={String(selectedWindow)}
+                  onValueChange={(value) => {
+                    if (!value) return;
+                    setWindowDays(parseAnalyticsWindowDays(Number(value)));
+                  }}
+                  aria-label="Analytics time window"
+                >
+                  {ANALYTICS_WINDOW_OPTIONS.map((days) => (
+                    <ToggleGroupItem
+                      key={days}
+                      value={String(days)}
+                      aria-label={`${days} day window`}
+                    >
+                      {days}d
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              ) : null}
               <StatusPill
                 status={
                   data.usageRollupStatus?.status === "ready" ||

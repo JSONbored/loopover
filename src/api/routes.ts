@@ -192,7 +192,7 @@ import {
   LATEST_RECOMMENDED_MCP_VERSION,
   MINIMUM_SUPPORTED_MCP_VERSION,
 } from "../services/mcp-compatibility";
-import { buildOperatorDashboardPayload } from "../services/operator-dashboard";
+import { buildOperatorDashboardPayload, clampOperatorDashboardWindowDays } from "../services/operator-dashboard";
 import { buildSelfDogfoodRegistrationPack, resolveSelfDogfoodRepoFullName } from "../services/self-dogfood-registration-pack";
 import { buildSubnetInterfaceDescriptor } from "../services/subnet-interface";
 import { buildPublicRepoQuality, type PublicRepoQuality } from "../services/public-repo-quality";
@@ -1471,7 +1471,8 @@ export function createApp() {
   app.get("/v1/app/operator-dashboard", async (c) => {
     const forbidden = await requireAppRole(c, ["operator"]);
     if (forbidden) return forbidden;
-    return c.json(await buildOperatorDashboardPayload(c.env));
+    const days = clampOperatorDashboardWindowDays(Number(c.req.query("days")));
+    return c.json(await buildOperatorDashboardPayload(c.env, { windowDays: days }));
   });
 
   // Dead-letter-queue table view (#2214), read-only: the self-host queue backend's admin surface is mirrored

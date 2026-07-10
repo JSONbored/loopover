@@ -79,9 +79,16 @@ export type OperatorDashboardPayload = {
 };
 
 const USAGE_WINDOW_DAYS = 7;
+// Gate-precision and cycle-time cards (#2191/#2194) keep a fixed 90d lookback for statistical stability.
+const GATE_ANALYTICS_WINDOW_DAYS = 90;
 
-export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorDashboardPayload> {
-  const usageSince = new Date(Date.now() - USAGE_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+export async function buildOperatorDashboardPayload(
+  env: Env,
+  options: { windowDays?: number } = {},
+): Promise<OperatorDashboardPayload> {
+  const windowDays = clampOperatorDashboardWindowDays(options.windowDays);
+  const usageSince = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+  const mcpSince = new Date(Date.now() - USAGE_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const [
     repositories,
     installations,
@@ -117,14 +124,14 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     summarizeProductUsageEvents(env, usageSince),
     listProductUsageDailyRollups(env, { limit: 14 }),
     getProductUsageRollupStatus(env),
-    summarizeMcpCompatibilityAdoption(env, usageSince),
-    getCommandUsefulnessSummary(env),
-    buildRecommendationQualityReport(env, { windowDays: 90 }),
-    computeFleetAnalytics(env, { windowDays: 90 }),
+    summarizeMcpCompatibilityAdoption(env, mcpSince),
+    getCommandUsefulnessSummary(env, { windowDays }),
+    buildRecommendationQualityReport(env, { windowDays: GATE_ANALYTICS_WINDOW_DAYS }),
+    computeFleetAnalytics(env, { windowDays: GATE_ANALYTICS_WINDOW_DAYS }),
     // #2191: reuse the existing eval (no new compute); it fails safe to an empty report on any read error.
-    computeGateEval(env, { days: 90, nowMs: Date.now() }),
+    computeGateEval(env, { days: GATE_ANALYTICS_WINDOW_DAYS, nowMs: Date.now() }),
     // #2194: cycle-time percentiles from the stats feed; fails safe to an empty aggregate.
-    computeCycleTimeAggregate(env, { days: 90, nowMs: Date.now() }),
+    computeCycleTimeAggregate(env, { days: GATE_ANALYTICS_WINDOW_DAYS, nowMs: Date.now() }),
     computeCalibration(env, operatorAgentConfig(env)),
     computeAgentHealth(env, operatorAgentConfig(env)),
     buildOrgSlopCalibration(env),
@@ -132,7 +139,7 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
   const weeklyValueReport = buildWeeklyValueReport({
     generatedAt: nowIso(),
     variant: "operator",
-    days: USAGE_WINDOW_DAYS,
+    days: windowDays,
     repositories,
     installations,
     health,
@@ -154,8 +161,8 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
       { label: "Installations", value: String(installations.length), delta: `${installedRepos} installed repos` },
       { label: "Registered repos", value: String(registeredRepos), delta: registry ? `${registry.repoCount} in latest registry` : "registry missing" },
       { label: "Digest subscriptions", value: String(digestSubscriptions), delta: "store-only" },
-      { label: "Product events", value: String(usageSummary.totalEvents), delta: "last 7 days" },
-      { label: "Active users", value: String(usageSummary.activeActors), delta: "hashed, last 7 days" },
+      { label: "Product events", value: String(usageSummary.totalEvents), delta: `last ${windowDays} days` },
+      { label: "Active users", value: String(usageSummary.activeActors), delta: `hashed, last ${windowDays} days` },
       { label: "Activation rollups", value: usageRollupStatus.status, delta: usageRollupStatus.latestRollupDay ?? "not generated" },
       {
         label: "MCP stale clients",
@@ -269,4 +276,10 @@ function sparklineFromCounts(value: number, total: number): number[] {
   const safeTotal = Math.max(total, 1);
   const ratio = Math.min(1, Math.max(0, value / safeTotal));
   return [Math.round(ratio * 40), Math.round(ratio * 55), Math.round(ratio * 70), Math.round(ratio * 85), Math.round(ratio * 100)];
+}
+
+export function clampOperatorDashboardWindowDays(value: number | undefined): number {
+  const numeric = Number(value);
+  if (numeric === 7 || numeric === 30 || numeric === 90) return numeric;
+  return USAGE_WINDOW_DAYS;
 }

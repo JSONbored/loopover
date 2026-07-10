@@ -209,6 +209,150 @@ describe("resolveUnlinkedIssueMatchDisposition", () => {
       expect(result?.kind).toBe("hold");
     });
 
+    describe("velocity exception for a CONFIRMED official miner (#4512)", () => {
+      function stubMinerFetch(githubUsername: string) {
+        return vi.fn(async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url === "https://api.gittensor.io/miners") return Response.json([{ githubUsername, githubId: "123", totalPrs: 2, totalMergedPrs: 2, isEligible: true, credibility: 1 }]);
+          if (url === "https://api.gittensor.io/miners/123/prs") return Response.json([]);
+          if (url === "https://api.gittensor.io/miners/123") return Response.json({});
+          if (url === "https://mirror.gittensor.io/api/v1/miners/123/issues") return Response.json({ issues: [] });
+          return Response.json({});
+        });
+      }
+
+      it("holds (does NOT close) a same-contributor repeat within the last hour when the author is a CONFIRMED official miner", async () => {
+        const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+        const env = createTestEnv({ AI: { run } as unknown as Ai });
+        await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+        vi.stubGlobal("fetch", stubMinerFetch("contributor-a"));
+
+        const first = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+        expect(first?.kind).toBe("hold");
+
+        // Immediately repeated (well within the 1h velocity-exception window) -- confirmed miner, so this
+        // must hold (with a distinct "held pending confirmation" message), not close.
+        const second = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, pullNumber: 102, config: config() });
+        expect(second?.kind).toBe("hold");
+        expect(second?.reason).toContain("within the last hour");
+        expect(second?.comment).toContain("reviewed manually");
+
+        vi.unstubAllGlobals();
+      });
+
+      it("still escalates to a CLOSE for a CONFIRMED miner once the repeat gap exceeds the velocity-exception window", async () => {
+        const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+        const env = createTestEnv({ AI: { run } as unknown as Ai });
+        await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+        vi.stubGlobal("fetch", stubMinerFetch("contributor-a"));
+
+        const first = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+        expect(first?.kind).toBe("hold");
+
+        // Backdate the recorded occurrence by 2 hours -- beyond the 1h velocity-exception window, so even a
+        // confirmed miner gets the ordinary escalation.
+        await env.DB.prepare("UPDATE audit_events SET created_at = ? WHERE actor = ?")
+          .bind(new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), "contributor-a")
+          .run();
+
+        const second = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, pullNumber: 102, config: config() });
+        expect(second?.kind).toBe("close");
+
+        vi.unstubAllGlobals();
+      });
+
+      it("a THIRD match from the same confirmed miner hits the miner-detection cache instead of re-fetching", async () => {
+        const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+        const env = createTestEnv({ AI: { run } as unknown as Ai });
+        await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+        const fetchMock = stubMinerFetch("contributor-a");
+        vi.stubGlobal("fetch", fetchMock);
+
+        const first = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+        expect(first?.kind).toBe("hold");
+        const second = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, pullNumber: 102, config: config() });
+        expect(second?.kind).toBe("hold");
+        const fetchCallsAfterSecond = fetchMock.mock.calls.length;
+        expect(fetchCallsAfterSecond).toBeGreaterThan(0); // the second call did fetch+cache the miner status
+
+        const third = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, pullNumber: 103, config: config() });
+        expect(third?.kind).toBe("hold");
+        // The miner-detection cache (5m TTL) satisfies the third lookup -- no additional /miners* fetch.
+        expect(fetchMock.mock.calls.length).toBe(fetchCallsAfterSecond);
+      });
+
+      it("a miner-detection cache READ failure falls back to a fresh fetch rather than a false negative", async () => {
+        const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+        const env = createTestEnv({ AI: { run } as unknown as Ai });
+        await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+        vi.stubGlobal("fetch", stubMinerFetch("contributor-a"));
+        const realPrepare = env.DB.prepare.bind(env.DB);
+        env.DB.prepare = ((sql: string) => {
+          if (/SELECT.*FROM.*official_miner_detections/i.test(sql)) throw new Error("d1 down");
+          return realPrepare(sql);
+        }) as typeof env.DB.prepare;
+
+        const first = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+        expect(first?.kind).toBe("hold");
+        const second = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, pullNumber: 102, config: config() });
+        // The cache read is broken, but the fresh fetch still confirms the miner -> velocity exception still applies.
+        expect(second?.kind).toBe("hold");
+      });
+
+      it("a miner-detection cache WRITE failure still uses the freshly-fetched confirmed status for this call", async () => {
+        const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+        const env = createTestEnv({ AI: { run } as unknown as Ai });
+        await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+        vi.stubGlobal("fetch", stubMinerFetch("contributor-a"));
+        const realPrepare = env.DB.prepare.bind(env.DB);
+        env.DB.prepare = ((sql: string) => {
+          if (/INSERT INTO.*official_miner_detections/i.test(sql)) throw new Error("d1 down");
+          return realPrepare(sql);
+        }) as typeof env.DB.prepare;
+
+        const first = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+        expect(first?.kind).toBe("hold");
+        const second = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, pullNumber: 102, config: config() });
+        expect(second?.kind).toBe("hold");
+      });
+
+      it("does NOT apply the velocity exception when the Gittensor API itself is unavailable (fail-safe: uncertain identity never gets leniency)", async () => {
+        const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+        const env = createTestEnv({ AI: { run } as unknown as Ai });
+        await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+        // The /miners fetch itself fails outright -- fetchOfficialGittensorMiner converts this into
+        // {status: "unavailable"}, which must never be treated as "confirmed".
+        vi.stubGlobal("fetch", async () => {
+          throw new Error("network down");
+        });
+
+        const first = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+        expect(first?.kind).toBe("hold");
+        const second = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, pullNumber: 102, config: config() });
+        expect(second?.kind).toBe("close");
+      });
+
+      it("does NOT apply the velocity exception to an UNCONFIRMED (not_found) author repeating just as fast", async () => {
+        const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+        const env = createTestEnv({ AI: { run } as unknown as Ai });
+        await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+        // /miners returns an empty roster -- contributor-a resolves to "not_found", never "confirmed".
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url === "https://api.gittensor.io/miners") return Response.json([]);
+          return Response.json({});
+        });
+
+        const first = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+        expect(first?.kind).toBe("hold");
+
+        const second = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, pullNumber: 102, config: config() });
+        expect(second?.kind).toBe("close");
+
+        vi.unstubAllGlobals();
+      });
+    });
+
     it("does not record an occurrence (and cannot escalate later) when the author login is only whitespace", async () => {
       const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
       const env = createTestEnv({ AI: { run } as unknown as Ai });

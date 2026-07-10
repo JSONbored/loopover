@@ -2616,6 +2616,20 @@ export async function hasRecentAuditEventForOtherTarget(env: Env, actor: string,
   return rows.length > 0;
 }
 
+/** Timestamp-returning variant of {@link hasRecentAuditEventForOtherTarget} (#4512): the newest matching
+ *  row's `createdAt`, or `null` when there is none. Backs velocity-aware escalation logic that needs to know
+ *  HOW RECENTLY a prior match happened, not just whether one exists within the window. */
+export async function mostRecentAuditEventForOtherTarget(env: Env, actor: string, eventType: string, currentTargetKey: string, sinceIso: string): Promise<string | null> {
+  const db = getDb(env.DB);
+  const rows = await db
+    .select({ createdAt: auditEvents.createdAt })
+    .from(auditEvents)
+    .where(and(eq(auditEvents.actor, actor), eq(auditEvents.eventType, eventType), not(eq(auditEvents.targetKey, currentTargetKey)), gte(auditEvents.createdAt, sinceIso)))
+    .orderBy(desc(auditEvents.createdAt))
+    .limit(1);
+  return rows[0]?.createdAt ?? null;
+}
+
 /** Count-returning variant of {@link hasRecentAuditEvent}, additionally scoped to one `targetKey` (e.g. a single
  *  `owner/repo#123` PR/issue) rather than the actor's activity across the whole repo. Backs the review-request
  *  nagging cooldown (#2463): counting how many `@gittensory` pings a contributor has sent on ONE thread within

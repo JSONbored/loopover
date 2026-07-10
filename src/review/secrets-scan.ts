@@ -1,113 +1,20 @@
 // Reusable secret-pattern scanner (the `secretsScan` capability). Deterministic, no deps.
 // Callers run scanForSecrets() on submitted diff/text; a hit typically forces a close/manual verdict.
 //
-// SELF-CONTAINED NATIVE PORT (reviewbot→gittensory convergence): every type + pattern this module needs is
-// defined HERE. No imports from reviewbot. The logic is byte-faithful to the reviewbot source
-// (src/core/secrets-scan.ts); there are no stricter-tsconfig deltas — the module is already total.
+// SELF-CONTAINED NATIVE PORT (reviewbot→gittensory convergence): byte-faithful to the reviewbot source
+// (src/core/secrets-scan.ts); there are no stricter-tsconfig deltas — the module is already total. No
+// imports from reviewbot.
 //
-// #2553: widened to match review-enrichment/src/analyzers/secret-scan.ts's richer, higher-recall rule set
-// (google_api_key, jwt, generic_secret_assignment) so the deterministic hard blocker (safety.ts's
-// HARD_SECRET_KINDS) catches the same patterns REES's advisory-only enrichment brief already does. Kept as a
-// second, independent copy here rather than a cross-package import: review-enrichment deploys standalone on
-// Railway with its own tsconfig/build/test pipeline (see review-enrichment/package.json), so importing across
-// that boundary would break its independence — the same reasoning this file's own header already documents
-// for staying self-contained relative to reviewbot.
+// #4608: the format-specific patterns + placeholder-value heuristics are shared with
+// content-lane/security-scan.ts via ./secret-patterns (both live under src/, same build, same deploy — no
+// deploy-independence reason to hand-duplicate them; that duplication already caused two independent,
+// currently-live drifts, see #4587/#4604). review-enrichment/src/analyzers/secret-scan.ts (REES) stays a
+// genuinely separate, deliberately wider copy — not imported here — because REES deploys standalone on
+// Railway with its own tsconfig/build/test pipeline; the same reasoning this file used to document for
+// itself before the #4608 extraction. See ./secret-patterns's header and
+// scripts/check-engine-parity.ts's SECRET_DETECTION_TWIN_PAIR for how REES's copy is kept from drifting.
 
-const SECRET_PATTERNS: Array<{ name: string; re: RegExp }> = [
-  { name: "github_token", re: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/ },
-  { name: "github_pat", re: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/ },
-  { name: "private_key_block", re: /-----BEGIN(?: RSA| EC| OPENSSH| PGP| DSA)? PRIVATE KEY-----/ },
-  { name: "aws_access_key", re: /\bAKIA[0-9A-Z]{16}\b/ },
-  { name: "slack_token", re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
-  { name: "google_api_key", re: /\bAIza[0-9A-Za-z_-]{35}\b/ },
-  { name: "gitlab_token", re: /\bglpat-[0-9A-Za-z_-]{20}(?![0-9A-Za-z_-])/ },
-  { name: "npm_token", re: /\bnpm_[A-Za-z0-9]{36}\b/ },
-  // Stripe live secret / restricted keys: `sk_live_` / `rk_live_` + >=24 base62.
-  { name: "stripe_secret_key", re: /\b(?:sk|rk)_live_[0-9A-Za-z]{24,}\b/ },
-  // SendGrid API key: `SG.` + 22-char id + `.` + 43-char secret (base64url).
-  { name: "sendgrid_key", re: /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/ },
-  // Hugging Face user access token: `hf_` + 34 base62 chars.
-  { name: "huggingface_token", re: /\bhf_[A-Za-z0-9]{34}\b/ },
-  // Voyage AI API key: `pa-` (platform) or `al-` (MongoDB Atlas) + base62 body.
-  { name: "voyage_api_key", re: /\b(?:pa|al)-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])/ },
-  // Firecrawl API key: `fc-` + base62 body (alnum only; reject hyphen-continued identifiers).
-  { name: "firecrawl_api_key", re: /\bfc-[A-Za-z0-9]{16,}(?![A-Za-z0-9_-])/ },
-  { name: "jwt", re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/ },
-  { name: "seed_or_mnemonic", re: /\b(?:seed phrase|mnemonic)\b/i },
-  { name: "bittensor_key", re: /\b(?:hot|cold)key\b\s*[:=]/i },
-];
-
-// Deliberately NOT in SECRET_PATTERNS above: unlike the format-specific patterns (a real GitHub token/AWS key
-// ALWAYS matches its exact character format, so a bare .test() is precise enough), a keyword-plus-quoted-value
-// SHAPE also matches plenty of non-secrets -- a Zod schema field (`password: z.string()`), a TypeScript type
-// declaration, or a placeholder value ("xxx", "your-api-key-here", "<REDACTED>"). Captured so each match's
-// VALUE can be checked against isPlaceholderSecretValue before counting as a hit; the value itself is never
-// returned from this module (only the kind name), preserving the existing never-echo-the-secret guarantee.
-const GENERIC_SECRET_ASSIGNMENT_PATTERN =
-  /((?:api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret))["']?\s*[:=]\s*["']([A-Za-z0-9+/=_-]{16,})["']/gi;
-
-const PLACEHOLDER_VALUE_PATTERN = /placeholder|change[_-]?me|your[_-]|<[^>]*>|\bexample\b|redacted|dummy|\bsample\b|\btodo\b|\bfixme\b|\binsert\b|replace[_-]?me|\bfake\b/i;
-
-// #2553 gate review finding: a string with NO repeated characters (e.g. "abcdefghijklmnop123") has HIGH
-// Shannon entropy by raw character-frequency counting, but is obviously not a real secret -- entropy alone
-// only measures frequency, not ORDER, so a keyboard-sequential/alphabetical run slips past a pure distinct-
-// character-count check. Detect the longest run of consecutive ascending or descending character codes (e.g.
-// "abcdefg" or "9876543") and treat a long one as a human-constructed test value, not a randomly generated
-// credential -- real API keys/tokens essentially never contain a 6+ character monotonic run.
-const MIN_SEQUENTIAL_RUN_LENGTH = 6;
-function hasLongSequentialRun(value: string): boolean {
-  let ascendingRun = 1;
-  let descendingRun = 1;
-  for (let i = 1; i < value.length; i += 1) {
-    const diff = value.charCodeAt(i) - value.charCodeAt(i - 1);
-    ascendingRun = diff === 1 ? ascendingRun + 1 : 1;
-    descendingRun = diff === -1 ? descendingRun + 1 : 1;
-    if (ascendingRun >= MIN_SEQUENTIAL_RUN_LENGTH || descendingRun >= MIN_SEQUENTIAL_RUN_LENGTH) return true;
-  }
-  return false;
-}
-
-// Lowercase hyphenated mock names are fixtures; mixed-case/digit-bearing values containing "mock" remain
-// plausible credentials and must still be reported by the generic assignment scanner.
-const LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN = /^(?:[a-z]+-)*mock(?:-[a-z]+)*$/;
-
-// All-lowercase-letters value check, shared by the self-naming-suffix exclusion below.
-const ALL_LOWERCASE_SEGMENTS_PATTERN = /^[a-z]+(?:[-_][a-z]+)*$/;
-
-// #4579-followup (metagraphed/gittensory#4524 "token = default-session-token"/"beta-session-token",
-// awesome-claude#4758 "embedded_secret: unsafe_install_or_secret" -- both confirmed live, no real secret
-// present): a value whose OWN last hyphen/underscore-separated segment is itself one of the same secret-shaped
-// trigger words reads as a NAME for a concept ("this is a kind of token/secret"), not an opaque credential --
-// a real generated token/key value never ends by literally restating what kind of thing it is. Deliberately
-// NARROWER than "any multi-segment lowercase phrase": a Diceware-style passphrase like
-// "alpha-bravo-charlie-delta" doesn't end in a trigger word, so it still correctly flags (regression guard
-// below) -- only values that self-identify as a token/secret/key/password NAME are excluded.
-const SELF_NAMING_FIXTURE_SUFFIX_PATTERN = /[-_](?:token|secret|key|password|passwd)$/i;
-
-/** True for an obvious non-secret filler value: a known placeholder phrase, a string built from at most 2
- *  distinct characters (e.g. "xxxxxxxxxxxxxxxx", "----------------"), a long monotonic character-code run
- *  (e.g. "abcdefghijklmnop123"), or a lowercase identifier whose own last segment self-names as a secret kind
- *  (e.g. "default-session-token", "unsafe_install_or_secret"). */
-function isPlaceholderSecretValue(value: string): boolean {
-  if (PLACEHOLDER_VALUE_PATTERN.test(value)) return true;
-  if (new Set(value.toLowerCase()).size <= 2) return true;
-  if (LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN.test(value)) return true;
-  if (ALL_LOWERCASE_SEGMENTS_PATTERN.test(value) && SELF_NAMING_FIXTURE_SUFFIX_PATTERN.test(value)) return true;
-  return hasLongSequentialRun(value);
-}
-
-function hasGenericSecretAssignment(text: string): boolean {
-  // No zero-length-match / lastIndex-stall guard needed: the pattern's captured value alone requires 16+
-  // characters, so every match is well over 16 characters long and lastIndex always advances past match.index.
-  GENERIC_SECRET_ASSIGNMENT_PATTERN.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = GENERIC_SECRET_ASSIGNMENT_PATTERN.exec(text)) !== null) {
-    // The key and value groups are mandatory (not `?`/`*`-wrapped), so both are always present
-    // whenever the overall match succeeds -- non-null by construction, not runtime branches.
-    if (!isPlaceholderSecretValue(match[2]!)) return true;
-  }
-  return false;
-}
+import { hasGenericSecretAssignment, SECRET_PATTERNS } from "./secret-patterns";
 
 // #3041: the one place the pattern list (format-specific SECRET_PATTERNS + the generic keyword-assignment
 // heuristic) is applied to a string. Both `scanForSecrets` (whole-text scan) and

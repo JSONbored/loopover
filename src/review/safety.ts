@@ -7,6 +7,7 @@
 
 import type { AdvisoryFinding } from "../types";
 import { neutralizePromptInjection, safeReviewTitle } from "./prompt-injection";
+import { HARD_SECRET_KINDS } from "./secret-patterns";
 import { scanDiffForSecretsWithLocations } from "./secrets-scan";
 
 // Concrete credential formats only — NOT the weak heuristics (`seed_or_mnemonic` / `bittensor_key`) that
@@ -14,31 +15,11 @@ import { scanDiffForSecretsWithLocations } from "./secrets-scan";
 // "mnemonic" in a .toml, .github/workflows/**, or wrangler/workers config is NOT a leaked credential, but it
 // matches those two patterns — on these Bittensor repos that wrongly hard-blocked owner config/workflow PRs
 // (RC6: #1505/#1495/#1485). A real-format token IS a leak regardless of the file it lives in, so we keep the
-// concrete formats as hard blockers and ignore only the ambiguous heuristics. This mirrors the same gate the
-// content lane already uses (src/review/content-lane/security-scan.ts).
-//
-// #2553: widened to match review-enrichment/src/analyzers/secret-scan.ts's richer, higher-recall rule set.
-// google_api_key/jwt are as format-precise as the original five (near-zero false-positive risk).
-// generic_secret_assignment is the one keyword-shaped pattern here — secrets-scan.ts already excludes
-// placeholder/type-declaration/schema-shaped matches (see isPlaceholderSecretValue there) before this kind
-// is ever produced, so it is safe to treat as an unconditional hard blocker like the rest.
-const HARD_SECRET_KINDS = new Set([
-  "github_token",
-  "github_pat",
-  "private_key_block",
-  "aws_access_key",
-  "slack_token",
-  "google_api_key",
-  "gitlab_token",
-  "npm_token",
-  "stripe_secret_key",
-  "sendgrid_key",
-  "huggingface_token",
-  "voyage_api_key",
-  "firecrawl_api_key",
-  "jwt",
-  "generic_secret_assignment",
-]);
+// concrete formats as hard blockers and ignore only the ambiguous heuristics. HARD_SECRET_KINDS is shared
+// (#4608) with the same gate the content lane uses (src/review/content-lane/security-scan.ts) via
+// ./secret-patterns — google_api_key/jwt/generic_secret_assignment (#2553) and voyage_api_key/
+// firecrawl_api_key (#4604) are as format-precise as the original five, so all are safe unconditional hard
+// blockers; see that module's header for the full reasoning.
 
 /** True when the safety scan is enabled. Flag-OFF (default) → every helper below is a no-op pass-through. */
 export function isSafetyEnabled(env: {

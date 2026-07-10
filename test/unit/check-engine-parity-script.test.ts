@@ -31,6 +31,8 @@ import {
   runEngineParityMain,
   SAFE_URL_MARKERS,
   SAFE_URL_TWIN_PAIR,
+  SECRET_DETECTION_MARKERS,
+  SECRET_DETECTION_TWIN_PAIR,
   SHARES_MEANINGFUL_FILE_MARKERS,
   SHARES_MEANINGFUL_FILE_TWIN_PAIR,
 } from "../../scripts/check-engine-parity";
@@ -242,13 +244,14 @@ describe("check-engine-parity script", () => {
   });
 
   describe("named twin-pair coverage (#4605)", () => {
-    it("registers the gate-decision, safe-url, diff-file-priority, and shares-meaningful-file pairs", () => {
+    it("registers the gate-decision, safe-url, diff-file-priority, shares-meaningful-file, and secret-detection pairs", () => {
       const areas = NAMED_TWIN_PAIRS.map(({ pair }) => pair.area);
       expect(areas).toEqual([
         "gate-decision",
         "content-lane",
         "diff-file-priority",
         "shares-meaningful-file",
+        "secret-detection",
       ]);
     });
 
@@ -262,7 +265,7 @@ describe("check-engine-parity script", () => {
       expect(scanned.some((discovered) => discovered.fileName === "safe-url.ts")).toBe(false);
     });
 
-    it("passes marker presence for all four named pairs against the real repo (regression guard)", () => {
+    it("passes marker presence for all five named pairs against the real repo (regression guard)", () => {
       for (const { pair, markers } of NAMED_TWIN_PAIRS) {
         const result = checkGateDecisionTwinPresence({ root: process.cwd(), pair, markers });
         expect(result.failures).toEqual([]);
@@ -307,12 +310,83 @@ describe("check-engine-parity script", () => {
       );
     });
 
-    it("includes all four named pairs in runEngineParityChecks pairsChecked", () => {
+    it("includes all five named pairs in runEngineParityChecks pairsChecked", () => {
       const result = runEngineParityChecks({ root: process.cwd() });
       const checkedAreas = result.pairsChecked.map((pair) => pair.area);
       for (const { pair } of NAMED_TWIN_PAIRS) {
         expect(checkedAreas).toContain(pair.area);
       }
+    });
+  });
+
+  describe("secret-detection twin coverage (#4608)", () => {
+    it("pairs src/review/secret-patterns.ts with REES's genuinely-separate, wider copy", () => {
+      expect(SECRET_DETECTION_TWIN_PAIR.hostRelative).toBe("src/review/secret-patterns.ts");
+      expect(SECRET_DETECTION_TWIN_PAIR.engineRelative).toBe(
+        "review-enrichment/src/analyzers/secret-scan.ts",
+      );
+      // Not discoverable by the generic src/{review,settings,signals} <-> packages/gittensory-engine scan:
+      // REES lives under review-enrichment/, a different root entirely.
+      const scanned = discoverEngineParityPairs({ root: process.cwd() });
+      expect(scanned.some((discovered) => discovered.fileName === "secret-patterns.ts")).toBe(false);
+    });
+
+    it("does not include the two kind names known to be named differently on REES's side (would false-fail)", () => {
+      // REES calls these `private_key` / `aws_access_key_id` rather than
+      // `private_key_block` / `aws_access_key` -- a pre-existing, out-of-scope naming divergence. Asserting
+      // their ABSENCE here documents the deliberate omission and guards against someone "completing the
+      // set" and reintroducing a false-fail.
+      expect(SECRET_DETECTION_MARKERS).not.toContain('"private_key_block"');
+      expect(SECRET_DETECTION_MARKERS).not.toContain('"aws_access_key"');
+    });
+
+    it("fails presence when the shared isPlaceholderSecretValue algorithm drifts on one side", () => {
+      // Reproduces the drift class #4608 exists to catch: one side silently drops a placeholder-detection
+      // exclusion rule (here, the mock-fixture carve-out) while the other keeps it. Both bodies start from
+      // the FULL marker set (join, not a hand-picked subset) so only the deliberately dropped line
+      // produces a failure -- a partial fixture would false-report every marker it happens to omit too.
+      const droppedMarker = "if (LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN.test(value)) return true;";
+      const hostBody = SECRET_DETECTION_MARKERS.join("\n");
+      const driftedEngineBody = SECRET_DETECTION_MARKERS.filter((marker) => marker !== droppedMarker).join("\n");
+      const result = checkGateDecisionTwinPresence({
+        root: "/fake",
+        readFile: (_root, relativePath) => {
+          if (relativePath === SECRET_DETECTION_TWIN_PAIR.hostRelative) return hostBody;
+          if (relativePath === SECRET_DETECTION_TWIN_PAIR.engineRelative) return driftedEngineBody;
+          throw new Error(`unexpected read: ${relativePath}`);
+        },
+        pair: SECRET_DETECTION_TWIN_PAIR,
+        markers: SECRET_DETECTION_MARKERS,
+      });
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]).toContain(SECRET_DETECTION_TWIN_PAIR.engineRelative);
+      expect(result.failures[0]).toContain(JSON.stringify(droppedMarker));
+    });
+
+    it("fails presence when a shared kind name is removed from REES's rule set", () => {
+      const body = [
+        "function isPlaceholderSecretValue(value: string): boolean {",
+        "if (PLACEHOLDER_VALUE_PATTERN.test(value)) return true;",
+        "if (new Set(value.toLowerCase()).size <= 2) return true;",
+        "if (LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN.test(value)) return true;",
+        "if (ALL_LOWERCASE_SEGMENTS_PATTERN.test(value) && SELF_NAMING_FIXTURE_SUFFIX_PATTERN.test(value)) return true;",
+        "return hasLongSequentialRun(value);",
+      ].join("\n");
+      const hostKinds = SECRET_DETECTION_MARKERS.filter((marker) => marker.startsWith('"')).join("\n");
+      const engineKindsMissingVoyage = hostKinds.replace('"voyage_api_key"\n', "");
+      const result = checkGateDecisionTwinPresence({
+        root: "/fake",
+        readFile: (_root, relativePath) => {
+          if (relativePath === SECRET_DETECTION_TWIN_PAIR.hostRelative) return `${body}\n${hostKinds}`;
+          if (relativePath === SECRET_DETECTION_TWIN_PAIR.engineRelative) return `${body}\n${engineKindsMissingVoyage}`;
+          throw new Error(`unexpected read: ${relativePath}`);
+        },
+        pair: SECRET_DETECTION_TWIN_PAIR,
+        markers: SECRET_DETECTION_MARKERS,
+      });
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]).toContain(SECRET_DETECTION_TWIN_PAIR.engineRelative);
+      expect(result.failures[0]).toContain(JSON.stringify('"voyage_api_key"'));
     });
   });
 

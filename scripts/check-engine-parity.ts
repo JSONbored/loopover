@@ -89,18 +89,62 @@ export const SHARES_MEANINGFUL_FILE_MARKERS = Object.freeze([
   "diffFilePriority(path) < 4",
 ] as const);
 
+/** `review-enrichment/src/analyzers/secret-scan.ts` (REES) is a genuinely separate, deliberately WIDER
+ *  advisory copy (deploys standalone on Railway with its own tsconfig/build/test pipeline — see that file's
+ *  own header) of the shared hard-block primitives now in `src/review/secret-patterns.ts` (#4608). Unlike
+ *  the other named pairs above, REES is NOT meant to converge toward byte-identical — a full-file comparison
+ *  would immediately false-fail on REES's 80+ extra rules — so this pair's markers cover only the narrow,
+ *  explicitly shared subset (the isPlaceholderSecretValue algorithm + the kind names both sides agree on). */
+export const SECRET_DETECTION_TWIN_PAIR: NamedTwinPair = Object.freeze({
+  area: "secret-detection",
+  hostRelative: "src/review/secret-patterns.ts",
+  engineRelative: "review-enrichment/src/analyzers/secret-scan.ts",
+  hostFileName: "secret-patterns.ts",
+  engineFileName: "secret-scan.ts",
+});
+
+// isPlaceholderSecretValue's signature + full body (one marker per line, so a merely-reformatted-but-
+// equivalent body doesn't false-fail) plus the HARD_SECRET_KINDS name literals that are EXACT string matches
+// against REES's `kind` values today. `private_key_block`/`aws_access_key` are deliberately EXCLUDED: REES
+// names the same two concepts `private_key`/`aws_access_key_id` (a pre-existing, out-of-scope naming
+// divergence) — including them here would false-fail this check on the very PR that introduces it.
+export const SECRET_DETECTION_MARKERS = Object.freeze([
+  "function isPlaceholderSecretValue(value: string): boolean {",
+  "if (PLACEHOLDER_VALUE_PATTERN.test(value)) return true;",
+  "if (new Set(value.toLowerCase()).size <= 2) return true;",
+  "if (LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN.test(value)) return true;",
+  "if (ALL_LOWERCASE_SEGMENTS_PATTERN.test(value) && SELF_NAMING_FIXTURE_SUFFIX_PATTERN.test(value)) return true;",
+  "return hasLongSequentialRun(value);",
+  '"github_token"',
+  '"github_pat"',
+  '"slack_token"',
+  '"google_api_key"',
+  '"gitlab_token"',
+  '"npm_token"',
+  '"stripe_secret_key"',
+  '"sendgrid_key"',
+  '"huggingface_token"',
+  '"voyage_api_key"',
+  '"firecrawl_api_key"',
+  '"jwt"',
+  '"generic_secret_assignment"',
+] as const);
+
 /** Every explicitly named twin pair, checked for core-marker presence in `runEngineParityChecks` — the
  *  same escape hatch #4518 built for `GATE_DECISION_TWIN_PAIR`, generalized (#4605) so a function-level or
  *  nested-directory duplicate can be added here without inventing a new mechanism. `GATE_DECISION_TWIN_PAIR`
  *  additionally gets the co-edit-or-version-bump enforcement (`checkGateDecisionVersionBump`) since its two
  *  sides are deliberately maintained as structurally divergent implementations; the other pairs here are
  *  meant to stay much closer to byte-identical, so presence-check plus a content marker on the specific
- *  historically-drifted value (see `DIFF_FILE_PRIORITY_MARKERS`) is the proportionate guard for now. */
+ *  historically-drifted value (see `DIFF_FILE_PRIORITY_MARKERS`) is the proportionate guard for now —
+ *  `SECRET_DETECTION_TWIN_PAIR` is the exception (see its own doc comment): its two sides are expected to
+ *  diverge everywhere EXCEPT the explicitly shared marker subset. */
 export const NAMED_TWIN_PAIRS: ReadonlyArray<{ pair: NamedTwinPair; markers: readonly string[] }> = Object.freeze([
   { pair: GATE_DECISION_TWIN_PAIR, markers: GATE_DECISION_CORE_MARKERS },
   { pair: SAFE_URL_TWIN_PAIR, markers: SAFE_URL_MARKERS },
   { pair: DIFF_FILE_PRIORITY_TWIN_PAIR, markers: DIFF_FILE_PRIORITY_MARKERS },
   { pair: SHARES_MEANINGFUL_FILE_TWIN_PAIR, markers: SHARES_MEANINGFUL_FILE_MARKERS },
+  { pair: SECRET_DETECTION_TWIN_PAIR, markers: SECRET_DETECTION_MARKERS },
 ]);
 const ENGINE_SRC_ROOT = "packages/gittensory-engine/src";
 const HOST_SRC_ROOT = "src";

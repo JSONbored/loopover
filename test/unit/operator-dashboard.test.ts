@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOperatorDashboardPayload, latestUsageRollup } from "../../src/services/operator-dashboard";
+import { buildOperatorDashboardPayload, clampOperatorDashboardWindowDays, latestUsageRollup } from "../../src/services/operator-dashboard";
 import type { ProductUsageDailyRollupRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -67,6 +67,22 @@ describe("operator dashboard payload", () => {
       expect.arrayContaining([
         expect.objectContaining({ label: "Fleet instances", value: "3", delta: "1 outlier(s)" }),
         expect.objectContaining({ label: "Fleet merge precision", value: "100%" }),
+      ]),
+    );
+  });
+
+  it("clamps unsupported window values to the default 7d lookback (#2199)", () => {
+    expect(clampOperatorDashboardWindowDays(30)).toBe(30);
+    expect(clampOperatorDashboardWindowDays(14)).toBe(7);
+  });
+
+  it("threads a custom windowDays through command usefulness metadata (#2199)", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "operator-dashboard-test-salt" });
+    const payload = await buildOperatorDashboardPayload(env, { windowDays: 90 });
+    expect(payload.commandUsefulness.windowDays).toBe(90);
+    expect(payload.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Product events", delta: "last 90 days" }),
       ]),
     );
   });

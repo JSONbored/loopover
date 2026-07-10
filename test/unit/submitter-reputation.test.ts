@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyOutcome,
+  classifySubmissionCadence,
   countOutcomes,
   DEFAULT_REPUTATION_CONFIG,
   getSubmitterReputation,
@@ -59,6 +60,97 @@ describe("classifyOutcome — reasonCode → quality bucket (#reputation-redesig
   });
   it("an unknown close reasonCode is EXCLUDED (be generous — never penalise on an unknown code)", () => {
     expect(classifyOutcome("closed", "some_future_reason")).toBe("exclude");
+  });
+});
+
+const MINUTE = 60_000;
+
+describe("classifySubmissionCadence — median inter-arrival gap (#4514)", () => {
+  it("computes the median gap from ascending timestamps and flags a superhuman-pace outlier", () => {
+    // 5 submissions, 4 gaps of exactly 5 minutes each: median 5 <= default 15-minute outlier bar.
+    const base = 1_700_000_000_000;
+    const timestamps = [0, 1, 2, 3, 4].map((i) => base + i * 5 * MINUTE);
+    const cadence = classifySubmissionCadence(timestamps);
+    expect(cadence).toEqual({ sampleGaps: 4, medianGapMinutes: 5, isOutlier: true });
+  });
+
+  it("sorts unsorted input internally before computing gaps", () => {
+    const base = 1_700_000_000_000;
+    const ascending = [0, 1, 2, 3, 4].map((i) => base + i * 5 * MINUTE);
+    const shuffled = [ascending[2]!, ascending[0]!, ascending[4]!, ascending[1]!, ascending[3]!];
+    expect(classifySubmissionCadence(shuffled)).toEqual(classifySubmissionCadence(ascending));
+  });
+
+  it("a normal human cadence (well above the outlier bar) is not flagged", () => {
+    const base = 1_700_000_000_000;
+    // 4 gaps of 3 hours each — nowhere near the 15-minute default bar.
+    const timestamps = [0, 1, 2, 3, 4].map((i) => base + i * 3 * 60 * MINUTE);
+    const cadence = classifySubmissionCadence(timestamps);
+    expect(cadence.isOutlier).toBe(false);
+    expect(cadence.medianGapMinutes).toBe(180);
+  });
+
+  it("too few gaps (below cadenceMinGaps) never reports an outlier, even at an extreme pace", () => {
+    const base = 1_700_000_000_000;
+    // 3 submissions, 2 gaps of 1 minute each: default cadenceMinGaps is 4, so this sample is too small.
+    const timestamps = [base, base + MINUTE, base + 2 * MINUTE];
+    const cadence = classifySubmissionCadence(timestamps);
+    expect(cadence.sampleGaps).toBe(2);
+    expect(cadence.isOutlier).toBe(false);
+    expect(cadence.medianGapMinutes).toBe(1);
+  });
+
+  it("reports a null medianGapMinutes for 0 or 1 timestamps (no computable gap)", () => {
+    expect(classifySubmissionCadence([])).toEqual({ sampleGaps: 0, medianGapMinutes: null, isOutlier: false });
+    expect(classifySubmissionCadence([1_700_000_000_000])).toEqual({
+      sampleGaps: 0,
+      medianGapMinutes: null,
+      isOutlier: false,
+    });
+  });
+
+  it("computes an even-length median as the average of the two middle gaps", () => {
+    const base = 1_700_000_000_000;
+    // Gaps (minutes): 2, 4, 6, 8, 10, 12 (6 gaps, 7 timestamps) -> sorted median = avg(6, 8) = 7.
+    let cursor = base;
+    const gapsMinutes = [2, 4, 6, 8, 10, 12];
+    const timestamps = [cursor];
+    for (const gap of gapsMinutes) {
+      cursor += gap * MINUTE;
+      timestamps.push(cursor);
+    }
+    const cadence = classifySubmissionCadence(timestamps);
+    expect(cadence.sampleGaps).toBe(6);
+    expect(cadence.medianGapMinutes).toBe(7);
+    expect(cadence.isOutlier).toBe(true); // 7 <= the default 15-minute outlier bar
+  });
+
+  it("computes an odd-length median as the single middle gap", () => {
+    const base = 1_700_000_000_000;
+    // Gaps (minutes): 10, 20, 30, 40, 50 (5 gaps, 6 timestamps) -> sorted median (middle of 5) = 30.
+    let cursor = base;
+    const timestamps = [cursor];
+    for (const gap of [10, 20, 30, 40, 50]) {
+      cursor += gap * MINUTE;
+      timestamps.push(cursor);
+    }
+    const cadence = classifySubmissionCadence(timestamps);
+    expect(cadence.sampleGaps).toBe(5);
+    expect(cadence.medianGapMinutes).toBe(30);
+    expect(cadence.isOutlier).toBe(false); // 30 > the default 15-minute outlier bar
+  });
+
+  it("respects a custom config's cadenceMinGaps and cadenceOutlierMedianGapMinutes", () => {
+    const base = 1_700_000_000_000;
+    const timestamps = [0, 1, 2].map((i) => base + i * 20 * MINUTE); // 2 gaps of 20 minutes
+    const strictConfig: ReputationConfig = { ...DEFAULT_REPUTATION_CONFIG, cadenceMinGaps: 2, cadenceOutlierMedianGapMinutes: 25 };
+    expect(classifySubmissionCadence(timestamps, strictConfig)).toEqual({
+      sampleGaps: 2,
+      medianGapMinutes: 20,
+      isOutlier: true, // 20 <= 25 under the widened custom bar, and the sample now clears cadenceMinGaps: 2
+    });
+    // The SAME timestamps against the default config (cadenceMinGaps: 4) are too small a sample to call.
+    expect(classifySubmissionCadence(timestamps).isOutlier).toBe(false);
   });
 });
 
@@ -121,6 +213,37 @@ describe("signalFromCounts — generous, quality-weighted, recency-aware (#reput
   });
 });
 
+describe("signalFromCounts — cadence tie-breaker, never independent (#4514)", () => {
+  // success=1, qualityFail=2, qualityFailLight=2: sample 5, weightedFails 2+1=3, failRate 0.6 -- between the
+  // cadence-assist bar (0.5) and the hard low bar (0.7), with success (1) below qualityFailLowMaxSuccess (2).
+  const borderlineCounts = () => countOutcomes(rows(["merged", "dual_review_approved", 1], ["closed", "dual_review_declined", 2], ["closed", "checks_failed", 2]));
+
+  it("without cadence, the borderline fail rate stays neutral (the existing baseline)", () => {
+    expect(signalFromCounts(borderlineCounts())).toBe("neutral");
+  });
+
+  it("a cadence outlier tips the SAME borderline fail rate to 'low'", () => {
+    expect(signalFromCounts(borderlineCounts(), DEFAULT_REPUTATION_CONFIG, { sampleGaps: 4, medianGapMinutes: 5, isOutlier: true })).toBe("low");
+  });
+
+  it("a non-outlier cadence verdict leaves the borderline case neutral (no change)", () => {
+    expect(signalFromCounts(borderlineCounts(), DEFAULT_REPUTATION_CONFIG, { sampleGaps: 4, medianGapMinutes: 180, isOutlier: false })).toBe("neutral");
+  });
+
+  it("a cadence outlier NEVER penalizes a well-calibrated actor on its own (success guard + low fail rate hold)", () => {
+    // 6 successes, 1 genuine decline: failRate 1/7 ~= 0.14, well under BOTH the assist (0.5) and hard (0.7)
+    // bars, and success (6) clears the trusted bar -- an outlier cadence verdict must not touch this.
+    const wellCalibrated = countOutcomes(rows(["merged", "dual_review_approved", 6], ["closed", "dual_review_declined", 1]));
+    expect(signalFromCounts(wellCalibrated, DEFAULT_REPUTATION_CONFIG, { sampleGaps: 10, medianGapMinutes: 1, isOutlier: true })).toBe("trusted");
+  });
+
+  it("a cadence outlier does not affect an already-'low' or already-'trusted' verdict (falls through fine)", () => {
+    // Already 'low' via the existing hard rule regardless of cadence.
+    const alreadyLow = countOutcomes(rows(["merged", "dual_review_approved", 1], ["closed", "dual_review_declined", 7]));
+    expect(signalFromCounts(alreadyLow, DEFAULT_REPUTATION_CONFIG, { sampleGaps: 10, medianGapMinutes: 500, isOutlier: false })).toBe("low");
+  });
+});
+
 describe("signalFromCounts — config-overridable thresholds (#private-config params)", () => {
   it("defaults to DEFAULT_REPUTATION_CONFIG when no config is passed (behavior-preserving)", () => {
     const c = countOutcomes(rows(["merged", "dual_review_approved", 12], ["closed", "dual_review_declined", 1]));
@@ -178,6 +301,44 @@ describe("recordSubmissionOutcome / getSubmitterReputation (D1, fail-safe)", () 
     const rep = await getSubmitterReputation(env, "p", "u");
     expect(rep.signal).toBe("low");
     expect(rep.closeRate).toBeCloseTo(0.9); // aggregate closeRate is still surfaced for /stats
+  });
+
+  it("cadence (#4514): a superhuman-pace createdAt spread tips an already-borderline fail rate to low", async () => {
+    // Same borderline shape as the pure signalFromCounts cadence test: 1 success, 2 declines, 2 checks_failed
+    // (failRate 0.6 -- between the assist and hard bars), but every row is 5 minutes apart -> cadence outlier.
+    const base = new Date("2026-07-01T00:00:00.000Z").getTime();
+    const windowRows = [
+      { status: "merged", reasonCode: "dual_review_approved", createdAt: new Date(base).toISOString() },
+      { status: "closed", reasonCode: "dual_review_declined", createdAt: new Date(base + 5 * MINUTE).toISOString() },
+      { status: "closed", reasonCode: "dual_review_declined", createdAt: new Date(base + 10 * MINUTE).toISOString() },
+      { status: "closed", reasonCode: "checks_failed", createdAt: new Date(base + 15 * MINUTE).toISOString() },
+      { status: "closed", reasonCode: "checks_failed", createdAt: new Date(base + 20 * MINUTE).toISOString() },
+    ];
+    const env = makeEnv({ statRow: { submissions: 5, merged: 1, closed: 4, manual: 0 }, windowRows });
+    const rep = await getSubmitterReputation(env, "p", "u");
+    expect(rep.signal).toBe("low");
+  });
+
+  it("cadence (#4514): the SAME borderline shape at a normal human cadence stays neutral", async () => {
+    const base = new Date("2026-07-01T00:00:00.000Z").getTime();
+    const windowRows = [
+      { status: "merged", reasonCode: "dual_review_approved", createdAt: new Date(base).toISOString() },
+      { status: "closed", reasonCode: "dual_review_declined", createdAt: new Date(base + 5 * 60 * MINUTE).toISOString() },
+      { status: "closed", reasonCode: "dual_review_declined", createdAt: new Date(base + 10 * 60 * MINUTE).toISOString() },
+      { status: "closed", reasonCode: "checks_failed", createdAt: new Date(base + 15 * 60 * MINUTE).toISOString() },
+      { status: "closed", reasonCode: "checks_failed", createdAt: new Date(base + 20 * 60 * MINUTE).toISOString() },
+    ];
+    const env = makeEnv({ statRow: { submissions: 5, merged: 1, closed: 4, manual: 0 }, windowRows });
+    const rep = await getSubmitterReputation(env, "p", "u");
+    expect(rep.signal).toBe("neutral");
+  });
+
+  it("cadence (#4514): a missing/unparseable createdAt is dropped, not treated as a zero-gap outlier", async () => {
+    const windowRows = rows(["merged", "dual_review_approved", 1], ["closed", "dual_review_declined", 2], ["closed", "checks_failed", 2]);
+    // No createdAt on any row (the existing Row shape) -> makeEnv defaults createdAt to null for all of them.
+    const env = makeEnv({ statRow: { submissions: 5, merged: 1, closed: 4, manual: 0 }, windowRows });
+    const rep = await getSubmitterReputation(env, "p", "u");
+    expect(rep.signal).toBe("neutral"); // same borderline shape, but no usable cadence data -> unaffected
   });
   it("fail-safe → neutral when the window query throws (never throws into the gate)", async () => {
     const env = {
@@ -275,13 +436,18 @@ describe("recordSubmissionOutcome / getSubmitterReputation (D1, fail-safe)", () 
 
 // A minimal D1 stub: the first query (.first) returns submitter_stats; the window query (.all) returns the
 // review_targets rows. Both come off the same prepared-statement stub (the two call sites use .first vs .all).
-function makeEnv(opts: { statRow: { submissions: number; merged: number; closed: number; manual: number } | null; windowRows: Row[] }): Env {
+function makeEnv(opts: {
+  statRow: { submissions: number; merged: number; closed: number; manual: number } | null;
+  windowRows: Array<Row & { createdAt?: string | null }>;
+}): Env {
   return {
     DB: {
       prepare: () => ({
         bind: () => ({
           first: async () => opts.statRow,
-          all: async () => ({ results: opts.windowRows.map((r) => ({ status: r.status, reasonCode: r.reasonCode })) }),
+          all: async () => ({
+            results: opts.windowRows.map((r) => ({ status: r.status, reasonCode: r.reasonCode, createdAt: r.createdAt ?? null })),
+          }),
         }),
       }),
     },

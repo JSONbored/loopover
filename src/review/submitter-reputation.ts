@@ -24,6 +24,19 @@
 // submitter_stats) — gittensory does not yet have them, so getSubmitterReputation / recordSubmissionOutcome
 // degrade fail-safe (neutral / no-op) until a later migration lands them. The PURE classifiers
 // (classifyOutcome / countOutcomes / signalFromCounts) are usable immediately.
+//
+// SUBMISSION-CADENCE SIGNAL (#4514): every existing signal here counts volume or ratios within a time window —
+// none has an inter-arrival-time (submission-cadence) dimension, so an autonomous agent operating at a
+// superhuman-but-clean pace was invisible to this module. `classifySubmissionCadence` computes the MEDIAN gap
+// (minutes) between a submitter's recent `review_targets.created_at` timestamps within the same window the
+// quality signal already reads — no new query, no migration. Its interaction with the existing signal is
+// deliberately narrow: cadence is a TIE-BREAKER folded into the existing serial-quality-failure rule in
+// `signalFromCounts`, never an independent path to 'low' — a superhuman-pace submitter with a healthy fail rate
+// and real successes is NEVER branded on cadence alone (the same success guard as the rate-based rule applies).
+// It only tips an ALREADY-elevated fail rate (at/above `cadenceAssistLowRate`, a lower bar than the hard
+// `qualityFailLowRate`) the rest of the way to 'low'. Too small a sample (`< cfg.cadenceMinGaps` computed gaps)
+// never reports an outlier — there is nothing (yet) to distinguish a genuine burst of quick, real submissions
+// from a data artifact.
 
 // ── Inlined minimal deps (no reviewbot imports) ─────────────────────────────────────────────────────────
 
@@ -49,6 +62,15 @@ export interface ReputationConfig {
   trustedMinSuccess: number;
   /** …AND a fail rate at/under this (0–1). */
   trustedMaxFailRate: number;
+  /** Cadence (#4514): fewer than this many computed inter-arrival gaps is too small a sample for a cadence
+   *  verdict — `classifySubmissionCadence` never reports an outlier below this. */
+  cadenceMinGaps: number;
+  /** Cadence (#4514): a median inter-arrival gap (minutes) at/below this counts as a superhuman-pace outlier. */
+  cadenceOutlierMedianGapMinutes: number;
+  /** Cadence (#4514): the LOWER fail-rate bar (0–1, below `qualityFailLowRate`) that, ONLY when cadence is ALSO
+   *  an outlier and the success guard still holds, tips `signalFromCounts` to 'low' — cadence is a tie-breaker,
+   *  never independently sufficient. */
+  cadenceAssistLowRate: number;
 }
 
 export type ReputationSignal = "trusted" | "neutral" | "low";
@@ -122,6 +144,41 @@ export interface ReputationCounts {
   promptInjection: number; // the ONLY hard-abuse signal — genuinely malicious
 }
 
+/** A submitter's classified submission cadence over a recency-windowed, ascending set of submission
+ *  timestamps (#4514). `medianGapMinutes` is null when there are no computable gaps (0 or 1 timestamp).
+ *  `isOutlier` is always false below `cfg.cadenceMinGaps` gaps — too small a sample to call. */
+export interface SubmissionCadence {
+  sampleGaps: number;
+  medianGapMinutes: number | null;
+  isOutlier: boolean;
+}
+
+/** Median of a non-empty numeric array. Pure; sorts a copy (does not mutate `values`). */
+function median(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
+}
+
+/**
+ * Classify a submitter's recent submission cadence from their submission timestamps (ms epoch; any order —
+ * sorted internally). Computes the MEDIAN inter-arrival gap in minutes and flags it as a superhuman-pace
+ * outlier once the sample is large enough to be meaningful (#4514). Pure — never reads the ambient clock.
+ */
+export function classifySubmissionCadence(
+  submittedAtMs: readonly number[],
+  cfg: ReputationConfig = DEFAULT_REPUTATION_CONFIG,
+): SubmissionCadence {
+  const sorted = [...submittedAtMs].sort((a, b) => a - b);
+  const gaps: number[] = [];
+  for (let i = 1; i < sorted.length; i++) gaps.push((sorted[i]! - sorted[i - 1]!) / 60_000);
+  if (gaps.length < cfg.cadenceMinGaps) {
+    return { sampleGaps: gaps.length, medianGapMinutes: gaps.length > 0 ? median(gaps) : null, isOutlier: false };
+  }
+  const medianGapMinutes = median(gaps);
+  return { sampleGaps: gaps.length, medianGapMinutes, isOutlier: medianGapMinutes <= cfg.cadenceOutlierMedianGapMinutes };
+}
+
 // ── Signal thresholds (#reputation-redesign). Default GENEROUS: 'low' ONLY for CLEAR, RECENT, genuine abuse or
 // serial quality-failure. A high-volume contributor with a healthy number of recent SUCCESSES is NEVER 'low'. ──
 //
@@ -149,11 +206,23 @@ export const DEFAULT_REPUTATION_CONFIG: ReputationConfig = {
   lightFailWeight: 0.5,
   trustedMinSuccess: 5,
   trustedMaxFailRate: 0.2,
+  // Cadence (#4514): 4 gaps (5 submissions) before a verdict is meaningful; a 15-minute-or-less median gap
+  // between well-formed, tested, documented PRs is beyond sustainable human pace; 0.5 is a materially lower
+  // bar than qualityFailLowRate (0.7) since cadence only ever ASSISTS an already-elevated fail rate.
+  cadenceMinGaps: 4,
+  cadenceOutlierMedianGapMinutes: 15,
+  cadenceAssistLowRate: 0.5,
 };
 
 /** Derive the reputation signal from the recency-windowed, quality-classified bucket counts. Pure + total.
- *  Thresholds default to DEFAULT_REPUTATION_CONFIG (behavior-preserving); a deployment may tune them privately. */
-export function signalFromCounts(c: ReputationCounts, cfg: ReputationConfig = DEFAULT_REPUTATION_CONFIG): ReputationSignal {
+ *  Thresholds default to DEFAULT_REPUTATION_CONFIG (behavior-preserving); a deployment may tune them privately.
+ *  `cadence` (#4514) is optional and, when present, can only ever TIP an already-elevated fail rate to 'low' —
+ *  see the module header for why it is never an independent path there. */
+export function signalFromCounts(
+  c: ReputationCounts,
+  cfg: ReputationConfig = DEFAULT_REPUTATION_CONFIG,
+  cadence?: SubmissionCadence,
+): ReputationSignal {
   // Effective (weighted) genuine-fail count: full-weight reviewer rejects + half-weight light signals (flaky
   // CI + honest-collision / transient-fetch). Prompt-injection is handled separately (its own hard rule).
   const weightedFails = c.qualityFail + c.qualityFailLight * cfg.lightFailWeight;
@@ -168,6 +237,14 @@ export function signalFromCounts(c: ReputationCounts, cfg: ReputationConfig = DE
   // soft signals (duplicates/unfetchable) only count at half weight here, so they can't brand alone. ──
   const failRate = sample > 0 ? weightedFails / sample : 0;
   if (failRate >= cfg.qualityFailLowRate && c.success < cfg.qualityFailLowMaxSuccess) return "low";
+
+  // ── 'low' — cadence-assisted (#4514): a superhuman-pace outlier tips an ALREADY-elevated fail rate (past the
+  // lower cadenceAssistLowRate bar, still under the hard qualityFailLowRate one above) the rest of the way to
+  // 'low', gated by the SAME success guard. Cadence alone (no `cadence` arg, or a non-outlier, or a low/zero
+  // fail rate) never reaches this — a fast but well-calibrated actor is not penalized on pace alone. ──
+  if (cadence?.isOutlier && failRate >= cfg.cadenceAssistLowRate && c.success < cfg.qualityFailLowMaxSuccess) {
+    return "low";
+  }
 
   // ── 'trusted' — solid recent successes and a low effective fail rate. ──
   if (c.success >= cfg.trustedMinSuccess && failRate <= cfg.trustedMaxFailRate) return "trusted";
@@ -240,15 +317,19 @@ export async function getSubmitterReputation(env: Env, project: string, submitte
   try {
     const result = await storage(env)
       .prepare(
-        `SELECT status, json_extract(decision_json, '$.reasonCode') AS reasonCode
+        `SELECT status, json_extract(decision_json, '$.reasonCode') AS reasonCode, created_at AS createdAt
            FROM review_targets
           WHERE project = ? AND submitter = ? AND terminal_at IS NOT NULL AND terminal_at >= datetime('now', ?)
           ORDER BY terminal_at DESC LIMIT ?`,
       )
       .bind(project, submitter, `-${cfg.windowDays} days`, REPUTATION_WINDOW_ROW_CAP)
-      .all<{ status: string; reasonCode: string | null }>();
+      .all<{ status: string; reasonCode: string | null; createdAt: string | null }>();
     const rows = result?.results ?? [];
-    signal = signalFromCounts(countOutcomes(rows), cfg);
+    // Cadence (#4514) reuses this same windowed query — no second DB round-trip. Unparseable/missing
+    // `createdAt` values are dropped rather than treated as NaN gaps (defensive against a malformed row).
+    const submittedAtMs = rows.map((r) => (r.createdAt ? Date.parse(r.createdAt) : NaN)).filter((ms) => !Number.isNaN(ms));
+    const cadence = classifySubmissionCadence(submittedAtMs, cfg);
+    signal = signalFromCounts(countOutcomes(rows), cfg, cadence);
   } catch {
     signal = "neutral"; // fail-safe — never throw into the gate.
   }

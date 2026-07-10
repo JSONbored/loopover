@@ -52,7 +52,9 @@ export function buildLoopClosureSummary(sources, options = {}) {
     byStatus[status] = (byStatus[status] ?? 0) + 1;
   }
 
-  const currentRunState = runState && typeof runState.getRunState === "function" ? runState.getRunState(repoFullName) : null;
+  const currentRunState = runState && typeof runState.getRunState === "function" && repoFullName !== null
+    ? runState.getRunState(repoFullName)
+    : null;
 
   return {
     sinceSeq,

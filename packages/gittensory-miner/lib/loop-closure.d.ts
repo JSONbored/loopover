@@ -1,5 +1,5 @@
 export interface LoopClosureEventLedger {
-  readEvents(filter?: { since?: number; repoFullName?: string }): Array<{ seq?: number; type?: unknown; repoFullName?: string }>;
+  readEvents(filter?: { since?: number; repoFullName?: string }): Array<{ seq?: number; type?: unknown; repoFullName?: string | null }>;
 }
 
 export interface LoopClosurePortfolioQueue {
@@ -7,7 +7,7 @@ export interface LoopClosurePortfolioQueue {
 }
 
 export interface LoopClosureRunState {
-  getRunState(repoFullName: string | null): string | null;
+  getRunState(repoFullName: string): string | null;
 }
 
 export interface LoopClosureSources {

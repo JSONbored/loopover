@@ -464,6 +464,37 @@
                 "accuracyPct"
               ]
             }
+          },
+          "accuracyTrend": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "weekStart": {
+                  "type": "string"
+                },
+                "merged": {
+                  "type": "number"
+                },
+                "closed": {
+                  "type": "number"
+                },
+                "reversed": {
+                  "type": "number"
+                },
+                "accuracyPct": {
+                  "type": "number",
+                  "nullable": true
+                }
+              },
+              "required": [
+                "weekStart",
+                "merged",
+                "closed",
+                "reversed",
+                "accuracyPct"
+              ]
+            }
           }
         },
         "required": [
@@ -471,7 +502,8 @@
           "updatedAt",
           "totals",
           "weekly",
-          "byProject"
+          "byProject",
+          "accuracyTrend"
         ]
       },
       "PublicQualityMetrics": {

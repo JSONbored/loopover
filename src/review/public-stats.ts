@@ -55,7 +55,7 @@ function storage(env: Env): D1Database {
 }
 
 /** Read-only helper that degrades a missing/empty table (or absent column in some envs) to []. */
-async function safeAll<T>(
+export async function safeAll<T>(
   env: Env,
   sql: string,
   ...binds: unknown[]
@@ -108,7 +108,7 @@ function accuracyPct(
  *  allowlist correctly went empty, while the historical rows this worker already wrote for them remain real and
  *  safe to publish. Empty allowlist => the own-ledger side reports zero (still fails safe), but does NOT
  *  suppress the separately-gated Orb cross-fleet aggregate (see getPublicStats below). */
-function publicStatsProjects(env: {
+export function publicStatsProjects(env: {
   GITTENSORY_PUBLIC_STATS_REPOS?: string | undefined;
 }): string[] {
   const seen = new Set<string>();
@@ -165,7 +165,7 @@ export interface PublicStatsPayload {
 // legacy review_targets ledger, which the convergence cutover orphaned (nothing writes it anymore). `reversed`
 // (the accuracy numerator) is computed LIVE from the same ledger: a terminal engine auto-action (close/merge)
 // that a human later overturned (see the reversal query below). All reads are public-safe COUNTs, degrade to 0.
-const PUBLISHED_PR_KEYS = `
+export const PUBLISHED_PR_KEYS = `
   SELECT
     substr(target_key, 1, instr(target_key, '#') - 1) AS repo,
     CAST(substr(target_key, instr(target_key, '#') + 1) AS INTEGER) AS number,

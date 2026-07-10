@@ -258,6 +258,7 @@ import { computeParityReadiness, isParityAuditEnabled } from "../review/parity-w
 import { computePredictedGateAgreement } from "../review/predicted-gate-agreement";
 import { isRagEnabled } from "../review/rag-wire";
 import { getPublicStats, isPublicStatsEnabled } from "../review/public-stats";
+import { loadPublicAccuracyTrend } from "../services/public-accuracy-trend";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES, normalizeReadinessGateMode } from "../signals/focus-manifest";
@@ -951,9 +952,9 @@ export function createApp() {
   app.get("/v1/public/stats", async (c) => {
     if (!isPublicStatsEnabled(c.env)) return c.json({ error: "not_found" }, 404);
     try {
-      const stats = await getPublicStats(c.env);
+      const [stats, accuracyTrend] = await Promise.all([getPublicStats(c.env), loadPublicAccuracyTrend(c.env)]);
       c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-      return c.json(stats);
+      return c.json({ ...stats, accuracyTrend });
     } catch {
       return c.json({ error: "public_stats_unavailable" }, 503);
     }

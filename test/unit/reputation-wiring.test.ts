@@ -149,6 +149,56 @@ describe("shouldSkipAiForReputation (helper)", () => {
     expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "burster" })).toBe(true);
     expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "newcomer" })).toBe(false);
   });
+
+  it("FLAG-ON: false for a null submitter (the ?? undefined coalesce on both the quality and cadence reads)", async () => {
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+    expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: null })).toBe(false);
+  });
+
+  describe("submission-cadence signal (#4514)", () => {
+    async function seedReviewTarget(env: Env, args: { number: number; submitter: string; createdAt: string }) {
+      await env.DB.prepare(
+        `INSERT INTO review_targets (id, project, kind, repo, number, submitter, status, decision_json, terminal_at, created_at)
+         VALUES (?, 'acme/widgets', 'pull_request', 'acme/widgets', ?, ?, 'merged', ?, ?, ?)`,
+      )
+        .bind(`acme/widgets:pull_request:acme/widgets#${args.number}`, args.number, args.submitter, JSON.stringify({ reasonCode: "dual_review_approved" }), args.createdAt, args.createdAt)
+        .run();
+    }
+
+    it("FLAG-ON: true for a machine-paced submitter even though every submission itself looks fine (quality-neutral)", async () => {
+      const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+      // Anchored to now (minus a couple hours of headroom) -- the cadence query only looks back 24h, so a
+      // fixed past date would fall outside the window and vacuously read as "0 samples, not machine-paced".
+      const t0 = Date.now() - 2 * 60 * 60_000;
+      for (let i = 0; i < 5; i++) {
+        // All merged/approved -- the QUALITY signal alone stays neutral/trusted; only cadence should trip this.
+        await seedReviewTarget(env, { number: i, submitter: "speedster", createdAt: new Date(t0 + i * 5 * 60_000).toISOString() });
+      }
+      expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "speedster" })).toBe(true);
+    });
+
+    it("FLAG-ON: false for the same number of submissions spread naturally over hours (comfortably human pace)", async () => {
+      const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+      const t0 = Date.now() - 20 * 60 * 60_000;
+      for (let i = 0; i < 5; i++) {
+        await seedReviewTarget(env, { number: i + 100, submitter: "steady", createdAt: new Date(t0 + i * 3 * 60 * 60_000).toISOString() });
+      }
+      expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "steady" })).toBe(false);
+    });
+
+    it("FLAG-ON: skips the (extra) cadence read once the quality/burst signal already justifies downgrading", async () => {
+      const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+      await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 12, merged: 0, closed: 12, manual: 0 });
+      const spy = vi.spyOn(env.DB, "prepare");
+      const before = spy.mock.calls.length;
+      expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "burster" })).toBe(true);
+      // Exactly the calls the quality/burst read itself makes (submitter_stats + review_targets window) --
+      // no additional prepare() for a cadence query once the burst check alone already returned true.
+      const afterQualityOnlyCallCount = spy.mock.calls.length - before;
+      spy.mockRestore();
+      expect(afterQualityOnlyCallCount).toBe(2);
+    });
+  });
 });
 
 describe("processGitHubWebhook records the reputation outcome on a terminal PR (flag-ON call site)", () => {

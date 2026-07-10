@@ -569,6 +569,7 @@ import {
 } from "../review/outcomes-wire";
 import { neutralHoldReasonCode, nativeGateActionFromConclusion, recordNativeGateDecision } from "../review/parity-wire";
 import { recordContributorGateDecision } from "../review/contributor-calibration";
+import { recordPredictedGateCalibration } from "../review/predicted-gate-calibration-ledger";
 import { getSubmitterReputation, type SubmissionOutcome } from "../review/submitter-reputation";
 import type {
   AdvisoryFinding,
@@ -3306,6 +3307,16 @@ async function runAgentMaintenancePlanAndExecute(
   // above -- see src/review/contributor-calibration.ts's doc comment. Currently write-only; nothing reads
   // contributor_gate_history yet.
   await recordContributorGateDecision(env, {
+    login: pr.authorLogin,
+    project: repoFullName,
+    pullNumber: pr.number,
+    headSha: pr.headSha,
+    decision: disposition.actionClass,
+  });
+  // #4517: pair this REAL decision against a recent predict_gate call from the same login/repo, if one
+  // exists -- see src/review/predicted-gate-calibration-ledger.ts's doc comment. Cold start (no prior
+  // prediction) records nothing.
+  await recordPredictedGateCalibration(env, {
     login: pr.authorLogin,
     project: repoFullName,
     pullNumber: pr.number,
@@ -10324,6 +10335,14 @@ async function maybePublishPrPublicSurface(
       /* v8 ignore else */
       if (contributorDecision !== null) {
         await recordContributorGateDecision(env, {
+          login: pr.authorLogin,
+          project: repoFullName,
+          pullNumber: pr.number,
+          headSha: pr.headSha,
+          decision: contributorDecision,
+        });
+        // #4517: same pairing as the other recordContributorGateDecision call site above.
+        await recordPredictedGateCalibration(env, {
           login: pr.authorLogin,
           project: repoFullName,
           pullNumber: pr.number,

@@ -50,6 +50,7 @@ export const RAW_SQL_ONLY_TABLES = new Set([
   "orb_signals",
   "orb_webhook_events",
   "override_audit",
+  "predicted_gate_calibration_ledger",
   "predicted_gate_calls",
   "repo_chunks",
   "review_audit",

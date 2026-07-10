@@ -13,6 +13,7 @@ import { GatePrecisionCard } from "@/components/site/app-panels/gate-precision-c
 import type { GateEvalReport } from "@/components/site/app-panels/gate-precision-card-model";
 import { CycleTimeCard } from "@/components/site/app-panels/cycle-time-card";
 import type { CycleTimeAggregate } from "@/components/site/app-panels/cycle-time-card-model";
+import { AnalyticsCardShell } from "@/components/site/app-panels/analytics-card-shell";
 import { useApiResource } from "@/lib/api/use-api-resource";
 
 export const Route = createFileRoute("/app/analytics")({
@@ -186,7 +187,16 @@ function ProductAnalytics() {
 
           {data.gateEval ? <GatePrecisionCard report={data.gateEval} /> : null}
 
-          {data.cycleTime ? <CycleTimeCard cycleTime={data.cycleTime} /> : null}
+          {data.cycleTime ? (
+            <CycleTimeCard cycleTime={data.cycleTime} />
+          ) : (
+            <AnalyticsCardShell
+              title="Review cycle time"
+              description="Gate decision → PR outcome duration percentiles."
+              state="empty"
+              emptyHint="Percentiles appear once the gate has resolved paired PRs in the analytics window."
+            />
+          )}
 
           {data.usageSummary ? (
             <ProductUsageBreakdownPanel

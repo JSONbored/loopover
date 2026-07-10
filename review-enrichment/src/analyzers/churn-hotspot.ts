@@ -11,6 +11,7 @@ import type {
 } from "../types.js";
 import type { AnalysisContext } from "../analysis-context.js";
 import { boundedFetchJson } from "../external-fetch.js";
+import { githubHeaders } from "../github-headers.js";
 import { isHistoryUninformativePath } from "./history-path.js";
 
 const GITHUB_API = "https://api.github.com";
@@ -55,14 +56,6 @@ export function summarizeChurn(commits: CommitItem[]): {
 /** True when a file's churn summary meets the hotspot thresholds (enough commits AND enough of them fixes). Pure. */
 export function isHotspot(summary: { commitCount: number; fixFraction: number }): boolean {
   return summary.commitCount >= MIN_COMMITS && summary.fixFraction >= MIN_FIX_FRACTION;
-}
-
-function githubHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-  };
 }
 
 /** Fetch one page of commits touching `path` since `since`. Returns the list, or null on any error / non-200. */

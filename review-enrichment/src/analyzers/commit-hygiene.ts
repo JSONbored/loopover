@@ -16,6 +16,7 @@ import type {
 } from "../types.js";
 import type { AnalysisContext } from "../analysis-context.js";
 import { boundedFetchJson } from "../external-fetch.js";
+import { githubHeaders } from "../github-headers.js";
 import { DEFAULT_MAX_FINDINGS } from "./limits.js";
 
 const GITHUB_API = "https://api.github.com";
@@ -41,14 +42,6 @@ interface CommitListItem {
   sha?: string;
   commit?: { message?: string };
   parents?: Array<{ sha?: string }>;
-}
-
-function githubHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-  };
 }
 
 async function fetchPrCommits(

@@ -15,10 +15,10 @@ import type {
 } from "../types.js";
 import type { AnalysisContext } from "../analysis-context.js";
 import { boundedFetchJson } from "../external-fetch.js";
+import { githubHeaders } from "../github-headers.js";
 import { DEFAULT_MAX_FINDINGS } from "./limits.js";
 
 const GITHUB_API = "https://api.github.com";
-const GITHUB_API_VERSION = "2022-11-28";
 
 const MIN_RUN = 8; // a contiguous run of >= this many significant normalized lines is required to flag a duplicate
 const MAX_CANDIDATES = 40; // cap candidate files (closest-by-path first) we consider per scan
@@ -46,15 +46,6 @@ interface ScanOptions {
   signal?: AbortSignal;
   analysis?: Pick<AnalysisContext, "fetchJson">;
   diagnostics?: AnalyzerDiagnostics;
-}
-
-function githubHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": GITHUB_API_VERSION,
-    "User-Agent": "gittensory-review-enrichment",
-  };
 }
 
 /** Parse `owner/repo`, rejecting anything that isn't exactly two safe segments (no traversal, no extra slashes) so a

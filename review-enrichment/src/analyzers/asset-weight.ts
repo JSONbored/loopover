@@ -12,13 +12,13 @@ import type {
 } from "../types.js";
 import type { AnalysisContext } from "../analysis-context.js";
 import { boundedFetchJson } from "../external-fetch.js";
+import { githubHeaders } from "../github-headers.js";
 import { isBinaryFileExtension } from "./binary-extensions.js";
 
 const MAX_FINDINGS = 50; // keep the brief bounded after evaluating every changed binary candidate
 const MAX_PATH_SIZE_LOOKUPS = 50; // fallback Contents API calls when a recursive tree is truncated
 const THRESHOLD_BYTES = 100 * 1024; // flag a newly-added blob >= 100 KB, or growth >= 100 KB
 const GITHUB_API = "https://api.github.com";
-const GITHUB_API_VERSION = "2022-11-28";
 
 interface ScanOptions {
   signal?: AbortSignal;
@@ -46,15 +46,6 @@ export function basePathForGrowth(file: EnrichFile): string | null {
   if (file.status === "modified" || file.status === "changed") return file.path;
   if (file.status === "renamed") return file.previousPath || null;
   return null;
-}
-
-function githubHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": GITHUB_API_VERSION,
-    "User-Agent": "gittensory-review-enrichment",
-  };
 }
 
 /** Percent-encode each segment of a repo path for a Contents API URL, rejecting (null) an empty path or any

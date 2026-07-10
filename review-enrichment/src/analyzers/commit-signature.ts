@@ -11,6 +11,7 @@ import type {
 } from "../types.js";
 import type { AnalysisContext } from "../analysis-context.js";
 import { boundedFetchJson } from "../external-fetch.js";
+import { githubHeaders } from "../github-headers.js";
 
 const GITHUB_API = "https://api.github.com";
 // Pull a bounded slice of recent commits — enough to decide "has any verified history" without paging the whole
@@ -39,14 +40,6 @@ interface CommitResponse {
 
 interface HistoryCommit {
   commit?: { verification?: { verified?: boolean } };
-}
-
-function githubHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-  };
 }
 
 async function fetchGithubJson<T>(

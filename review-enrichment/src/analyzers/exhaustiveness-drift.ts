@@ -4,6 +4,7 @@
 // pre-PR member set, and only reports high-confidence misses (explicit enum/union cases, no default branch). Bounded
 // file-fetch caps; fail-safe on missing token/headSha, bad slug, or fetch errors.
 import type { EnrichRequest, ExhaustivenessFinding } from "../types.js";
+import { githubHeaders } from "../github-headers.js";
 import { reconstructOldContent } from "./doc-comment-drift.js";
 import { isDiffFileHeaderLine } from "./diff-lines.js";
 import { isTestPath } from "./test-ratio.js";
@@ -43,14 +44,6 @@ function escapeRegExp(value: string): string {
 
 function isScannablePath(path: string): boolean {
   return SOURCE_RE.test(path) && !SKIP_RE.test(path) && !isTestPath(path);
-}
-
-function githubHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/vnd.github.raw",
-    "X-GitHub-Api-Version": "2022-11-28",
-  };
 }
 
 async function readBoundedText(resp: Response, signal?: AbortSignal): Promise<string | null> {
@@ -93,7 +86,7 @@ async function fetchFileAtHead(
     const encoded = path.split("/").map(encodeURIComponent).join("/");
     const resp = await fetchFn(
       `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encoded}?ref=${encodeURIComponent(headSha)}`,
-      { headers: githubHeaders(token), signal },
+      { headers: githubHeaders(token, { raw: true }), signal },
     );
     if (!resp.ok) return null;
     return await readBoundedText(resp, signal);

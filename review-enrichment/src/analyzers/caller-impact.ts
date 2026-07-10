@@ -27,12 +27,12 @@ import type {
 } from "../types.js";
 import type { AnalysisContext } from "../analysis-context.js";
 import { boundedFetchJson } from "../external-fetch.js";
+import { githubHeaders } from "../github-headers.js";
 import { exportedNames, isPublicEntrypoint } from "./api-break.js";
 import { isTestPath } from "./test-ratio.js";
 import { DEFAULT_MAX_FINDINGS } from "./limits.js";
 
 const GITHUB_API = "https://api.github.com";
-const GITHUB_API_VERSION = "2022-11-28";
 const SLUG_RE = /^[A-Za-z0-9._-]+$/;
 const MAX_SYMBOLS = 6; // removed symbols searched per PR (Code Search rate budget)
 const MAX_SEARCHES = 6; // bounded Code Search queries per PR
@@ -67,15 +67,6 @@ interface RemovedExport {
   file: string;
   symbol: string;
   line: number;
-}
-
-function githubHeaders(token: string, raw = false): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: raw ? "application/vnd.github.raw" : "application/vnd.github+json",
-    "X-GitHub-Api-Version": GITHUB_API_VERSION,
-    "User-Agent": "gittensory-review-enrichment",
-  };
 }
 
 function escapeRegExp(value: string): string {
@@ -287,7 +278,7 @@ async function fetchFileAtHead(
     const encoded = path.split("/").map(encodeURIComponent).join("/");
     const resp = await fetchImpl(
       `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encoded}?ref=${encodeURIComponent(headSha)}`,
-      { headers: githubHeaders(token, true), signal },
+      { headers: githubHeaders(token, { raw: true }), signal },
     );
     if (!resp.ok) return null;
     return await readBoundedText(resp, signal);

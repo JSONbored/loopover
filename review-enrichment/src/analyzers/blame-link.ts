@@ -12,6 +12,7 @@ import type {
 } from "../types.js";
 import type { AnalysisContext } from "../analysis-context.js";
 import { boundedFetchJson } from "../external-fetch.js";
+import { githubHeaders } from "../github-headers.js";
 import { isHistoryUninformativePath } from "./history-path.js";
 
 const GITHUB_API = "https://api.github.com";
@@ -60,14 +61,6 @@ export function firstTouchedOldLine(patch: string): number | null {
     // Everything else (additions, `\`/`+` markers, malformed text) is not an old-file line: do not advance.
   }
   return null;
-}
-
-function githubHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-  };
 }
 
 async function fetchGithubJson<T>(

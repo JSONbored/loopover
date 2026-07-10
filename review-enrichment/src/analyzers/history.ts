@@ -12,10 +12,10 @@
 import type { AnalyzerDiagnostics, EnrichRequest, HistoryFinding } from "../types.js";
 import type { AnalysisContext } from "../analysis-context.js";
 import { boundedFetchJson } from "../external-fetch.js";
+import { githubHeaders } from "../github-headers.js";
 import { isDiffFileHeaderLine } from "./diff-lines.js";
 
 const GITHUB_API = "https://api.github.com";
-const GITHUB_API_VERSION = "2022-11-28";
 const MAX_FILES_PROBED = 5; // bound the per-file commit-history fan-out
 const COMMITS_PER_FILE = 10; // recent commits to inspect per probed file
 const MAX_PR_LOOKUPS = 12; // global cap on commit→PR resolution calls
@@ -177,15 +177,6 @@ export function parseRepo(
     }
   }
   return { owner: owner!, repo: repo! };
-}
-
-function githubHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": GITHUB_API_VERSION,
-    "User-Agent": "gittensory-review-enrichment",
-  };
 }
 
 // ── Linked-issue alignment (no fetch — the issue text is in the envelope) ───────

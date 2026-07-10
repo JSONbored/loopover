@@ -15,6 +15,7 @@ import type {
 } from "../types.js";
 import type { AnalysisContext } from "../analysis-context.js";
 import { boundedFetchJson } from "../external-fetch.js";
+import { githubHeaders } from "../github-headers.js";
 
 const GITHUB_API = "https://api.github.com";
 const SLUG_RE = /^[A-Za-z0-9._-]+$/;
@@ -244,14 +245,6 @@ export function pathMatches(coveragePath: string, prFile: string): boolean {
   const c = coveragePath.replace(/\\/g, "/");
   const p = prFile.replace(/\\/g, "/");
   return c === p || c.endsWith(`/${p}`);
-}
-
-function githubHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-  };
 }
 
 /** Fetch + parse JSON with the shared bounded-fetch guard rails; returns the parsed body or null on any

@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Download } from "lucide-react";
 
 import { BoundaryBadge, Stat, StatusPill } from "@/components/site/control-primitives";
 import { RefreshMeta } from "@/components/site/refresh-meta";
-import { StateBoundary } from "@/components/site/state-views";
+import { StateActionButton, StateBoundary } from "@/components/site/state-views";
 import { TrendChart } from "@/components/site/trend-chart";
 import {
   AdoptionRetentionPanel,
@@ -15,6 +16,7 @@ import type { GateEvalReport } from "@/components/site/app-panels/gate-precision
 import { CycleTimeCard } from "@/components/site/app-panels/cycle-time-card";
 import type { CycleTimeAggregate } from "@/components/site/app-panels/cycle-time-card-model";
 import { useApiResource } from "@/lib/api/use-api-resource";
+import { exportOperatorDashboardCsv } from "@/lib/csv-export";
 
 export const Route = createFileRoute("/app/analytics")({
   component: ProductAnalytics,
@@ -164,6 +166,13 @@ function ProductAnalytics() {
                 </StatusPill>
               ) : null}
               <BoundaryBadge boundary="private-api" />
+              <StateActionButton
+                onClick={() => exportOperatorDashboardCsv(data)}
+                disabled={data.metrics.length === 0}
+                icon={<Download className="size-3 shrink-0" aria-hidden />}
+              >
+                Export CSV
+              </StateActionButton>
               <RefreshMeta loadedAt={dashboard.loadedAt} onRefresh={dashboard.reload} />
             </div>
           </header>

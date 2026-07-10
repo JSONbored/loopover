@@ -56,6 +56,7 @@ function preview(overrides: Partial<SettingsPreviewResponse> = {}): SettingsPrev
     previewComment: "Thanks for the PR! A couple of notes...",
     appliedLabel: "gittensor:reviewed",
     checkRun: { willCreate: true, title: "Gittensory review", detailLevel: "full" },
+    checkRunReadiness: null,
     installPreview: INSTALL_PREVIEW,
     warnings: [],
     summary: "Would comment and label this PR.",

@@ -6094,6 +6094,47 @@ describe("queue processors", () => {
         expect(skipAudit?.detail).toContain("one-shot review cadence");
       });
 
+      it("default (one_shot): a repeat trigger replays a cached unaddressed linked-issue blocker in block mode", async () => {
+        let aiCalls = 0;
+        const env = createTestEnv({
+          GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+          AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ status: "addressed", rationale: "fresh call should not run" }) }; } } as unknown as Ai,
+          AI_SUMMARIES_ENABLED: "true",
+          AI_PUBLIC_COMMENTS_ENABLED: "true",
+          AI_DAILY_NEURON_BUDGET: "100000",
+        });
+        await seedRegateChurnRepo(env, { publicSurface: "comment_only", aiReviewMode: "off", linkedIssueSatisfactionGateMode: "block" });
+        await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 98, title: "Same-issue blocker PR", state: "open", user: { login: "contributor" }, head: { sha: "a98-v1" }, labels: [], body: "Closes #1" });
+        await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 98, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+        await putCachedLinkedIssueSatisfaction(env, "JSONbored/gittensory", 98, "a98-v1", 1, "seed-fp", { status: "ok", result: { status: "unaddressed", rationale: "still does not implement the requested stream", confidence: 0.91 }, estimatedNeurons: 4 });
+
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = input.toString();
+          const method = init?.method ?? "GET";
+          if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+          if (url.includes("/pulls/98/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 2, deletions: 0, changes: 2, patch: "@@\n+export const ok = true;\n+export const also = 1;" }]);
+          if (url.endsWith("/pulls/98")) return Response.json({ number: 98, title: "Same-issue blocker PR", state: "open", user: { login: "contributor" }, head: { sha: "a98-v2" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+          if (url.includes("/commits/a98-v2/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+          if (url.includes("/commits/a98-v2/status")) return Response.json({ state: "success", statuses: [] });
+          if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+          if (url.includes("/issues/98/comments")) return method === "GET" ? Response.json([]) : Response.json({ id: 1 }, { status: 201 });
+          if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+          return Response.json({});
+        });
+
+        await processJob(env, { type: "agent-regate-pr", deliveryId: "one-shot-same-issue-blocker-push", repoFullName: "JSONbored/gittensory", prNumber: 98, installationId: 123 });
+
+        expect(aiCalls).toBe(0);
+        const summary = await env.DB.prepare("select conclusion from check_summaries where repo_full_name = ? and pull_number = ? and head_sha = ?")
+          .bind("JSONbored/gittensory", 98, "a98-v2")
+          .first<{ conclusion: string }>();
+        expect(summary?.conclusion).toBe("failure");
+        const blocker = await env.DB.prepare("select blocker_codes_json as blockerCodesJson from gate_outcomes where repo_full_name = ? and pull_number = ? and head_sha = ?")
+          .bind("JSONbored/gittensory", 98, "a98-v2")
+          .first<{ blockerCodesJson: string }>();
+        expect(JSON.parse(blocker?.blockerCodesJson ?? "[]")).toContain("linked_issue_scope_mismatch");
+      });
+
       it("per-repo override (continuous via .gittensory.yml): a new push DOES spend a fresh main-review AI call, unlike the one_shot default", async () => {
         let aiCalls = 0;
         const env = createTestEnv({

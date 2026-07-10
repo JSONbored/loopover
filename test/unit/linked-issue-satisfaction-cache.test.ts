@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { getCachedLinkedIssueSatisfaction, hasPublishedLinkedIssueSatisfaction, putCachedLinkedIssueSatisfaction } from "../../src/db/repositories";
+import { getCachedLinkedIssueSatisfaction, getLatestPublishedLinkedIssueSatisfaction, hasPublishedLinkedIssueSatisfaction, putCachedLinkedIssueSatisfaction } from "../../src/db/repositories";
 import { linkedIssueSatisfactionCacheInputFingerprint } from "../../src/review/linked-issue-satisfaction-cache-input";
 import { createTestEnv } from "../helpers/d1";
 
@@ -111,6 +111,41 @@ describe("hasPublishedLinkedIssueSatisfaction (#one-shot-review-cadence)", () =>
     expect(await hasPublishedLinkedIssueSatisfaction(env, "o/r", 22, 6)).toBe(false); // different (newly-linked) issue on the SAME PR
     expect(await hasPublishedLinkedIssueSatisfaction(env, "o/r", 23, 5)).toBe(false); // different PR
     expect(await hasPublishedLinkedIssueSatisfaction(env, "o/r2", 22, 5)).toBe(false); // different repo
+  });
+});
+
+describe("getLatestPublishedLinkedIssueSatisfaction (#one-shot-review-cadence)", () => {
+  it("returns null when no row exists for the PR + linked issue number", async () => {
+    const env = createTestEnv();
+    expect(await getLatestPublishedLinkedIssueSatisfaction(env, "o/r", 30, 1)).toBeNull();
+  });
+
+  it("returns the latest row for the same PR + linked issue number regardless of head SHA or fingerprint", async () => {
+    const env = createTestEnv();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-07-07T09:00:00.000Z"));
+      await putCachedLinkedIssueSatisfaction(env, "o/r", 31, "sha1", 5, "old-fp", {
+        status: "ok",
+        result: { status: "addressed", rationale: "old pass", confidence: 0.9 },
+        estimatedNeurons: 4,
+      });
+      vi.setSystemTime(new Date("2026-07-07T09:01:00.000Z"));
+      await putCachedLinkedIssueSatisfaction(env, "o/r", 31, "sha2", 5, "new-fp", {
+        status: "ok",
+        result: { status: "unaddressed", rationale: "latest blocker", confidence: 0.9 },
+        estimatedNeurons: 8,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(await getLatestPublishedLinkedIssueSatisfaction(env, "o/r", 31, 5)).toEqual({
+      status: "ok",
+      result: { status: "unaddressed", rationale: "latest blocker", confidence: 0.9 },
+      estimatedNeurons: 8,
+    });
+    expect(await getLatestPublishedLinkedIssueSatisfaction(env, "o/r", 31, 6)).toBeNull();
   });
 });
 

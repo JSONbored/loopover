@@ -54,6 +54,7 @@ import {
   putCachedAiSlopAdvisory,
   hasPublishedAiSlopAdvisory,
   getCachedLinkedIssueSatisfaction,
+  getLatestPublishedLinkedIssueSatisfaction,
   putCachedLinkedIssueSatisfaction,
   hasPublishedLinkedIssueSatisfaction,
   markPullRequestsRegated,
@@ -10177,6 +10178,20 @@ async function maybePublishPrPublicSurface(
         primaryLinkedIssueNumber !== undefined &&
         (await hasPublishedLinkedIssueSatisfaction(env, repoFullName, pr.number, primaryLinkedIssueNumber).catch(() => false));
       if (linkedIssueOneShotSkip) {
+        const priorLinkedIssueSatisfaction = await getLatestPublishedLinkedIssueSatisfaction(env, repoFullName, pr.number, primaryLinkedIssueNumber).catch(() => null);
+        if (priorLinkedIssueSatisfaction?.status === "ok" && priorLinkedIssueSatisfaction.result) {
+          linkedIssueSatisfaction = { status: priorLinkedIssueSatisfaction.result.status, rationale: priorLinkedIssueSatisfaction.result.rationale };
+          if (settings.linkedIssueSatisfactionGateMode === "block" && priorLinkedIssueSatisfaction.result.status === "unaddressed") {
+            advisory.findings.push({
+              code: "linked_issue_scope_mismatch",
+              severity: "warning",
+              title: "Linked issue does not appear to be satisfied",
+              detail: priorLinkedIssueSatisfaction.result.rationale,
+              action: "Confirm this PR actually addresses the linked issue's scope, or link the correct issue.",
+              publicText: `AI assessment: this PR does not appear to satisfy its linked issue's scope. ${priorLinkedIssueSatisfaction.result.rationale}`,
+            });
+          }
+        }
         await recordAuditEvent(env, {
           eventType: "github_app.linked_issue_satisfaction_one_shot_skip",
           actor: author,

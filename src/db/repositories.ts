@@ -4794,6 +4794,34 @@ export async function hasPublishedLinkedIssueSatisfaction(
   return Boolean(row);
 }
 
+/** #one-shot-review-cadence: latest stored linked-issue satisfaction assessment for this PR + primary issue,
+ *  regardless of head SHA or fingerprint. One-shot repeat triggers intentionally freeze the first-pass AI
+ *  result rather than re-spending, but `block` mode still needs the prior unaddressed verdict replayed so the
+ *  configured gate blocker cannot disappear on the next automatic evaluation. */
+export async function getLatestPublishedLinkedIssueSatisfaction(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+  linkedIssueNumber: number,
+): Promise<{ status: string; result: LinkedIssueSatisfactionResult | null; estimatedNeurons: number } | null> {
+  const row = await env.DB
+    .prepare(
+      `SELECT status, result_json AS resultJson, estimated_neurons AS estimatedNeurons
+       FROM linked_issue_satisfaction_cache
+       WHERE repo_full_name = ? AND pull_number = ? AND linked_issue_number = ?
+       ORDER BY created_at DESC, head_sha DESC
+       LIMIT 1`,
+    )
+    .bind(repoFullName, pullNumber, linkedIssueNumber)
+    .first<{ status: string; resultJson: string | null; estimatedNeurons: number }>();
+  if (!row) return null;
+  return {
+    status: row.status,
+    result: parseJson<LinkedIssueSatisfactionResult | null>(row.resultJson, null),
+    estimatedNeurons: row.estimatedNeurons,
+  };
+}
+
 /** #4499 (grounding-file-content-cache): the stored file content for (repo, path, head SHA), or null on a
  *  miss. Unlike linked_issue_satisfaction_cache, every stored row is durable with NO input-fingerprint
  *  dimension -- file content at an immutable head SHA has exactly one correct value, so a hit is always safe

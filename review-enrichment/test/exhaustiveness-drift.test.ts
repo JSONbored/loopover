@@ -161,3 +161,33 @@ test("scanExhaustivenessDrift: returns no findings without a GitHub token", asyn
   );
   assert.deepEqual(findings, []);
 });
+
+// Direct unit coverage for extractEnumMembers - previously only imported, never called (#2028 follow-up).
+const enumMembers = (content: string, name: string): string[] | null => {
+  const set = extractEnumMembers(content, name);
+  return set ? [...set].sort() : null;
+};
+
+test("extractEnumMembers: returns null when the named enum is absent", () => {
+  assert.equal(extractEnumMembers("enum Foo { A }", "Bar"), null);
+});
+
+test("extractEnumMembers: collects the member names of a plain enum", () => {
+  assert.deepEqual(enumMembers("enum Color { Red, Green, Blue }", "Color"), ["Blue", "Green", "Red"]);
+});
+
+test("extractEnumMembers: handles export/const modifiers and strips ` = value` initializers", () => {
+  assert.deepEqual(enumMembers("export const enum Dir { Up = 1, Down = 2 }", "Dir"), ["Down", "Up"]);
+});
+
+test("extractEnumMembers: an empty enum body yields null (no members)", () => {
+  assert.equal(extractEnumMembers("enum Empty {}", "Empty"), null);
+});
+
+test("extractEnumMembers: skips a comment-only member part (`//`-leading) while keeping real members", () => {
+  assert.deepEqual(enumMembers("enum E { A, B, // trailing note }", "E"), ["A", "B"]);
+});
+
+test("extractEnumMembers: skips the empty part left by a trailing comma", () => {
+  assert.deepEqual(enumMembers("enum E { X, Y, }", "E"), ["X", "Y"]);
+});

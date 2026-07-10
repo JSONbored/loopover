@@ -27,6 +27,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_validate_linked_issue",
   "gittensory_check_before_start",
   "gittensory_find_opportunities",
+  "gittensory_retrieve_issue_context",
   "gittensory_lint_pr_text",
   "gittensory_validate_config",
   "gittensory_get_registry_changes",

@@ -49,9 +49,9 @@ function normalizeMapping(input: unknown, index: number, warnings: string[]): Li
     return null;
   }
   // Unlike `removeOtherTypeLabels`, a malformed value here can only ever be warned-and-defaulted (never
-  // dropped) -- defaulting to `undefined`/strict is always the SAFE direction, so there is no silent-flip
-  // risk that would justify discarding an otherwise-valid mapping over it. Mirrors `src/review/linked-issue-
-  // label-propagation.ts`'s copy of this normalizer.
+  // dropped) -- defaulting to `undefined`/strict is always the SAFE direction (no mapping accidentally
+  // starts trusting maintainer-authored issues), so there is no silent-flip risk that would justify
+  // discarding an otherwise-valid mapping over it.
   let trustMaintainerAuthoredIssue: boolean | undefined;
   if (record.trustMaintainerAuthoredIssue !== undefined) {
     if (typeof record.trustMaintainerAuthoredIssue === "boolean") {
@@ -60,7 +60,18 @@ function normalizeMapping(input: unknown, index: number, warnings: string[]): Li
       warnings.push(`settings.linkedIssueLabelPropagation.mappings[${index}].trustMaintainerAuthoredIssue must be a boolean; ignoring it.`);
     }
   }
-  return { issueLabel, prLabel, removeOtherTypeLabels: record.removeOtherTypeLabels === true, trustMaintainerAuthoredIssue };
+  // Same parse contract as trustMaintainerAuthoredIssue just above (#priority-reward-maintainer-trust):
+  // malformed is warned-and-defaulted to undefined/strict, never silently coerced, never a reason to drop
+  // an otherwise-valid mapping.
+  let trustMaintainerAuthoredIssueForReward: boolean | undefined;
+  if (record.trustMaintainerAuthoredIssueForReward !== undefined) {
+    if (typeof record.trustMaintainerAuthoredIssueForReward === "boolean") {
+      trustMaintainerAuthoredIssueForReward = record.trustMaintainerAuthoredIssueForReward;
+    } else {
+      warnings.push(`settings.linkedIssueLabelPropagation.mappings[${index}].trustMaintainerAuthoredIssueForReward must be a boolean; ignoring it.`);
+    }
+  }
+  return { issueLabel, prLabel, removeOtherTypeLabels: record.removeOtherTypeLabels === true, trustMaintainerAuthoredIssue, trustMaintainerAuthoredIssueForReward };
 }
 
 /** Defaults-fill a per-repo `linkedIssueLabelPropagation` override into an always-complete, safe config —

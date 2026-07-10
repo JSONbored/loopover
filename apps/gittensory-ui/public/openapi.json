@@ -8949,6 +8949,9 @@
                     },
                     "trustMaintainerAuthoredIssue": {
                       "type": "boolean"
+                    },
+                    "trustMaintainerAuthoredIssueForReward": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -9477,10 +9480,26 @@
               "action": {
                 "type": "string",
                 "enum": [
-                  "close"
+                  "close",
+                  "advisory"
                 ]
               },
               "message": {
+                "type": "string"
+              },
+              "requireViewports": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "requireThemes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "skillFileUrl": {
                 "type": "string"
               }
             },
@@ -9488,7 +9507,9 @@
               "enabled",
               "whenLabels",
               "whenPaths",
-              "action"
+              "action",
+              "requireViewports",
+              "requireThemes"
             ]
           },
           "createdAt": {

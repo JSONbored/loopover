@@ -52,3 +52,11 @@ maxConcurrentClaims: 1
 # How strongly this repo encourages a miner to open discovery issues.
 # Values: encouraged | neutral | discouraged. Default: neutral.
 issueDiscoveryPolicy: neutral
+
+# Per-repo tuning for the feasibility gate a miner consults before starting work.
+# `enabled` (boolean, default: true) turns the gate off entirely for this repo.
+# `suppressedReasons` (string list, default: []) ignores specific avoid/raise
+# reason codes (e.g. duplicate_cluster_high) from the gate's verdict.
+feasibilityGate:
+  enabled: true
+  suppressedReasons: []

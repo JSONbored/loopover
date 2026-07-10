@@ -3,6 +3,8 @@ import { buildScorePreview } from "../scoring/preview";
 import type { GittensorContributorSnapshot } from "../gittensor/api";
 import type { BountyRecord, CheckSummaryRecord, IssueRecord, PullRequestRecord, RecentMergedPullRequestRecord, RepositoryRecord, ScoringModelSnapshotRecord } from "../types";
 import { nowIso } from "../utils/json";
+import { isFailingCheckSummary } from "./check-summary";
+export { isFailingCheckSummary } from "./check-summary";
 import {
   buildCollisionReport,
   buildLaneAdvice,
@@ -748,20 +750,6 @@ function matchingCheckSummaries(pr: PullRequestRecord, checkSummaries: CheckSumm
       (check.pullNumber !== undefined && check.pullNumber !== null && check.pullNumber === pr.number) ||
       (check.pullNumber === undefined || check.pullNumber === null ? Boolean(pr.headSha && check.headSha === pr.headSha) : false),
   );
-}
-
-/** Conclusion/status values that mark a single cached check as failing or attention-needing. */
-const FAILING_CHECK_STATES = ["failure", "failed", "timed_out", "cancelled", "action_required", "startup_failure"];
-
-/**
- * Canonical "is this ONE cached check failing?" predicate, shared so every surface (readiness, the maintainer
- * queue digest) classifies a check identically. A cached check may carry its outcome on `conclusion` (check
- * runs) OR only on `status` (commit-status rows and runs that errored before concluding), so fall back to
- * `status` when `conclusion` is absent, and case-fold both — GitHub conclusions are lowercase, but cached/commit
- * statuses are not guaranteed to be.
- */
-export function isFailingCheckSummary(check: CheckSummaryRecord): boolean {
-  return FAILING_CHECK_STATES.includes((check.conclusion ?? check.status).toLowerCase());
 }
 
 function hasFailingCheck(checks: CheckSummaryRecord[]): boolean {

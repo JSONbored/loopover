@@ -20,9 +20,11 @@ export type UnlinkedIssueMatchVerdict = {
 
 const NO_MATCH: UnlinkedIssueMatchVerdict = { matched: false, confidence: 0, evidence: "" };
 
-const MAX_TOKENS = 400;
+// Exported so the guardrail orchestrator (unlinked-issue-guardrail.ts, #4515) can size its own worst-case
+// per-PR AI-spend estimate off the same numbers, rather than a second, driftable copy of them.
+export const MAX_TOKENS = 400;
 // This check only needs enough diff to judge scope overlap, not the full multi-file review budget.
-const DIFF_CHAR_BUDGET = 6_000;
+export const DIFF_CHAR_BUDGET = 6_000;
 
 type AiRunner = { run: (model: string, options: unknown, extra?: unknown) => Promise<unknown> };
 

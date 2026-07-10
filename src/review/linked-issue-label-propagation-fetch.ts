@@ -1,4 +1,4 @@
-import { fetchLinkedIssueFacts, type LinkedIssueFactsFetch } from "../github/backfill";
+import { fetchLinkedIssueFacts, type LinkedIssueFactsFetch, type LinkedIssueFactsResult } from "../github/backfill";
 import { createInstallationToken, getRepositoryCollaboratorPermission } from "../github/app";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { parseGitHubLoginList } from "../auth/security";
@@ -40,14 +40,30 @@ async function isRepoMaintainerLogin(env: Env, installationId: number, repoFullN
   return permission != null && new Set(["admin", "maintain", "write"]).has(permission);
 }
 
+/** True when the linked issue's authority for propagation can be trusted (#4528): it's still OPEN, or it
+ *  was closed no earlier than THIS PR's own merge. Merging a PR whose body says "Closes #N" auto-closes
+ *  issue #N as an immediate side effect of that same merge -- so `closedAt >= prMergedAt` is exactly the
+ *  signature of "this merge is what closed it," the single most authoritative moment for propagation to
+ *  fire, not a weaker one. An issue closed BEFORE this PR ever merged (`closedAt < prMergedAt`) is the
+ *  gaming case the OPEN-only check originally existed to block -- a PR opportunistically referencing some
+ *  unrelated, already-resolved issue to borrow its label -- and stays blocked, unchanged. `prMergedAt`
+ *  absent (PR not yet merged) never trusts a closed issue, also unchanged. */
+function isLinkedIssueTrustworthy(facts: LinkedIssueFactsResult, prMergedAt: string | null): boolean {
+  if (facts.state === "open") return true;
+  return prMergedAt !== null && facts.closedAt !== null && facts.closedAt >= prMergedAt;
+}
+
 /** Per-issue label resolution for {@link fetchLinkedIssueLabelsForPropagation}: a direct PR-author-is-
  *  issue-author-or-assignee match unlocks EVERY label the issue carries (today's original behavior,
- *  unchanged). Failing that, a mapping explicitly opted into `trustMaintainerAuthoredIssue`
- *  (#priority-linked-issue-gate-ownership) unlocks JUST that mapping's `issueLabel` when the issue's
- *  author independently checks out as a repo maintainer/operator via {@link isRepoMaintainerLogin} --
- *  built so routine bug/feature mirroring doesn't require formal GitHub issue assignment (our own repos
- *  rarely assign issues), while a scarce, maintainer-hand-picked reward label like `gittensor:priority`
- *  (which should never set the flag) still requires the contributor to be the actual author/assignee.
+ *  unchanged). Failing that, a mapping explicitly opted into `trustMaintainerAuthoredIssue` OR
+ *  `trustMaintainerAuthoredIssueForReward` (#priority-linked-issue-gate-ownership, #priority-reward-
+ *  maintainer-trust) unlocks JUST that mapping's `issueLabel` when the issue's author independently
+ *  checks out as a repo maintainer/operator via {@link isRepoMaintainerLogin} -- built so routine
+ *  bug/feature mirroring doesn't require formal GitHub issue assignment (our own repos rarely assign
+ *  issues). A reward mapping (e.g. `gittensor:priority`) opting into the SAME relaxation via the
+ *  `...ForReward` flag is a deliberate, per-repo operator choice (see that flag's own doc comment in
+ *  types.ts for why the assignee-only bar is often unsatisfiable in practice); a reward mapping that has
+ *  NOT opted in still requires the contributor to be the actual author/assignee, unchanged.
  *  `relaxableLabels` is empty whenever the caller passed no mappings or none opted in, which skips the
  *  maintainer-permission check (and its GitHub API call) entirely -- byte-identical to the pre-fix
  *  behavior for any caller that hasn't opted in. Logs once per issue when the returned set is smaller
@@ -58,8 +74,9 @@ async function resolveIssueLabelsForPropagation(
   result: LinkedIssueFactsFetch,
   prAuthorLogin: string | undefined,
   relaxableLabels: ReadonlySet<string>,
+  prMergedAt: string | null,
 ): Promise<string[]> {
-  if (result.status !== "found" || result.facts.state !== "open" || !prAuthorLogin) return [];
+  if (result.status !== "found" || !isLinkedIssueTrustworthy(result.facts, prMergedAt) || !prAuthorLogin) return [];
   const allLabels = result.facts.labels;
   const issueAuthorLogin = result.facts.authorLogin?.toLowerCase();
   const assignees = result.facts.assignees.map((login) => login.toLowerCase());
@@ -86,9 +103,9 @@ async function resolveIssueLabelsForPropagation(
 }
 
 /** FETCH every linked issue's labels (fail-open) and flatten into one label list for
- *  `resolvePrTypeLabel` (`src/settings/pr-type-label.ts`) to match against. Only verified OPEN issues
- *  can contribute labels; closing-keyword text in a PR body is author-controlled and is not authority by
- *  itself. Mirrors
+ *  `resolvePrTypeLabel` (`src/settings/pr-type-label.ts`) to match against. Only an OPEN issue, or one
+ *  closed no earlier than THIS PR's own merge (#4528, {@link isLinkedIssueTrustworthy}), can contribute
+ *  labels; closing-keyword text in a PR body is author-controlled and is not authority by itself. Mirrors
  *  `resolveLinkedIssueHardRule`'s own fetch idiom (`src/review/linked-issue-hard-rules.ts`): a per-issue
  *  fetch failure contributes no labels rather than throwing, so if EVERY linked issue fails, the result is
  *  `[]` — which can never match a mapping, meaning a sensitive label like `gittensor:priority` never applies
@@ -104,8 +121,11 @@ async function resolveIssueLabelsForPropagation(
  *
  *  `mappings` (optional, #priority-linked-issue-gate-ownership) is the propagation config's own mapping
  *  list, used ONLY to know which `issueLabel`s are allowed to unlock via `resolveIssueLabelsForPropagation`'s
- *  relaxed maintainer-authored-issue path -- omitting it (or a mapping never setting the flag) reproduces
- *  today's strict author-or-assignee-only behavior exactly. */
+ *  relaxed maintainer-authored-issue path (either trust flag) -- omitting it (or a mapping never setting
+ *  either flag) reproduces today's strict author-or-assignee-only behavior exactly.
+ *
+ *  `prMergedAt` (#4528) is this PR's own `merged_at`, or `null` while unmerged -- the caller's `pr.mergedAt`
+ *  straight from the DB row, no extra fetch. */
 export async function fetchLinkedIssueLabelsForPropagation(args: {
   env: Env;
   repoFullName: string;
@@ -113,6 +133,7 @@ export async function fetchLinkedIssueLabelsForPropagation(args: {
   installationId: number;
   prAuthorLogin: string | null | undefined;
   mappings?: readonly LinkedIssueLabelPropagationMapping[] | undefined;
+  prMergedAt?: string | null | undefined;
 }): Promise<string[]> {
   if (args.linkedIssues.length === 0) return [];
   const linkedIssues = args.linkedIssues.slice(0, MAX_LINKED_ISSUES_TO_FETCH);
@@ -126,9 +147,10 @@ export async function fetchLinkedIssueLabelsForPropagation(args: {
     args.installationId,
   );
   const prAuthorLogin = args.prAuthorLogin?.toLowerCase();
+  const prMergedAt = args.prMergedAt ?? null;
   const relaxableLabels = new Set(
     (args.mappings ?? [])
-      .filter((mapping) => mapping.trustMaintainerAuthoredIssue === true)
+      .filter((mapping) => mapping.trustMaintainerAuthoredIssue === true || mapping.trustMaintainerAuthoredIssueForReward === true)
       .map((mapping) => mapping.issueLabel.toLowerCase()),
   );
   const results = await Promise.all(
@@ -149,6 +171,7 @@ export async function fetchLinkedIssueLabelsForPropagation(args: {
         result,
         prAuthorLogin,
         relaxableLabels,
+        prMergedAt,
       ),
     ),
   );

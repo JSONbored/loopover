@@ -6,6 +6,7 @@ import {
   repoDocGenerationConfigToJson,
   reviewConfigToJson,
   reviewRecapConfigToJson,
+  maintainerRecapConfigToJson,
   settingsOverrideToJson,
   type FocusManifest,
   type FocusManifestSource,
@@ -69,6 +70,8 @@ function focusManifestToNormalizedJson(manifest: FocusManifest): Record<string, 
   if (repoDocGeneration !== null) normalized.repoDocGeneration = repoDocGeneration;
   const reviewRecap = reviewRecapConfigToJson(manifest.reviewRecap);
   if (reviewRecap !== null) normalized.reviewRecap = reviewRecap;
+  const maintainerRecap = maintainerRecapConfigToJson(manifest.maintainerRecap);
+  if (maintainerRecap !== null) normalized.maintainerRecap = maintainerRecap;
 
   return normalized;
 }

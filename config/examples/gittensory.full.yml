@@ -616,22 +616,32 @@ settings:
   # label like `gittensor:priority` -- it is NEVER inferred from a PR's title, changed files, AI
   # output, or existing PR labels, only ever copied from a linked/closing issue ("Fixes #123") that
   # ALREADY carries the configured issue label. Generic beyond the priority use case: any issue label
-  # can map to any PR label. `removeOtherTypeLabels: true` REPLACES the type label entirely (bug/
-  # feature are removed), matching how `gittensor:priority` behaves today; `false` applies the mapped
-  # label ADDITIVELY alongside the normal title-based bug/feature label, leaving it untouched -- useful
-  # for a mapping unrelated to the bug/feature/priority triad (e.g. a `customer:vip` issue label
-  # copied to a `triage:vip` PR label). Disabled by default (no mappings) -- a self-hoster opts in per
-  # repo. If your labels carry reward or moderation weight, configure this in PRIVATE per-repo/global
-  # config (see `config/examples/README.md`) rather than the public `.gittensory.yml`, so contributors
-  # cannot see the exact mapping rules. A per-repo `mappings` override in the private-config layer
-  # REPLACES the global default list wholesale -- it does not merge with it.
+  # can map to any PR label. `removeOtherTypeLabels: true` marks the mapping EXCLUSIVE -- it REPLACES
+  # the type label entirely (bug/feature are removed), for genuinely mutually-exclusive categories; only
+  # the FIRST-configured exclusive match wins when more than one applies. `false` (e.g. `gittensor:priority`,
+  # which is a reward tag that coexists WITH whichever type already applies, not a type of its own) applies
+  # the mapped label ADDITIVELY alongside whichever exclusive match (or the normal title-based bug/feature
+  # label) already won -- every additive match composes together rather than competing for a single slot.
+  # Each mapping normally requires the PR author to be the linked issue's own author or a GitHub assignee of
+  # it (`trustMaintainerAuthoredIssue: true` relaxes this for a routine, non-reward category like bug/feature
+  # -- see the field's own doc comment in `types.ts`). `trustMaintainerAuthoredIssueForReward: true` opts a
+  # REWARD mapping like `gittensor:priority` into that same relaxation: without it, a mapping like this can
+  # structurally never propagate to most external contributors, since GitHub silently refuses to assign
+  # anyone lacking push/triage access to the repo -- so if your issues are open-pickup (maintainer-authored,
+  # rarely formally assigned to a specific contributor), the reward label needs this flag to ever reach them.
+  # Disabled by default (no mappings) -- a self-hoster opts in per repo. If your labels carry reward or
+  # moderation weight, configure this in PRIVATE per-repo/global config (see `config/examples/README.md`)
+  # rather than the public `.gittensory.yml`, so contributors cannot see the exact mapping rules. A per-repo
+  # `mappings` override in the private-config layer REPLACES the global default list wholesale -- it does
+  # not merge with it.
   # linkedIssueLabelPropagation:
   #   enabled: true
   #   mode: exclusive_type_label
   #   mappings:
   #     - issueLabel: gittensor:priority
   #       prLabel: gittensor:priority
-  #       removeOtherTypeLabels: true
+  #       removeOtherTypeLabels: false
+  #       trustMaintainerAuthoredIssueForReward: true
 
   # Create the label if it does not yet exist. Bool. Default: true.
   createMissingLabel: true
@@ -1133,3 +1143,13 @@ settings:
 # reviewRecap:
 #   enabled: true    # Bool. Default: false (no recap is ever built or posted).
 #   cadenceDays: 7   # Positive integer. Days of activity each recap covers. Default: 7 (weekly).
+
+# Cross-repo maintainer recap digest (#1963, #2250): config-as-code override for the CRON-scheduled digest
+# that folds gate-precision + outcome-calibration across every scanned repo into one report (distinct from
+# the single-repo reviewRecap above). Operator-level, not per-repo -- only meaningful on the gittensory
+# self-repo's own manifest (the repo this instance identifies as); a present block there wins over the
+# GITTENSORY_MAINTAINER_RECAP / GITTENSORY_RECAP_CADENCE env vars, which stay the fallback when absent.
+# maintainerRecap:
+#   enabled: true         # Bool. Default: false (env vars decide instead).
+#   cadence: weekly        # daily | weekly. Default: weekly. Invalid values fall back to weekly.
+#   channel: discord       # discord (only supported channel today). Invalid values fall back to discord.

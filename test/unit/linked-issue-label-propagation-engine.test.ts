@@ -131,6 +131,33 @@ describe("normalizeLinkedIssueLabelPropagationConfig (#priority-linked-issue-gat
     expect(warnings.some((w) => w.includes("mappings[0].trustMaintainerAuthoredIssue"))).toBe(true);
   });
 
+  it("passes through a mapping's trustMaintainerAuthoredIssueForReward: true unchanged (#priority-reward-maintainer-trust)", () => {
+    const warnings: string[] = [];
+    const result = normalizeLinkedIssueLabelPropagationConfig(
+      { enabled: true, mappings: [{ issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: false, trustMaintainerAuthoredIssueForReward: true }] },
+      warnings,
+    );
+    expect(result.mappings).toEqual([{ issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: false, trustMaintainerAuthoredIssueForReward: true }]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("leaves trustMaintainerAuthoredIssueForReward undefined (not defaulted to false) when omitted from a mapping, with no warning", () => {
+    const warnings: string[] = [];
+    const result = normalizeLinkedIssueLabelPropagationConfig({ enabled: true, mappings: [{ issueLabel: "a", prLabel: "b" }] }, warnings);
+    expect(result.mappings[0]?.trustMaintainerAuthoredIssueForReward).toBeUndefined();
+    expect(warnings).toEqual([]);
+  });
+
+  it("warns and ignores a non-boolean trustMaintainerAuthoredIssueForReward, keeping the rest of the mapping (never silently defaults to true)", () => {
+    const warnings: string[] = [];
+    const result = normalizeLinkedIssueLabelPropagationConfig(
+      { enabled: true, mappings: [{ issueLabel: "gittensor:priority", prLabel: "gittensor:priority", trustMaintainerAuthoredIssueForReward: "true" }] },
+      warnings,
+    );
+    expect(result.mappings).toEqual([{ issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: false, trustMaintainerAuthoredIssueForReward: undefined }]);
+    expect(warnings.some((w) => w.includes("mappings[0].trustMaintainerAuthoredIssueForReward"))).toBe(true);
+  });
+
   it("defaults removeOtherTypeLabels to false when omitted from a mapping", () => {
     const warnings: string[] = [];
     const result = normalizeLinkedIssueLabelPropagationConfig({ enabled: true, mappings: [{ issueLabel: "a", prLabel: "b" }] }, warnings);

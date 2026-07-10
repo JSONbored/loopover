@@ -1,0 +1,20 @@
+{
+  "predicted": true,
+  "basis": "public_config",
+  "pack": "gittensor",
+  "conclusion": "failure",
+  "title": "Gittensory Orb Review Agent: PR author also opened the linked issue",
+  "summary": "PR author also opened the linked issue — Link an issue that was opened by a different contributor, or provide a rationale for why this self-authored issue represents genuine discovery work.",
+  "readinessScore": 95,
+  "blockers": [
+    {
+      "code": "self_authored_linked_issue",
+      "title": "PR author also opened the linked issue",
+      "detail": "The contributor who opened this PR also filed the linked issue. This pattern can indicate artificial issue-discovery work rather than solving an independently discovered problem.",
+      "action": "Link an issue that was opened by a different contributor, or provide a rationale for why this self-authored issue represents genuine discovery work."
+    }
+  ],
+  "warnings": [],
+  "funnel": null,
+  "note": "Predicted from the repo's public .gittensory.yml gate config + safe defaults. The maintainer may have private dashboard overrides not reflected here, and the dual-model AI-consensus blocker is only evaluated on a real PR. The slop score is NOT evaluated pre-submission (it needs the diff content) and may still fail the real gate. Provide the PR's changed paths to also predict the focus-manifest path policy, the size/guardrail hold, and any pre-merge check scoped to changed paths; without them only path-independent title/description/label pre-merge checks are predicted. Every author is gated the same: a configured hard blocker fails the gate regardless of confirmed-contributor status (which affects only on-chain scoring)."
+}

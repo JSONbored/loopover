@@ -61,6 +61,7 @@ describe("runVisualVisionForAdvisory", () => {
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -73,12 +74,30 @@ describe("runVisualVisionForAdvisory", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("REGRESSION (#token-bleed-spend-gate): a paused mode never reaches the vision call, even with a non-empty route list", async () => {
+    const env = byokEnv();
+    stubShotsAndProvider(findingsResponse([{ path: "src/Button.tsx", body: "regressed" }]));
+    const adv = findingsHolder();
+    await runVisualVisionForAdvisory(env, {
+      mode: "paused",
+      repoFullName,
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      settings: byokSettings(),
+      advisory: adv,
+      routes: [route({ path: "src/Button.tsx" })],
+    });
+    expect(adv.findings).toEqual([]);
+  });
+
   it("handles a null author (ghost/deleted account) by treating it as an anonymous submitter, not a crash", async () => {
     const env = byokEnv();
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: null,
@@ -98,6 +117,7 @@ describe("runVisualVisionForAdvisory", () => {
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -127,6 +147,7 @@ describe("runVisualVisionForAdvisory", () => {
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "bob",
@@ -145,6 +166,7 @@ describe("runVisualVisionForAdvisory", () => {
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -164,6 +186,7 @@ describe("runVisualVisionForAdvisory", () => {
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -183,6 +206,7 @@ describe("runVisualVisionForAdvisory", () => {
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -201,6 +225,7 @@ describe("runVisualVisionForAdvisory", () => {
     stubShotsAndProvider(findingsResponse([{ path: "/app", body: "The submit button is clipped on the right edge." }]));
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -242,6 +267,7 @@ describe("runVisualVisionForAdvisory", () => {
     }));
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -271,6 +297,7 @@ describe("runVisualVisionForAdvisory", () => {
     stubShotsAndProvider(findingsResponse([]));
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -295,6 +322,7 @@ describe("runVisualVisionForAdvisory", () => {
     }));
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -321,6 +349,7 @@ describe("runVisualVisionForAdvisory", () => {
     }));
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -339,6 +368,7 @@ describe("runVisualVisionForAdvisory", () => {
     stubShotsAndProvider("I looked at the screenshots and everything seems fine, no JSON here.");
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -356,6 +386,7 @@ describe("runVisualVisionForAdvisory", () => {
     stubShotsAndProvider(null);
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -376,6 +407,7 @@ describe("runVisualVisionForAdvisory", () => {
     const adv = findingsHolder();
     await expect(
       runVisualVisionForAdvisory(env, {
+        mode: "live",
         repoFullName,
         pr,
         author: "alice",
@@ -414,6 +446,7 @@ describe("runVisualVisionForAdvisory: self-host local vision provider (#4335)", 
     stubShots();
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -446,6 +479,7 @@ describe("runVisualVisionForAdvisory: self-host local vision provider (#4335)", 
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -468,6 +502,7 @@ describe("runVisualVisionForAdvisory: self-host local vision provider (#4335)", 
     stubShots();
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -488,6 +523,7 @@ describe("runVisualVisionForAdvisory: self-host local vision provider (#4335)", 
     stubShotsAndProvider(findingsResponse([{ path: "/app", body: "BYOK finding wins." }]));
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -506,6 +542,7 @@ describe("runVisualVisionForAdvisory: self-host local vision provider (#4335)", 
     stubShots();
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -523,6 +560,7 @@ describe("runVisualVisionForAdvisory: self-host local vision provider (#4335)", 
     stubShots();
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -540,6 +578,7 @@ describe("runVisualVisionForAdvisory: self-host local vision provider (#4335)", 
     stubShots();
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",
@@ -557,6 +596,7 @@ describe("runVisualVisionForAdvisory: self-host local vision provider (#4335)", 
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
+      mode: "live",
       repoFullName,
       pr,
       author: "alice",

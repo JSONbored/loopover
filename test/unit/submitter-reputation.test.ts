@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyOutcome,
+  computeSubmissionCadence,
   countOutcomes,
   DEFAULT_REPUTATION_CONFIG,
+  getSubmitterCadence,
   getSubmitterReputation,
+  isMachinePacedCadence,
   recordSubmissionOutcome,
   REPUTATION_WINDOW_DAYS,
   type ReputationConfig,
@@ -270,6 +273,104 @@ describe("recordSubmissionOutcome / getSubmitterReputation (D1, fail-safe)", () 
     const rep = await getSubmitterReputation(env, "p", "u");
     expect(rep.signal).toBe("neutral");
     expect(rep.closeRate).toBeCloseTo(1 / 3); // closed 1 / (merged 2 + closed 1)
+  });
+});
+
+describe("computeSubmissionCadence (pure) (#4514)", () => {
+  it("returns count and null medianGapMs for 0 or 1 samples (nothing to measure a gap between)", () => {
+    expect(computeSubmissionCadence([])).toEqual({ count: 0, medianGapMs: null });
+    expect(computeSubmissionCadence(["2026-01-01T00:00:00.000Z"])).toEqual({ count: 1, medianGapMs: null });
+  });
+
+  it("computes the median gap between consecutive submissions, order-independent", () => {
+    // Gaps: 10min, 20min, 30min -> sorted [10,20,30] -> median 20min.
+    const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
+    const timestamps = [t0, t0 + 10 * 60_000, t0 + 30 * 60_000, t0 + 60 * 60_000].map((ms) => new Date(ms).toISOString());
+    // Shuffle the input order -- the function must sort internally, not assume caller ordering.
+    const shuffled = [timestamps[2]!, timestamps[0]!, timestamps[3]!, timestamps[1]!];
+    expect(computeSubmissionCadence(shuffled)).toEqual({ count: 4, medianGapMs: 20 * 60_000 });
+  });
+
+  it("averages the two middle gaps for an even number of gaps", () => {
+    // 3 timestamps -> 2 gaps: 10min, 30min -> even count -> average = 20min.
+    const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
+    const timestamps = [t0, t0 + 10 * 60_000, t0 + 40 * 60_000].map((ms) => new Date(ms).toISOString());
+    expect(computeSubmissionCadence(timestamps)).toEqual({ count: 3, medianGapMs: 20 * 60_000 });
+  });
+});
+
+describe("isMachinePacedCadence (pure) (#4514)", () => {
+  it("requires BOTH the minimum sample size AND a sub-threshold median gap", () => {
+    // Below minSample (5) -- fast, but not enough samples to call it a pattern.
+    expect(isMachinePacedCadence({ count: 4, medianGapMs: 60_000 })).toBe(false);
+    // Enough samples, but the gap is comfortably human (well over 10min).
+    expect(isMachinePacedCadence({ count: 10, medianGapMs: 60 * 60_000 })).toBe(false);
+    // No gap at all to measure (count < 2 internally, or explicitly null).
+    expect(isMachinePacedCadence({ count: 8, medianGapMs: null })).toBe(false);
+    // Enough samples AND a tight gap -- machine-paced.
+    expect(isMachinePacedCadence({ count: 5, medianGapMs: 5 * 60_000 })).toBe(true);
+    expect(isMachinePacedCadence({ count: 20, medianGapMs: 60_000 })).toBe(true);
+  });
+
+  it("is a boundary at exactly the configured thresholds", () => {
+    // Exactly at minSample, exactly under the max gap -- still counts.
+    expect(isMachinePacedCadence({ count: 5, medianGapMs: 10 * 60_000 - 1 })).toBe(true);
+    // Exactly AT the max gap -- not strictly under, so not machine-paced.
+    expect(isMachinePacedCadence({ count: 5, medianGapMs: 10 * 60_000 })).toBe(false);
+  });
+});
+
+describe("getSubmitterCadence (D1, fail-safe) (#4514)", () => {
+  function makeCadenceEnv(createdAts: string[]): Env {
+    return {
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            all: async () => ({ results: createdAts.map((createdAt) => ({ createdAt })) }),
+          }),
+        }),
+      },
+    } as unknown as Env;
+  }
+
+  it("returns count 0 / null with no submitter (early return, no DB touch)", async () => {
+    expect(await getSubmitterCadence({} as Env, "p", undefined)).toEqual({ count: 0, medianGapMs: null });
+  });
+
+  it("derives cadence from the queried created_at timestamps", async () => {
+    const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
+    const env = makeCadenceEnv([t0, t0 + 5 * 60_000, t0 + 10 * 60_000, t0 + 15 * 60_000, t0 + 20 * 60_000].map((ms) => new Date(ms).toISOString()));
+    const cadence = await getSubmitterCadence(env, "p", "farmer99");
+    expect(cadence).toEqual({ count: 5, medianGapMs: 5 * 60_000 });
+    expect(isMachinePacedCadence(cadence)).toBe(true);
+  });
+
+  it("fail-safe: degrades to count 0 / null when the query throws, never throws into the caller", async () => {
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            all: async () => {
+              throw new Error("D1 boom");
+            },
+          }),
+        }),
+      },
+    } as unknown as Env;
+    expect(await getSubmitterCadence(env, "p", "farmer99")).toEqual({ count: 0, medianGapMs: null });
+  });
+
+  it("fail-safe: degrades to count 0 / null when the query returns a malformed result (?? [] fallback)", async () => {
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            all: async () => undefined,
+          }),
+        }),
+      },
+    } as unknown as Env;
+    expect(await getSubmitterCadence(env, "p", "farmer99")).toEqual({ count: 0, medianGapMs: null });
   });
 });
 

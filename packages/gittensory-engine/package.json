@@ -46,6 +46,14 @@
     "./signals/test-evidence": {
       "types": "./dist/signals/test-evidence.d.ts",
       "default": "./dist/signals/test-evidence.js"
+    },
+    "./signals/check-summary": {
+      "types": "./dist/signals/check-summary.d.ts",
+      "default": "./dist/signals/check-summary.js"
+    },
+    "./signals/path-matchers": {
+      "types": "./dist/signals/path-matchers.d.ts",
+      "default": "./dist/signals/path-matchers.js"
     }
   },
   "files": [
@@ -54,9 +62,12 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\""
+    "test": "npm run build && rm -rf dist-test && tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\""
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.205",
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "^0.20.8",
     "yaml": "^2.9.0"
   },
   "devDependencies": {

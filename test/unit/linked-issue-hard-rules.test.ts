@@ -563,7 +563,7 @@ describe("mergeLinkedIssueHardRuleWithPersistedViolation (#linked-issue-hard-rul
 });
 
 describe("hasVerifiableOpenLinkedIssueReference (#unlinked-issue-guardrail-followup — pure evaluator)", () => {
-  const found = (state: string): LinkedIssueFactsFetch => ({ status: "found", facts: { number: 1, state, labels: [], assignees: [], authorLogin: null } });
+  const found = (state: string): LinkedIssueFactsFetch => ({ status: "found", facts: { number: 1, state, labels: [], assignees: [], authorLogin: null, closedAt: null } });
   const notFound: LinkedIssueFactsFetch = { status: "not_found" };
   const fetchError: LinkedIssueFactsFetch = { status: "fetch_error" };
 

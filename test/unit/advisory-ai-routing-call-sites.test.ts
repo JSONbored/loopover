@@ -34,6 +34,7 @@ describe("runAiSlopForAdvisory routes through AI_ADVISORY (#4364)", () => {
       AI_ADVISORY: { run: advisoryRun } as unknown as Ai,
     });
     await runAiSlopForAdvisory(env, {
+      mode: "live",
       settings: settingsFixture({ slop: true, e2eTestGen: false, planner: false, summaries: false }),
       advisory,
       repoFullName: "owner/repo",
@@ -42,6 +43,7 @@ describe("runAiSlopForAdvisory routes through AI_ADVISORY (#4364)", () => {
       files,
       deterministicBand: "clean",
       confirmedContributor: true,
+      commitThresholdReached: false,
     });
     expect(advisoryRun).toHaveBeenCalled();
     expect(frontierRun).not.toHaveBeenCalled();
@@ -57,6 +59,7 @@ describe("runAiSlopForAdvisory routes through AI_ADVISORY (#4364)", () => {
       AI_ADVISORY: { run: advisoryRun } as unknown as Ai,
     });
     await runAiSlopForAdvisory(env, {
+      mode: "live",
       settings: settingsFixture(undefined),
       advisory,
       repoFullName: "owner/repo",
@@ -65,6 +68,7 @@ describe("runAiSlopForAdvisory routes through AI_ADVISORY (#4364)", () => {
       files,
       deterministicBand: "clean",
       confirmedContributor: true,
+      commitThresholdReached: false,
     });
     expect(frontierRun).toHaveBeenCalled();
     expect(advisoryRun).not.toHaveBeenCalled();
@@ -75,6 +79,7 @@ describe("runAiSlopForAdvisory routes through AI_ADVISORY (#4364)", () => {
     advisoryRun.mockClear();
     const env = createTestEnv({ AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI: { run: frontierRun } as unknown as Ai });
     await runAiSlopForAdvisory(env, {
+      mode: "live",
       settings: settingsFixture({ slop: true, e2eTestGen: false, planner: false, summaries: false }),
       advisory,
       repoFullName: "owner/repo",
@@ -83,6 +88,7 @@ describe("runAiSlopForAdvisory routes through AI_ADVISORY (#4364)", () => {
       files,
       deterministicBand: "clean",
       confirmedContributor: true,
+      commitThresholdReached: false,
     });
     expect(frontierRun).toHaveBeenCalled();
     expect(advisoryRun).not.toHaveBeenCalled();

@@ -78,6 +78,13 @@ export {
   type ReplayHarnessStatus,
 } from "./phase7-calibration-loop.js";
 export {
+  buildCalibrationDashboardView,
+  resolveCalibrationDashboardStatus,
+  type CalibrationDashboardRow,
+  type CalibrationDashboardStatus,
+  type CalibrationDashboardView,
+} from "./calibration-dashboard.js";
+export {
   computeFindingSeverityCompositeCalibrationScore,
   ingestFindingSeverityCalibrationSignals,
   renderFindingSeverityCalibrationAuditMarkdown,
@@ -129,6 +136,7 @@ export {
   type TrackRecordTenure,
 } from "./track-record-summary.js";
 export * from "./governor/rate-limit.js";
+export * from "./governor/budget-cap.js";
 export {
   GOVERNOR_LEDGER_EVENT_TYPES,
   normalizeGovernorLedgerEvent,
@@ -136,6 +144,120 @@ export {
   type GovernorLedgerEventType,
   type NormalizedGovernorLedgerEvent,
 } from "./governor-ledger.js";
+export {
+  MINER_TELEMETRY_EVENT_TYPES,
+  MINER_TELEMETRY_OUTCOME_BUCKETS,
+  normalizeMinerTelemetryEvent,
+  type MinerTelemetryEvent,
+  type MinerTelemetryEventType,
+  type MinerTelemetryOutcomeBucket,
+  type NormalizedMinerTelemetryEvent,
+} from "./miner-telemetry.js";
+export {
+  MINER_PREDICTIONS_TOTAL,
+  MINER_PREDICTION_CORRECT_TOTAL,
+  MINER_PREDICTION_INCORRECT_TOTAL,
+  renderMinerPredictionMetrics,
+  type MinerPredictionMetricRow,
+} from "./miner-prediction-metrics.js";
+export {
+  ATTEMPT_LOG_EVENT_TYPES,
+  createAttemptLogBuffer,
+  formatAttemptLogJsonl,
+  normalizeAttemptLogEvent,
+  type AttemptLogEvent,
+  type AttemptLogEventType,
+  type NormalizedAttemptLogEvent,
+} from "./miner/attempt-log.js";
+export {
+  ACCEPTANCE_CRITERIA_FILENAME,
+  ACCEPTANCE_CRITERIA_VERSION,
+  buildAcceptanceCriteria,
+  serializeAcceptanceCriteria,
+  shouldWriteAcceptanceCriteria,
+  type AcceptanceCriteria,
+  type AcceptanceCriteriaInput,
+} from "./miner/acceptance-criteria.js";
+export {
+  codingAgentModeExecutes,
+  isGlobalMinerCodingAgentPause,
+  resolveCodingAgentExecutionMode,
+  resolveCodingAgentModeFromConfig,
+  type CodingAgentExecutionMode,
+} from "./miner/coding-agent-mode.js";
+export {
+  createFakeCodingAgentDriver,
+  createNoopCodingAgentDriver,
+  type CodingAgentDriver,
+  type CodingAgentDriverResult,
+  type CodingAgentDriverTask,
+} from "./miner/coding-agent-driver.js";
+export {
+  createCliSubprocessCodingAgentDriver,
+  type CliSubprocessDriverOptions,
+  type CliSubprocessSpawnFn,
+} from "./miner/cli-subprocess-driver.js";
+export {
+  addWorktree,
+  planWorktree,
+  removeWorktree,
+  shouldRetainWorktree,
+  WORKTREE_BRANCH_PREFIX,
+  WORKTREE_SUBDIR,
+  type WorktreeAddResult,
+  type WorktreeExecFn,
+  type WorktreeExecResult,
+  type WorktreePlan,
+  type WorktreeRemoveResult,
+} from "./miner/worktree-allocator.js";
+export {
+  invokeCodingAgentDriver,
+  type AttemptLogSink,
+} from "./miner/coding-agent-invoke.js";
+export {
+  classifyLintGuardPackage,
+  guardChangedFiles,
+  guardCodingAgentDriverResult,
+  type LintGuardCheckResult,
+  type LintGuardedDriverResult,
+  type LintGuardOptions,
+  type LintGuardPackage,
+  type LintGuardResult,
+  type LintGuardSpawnFn,
+} from "./miner/lint-guard.js";
+export {
+  CODING_AGENT_DRIVER_CONFIG_ENV,
+  CODING_AGENT_DRIVER_NAMES,
+  createCodingAgentDriver,
+  createFakeCodingAgentDriverForFactory,
+  isConfiguredCodingAgentDriver,
+  resolveConfiguredCodingAgentDriverNames,
+  runCodingAgentAttempt,
+  type CodingAgentDriverName,
+  type CreateCodingAgentDriverOptions,
+  type RunCodingAgentAttemptOptions,
+} from "./miner/driver-factory.js";
+export * from "./miner/attempt-metering.js";
+export {
+  buildRepoMap,
+  extractRepoMapSymbols,
+  renderRepoMap,
+  resolveRepoMapLanguage,
+  type BuildRepoMapOptions,
+  type LoadRepoMapLanguageFn,
+  type RepoMapFileEntry,
+  type RepoMapSkipReason,
+  type RepoMapSourceFile,
+  type RepoMapSymbol,
+  type RepoMapSymbolKind,
+} from "./miner/repo-map.js";
+export {
+  createAgentSdkCodingAgentDriver,
+  type AgentSdkHooks,
+  type AgentSdkQueryFn,
+  type AgentSdkQueryOptions,
+  type CreateAgentSdkDriverOptions,
+} from "./miner/agent-sdk-driver.js";
 export * from "./plan-export.js";
 export { countPlanStepsByStatus } from "./plan-step-stats.js";
 export { countPlanSteps } from "./plan-step-count.js";
@@ -164,6 +286,7 @@ export {
   type PromptPacketTextField,
 } from "./prompt-packet.js";
 export * from "./portfolio/queue.js";
+export * from "./portfolio/non-convergence.js";
 export {
   applyAiPolicyFatigueToRankInput,
   createAiPolicyFatigueCacheEntry,
@@ -193,10 +316,43 @@ export {
   parseMinerGoalSpecContent,
   discoverMinerGoalSpecPath,
   MINER_GOAL_SPEC_FILENAMES,
+  type FeasibilityGatePolicy,
   type MinerGoalSpec,
   type MinerIssueDiscoveryPolicy,
   type ParsedMinerGoalSpec,
 } from "./miner-goal-spec.js";
+export {
+  DEFAULT_FLEET_RUN_MANIFEST,
+  parseFleetRunManifest,
+  parseFleetRunManifestContent,
+  type FleetRunManifest,
+  type FleetRunManifestRepo,
+  type ParsedFleetRunManifest,
+} from "./fleet-run-manifest.js";
+export {
+  DISCOVERY_INDEX_CONTRACT_VERSION,
+  DISCOVERY_INDEX_FORBIDDEN_FIELDS,
+  discoveryIndexBoundaryViolations,
+  normalizeDiscoveryIndexCandidate,
+  normalizeDiscoveryIndexRequest,
+  normalizeDiscoveryIndexResponse,
+  type DiscoveryIndexAiPolicySource,
+  type DiscoveryIndexCandidate,
+  type DiscoveryIndexQuery,
+  type DiscoveryIndexRequest,
+  type DiscoveryIndexResponse,
+  type ParsedDiscoveryIndexRequest,
+  type ParsedDiscoveryIndexResponse,
+} from "./discovery-index-contract.js";
+export {
+  buildSoftClaimRequest,
+  softClaimActionForStatus,
+  type SoftClaimAction,
+  type SoftClaimRecord,
+  type SoftClaimRequest,
+  type SoftClaimRequestContext,
+  type SoftClaimStatus,
+} from "./discovery-soft-claim.js";
 export {
   computeMetadataLaneFit,
   computeMinerGoalLaneFit,
@@ -255,6 +411,14 @@ export {
 // Issue-centric RAG query composition (#2320, extracted in #4254): the pure query builder + the shared
 // minimum-query floor; the Vectorize/D1 retrieval backend intentionally stays in the backend.
 export { MIN_QUERY_CHARS, buildIssueRagQuery, type IssueRagQueryInput } from "./issue-rag-query.js";
+// #782 deterministic local scorer (extracted in #4253): pure token-scoring from changed-file metadata,
+// shared by the published CLIs and the hosted Worker. The Node-coupled local-branch.ts stays in the backend.
+export {
+  computeLocalScorerTokens,
+  type LocalScorerChangedFile,
+  type LocalScorerValidation,
+  type LocalScorerResult,
+} from "./local-scorer.js";
 export {
   buildPredictedGateVerdict,
   predictedGateNote,
@@ -280,6 +444,7 @@ export {
   repoDocGenerationConfigToJson,
   reviewConfigToJson,
   reviewRecapConfigToJson,
+  maintainerRecapConfigToJson,
   settingsOverrideToJson,
   MAX_FOCUS_MANIFEST_BYTES,
   CONVERGED_FEATURE_KEYS,
@@ -310,6 +475,7 @@ export {
   type FocusManifestRepoDocGenerationScope,
   type FocusManifestReviewConfig,
   type FocusManifestReviewRecapConfig,
+  type FocusManifestMaintainerRecapConfig,
   type FocusManifestSettings,
   type FocusManifestSource,
   type LabelingRule,
@@ -346,3 +512,12 @@ export {
   type MaintainerNoiseReport,
   type PullRequestReviewability,
 } from "./reward-risk.js";
+
+// Shared subprocess env-allowlist + secret-redaction helpers (#4284) — one source of truth for every driver that
+// spawns a locally-authenticated CLI subprocess (src/selfhost/ai.ts and the coming gittensory-miner drivers).
+export {
+  SUBPROCESS_CLI_ENV_ALLOWLIST,
+  buildAllowlistedEnv,
+  SECRET_PATTERNS,
+  redactSecrets,
+} from "./subprocess-env.js";

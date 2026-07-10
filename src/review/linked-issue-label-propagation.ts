@@ -60,7 +60,18 @@ function normalizeMapping(input: unknown, index: number, warnings: string[]): Li
       warnings.push(`settings.linkedIssueLabelPropagation.mappings[${index}].trustMaintainerAuthoredIssue must be a boolean; ignoring it.`);
     }
   }
-  return { issueLabel, prLabel, removeOtherTypeLabels: record.removeOtherTypeLabels === true, trustMaintainerAuthoredIssue };
+  // Same parse contract as trustMaintainerAuthoredIssue just above (#priority-reward-maintainer-trust):
+  // malformed is warned-and-defaulted to undefined/strict, never silently coerced, never a reason to drop
+  // an otherwise-valid mapping.
+  let trustMaintainerAuthoredIssueForReward: boolean | undefined;
+  if (record.trustMaintainerAuthoredIssueForReward !== undefined) {
+    if (typeof record.trustMaintainerAuthoredIssueForReward === "boolean") {
+      trustMaintainerAuthoredIssueForReward = record.trustMaintainerAuthoredIssueForReward;
+    } else {
+      warnings.push(`settings.linkedIssueLabelPropagation.mappings[${index}].trustMaintainerAuthoredIssueForReward must be a boolean; ignoring it.`);
+    }
+  }
+  return { issueLabel, prLabel, removeOtherTypeLabels: record.removeOtherTypeLabels === true, trustMaintainerAuthoredIssue, trustMaintainerAuthoredIssueForReward };
 }
 
 /** Defaults-fill a per-repo `linkedIssueLabelPropagation` override into an always-complete, safe config —

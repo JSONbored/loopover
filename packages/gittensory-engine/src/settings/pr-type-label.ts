@@ -14,7 +14,7 @@
 // moves away from it. Public + neutral categorization (NOT the reputation signal). Review-time +
 // independent of the gate / autonomy / dry-run (matches reviewbot, where auto-label runs at review
 // start). Fail-safe.
-import type { LinkedIssueLabelPropagationConfig, PrTypeLabelSet } from "../types/manifest-deps-types.js";
+import type { LinkedIssueLabelPropagationConfig, LinkedIssueLabelPropagationMapping, PrTypeLabelSet } from "../types/manifest-deps-types.js";
 
 export type { PrTypeLabelSet } from "../types/manifest-deps-types.js";
 
@@ -156,9 +156,25 @@ export function resolvePrTypeLabel(input: {
 
   if (input.propagation?.enabled) {
     const wanted = new Set((input.linkedIssueLabels ?? []).map((label) => label.toLowerCase()));
+    // Collect EVERY mapping the linked issue's labels satisfy, not just the first. An exclusive mapping
+    // (removeOtherTypeLabels: true -- e.g. bug/feature, genuinely mutually-exclusive categories) still only
+    // ever lets the FIRST-configured match win, same precedence as before. But an additive mapping (e.g.
+    // priority -- a maintainer-hand-picked reward tag that coexists WITH whichever type already applies, not a
+    // type of its own) must compose with that winner instead of being skipped just because an earlier mapping
+    // in the array already matched and returned. Before this, an additive match was unreachable whenever the
+    // SAME linked issue also carried a label an earlier (exclusive) mapping matched -- the overwhelmingly common
+    // case for gittensor:priority, which is applied ALONGSIDE gittensor:bug/gittensor:feature on the issue, never
+    // instead of it (#priority-linked-issue-gate).
+    let exclusiveMatch: LinkedIssueLabelPropagationMapping | undefined;
+    const additiveMatches: LinkedIssueLabelPropagationMapping[] = [];
     for (const mapping of input.propagation.mappings) {
       if (!wanted.has(mapping.issueLabel.toLowerCase())) continue;
-      return mapping.removeOtherTypeLabels ? decide([mapping.prLabel], "propagation_exclusive") : decide([titleLabel, mapping.prLabel], "propagation_additive");
+      if (mapping.removeOtherTypeLabels) exclusiveMatch ??= mapping;
+      else additiveMatches.push(mapping);
+    }
+    if (exclusiveMatch || additiveMatches.length > 0) {
+      const applyLabels = [exclusiveMatch ? exclusiveMatch.prLabel : titleLabel, ...additiveMatches.map((mapping) => mapping.prLabel)];
+      return decide(applyLabels, exclusiveMatch ? "propagation_exclusive" : "propagation_additive");
     }
   }
   return decide([titleLabel], "title");

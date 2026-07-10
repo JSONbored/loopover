@@ -1,5 +1,6 @@
 import type { EventLedger, LedgerEntry } from "./event-ledger.js";
 import type { PortfolioQueueStore, QueueStatus } from "./portfolio-queue.js";
+import type { RunState, RunStateStore } from "./run-state.js";
 
 export type ManageStatusRow = {
   repoFullName: string;
@@ -16,6 +17,18 @@ export type ManageStatusRow = {
 export type ManageStatusSources = {
   portfolioQueue: PortfolioQueueStore;
   eventLedger: EventLedger;
+};
+
+export type RunPortfolioSources = ManageStatusSources & {
+  runStateStore: RunStateStore;
+};
+
+export type RunPortfolioRow = {
+  repoFullName: string;
+  runState: RunState | null;
+  runStateUpdatedAt: string | null;
+  prCount: number;
+  prs: ManageStatusRow[];
 };
 
 export type ManageUpdateSnapshot = {
@@ -39,7 +52,11 @@ export function indexLatestManageUpdates(events: LedgerEntry[]): Map<string, Man
 
 export function collectManageStatus(sources: ManageStatusSources): ManageStatusRow[];
 
+export function collectRunPortfolio(sources: RunPortfolioSources): RunPortfolioRow[];
+
 export function renderManageStatusTable(rows: ManageStatusRow[]): string;
+
+export function renderRunPortfolioTable(portfolio: RunPortfolioRow[]): string;
 
 export function parseManageStatusArgs(args?: string[]): { json: boolean } | { error: string };
 
@@ -48,5 +65,6 @@ export function runManageStatus(
   options?: {
     initPortfolioQueue?: () => PortfolioQueueStore;
     initEventLedger?: () => EventLedger;
+    initRunStateStore?: () => RunStateStore;
   },
 ): number;

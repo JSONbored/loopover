@@ -89,6 +89,7 @@ describe("repository settings enforcement audit (#797)", () => {
   it("no-ops AI review when aiReviewMode is off", async () => {
     const advisory = missingIssueAdvisory();
     const notes = await runAiReviewForAdvisory({} as Env, {
+      mode: "live",
       settings: settings({ aiReviewMode: "off" }),
       advisory,
       repoFullName: "owner/repo",

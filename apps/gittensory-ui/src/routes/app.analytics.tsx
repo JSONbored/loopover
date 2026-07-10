@@ -9,6 +9,10 @@ import {
   ProductUsageBreakdownPanel,
   WeeklyValueMetricsPanel,
 } from "@/components/site/usage-analytics-panels";
+import { GatePrecisionCard } from "@/components/site/app-panels/gate-precision-card";
+import type { GateEvalReport } from "@/components/site/app-panels/gate-precision-card-model";
+import { CycleTimeCard } from "@/components/site/app-panels/cycle-time-card";
+import type { CycleTimeAggregate } from "@/components/site/app-panels/cycle-time-card-model";
 import { useApiResource } from "@/lib/api/use-api-resource";
 
 export const Route = createFileRoute("/app/analytics")({
@@ -98,6 +102,8 @@ type OperatorDashboard = {
     }>;
   };
   upstreamDrift?: { status?: string; openReportCount?: number } | null;
+  gateEval?: GateEvalReport;
+  cycleTime?: CycleTimeAggregate;
 };
 
 function ProductAnalytics() {
@@ -177,6 +183,10 @@ function ProductAnalytics() {
               warnings={data.weeklyValueReport.warnings}
             />
           ) : null}
+
+          {data.gateEval ? <GatePrecisionCard report={data.gateEval} /> : null}
+
+          {data.cycleTime ? <CycleTimeCard cycleTime={data.cycleTime} /> : null}
 
           {data.usageSummary ? (
             <ProductUsageBreakdownPanel

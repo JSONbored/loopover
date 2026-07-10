@@ -3,13 +3,16 @@
 // FOREGROUND_QUEUE_PRIORITY_FLOOR, see queue-common.ts) -- must always win a resource race against periodic
 // maintenance sweeps (contributor evidence, burden forecasts, RAG re-indexing, drift scans, product rollups,
 // notifications...). Those sweeps already run on a conservative cadence (every 30min/hourly/6-hourly, see
-// index.ts's enqueueScheduledJobs) and already yield to an EXHAUSTED GitHub REST budget
-// (shouldWaitForGitHubRateLimit) -- this module adds an ORTHOGONAL signal: is the box itself under load RIGHT
-// NOW (a live-work backlog, an aging live job, a hot host CPU), independent of whether GitHub's API happens to
-// be rate-limited. The queue backends (sqlite-queue.ts / pg-queue.ts) consult this at CLAIM time, the same way
-// they already consult GitHub rate-limit admission: a denied maintenance job is pushed back to 'pending' with
-// a jittered future run_after -- its original enqueue time is left untouched, so the age-based trickle below
-// still works -- never dropped and never run early.
+// index.ts's enqueueScheduledJobs); the subset that makes real GitHub REST calls ALSO yields to an EXHAUSTED
+// GitHub REST budget (shouldWaitForGitHubRateLimit) via isGitHubBudgetBackgroundJob / GITHUB_BUDGET_BACKGROUND_TYPES
+// (queue-common.ts) -- purely-internal sweeps that touch no GitHub API (product-usage rollups, retention
+// pruning, notification delivery, and similar) have no such budget to yield to and correctly aren't in that set.
+// This module adds an ORTHOGONAL signal on top of whichever of those a job type already has: is the box itself
+// under load RIGHT NOW (a live-work backlog, an aging live job, a hot host CPU), independent of whether GitHub's
+// API happens to be rate-limited. The queue backends (sqlite-queue.ts / pg-queue.ts) consult this at CLAIM time,
+// the same way they already consult GitHub rate-limit admission where applicable: a denied maintenance job is
+// pushed back to 'pending' with a jittered future run_after -- its original enqueue time is left untouched, so
+// the age-based trickle below still works -- never dropped and never run early.
 //
 // TRICKLE: a maintenance job that has been pending since `maxDeferAgeMs` is force-admitted regardless of
 // current pressure, so a box under SUSTAINED load can never starve maintenance work forever -- it just runs at
@@ -53,6 +56,7 @@ export const MAINTENANCE_JOB_TYPES: ReadonlySet<string> = new Set([
   "prune-retention",
   "generate-weekly-value-report",
   "generate-review-recap",
+  "generate-maintainer-recap",
   "generate-signal-snapshots",
   "notify-evaluate",
   "notify-deliver",

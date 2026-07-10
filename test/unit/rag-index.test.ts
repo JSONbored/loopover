@@ -426,6 +426,44 @@ describe("indexRepo: embedding cache (#4365) — skip unchanged files by git blo
     expect(result.files).toBe(1); // only one of the two new files fit under the cap
     expect(await countChunks(env, PROJECT, "gittensory")).toBe(MAX_CHUNKS_PER_REPO); // never exceeds the cap
   });
+
+  it("refreshes changed files in a full reindex even when the repository is already capped", async () => {
+    const { env, ai } = indexEnv();
+    const ns = ragNamespace(PROJECT, "gittensory");
+    await env.DB.batch(
+      Array.from({ length: MAX_CHUNKS_PER_REPO }, (_, i) => {
+        const path = i === 0 ? "src/changed.ts" : `src/existing${i}.ts`;
+        return env.DB.prepare("INSERT INTO repo_chunks (id, project, repo, path, chunk_index, kind, text, blob_sha) VALUES (?,?,?,?,?,?,?,?)").bind(
+          `${ns}|${path}::0`,
+          PROJECT,
+          "gittensory",
+          path,
+          0,
+          "code",
+          i === 0 ? "old changed file" : "old",
+          i === 0 ? "sha-old" : `sha-existing-${i}`,
+        );
+      }),
+    );
+    stubGithub({
+      tree: [
+        { path: "src/changed.ts", size: 30, sha: "sha-new" },
+        ...Array.from({ length: MAX_CHUNKS_PER_REPO - 1 }, (_, i) => ({ path: `src/existing${i + 1}.ts`, size: 10, sha: `sha-existing-${i + 1}` })),
+        { path: "src/new.ts", size: 10, sha: "sha-new-file" },
+      ],
+      files: { "src/changed.ts": "export const changed = true;\n", "src/new.ts": "export const n = 1;\n" },
+    });
+
+    const result = await indexRepo(env, PROJECT, REPO);
+
+    expect(result).toMatchObject({ indexed: 1, files: 1, capped: true });
+    expect(ai.run).toHaveBeenCalledTimes(1);
+    expect(await countChunks(env, PROJECT, "gittensory")).toBe(MAX_CHUNKS_PER_REPO);
+    const row = await env.DB.prepare("SELECT text, blob_sha FROM repo_chunks WHERE project=? AND repo=? AND path=?")
+      .bind(PROJECT, "gittensory", "src/changed.ts")
+      .first<{ text: string; blob_sha: string }>();
+    expect(row).toEqual({ text: "export const changed = true;\n", blob_sha: "sha-new" });
+  });
 });
 
 describe("indexRepo: MAX_CHUNKS_PER_REPO cap holds", () => {
@@ -954,8 +992,10 @@ describe("merged-PR incremental re-index trigger (webhook)", () => {
     // REGRESSION (#rate-limit-admission-attribution): installationId must be threaded through so the queue's
     // admission check attributes this job to the repo's OWN installation bucket, not the shared public-token
     // bucket -- omitting it starves an installed repo's re-index behind unrelated public-token traffic.
+    // paths reflects listPullRequestFiles's deterministic path-ascending order (#linked-issue-satisfaction-cache-fingerprint-stability),
+    // not the seed/insertion order above -- "README.md" sorts before "src/a.ts".
     expect(ragJobs).toEqual([
-      { type: "rag-index-repo", requestedBy: "webhook", repoFullName: "JSONbored/gittensory", paths: ["src/a.ts", "README.md"], installationId: 123 },
+      { type: "rag-index-repo", requestedBy: "webhook", repoFullName: "JSONbored/gittensory", paths: ["README.md", "src/a.ts"], installationId: 123 },
     ]);
   });
 

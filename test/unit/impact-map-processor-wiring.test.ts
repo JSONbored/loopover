@@ -100,6 +100,7 @@ describe("impact map wired into runAiReviewForAdvisory (#2186)", () => {
       .bind("v1", "acme", "widgets", "src/review/caller.ts", 0, "code", "export function caller() { return computeThing(); }")
       .run();
     const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       repoFullName: "acme/widgets",
       pr: { number: 3, title: "Add computeThing", body: "Adds a helper." },
@@ -132,6 +133,7 @@ describe("impact map wired into runAiReviewForAdvisory (#2186)", () => {
       .bind("acme/widgets", 3, "src/review/impact-map.ts", "modified", 1, 0, 1, JSON.stringify({ patch: "@@\n+export function computeThing() {}" }))
       .run();
     const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       repoFullName: "acme/widgets",
       pr: { number: 3, title: "Add computeThing", body: "Adds a helper." },
@@ -157,6 +159,7 @@ describe("impact map wired into runAiReviewForAdvisory (#2186)", () => {
       .bind("acme/widgets", 3, "src/review/impact-map.ts", "modified", 1, 0, 1, JSON.stringify({ patch: "@@\n+export function computeThing() {}" }))
       .run();
     const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       repoFullName: "acme/widgets",
       pr: { number: 3, title: "Add computeThing", body: "Adds a helper." },
@@ -179,6 +182,7 @@ describe("impact map wired into runAiReviewForAdvisory (#2186)", () => {
       .bind("acme/widgets", 3, "src/review/impact-map.ts", "modified", 1, 0, 1, JSON.stringify({ patch: "@@\n+export function computeThing() {}" }))
       .run();
     const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       repoFullName: "acme/widgets",
       pr: { number: 3, title: "Add computeThing", body: "Adds a helper." },

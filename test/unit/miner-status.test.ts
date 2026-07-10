@@ -1,9 +1,15 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildEngineVersionSkewCheck,
   collectStatus,
+  compareInstalledEngineVersion,
+  readExpectedEnginePackageVersion,
+  readExpectedEnginePackageVersionFromPaths,
+  readInstalledEnginePackageVersion,
+  readInstalledEnginePackageVersionFromPaths,
   resolveMinerStateDir,
   runDoctor,
   runDoctorChecks,
@@ -72,12 +78,96 @@ describe("gittensory-miner status/doctor (#2288)", () => {
     expect(checks.map((check) => check.name)).toEqual([
       "node-version",
       "engine-resolves",
+      "engine-version-skew",
       "state-dir-writable",
       "laptop-state-sqlite",
       "docker-present",
+      "claude-cli-present",
+      "codex-cli-present",
     ]);
     expect(runDoctor([], env)).toBe(0);
     expect(log).toHaveBeenCalled();
+  });
+
+  it("engine version skew helpers compare installed vs expected semver", () => {
+    expect(compareInstalledEngineVersion("0.2.0", "0.2.0")).toBe(0);
+    expect(compareInstalledEngineVersion("0.1.0", "0.2.0")).toBe(-1);
+    expect(compareInstalledEngineVersion("0.3.0", "0.2.0")).toBe(1);
+    expect(typeof readInstalledEnginePackageVersion()).toBe("string");
+    expect(readExpectedEnginePackageVersion()).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it("buildEngineVersionSkewCheck skips when expected version is unavailable", () => {
+    const skewCheck = buildEngineVersionSkewCheck(
+      () => "0.2.0",
+      () => null,
+    );
+    expect(skewCheck.ok).toBe(true);
+    expect(skewCheck.detail).toContain("skipped");
+  });
+
+  it("buildEngineVersionSkewCheck fails when installed engine is missing", () => {
+    const skewCheck = buildEngineVersionSkewCheck(
+      () => null,
+      () => "0.2.0",
+    );
+    expect(skewCheck.ok).toBe(false);
+    expect(skewCheck.detail).toContain("not installed");
+  });
+
+  it("readExpectedEnginePackageVersionFromPaths prefers monorepo package.json then the pin file", () => {
+    const root = tempRoot();
+    const monorepoPkg = join(root, "engine-package.json");
+    const pinFile = join(root, "expected-engine.version");
+    writeFileSync(monorepoPkg, JSON.stringify({ version: "0.2.0" }));
+    writeFileSync(pinFile, "0.1.0\n");
+    expect(readExpectedEnginePackageVersionFromPaths(monorepoPkg, pinFile)).toBe("0.2.0");
+
+    expect(readExpectedEnginePackageVersionFromPaths(join(root, "missing.json"), pinFile)).toBe("0.1.0");
+    expect(readExpectedEnginePackageVersionFromPaths(join(root, "missing.json"), join(root, "missing-pin"))).toBeNull();
+    writeFileSync(join(root, "broken.json"), "not-json");
+    expect(readExpectedEnginePackageVersionFromPaths(join(root, "broken.json"), pinFile)).toBeNull();
+  });
+
+  it("readInstalledEnginePackageVersionFromPaths falls back to the workspace engine package", () => {
+    const root = tempRoot();
+    const workspacePkg = join(root, "gittensory-engine-package.json");
+    writeFileSync(workspacePkg, JSON.stringify({ version: "0.2.0" }));
+    expect(readInstalledEnginePackageVersionFromPaths("/missing/entry", workspacePkg)).toBe("0.2.0");
+    writeFileSync(workspacePkg, "not-json");
+    expect(readInstalledEnginePackageVersionFromPaths("/missing/entry", workspacePkg)).toBeNull();
+    expect(readInstalledEnginePackageVersionFromPaths("/missing/entry", join(root, "missing.json"))).toBeNull();
+
+    const installedPkg = join(root, "installed", "package.json");
+    mkdirSync(join(root, "installed"), { recursive: true });
+    writeFileSync(installedPkg, JSON.stringify({ version: "0.2.1" }));
+    expect(readInstalledEnginePackageVersionFromPaths(join(root, "installed", "index.js"), workspacePkg)).toBe("0.2.1");
+  });
+
+  it("runDoctor supports --json output", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const env = { GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state") };
+    initLaptopState(env);
+    expect(runDoctor(["--json"], env)).toBe(0);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0])).checks).toBeDefined();
+  });
+
+  it("buildEngineVersionSkewCheck reports behind when installed engine lags expected", () => {
+    const skewCheck = buildEngineVersionSkewCheck(
+      () => "0.1.0",
+      () => "0.2.0",
+    );
+    expect(skewCheck.ok).toBe(false);
+    expect(skewCheck.detail).toContain("behind");
+  });
+
+  it("buildEngineVersionSkewCheck reports ahead when installed engine exceeds expected", () => {
+    const skewCheck = buildEngineVersionSkewCheck(
+      () => "0.3.0",
+      () => "0.2.0",
+    );
+    expect(skewCheck.ok).toBe(true);
+    expect(skewCheck.detail).toContain("ahead");
   });
 
   it("doctor fails (exit 1) when the state directory cannot be created", () => {

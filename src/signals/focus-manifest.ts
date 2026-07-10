@@ -31,6 +31,7 @@ export {
   repoDocGenerationConfigToJson,
   reviewConfigToJson,
   reviewRecapConfigToJson,
+  maintainerRecapConfigToJson,
   settingsOverrideToJson,
   type AutoReviewConfig,
   type CommentVerbosity,
@@ -53,6 +54,7 @@ export {
   type FocusManifestRepoDocGenerationScope,
   type FocusManifestReviewConfig,
   type FocusManifestReviewRecapConfig,
+  type FocusManifestMaintainerRecapConfig,
   type FocusManifestSettings,
   type FocusManifestSource,
   type LabelingRule,
@@ -166,12 +168,20 @@ export function evaluateAutoReviewSkipReason(config: AutoReviewConfig, input: Au
       return "review skipped (base branch out of scope)";
     }
   }
-  if (config.autoPauseAfterReviewedCommits !== null && config.autoPauseAfterReviewedCommits > 0) {
-    if (input.reviewedCommitCount >= config.autoPauseAfterReviewedCommits) {
-      return "review paused (commit threshold)";
-    }
+  if (isAutoReviewCommitThresholdReached(config, input.reviewedCommitCount)) {
+    return "review paused (commit threshold)";
   }
   return null;
+}
+
+/** Shared commit-threshold check (`review.auto_review.auto_pause_after_reviewed_commits`): once a PR's already
+ *  been reviewed this many times at essentially its current state, further AI spend on it should stop. Broken
+ *  out of `evaluateAutoReviewSkipReason` so a SECOND AI feature sharing the same PR (e.g. the slop advisory,
+ *  #ai-slop-repeat-spend) can reuse the identical threshold semantics without re-implementing the null/0
+ *  "unset" handling or pulling in every OTHER unrelated `auto_review` rule (draft/author/title/size/base-branch
+ *  skips) that only make sense for the primary review pass. */
+export function isAutoReviewCommitThresholdReached(config: AutoReviewConfig, reviewedCommitCount: number): boolean {
+  return config.autoPauseAfterReviewedCommits !== null && config.autoPauseAfterReviewedCommits > 0 && reviewedCommitCount >= config.autoPauseAfterReviewedCommits;
 }
 
 /** Known auto-review skip reason tokens returned by `evaluateAutoReviewSkipReason`. (#2067) */
@@ -556,7 +566,10 @@ export function resolveEffectiveSettings(
       whenLabels: screenshotTableGateOverride.whenLabels ?? base.whenLabels,
       whenPaths: screenshotTableGateOverride.whenPaths ?? base.whenPaths,
       action: screenshotTableGateOverride.action ?? base.action,
+      requireViewports: screenshotTableGateOverride.requireViewports ?? base.requireViewports,
+      requireThemes: screenshotTableGateOverride.requireThemes ?? base.requireThemes,
       message: screenshotTableGateOverride.message ?? base.message,
+      skillFileUrl: screenshotTableGateOverride.skillFileUrl ?? base.skillFileUrl,
     };
   }
   if (advisoryAiRoutingOverride !== undefined) {

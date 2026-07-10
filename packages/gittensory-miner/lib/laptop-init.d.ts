@@ -21,4 +21,15 @@ export function checkDockerPresent(options?: {
   resolveDockerPath?: () => string | null;
 }): DoctorCheck;
 
+export function checkClaudeCliPresent(options?: {
+  env?: Record<string, string | undefined>;
+  resolveClaudePath?: () => string | null;
+}): DoctorCheck;
+
+export function checkCodexCliPresent(options?: {
+  env?: Record<string, string | undefined>;
+  resolveCodexPath?: () => string | null;
+  resolveCodexAuthPath?: () => string;
+}): DoctorCheck;
+
 export function runInit(args?: string[], env?: Record<string, string | undefined>): number;

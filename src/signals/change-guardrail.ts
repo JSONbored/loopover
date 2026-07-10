@@ -143,7 +143,11 @@ export function guardrailPathMatches(changedPaths: string[], hardGuardrailGlobs:
     if (path.length === 0) continue;
     const canonicalPath = canonicalize(path);
     for (const glob of hardGuardrailGlobs) {
-      if (hasUnsafeWildcardCount(glob) || globToRegExp(glob).test(canonicalPath)) {
+      if (hasUnsafeWildcardCount(glob)) {
+        matches.push({ path, glob });
+        continue;
+      }
+      if (globToRegExp(glob).test(canonicalPath)) {
         matches.push({ path, glob });
       }
     }

@@ -1110,4 +1110,83 @@ describe("product usage events", () => {
       ]),
     });
   });
+
+  it("REGRESSION (#4501): the daily rollup's event scan is stable across repeated hourly re-runs when events tie on occurredAt at the scan-cap boundary", async () => {
+    const env = createTestEnv();
+    const day = "2026-05-29";
+    const startMs = Date.parse(`${day}T00:00:00.000Z`);
+    const FILLER_COUNT = 4996;
+    await env.DB.batch(
+      Array.from({ length: FILLER_COUNT }, (_, index) =>
+        env.DB.prepare(
+          "insert into product_usage_events (id, surface, role, event_name, route, actor_hash, session_hash, repo_full_name, target_key, outcome, latency_ms, client_name, client_version, metadata_json, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ).bind(`filler-${index}`, "api", "miner", "filler_event", "/v1/filler", null, null, null, null, "success", null, null, null, "{}", new Date(startMs + index * 10).toISOString()),
+      ),
+    );
+    // 5 events sharing ONE occurredAt right at the scan-cap boundary, each with its OWN eventName so the
+    // rollup's byEvent output reveals exactly which ones survived, inserted in a SCRAMBLED (non-id-sorted)
+    // order -- without the #4501 id tiebreak, which 4 of these 5 fall inside PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT
+    // is query-plan-dependent and could silently change hour to hour as index.ts re-enqueues this rollup.
+    const tiedIso = new Date(startMs + FILLER_COUNT * 10).toISOString();
+    const scrambledTiedIds = ["tied-c", "tied-e", "tied-a", "tied-d", "tied-b"];
+    await env.DB.batch(
+      scrambledTiedIds.map((id) =>
+        env.DB.prepare(
+          "insert into product_usage_events (id, surface, role, event_name, route, actor_hash, session_hash, repo_full_name, target_key, outcome, latency_ms, client_name, client_version, metadata_json, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ).bind(id, "api", "miner", id, "/v1/tied", null, null, null, null, "success", null, null, null, "{}", tiedIso),
+      ),
+    );
+
+    const firstRun = await rollupProductUsageDaily(env, { day, nowIso: `${day}T23:00:00.000Z` });
+    const secondRun = await rollupProductUsageDaily(env, { day, nowIso: `${day}T23:00:00.000Z` });
+
+    expect(firstRun.rollups[0]).toMatchObject({ status: "incomplete", totalEvents: FILLER_COUNT + 5, sourceEventCount: FILLER_COUNT + 5 });
+    // 4996 filler + 5 tied = 5001 sourced; the cap keeps the EARLIEST 5000 by (occurredAt, id) -- deterministically
+    // the 4 tied rows with the LOWEST id, never whichever 4 the query planner happens to scan first.
+    const tiedEventNames = firstRun.rollups[0]?.byEvent.filter((entry) => entry.eventName.startsWith("tied-")).map((entry) => entry.eventName);
+    expect(new Set(tiedEventNames)).toEqual(new Set(["tied-a", "tied-b", "tied-c", "tied-d"]));
+    // REGRESSION: byte-identical across the repeated ("hourly re-run") call -- no drift on unchanged source data.
+    expect(JSON.stringify(secondRun.rollups[0])).toBe(JSON.stringify(firstRun.rollups[0]));
+  });
+
+  it("INVARIANT (#4501): the retention scan's cap boundary is governed by the id tiebreak, not insertion order, when events tie on occurredAt", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+    const day = "2026-06-20";
+    const previousDay = "2026-06-10";
+    const previousStartMs = Date.parse(`${previousDay}T00:00:00.000Z`);
+    // 4996 retention-window events with distinct timestamps AFTER (newer than) the tied group below -- the
+    // retention scan keeps the NEWEST N, so this pushes the cap boundary to land inside the tied group.
+    await env.DB.batch(
+      Array.from({ length: 4996 }, (_, index) =>
+        env.DB.prepare(
+          "insert into product_usage_events (id, surface, role, event_name, route, actor_hash, session_hash, repo_full_name, target_key, outcome, latency_ms, client_name, client_version, metadata_json, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ).bind(`retention-filler-${index}`, "mcp", "miner", "mcp_request", "/mcp", `filler-actor-${index}`, null, null, null, "success", null, null, null, JSON.stringify({ role: "miner" }), new Date(previousStartMs + (index + 1) * 1000).toISOString()),
+      ),
+    );
+    // 5 retention-window events sharing ONE (earliest, boundary-straddling) occurredAt, each a distinct actor,
+    // inserted in a SCRAMBLED (non-id-sorted) order -- desc(id) keeps "tied-e" and evicts "tied-a" among ties.
+    const tiedIso = new Date(previousStartMs).toISOString();
+    const scrambledTiedIds = ["tied-c", "tied-e", "tied-a", "tied-d", "tied-b"];
+    await env.DB.batch(
+      scrambledTiedIds.map((id) =>
+        env.DB.prepare(
+          "insert into product_usage_events (id, surface, role, event_name, route, actor_hash, session_hash, repo_full_name, target_key, outcome, latency_ms, client_name, client_version, metadata_json, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ).bind(id, "mcp", "miner", "mcp_request", "/mcp", `${id}-hash`, null, null, null, "success", null, null, null, JSON.stringify({ role: "miner" }), tiedIso),
+      ),
+    );
+    // Current-day event from "tied-a" -- the LOWEST id among the tied group, so #4501's desc(id) tiebreak
+    // deterministically EVICTS it from the retention scan; without the fix this could flip either way.
+    await env.DB.prepare(
+      "insert into product_usage_events (id, surface, role, event_name, route, actor_hash, session_hash, repo_full_name, target_key, outcome, latency_ms, client_name, client_version, metadata_json, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+      .bind("retention-current-event", "mcp", "miner", "mcp_request", "/mcp", "tied-a-hash", null, null, null, "success", null, null, null, JSON.stringify({ role: "miner" }), `${day}T01:00:00.000Z`)
+      .run();
+
+    const result = await rollupProductUsageDaily(env, { day, nowIso: "2026-06-21T00:00:00.000Z" });
+
+    expect(result.rollups[0]).toMatchObject({
+      day,
+      retention: expect.arrayContaining([expect.objectContaining({ window: "previous_30_days", capped: true, activeActors: 1, retainedActors: 0 })]),
+    });
+  });
 });

@@ -98,6 +98,10 @@ repoDocGeneration:
 reviewRecap:
   enabled: true
   cadenceDays: 14
+maintainerRecap:
+  enabled: true
+  cadence: daily
+  channel: discord
 `,
     });
     expect(result.status).toBe("ok");
@@ -111,7 +115,13 @@ reviewRecap:
       contentLane: { entryFileGlob: "data/*.json", collectionField: "records" },
       repoDocGeneration: { enabled: true, scope: ["agents"] },
       reviewRecap: { enabled: true, cadenceDays: 14 },
+      maintainerRecap: { enabled: true, cadence: "daily", channel: "discord" },
     });
+  });
+
+  it("omits maintainerRecap from the normalized output when it is not configured", () => {
+    const result = buildFocusManifestValidation({ content: "wantedPaths: [src/]\n" });
+    expect(result.normalized).not.toHaveProperty("maintainerRecap");
   });
 
   it("returns error when manifest content is not a mapping", () => {

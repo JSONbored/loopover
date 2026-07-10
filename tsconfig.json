@@ -17,5 +17,5 @@
     "forceConsistentCasingInFileNames": true,
     "outDir": "dist"
   },
-  "include": ["src", "test", "worker-configuration.d.ts", "vitest.config.ts", "vitest.workers.config.ts", "drizzle.config.ts"]
+  "include": ["src", "test", "scripts/check-engine-parity.ts", "worker-configuration.d.ts", "vitest.config.ts", "vitest.workers.config.ts", "drizzle.config.ts"]
 }

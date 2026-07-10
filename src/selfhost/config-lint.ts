@@ -17,6 +17,7 @@ const TOP_LEVEL_FIELDS = [
   "contentLane",
   "repoDocGeneration",
   "reviewRecap",
+  "maintainerRecap",
 ] as const;
 
 const TOP_LEVEL_FIELD_SET = new Set<string>(TOP_LEVEL_FIELDS);

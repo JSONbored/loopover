@@ -396,6 +396,7 @@ describe("RAG wired into the AI reviewer (flag GITTENSORY_REVIEW_RAG)", () => {
       title: "Gittensory advisory available", summary: "ok", findings: [], generatedAt: "2026-06-20T00:00:00.000Z",
     };
     const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       repoFullName: "acme/widgets",
       pr: { number: 3, title: "Add helper", body: "Adds a helper." },

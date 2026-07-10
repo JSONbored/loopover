@@ -351,6 +351,62 @@ describe("renderUnifiedReviewComment", () => {
     expect(md).not.toContain("broke </details>");
   });
 
+  it("renders non-required-but-red checks as a non-blocking 'Flagged checks' section, independent of ciState (#4414-class advisory holds)", () => {
+    const md = renderUnifiedReviewComment(
+      {
+        ...base,
+        readiness: {
+          ciState: "passed",
+          nonRequiredFailingDetails: [{ name: "Contributor trust", summary: "flagged for manual review" }],
+        },
+      },
+      {},
+    );
+    expect(md).toContain("Flagged checks (non-blocking)");
+    expect(md).toContain("- Contributor trust — flagged for manual review");
+    // Never blocking: ciState stayed "passed" input, and this section must not read as the failing-checks one.
+    expect(md).not.toContain("**CI checks failing**");
+  });
+
+  it("omits the 'Flagged checks' section when nonRequiredFailingDetails is absent/empty (default, byte-identical)", () => {
+    expect(renderUnifiedReviewComment({ ...base, readiness: { ciState: "passed" } }, {})).not.toContain("Flagged checks");
+    expect(renderUnifiedReviewComment({ ...base, readiness: { ciState: "passed", nonRequiredFailingDetails: [] } }, {})).not.toContain("Flagged checks");
+  });
+
+  it("hides the 'Flagged checks' section under review.comment_verbosity: quiet, matching Nits/linked-issue-satisfaction", () => {
+    const md = renderUnifiedReviewComment(
+      { ...base, readiness: { ciState: "passed", nonRequiredFailingDetails: [{ name: "Contributor trust" }] } },
+      { commentVerbosity: "quiet" },
+    );
+    expect(md).not.toContain("Flagged checks");
+  });
+
+  it("angle-escapes a non-required-failing check name + detail (public-safety, mirrors FIX D3)", () => {
+    const md = renderUnifiedReviewComment(
+      { ...base, readiness: { ciState: "passed", nonRequiredFailingDetails: [{ name: "check <x>", summary: "broke </details>" }] } },
+      {},
+    );
+    expect(md).toContain("check &lt;x&gt;");
+    expect(md).toContain("broke &lt;/details&gt;");
+    expect(md).not.toContain("broke </details>");
+  });
+
+  it("drops a non-required-failing entry with a blank/whitespace-only name (defensive), keeping other valid entries", () => {
+    const md = renderUnifiedReviewComment(
+      {
+        ...base,
+        readiness: {
+          ciState: "passed",
+          nonRequiredFailingDetails: [{ name: "   " }, { name: "Contributor trust" }],
+        },
+      },
+      {},
+    );
+    expect(md).toContain("Flagged checks (non-blocking)");
+    expect(md).toContain("- Contributor trust");
+    expect(md).not.toMatch(/-\s*\n/); // the blank-named entry never rendered its own bullet
+  });
+
   it("appends an explicit verdict reason across ready (merged + unmerged) and advisory states", () => {
     const merged = renderUnifiedReviewComment({ ...base, decision: "merge", merged: true, verdictReason: "all checks green" }, {});
     expect(merged).toContain("**✅ Suggested Action - Approve/Merge**");

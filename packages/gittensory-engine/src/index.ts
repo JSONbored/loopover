@@ -137,6 +137,7 @@ export {
 } from "./track-record-summary.js";
 export * from "./governor/rate-limit.js";
 export * from "./governor/budget-cap.js";
+export * from "./miner/kill-switch.js";
 export {
   GOVERNOR_LEDGER_EVENT_TYPES,
   normalizeGovernorLedgerEvent,

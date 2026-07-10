@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { isRecapEnabled, resolveMaintainerRecapManifestOverride, runMaintainerRecapJob, shouldFireMaintainerRecap } from "../../src/review/maintainer-recap-wire";
 import type { MaintainerRecapJobSkipped } from "../../src/review/maintainer-recap-wire";
 import type { RunMaintainerRecapResult } from "../../src/services/maintainer-recap";
-import { updatePullRequestSlopAssessment, upsertPullRequestFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
+import { recordGateBlockOutcome, updatePullRequestSlopAssessment, upsertPullRequestFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { createTestEnv } from "../helpers/d1";
 
@@ -187,6 +187,34 @@ describe("runMaintainerRecapJob — cross-repo digest (#1963, #2248)", () => {
     expect(report.repos.map((r) => r.repoFullName).sort()).toEqual(["owner/alpha", "owner/beta"]);
     expect(report.totals.merged).toBe(3); // 1 (alpha) + 2 (beta)
     expect(posted).toHaveLength(1);
+  });
+
+  // #4521: runMaintainerRecapJob always opts loadGatePrecisionReport into includeCohorts -- proves the split
+  // actually reaches the finished report/formatted digest, not just that the wiring doesn't crash (every
+  // OTHER test in this file also exercises includeCohorts implicitly since it's now unconditional, but none
+  // of them seed a gate block or a miner author, so none would catch a real miner-vs-human misclassification).
+  it("populates totals.cohorts end-to-end when a blocked PR's author is a confirmed miner", async () => {
+    const env = createTestEnv({ DISCORD_WEBHOOK_URL: HOOK });
+    await seedRegisteredRepo(env, "owner/alpha");
+    await upsertPullRequestFromGitHub(env, "owner/alpha", { number: 1, title: "miner PR", state: "closed", user: { login: "miner-alice" } });
+    await recordGateBlockOutcome(env, { repoFullName: "owner/alpha", pullNumber: 1, blockerCodes: ["slop_risk"] });
+    await upsertPullRequestFromGitHub(env, "owner/alpha", { number: 2, title: "human PR", state: "closed", user: { login: "human-bob" } });
+    await recordGateBlockOutcome(env, { repoFullName: "owner/alpha", pullNumber: 2, blockerCodes: ["slop_risk"] });
+    vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url) === HOOK) return new Response(null, { status: 204 });
+      if (String(url) === "https://api.gittensor.io/miners") return Response.json([{ uid: 1, githubUsername: "miner-alice", githubId: "1" }]);
+      return new Response(null, { status: 204 });
+    });
+
+    const { report, formatted } = ranRecap(await runMaintainerRecapJob(env));
+
+    expect(report.totals.cohorts).toMatchObject({ miner: { blocked: 1 }, human: { blocked: 1 } });
+    expect(report.repos[0]?.cohorts).toMatchObject({ miner: { blocked: 1 }, human: { blocked: 1 } });
+    expect(formatted).toContain("## Cohorts");
+    // Neither PR merged (both stay "closed"), so blockedThenMerged is 0 for both cohorts -- only `blocked`
+    // differs from zero here.
+    expect(formatted).toContain("Miner-originated: 0/1 gate false positives");
+    expect(formatted).toContain("Human-originated: 0/1 gate false positives");
   });
 
   it("threads a custom windowDays through to the report and the per-repo aggregators", async () => {

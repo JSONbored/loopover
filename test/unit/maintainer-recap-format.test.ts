@@ -90,4 +90,33 @@ describe("formatMaintainerRecap (#2240)", () => {
     expect(body).toContain("- <redacted>");
     expect(body).not.toContain("payout");
   });
+
+  // #4521: the whole "## Cohorts" section is additive -- absent when totals.cohorts is, present (with both
+  // cohort lines) when it's supplied.
+  it("omits the Cohorts section entirely when totals.cohorts is absent (byte-identical to before the split existed)", () => {
+    const body = formatMaintainerRecap(emptyReport());
+    expect(body).not.toContain("## Cohorts");
+    expect(body).not.toContain("Miner-originated");
+  });
+
+  it("renders the Cohorts section with both lines when totals.cohorts is present", () => {
+    const report: RecapReport = {
+      ...emptyReport(),
+      totals: {
+        ...emptyReport().totals,
+        cohorts: {
+          miner: { blocked: 3, gateFalsePositives: 1, gateFalsePositiveRate: 0.333 },
+          human: { blocked: 5, gateFalsePositives: 0, gateFalsePositiveRate: 0 },
+        },
+      },
+    };
+    const body = formatMaintainerRecap(report);
+    expect(body).toContain("## Cohorts");
+    expect(body).toContain("- Miner-originated: 1/3 gate false positives (33%)");
+    expect(body).toContain("- Human-originated: 0/5 gate false positives (0%)");
+    // The section sits between Totals and Per-repo, and the trailing-blank-line collapse still holds.
+    expect(body.indexOf("## Totals")).toBeLessThan(body.indexOf("## Cohorts"));
+    expect(body.indexOf("## Cohorts")).toBeLessThan(body.indexOf("## Per-repo"));
+    expect(body).not.toMatch(/\n{3,}/);
+  });
 });

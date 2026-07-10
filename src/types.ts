@@ -2444,6 +2444,15 @@ export type ReviewRecap = {
   summary: string[];
 };
 
+/** #4521: one cohort's blocked/false-positive counts within a maintainer recap window — the SAME shape for
+ *  both the per-repo and aggregate-totals cohort splits. Mirrors GatePrecisionCohortReport's overall shape,
+ *  renamed to match this file's own gateFalsePositives/gateFalsePositiveRate naming convention. */
+export type MaintainerRecapCohortCounts = {
+  blocked: number;
+  gateFalsePositives: number;
+  gateFalsePositiveRate: number | null;
+};
+
 /** One repo's realized review-outcome roll-up inside a maintainer recap window (#2239, foundation for #1963).
  *  Counts are ground-truth PR outcomes + gate/recommendation calibration totals — never predictions. */
 export type MaintainerRecapRepo = {
@@ -2458,6 +2467,10 @@ export type MaintainerRecapRepo = {
   gateOverrides: number;
   /** Recommendations that resolved NEGATIVELY (a reversal) over the window, from the outcome calibration. */
   reversals: number;
+  /** #4521: miner-vs-human split of this repo's gate-block outcomes, present only when the caller's
+   *  GatePrecisionReport carried a `cohorts` field (loadGatePrecisionReport's `includeCohorts` option).
+   *  Absent means the split wasn't requested for this recap run — never a signal that it doesn't apply. */
+  cohorts?: { miner: MaintainerRecapCohortCounts; human: MaintainerRecapCohortCounts } | undefined;
 };
 
 /** A serializable maintainer recap: a window of gittensory's OWN review-outcome data folded across repos.
@@ -2479,6 +2492,10 @@ export type RecapReport = {
     reversals: number;
     /** Aggregate false-positive rate (gateFalsePositives / blocked), null when nothing was blocked. */
     gateFalsePositiveRate: number | null;
+    /** #4521: aggregate miner-vs-human split across every repo that carried one — present only when at
+     *  least one repo's GatePrecisionReport included `cohorts`. A repo without one simply doesn't
+     *  contribute to these sums, so a partial-adoption window still degrades gracefully. */
+    cohorts?: { miner: MaintainerRecapCohortCounts; human: MaintainerRecapCohortCounts } | undefined;
   };
   summary: string[];
 };

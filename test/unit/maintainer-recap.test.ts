@@ -8,7 +8,8 @@ const GEN = "2026-07-08T00:00:00.000Z";
 const DISCORD_HOOK = "https://discord.com/api/webhooks/123/abc";
 const SLACK_HOOK = "https://hooks.slack.com/services/T00/B00/xxxyyyzzz";
 
-/** Build one repo's injected inputs from the handful of counts this builder actually reads. */
+/** Build one repo's injected inputs from the handful of counts this builder actually reads. `cohorts` (#4521)
+ *  is omitted by default -- every pre-existing call site keeps exercising the no-cohorts (legacy) arm. */
 function repoInput(
   repoFullName: string,
   c: {
@@ -20,6 +21,7 @@ function repoInput(
     closed?: number;
     reversals?: number;
     emptyBands?: boolean;
+    cohorts?: { miner: { blocked: number; blockedThenMerged: number }; human: { blocked: number; blockedThenMerged: number } };
   } = {},
 ): MaintainerRecapRepoInput {
   const blocked = c.blocked ?? 0;
@@ -27,6 +29,10 @@ function repoInput(
   const bands: OutcomeCalibration["slop"]["bands"] = c.emptyBands
     ? []
     : [{ band: "clean", sampleSize: 0, merged: c.merged ?? 0, closed: c.closed ?? 0, mergeRate: 0 }];
+  const cohortReport = (counts: { blocked: number; blockedThenMerged: number }) => ({
+    perGateType: [],
+    overall: { blocked: counts.blocked, blockedThenMerged: counts.blockedThenMerged, falsePositiveRate: counts.blocked > 0 ? Math.round((counts.blockedThenMerged / counts.blocked) * 1000) / 1000 : null },
+  });
   return {
     gatePrecision: {
       repoFullName,
@@ -35,6 +41,7 @@ function repoInput(
       perGateType: [{ gateType: "missing_linked_issue", blocked, blockedThenMerged, overridden: c.overridden ?? 0, falsePositiveRate: null }],
       overall: { blocked, blockedThenMerged, falsePositiveRate: null },
       signals: [],
+      ...(c.cohorts ? { cohorts: { miner: cohortReport(c.cohorts.miner), human: cohortReport(c.cohorts.human) } } : {}),
     },
     calibration: {
       repoFullName,
@@ -98,6 +105,69 @@ describe("buildMaintainerRecap (#2239)", () => {
     const report = buildMaintainerRecap({ generatedAt: GEN, repos: [repoInput("/Users/secret/repo", { blocked: 1, blockedThenMerged: 0 })] });
     expect(report.repos[0]?.repoFullName).toContain("<redacted-path>");
     expect(report.repos[0]?.repoFullName).not.toContain("/Users/secret");
+  });
+});
+
+// #4521: additive miner-vs-human cohort split, computed only for repos whose injected GatePrecisionReport
+// actually carried `cohorts` (loadGatePrecisionReport's includeCohorts option, #4520).
+describe("buildMaintainerRecap cohort split (#4521)", () => {
+  it("omits totals.cohorts and the per-repo cohorts field when no repo's report carried one (byte-identical to before the split existed)", () => {
+    const report = buildMaintainerRecap({ generatedAt: GEN, repos: [repoInput("owner/repo-a", { blocked: 4, blockedThenMerged: 1 })] });
+    expect(report.totals.cohorts).toBeUndefined();
+    expect(report.repos[0]?.cohorts).toBeUndefined();
+    expect(report.summary).toHaveLength(3); // no 4th cohort summary line either
+  });
+
+  it("attaches the per-repo split verbatim and aggregates it into totals.cohorts", () => {
+    const report = buildMaintainerRecap({
+      generatedAt: GEN,
+      repos: [
+        repoInput("owner/repo-a", {
+          blocked: 6, blockedThenMerged: 2,
+          cohorts: { miner: { blocked: 2, blockedThenMerged: 1 }, human: { blocked: 4, blockedThenMerged: 1 } },
+        }),
+      ],
+    });
+    expect(report.repos[0]?.cohorts).toMatchObject({
+      miner: { blocked: 2, gateFalsePositives: 1, gateFalsePositiveRate: 0.5 },
+      human: { blocked: 4, gateFalsePositives: 1, gateFalsePositiveRate: 0.25 },
+    });
+    expect(report.totals.cohorts).toMatchObject({
+      miner: { blocked: 2, gateFalsePositives: 1, gateFalsePositiveRate: 0.5 },
+      human: { blocked: 4, gateFalsePositives: 1, gateFalsePositiveRate: 0.25 },
+    });
+    expect(report.summary[3]).toContain("Miner-originated: 2 blocked (50% false-positive)");
+    expect(report.summary[3]).toContain("Human-originated: 4 blocked (25% false-positive)");
+  });
+
+  it("sums cohorts ACROSS repos, correctly reporting n/a for a zero-blocked cohort", () => {
+    const report = buildMaintainerRecap({
+      generatedAt: GEN,
+      repos: [
+        repoInput("owner/repo-a", { blocked: 2, blockedThenMerged: 0, cohorts: { miner: { blocked: 2, blockedThenMerged: 0 }, human: { blocked: 0, blockedThenMerged: 0 } } }),
+        repoInput("owner/repo-b", { blocked: 3, blockedThenMerged: 1, cohorts: { miner: { blocked: 1, blockedThenMerged: 0 }, human: { blocked: 2, blockedThenMerged: 1 } } }),
+      ],
+    });
+    expect(report.totals.cohorts).toMatchObject({
+      miner: { blocked: 3, gateFalsePositives: 0, gateFalsePositiveRate: 0 },
+      human: { blocked: 2, gateFalsePositives: 1, gateFalsePositiveRate: 0.5 },
+    });
+  });
+
+  it("degrades gracefully when only SOME repos in the window carried a cohort split (partial adoption)", () => {
+    const report = buildMaintainerRecap({
+      generatedAt: GEN,
+      repos: [
+        repoInput("owner/repo-a", { blocked: 4, blockedThenMerged: 1 }), // no cohorts -- doesn't contribute
+        repoInput("owner/repo-b", { blocked: 2, blockedThenMerged: 1, cohorts: { miner: { blocked: 1, blockedThenMerged: 1 }, human: { blocked: 1, blockedThenMerged: 0 } } }),
+      ],
+    });
+    expect(report.repos[0]?.cohorts).toBeUndefined();
+    expect(report.repos[1]?.cohorts).toBeDefined();
+    // Only repo-b's counts feed the aggregate -- repo-a's 4 blocked never appear here.
+    expect(report.totals.cohorts).toMatchObject({ miner: { blocked: 1 }, human: { blocked: 1 } });
+    // But repo-a's counts STILL feed the ordinary (non-cohort) totals, unaffected by the split.
+    expect(report.totals.blocked).toBe(6);
   });
 });
 

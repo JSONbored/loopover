@@ -14,7 +14,7 @@ import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN, PUBLIC_UNSAFE_PATTERN } from "../signa
 import { deliverRecapToDiscord, deliverRecapToSlack } from "./notify-discord";
 import type { GatePrecisionReport } from "./gate-precision";
 import type { OutcomeCalibration } from "./outcome-calibration";
-import type { MaintainerRecapRepo, RecapReport } from "../types";
+import type { MaintainerRecapCohortCounts, MaintainerRecapRepo, RecapReport } from "../types";
 import { nowIso } from "../utils/json";
 
 const DEFAULT_WINDOW_DAYS = 7;
@@ -45,6 +45,12 @@ export type MaintainerRecapInputs = {
   repos: MaintainerRecapRepoInput[];
 };
 
+/** #4521: convert one GatePrecisionCohortReport's `overall` bucket into the recap's own cohort-counts shape
+ *  (renamed fields to match this file's gateFalsePositives/gateFalsePositiveRate convention). Pure. */
+function toRecapCohortCounts(overall: { blocked: number; blockedThenMerged: number; falsePositiveRate: number | null }): MaintainerRecapCohortCounts {
+  return { blocked: overall.blocked, gateFalsePositives: overall.blockedThenMerged, gateFalsePositiveRate: overall.falsePositiveRate };
+}
+
 /** PURE recap builder: fold each repo's gate-precision + outcome-calibration reports into a {@link RecapReport}
  *  with per-repo counts and top-line gate/reversal totals. Never throws; an empty repo list yields a zeroed
  *  report with a null false-positive rate (nothing blocked ⇒ nothing to divide by). */
@@ -60,6 +66,14 @@ export function buildMaintainerRecap(args: MaintainerRecapInputs): RecapReport {
     gateOverrides: 0,
     reversals: 0,
     gateFalsePositiveRate: null as number | null,
+  };
+  // #4521: accumulated only across repos whose GatePrecisionReport actually carried `cohorts` (loadGate
+  // PrecisionReport's includeCohorts option) -- a repo without one simply doesn't contribute, so a window
+  // mixing cohort-aware and legacy call sites still degrades gracefully rather than half-reporting zeros.
+  let cohortBlockedRepos = 0;
+  const cohortTotals = {
+    miner: { blocked: 0, gateFalsePositives: 0 },
+    human: { blocked: 0, gateFalsePositives: 0 },
   };
   for (const { gatePrecision, calibration } of args.repos) {
     let merged = 0;
@@ -78,6 +92,9 @@ export function buildMaintainerRecap(args: MaintainerRecapInputs): RecapReport {
       gateFalsePositives: gatePrecision.overall.blockedThenMerged,
       gateOverrides,
       reversals: calibration.recommendations.negative,
+      ...(gatePrecision.cohorts
+        ? { cohorts: { miner: toRecapCohortCounts(gatePrecision.cohorts.miner.overall), human: toRecapCohortCounts(gatePrecision.cohorts.human.overall) } }
+        : {}),
     };
     repos.push(repo);
     totals.reviewed += repo.reviewed;
@@ -87,19 +104,54 @@ export function buildMaintainerRecap(args: MaintainerRecapInputs): RecapReport {
     totals.gateFalsePositives += repo.gateFalsePositives;
     totals.gateOverrides += repo.gateOverrides;
     totals.reversals += repo.reversals;
+    if (gatePrecision.cohorts) {
+      cohortBlockedRepos += 1;
+      cohortTotals.miner.blocked += gatePrecision.cohorts.miner.overall.blocked;
+      cohortTotals.miner.gateFalsePositives += gatePrecision.cohorts.miner.overall.blockedThenMerged;
+      cohortTotals.human.blocked += gatePrecision.cohorts.human.overall.blocked;
+      cohortTotals.human.gateFalsePositives += gatePrecision.cohorts.human.overall.blockedThenMerged;
+    }
   }
   totals.gateFalsePositiveRate =
     totals.blocked > 0 ? Math.round((totals.gateFalsePositives / totals.blocked) * 100) / 100 : null;
+  const cohorts =
+    cohortBlockedRepos > 0
+      ? {
+          miner: {
+            blocked: cohortTotals.miner.blocked,
+            gateFalsePositives: cohortTotals.miner.gateFalsePositives,
+            gateFalsePositiveRate: cohortTotals.miner.blocked > 0 ? Math.round((cohortTotals.miner.gateFalsePositives / cohortTotals.miner.blocked) * 100) / 100 : null,
+          },
+          human: {
+            blocked: cohortTotals.human.blocked,
+            gateFalsePositives: cohortTotals.human.gateFalsePositives,
+            gateFalsePositiveRate: cohortTotals.human.blocked > 0 ? Math.round((cohortTotals.human.gateFalsePositives / cohortTotals.human.blocked) * 100) / 100 : null,
+          },
+        }
+      : undefined;
   const rateLine =
     totals.gateFalsePositiveRate !== null
       ? `Gate false-positive rate: ${Math.round(totals.gateFalsePositiveRate * 100)}% (${totals.gateFalsePositives}/${totals.blocked} block(s) later merged).`
       : `Gate false-positive rate: not enough blocked PRs in the window to report.`;
+  // #4521: an additional summary line ONLY when the cohort split was actually requested this run — omitted
+  // (not "N/A") when absent, so a legacy call site's summary output is byte-identical to before this existed.
+  const cohortLine = cohorts ? [formatCohortSummaryLine(cohorts)] : [];
   const summary = [
     `Maintainer recap over the last ${windowDays} day(s): ${repos.length} repo(s), ${totals.reviewed} reviewed, ${totals.merged} merged, ${totals.closed} closed.`,
     rateLine,
     `${totals.gateOverrides} maintainer override(s), ${totals.reversals} recommendation reversal(s).`,
+    ...cohortLine,
   ].map(sanitizeRecapText);
-  return { generatedAt: args.generatedAt, windowDays, repos, totals, summary };
+  return { generatedAt: args.generatedAt, windowDays, repos, totals: { ...totals, ...(cohorts ? { cohorts } : {}) }, summary };
+}
+
+/** #4521: "N of M blocked PRs were miner-originated, precision X% vs human Y%" — mirrors rateLine's own
+ *  null-below-sample handling per cohort (a cohort's own falsePositiveRate is already null when its blocked
+ *  count is 0, from GatePrecisionCohortReport's MIN_SAMPLE floor at the source). */
+function formatCohortSummaryLine(cohorts: { miner: MaintainerRecapCohortCounts; human: MaintainerRecapCohortCounts }): string {
+  const rate = (counts: MaintainerRecapCohortCounts): string =>
+    counts.gateFalsePositiveRate !== null ? `${Math.round(counts.gateFalsePositiveRate * 100)}%` : "n/a";
+  return `Miner-originated: ${cohorts.miner.blocked} blocked (${rate(cohorts.miner)} false-positive) — Human-originated: ${cohorts.human.blocked} blocked (${rate(cohorts.human)} false-positive).`;
 }
 
 /** Redact one free-text line bound for the public digest body. Two arms mirroring weekly-value-report.ts's
@@ -147,10 +199,23 @@ export function formatMaintainerRecap(report: RecapReport): string {
     `- Overrides: ${totals.gateOverrides}`,
     `- Reversals: ${totals.reversals}`,
     "",
+    // #4521: an entire section, only when the cohort split was requested this run -- omitted (not an empty
+    // header) when absent, so the digest degrades gracefully to exactly today's output.
+    ...(totals.cohorts ? ["## Cohorts", ...formatCohortLines(totals.cohorts), ""] : []),
     "## Per-repo",
     ...recapSectionLines(perRepoLines, "_No repositories in this window._"),
   ];
   return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`;
+}
+
+/** #4521: render the aggregate miner-vs-human split as two bullet lines, mirroring the Totals section's own
+ *  "gate false positives: N/M (rate)" phrasing per cohort. */
+function formatCohortLines(cohorts: { miner: MaintainerRecapCohortCounts; human: MaintainerRecapCohortCounts }): string[] {
+  const line = (label: string, counts: MaintainerRecapCohortCounts): string => {
+    const cohortRate = counts.gateFalsePositiveRate !== null ? `${Math.round(counts.gateFalsePositiveRate * 100)}%` : "n/a";
+    return `- ${label}: ${counts.gateFalsePositives}/${counts.blocked} gate false positives (${cohortRate})`;
+  };
+  return [line("Miner-originated", cohorts.miner), line("Human-originated", cohorts.human)];
 }
 
 export type RunMaintainerRecapResult =

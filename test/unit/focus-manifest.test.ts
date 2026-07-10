@@ -3686,12 +3686,20 @@ describe("overlayReviewConfig / review.shared_config (#2046)", () => {
   });
 
   it("merges nested auto_review and partial field maps key-by-key", () => {
-    const base = parseReviewConfigMapping({ auto_review: { skip_drafts: true, ignore_authors: ["bot"] }, fields: { relatedWork: false } }, []);
+    const base = parseReviewConfigMapping({ auto_review: { skip_drafts: true, cadence: "one_shot", ignore_authors: ["bot"] }, fields: { relatedWork: false } }, []);
     const override = parseReviewConfigMapping({ auto_review: { ignore_authors: ["dependabot"] }, fields: { openPrQueue: true } }, []);
     const merged = overlayReviewConfig(base, override);
     expect(merged.autoReview.skipDrafts).toBe(true);
+    // #one-shot-review-cadence: override left cadence unset, so the base's value fills the gap (pickOverlayNullable).
+    expect(merged.autoReview.cadence).toBe("one_shot");
     expect(merged.autoReview.ignoreAuthors).toEqual(["dependabot"]);
     expect(merged.fields).toEqual({ relatedWork: false, openPrQueue: true });
+  });
+
+  it("lets an explicit override cadence win over the base's (#one-shot-review-cadence)", () => {
+    const base = parseReviewConfigMapping({ auto_review: { cadence: "one_shot" } }, []);
+    const override = parseReviewConfigMapping({ auto_review: { cadence: "continuous" } }, []);
+    expect(overlayReviewConfig(base, override).autoReview.cadence).toBe("continuous");
   });
 
   it("preserves sharedConfigSource from the override when set", () => {
@@ -3722,6 +3730,7 @@ describe("review.auto_review (#1954 / #2038–#2041)", () => {
     });
     expect(m.review.autoReview).toEqual({
       skipDrafts: true,
+      cadence: null,
       ignoreAuthors: ["*[bot]", "dependabot[bot]"],
       ignoreTitleKeywords: ["WIP", "draft"],
       skipLabels: ["do-not-review", "wip"],

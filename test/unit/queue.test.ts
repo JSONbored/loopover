@@ -53,6 +53,8 @@ import {
   upsertRepositoryFromGitHub,
   putCachedAiReview,
   markAiReviewPublished,
+  putCachedAiSlopAdvisory,
+  putCachedLinkedIssueSatisfaction,
   recordReviewSuppression,
   listReviewSuppressions,
   setGlobalAgentFrozen,
@@ -3907,6 +3909,10 @@ describe("queue processors", () => {
         AI_DAILY_NEURON_BUDGET: "100000",
       });
       await seedRegateChurnRepo(env);
+      // #one-shot-review-cadence: this test is about the non-cacheable-outcome cooldown specifically, not
+      // cadence -- opt into continuous so the SAME unchanged-head assertions below exercise that mechanism in
+      // isolation, unaffected by the one_shot default now suppressing repeat automatic passes for a different reason.
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { review: { auto_review: { cadence: "continuous" } } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 60, title: "Quiet PR", state: "open", user: { login: "contributor" }, head: { sha: "a60" }, labels: [], body: "Closes #1" });
       await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 60, status: "complete", reviewsSyncedAt: new Date().toISOString() });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -5276,6 +5282,9 @@ describe("queue processors", () => {
         AI_DAILY_NEURON_BUDGET: "100000",
       });
       await seedRegateChurnRepo(env);
+      // #one-shot-review-cadence: isolate this test to the cooldown-vs-real-state-change mechanism it's actually
+      // about (see the PR 60 test above for the identical rationale).
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { review: { auto_review: { cadence: "continuous" } } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 63, title: "Pushed PR", state: "open", user: { login: "contributor" }, head: { sha: "a63" }, labels: [], body: "Closes #1" });
       await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 63, status: "complete", reviewsSyncedAt: new Date().toISOString() });
       let liveHeadSha = "a63";
@@ -5447,6 +5456,8 @@ describe("queue processors", () => {
         AI_DAILY_NEURON_BUDGET: "100000",
       });
       await seedRegateChurnRepo(env, { publicSurface: "comment_and_label" });
+      // #one-shot-review-cadence: isolate this test to the unchanged-head/label-repair mechanism it's about.
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { review: { auto_review: { cadence: "continuous" } } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 70, title: "Fix the retry loop", state: "open", user: { login: "contributor" }, head: { sha: "a70" }, labels: [], body: "Closes #1" });
       await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 70, status: "complete", reviewsSyncedAt: new Date().toISOString() });
 
@@ -5587,6 +5598,8 @@ describe("queue processors", () => {
         AI_DAILY_NEURON_BUDGET: "100000",
       });
       await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
+      // #one-shot-review-cadence: isolate this test to the real-code-change-triggers-fresh-review mechanism.
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { review: { auto_review: { cadence: "continuous" } } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 72, title: "Evolving PR", state: "open", user: { login: "contributor" }, head: { sha: "a72" }, labels: [], body: "Closes #1" });
       await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 72, status: "complete", reviewsSyncedAt: new Date().toISOString() });
 
@@ -5878,6 +5891,245 @@ describe("queue processors", () => {
       expect(bypassAudit?.outcome).toBe("completed");
     });
 
+    describe("one-shot AI review cadence (#one-shot-review-cadence)", () => {
+      it("default (one_shot, no manual-review label): a genuinely NEW push does not spend a fresh main-review AI call -- reuses the prior published review", async () => {
+        let aiCalls = 0;
+        const env = createTestEnv({
+          GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+          AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Fresh (should not happen under one-shot).", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+          AI_SUMMARIES_ENABLED: "true",
+          AI_PUBLIC_COMMENTS_ENABLED: "true",
+          AI_DAILY_NEURON_BUDGET: "100000",
+        });
+        // No cadence override anywhere (no yml, no GITTENSORY_REVIEW_CONTINUOUS) -- one_shot is the codebase default.
+        await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
+        await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 91, title: "One-shot PR", state: "open", user: { login: "contributor" }, head: { sha: "a91-v1" }, labels: [], body: "Closes #1" });
+        await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 91, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+        await putCachedAiReview(env, "JSONbored/gittensory", 91, "a91-v1", "block", { notes: "Original one-shot review.", reviewerCount: 1 });
+        await markAiReviewPublished(env, "JSONbored/gittensory", 91, "a91-v1");
+
+        let publicCommentBody = "";
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = input.toString();
+          const method = init?.method ?? "GET";
+          if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+          // A genuinely NEW push -- a new head SHA, no manual-review label anywhere.
+          if (url.includes("/pulls/91/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 2, deletions: 0, changes: 2, patch: "@@\n+export const ok = true;\n+export const also = 1;" }]);
+          if (url.endsWith("/pulls/91")) return Response.json({ number: 91, title: "One-shot PR", state: "open", user: { login: "contributor" }, head: { sha: "a91-v2" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+          if (url.includes("/commits/a91-v2/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+          if (url.includes("/commits/a91-v2/status")) return Response.json({ state: "success", statuses: [] });
+          if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+          if (url.includes("/issues/91/comments") && method === "GET") return Response.json([]);
+          if (url.includes("/issues/91/comments") && method === "POST") {
+            publicCommentBody = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+            return Response.json({ id: 1 }, { status: 201 });
+          }
+          if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+          return Response.json({});
+        });
+
+        await processJob(env, { type: "agent-regate-pr", deliveryId: "one-shot-push", repoFullName: "JSONbored/gittensory", prNumber: 91, installationId: 123 });
+
+        expect(aiCalls).toBe(0); // the new head never bought a fresh AI review
+        expect(publicCommentBody).toContain("Original one-shot review.");
+        const reuseAudit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? and target_key = ?")
+          .bind("github_app.ai_review_one_shot_reuse", "JSONbored/gittensory#91")
+          .first<{ outcome: string; detail: string }>();
+        expect(reuseAudit?.outcome).toBe("completed");
+        expect(reuseAudit?.detail).toContain("one-shot review cadence");
+      });
+
+      it("default (one_shot): a PR with no prior review yet still gets its first pass -- one-shot never blocks the FIRST review", async () => {
+        let aiCalls = 0;
+        const env = createTestEnv({
+          GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+          AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "First pass.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+          AI_SUMMARIES_ENABLED: "true",
+          AI_PUBLIC_COMMENTS_ENABLED: "true",
+          AI_DAILY_NEURON_BUDGET: "100000",
+        });
+        await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
+        await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 92, title: "Brand-new PR", state: "open", user: { login: "contributor" }, head: { sha: "a92" }, labels: [], body: "Closes #1" });
+        await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 92, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+        // Deliberately NO prior putCachedAiReview/markAiReviewPublished -- this PR has never been reviewed.
+
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = input.toString();
+          const method = init?.method ?? "GET";
+          if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+          if (url.includes("/pulls/92/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+          if (url.endsWith("/pulls/92")) return Response.json({ number: 92, title: "Brand-new PR", state: "open", user: { login: "contributor" }, head: { sha: "a92" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+          if (url.includes("/commits/a92/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+          if (url.includes("/commits/a92/status")) return Response.json({ state: "success", statuses: [] });
+          if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+          if (url.includes("/issues/92/comments")) return method === "GET" ? Response.json([]) : Response.json({ id: 1 }, { status: 201 });
+          if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+          return Response.json({});
+        });
+
+        await processJob(env, { type: "agent-regate-pr", deliveryId: "one-shot-first-pass", repoFullName: "JSONbored/gittensory", prNumber: 92, installationId: 123 });
+
+        expect(aiCalls).toBeGreaterThan(0); // the very first pass is never suppressed by one-shot mode
+        const reuseAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+          .bind("github_app.ai_review_one_shot_reuse", "JSONbored/gittensory#92")
+          .first<{ n: number }>();
+        expect(reuseAudit?.n).toBe(0); // no reuse fired -- there was nothing to reuse
+      });
+
+      it("default (one_shot): a repeat trigger does not spend a fresh SLOP advisory call once this PR already had one, regardless of head SHA", async () => {
+        let aiCalls = 0;
+        const env = createTestEnv({
+          GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+          AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ risk: "low", rationale: "fine" }) }; } } as unknown as Ai,
+          AI_SUMMARIES_ENABLED: "true",
+          AI_PUBLIC_COMMENTS_ENABLED: "true",
+          AI_DAILY_NEURON_BUDGET: "100000",
+        });
+        await seedRegateChurnRepo(env, { publicSurface: "comment_only", aiReviewMode: "off", slopGateMode: "advisory", slopAiAdvisory: true });
+        await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 93, title: "Slop one-shot PR", state: "open", user: { login: "contributor" }, head: { sha: "a93-v1" }, labels: [], body: "Closes #1" });
+        await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 93, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+        // A slop advisory row already exists for an EARLIER head -- this PR already had its one-shot slop pass.
+        await putCachedAiSlopAdvisory(env, "JSONbored/gittensory", 93, "a93-v1", "seed-fp", { status: "ok", band: "low", finding: null, estimatedNeurons: 4 });
+
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = input.toString();
+          const method = init?.method ?? "GET";
+          if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+          if (url.includes("/pulls/93/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 2, deletions: 0, changes: 2, patch: "@@\n+export const ok = true;\n+export const also = 1;" }]);
+          if (url.endsWith("/pulls/93")) return Response.json({ number: 93, title: "Slop one-shot PR", state: "open", user: { login: "contributor" }, head: { sha: "a93-v2" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+          if (url.includes("/commits/a93-v2/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+          if (url.includes("/commits/a93-v2/status")) return Response.json({ state: "success", statuses: [] });
+          if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+          if (url.includes("/issues/93/comments")) return method === "GET" ? Response.json([]) : Response.json({ id: 1 }, { status: 201 });
+          if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+          return Response.json({});
+        });
+
+        await processJob(env, { type: "agent-regate-pr", deliveryId: "one-shot-slop-push", repoFullName: "JSONbored/gittensory", prNumber: 93, installationId: 123 });
+
+        expect(aiCalls).toBe(0); // no fresh slop LLM call on the new head
+        const skipAudit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? and target_key = ?")
+          .bind("github_app.ai_slop_one_shot_skip", "JSONbored/gittensory#93")
+          .first<{ outcome: string; detail: string }>();
+        expect(skipAudit?.outcome).toBe("completed");
+        expect(skipAudit?.detail).toContain("one-shot review cadence");
+      });
+
+      it("default (one_shot): a NEWLY-linked issue still gets its own linked-issue-satisfaction pass even though the PR already has one for a DIFFERENT issue", async () => {
+        let aiCalls = 0;
+        const env = createTestEnv({
+          GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+          AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ status: "addressed", rationale: "looks done" }) }; } } as unknown as Ai,
+          AI_SUMMARIES_ENABLED: "true",
+          AI_PUBLIC_COMMENTS_ENABLED: "true",
+          AI_DAILY_NEURON_BUDGET: "100000",
+        });
+        await seedRegateChurnRepo(env, { publicSurface: "comment_only", aiReviewMode: "off", linkedIssueSatisfactionGateMode: "advisory" });
+        // The PR now cites issue #2 as its primary linked issue -- a prior pass exists only for issue #1, a
+        // DIFFERENT (now-superseded) issue, so issue #2 must still be treated as never-assessed.
+        await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 94, title: "Re-linked PR", state: "open", user: { login: "contributor" }, head: { sha: "a94" }, labels: [], body: "Closes #2" });
+        await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 94, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+        await putCachedLinkedIssueSatisfaction(env, "JSONbored/gittensory", 94, "a94-old", 1, "seed-fp", { status: "ok", result: { status: "addressed", rationale: "old issue was done", confidence: 0.9 }, estimatedNeurons: 4 });
+
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = input.toString();
+          const method = init?.method ?? "GET";
+          if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+          if (url.includes("/pulls/94/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+          if (url.endsWith("/pulls/94")) return Response.json({ number: 94, title: "Re-linked PR", state: "open", user: { login: "contributor" }, head: { sha: "a94" }, labels: [], body: "Closes #2", mergeable_state: "clean" });
+          if (url.includes("/commits/a94/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+          if (url.includes("/commits/a94/status")) return Response.json({ state: "success", statuses: [] });
+          if (url.includes("/issues/2")) return Response.json({ number: 2, title: "Second issue", state: "open", labels: [], user: { login: "reporter" }, body: "Do the second thing." });
+          if (url.includes("/issues/94/comments")) return method === "GET" ? Response.json([]) : Response.json({ id: 1 }, { status: 201 });
+          if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+          return Response.json({});
+        });
+
+        await processJob(env, { type: "agent-regate-pr", deliveryId: "one-shot-relinked", repoFullName: "JSONbored/gittensory", prNumber: 94, installationId: 123 });
+
+        expect(aiCalls).toBeGreaterThan(0); // issue #2 was never assessed before -- gets its own first pass
+        const skipAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+          .bind("github_app.linked_issue_satisfaction_one_shot_skip", "JSONbored/gittensory#94")
+          .first<{ n: number }>();
+        expect(skipAudit?.n).toBe(0); // never skipped -- issue #2 genuinely had no prior pass
+      });
+
+      it("per-repo override (continuous via .gittensory.yml): a new push DOES spend a fresh main-review AI call, unlike the one_shot default", async () => {
+        let aiCalls = 0;
+        const env = createTestEnv({
+          GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+          AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Continuous re-review.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+          AI_SUMMARIES_ENABLED: "true",
+          AI_PUBLIC_COMMENTS_ENABLED: "true",
+          AI_DAILY_NEURON_BUDGET: "100000",
+        });
+        await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
+        await upsertRepoFocusManifest(env, "JSONbored/gittensory", { review: { auto_review: { cadence: "continuous" } } });
+        await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 95, title: "Continuous-mode PR", state: "open", user: { login: "contributor" }, head: { sha: "a95-v1" }, labels: [], body: "Closes #1" });
+        await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 95, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+        await putCachedAiReview(env, "JSONbored/gittensory", 95, "a95-v1", "block", { notes: "Original review.", reviewerCount: 1 });
+        await markAiReviewPublished(env, "JSONbored/gittensory", 95, "a95-v1");
+
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = input.toString();
+          const method = init?.method ?? "GET";
+          if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+          if (url.includes("/pulls/95/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 2, deletions: 0, changes: 2, patch: "@@\n+export const ok = true;\n+export const also = 1;" }]);
+          if (url.endsWith("/pulls/95")) return Response.json({ number: 95, title: "Continuous-mode PR", state: "open", user: { login: "contributor" }, head: { sha: "a95-v2" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+          if (url.includes("/commits/a95-v2/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+          if (url.includes("/commits/a95-v2/status")) return Response.json({ state: "success", statuses: [] });
+          if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+          if (url.includes("/issues/95/comments")) return method === "GET" ? Response.json([]) : Response.json({ id: 1 }, { status: 201 });
+          if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+          return Response.json({});
+        });
+
+        await processJob(env, { type: "agent-regate-pr", deliveryId: "continuous-push", repoFullName: "JSONbored/gittensory", prNumber: 95, installationId: 123 });
+
+        expect(aiCalls).toBeGreaterThan(0); // continuous mode: the new head DOES buy a fresh AI review
+        const reuseAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+          .bind("github_app.ai_review_one_shot_reuse", "JSONbored/gittensory#95")
+          .first<{ n: number }>();
+        expect(reuseAudit?.n).toBe(0); // one-shot reuse never engaged -- this repo opted out
+      });
+
+      it("fleet-wide env default (GITTENSORY_REVIEW_CONTINUOUS): applies when the repo has no yml override, but a repo override still wins over it", async () => {
+        let aiCalls = 0;
+        const env = createTestEnv({
+          GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+          GITTENSORY_REVIEW_CONTINUOUS: "true",
+          AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Fleet-wide continuous.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+          AI_SUMMARIES_ENABLED: "true",
+          AI_PUBLIC_COMMENTS_ENABLED: "true",
+          AI_DAILY_NEURON_BUDGET: "100000",
+        });
+        await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
+        // No per-repo cadence override -- inherits the fleet-wide GITTENSORY_REVIEW_CONTINUOUS default.
+        await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 96, title: "Fleet-default PR", state: "open", user: { login: "contributor" }, head: { sha: "a96-v1" }, labels: [], body: "Closes #1" });
+        await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 96, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+        await putCachedAiReview(env, "JSONbored/gittensory", 96, "a96-v1", "block", { notes: "Original review.", reviewerCount: 1 });
+        await markAiReviewPublished(env, "JSONbored/gittensory", 96, "a96-v1");
+
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = input.toString();
+          const method = init?.method ?? "GET";
+          if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+          if (url.includes("/pulls/96/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 2, deletions: 0, changes: 2, patch: "@@\n+export const ok = true;\n+export const also = 1;" }]);
+          if (url.endsWith("/pulls/96")) return Response.json({ number: 96, title: "Fleet-default PR", state: "open", user: { login: "contributor" }, head: { sha: "a96-v2" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+          if (url.includes("/commits/a96-v2/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+          if (url.includes("/commits/a96-v2/status")) return Response.json({ state: "success", statuses: [] });
+          if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+          if (url.includes("/issues/96/comments")) return method === "GET" ? Response.json([]) : Response.json({ id: 1 }, { status: 201 });
+          if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+          return Response.json({});
+        });
+
+        await processJob(env, { type: "agent-regate-pr", deliveryId: "fleet-continuous-push", repoFullName: "JSONbored/gittensory", prNumber: 96, installationId: 123 });
+
+        expect(aiCalls).toBeGreaterThan(0); // the fleet-wide env default applied since the repo set no override
+      });
+    });
+
     it("#freeze-owner-exemption (incident, confirmed live on PR #3476): the repo owner's OWN held PR is never frozen -- a new push gets a fresh AI review", async () => {
       // The owner pushing a genuine fix to their OWN held PR must not keep replaying the ORIGINAL, now-stale
       // verdict pass after pass -- confirmed live via github_app.ai_review_frozen_reuse firing on every one of
@@ -5894,6 +6146,10 @@ describe("queue processors", () => {
         AI_DAILY_NEURON_BUDGET: "100000",
       });
       await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
+      // #one-shot-review-cadence: isolate this test to the owner-exemption-from-the-LABEL-freeze mechanism --
+      // without this, a prior published review would ALSO be reused by the (correctly firing) one_shot default,
+      // for an unrelated reason, masking whether the label-freeze exemption itself actually works.
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { review: { auto_review: { cadence: "continuous" } } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 79, title: "Owner's held PR", state: "open", user: { login: "JSONbored" }, head: { sha: "a79-v1" }, labels: [{ name: "manual-review" }], body: "Closes #1" });
       await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 79, status: "complete", reviewsSyncedAt: new Date().toISOString() });
       await putCachedAiReview(env, "JSONbored/gittensory", 79, "a79-v1", "block", { notes: "Original stale review.", reviewerCount: 1 });
@@ -5933,6 +6189,8 @@ describe("queue processors", () => {
         AI_DAILY_NEURON_BUDGET: "100000",
       });
       await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
+      // #one-shot-review-cadence: isolate this test to the admin-exemption-from-the-LABEL-freeze mechanism.
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { review: { auto_review: { cadence: "continuous" } } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 80, title: "Admin's held PR", state: "open", user: { login: "fleet-admin" }, head: { sha: "a80-v1" }, labels: [{ name: "manual-review" }], body: "Closes #1" });
       await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 80, status: "complete", reviewsSyncedAt: new Date().toISOString() });
       await putCachedAiReview(env, "JSONbored/gittensory", 80, "a80-v1", "block", { notes: "Original stale review.", reviewerCount: 1 });
@@ -5970,6 +6228,8 @@ describe("queue processors", () => {
         AI_DAILY_NEURON_BUDGET: "100000",
       });
       await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
+      // #one-shot-review-cadence: isolate this test to the automation-bot-exemption-from-the-LABEL-freeze mechanism.
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { review: { auto_review: { cadence: "continuous" } } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 81, title: "Bot's held PR", state: "open", user: { login: "dependabot[bot]" }, head: { sha: "a81-v1" }, labels: [{ name: "manual-review" }], body: "Closes #1" });
       await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 81, status: "complete", reviewsSyncedAt: new Date().toISOString() });
       await putCachedAiReview(env, "JSONbored/gittensory", 81, "a81-v1", "block", { notes: "Original stale review.", reviewerCount: 1 });
@@ -6008,7 +6268,9 @@ describe("queue processors", () => {
       });
       await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
       // manualReviewLabel is config-as-code only (.gittensory.yml), not a DB-backed repository setting.
-      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { manualReviewLabel: null } });
+      // #one-shot-review-cadence: also opts into continuous here so this test stays isolated to the
+      // manualReviewLabel-disabled mechanism it's actually about.
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { manualReviewLabel: null }, review: { auto_review: { cadence: "continuous" } } });
       // The PR carries the literal "manual-review" text as a label, but with the mechanism disabled repo-wide
       // there is no configured label to match against — the freeze must never engage on text alone.
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 76, title: "Held PR, mechanism disabled", state: "open", user: { login: "contributor" }, head: { sha: "a76" }, labels: [{ name: "manual-review" }], body: "Closes #1" });

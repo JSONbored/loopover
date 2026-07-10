@@ -98,6 +98,7 @@ GITTENSORY_REVIEW_SCREENSHOTS="true"             # before/after visual capture f
 GITTENSORY_REVIEW_E2E_TESTS="true"               # AI-generated E2E test coverage (needs features.e2eTests too)
 
 # Global (cron / endpoint) flags, not scoped by GITTENSORY_REVIEW_REPOS.
+GITTENSORY_REVIEW_CONTINUOUS="true"              # fleet-wide default: re-review on every push (else one-shot)
 GITTENSORY_REVIEW_OPS="true"                     # read-only anomaly scan + outcome stats endpoint
 GITTENSORY_REVIEW_SELFTUNE="true"                # self-tightening tuning loop, never loosens
 GITTENSORY_REVIEW_PARITY_AUDIT="true"            # shadow-record gate-decision parity readiness

@@ -20,6 +20,8 @@ describe("review.auto_review parse ↔ reviewConfigToJson round-trip (#2071)", (
   const roundTripCases: Array<{ name: string; autoReview: Record<string, unknown> }> = [
     { name: "skip_drafts: true", autoReview: { skip_drafts: true } },
     { name: "skip_drafts: false", autoReview: { skip_drafts: false } },
+    { name: "cadence: one_shot", autoReview: { cadence: "one_shot" } },
+    { name: "cadence: continuous", autoReview: { cadence: "continuous" } },
     { name: "ignore_authors", autoReview: { ignore_authors: ["*[bot]", "dependabot[bot]"] } },
     { name: "ignore_title_keywords", autoReview: { ignore_title_keywords: ["WIP", "draft"] } },
     { name: "skip_labels", autoReview: { skip_labels: ["do-not-review", "wip"] } },
@@ -33,6 +35,7 @@ describe("review.auto_review parse ↔ reviewConfigToJson round-trip (#2071)", (
       name: "all knobs together",
       autoReview: {
         skip_drafts: true,
+        cadence: "one_shot",
         ignore_authors: ["*[bot]"],
         ignore_title_keywords: ["WIP"],
         skip_labels: ["do-not-review"],
@@ -79,6 +82,12 @@ describe("review.auto_review malformed config (#2071)", () => {
     const bad = parseFocusManifest({ review: { auto_review: { auto_pause_after_reviewed_commits: -1 } } });
     expect(bad.review.autoReview.autoPauseAfterReviewedCommits).toBeNull();
     expect(bad.warnings.some((w) => /auto_pause_after_reviewed_commits.*non-negative integer/.test(w))).toBe(true);
+  });
+
+  it("warns on an invalid cadence value and drops the knob (#one-shot-review-cadence)", () => {
+    const bad = parseFocusManifest({ review: { auto_review: { cadence: "sometimes" } } });
+    expect(bad.review.autoReview.cadence).toBeNull();
+    expect(bad.warnings.some((w) => /auto_review\.cadence.*must be one of/.test(w))).toBe(true);
   });
 });
 

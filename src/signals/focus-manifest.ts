@@ -4,6 +4,7 @@
  * `src/` modules (`classifyChangedFile`, `mergeContributorBlacklists`, etc.).
  */
 export {
+  AI_REVIEW_CADENCES,
   COMMENT_VERBOSITY_LEVELS,
   CONVERGED_FEATURE_KEYS,
   E2E_TEST_DELIVERY_MODES,
@@ -33,6 +34,7 @@ export {
   reviewRecapConfigToJson,
   maintainerRecapConfigToJson,
   settingsOverrideToJson,
+  type AiReviewCadence,
   type AutoReviewConfig,
   type CommentVerbosity,
   type ConvergedFeatureKey,

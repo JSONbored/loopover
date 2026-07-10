@@ -644,10 +644,25 @@ export type LabelingRule = {
   descriptionContains: string | null;
 };
 
+/** `review.auto_review.cadence` (#one-shot-review-cadence). `one_shot` = the AI-generated content (main review,
+ *  slop advisory, linked-issue satisfaction) is produced once per PR and never automatically regenerated
+ *  afterward — not on a new push, not on CI-check completion, not on a scheduled sweep tick; only an explicit
+ *  maintainer retrigger (the PR-panel checkbox or `@gittensory review` as a maintainer) spends a fresh call.
+ *  `continuous` = the traditional behavior — every trigger re-runs AI content generation, subject to each
+ *  feature's own head-SHA cache. Orthogonal to `aiReviewMode`'s enforcement-strictness axis (off/advisory/
+ *  block) — the deterministic gate (CI status, mergeability, static-rule blockers) is NEVER affected by this
+ *  and always re-evaluates on every pass regardless of cadence. */
+export const AI_REVIEW_CADENCES = ["one_shot", "continuous"] as const;
+export type AiReviewCadence = (typeof AI_REVIEW_CADENCES)[number];
+
 /** Per-repo AI review eligibility knobs under `review.auto_review`. Unset fields are byte-identical defaults. */
 export type AutoReviewConfig = {
   /** `review.auto_review.skip_drafts`: when true, draft PRs skip AI review. null (default) ⇒ drafts reviewed as today. (#2038) */
   skipDrafts: boolean | null;
+  /** `review.auto_review.cadence`: per-repo override of the AI review re-trigger cadence. null (default) ⇒
+   *  inherit the operator's fleet-wide GITTENSORY_REVIEW_CONTINUOUS default (itself "one_shot" when unset).
+   *  (#one-shot-review-cadence) */
+  cadence: AiReviewCadence | null;
   /** `review.auto_review.ignore_authors`: author-login globs whose PRs skip AI review. Empty ⇒ every author. (#2039) */
   ignoreAuthors: string[];
   /** `review.auto_review.ignore_title_keywords`: case-insensitive title substrings that skip AI review. Empty ⇒ no skip. (#2040) */
@@ -677,6 +692,7 @@ export const EMPTY_MAX_FINDINGS_CONFIG: MaxFindingsConfig = { blockers: null, ni
 
 export const EMPTY_AUTO_REVIEW_CONFIG: AutoReviewConfig = {
   skipDrafts: null,
+  cadence: null,
   ignoreAuthors: [],
   ignoreTitleKeywords: [],
   skipLabels: [],
@@ -2299,6 +2315,7 @@ function overlayMaxFindingsConfig(base: MaxFindingsConfig, override: MaxFindings
 function overlayAutoReviewConfig(base: AutoReviewConfig, override: AutoReviewConfig): AutoReviewConfig {
   return {
     skipDrafts: pickOverlayNullable(override.skipDrafts, base.skipDrafts),
+    cadence: pickOverlayNullable(override.cadence, base.cadence),
     ignoreAuthors: pickOverlayStringList(override.ignoreAuthors, base.ignoreAuthors),
     ignoreTitleKeywords: pickOverlayStringList(override.ignoreTitleKeywords, base.ignoreTitleKeywords),
     skipLabels: pickOverlayStringList(override.skipLabels, base.skipLabels),
@@ -2493,6 +2510,7 @@ function parseReviewLabelingRules(value: JsonValue | undefined, warnings: string
 function autoReviewPresent(config: AutoReviewConfig): boolean {
   return (
     config.skipDrafts !== null ||
+    config.cadence !== null ||
     config.ignoreAuthors.length > 0 ||
     config.ignoreTitleKeywords.length > 0 ||
     config.skipLabels.length > 0 ||
@@ -2514,6 +2532,7 @@ function parseAutoReviewConfig(value: JsonValue | undefined, warnings: string[])
   const record = value as Record<string, JsonValue>;
   return {
     skipDrafts: normalizeOptionalBoolean(record.skip_drafts, "review.auto_review.skip_drafts", warnings),
+    cadence: normalizeOptionalEnum(record.cadence, "review.auto_review.cadence", AI_REVIEW_CADENCES, warnings),
     ignoreAuthors: parseManifestGlobList(record.ignore_authors, "review.auto_review.ignore_authors", warnings),
     ignoreTitleKeywords: parseAutoReviewTitleKeywords(record.ignore_title_keywords, warnings),
     skipLabels: parseAutoReviewSkipLabels(record.skip_labels, warnings),
@@ -2937,6 +2956,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   if (autoReviewPresent(review.autoReview)) {
     const autoReview: Record<string, JsonValue> = {};
     if (review.autoReview.skipDrafts !== null) autoReview.skip_drafts = review.autoReview.skipDrafts;
+    if (review.autoReview.cadence !== null) autoReview.cadence = review.autoReview.cadence;
     if (review.autoReview.ignoreAuthors.length > 0) autoReview.ignore_authors = [...review.autoReview.ignoreAuthors];
     if (review.autoReview.ignoreTitleKeywords.length > 0) autoReview.ignore_title_keywords = [...review.autoReview.ignoreTitleKeywords];
     if (review.autoReview.skipLabels.length > 0) autoReview.skip_labels = [...review.autoReview.skipLabels];

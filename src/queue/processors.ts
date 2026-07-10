@@ -52,8 +52,10 @@ import {
   markAiReviewPublished,
   getCachedAiSlopAdvisory,
   putCachedAiSlopAdvisory,
+  hasPublishedAiSlopAdvisory,
   getCachedLinkedIssueSatisfaction,
   putCachedLinkedIssueSatisfaction,
+  hasPublishedLinkedIssueSatisfaction,
   markPullRequestsRegated,
   markPullRequestsBacklogConvergenceRegated,
   markPullRequestReviewsInvalidated,
@@ -430,6 +432,7 @@ import {
   resolveReviewPromptOverrides,
   resolveReviewMemoryManifestToggle,
   resolveReviewVisualConfig,
+  type AiReviewCadence,
   type FocusManifestFinding,
   type FocusManifest,
   type ReviewPathInstruction,
@@ -6819,6 +6822,19 @@ export function shouldRunSlopAiAdvisory(
   return settings.slopAiAdvisory && settings.slopGateMode !== "off";
 }
 
+/** #one-shot-review-cadence: resolve the effective AI review re-trigger cadence. The per-repo
+ *  `review.auto_review.cadence` manifest field (`configuredCadence`, already resolved by
+ *  resolveReviewAutoReviewConfig) always wins when set; otherwise falls back to the operator's fleet-wide
+ *  GITTENSORY_REVIEW_CONTINUOUS default. Both unset ⇒ "one_shot" — see AutoReviewConfig["cadence"]'s own doc
+ *  comment for the full semantics. */
+export function resolveAiReviewCadence(
+  env: { GITTENSORY_REVIEW_CONTINUOUS?: string | undefined },
+  configuredCadence: AiReviewCadence | null,
+): AiReviewCadence {
+  if (configuredCadence !== null) return configuredCadence;
+  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_CONTINUOUS ?? "") ? "continuous" : "one_shot";
+}
+
 function shouldProcessPullRequestPublicSurface(
   eventName: string,
   action: string | undefined,
@@ -8877,6 +8893,13 @@ async function maybePublishPrPublicSurface(
     return undefined;
   const reviewManifest = await loadRepoFocusManifest(env, repoFullName).catch(() => null);
   const autoReviewConfig = resolveReviewAutoReviewConfig(reviewManifest);
+  // #one-shot-review-cadence: resolved once, up front, so all three AI dispatch sites below (slop,
+  // linked-issue satisfaction, main review) see the same answer. An explicit maintainer retrigger
+  // (forceAiReview, set by the PR-panel checkbox or a maintainer's `@gittensory review`) always bypasses
+  // one-shot mode regardless of cadence -- that is the whole point of "one-shot until you ask again."
+  const oneShotCadenceActive =
+    resolveAiReviewCadence(env, autoReviewConfig.cadence) === "one_shot" &&
+    webhook.forceAiReview !== true;
   const reviewEligibility = decideReviewEligibility({
     authorLogin: author,
     ignoreAuthors: autoReviewConfig.ignoreAuthors,
@@ -9560,22 +9583,41 @@ async function maybePublishPrPublicSurface(
       // AI-assisted slop advisory (#533, opt-in). Reuses the already-fetched files; appends at most one
       // advisory-only finding. Deliberately does NOT update slopRisk — only the deterministic core blocks.
       if (shouldRunSlopAiAdvisory(settings)) {
-        // #ai-slop-repeat-spend: same commit-threshold cap ai_review already applies (auto_pause_after_reviewed_commits)
-        // — a PR the sweep keeps re-visiting stops getting a fresh slop advisory once it's been reviewed enough
-        // times, instead of re-attempting (and re-touching the shared neuron/provider budget) on every single pass.
-        const slopReviewedCommitCount = await countPublishedAiReviewHeads(env, repoFullName, pr.number).catch(() => 0);
-        await runAiSlopForAdvisory(env, {
-          mode,
-          settings,
-          advisory,
-          repoFullName,
-          pr,
-          author,
-          files: slopFiles,
-          deterministicBand: slop.band,
-          confirmedContributor,
-          commitThresholdReached: isAutoReviewCommitThresholdReached(autoReviewConfig, slopReviewedCommitCount),
-        });
+        // #one-shot-review-cadence: a repeat automatic trigger (push/CI-completion/sweep) under one-shot mode
+        // must not spend another slop LLM call once this PR has already had ITS one-shot slop pass -- silent
+        // skip (mirrors commitThresholdReached just below: no reuse-for-display, matching the pre-existing
+        // precedent for this same feature). An explicit maintainer retrigger already unset oneShotCadenceActive
+        // above, so it always reaches the fresh call regardless of prior passes.
+        const slopOneShotSkip =
+          oneShotCadenceActive &&
+          (await hasPublishedAiSlopAdvisory(env, repoFullName, pr.number).catch(() => false));
+        if (slopOneShotSkip) {
+          await recordAuditEvent(env, {
+            eventType: "github_app.ai_slop_one_shot_skip",
+            actor: author,
+            targetKey: `${repoFullName}#${pr.number}`,
+            outcome: "completed",
+            detail: "one-shot review cadence: this PR already had its slop advisory pass; not spending a fresh call",
+            metadata: { repoFullName, headSha: advisory.headSha ?? null },
+          }).catch(() => undefined);
+        } else {
+          // #ai-slop-repeat-spend: same commit-threshold cap ai_review already applies (auto_pause_after_reviewed_commits)
+          // — a PR the sweep keeps re-visiting stops getting a fresh slop advisory once it's been reviewed enough
+          // times, instead of re-attempting (and re-touching the shared neuron/provider budget) on every single pass.
+          const slopReviewedCommitCount = await countPublishedAiReviewHeads(env, repoFullName, pr.number).catch(() => 0);
+          await runAiSlopForAdvisory(env, {
+            mode,
+            settings,
+            advisory,
+            repoFullName,
+            pr,
+            author,
+            files: slopFiles,
+            deterministicBand: slop.band,
+            confirmedContributor,
+            commitThresholdReached: isAutoReviewCommitThresholdReached(autoReviewConfig, slopReviewedCommitCount),
+          });
+        }
       }
     }
     // Linked-issue satisfaction assessment (#1961/#3906, opt-in via linkedIssueSatisfactionGateMode). Assesses
@@ -9584,17 +9626,37 @@ async function maybePublishPrPublicSurface(
     // is byte-identical to before this feature existed for every repo that hasn't opted in. (Declared/hoisted
     // to function scope above, alongside gateEvaluation, since it is consumed later outside this try block.)
     if (settings.linkedIssueSatisfactionGateMode !== "off" && pr.linkedIssues.length > 0) {
-      linkedIssueSatisfaction = await runLinkedIssueSatisfactionForAdvisory(env, {
-        mode,
-        settings,
-        advisory,
-        repoFullName,
-        pr,
-        author,
-        files: await getReviewFiles(),
-        confirmedContributor,
-        installationId,
-      });
+      // #one-shot-review-cadence: mirrors the slop advisory's skip above, scoped to the PR's PRIMARY linked
+      // issue (matching runLinkedIssueSatisfactionForAdvisory's own "assesses only the first linked issue"
+      // contract) -- a newly-linked issue never assessed before still gets its own first pass even when the
+      // PR itself already had a satisfaction pass for a DIFFERENT (now-superseded) linked issue.
+      const primaryLinkedIssueNumber = pr.linkedIssues[0];
+      const linkedIssueOneShotSkip =
+        oneShotCadenceActive &&
+        primaryLinkedIssueNumber !== undefined &&
+        (await hasPublishedLinkedIssueSatisfaction(env, repoFullName, pr.number, primaryLinkedIssueNumber).catch(() => false));
+      if (linkedIssueOneShotSkip) {
+        await recordAuditEvent(env, {
+          eventType: "github_app.linked_issue_satisfaction_one_shot_skip",
+          actor: author,
+          targetKey: `${repoFullName}#${pr.number}`,
+          outcome: "completed",
+          detail: "one-shot review cadence: this PR's linked issue already had its satisfaction pass; not spending a fresh call",
+          metadata: { repoFullName, headSha: advisory.headSha ?? null },
+        }).catch(() => undefined);
+      } else {
+        linkedIssueSatisfaction = await runLinkedIssueSatisfactionForAdvisory(env, {
+          mode,
+          settings,
+          advisory,
+          repoFullName,
+          pr,
+          author,
+          files: await getReviewFiles(),
+          confirmedContributor,
+          installationId,
+        });
+      }
     }
     // Focus-manifest policy (#555, opt-in via manifestPolicyGateMode). Reload the CACHED manifest (the
     // settings resolver discards the raw manifest, but loadRepoFocusManifest is cached so this is cheap),
@@ -9843,10 +9905,20 @@ async function maybePublishPrPublicSurface(
       isReputationEnabled(env) && isConvergenceRepoAllowed(env, repoFullName)
         ? await shouldSkipAiForReputation(env, { project: repoFullName, submitter: author })
         : undefined;
+    // #one-shot-review-cadence: only even attempts the lookup when the review would otherwise be eligible to
+    // run fresh this pass (mirrors how the frozen/paused branches below are similarly mutually exclusive) --
+    // a PR that's blacklisted/frozen/already-skipped for another reason never shows AI content at all today,
+    // and one-shot mode must not change that. A non-null result here means this PR already had its one-shot
+    // main-review pass, so the fresh call below must be skipped and this reused instead.
+    const oneShotPriorReview =
+      oneShotCadenceActive && !authorBlacklisted && !isFrozenForManualReview && !autoReviewSkipReason
+        ? await getLatestPublishedAiReview(env, repoFullName, pr.number, settings.aiReviewMode).catch(() => null)
+        : null;
     const aiReviewWillRun =
       !authorBlacklisted &&
       !isFrozenForManualReview &&
       !autoReviewSkipReason &&
+      !oneShotPriorReview &&
       (await shouldStartAiReviewForAdvisory(env, {
         settings,
         advisory,
@@ -9899,6 +9971,19 @@ async function maybePublishPrPublicSurface(
           metadata: { deliveryId: webhook.deliveryId, repoFullName, headSha: advisory.headSha ?? null },
         }).catch(() => undefined);
       }
+    } else if (oneShotPriorReview && hasPublicReviewAssessment(oneShotPriorReview.notes)) {
+      advisory.findings.push(...oneShotPriorReview.findings);
+      aiReview = oneShotPriorReview;
+      aiReviewWasReused = true;
+      incr("gittensory_ai_review_one_shot_reuse_total");
+      await recordAuditEvent(env, {
+        eventType: "github_app.ai_review_one_shot_reuse",
+        actor: author,
+        targetKey: `${repoFullName}#${pr.number}`,
+        outcome: "completed",
+        detail: "one-shot review cadence: reused the last published AI review instead of spending a fresh call",
+        metadata: { deliveryId: webhook.deliveryId, repoFullName, headSha: advisory.headSha ?? null },
+      }).catch(() => undefined);
     }
     // Review-evasion protection (#review-evasion-protection): durably record that a review pass is starting
     // for this EXACT head BEFORE any cost-bearing AI-review work begins (including the reviewing placeholder

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { getCachedLinkedIssueSatisfaction, putCachedLinkedIssueSatisfaction } from "../../src/db/repositories";
+import { getCachedLinkedIssueSatisfaction, hasPublishedLinkedIssueSatisfaction, putCachedLinkedIssueSatisfaction } from "../../src/db/repositories";
 import { linkedIssueSatisfactionCacheInputFingerprint } from "../../src/review/linked-issue-satisfaction-cache-input";
 import { createTestEnv } from "../helpers/d1";
 
@@ -88,6 +88,29 @@ describe("linked-issue satisfaction cache (#1961/#3906)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("hasPublishedLinkedIssueSatisfaction (#one-shot-review-cadence)", () => {
+  it("is false when no row exists for the PR + linked issue number", async () => {
+    const env = createTestEnv();
+    expect(await hasPublishedLinkedIssueSatisfaction(env, "o/r", 20, 1)).toBe(false);
+  });
+
+  it("is true once ANY row exists for that issue number, regardless of head SHA", async () => {
+    const env = createTestEnv();
+    const fingerprint = await fp();
+    await putCachedLinkedIssueSatisfaction(env, "o/r", 21, "sha1", 5, fingerprint, { status: "ok", result: { status: "addressed", rationale: "r", confidence: 0.9 }, estimatedNeurons: 4 });
+    expect(await hasPublishedLinkedIssueSatisfaction(env, "o/r", 21, 5)).toBe(true);
+  });
+
+  it("scopes to (repo, pull, linkedIssueNumber) -- a newly-linked (never-assessed) issue still reads false even though the PR already has a pass for a DIFFERENT issue", async () => {
+    const env = createTestEnv();
+    const fingerprint = await fp();
+    await putCachedLinkedIssueSatisfaction(env, "o/r", 22, "sha1", 5, fingerprint, { status: "ok", result: { status: "addressed", rationale: "r", confidence: 0.9 }, estimatedNeurons: 4 });
+    expect(await hasPublishedLinkedIssueSatisfaction(env, "o/r", 22, 6)).toBe(false); // different (newly-linked) issue on the SAME PR
+    expect(await hasPublishedLinkedIssueSatisfaction(env, "o/r", 23, 5)).toBe(false); // different PR
+    expect(await hasPublishedLinkedIssueSatisfaction(env, "o/r2", 22, 5)).toBe(false); // different repo
   });
 });
 

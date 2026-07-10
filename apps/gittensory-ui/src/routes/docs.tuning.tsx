@@ -139,6 +139,18 @@ function Tuning() {
           <code>.gittensory.yml</code> before the feature is active for it. Per-PR.
         </li>
         <li>
+          <code>GITTENSORY_REVIEW_CONTINUOUS</code> — fleet-wide default AI review re-trigger
+          cadence. Off by default (one-shot): AI-generated content (main review, slop advisory,
+          linked-issue satisfaction) is produced once per PR and never regenerated automatically
+          afterward — only an explicit maintainer retrigger (the PR-panel checkbox, or{" "}
+          <code>@gittensory review</code> as a maintainer) spends a fresh call. Truthy switches the
+          fleet default to continuous — every push/CI-completion/sweep re-runs AI content
+          generation. A repo's own <code>review.auto_review.cadence</code> in{" "}
+          <code>.gittensory.yml</code> always overrides this default, in either direction. Never
+          affects the deterministic gate (CI status, mergeability, static-rule blockers), which
+          always re-evaluates regardless.
+        </li>
+        <li>
           <code>GITTENSORY_REVIEW_RAG</code> — retrieval-augmented context: queries the codebase
           vector index for related code and docs (callers, related modules, existing conventions)
           and appends a "Relevant existing code / docs" section to the reviewer prompt. Additive

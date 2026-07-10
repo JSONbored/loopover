@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { getCachedAiSlopAdvisory, putCachedAiSlopAdvisory } from "../../src/db/repositories";
+import { getCachedAiSlopAdvisory, hasPublishedAiSlopAdvisory, putCachedAiSlopAdvisory } from "../../src/db/repositories";
 import { aiSlopCacheInputFingerprint } from "../../src/review/ai-slop-cache-input";
 import { createTestEnv } from "../helpers/d1";
 
@@ -83,6 +83,33 @@ describe("AI slop advisory cache (#ai-slop-cache)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("hasPublishedAiSlopAdvisory (#one-shot-review-cadence)", () => {
+  it("is false when no row exists for the PR", async () => {
+    const env = createTestEnv();
+    expect(await hasPublishedAiSlopAdvisory(env, "o/r", 20)).toBe(false);
+  });
+
+  it("is true once ANY row exists, regardless of head SHA -- existence-only, not scoped to the current head", async () => {
+    const env = createTestEnv();
+    const fingerprint = await fp();
+    await putCachedAiSlopAdvisory(env, "o/r", 21, "sha1", fingerprint, { status: "ok", band: "low", finding: null, estimatedNeurons: 4 });
+    expect(await hasPublishedAiSlopAdvisory(env, "o/r", 21)).toBe(true);
+    // A DIFFERENT, later head SHA for the SAME PR still reads as "already had its pass" -- one-shot mode's
+    // whole point is that a new push does not reset this. The lookup carries no headSha parameter at all,
+    // so a query for the SAME PR after a would-be new commit lands is unaffected by which SHA is now current.
+    await putCachedAiSlopAdvisory(env, "o/r", 21, "sha2", fingerprint, { status: "ok", band: "low", finding: null, estimatedNeurons: 4 });
+    expect(await hasPublishedAiSlopAdvisory(env, "o/r", 21)).toBe(true);
+  });
+
+  it("scopes strictly to (repo, pull) -- a different PR or repo is unaffected", async () => {
+    const env = createTestEnv();
+    const fingerprint = await fp();
+    await putCachedAiSlopAdvisory(env, "o/r", 22, "sha1", fingerprint, { status: "ok", band: "low", finding: null, estimatedNeurons: 4 });
+    expect(await hasPublishedAiSlopAdvisory(env, "o/r", 23)).toBe(false); // different PR
+    expect(await hasPublishedAiSlopAdvisory(env, "o/r2", 22)).toBe(false); // different repo
   });
 });
 

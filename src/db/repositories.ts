@@ -4759,6 +4759,19 @@ export async function putCachedAiSlopAdvisory(
     .run();
 }
 
+/** #one-shot-review-cadence: does at least one slop-advisory row exist for this PR, regardless of head SHA?
+ *  Consulted ONLY when the resolved AI review cadence is "one_shot" — an existing row means this PR already
+ *  had its one-shot slop pass, so a later automatic trigger (push/CI-completion/sweep) must not spend another
+ *  LLM call. Existence-only (no reuse-for-display): mirrors the pre-existing commitThresholdReached silent-skip
+ *  precedent for this same feature, which also does not resurface a prior finding once paused. */
+export async function hasPublishedAiSlopAdvisory(env: Env, repoFullName: string, pullNumber: number): Promise<boolean> {
+  const row = await env.DB
+    .prepare("SELECT 1 AS present FROM ai_slop_cache WHERE repo_full_name = ? AND pull_number = ? LIMIT 1")
+    .bind(repoFullName, pullNumber)
+    .first<{ present: number }>();
+  return Boolean(row);
+}
+
 /** #linked-issue-satisfaction-cache: the stored linked-issue satisfaction result for (repo, pull, head SHA,
  *  linked issue number), or null on a miss. Mirrors getCachedAiSlopAdvisory -- every stored row is
  *  unconditionally durable (no cacheable/allowNonCacheable/maxAgeMs dimension). A nullish head SHA is always a
@@ -4812,6 +4825,25 @@ export async function putCachedLinkedIssueSatisfaction(
     )
     .bind(repoFullName, pullNumber, headSha, linkedIssueNumber, inputFingerprint, result.status, jsonString(result.result), result.estimatedNeurons, nowIso())
     .run();
+}
+
+/** #one-shot-review-cadence: does a linked-issue satisfaction row exist for this PR + linked issue number,
+ *  regardless of head SHA? Consulted ONLY when the resolved AI review cadence is "one_shot", mirroring
+ *  hasPublishedAiSlopAdvisory. Scoped ADDITIONALLY to linkedIssueNumber (not just the PR) — a PR's primary
+ *  linked issue can change between passes (see linked_issue_satisfaction_cache's own doc comment), and a
+ *  newly-linked issue has never been assessed, so it must still get its own first pass under one-shot mode
+ *  rather than being silently blocked by an unrelated issue's prior assessment. */
+export async function hasPublishedLinkedIssueSatisfaction(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+  linkedIssueNumber: number,
+): Promise<boolean> {
+  const row = await env.DB
+    .prepare("SELECT 1 AS present FROM linked_issue_satisfaction_cache WHERE repo_full_name = ? AND pull_number = ? AND linked_issue_number = ? LIMIT 1")
+    .bind(repoFullName, pullNumber, linkedIssueNumber)
+    .first<{ present: number }>();
+  return Boolean(row);
 }
 
 /** #4499 (grounding-file-content-cache): the stored file content for (repo, path, head SHA), or null on a

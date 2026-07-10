@@ -259,6 +259,15 @@ declare global {
      *  E2E test coverage feature. Default OFF — unset/false the feature is never active for any repo regardless
      *  of a per-repo `features.e2eTests` override. */
     GITTENSORY_REVIEW_E2E_TESTS?: string;
+    /** #one-shot-review-cadence: the operator's FLEET-WIDE default for AI review re-trigger cadence, consulted
+     *  only when a repo's `.gittensory.yml review.auto_review.cadence` is unset (a per-repo value always wins
+     *  regardless of this flag — see resolveAiReviewCadence). Default OFF (unset/false) ⇒ "one_shot": the
+     *  AI-generated content (main review, slop advisory, linked-issue satisfaction) freezes after its first
+     *  pass for every repo, and only an explicit maintainer retrigger spends a fresh call. Truthy ⇒
+     *  "continuous": the traditional behavior where every push/CI-completion/sweep trigger re-runs AI content
+     *  generation, for operators who prefer that over one-shot. Never affects the deterministic gate (CI
+     *  status, mergeability, static-rule blockers), which always re-evaluates regardless of this flag. */
+    GITTENSORY_REVIEW_CONTINUOUS?: string;
     /** Convergence (reputation): when truthy, the INTERNAL-only ported submitter-reputation signal extends the
      *  AI-spend gate — a new / burst / low-reputation submitter is downgraded to a deterministic-only review
      *  (the AI neurons are skipped), and the per-(project, submitter) outcome is recorded after the gate

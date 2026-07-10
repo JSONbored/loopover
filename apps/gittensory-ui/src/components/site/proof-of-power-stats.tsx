@@ -97,9 +97,12 @@ export function ProofOfPowerStats({ className }: { className?: string }) {
   const { totals, weekly, byProject } = data;
   const repoCount = byProject.length;
   const timeSaved = formatTimeSaved(totals.minutesSaved);
-  // #4447/#4448: 8-week sparklines riding beside the two tiles that have a weekly trend to show. The other
-  // tiles (PRs reviewed, filtered %, time saved) have no persisted weekly series, only a lifetime total plus a
-  // single "this week" delta -- nothing for a sparkline to plot yet.
+  // #4447/#4448/#4445-follow-up: 8-week sparklines riding beside every tile that has a weekly trend to show.
+  // "Maintainer time saved" is the one tile left without one -- it's a fixed multiple of PRs-reviewed
+  // (minutesSaved = reviewed × ~20min), so its own trend line would just be a rescaled copy of the reviewed
+  // sparkline, not new information.
+  const reviewedSparkline = toTrendPoints(data.reviewVolumeTrend, (week) => week.reviewed);
+  const filteredSparkline = toTrendPoints(data.reviewVolumeTrend, (week) => week.filteredPct);
   const accuracySparkline = toTrendPoints(data.accuracyTrend, (week) => week.accuracyPct);
   const reuseRateSparkline = toTrendPoints(data.reuseRateTrend, (week) => week.reuseRatePct);
   const latestReuseRatePct =
@@ -123,11 +126,13 @@ export function ProofOfPowerStats({ className }: { className?: string }) {
           label="PRs reviewed"
           value={<Num value={totals.reviewed} />}
           hint={`${intFmt.format(totals.merged)} merged across ${repoCount} repo${repoCount === 1 ? "" : "s"}${weekly.reviewed > 0 ? ` · +${intFmt.format(weekly.reviewed)} this week` : ""}`}
+          trend={<Sparkline points={reviewedSparkline} color="var(--chart-3)" />}
         />
         <Stat
           label="Filtered without merge"
           value={totals.filteredPct == null ? "—" : `${totals.filteredPct}%`}
           hint={`${intFmt.format(totals.reviewed - totals.merged)} closed, advised, or escalated`}
+          trend={<Sparkline points={filteredSparkline} color="var(--chart-4)" />}
         />
         <Stat
           label="Maintainer time saved"

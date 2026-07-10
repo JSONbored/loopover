@@ -3,6 +3,7 @@ import { createApp } from "../../src/api/routes";
 import { createTestEnv } from "../helpers/d1";
 import { PUBLIC_ACCURACY_TREND_WEEKS } from "../../src/services/public-accuracy-trend";
 import { PUBLIC_REUSE_RATE_TREND_WEEKS } from "../../src/services/public-reuse-rate-trend";
+import { PUBLIC_REVIEW_VOLUME_TREND_WEEKS } from "../../src/services/public-review-volume-trend";
 
 /** Seed the LIVE ledger: a published-review surface per reviewed PR (audit_events) + each PR's terminal
  *  disposition (pull_requests state/merged_at), plus one live reversal (an engine close on a now-reopened PR). */
@@ -64,6 +65,7 @@ describe("GET /v1/public/stats (#1059)", () => {
       byProject: Array<{ project: string; reviewed: number }>;
       accuracyTrend: Array<{ weekStart: string; merged: number; closed: number; reversed: number; accuracyPct: number | null }>;
       reuseRateTrend: Array<{ weekStart: string; hits: number; misses: number; reuseRatePct: number | null }>;
+      reviewVolumeTrend: Array<{ weekStart: string; reviewed: number; merged: number; filteredPct: number | null }>;
     };
     expect(body.totals.handled).toBe(5); // distinct reviewed PRs
     expect(body.totals.merged).toBe(3);
@@ -86,5 +88,13 @@ describe("GET /v1/public/stats (#1059)", () => {
     // #4448: the weekly AI-work reuse-rate trend rides along on the SAME response too.
     expect(body.reuseRateTrend).toHaveLength(PUBLIC_REUSE_RATE_TREND_WEEKS);
     for (const week of body.reuseRateTrend) expect(typeof week.weekStart).toBe("string");
+    // #4445 follow-up: the weekly review-volume/filtered-rate trend rides along on the SAME response too.
+    expect(body.reviewVolumeTrend).toHaveLength(PUBLIC_REVIEW_VOLUME_TREND_WEEKS);
+    for (const week of body.reviewVolumeTrend) expect(typeof week.weekStart).toBe("string");
+    // All 5 seeded PRs were published "now" (no explicit created_at in the seed), so the whole cohort lands in
+    // the current week: reviewed 5, merged 3 -- the SAME totals as the lifetime totals.reviewed/merged above.
+    const currentWeek = body.reviewVolumeTrend[body.reviewVolumeTrend.length - 1];
+    expect(currentWeek?.reviewed).toBe(5);
+    expect(currentWeek?.merged).toBe(3);
   });
 });

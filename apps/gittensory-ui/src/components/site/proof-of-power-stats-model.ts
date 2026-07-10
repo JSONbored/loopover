@@ -41,6 +41,15 @@ export type PublicStats = {
     misses: number;
     reuseRatePct: number | null;
   }>;
+  /** Trailing weekly review-volume/filtered-rate trend (#4445 follow-up) -- each week is the cohort of PRs
+   *  first published that week; `merged` reflects their CURRENT disposition, not necessarily merged that
+   *  same week. */
+  reviewVolumeTrend: Array<{
+    weekStart: string;
+    reviewed: number;
+    merged: number;
+    filteredPct: number | null;
+  }>;
 };
 
 /** Relative "updated Ns ago" label from the payload's updatedAt (mirrors MetaStrip's freshness logic). */

@@ -135,8 +135,9 @@ async function loadReversalDayRows(env: Env, projects: string[], sinceIso: strin
 
 /** Day-bucketed Orb-fleet merged/closed, matching getOrbGlobalStats (orb/outcomes.ts) exactly except for the
  *  added `GROUP BY day`. No excludeAccount here, mirroring getPublicStats's own choice not to exclude any
- *  account from the homepage total (see public-stats.ts's file header). */
-async function loadOrbDayRows(env: Env, sinceIso: string): Promise<Map<string, { merged: number; closed: number }>> {
+ *  account from the homepage total (see public-stats.ts's file header). Exported for reuse by the sibling
+ *  review-volume trend (#4445 follow-up), which needs the SAME per-day Orb split for its own "reviewed" total. */
+export async function loadOrbDayRows(env: Env, sinceIso: string): Promise<Map<string, { merged: number; closed: number }>> {
   const map = new Map<string, { merged: number; closed: number }>();
   const rows = await safeAll<{ day: string; merged: number; closed: number }>(
     env,

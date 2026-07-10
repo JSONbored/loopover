@@ -73,6 +73,16 @@ const PAYLOAD: PublicStats = {
     { weekStart: "2026-06-15", hits: 80, misses: 20, reuseRatePct: 80 },
     { weekStart: "2026-06-22", hits: 83, misses: 17, reuseRatePct: 83 },
   ],
+  reviewVolumeTrend: [
+    { weekStart: "2026-05-04", reviewed: 2, merged: 1, filteredPct: null },
+    { weekStart: "2026-05-11", reviewed: 300, merged: 150, filteredPct: 50 },
+    { weekStart: "2026-05-18", reviewed: 310, merged: 160, filteredPct: 48.4 },
+    { weekStart: "2026-05-25", reviewed: 320, merged: 165, filteredPct: 48.4 },
+    { weekStart: "2026-06-01", reviewed: 330, merged: 170, filteredPct: 48.5 },
+    { weekStart: "2026-06-08", reviewed: 340, merged: 175, filteredPct: 48.5 },
+    { weekStart: "2026-06-15", reviewed: 350, merged: 180, filteredPct: 48.6 },
+    { weekStart: "2026-06-22", reviewed: 358, merged: 185, filteredPct: 48.3 },
+  ],
 };
 
 function renderWithClient(ui: ReactNode) {
@@ -146,12 +156,13 @@ describe("ProofOfPowerStats", () => {
     expect(screen.getByText("avoided redoing prior AI work")).toBeTruthy();
   });
 
-  it("renders a sparkline beside accuracy and reuse-rate, each labeled by its own week count", async () => {
+  it("renders a sparkline beside all four trend-backed tiles, each labeled by its own week count", async () => {
     apiFetch.mockResolvedValue({ ok: true, status: 200, durationMs: 1, data: PAYLOAD });
     renderWithClient(<ProofOfPowerStats />);
     await screen.findByText("Decision accuracy");
     const sparklines = screen.getAllByRole("img", { name: "Trend over the last 8 weeks" });
-    expect(sparklines).toHaveLength(2); // accuracy + reuse-rate, both 8-week payloads
+    // PRs reviewed + Filtered without merge + Decision accuracy + AI work reused, all 8-week payloads.
+    expect(sparklines).toHaveLength(4);
   });
 
   it("settles the count-up on the real reviewed total (not stuck at 0 when rAF never fires)", async () => {

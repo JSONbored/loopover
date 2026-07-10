@@ -144,6 +144,19 @@ export const PublicStatsSchema = z
         reuseRatePct: z.number().nullable(),
       }),
     ),
+    /** Trailing weekly PR-review-volume/filtered-rate trend (#4445 follow-up) -- each week is the COHORT of PRs
+     *  first published that week, `merged` reflects their CURRENT disposition (not necessarily merged the same
+     *  week), and null filteredPct means too few reviewed PRs that week to publish a meaningful percentage. The
+     *  most recent 1-2 weeks can read a lower filteredPct than they'll eventually settle at, since some of that
+     *  cohort may still be in flight. */
+    reviewVolumeTrend: z.array(
+      z.object({
+        weekStart: z.string(),
+        reviewed: z.number(),
+        merged: z.number(),
+        filteredPct: z.number().nullable(),
+      }),
+    ),
   })
   .openapi("PublicStats");
 

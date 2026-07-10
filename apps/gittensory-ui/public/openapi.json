@@ -522,6 +522,33 @@
                 "reuseRatePct"
               ]
             }
+          },
+          "reviewVolumeTrend": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "weekStart": {
+                  "type": "string"
+                },
+                "reviewed": {
+                  "type": "number"
+                },
+                "merged": {
+                  "type": "number"
+                },
+                "filteredPct": {
+                  "type": "number",
+                  "nullable": true
+                }
+              },
+              "required": [
+                "weekStart",
+                "reviewed",
+                "merged",
+                "filteredPct"
+              ]
+            }
           }
         },
         "required": [
@@ -531,7 +558,8 @@
           "weekly",
           "byProject",
           "accuracyTrend",
-          "reuseRateTrend"
+          "reuseRateTrend",
+          "reviewVolumeTrend"
         ]
       },
       "PublicQualityMetrics": {

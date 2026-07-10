@@ -1022,11 +1022,22 @@ settings:
 #     claude_effort: null  # Overrides CLAUDE_AI_EFFORT for this repo. String or null. Default (env unset): medium.
 #     codex_model: null    # Overrides CODEX_AI_MODEL for this repo. String or null.
 #     codex_effort: null   # Overrides CODEX_AI_EFFORT for this repo. String or null. Default (env unset): medium.
+#     ollama_model: null   # Overrides OLLAMA_AI_MODEL for this repo's ollama reviewer. String or null. (#3902)
+#     openai_model: null   # Overrides OPENAI_AI_MODEL for this repo's openai reviewer. String or null. (#3902)
+#     openai_compatible_model: null  # Overrides OPENAI_COMPATIBLE_AI_MODEL for this repo. String or null. (#3902)
+#     anthropic_model: null  # Overrides ANTHROPIC_AI_MODEL for this repo's BYOK Messages API reviewer. String or null. (#3902)
 #   # Per-repo before/after screenshot-capture config (#3609 preview / #3610 routes). Only takes effect when
 #   # the operator has ALSO enabled GITTENSORY_REVIEW_SCREENSHOTS + this repo's cutover allowlist -- this
 #   # config narrows/redirects that feature, it never turns it on by itself. All-null/empty/default ⇒
 #   # byte-identical to today (GitHub-native preview discovery, automatic file-to-route inference).
 #   visual:
+#     # The repo's "before" production URL -- e.g. "https://metagraph.sh" for a repo whose live site differs
+#     # from the operator's own PUBLIC_SITE_ORIGIN env var (a single GLOBAL value with no per-repo awareness,
+#     # correct for at most one repo on a multi-repo self-host instance). ALWAYS wins over PUBLIC_SITE_ORIGIN
+#     # when set, mirroring preview.url_template's precedence over GitHub-native discovery below. Must resolve
+#     # to a valid HTTPS URL targeting a public host (same SSRF guard as preview.url_template). String or null.
+#     # Default: null (falls back to PUBLIC_SITE_ORIGIN).
+#     production_url: "https://example.com"
 #     preview:
 #       # The repo's "after" preview URL, with {number}/{head_sha}/{head_sha_short} placeholders substituted
 #       # at capture time. ALWAYS wins over GitHub-native preview discovery (Deployments API / commit checks /

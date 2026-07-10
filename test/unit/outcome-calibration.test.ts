@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildFleetOutcomeCalibration,
   buildOutcomeCalibrationSignals,
   buildRecommendationOutcomeCalibration,
   buildRepoOutcomeCalibration,
@@ -188,6 +189,48 @@ describe("buildRepoOutcomeCalibration (env loader)", () => {
 
     const report = await buildRepoOutcomeCalibration(env, "owner/repo", 365);
     expect(report.recommendations).toMatchObject({ total: 2, positive: 1, negative: 1, positiveRate: 0.5 });
+  });
+});
+
+describe("buildFleetOutcomeCalibration (env loader)", () => {
+  it("folds resolved PRs + recommendation outcomes across EVERY repo, not just one", async () => {
+    const env = createTestEnv();
+    await upsertPullRequestFromGitHub(env, "owner/repo-a", { number: 1, title: "merged clean", state: "closed", user: { login: "alice" }, merged_at: "2026-06-01T00:00:00.000Z" });
+    await updatePullRequestSlopAssessment(env, "owner/repo-a", 1, { slopRisk: 0, slopBand: "clean" });
+    await upsertPullRequestFromGitHub(env, "owner/repo-b", { number: 1, title: "closed high", state: "closed", user: { login: "bob" } });
+    await updatePullRequestSlopAssessment(env, "owner/repo-b", 1, { slopRisk: 70, slopBand: "high" });
+    await createAgentRun(env, runRecord("r-fleet", "miner", "2026-06-01T00:00:00.000Z"));
+    await replaceAgentActions(env, "r-fleet", [actionRecord("fleet-merged", "r-fleet")]);
+    await upsertAgentRecommendationOutcome(env, {
+      actionId: "fleet-merged",
+      runId: "r-fleet",
+      actorLogin: "miner",
+      actionType: "choose_next_work",
+      targetRepoFullName: "owner/repo-a",
+      source: "explicit",
+      outcomeState: "merged",
+      outcomeTargetType: "pull_request",
+      maintainerLane: false,
+      confidence: "high",
+      reason: "fleet-wide signal",
+      metadata: {},
+    });
+
+    const report = await buildFleetOutcomeCalibration(env);
+    expect(report.slop.totalResolved).toBe(2); // both repos counted, not just one
+    expect(report.slop.bands.find((b) => b.band === "clean")).toMatchObject({ merged: 1, closed: 0 });
+    expect(report.slop.bands.find((b) => b.band === "high")).toMatchObject({ merged: 0, closed: 1 });
+    expect(report.recommendations).toMatchObject({ total: 1, positive: 1, positiveRate: 1 });
+    expect(report.signals.length).toBeGreaterThan(0);
+    expect(JSON.stringify(report)).not.toMatch(/reward|payout|trust score|wallet|hotkey/i);
+  });
+
+  it("fails safe to an all-empty report when there is no resolved-PR signal yet", async () => {
+    const env = createTestEnv();
+    const report = await buildFleetOutcomeCalibration(env);
+    expect(report.slop).toMatchObject({ totalResolved: 0, overallMergeRate: null, discriminates: null });
+    expect(report.recommendations).toMatchObject({ total: 0, positiveRate: null });
+    expect(report.signals.length).toBeGreaterThan(0); // still narrates the "not enough data" state
   });
 });
 

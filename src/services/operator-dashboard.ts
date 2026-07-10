@@ -30,6 +30,7 @@ import { computeGateEval, type GateEvalReport } from "../review/parity";
 import { computeCycleTimeAggregate, type CycleTimeAggregate } from "../review/stats";
 import { loadUpstreamStatus, type UpstreamStatus } from "../upstream/ruleset";
 import { nowIso } from "../utils/json";
+import { buildFleetOutcomeCalibration, type FleetOutcomeCalibration } from "./outcome-calibration";
 import { buildRecommendationQualityReport, type RecommendationQualityReport } from "./recommendation-quality-report";
 import { buildWeeklyValueReport } from "./weekly-value-report";
 
@@ -64,6 +65,10 @@ export type OperatorDashboardPayload = {
   // Gate-precision eval (#2191): the per-project confusion matrix + precisions from computeGateEval, surfaced
   // read-only for the maintainer analytics card. Fail-safe empty report when there is no review_audit signal.
   gateEval: GateEvalReport;
+  // Fleet-wide confidence calibration (#2192, part of #1967): slop-band merge-rate curve + recommendation
+  // outcome split from buildFleetOutcomeCalibration, surfaced read-only for the analytics card. Fails safe
+  // to an all-zero/null-discriminates report when there is no resolved-PR signal yet.
+  calibration: FleetOutcomeCalibration;
   // PR review cycle-time percentiles (#2194): gate decision → outcome from review_audit; fail-safe empty aggregate.
   cycleTime: CycleTimeAggregate;
 };
@@ -90,6 +95,7 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     recommendationQuality,
     fleetMetrics,
     gateEval,
+    calibration,
     cycleTime,
   ] = await Promise.all([
     listRepositories(env),
@@ -110,6 +116,9 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     computeFleetAnalytics(env, { windowDays: 90 }),
     // #2191: reuse the existing eval (no new compute); it fails safe to an empty report on any read error.
     computeGateEval(env, { days: 90, nowMs: Date.now() }),
+    // #2192: fleet-wide slop-band calibration + recommendation outcome split (no new compute — reuses the
+    // same pure builders buildRepoOutcomeCalibration already uses, over every repo instead of one).
+    buildFleetOutcomeCalibration(env),
     // #2194: cycle-time percentiles from the stats feed; fails safe to an empty aggregate.
     computeCycleTimeAggregate(env, { days: 90, nowMs: Date.now() }),
   ]);
@@ -206,6 +215,7 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     upstreamDrift,
     fleetMetrics,
     gateEval,
+    calibration,
     cycleTime,
   };
 }

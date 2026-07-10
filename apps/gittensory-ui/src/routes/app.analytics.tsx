@@ -12,6 +12,8 @@ import {
 } from "@/components/site/usage-analytics-panels";
 import { GatePrecisionCard } from "@/components/site/app-panels/gate-precision-card";
 import type { GateEvalReport } from "@/components/site/app-panels/gate-precision-card-model";
+import { CalibrationCard } from "@/components/site/calibration-card";
+import type { FleetOutcomeCalibration } from "@/components/site/calibration-card-model";
 import { CycleTimeCard } from "@/components/site/app-panels/cycle-time-card";
 import type { CycleTimeAggregate } from "@/components/site/app-panels/cycle-time-card-model";
 import { useApiResource } from "@/lib/api/use-api-resource";
@@ -104,6 +106,7 @@ type OperatorDashboard = {
   };
   upstreamDrift?: { status?: string; openReportCount?: number } | null;
   gateEval?: GateEvalReport;
+  calibration?: FleetOutcomeCalibration;
   cycleTime?: CycleTimeAggregate;
 };
 
@@ -187,6 +190,8 @@ function ProductAnalytics() {
           ) : null}
 
           {data.gateEval ? <GatePrecisionCard report={data.gateEval} /> : null}
+
+          {data.calibration ? <CalibrationCard calibration={data.calibration} /> : null}
 
           {data.cycleTime ? <CycleTimeCard cycleTime={data.cycleTime} /> : null}
 

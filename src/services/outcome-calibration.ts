@@ -8,7 +8,7 @@
 //     recommendation-outcome ledger.
 // All inputs already exist: slop_band persists on the PR row (#726) + closed PRs are retained, and the
 // agent_recommendation_outcomes ledger (#543's recommendation half) is populated by evaluateRecommendationOutcomes.
-import { listAgentRecommendationOutcomes, listPullRequests } from "../db/repositories";
+import { listAgentRecommendationOutcomes, listAllPullRequests, listPullRequests } from "../db/repositories";
 import type { SlopBand } from "../signals/slop";
 import type { AgentRecommendationOutcomeRecord, PullRequestRecord } from "../types";
 import { nowIso } from "../utils/json";
@@ -161,4 +161,27 @@ export async function buildRepoOutcomeCalibration(
   const slop = buildSlopOutcomeCalibration(pullRequests);
   const recommendations = buildRecommendationOutcomeCalibration(outcomes, repoFullName, options);
   return { repoFullName, generatedAt: nowIso(), windowDays: windowDays ?? null, slop, recommendations, signals: buildOutcomeCalibrationSignals(slop, recommendations) };
+}
+
+export type FleetOutcomeCalibration = {
+  generatedAt: string;
+  slop: SlopOutcomeCalibration;
+  recommendations: RecommendationOutcomeCalibration;
+  signals: string[];
+};
+
+/**
+ * Fleet-wide mirror of buildRepoOutcomeCalibration (#2192, part of #1967): the same pure calibration fold,
+ * over every repo's PRs/outcomes instead of one repo, for the operator analytics dashboard's
+ * confidence-calibration card. Reuses the already-tested pure builders above; the only new I/O is two
+ * existing bulk-read repository calls (no new SQL).
+ */
+export async function buildFleetOutcomeCalibration(env: Env): Promise<FleetOutcomeCalibration> {
+  const [pullRequests, outcomes] = await Promise.all([
+    listAllPullRequests(env),
+    listAgentRecommendationOutcomes(env, { limit: 5000 }),
+  ]);
+  const slop = buildSlopOutcomeCalibration(pullRequests);
+  const recommendations = buildRecommendationOutcomeCalibration(outcomes);
+  return { generatedAt: nowIso(), slop, recommendations, signals: buildOutcomeCalibrationSignals(slop, recommendations) };
 }

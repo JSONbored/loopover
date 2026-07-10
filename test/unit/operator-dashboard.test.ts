@@ -26,6 +26,10 @@ describe("operator dashboard payload", () => {
     // #2191: gate-eval report is surfaced read-only; with no review_audit signal it fails safe to an empty
     // report (no rows, no signal) rather than being absent.
     expect(payload.gateEval).toEqual({ rows: [], hasSignal: false });
+    // #2192: fleet-wide calibration fails safe to an all-zero/null-discriminates report, never absent.
+    expect(payload.calibration.slop).toMatchObject({ totalResolved: 0, overallMergeRate: null, discriminates: null });
+    expect(payload.calibration.recommendations).toMatchObject({ total: 0, positiveRate: null });
+    expect(payload.calibration.signals.length).toBeGreaterThan(0);
     expect(payload.cycleTime).toEqual({
       p50Ms: null,
       p90Ms: null,

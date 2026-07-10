@@ -5,7 +5,9 @@ import {
   countDecisionPoints,
   DEFAULT_MAX_COMPLEXITY,
   functionNameFromLine,
+  isJsTsPath,
   scanComplexity,
+  scanContentForComplexity,
   scanPatchForComplexity,
 } from "../dist/analyzers/complexity.js";
 import { renderBrief } from "../dist/render.js";
@@ -196,4 +198,78 @@ test("scanComplexity: aggregates across files and renders a public-safe brief", 
   assert.match(promptSection, /Approximate cyclomatic complexity/);
   assert.match(promptSection, /src\/a\.ts:1/);
   assert.match(promptSection, /big/);
+});
+
+// scanContentForComplexity (#4740): the full-file-scan counterpart to scanPatchForComplexity, used by
+// complexity-delta.ts to score a reconstructed pre-PR file and the current head file with identical logic.
+// Own section (not complexity-delta.test.ts) since the function itself is exported from this file.
+
+test("scanContentForComplexity: scores a function from full file content, not just diff-added lines", () => {
+  // No patch/hunk involved at all -- this is the capability gap scanPatchForComplexity cannot cover: a function
+  // whose signature line never appears in any diff.
+  const content = ["function existing() {", "  if (a) {}", "  if (b) {}", "  return 1;", "}"].join("\n");
+  const scores = scanContentForComplexity(content);
+  assert.deepEqual(scores.get("existing"), { line: 1, complexity: 3 });
+});
+
+test("scanContentForComplexity: includes every function regardless of threshold (unfiltered, unlike the diff-hunk pass)", () => {
+  const ifCount = DEFAULT_MAX_COMPLEXITY + 1;
+  const content = [
+    "function low() {",
+    "  return 1;",
+    "}",
+    "function high() {",
+    ...Array.from({ length: ifCount }, (_, i) => `  if (cond${i}) {}`),
+    "}",
+  ].join("\n");
+  const scores = scanContentForComplexity(content);
+  assert.deepEqual(scores.get("low"), { line: 1, complexity: 1 });
+  assert.equal(scores.get("high")?.complexity, 1 + ifCount);
+});
+
+test("scanContentForComplexity: arrow functions are scored the same as named functions", () => {
+  const content = ["export const run = () => {", "  if (a) {}", "  if (b) {}", "};"].join("\n");
+  assert.deepEqual(scanContentForComplexity(content).get("run"), { line: 1, complexity: 3 });
+});
+
+test("scanContentForComplexity: a comment-only line does not inflate complexity", () => {
+  const content = ["function f() {", "  if (a) {}", "  // pretend this checks something else too", "}"].join("\n");
+  assert.deepEqual(scanContentForComplexity(content).get("f"), { line: 1, complexity: 2 });
+});
+
+test("scanContentForComplexity: skips a line beyond the line-length cap without corrupting the pending function", () => {
+  const overLongLine = `  if (${"a".repeat(2100)}) {}`; // over the default 2000-char cap
+  const content = ["function f() {", overLongLine, "  if (b) {}", "}"].join("\n");
+  // The over-long line's "if (" is never counted (skipped entirely); only the short "if (b)" is.
+  assert.deepEqual(scanContentForComplexity(content).get("f"), { line: 1, complexity: 2 });
+});
+
+test("scanContentForComplexity: excludes a name declared more than once (ambiguous match target)", () => {
+  const content = ["function dup() {", "  if (a) {}", "}", "function dup() {", "  if (b) {}", "  if (c) {}", "}"].join(
+    "\n",
+  );
+  assert.equal(scanContentForComplexity(content).has("dup"), false);
+});
+
+test("scanContentForComplexity: a nested function's decision points count toward the outer pending function", () => {
+  // Same single-level scope limit scanPatchForComplexity already carries: a function opening while another is
+  // already pending is never tracked as its own entry.
+  const content = ["function outer() {", "  function inner() {", "    if (a) {}", "  }", "  if (b) {}", "}"].join(
+    "\n",
+  );
+  const scores = scanContentForComplexity(content);
+  assert.equal(scores.has("inner"), false);
+  assert.deepEqual(scores.get("outer"), { line: 1, complexity: 3 });
+});
+
+test("scanContentForComplexity: empty content yields an empty map", () => {
+  assert.equal(scanContentForComplexity("").size, 0);
+});
+
+test("isJsTsPath: matches JS/TS source extensions, excludes test paths and other languages", () => {
+  assert.equal(isJsTsPath("src/widget.ts"), true);
+  assert.equal(isJsTsPath("src/widget.tsx"), true);
+  assert.equal(isJsTsPath("src/widget.mjs"), true);
+  assert.equal(isJsTsPath("src/widget.py"), false);
+  assert.equal(isJsTsPath("src/widget.test.ts"), false);
 });

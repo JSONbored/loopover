@@ -37,6 +37,7 @@ import { scanDeepNesting, DEFAULT_MAX_DEPTH } from "./deep-nesting.js";
 import { scanI18nRegression } from "./i18n-regression.js";
 import { scanErrorSwallow } from "./error-swallow.js";
 import { scanComplexity, DEFAULT_MAX_COMPLEXITY } from "./complexity.js";
+import { scanComplexityDelta } from "./complexity-delta.js";
 import { scanFloatingPromise } from "./floating-promise.js";
 import { scanSizeSmell } from "./size-smell.js";
 import { scanA11yRegression } from "./a11y-regression.js";
@@ -1229,6 +1230,38 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanComplexity(req, signal),
+  }),
+  descriptor({
+    name: "complexityDelta",
+    title: "Complexity delta (before/after)",
+    category: "quality",
+    cost: "github-light",
+    defaultEnabled: true,
+    requires: ["files", "github-token", "head-sha"],
+    limits: { maxFiles: 20, maxFindings: DEFAULT_MAX_FINDINGS },
+    docs: {
+      summary:
+        "Flags a function whose approximate cyclomatic complexity changed between the pre-PR and head versions of a file -- not just newly-added functions.",
+      looksAt:
+        "Changed TS/JS source files, reconstructing the pre-PR file at headSha via the shared before-content primitive and re-running complexity's own decision-point counting on both versions.",
+      reports: "File, the function's current line, name, and its before/after/delta approximate complexity.",
+      network:
+        "Calls the GitHub API for changed file contents at headSha. Requires headSha and token forwarding for private repos.",
+      notes:
+        "Complements complexity (new-function absolute threshold): a function whose signature is unchanged but whose body got simpler shows a negative (improving) delta -- the case the absolute-threshold analyzer alone cannot see. A wholly-added file or an unreconstructable patch degrades to zero findings for that file rather than guessing. A function name that recurs more than once in either version is excluded from matching (ambiguous).",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Complexity delta (before vs. after this PR)"];
+      for (const item of findings) {
+        const location = helpers.safeCodeSpan(`${item.file}:${item.line}`);
+        const name = helpers.safeCodeSpan(item.name);
+        const sign = item.delta > 0 ? "+" : "";
+        lines.push(`- ${location} — ${name}: complexity ${item.before} → ${item.after} (${sign}${item.delta})`);
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanComplexityDelta(req, fetch, { signal }),
   }),
   descriptor({
     name: "unsafeAny",

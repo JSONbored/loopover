@@ -54,6 +54,7 @@ const EXPECTED_ANALYZERS = [
   "deepNesting",
   "errorSwallow",
   "complexity",
+  "complexityDelta",
   "unsafeAny",
   "a11y",
   "i18n",

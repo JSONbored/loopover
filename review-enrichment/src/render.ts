@@ -499,6 +499,7 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("deepNesting", findings.deepNesting));
   lines.push(...renderDescriptorSection("errorSwallow", findings.errorSwallow));
   lines.push(...renderDescriptorSection("complexity", findings.complexity));
+  lines.push(...renderDescriptorSection("complexityDelta", findings.complexityDelta));
   lines.push(...renderDescriptorSection("unsafeAny", findings.unsafeAny));
   lines.push(...renderDescriptorSection("a11y", findings.a11y));
   lines.push(...renderDescriptorSection("i18n", findings.i18n));

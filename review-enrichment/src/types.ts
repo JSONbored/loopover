@@ -556,6 +556,23 @@ export interface ComplexityFinding {
   threshold: number;
 }
 
+/** A real before/after cyclomatic-complexity delta for a function that existed BEFORE this PR too and whose body
+ *  changed (#4740, part of epic #4737) -- the true-delta counterpart complexity.ts's own header comment
+ *  explicitly disclaims being (that analyzer only scores NEWLY-added functions against a fixed threshold, since
+ *  it normally has no full-file content). Using the shared reconstructOldContent primitive (#4739) to recover the
+ *  pre-PR file text, both the reconstructed OLD and current HEAD versions are scanned with complexity.ts's OWN
+ *  decision-point counting logic (unchanged, just run twice) and matched by function name. A negative `delta` is
+ *  an IMPROVEMENT (the function got simpler); a positive `delta` is a regression. Reports file, the function's
+ *  CURRENT (head) line, name, and both raw scores -- never source content. */
+export interface ComplexityDeltaFinding {
+  file: string;
+  line: number;
+  name: string;
+  before: number;
+  after: number;
+  delta: number;
+}
+
 /** Deep control-flow nesting newly added in the diff (#2030, part of #1499).
  *  Reports file, line, measured depth, and threshold — never source content. */
 export interface DeepNestingFinding {
@@ -718,6 +735,7 @@ export interface BriefFindings {
   deepNesting?: DeepNestingFinding[];
   errorSwallow?: ErrorSwallowFinding[];
   complexity?: ComplexityFinding[];
+  complexityDelta?: ComplexityDeltaFinding[];
   unsafeAny?: UnsafeAnyFinding[];
   a11y?: A11yFinding[];
   i18n?: I18nFinding[];

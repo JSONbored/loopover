@@ -1245,6 +1245,33 @@
       }
     },
     {
+      "name": "complexityDelta",
+      "title": "Complexity delta (before/after)",
+      "category": "quality",
+      "cost": "github-light",
+      "defaultEnabled": true,
+      "profiles": [
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "files",
+        "github-token",
+        "head-sha"
+      ],
+      "limits": {
+        "maxFiles": 20,
+        "maxFindings": 25
+      },
+      "docs": {
+        "summary": "Flags a function whose approximate cyclomatic complexity changed between the pre-PR and head versions of a file -- not just newly-added functions.",
+        "looksAt": "Changed TS/JS source files, reconstructing the pre-PR file at headSha via the shared before-content primitive and re-running complexity's own decision-point counting on both versions.",
+        "reports": "File, the function's current line, name, and its before/after/delta approximate complexity.",
+        "network": "Calls the GitHub API for changed file contents at headSha. Requires headSha and token forwarding for private repos.",
+        "notes": "Complements complexity (new-function absolute threshold): a function whose signature is unchanged but whose body got simpler shows a negative (improving) delta -- the case the absolute-threshold analyzer alone cannot see. A wholly-added file or an unreconstructable patch degrades to zero findings for that file rather than guessing. A function name that recurs more than once in either version is excluded from matching (ambiguous)."
+      }
+    },
+    {
       "name": "unsafeAny",
       "title": "Unsafe any (TS)",
       "category": "quality",

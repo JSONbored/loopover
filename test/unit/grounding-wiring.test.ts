@@ -525,6 +525,24 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
     fetchSpy.mockRestore();
   });
 
+  it("REGRESSION: truncated small-cap probes are not cached for later larger security scans", async () => {
+    const env = createTestEnv();
+    let fetchCount = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return new Response("short cap skipped", { status: 200, headers: { "content-length": "100" } });
+      }
+      return new Response("prefix" + "x".repeat(20) + "credential_marker_after_grounding_cap", { status: 200 });
+    });
+    const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+
+    expect(await fetcher.getFileContent("large.ts", "sha7", 10)).toBe(" ".repeat(11));
+    expect(await fetcher.getFileContent("large.ts", "sha7", 100)).toContain("credential_marker_after_grounding_cap");
+    expect(fetchCount).toBe(2);
+    fetchSpy.mockRestore();
+  });
+
   it("streams the body and truncates once the running text exceeds the per-file cap", async () => {
     const env = createTestEnv();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(

@@ -136,10 +136,9 @@ export async function makeGithubFileFetcher(env: Env, repoFullName: string, inst
   const { owner, name } = repoParts(repoFullName);
   return {
     async getFileContent(path: string, ref: string, maxChars = 24_001): Promise<string | null> {
-      // #4499: content for a given (repo, path, ref) is a git blob at an immutable commit -- it never changes,
-      // so a cache hit is always safe to reuse verbatim, skipping the GitHub call entirely. Checked BEFORE the
-      // network fetch below; only a genuinely successful fetch is ever written back (see the .catch-free write
-      // after the try block), so a transient failure is never mistaken for a confirmed-permanent one.
+      // #4499: complete content for a given (repo, path, ref) is a git blob at an immutable commit -- it
+      // never changes, so a complete cache hit is safe to reuse verbatim. Truncated maxChars probes are
+      // deliberately not cached below: security-sensitive callers may later request a larger cap.
       const cached = await getCachedGroundingFileContent(env, repoFullName, path, ref).catch(() => null);
       if (cached !== null) return cached;
       try {
@@ -149,7 +148,7 @@ export async function makeGithubFileFetcher(env: Env, repoFullName: string, inst
           .join("/")}?ref=${encodeURIComponent(ref)}`;
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 10_000);
-        let content: string | null;
+        let content: string;
         try {
           const response = await timeoutFetch(url, {
             signal: controller.signal,
@@ -165,15 +164,17 @@ export async function makeGithubFileFetcher(env: Env, repoFullName: string, inst
           });
           if (!response.ok) return null;
           const contentLength = response.headers.get("content-length");
-          content = contentLength && Number(contentLength) > maxChars ? " ".repeat(maxChars + 1) : await readTextWithLimit(response, maxChars);
+          if (contentLength && Number(contentLength) > maxChars) {
+            content = " ".repeat(maxChars + 1);
+          } else {
+            content = await readTextWithLimit(response, maxChars);
+          }
         } finally {
           clearTimeout(timeout);
         }
-        /* v8 ignore next -- readTextWithLimit's `string | null` return type is defensive; both of its actual
-         * return paths (text.slice(...) / text) always produce a string, never null, so this guard's false
-         * side is unreachable via the current implementation. Kept so a future readTextWithLimit change that
-         * legitimately returns null can never get cached as if it were real fetched content. */
-        if (content !== null) {
+        // Cache only complete bodies. A maxChars+1 probe result is a truncation marker/prefix and must
+        // not satisfy a later caller that asks for a larger security-sensitive scan window.
+        if (content.length <= maxChars) {
           await putCachedGroundingFileContent(env, repoFullName, path, ref, content).catch(() => undefined);
         }
         return content;
@@ -184,7 +185,7 @@ export async function makeGithubFileFetcher(env: Env, repoFullName: string, inst
   };
 }
 
-async function readTextWithLimit(response: Response, maxChars: number): Promise<string | null> {
+async function readTextWithLimit(response: Response, maxChars: number): Promise<string> {
   if (!response.body) {
     const text = await response.text();
     return text.length > maxChars ? text.slice(0, maxChars + 1) : text;

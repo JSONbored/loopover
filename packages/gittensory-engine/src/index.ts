@@ -210,6 +210,7 @@ export {
   type WorktreePlan,
   type WorktreeRemoveResult,
 } from "./miner/worktree-allocator.js";
+export * from "./miner/worktree-pool.js";
 export {
   invokeCodingAgentDriver,
   type AttemptLogSink,

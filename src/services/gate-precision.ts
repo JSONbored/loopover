@@ -15,6 +15,7 @@
 // Privacy: the report carries repo full name + PR-derived counts + gate-type codes ONLY — no actor logins, no
 // trust/reward/credibility numbers. Internal/maintainer-authenticated; never publicly exposed.
 import { listGateOutcomes, listPullRequests } from "../db/repositories";
+import { fetchOfficialGittensorMinerLogins } from "../gittensor/api";
 import type { GateOutcomeRecord, PullRequestRecord } from "../types";
 import { nowIso } from "../utils/json";
 
@@ -29,6 +30,13 @@ export type GatePrecisionPerType = {
   falsePositiveRate: number | null;
 };
 
+/** #4520: one cohort's fold result -- the SAME shape the blended report already carries, so a dashboard can
+ *  render miner/human side by side with the identical component it already uses for the blended totals. */
+export type GatePrecisionCohortReport = {
+  perGateType: GatePrecisionPerType[];
+  overall: { blocked: number; blockedThenMerged: number; falsePositiveRate: number | null };
+};
+
 export type GatePrecisionReport = {
   repoFullName: string;
   generatedAt: string;
@@ -36,6 +44,11 @@ export type GatePrecisionReport = {
   perGateType: GatePrecisionPerType[];
   overall: { blocked: number; blockedThenMerged: number; falsePositiveRate: number | null };
   signals: string[];
+  /** #4520: miner-vs-human split, present only when the caller supplied minerLogins (loadGatePrecisionReport's
+   *  includeCohorts option). Purely additive -- never replaces the blended perGateType/overall above, and
+   *  every existing caller that doesn't ask for it sees byte-identical output. An outcome whose PR author is
+   *  unresolvable or not a confirmed miner falls into `human` (fail-safe: never over-classify as miner). */
+  cohorts?: { miner: GatePrecisionCohortReport; human: GatePrecisionCohortReport } | undefined;
 };
 
 function round(value: number): number {
@@ -54,31 +67,15 @@ function sameRepo(a: string | null | undefined, b: string): boolean {
   return (a ?? "").toLowerCase() === b.toLowerCase();
 }
 
-/**
- * Per-gate-type false-positive measurement over recorded gate blocks. Pure. For each block row we look up the
- * PR's terminal outcome; a blocked PR that later MERGED is a false positive. Each blocker `code` on the row
- * contributes to that code's bucket (a block citing two codes counts toward both). Overridden-then-merged is
- * the strongest signal — `overridden` is counted separately per type. When `options.repoFullName` is given,
- * only blocks for that repo are counted. The rate is null below MIN_SAMPLE.
- */
-export function buildGatePrecisionReport(
-  outcomes: GateOutcomeRecord[],
-  pullRequests: PullRequestRecord[],
-  options: { repoFullName?: string } = {},
-): Omit<GatePrecisionReport, "repoFullName" | "generatedAt" | "windowDays"> {
-  const repoFullName = options.repoFullName;
-  // Index PRs by number for an O(1) terminal-outcome lookup, scoped to the repo when one is given.
-  const prByNumber = new Map<number, PullRequestRecord>();
-  for (const pr of pullRequests) {
-    if (repoFullName && !sameRepo(pr.repoFullName, repoFullName)) continue;
-    prByNumber.set(pr.number, pr);
-  }
-  const scoped = repoFullName ? outcomes.filter((o) => sameRepo(o.repoFullName, repoFullName)) : outcomes;
-
+/** #4520: the fold core, extracted so buildGatePrecisionReport can run it up to three times (blended, miner,
+ *  human) over disjoint outcome subsets without duplicating the accumulation logic. Pure -- the same
+ *  MIN_SAMPLE floor is applied independently per call, so a small cohort correctly reads null rather than a
+ *  noisy rate. */
+function foldGateOutcomes(outcomes: GateOutcomeRecord[], prByNumber: Map<number, PullRequestRecord>): GatePrecisionCohortReport {
   const perType = new Map<string, { blocked: number; blockedThenMerged: number; overridden: number }>();
   let overallBlocked = 0;
   let overallMerged = 0;
-  for (const outcome of scoped) {
+  for (const outcome of outcomes) {
     const pr = prByNumber.get(outcome.pullNumber);
     // A blocked PR that later MERGED is a false positive; closed/open are not (the block held or is unresolved).
     const merged = pr ? terminalOutcome(pr) === "merged" : false;
@@ -111,7 +108,58 @@ export function buildGatePrecisionReport(
       blockedThenMerged: overallMerged,
       falsePositiveRate: overallBlocked >= MIN_SAMPLE ? round(overallMerged / overallBlocked) : null,
     },
-    signals: buildGatePrecisionSignals(perGateType, overallBlocked, overallMerged),
+  };
+}
+
+/** #4520: true when the outcome's PR author (looked up via prByNumber) is a confirmed miner login. Fail-safe
+ *  on every unresolvable path (no PR record, no author) -- defaults to NOT a miner, never the reverse,
+ *  matching this codebase's "unconfirmed defaults to human/non-miner" convention throughout. */
+function isMinerAuthoredOutcome(outcome: GateOutcomeRecord, prByNumber: Map<number, PullRequestRecord>, minerLogins: ReadonlySet<string>): boolean {
+  const authorLogin = prByNumber.get(outcome.pullNumber)?.authorLogin;
+  return authorLogin ? minerLogins.has(authorLogin.toLowerCase()) : false;
+}
+
+/**
+ * Per-gate-type false-positive measurement over recorded gate blocks. Pure. For each block row we look up the
+ * PR's terminal outcome; a blocked PR that later MERGED is a false positive. Each blocker `code` on the row
+ * contributes to that code's bucket (a block citing two codes counts toward both). Overridden-then-merged is
+ * the strongest signal — `overridden` is counted separately per type. When `options.repoFullName` is given,
+ * only blocks for that repo are counted. The rate is null below MIN_SAMPLE. When `options.minerLogins` is
+ * given (#4520), an additive miner-vs-human `cohorts` split is computed on top of the SAME blended fold;
+ * omitting it keeps every existing caller byte-identical.
+ */
+export function buildGatePrecisionReport(
+  outcomes: GateOutcomeRecord[],
+  pullRequests: PullRequestRecord[],
+  options: { repoFullName?: string; minerLogins?: ReadonlySet<string> } = {},
+): Omit<GatePrecisionReport, "repoFullName" | "generatedAt" | "windowDays"> {
+  const repoFullName = options.repoFullName;
+  // Index PRs by number for an O(1) terminal-outcome lookup, scoped to the repo when one is given.
+  const prByNumber = new Map<number, PullRequestRecord>();
+  for (const pr of pullRequests) {
+    if (repoFullName && !sameRepo(pr.repoFullName, repoFullName)) continue;
+    prByNumber.set(pr.number, pr);
+  }
+  const scoped = repoFullName ? outcomes.filter((o) => sameRepo(o.repoFullName, repoFullName)) : outcomes;
+
+  const { perGateType, overall } = foldGateOutcomes(scoped, prByNumber);
+
+  let cohorts: GatePrecisionReport["cohorts"];
+  if (options.minerLogins) {
+    const minerLogins = options.minerLogins;
+    const minerOutcomes: GateOutcomeRecord[] = [];
+    const humanOutcomes: GateOutcomeRecord[] = [];
+    for (const outcome of scoped) {
+      (isMinerAuthoredOutcome(outcome, prByNumber, minerLogins) ? minerOutcomes : humanOutcomes).push(outcome);
+    }
+    cohorts = { miner: foldGateOutcomes(minerOutcomes, prByNumber), human: foldGateOutcomes(humanOutcomes, prByNumber) };
+  }
+
+  return {
+    perGateType,
+    overall,
+    signals: buildGatePrecisionSignals(perGateType, overall.blocked, overall.blockedThenMerged),
+    ...(cohorts ? { cohorts } : {}),
   };
 }
 
@@ -133,12 +181,19 @@ export function buildGatePrecisionSignals(perGateType: GatePrecisionPerType[], o
   return signals;
 }
 
-/** Load a repo's gate-block ledger + PRs and assemble the precision report. */
-export async function loadGatePrecisionReport(env: Env, repoFullName: string, options: { windowDays?: number } = {}): Promise<GatePrecisionReport> {
-  const [pullRequests, outcomes] = await Promise.all([
+/** Load a repo's gate-block ledger + PRs and assemble the precision report. `includeCohorts` (#4520) fetches
+ *  the full confirmed-miner login set ONCE and threads it into buildGatePrecisionReport for the additive
+ *  miner-vs-human split; omitted (default) keeps this byte-identical to before the split existed. */
+export async function loadGatePrecisionReport(
+  env: Env,
+  repoFullName: string,
+  options: { windowDays?: number; includeCohorts?: boolean } = {},
+): Promise<GatePrecisionReport> {
+  const [pullRequests, outcomes, minerLogins] = await Promise.all([
     listPullRequests(env, repoFullName),
     listGateOutcomes(env, { repoFullName, ...(options.windowDays !== undefined ? { windowDays: options.windowDays } : {}) }),
+    options.includeCohorts ? fetchOfficialGittensorMinerLogins() : Promise.resolve(undefined),
   ]);
-  const report = buildGatePrecisionReport(outcomes, pullRequests, { repoFullName });
+  const report = buildGatePrecisionReport(outcomes, pullRequests, { repoFullName, ...(minerLogins ? { minerLogins } : {}) });
   return { repoFullName, generatedAt: nowIso(), windowDays: options.windowDays ?? null, ...report };
 }

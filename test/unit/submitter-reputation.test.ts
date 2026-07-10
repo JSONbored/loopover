@@ -6,6 +6,7 @@ import {
   DEFAULT_REPUTATION_CONFIG,
   getSubmitterCadence,
   getSubmitterReputation,
+  getSubmitterReputationAcrossInstall,
   isMachinePacedCadence,
   recordSubmissionOutcome,
   REPUTATION_WINDOW_DAYS,
@@ -371,6 +372,67 @@ describe("getSubmitterCadence (D1, fail-safe) (#4514)", () => {
       },
     } as unknown as Env;
     expect(await getSubmitterCadence(env, "p", "farmer99")).toEqual({ count: 0, medianGapMs: null });
+  });
+});
+
+describe("getSubmitterReputationAcrossInstall (#4513)", () => {
+  function makeInstallEnv(opts: { windowRows: Row[]; boundInstallationId?: number[]; throwOnAll?: boolean }): Env {
+    return {
+      DB: {
+        prepare: () => ({
+          bind: (installationId: number, _submitter: string, ..._rest: unknown[]) => {
+            opts.boundInstallationId?.push(installationId);
+            return {
+              all: async () => {
+                if (opts.throwOnAll) throw new Error("D1 boom");
+                return { results: opts.windowRows.map((r) => ({ status: r.status, reasonCode: r.reasonCode })) };
+              },
+            };
+          },
+        }),
+      },
+    } as unknown as Env;
+  }
+
+  it("returns neutral with no submitter (early return, no DB touch)", async () => {
+    const rep = await getSubmitterReputationAcrossInstall({} as Env, 123, undefined);
+    expect(rep).toEqual({ submissions: 0, merged: 0, closed: 0, manual: 0, closeRate: 0, signal: "neutral" });
+  });
+
+  it("derives the SAME quality-weighted signal as the per-project function, from installation-scoped rows", async () => {
+    // 8 recent submissions across (implicitly) many repos in the install, almost all genuine declines -> low.
+    const env = makeInstallEnv({ windowRows: rows(["merged", "dual_review_approved", 1], ["closed", "dual_review_declined", 7]) });
+    const rep = await getSubmitterReputationAcrossInstall(env, 123, "farmer99");
+    expect(rep.signal).toBe("low");
+  });
+
+  it("binds the installation_id (not a project string) as the scoping parameter", async () => {
+    const bound: number[] = [];
+    const env = makeInstallEnv({ windowRows: [], boundInstallationId: bound });
+    await getSubmitterReputationAcrossInstall(env, 456, "farmer99");
+    expect(bound).toEqual([456]);
+  });
+
+  it("does NOT widen the all-time submitter_stats aggregate -- submissions/merged/closed/manual stay zero (signal-only)", async () => {
+    const env = makeInstallEnv({ windowRows: rows(["merged", "dual_review_approved", 6]) });
+    const rep = await getSubmitterReputationAcrossInstall(env, 123, "farmer99");
+    expect(rep.submissions).toBe(0);
+    expect(rep.merged).toBe(0);
+    expect(rep.closeRate).toBe(0);
+  });
+
+  it("fail-safe: degrades to neutral when the install-wide query throws, never throws into the caller", async () => {
+    const env = makeInstallEnv({ windowRows: [], throwOnAll: true });
+    const rep = await getSubmitterReputationAcrossInstall(env, 123, "farmer99");
+    expect(rep.signal).toBe("neutral");
+  });
+
+  it("respects a custom windowDays/minSample config the same way the per-project function does", async () => {
+    const cfg: ReputationConfig = { ...DEFAULT_REPUTATION_CONFIG, minSample: 100 };
+    const env = makeInstallEnv({ windowRows: rows(["closed", "dual_review_declined", 8]) });
+    const rep = await getSubmitterReputationAcrossInstall(env, 123, "farmer99", cfg);
+    // Only 8 samples, well under the raised minSample of 100 -> neutral regardless of how bad they look.
+    expect(rep.signal).toBe("neutral");
   });
 });
 

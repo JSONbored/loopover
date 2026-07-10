@@ -520,6 +520,7 @@ import { evaluateWithSurfaceLane } from "../review/content-lane-wire";
 import { reviewThreadBlockerFinding } from "../review/review-thread-findings";
 import { indexRepo, reindexChangedPaths } from "../review/rag-index";
 import {
+  getEffectiveSubmitterReputation,
   isReputationEnabled,
   recordReputationOutcome,
   shouldSkipAiForReputation,
@@ -570,7 +571,7 @@ import {
 import { neutralHoldReasonCode, nativeGateActionFromConclusion, recordNativeGateDecision } from "../review/parity-wire";
 import { recordContributorGateDecision } from "../review/contributor-calibration";
 import { recordPredictedGateCalibration } from "../review/predicted-gate-calibration-ledger";
-import { getSubmitterReputation, type SubmissionOutcome } from "../review/submitter-reputation";
+import type { SubmissionOutcome } from "../review/submitter-reputation";
 import type {
   AdvisoryFinding,
   AiContentBlock,
@@ -8524,7 +8525,7 @@ export async function runVisualVisionForAdvisory(
 ): Promise<void> {
   if (args.mode === "paused" || args.routes.length === 0) return;
   try {
-    const visionReputation = await getSubmitterReputation(env, args.repoFullName, args.author ?? undefined);
+    const visionReputation = await getEffectiveSubmitterReputation(env, { repoFullName: args.repoFullName, submitter: args.author ?? undefined });
     // BYOK resolution mirrors runAiReviewForAdvisory's own (re-resolved per-caller is this codebase's
     // established convention for this exact 3-line block, not an anti-pattern — see e.g. runAiSlopForAdvisory).
     const storedVisionKey =

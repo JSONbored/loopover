@@ -3993,19 +3993,25 @@ describe("queue processors", () => {
         GITTENSORY_REVIEW_REPUTATION: "true",
       });
       await seedRegateChurnRepo(env);
-      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 62, title: "Reputation PR", state: "open", user: { login: "contributor" }, head: { sha: "a62" }, labels: [], body: "Closes #1" });
+      // Deliberately NOT "contributor" -- several other tests earlier in this file (e.g. line ~3732) stub the
+      // Gittensor miners endpoint to confirm "contributor" as an official miner, and that caches a "confirmed"
+      // official_miner_detections row (5-min TTL) in this file's shared D1 instance. A submitter this test's own
+      // fetch stub never confirms must still resolve as NOT a miner, or #4513's install-wide widening adds a 4th
+      // reputation-scan prepare and this invariant's count goes stale for reasons unrelated to what it's testing.
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 62, title: "Reputation PR", state: "open", user: { login: "reputation-single-read-user" }, head: { sha: "a62" }, labels: [], body: "Closes #1" });
       await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 62, status: "complete", reviewsSyncedAt: new Date().toISOString() });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = init?.method ?? "GET";
         if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/pulls/62/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
-        if (url.endsWith("/pulls/62")) return Response.json({ number: 62, title: "Reputation PR", state: "open", user: { login: "contributor" }, head: { sha: "a62" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+        if (url.endsWith("/pulls/62")) return Response.json({ number: 62, title: "Reputation PR", state: "open", user: { login: "reputation-single-read-user" }, head: { sha: "a62" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
         if (url.includes("/commits/a62/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
         if (url.includes("/commits/a62/status")) return Response.json({ state: "success", statuses: [] });
         if (url.includes("/issues/62/comments")) return method === "POST" ? Response.json({ id: 62 }, { status: 201 }) : Response.json([]);
         if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
         if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        if (url.includes("/miners")) return Response.json([]);
         return Response.json({});
       });
 
@@ -26954,6 +26960,9 @@ describe("queue processors", () => {
         if (url === "https://api.gittensor.io/miners") return Response.json([]);
         if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
         if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+        // #4359: commitE2eTestToPrBranch re-fetches the live PR to verify the head branch/commit hasn't
+        // moved since this pass cached it, before ever writing -- must match seedCheckboxPr's own head.
+        if (url.endsWith("/pulls/6011") && method === "GET") return Response.json({ head: { ref: "feature/checkout-retry", sha: "checkbox-4589-commit-sha", repo: { full_name: repoFullName } } });
         if (url.includes("/git/commits/checkbox-4589-commit-sha") && method === "GET") return Response.json({ tree: { sha: "base-tree" } });
         if (url.includes("/git/trees") && method === "POST") {
           gitWrites.push("tree");

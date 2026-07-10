@@ -54,6 +54,20 @@ function stubShotsAndProvider(providerResponseText: string | null) {
   }));
 }
 
+/** #4513: getEffectiveSubmitterReputation now checks confirmed-official-miner identity (a fetch to
+ *  api.gittensor.io/miners) whenever a submitter's PER-REPO reputation signal is "neutral" -- i.e. in every
+ *  scenario below that doesn't already mock getSubmitterReputation to a non-neutral signal. That identity
+ *  check is unrelated to whether this function goes on to spend on a vision call, so a bare `vi.fn()`
+ *  asserting NO fetch at all is no longer accurate; this resolves the miner check to "not a miner" (an empty
+ *  roster) so the rest of each test's decline/self-host logic runs exactly as before. */
+function stubMinerCheckOnly() {
+  return vi.fn(async (input: RequestInfo | URL) => {
+    const url = input.toString();
+    if (url === "https://api.gittensor.io/miners") return Response.json([]);
+    return new Response("not found", { status: 404 });
+  });
+}
+
 describe("runVisualVisionForAdvisory", () => {
   it("no-ops on an empty route list -- never touches D1 or the network", async () => {
     const env = byokEnv();
@@ -113,7 +127,7 @@ describe("runVisualVisionForAdvisory", () => {
   it("declines when no route crossed the pixel-diff threshold (no_confirmed_regression) -- never resolves BYOK", async () => {
     const env = byokEnv();
     await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-vision-key", model: null });
-    const fetchMock = vi.fn();
+    const fetchMock = stubMinerCheckOnly();
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
@@ -127,7 +141,9 @@ describe("runVisualVisionForAdvisory", () => {
       routes: [route({ path: "/app", beforeUrl: "https://x/gittensory/shot?key=b", afterUrl: "https://x/gittensory/shot?key=a" })],
     });
     expect(adv.findings).toEqual([]);
-    expect(fetchMock).not.toHaveBeenCalled();
+    // The only network activity is the (unrelated) confirmed-official-miner identity check -- never a
+    // real BYOK/vision-spend call.
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(["https://api.gittensor.io/miners"]);
   });
 
   it("declines for a low-reputation submitter even with a confirmed regression and BYOK configured", async () => {
@@ -162,7 +178,7 @@ describe("runVisualVisionForAdvisory", () => {
 
   it("declines when BYOK is not configured (aiReviewByok off) even with a confirmed regression", async () => {
     const env = byokEnv();
-    const fetchMock = vi.fn();
+    const fetchMock = stubMinerCheckOnly();
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
@@ -176,13 +192,13 @@ describe("runVisualVisionForAdvisory", () => {
       routes: [route({ path: "/app", diffUrl: "https://x/gittensory/shot?key=diff", beforeUrl: "https://x/gittensory/shot?key=b", afterUrl: "https://x/gittensory/shot?key=a" })],
     });
     expect(adv.findings).toEqual([]);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(["https://api.gittensor.io/miners"]);
   });
 
   it("declines when the submitter is not a confirmed contributor, even with BYOK configured", async () => {
     const env = byokEnv();
     await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-vision-key", model: null });
-    const fetchMock = vi.fn();
+    const fetchMock = stubMinerCheckOnly();
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
@@ -196,13 +212,13 @@ describe("runVisualVisionForAdvisory", () => {
       routes: [route({ path: "/app", diffUrl: "https://x/gittensory/shot?key=diff", beforeUrl: "https://x/gittensory/shot?key=b", afterUrl: "https://x/gittensory/shot?key=a" })],
     });
     expect(adv.findings).toEqual([]);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(["https://api.gittensor.io/miners"]);
   });
 
   it("skips BYOK (declines, falls back to nothing) when the declared provider doesn't match the stored key", async () => {
     const env = byokEnv();
     await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-vision-key", model: null });
-    const fetchMock = vi.fn();
+    const fetchMock = stubMinerCheckOnly();
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
@@ -216,7 +232,7 @@ describe("runVisualVisionForAdvisory", () => {
       routes: [route({ path: "/app", diffUrl: "https://x/gittensory/shot?key=diff", beforeUrl: "https://x/gittensory/shot?key=b", afterUrl: "https://x/gittensory/shot?key=a" })],
     });
     expect(adv.findings).toEqual([]);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(["https://api.gittensor.io/miners"]);
   });
 
   it("calls the BYOK vision provider with before+after images and publishes a returned finding (desktop route)", async () => {
@@ -402,7 +418,7 @@ describe("runVisualVisionForAdvisory", () => {
     const env = byokEnv();
     await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-vision-key", model: null });
     vi.spyOn(repositories, "getDecryptedRepositoryAiKey").mockRejectedValueOnce(new Error("D1 unavailable"));
-    const fetchMock = vi.fn();
+    const fetchMock = stubMinerCheckOnly();
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
     await expect(
@@ -418,7 +434,7 @@ describe("runVisualVisionForAdvisory", () => {
       }),
     ).resolves.toBeUndefined();
     expect(adv.findings).toEqual([]);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(["https://api.gittensor.io/miners"]);
   });
 });
 
@@ -475,7 +491,7 @@ describe("runVisualVisionForAdvisory: self-host local vision provider (#4335)", 
     const runMock = vi.fn(async () => ({ response: findingsResponse([{ path: "/app", body: "should not run" }]) }));
     const env = byokEnv();
     (env as unknown as { AI_VISION: unknown }).AI_VISION = { run: runMock };
-    const fetchMock = vi.fn();
+    const fetchMock = stubMinerCheckOnly();
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
@@ -489,7 +505,7 @@ describe("runVisualVisionForAdvisory: self-host local vision provider (#4335)", 
       routes: selfHostVisionRoutes(),
     });
     expect(runMock).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(["https://api.gittensor.io/miners"]);
     expect(adv.findings).toEqual([]);
   });
 
@@ -592,7 +608,7 @@ describe("runVisualVisionForAdvisory: self-host local vision provider (#4335)", 
 
   it("still declines entirely when NEITHER BYOK nor env.AI_VISION is configured", async () => {
     const env = byokEnv();
-    const fetchMock = vi.fn();
+    const fetchMock = stubMinerCheckOnly();
     vi.stubGlobal("fetch", fetchMock);
     const adv = findingsHolder();
     await runVisualVisionForAdvisory(env, {
@@ -606,6 +622,6 @@ describe("runVisualVisionForAdvisory: self-host local vision provider (#4335)", 
       routes: selfHostVisionRoutes(),
     });
     expect(adv.findings).toEqual([]);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(["https://api.gittensor.io/miners"]);
   });
 });

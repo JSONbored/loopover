@@ -26,7 +26,7 @@ import {
 } from "../../src/github/app";
 import type { Advisory } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
-import { getInstallation, upsertInstallation } from "../../src/db/repositories";
+import { getInstallation, listLatestGitHubRateLimitObservations, upsertInstallation } from "../../src/db/repositories";
 import { clockSkewSecondsSample, resetClockSkewForTest } from "../../src/selfhost/clock-skew";
 
 beforeEach(() => {
@@ -2320,6 +2320,29 @@ describe("GitHub check runs", () => {
       permissions: { checks: "write" },
       events: expect.arrayContaining(["pull_request"]),
     });
+  });
+
+  it("INVARIANT (#4506): getAppInstallation's call is recorded into the shared rate-limit observation store", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/app/installations/123")) {
+        return Response.json(
+          { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "selected", permissions: {}, events: [] },
+          { headers: { "x-ratelimit-remaining": "4321", "x-ratelimit-reset": "1779976046" } },
+        );
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await getAppInstallation(env, 123);
+
+    // Unlike a bare fetch, this is now visible to shouldWaitForGitHubRateLimit's admission reads -- before #4506,
+    // this call passed no rate-limit-admission option at all, so it never reached recordGitHubRateLimitObservation.
+    expect(await listLatestGitHubRateLimitObservations(env)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: "/app/installations/123", statusCode: 200, remaining: 4321, admissionKey: "installation:123" })]),
+    );
   });
 
   it("surfaces live GitHub App installation fetch failures", async () => {

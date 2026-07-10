@@ -1,7 +1,4 @@
-import { chmodSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 
 export const RUN_STATES = Object.freeze(["idle", "discovering", "planning", "preparing"]);
 
@@ -10,26 +7,11 @@ const defaultDbFileName = "run-state.sqlite3";
 let defaultRunStateStore = null;
 
 export function resolveRunStateDbPath(env = process.env) {
-  const explicitPath = typeof env.GITTENSORY_MINER_RUN_STATE_DB === "string"
-    ? env.GITTENSORY_MINER_RUN_STATE_DB.trim()
-    : "";
-  if (explicitPath) return explicitPath;
-
-  const explicitConfigDir = typeof env.GITTENSORY_MINER_CONFIG_DIR === "string"
-    ? env.GITTENSORY_MINER_CONFIG_DIR.trim()
-    : "";
-  if (explicitConfigDir) return join(explicitConfigDir, defaultDbFileName);
-
-  const configHome = typeof env.XDG_CONFIG_HOME === "string" && env.XDG_CONFIG_HOME.trim()
-    ? env.XDG_CONFIG_HOME.trim()
-    : join(homedir(), ".config");
-  return join(configHome, "gittensory-miner", defaultDbFileName);
+  return resolveLocalStoreDbPath(defaultDbFileName, "GITTENSORY_MINER_RUN_STATE_DB", env);
 }
 
 function normalizeDbPath(dbPath) {
-  const path = (dbPath ?? resolveRunStateDbPath()).trim();
-  if (!path) throw new Error("invalid_run_state_db_path");
-  return path;
+  return normalizeLocalStoreDbPath(dbPath, resolveRunStateDbPath(), "invalid_run_state_db_path");
 }
 
 function normalizeRepoFullName(repoFullName) {
@@ -51,9 +33,7 @@ function normalizeRunState(state) {
  */
 export function initRunStateStore(dbPath = resolveRunStateDbPath()) {
   const resolvedPath = normalizeDbPath(dbPath);
-  mkdirSync(dirname(resolvedPath), { recursive: true, mode: 0o700 });
-  const db = new DatabaseSync(resolvedPath);
-  chmodSync(resolvedPath, 0o600);
+  const db = openLocalStoreDb(resolvedPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS miner_run_state (
       repo_full_name TEXT PRIMARY KEY,
@@ -72,6 +52,9 @@ export function initRunStateStore(dbPath = resolveRunStateDbPath()) {
       state = excluded.state,
       updated_at = excluded.updated_at
   `);
+  const listStatement = db.prepare(
+    "SELECT repo_full_name, state, updated_at FROM miner_run_state ORDER BY repo_full_name",
+  );
 
   return {
     dbPath: resolvedPath,
@@ -85,6 +68,13 @@ export function initRunStateStore(dbPath = resolveRunStateDbPath()) {
       const updatedAt = new Date().toISOString();
       setStatement.run(normalizedRepo, normalizedState, updatedAt);
       return { repoFullName: normalizedRepo, state: normalizedState, updatedAt };
+    },
+    /** Every repo with a recorded run state, across the whole store — the per-repo discover/plan/prepare
+     *  signal a "run portfolio" view folds alongside managed PR rows (#4279). */
+    listRunStates() {
+      return listStatement.all()
+        .filter((row) => runStateSet.has(row.state))
+        .map((row) => ({ repoFullName: row.repo_full_name, state: row.state, updatedAt: row.updated_at }));
     },
     close() {
       db.close();
@@ -103,6 +93,10 @@ export function getRunState(repoFullName) {
 
 export function setRunState(repoFullName, state) {
   return getDefaultRunStateStore().setRunState(repoFullName, state);
+}
+
+export function listRunStates() {
+  return getDefaultRunStateStore().listRunStates();
 }
 
 export function closeDefaultRunStateStore() {

@@ -49,3 +49,10 @@ Maximum issues one miner may hold claimed on this repo at once.
 ### `issueDiscoveryPolicy` (`encouraged` | `neutral` | `discouraged`, default: `neutral`)
 
 How strongly this repo encourages a miner to open discovery issues.
+
+### `feasibilityGate` (object, default: `{ enabled: true, suppressedReasons: [] }`)
+
+Per-repo tuning for the feasibility gate (`buildFeasibilityVerdict`) a miner consults before starting work. This is config-parsing surface only — a caller wiring the gate into a decision flow is responsible for reading and applying this policy.
+
+- `enabled` (boolean, default: `true`) — whether the feasibility gate is consulted at all before a miner starts work.
+- `suppressedReasons` (string list, default: `[]`) — specific avoid/raise reason codes (e.g. `duplicate_cluster_high`) this repo wants ignored.

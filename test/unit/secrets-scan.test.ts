@@ -201,4 +201,34 @@ describe("scanForSecrets — deterministic secret-pattern scanner", () => {
     const singleWord = "qwzxvbnmalskdjfhgpoiu";
     expect(scanForSecrets(`token = "${singleWord}"`).kinds).toContain("generic_secret_assignment");
   });
+
+  // #4579-followup: confirmed live false positives (metagraphed/gittensory#4524, #4224) closed PRs for
+  // "missing before/after screenshot table"-unrelated reasons -- a leaked secret that never existed. Both
+  // values are test FIXTURES (a session-token mock) whose own last segment self-names as "token".
+  it.each([
+    ["default-session-token", 'token: "default-session-token"'],
+    ["beta-session-token", 'token: "beta-session-token"'],
+    ["three-segment self-naming secret", 'client_secret = "some-embedded-secret"'],
+  ])("does NOT flag a self-naming multi-segment fixture value: %s (#4579-followup)", (_name, snippet) => {
+    expect(scanForSecrets(snippet).kinds).not.toContain("generic_secret_assignment");
+  });
+
+  // #4579-followup: confirmed live false positive (awesome-claude#4758) -- an enum/category LABEL, not a
+  // credential, assigned to a key that itself contains "secret" (embedded_secret).
+  it("does NOT flag an underscore-separated self-naming enum label (#4579-followup)", () => {
+    expect(scanForSecrets('embedded_secret: "unsafe_install_or_secret"').kinds).not.toContain("generic_secret_assignment");
+  });
+
+  it("still flags a generic multi-segment lowercase passphrase that does NOT self-name as a secret kind (regression guard for #4579-followup)", () => {
+    // Same shape as the excluded fixtures above (all-lowercase, hyphen-separated, no digits) but the value's
+    // own last segment is "delta", not token/secret/key/password/passwd -- a real Diceware-style passphrase
+    // must not be swept in by the new self-naming-suffix exclusion.
+    expect(scanForSecrets('token = "alpha-bravo-charlie-delta"').kinds).toContain("generic_secret_assignment");
+  });
+
+  it("still flags a self-naming-suffix-shaped value that also has mixed case or digits (the exclusion requires ALL-lowercase)", () => {
+    // Ends in "-token" like the excluded fixtures, but the earlier segment has a digit -- not a plausible
+    // human-authored fixture name, so it must still be reported.
+    expect(scanForSecrets('token = "session2024-token"').kinds).toContain("generic_secret_assignment");
+  });
 });

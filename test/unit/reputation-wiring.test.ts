@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { reputationOutcomeFromTerminalState, runAiReviewForAdvisory } from "../../src/queue/processors";
+import { reputationOutcomeFromTerminalState, runAiReviewForAdvisory, shouldStartAiReviewForAdvisory } from "../../src/queue/processors";
 import {
   isReputationEnabled,
   recordReputationOutcome,
@@ -7,7 +7,9 @@ import {
   shouldSkipAiForReputation,
 } from "../../src/review/reputation-wire";
 import { getSubmitterReputation, recordSubmissionOutcome } from "../../src/review/submitter-reputation";
+import { isConvergenceRepoAllowed } from "../../src/review/cutover-gate";
 import { evaluateGateCheck } from "../../src/rules/advisory";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import type { Advisory, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -137,6 +139,101 @@ describe("AI-spend gate: reputation downgrade", () => {
   });
 });
 
+describe("reputation check threaded from caller to callee, not re-derived (#4507)", () => {
+  it("INVARIANT: shouldStartAiReviewForAdvisory and runAiReviewForAdvisory make ZERO additional reputation-scan D1 reads when the caller threads its own already-computed result (the common, no-manifest-override case)", async () => {
+    const { env, run } = aiEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+    // A healthy, non-downgraded submitter (matches the existing "good-reputation submitter proceeds to the
+    // normal AI review" fixture) so BOTH functions actually reach their reputation check, not an early return.
+    await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 20, merged: 18, closed: 2, manual: 0 });
+    const adv = advisory();
+    // Mirrors the real caller (processors.ts's outer webhook-processing scope): compute the reputation check
+    // ONCE, thread the SAME result into both shouldStartAiReviewForAdvisory and runAiReviewForAdvisory.
+    const preComputedReputationSkip = await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "burster" });
+    expect(preComputedReputationSkip).toBe(false); // healthy submitter — not downgraded
+
+    const spy = vi.spyOn(env.DB, "prepare");
+    const before = spy.mock.calls.length;
+
+    const willRun = await shouldStartAiReviewForAdvisory(env, {
+      settings: { aiReviewMode: "advisory" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      author: "burster",
+      confirmedContributor: true,
+      preComputedReputationSkip,
+    });
+    expect(willRun).toBe(true);
+
+    const result = await runAiReviewForAdvisory(env, { ...baseArgs, advisory: adv, preComputedReputationSkip });
+
+    // Neither call made a fresh reputation-scan prepare() — both reused the single value threaded from the
+    // outer scope. runAiReviewForAdvisory does other unrelated D1 work (feature manifest, AI review lock, ...),
+    // so this filters to shouldSkipAiForReputation's own 3 distinctive queries (submitter_stats aggregate,
+    // review_targets quality scan, review_targets cadence scan) rather than asserting on total prepare() count.
+    // Before this fix, each of the two calls independently ran all 3, so this would have shown 6, not 0.
+    // (Read spy.mock.calls BEFORE mockRestore() -- mockRestore() also resets recorded calls.)
+    const reputationPrepares = spy.mock.calls
+      .slice(before)
+      .map(([sql]) => String(sql))
+      .filter((sql) => sql.includes("submitter_stats") || sql.includes("terminal_at IS NOT NULL") || sql.includes("created_at >= datetime"));
+    spy.mockRestore();
+    expect(reputationPrepares).toEqual([]);
+    expect(result?.notes).toContain("Add a test.");
+    expect(run).toHaveBeenCalled();
+  });
+
+  it("REGRESSION: a per-repo manifest override disabling reputation does NOT let a stale threaded 'skip' force-skip the AI review (divergent-config edge case)", async () => {
+    // Allowlist includes acme/widgets (createTestEnv's default GITTENSORY_REVIEW_REPOS), so the CALLER's own
+    // gate condition (isReputationEnabled && isConvergenceRepoAllowed) is true and it computes a REAL skip
+    // result — for a burst/downgraded submitter, that result is `true` (skip).
+    const { env, run } = aiEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+    await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 12, merged: 0, closed: 12, manual: 0 });
+    const preComputedReputationSkip = await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "burster" });
+    expect(preComputedReputationSkip).toBe(true); // burst submitter — downgraded
+
+    // But a per-repo manifest override explicitly turns reputation OFF for this repo, disagreeing with the
+    // allowlist. runAiReviewForAdvisory's OWN gate (resolveConvergedFeature) must honor that override and skip
+    // its reputation check entirely — the threaded `skip: true` (computed under the caller's now-overridden
+    // assumption) must never reach the `if` at all, let alone force a skip.
+    await upsertRepoFocusManifest(env, "acme/widgets", { features: { reputation: false } });
+
+    const result = await runAiReviewForAdvisory(env, { ...baseArgs, advisory: advisory(), preComputedReputationSkip });
+
+    // The AI review ran normally — NOT force-skipped by the stale threaded value.
+    expect(result?.notes).toContain("Add a test.");
+    expect(run).toHaveBeenCalled();
+  });
+
+  it("REGRESSION: a per-repo manifest override enabling reputation outside the allowlist still runs its own fresh check (the caller never threaded a value)", async () => {
+    // Allowlist does NOT include this repo, so the CALLER's own gate condition is false — it never calls
+    // shouldSkipAiForReputation at all, and preComputedReputationSkip stays undefined.
+    const { env, run } = aiEnv({ GITTENSORY_REVIEW_REPUTATION: "true", GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory" });
+    await seedSubmitter(env, { project: "unlisted/repo", submitter: "burster", submissions: 12, merged: 0, closed: 12, manual: 0 });
+    expect(isConvergenceRepoAllowed(env, "unlisted/repo")).toBe(false); // confirms the caller's own gate is closed
+    const preComputedReputationSkip =
+      isReputationEnabled(env) && isConvergenceRepoAllowed(env, "unlisted/repo")
+        ? await shouldSkipAiForReputation(env, { project: "unlisted/repo", submitter: "burster" })
+        : undefined;
+    expect(preComputedReputationSkip).toBeUndefined();
+
+    // A manifest override explicitly forces reputation ON for this specific, non-allowlisted repo.
+    await upsertRepoFocusManifest(env, "unlisted/repo", { features: { reputation: true } });
+
+    const result = await runAiReviewForAdvisory(env, {
+      ...baseArgs,
+      repoFullName: "unlisted/repo",
+      advisory: advisory({ repoFullName: "unlisted/repo" }),
+      preComputedReputationSkip,
+    });
+
+    // reputationActive is true (override), and since nothing was threaded, runAiReviewForAdvisory must fall
+    // back to its OWN fresh shouldSkipAiForReputation call rather than treating the absent value as "don't
+    // skip" — the burst submitter is still correctly downgraded (no AI spend).
+    expect(result).toBeUndefined();
+    expect(run).not.toHaveBeenCalled();
+  });
+});
+
 describe("shouldSkipAiForReputation (helper)", () => {
   it("FLAG-OFF: returns false immediately without reading the DB (broken DB still yields false)", async () => {
     const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "false", DB: undefined as unknown as D1Database });
@@ -148,6 +245,56 @@ describe("shouldSkipAiForReputation (helper)", () => {
     await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 12, merged: 0, closed: 12, manual: 0 });
     expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "burster" })).toBe(true);
     expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "newcomer" })).toBe(false);
+  });
+
+  it("FLAG-ON: false for a null submitter (the ?? undefined coalesce on both the quality and cadence reads)", async () => {
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+    expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: null })).toBe(false);
+  });
+
+  describe("submission-cadence signal (#4514)", () => {
+    async function seedReviewTarget(env: Env, args: { number: number; submitter: string; createdAt: string }) {
+      await env.DB.prepare(
+        `INSERT INTO review_targets (id, project, kind, repo, number, submitter, status, decision_json, terminal_at, created_at)
+         VALUES (?, 'acme/widgets', 'pull_request', 'acme/widgets', ?, ?, 'merged', ?, ?, ?)`,
+      )
+        .bind(`acme/widgets:pull_request:acme/widgets#${args.number}`, args.number, args.submitter, JSON.stringify({ reasonCode: "dual_review_approved" }), args.createdAt, args.createdAt)
+        .run();
+    }
+
+    it("FLAG-ON: true for a machine-paced submitter even though every submission itself looks fine (quality-neutral)", async () => {
+      const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+      // Anchored to now (minus a couple hours of headroom) -- the cadence query only looks back 24h, so a
+      // fixed past date would fall outside the window and vacuously read as "0 samples, not machine-paced".
+      const t0 = Date.now() - 2 * 60 * 60_000;
+      for (let i = 0; i < 5; i++) {
+        // All merged/approved -- the QUALITY signal alone stays neutral/trusted; only cadence should trip this.
+        await seedReviewTarget(env, { number: i, submitter: "speedster", createdAt: new Date(t0 + i * 5 * 60_000).toISOString() });
+      }
+      expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "speedster" })).toBe(true);
+    });
+
+    it("FLAG-ON: false for the same number of submissions spread naturally over hours (comfortably human pace)", async () => {
+      const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+      const t0 = Date.now() - 20 * 60 * 60_000;
+      for (let i = 0; i < 5; i++) {
+        await seedReviewTarget(env, { number: i + 100, submitter: "steady", createdAt: new Date(t0 + i * 3 * 60 * 60_000).toISOString() });
+      }
+      expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "steady" })).toBe(false);
+    });
+
+    it("FLAG-ON: skips the (extra) cadence read once the quality/burst signal already justifies downgrading", async () => {
+      const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+      await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 12, merged: 0, closed: 12, manual: 0 });
+      const spy = vi.spyOn(env.DB, "prepare");
+      const before = spy.mock.calls.length;
+      expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "burster" })).toBe(true);
+      // Exactly the calls the quality/burst read itself makes (submitter_stats + review_targets window) --
+      // no additional prepare() for a cadence query once the burst check alone already returned true.
+      const afterQualityOnlyCallCount = spy.mock.calls.length - before;
+      spy.mockRestore();
+      expect(afterQualityOnlyCallCount).toBe(2);
+    });
   });
 });
 

@@ -8,7 +8,7 @@ import {
   isGroundingEnabled,
   makeGithubFileFetcher,
 } from "../../src/review/grounding-wire";
-import { upsertCheckSummary, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { getCachedGroundingFileContent, putCachedGroundingFileContent, upsertCheckSummary, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import * as githubApp from "../../src/github/app";
 import { githubRateLimitAdmissionKeyForInstallation, latestGitHubRestRateLimitObservation } from "../../src/github/client";
 import type { Advisory, CheckSummaryRecord, JsonValue, PullRequestFileRecord, RepositorySettings } from "../../src/types";
@@ -377,6 +377,130 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
     fetchSpy.mockRestore();
   });
 
+  it("INVARIANT (#4499): a second getFileContent call for the SAME (repo, path, ref) makes ZERO additional GitHub fetches, reusing the cached content", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
+    let fetchCount = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = String(url);
+      if (u.includes("/contents/cached.ts")) {
+        fetchCount += 1;
+        return new Response("export const cached = true;", { status: 200 });
+      }
+      return new Response("missing", { status: 404 });
+    });
+    // A brand-new fetcher instance each time -- mirrors a fresh review pass creating its own
+    // makeGithubFileFetcher via a NEW GitHub App token, while sharing the SAME durable DB.
+    const first = await (await makeGithubFileFetcher(env, "acme/widgets", null)).getFileContent("cached.ts", "sha7");
+    const second = await (await makeGithubFileFetcher(env, "acme/widgets", null)).getFileContent("cached.ts", "sha7");
+    expect(first).toBe("export const cached = true;");
+    expect(second).toBe("export const cached = true;");
+    expect(fetchCount).toBe(1);
+    fetchSpy.mockRestore();
+  });
+
+  it("REGRESSION (#4499, grounding-refetch incident): repeated cooldown-driven calls on an unchanged head SHA only fetch once total, not once per call", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
+    let fetchCount = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = String(url);
+      if (u.includes("/contents/repeat.ts")) {
+        fetchCount += 1;
+        return new Response("export const repeat = 1;", { status: 200 });
+      }
+      return new Response("missing", { status: 404 });
+    });
+    // Simulates 5 separate review passes for the SAME unchanged PR head (e.g. non-push webhook events, or
+    // scheduled sweep ticks past the 30-minute non-cacheable cooldown) -- previously each one re-fetched the
+    // full file body from GitHub from scratch.
+    for (let i = 0; i < 5; i += 1) {
+      const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+      // eslint-disable-next-line no-await-in-loop -- sequential passes, mirroring separate review invocations
+      const content = await fetcher.getFileContent("repeat.ts", "unchanged-sha");
+      expect(content).toBe("export const repeat = 1;");
+    }
+    expect(fetchCount).toBe(1);
+    fetchSpy.mockRestore();
+  });
+
+  it("a genuinely NEW head SHA still triggers a fresh fetch (the cache never masks a real code change)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
+    const responses: Record<string, string> = { "sha-old": "export const v = 1;", "sha-new": "export const v = 2;" };
+    let fetchCount = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = String(url);
+      const shaMatch = /ref=(sha-\w+)/.exec(u);
+      const sha = shaMatch?.[1];
+      if (u.includes("/contents/changed.ts") && sha && sha in responses) {
+        fetchCount += 1;
+        return new Response(responses[sha], { status: 200 });
+      }
+      return new Response("missing", { status: 404 });
+    });
+    const first = await (await makeGithubFileFetcher(env, "acme/widgets", null)).getFileContent("changed.ts", "sha-old");
+    const second = await (await makeGithubFileFetcher(env, "acme/widgets", null)).getFileContent("changed.ts", "sha-new");
+    expect(first).toBe("export const v = 1;");
+    expect(second).toBe("export const v = 2;");
+    expect(fetchCount).toBe(2);
+    fetchSpy.mockRestore();
+  });
+
+  it("a failed fetch (non-OK response) is never cached, so a later retry still attempts a fresh fetch", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
+    let attempt = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = String(url);
+      if (u.includes("/contents/flaky.ts")) {
+        attempt += 1;
+        return attempt === 1 ? new Response("server error", { status: 500 }) : new Response("export const recovered = true;", { status: 200 });
+      }
+      return new Response("missing", { status: 404 });
+    });
+    const first = await (await makeGithubFileFetcher(env, "acme/widgets", null)).getFileContent("flaky.ts", "sha7");
+    const second = await (await makeGithubFileFetcher(env, "acme/widgets", null)).getFileContent("flaky.ts", "sha7");
+    expect(first).toBeNull();
+    expect(second).toBe("export const recovered = true;");
+    expect(attempt).toBe(2);
+    fetchSpy.mockRestore();
+  });
+
+  it("a throwing cache READ degrades to a fresh live fetch (fail-safe, never blocks the file fetch)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
+    const prepareSpy = vi.spyOn(env.DB, "prepare").mockImplementation(() => {
+      throw new Error("cache read boom");
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("export const ok = true;", { status: 200 }));
+    try {
+      const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+      expect(await fetcher.getFileContent("cacheread.ts", "sha7")).toBe("export const ok = true;");
+    } finally {
+      prepareSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("a throwing cache WRITE is swallowed (fail-safe) -- the fetched content is still returned even though it couldn't be cached", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    const prepareSpy = vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (/INSERT INTO grounding_file_content_cache/i.test(sql)) throw new Error("cache write boom");
+      return realPrepare(sql);
+    });
+    // A fresh Response each call -- mockResolvedValue would reuse ONE Response instance across both calls, and
+    // a Response body can only be read once, which would make the second call's read return empty regardless
+    // of caching behavior.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("export const ok = true;", { status: 200 }));
+    try {
+      const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+      expect(await fetcher.getFileContent("cachewrite.ts", "sha7")).toBe("export const ok = true;");
+      // The write failed, so a SECOND call must still fetch live rather than (incorrectly) finding a cached row.
+      expect(await fetcher.getFileContent("cachewrite.ts", "sha7")).toBe("export const ok = true;");
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      prepareSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("never throws — a fetch rejection resolves to null", async () => {
     const env = createTestEnv();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("boom"));
@@ -566,6 +690,31 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
       tokenSpy.mockRestore();
       vi.useRealTimers();
     }
+  });
+});
+
+// ── getCachedGroundingFileContent / putCachedGroundingFileContent (#4499) ───────────────────────────
+
+describe("grounding_file_content_cache repository helpers", () => {
+  it("getCachedGroundingFileContent is a miss for a nullish head SHA, without touching the DB", async () => {
+    const env = createTestEnv();
+    expect(await getCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", null)).toBeNull();
+    expect(await getCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", undefined)).toBeNull();
+  });
+
+  it("putCachedGroundingFileContent is a no-op for a nullish head SHA -- a later real-headSha read still misses", async () => {
+    const env = createTestEnv();
+    await putCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", null, "should not be stored");
+    await putCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", undefined, "should not be stored either");
+    expect(await getCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", "sha7")).toBeNull();
+  });
+
+  it("round-trips a genuinely stored value for a real (repo, path, head SHA), and a write overwrites an existing row for the SAME key", async () => {
+    const env = createTestEnv();
+    await putCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", "sha7", "export const a = 1;");
+    expect(await getCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", "sha7")).toBe("export const a = 1;");
+    await putCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", "sha7", "export const a = 2; // updated");
+    expect(await getCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", "sha7")).toBe("export const a = 2; // updated");
   });
 });
 

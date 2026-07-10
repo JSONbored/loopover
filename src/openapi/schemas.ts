@@ -788,8 +788,11 @@ export const RepositorySettingsSchema = z
         enabled: z.boolean(),
         whenLabels: z.array(z.string()),
         whenPaths: z.array(z.string()),
-        action: z.enum(["close"]),
+        action: z.enum(["close", "advisory"]),
+        requireViewports: z.array(z.string()),
+        requireThemes: z.array(z.string()),
         message: z.string().optional(),
+        skillFileUrl: z.string().optional(),
       })
       .optional(),
     createdAt: z.string().nullable().optional(),

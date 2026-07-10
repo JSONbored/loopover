@@ -3,17 +3,15 @@
 // single-repo ReviewRecap job, which is manually-triggerable only (review-recap.ts). Flag-gated and OFF by
 // default, mirroring isOpsEnabled: flag-OFF, the cron enqueues no job and this module's exports are never
 // invoked, so the deploy is byte-identical to today.
-import { listRepositories } from "../db/repositories";
+import { claimMaintainerRecapPeriod, listRepositories, recordAuditEvent } from "../db/repositories";
 import { isAgentConfigured } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
-import { loadGatePrecisionReport } from "../services/gate-precision";
 import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
-import { buildMaintainerRecap, type MaintainerRecapRepoInput } from "../services/maintainer-recap";
-import { deliverRecapToDiscord } from "../services/notify-discord";
+import { runMaintainerRecap, type MaintainerRecapRepoInput, type RunMaintainerRecapResult } from "../services/maintainer-recap";
+import { loadGatePrecisionReport } from "../services/gate-precision";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveGittensorySelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
-import { errorMessage, nowIso } from "../utils/json";
-import type { RecapReport } from "../types";
+import { errorMessage } from "../utils/json";
 
 /** A manifest-sourced enable/cadence override (#2250) -- the `maintainerRecap` block of the gittensory
  *  self-repo's `.gittensory.yml` (see FocusManifestMaintainerRecapConfig). `present: false` (no block, or the
@@ -62,6 +60,16 @@ function normalizeRecapDayOfWeek(value: string | undefined): number {
   return Math.max(MIN_DAY_OF_WEEK, Math.min(MAX_DAY_OF_WEEK, Math.round(numeric)));
 }
 
+/** The effective cadence: a present manifest override wins outright, else the env knob (default weekly).
+ *  Shared by shouldFireMaintainerRecap (gating) and runMaintainerRecapJob (audit-event metadata only, #2251)
+ *  so there is exactly one place that resolves "what cadence is configured right now". */
+function resolveRecapCadence(
+  env: { GITTENSORY_RECAP_CADENCE?: string | undefined },
+  manifestOverride?: MaintainerRecapManifestOverride | undefined,
+): RecapCadence {
+  return manifestOverride?.present ? manifestOverride.cadence : normalizeRecapCadence(env.GITTENSORY_RECAP_CADENCE);
+}
+
 /**
  * True on the one cron tick per period the maintainer recap should fire: "daily" fires every day at the
  * configured hour; "weekly" fires ONLY on the configured day-of-week at that hour, so the tick fires at most
@@ -83,7 +91,7 @@ export function shouldFireMaintainerRecap(
   manifestOverride?: MaintainerRecapManifestOverride | undefined,
 ): boolean {
   if (hour !== normalizeRecapHour(env.GITTENSORY_RECAP_HOUR)) return false;
-  const cadence = manifestOverride?.present ? manifestOverride.cadence : normalizeRecapCadence(env.GITTENSORY_RECAP_CADENCE);
+  const cadence = resolveRecapCadence(env, manifestOverride);
   return cadence === "daily" || dayOfWeek === normalizeRecapDayOfWeek(env.GITTENSORY_RECAP_DAY);
 }
 
@@ -124,15 +132,44 @@ export async function resolveMaintainerRecapManifestOverride(env: Env): Promise<
   }
 }
 
+/** The current UTC calendar date ("YYYY-MM-DD") as the per-period claim key (#2249). Daily fires at most once
+ *  per date; weekly fires on only ONE designated date per week, so keying by date alone is correct for both
+ *  cadences without needing to encode which cadence produced the tick. */
+function computeRecapPeriodKey(now: Date): string {
+  return now.toISOString().slice(0, 10);
+}
+
+/** The channels this digest attempts today (#2251 audit metadata): runMaintainerRecap (#2252) always fans out
+ *  to both, each independently best-effort/no-op when unconfigured. */
+const RECAP_CHANNELS_ATTEMPTED = ["discord", "slack"] as const;
+
+/** A per-period claim already taken (#2249): the job never scanned repos, built a report, or delivered. */
+export type MaintainerRecapJobSkipped = { skipped: true; reason: "already_sent_this_period" };
+
 /**
- * Build the cross-repo RecapReport (#2239) over the recap's scan repos and deliver it to Discord. A per-repo
- * aggregator failure is logged and that repo is skipped -- one repo's D1 hiccup must not blank the whole
- * digest (mirrors ops-wire.ts's runOpsAlerts). deliverRecapToDiscord itself never throws (best-effort webhook).
+ * Load aggregator inputs for every scan repo, then delegate to {@link runMaintainerRecap} for build → format →
+ * dual-channel (Discord + Slack) delivery. A per-repo aggregator failure is logged and that repo is skipped --
+ * one repo's D1 hiccup must not blank the whole digest (mirrors ops-wire.ts's runOpsAlerts).
+ *
+ * Idempotent per UTC calendar date (#2249): claims the day via claimMaintainerRecapPeriod BEFORE doing any
+ * repo scan or send, so a retried cron tick / redelivered (at-least-once) queue message for a period already
+ * claimed short-circuits to `{ skipped: true, reason: "already_sent_this_period" }` without re-scanning repos
+ * or re-delivering.
+ *
+ * Records a `maintainer_recap_generated` audit event once the report is built (#2251), mirroring
+ * generateWeeklyValueReport's own audit call -- gives operators a ledger trail ("did the digest run today?")
+ * independent of the per-channel `maintainer_recap_notification.{discord,slack}` events deliverRecapToDiscord /
+ * deliverRecapToSlack already record for the send outcome itself.
  */
 export async function runMaintainerRecapJob(
   env: Env,
   windowDays?: number,
-): Promise<{ report: RecapReport; delivery: { sent: boolean; reason?: string } }> {
+  manifestOverride?: MaintainerRecapManifestOverride | undefined,
+): Promise<MaintainerRecapJobSkipped | RunMaintainerRecapResult> {
+  const periodKey = computeRecapPeriodKey(new Date());
+  const claimed = await claimMaintainerRecapPeriod(env, periodKey);
+  if (!claimed) return { skipped: true, reason: "already_sent_this_period" };
+
   const resolvedWindowDays = windowDays ?? DEFAULT_RECAP_WINDOW_DAYS;
   const repoNames = await recapScanRepos(env);
   const repos: MaintainerRecapRepoInput[] = [];
@@ -149,7 +186,27 @@ export async function runMaintainerRecapJob(
       );
     }
   }
-  const report = buildMaintainerRecap({ generatedAt: nowIso(), windowDays: resolvedWindowDays, repos });
-  const delivery = await deliverRecapToDiscord(env, report);
-  return { report, delivery };
+  const result = await runMaintainerRecap(env, { windowDays: resolvedWindowDays, repos });
+  // unreachable implicit-else: runMaintainerRecap only returns skipped:true when explicitly passed
+  // `enabled: false`, which this call site never does -- the enable/disable decision already happened
+  // before runMaintainerRecapJob was ever invoked (isRecapEnabled, checked by the cron and the processor).
+  /* v8 ignore else */
+  if (!result.skipped) {
+    await recordAuditEvent(env, {
+      eventType: "maintainer_recap_generated",
+      actor: "gittensory",
+      route: "scheduled",
+      targetKey: `maintainer-recap:${periodKey}`,
+      outcome: "success",
+      detail: `${result.report.repos.length} repo(s), ${result.report.summary.length} section(s)`,
+      metadata: {
+        cadence: resolveRecapCadence(env, manifestOverride),
+        windowDays: resolvedWindowDays,
+        repoCount: result.report.repos.length,
+        sectionCount: result.report.summary.length,
+        channelsAttempted: [...RECAP_CHANNELS_ATTEMPTED],
+      },
+    });
+  }
+  return result;
 }

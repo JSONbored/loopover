@@ -1,13 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestEnv } from "../helpers/d1";
 import {
+  aggregateCycleTimePercentiles,
   aggregateReviewEffort,
+  buildCycleTimeDistribution,
   computeStats,
+  cycleTimeMs,
+  EMPTY_CYCLE_TIME,
   handleParity,
   handleStats,
   isParityCutoverReady,
   MIN_PARITY_SAMPLE,
   PARITY_AGREEMENT_FLOOR,
+  percentileNearestRank,
   type GateParityRow,
   type StatsEvalDeps,
 } from "../../src/review/stats";
@@ -28,6 +33,10 @@ function stubEnv(extra: Record<string, unknown> = {}): Env {
     { minutes: 4 },
     { minutes: 96 },
   ];
+  const cyclePairs = [
+    { decided_at: "2026-06-01T10:00:00Z", outcome_at: "2026-06-01T10:05:00Z" },
+    { decided_at: "2026-06-01T11:00:00Z", outcome_at: "2026-06-01T11:30:00Z" },
+  ];
   let lastSql = "";
   return {
     ...extra,
@@ -37,15 +46,17 @@ function stubEnv(extra: Record<string, unknown> = {}): Env {
         return {
           bind: () => ({
             all: async () => ({
-              // review-effort read → effortMinutes; gate_decision → gateActions; other review_audit → reversals;
-              // everything else → decision rows. (The eval/parity engine is the default no-op deps.)
+              // review-effort read → effortMinutes; cycle-time pairs → cyclePairs; gate action counts → gateActions;
+              // other review_audit → reversals; everything else → decision rows.
               results: lastSql.includes("reviewEffortMinutes")
                 ? effortMinutes
-                : lastSql.includes("gate_decision")
-                  ? gateActions
-                  : lastSql.includes("review_audit")
-                    ? reversals
-                    : decisions,
+                : lastSql.includes("decided_at") && lastSql.includes("outcome_at")
+                  ? cyclePairs
+                  : lastSql.includes("decision AS action")
+                    ? gateActions
+                    : lastSql.includes("review_audit")
+                      ? reversals
+                      : decisions,
             }),
           }),
         };
@@ -72,6 +83,9 @@ describe("computeStats — D1 aggregate for the dashboard", () => {
     expect(out.recommendations).toEqual([]);
     expect(out.gateParity.cutoverReady).toEqual([]);
     expect(out.reviewEffort).toEqual({ avgBand: 3, totalEstimatedMinutes: 100 });
+    expect(out.cycleTime.sampleSize).toBe(2);
+    expect(out.cycleTime.p50Ms).toBe(300_000);
+    expect(out.cycleTime.distribution.length).toBeGreaterThan(0);
   });
 
   it("clamps an absurd window and falls back to a safe bucket", async () => {
@@ -249,7 +263,7 @@ describe("computeStats — gate-decision read is fail-safe", () => {
           return {
             bind: () => ({
               all: async () => {
-                if (lastSql.includes("gate_decision")) throw new Error("gate read down");
+                if (lastSql.includes("decision AS action")) throw new Error("gate read down");
                 return { results: lastSql.includes("review_audit") ? [] : decisions };
               },
             }),
@@ -408,6 +422,142 @@ describe("computeStats — NaN window + null D1 results (the ?? [] fallbacks)", 
     expect(out.projects).toEqual([]);
     expect(out.verdicts).toEqual([]);
     expect(out.reviewEffort).toEqual({ avgBand: null, totalEstimatedMinutes: 0 });
+    expect(out.cycleTime).toEqual(EMPTY_CYCLE_TIME);
+  });
+});
+
+describe("cycle-time aggregation (#2194)", () => {
+  it("cycleTimeMs rejects negative and non-finite deltas", () => {
+    expect(cycleTimeMs("2026-06-01T10:00:00Z", "2026-06-01T09:00:00Z")).toBeNull();
+    expect(cycleTimeMs("bad", "2026-06-01T09:00:00Z")).toBeNull();
+    expect(cycleTimeMs("2026-06-01T10:00:00Z", "2026-06-01T10:05:00Z")).toBe(300_000);
+  });
+
+  it("percentileNearestRank uses nearest-rank on sorted samples", () => {
+    const sorted = [100, 200, 300, 400];
+    expect(percentileNearestRank(sorted, 50)).toBe(200);
+    expect(percentileNearestRank(sorted, 90)).toBe(400);
+    expect(percentileNearestRank([], 50)).toBeNull();
+  });
+
+  it("buildCycleTimeDistribution returns [] for empty input and a single bucket when all samples match", () => {
+    expect(buildCycleTimeDistribution([])).toEqual([]);
+    expect(buildCycleTimeDistribution([5, 5, 5])).toEqual([3]);
+  });
+
+  it("buildCycleTimeDistribution places the max sample in the last bucket (boundary clamp)", () => {
+    expect(buildCycleTimeDistribution([0, 100], 2)).toEqual([1, 1]);
+  });
+
+  it("aggregateCycleTimePercentiles folds samples into p50/p90/p99 + distribution", () => {
+    const agg = aggregateCycleTimePercentiles([60_000, 120_000, 180_000, 240_000, 300_000]);
+    expect(agg.sampleSize).toBe(5);
+    expect(agg.p50Ms).toBe(180_000);
+    expect(agg.p90Ms).toBe(300_000);
+    expect(agg.p99Ms).toBe(300_000);
+    expect(agg.distribution.length).toBeGreaterThan(0);
+  });
+
+  it("aggregateCycleTimePercentiles returns EMPTY_CYCLE_TIME for no valid samples", () => {
+    expect(aggregateCycleTimePercentiles([])).toEqual(EMPTY_CYCLE_TIME);
+    expect(aggregateCycleTimePercentiles([-1, Number.NaN])).toEqual(EMPTY_CYCLE_TIME);
+  });
+
+  it("computeCycleTimeAggregate reads paired review_audit rows from D1", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO review_audit (id, project, target_id, event_type, decision, source, created_at) VALUES
+        ('gd1', 'owner/repo', 'owner/repo#1', 'gate_decision', 'merge', 'test', '2026-06-10T10:00:00Z'),
+        ('po1', 'owner/repo', 'owner/repo#1', 'pr_outcome', 'merged', 'test', '2026-06-10T10:10:00Z'),
+        ('gd2', 'owner/repo', 'owner/repo#2', 'gate_decision', 'close', 'test', '2026-06-11T10:00:00Z'),
+        ('po2', 'owner/repo', 'owner/repo#2', 'pr_outcome', 'closed', 'test', '2026-06-11T10:30:00Z')`,
+    ).run();
+    const { computeCycleTimeAggregate } = await import("../../src/review/stats");
+    const agg = await computeCycleTimeAggregate(env, { days: 90, nowMs: NOW });
+    expect(agg.sampleSize).toBe(2);
+    expect(agg.p50Ms).toBe(600_000);
+    expect(agg.distribution.length).toBeGreaterThan(0);
+  });
+
+  it("computeCycleTimeAggregate fails safe to EMPTY_CYCLE_TIME when the query rejects", async () => {
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            all: async () => {
+              throw new Error("d1 down");
+            },
+          }),
+        }),
+      },
+    } as unknown as Env;
+    const { computeCycleTimeAggregate } = await import("../../src/review/stats");
+    expect(await computeCycleTimeAggregate(env, { days: 30, nowMs: NOW })).toEqual(EMPTY_CYCLE_TIME);
+  });
+
+  it("computeCycleTimeAggregate defaults non-finite/non-positive days to 90", async () => {
+    let boundFrom: string | undefined;
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: (fromIso: string) => {
+            boundFrom = fromIso;
+            return { all: async () => ({ results: [] as Array<{ decided_at: string; outcome_at: string }> }) };
+          },
+        }),
+      },
+    } as unknown as Env;
+    const { computeCycleTimeAggregate } = await import("../../src/review/stats");
+    await computeCycleTimeAggregate(env, { days: Number.NaN, nowMs: NOW });
+    expect(boundFrom).toBe(new Date(NOW - 90 * 86_400_000).toISOString().slice(0, 10));
+  });
+
+  it("computeCycleTimeAggregate clamps days to 730", async () => {
+    let boundFrom: string | undefined;
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: (fromIso: string) => {
+            boundFrom = fromIso;
+            return { all: async () => ({ results: [] as Array<{ decided_at: string; outcome_at: string }> }) };
+          },
+        }),
+      },
+    } as unknown as Env;
+    const { computeCycleTimeAggregate } = await import("../../src/review/stats");
+    await computeCycleTimeAggregate(env, { days: 99_999, nowMs: NOW });
+    expect(boundFrom).toBe(new Date(NOW - 730 * 86_400_000).toISOString().slice(0, 10));
+  });
+
+  it("computeCycleTimeAggregate tolerates missing D1 results and skips null cycle deltas", async () => {
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            all: async () => ({
+              results: undefined,
+            }),
+          }),
+        }),
+      },
+    } as unknown as Env;
+    const envWithBadRows = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            all: async () => ({
+              results: [
+                { decided_at: "2026-06-01T10:00:00Z", outcome_at: "2026-06-01T09:00:00Z" },
+                { decided_at: "bad", outcome_at: "2026-06-01T09:00:00Z" },
+              ],
+            }),
+          }),
+        }),
+      },
+    } as unknown as Env;
+    const { computeCycleTimeAggregate } = await import("../../src/review/stats");
+    expect(await computeCycleTimeAggregate(env, { days: 30, nowMs: NOW })).toEqual(EMPTY_CYCLE_TIME);
+    expect(await computeCycleTimeAggregate(envWithBadRows, { days: 30, nowMs: NOW })).toEqual(EMPTY_CYCLE_TIME);
   });
 });
 

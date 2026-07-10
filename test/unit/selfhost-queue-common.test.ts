@@ -267,7 +267,36 @@ describe("self-host queue common helpers", () => {
     expect(isGitHubBudgetBackgroundJob({ type: "agent-regate-sweep", requestedBy: "schedule" })).toBe(true);
     expect(isGitHubBudgetBackgroundJob({ type: "backfill-repo-segment", requestedBy: "schedule", repoFullName: "owner/repo", segment: "open_pull_requests" })).toBe(true);
     expect(isGitHubBudgetBackgroundJob({ type: "rag-index-repo", requestedBy: "schedule" })).toBe(true);
-    expect(isGitHubBudgetBackgroundJob({ type: "refresh-installation-health", requestedBy: "schedule" })).toBe(false);
+  });
+
+  it("REGRESSION (#4505): every maintenance job type confirmed to make real GitHub REST calls is GitHub-budget-gated", () => {
+    // refreshInstallationHealthRecords calls getAppInstallation (a direct REST call) per installation, plus
+    // resolveRepositorySettings per installed repo -- runs every 30 min, UNCONDITIONALLY, in every deployment.
+    expect(isGitHubBudgetBackgroundJob({ type: "refresh-installation-health", requestedBy: "schedule" })).toBe(true);
+    // fanOutBacklogConvergenceSweepJobs / sweepRepoBacklogConvergence call resolveRepositorySettings per repo.
+    expect(isGitHubBudgetBackgroundJob({ type: "backlog-convergence-sweep", requestedBy: "schedule" })).toBe(true);
+    // selfTuneRepos calls resolveRepositorySettings per registered repo.
+    expect(isGitHubBudgetBackgroundJob({ type: "selftune", requestedBy: "schedule" })).toBe(true);
+    // runReviewRecapJob calls loadRepoFocusManifest directly.
+    expect(isGitHubBudgetBackgroundJob({ type: "generate-review-recap", requestedBy: "schedule", repoFullName: "owner/repo" })).toBe(true);
+    // reconcile-open-prs: runOpenPrReconciliation makes large paginated GitHub REST calls per watched repo.
+    expect(isGitHubBudgetBackgroundJob({ type: "reconcile-open-prs", requestedBy: "schedule" })).toBe(true);
+  });
+
+  it("REGRESSION (#4505): maintenance job types confirmed to make NO GitHub REST calls stay OFF the GitHub budget (never wrongly gated)", () => {
+    // Verified local-only (D1 reads/writes, or dispatching an already-gated job type) during the #4505 audit --
+    // asserting these stay false catches a future accidental over-broad addition to GITHUB_BUDGET_BACKGROUND_TYPES,
+    // which would make a purely-internal job wait on a GitHub rate-limit budget it never draws from.
+    expect(isGitHubBudgetBackgroundJob({ type: "refresh-registry", requestedBy: "schedule" })).toBe(false);
+    expect(isGitHubBudgetBackgroundJob({ type: "refresh-scoring-model", requestedBy: "schedule" })).toBe(false);
+    expect(isGitHubBudgetBackgroundJob({ type: "repair-data-fidelity", requestedBy: "schedule" })).toBe(false);
+    expect(isGitHubBudgetBackgroundJob({ type: "rollup-product-usage", requestedBy: "schedule" })).toBe(false);
+    expect(isGitHubBudgetBackgroundJob({ type: "prune-retention", requestedBy: "schedule", dryRun: false })).toBe(false);
+    expect(isGitHubBudgetBackgroundJob({ type: "generate-weekly-value-report", requestedBy: "schedule" })).toBe(false);
+    expect(isGitHubBudgetBackgroundJob({ type: "generate-maintainer-recap", requestedBy: "schedule" })).toBe(false);
+    expect(isGitHubBudgetBackgroundJob({ type: "generate-signal-snapshots", requestedBy: "schedule" })).toBe(false);
+    expect(isGitHubBudgetBackgroundJob({ type: "ops-alerts", requestedBy: "schedule" })).toBe(false);
+    expect(isGitHubBudgetBackgroundJob({ type: "sweep-liveness-watchdog", requestedBy: "schedule" })).toBe(false);
   });
 
   describe("isScheduledRegateSweepJob", () => {
@@ -1009,6 +1038,20 @@ describe("self-host queue common helpers", () => {
         }),
       ),
     ).toBeNull();
+  });
+
+  it("REGRESSION (#4505): generate-review-recap coalesces per-repo instead of falling through to null (previously had no case at all)", () => {
+    expect(jobCoalesceKey(payload({ type: "generate-review-recap", requestedBy: "api", repoFullName: "JSONbored/Gittensory" }))).toBe("generate-review-recap:jsonbored/gittensory");
+    // A second trigger for the SAME repo produces the identical key, so pg-queue.ts's pending-only coalesce
+    // path merges it into the first instead of inserting a duplicate row.
+    expect(jobCoalesceKey(payload({ type: "generate-review-recap", requestedBy: "api", repoFullName: "jsonbored/gittensory" }))).toBe("generate-review-recap:jsonbored/gittensory");
+    // A DIFFERENT repo gets a distinct key -- never coalesced together.
+    expect(jobCoalesceKey(payload({ type: "generate-review-recap", requestedBy: "api", repoFullName: "owner/other-repo" }))).toBe("generate-review-recap:owner/other-repo");
+  });
+
+  it("REGRESSION (#4505): refresh-installation-health and selftune coalesce to a single global slot (unaffected by the GitHub-budget fix)", () => {
+    expect(jobCoalesceKey(payload({ type: "refresh-installation-health", requestedBy: "schedule" }))).toBe("refresh-installation-health");
+    expect(jobCoalesceKey(payload({ type: "selftune", requestedBy: "schedule" }))).toBe("selftune");
   });
 
   it("orders per-PR re-gate jobs by GitHub PR creation time, with a deterministic legacy fallback", () => {

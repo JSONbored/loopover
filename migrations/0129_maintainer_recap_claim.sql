@@ -1,0 +1,15 @@
+-- Per-period dedup marker for the cross-repo maintainer recap digest (#2249): collapse a retried cron tick /
+-- redelivered queue message to AT MOST ONE effective digest per period.
+--
+-- BEFORE: runMaintainerRecapJob has no idempotency of its own -- it re-scans every repo and re-posts to
+-- Discord on every invocation. Cloudflare Queues are at-least-once delivery, so a message can be redelivered
+-- after the consumer already completed the send (an ack that failed/timed out), producing a duplicate digest.
+--
+-- AFTER: claimMaintainerRecapPeriod performs an atomic conditional UPDATE on this singleton column, mirroring
+-- claimRegateFanoutSlot (0063) -- D1 serializes writes, so only the FIRST invocation for a given period_key
+-- (the current UTC date, "YYYY-MM-DD") matches the "unset or a different period" predicate and proceeds; a
+-- retried/redelivered invocation for the SAME period gets 0 changes and skips before any repo scan or send.
+--
+-- Reuses the global_agent_controls singleton (0059); nullable / no default -> backward-compatible (NULL = no
+-- recap has claimed a period yet, so the first one proceeds).
+ALTER TABLE global_agent_controls ADD COLUMN last_recap_period_key TEXT;

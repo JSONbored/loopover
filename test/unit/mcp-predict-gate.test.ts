@@ -228,4 +228,50 @@ testExpectations:
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toContain("authenticated GitHub login");
   });
+
+  describe("records the call for predicted-vs-live agreement measurement (#predicted-live-gate-agreement)", () => {
+    async function rawAll(env: Env, sql: string): Promise<Record<string, unknown>[]> {
+      const res = await (env.DB as unknown as { prepare: (s: string) => { all: <T>() => Promise<{ results: T[] }> } }).prepare(sql).all<Record<string, unknown>>();
+      return res.results;
+    }
+
+    it("SELF-HOSTED instances record a predicted_gate_calls row on a successful predict_gate call", async () => {
+      const env = createTestEnv(); // SELFHOST_TRANSIENT_CACHE present by default → self-hosted
+      const client = await connect(env);
+
+      await client.callTool({
+        name: "gittensory_predict_gate",
+        arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Add retry to upload client" },
+      });
+
+      const rows = await rawAll(env, "SELECT * FROM predicted_gate_calls");
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ login: "miner1", project: "acme/widgets" });
+    });
+
+    it("also records from gittensory_explain_gate_disposition (both tools share computePredictedGateVerdict)", async () => {
+      const env = createTestEnv();
+      const client = await connect(env);
+
+      await client.callTool({
+        name: "gittensory_explain_gate_disposition",
+        arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Add retry to upload client" },
+      });
+
+      expect(await rawAll(env, "SELECT * FROM predicted_gate_calls")).toHaveLength(1);
+    });
+
+    it("records NOTHING on the CLOUD WORKER when GITTENSORY_REVIEW_PARITY_AUDIT is unset (byte-identical default)", async () => {
+      const env = createTestEnv();
+      delete env.SELFHOST_TRANSIENT_CACHE; // simulate the cloud worker
+      const client = await connect(env);
+
+      await client.callTool({
+        name: "gittensory_predict_gate",
+        arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Add retry to upload client" },
+      });
+
+      expect(await rawAll(env, "SELECT * FROM predicted_gate_calls")).toHaveLength(0);
+    });
+  });
 });

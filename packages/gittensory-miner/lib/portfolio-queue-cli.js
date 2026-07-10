@@ -1,4 +1,5 @@
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
+import { runPortfolioDashboard } from "./portfolio-dashboard.js";
 
 const QUEUE_LIST_USAGE = "Usage: gittensory-miner queue list [--repo <owner/repo>] [--json]";
 const QUEUE_NEXT_USAGE = "Usage: gittensory-miner queue next [--json]";
@@ -210,6 +211,7 @@ export function runQueueCli(subcommand, args, options = {}) {
   if (subcommand === "list") return runQueueList(args, options);
   if (subcommand === "next") return runQueueNext(args, options);
   if (subcommand === "done") return runQueueDone(args, options);
+  if (subcommand === "dashboard") return runPortfolioDashboard(args, options);
   console.error(`Unknown queue subcommand: ${subcommand ?? ""}. ${QUEUE_LIST_USAGE}`);
   return 2;
 }

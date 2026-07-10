@@ -79,6 +79,22 @@ describe("scanForSecrets", () => {
   it("does NOT flag a schema field declaration with no literal value", () => {
     expect(scanForSecrets("password: z.string()").kinds).not.toContain("generic_secret_assignment");
   });
+
+  // #4579-followup: confirmed live false positives (awesome-claude#4758 "embedded_secret:
+  // unsafe_install_or_secret"; the same self-naming shape as metagraphed/gittensory#4524's
+  // "token: default-session-token") -- neither is a real secret, both are enum/fixture NAMES whose own last
+  // segment restates the kind of thing they are.
+  it.each([
+    ["session-token fixture", 'token: "default-session-token"'],
+    ["enum label ending in _secret", 'embedded_secret: "unsafe_install_or_secret"'],
+    ["password ending in -passwd", 'password: "legacy-system-passwd"'],
+  ])("does NOT flag a self-naming multi-segment fixture/enum value: %s (#4579-followup)", (_name, snippet) => {
+    expect(scanForSecrets(snippet).kinds).not.toContain("generic_secret_assignment");
+  });
+
+  it("still flags a generic multi-segment lowercase passphrase that does NOT self-name as a secret kind (regression guard for #4579-followup)", () => {
+    expect(scanForSecrets('token = "alpha-bravo-charlie-delta"').kinds).toContain("generic_secret_assignment");
+  });
 });
 
 describe("scanSubmissionContent", () => {

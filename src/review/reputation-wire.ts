@@ -14,7 +14,9 @@
 // the ported module degrades to "neutral" / no-op on any DB error, so this never throws into the gate.
 
 import {
+  getSubmitterCadence,
   getSubmitterReputation,
+  isMachinePacedCadence,
   recordSubmissionOutcome,
   type SubmissionOutcome,
   type SubmitterStats,
@@ -58,6 +60,12 @@ export function shouldDowngradeToDeterministic(stats: SubmitterStats): boolean {
  * downgrade to a deterministic-only review. When the flag is OFF this returns false IMMEDIATELY — no DB read —
  * so the AI-spend gate is byte-identical to today. `project` namespaces the per-(project, submitter) rows
  * (gittensory uses the repo full name). NEVER throws: the ported module already degrades to neutral on error.
+ *
+ * Also checks submission CADENCE (#4514): every quality-based signal above only tells you whether a
+ * submitter's outcomes were good or bad, never how FAST they arrived -- a fast, well-formed, strategically
+ * low-value submitter clears every quality bar while still being invisible to those signals. A cadence read
+ * this tight, sustained across this many consecutive submissions, is not a pattern any human contributor
+ * plausibly sustains, independent of whether the submissions themselves look fine.
  */
 export async function shouldSkipAiForReputation(
   env: Env,
@@ -65,7 +73,9 @@ export async function shouldSkipAiForReputation(
 ): Promise<boolean> {
   if (!isReputationEnabled(env)) return false;
   const stats = await getSubmitterReputation(env, args.project, args.submitter ?? undefined);
-  return shouldDowngradeToDeterministic(stats);
+  if (shouldDowngradeToDeterministic(stats)) return true;
+  const cadence = await getSubmitterCadence(env, args.project, args.submitter ?? undefined);
+  return isMachinePacedCadence(cadence);
 }
 
 /**

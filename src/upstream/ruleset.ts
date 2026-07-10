@@ -291,9 +291,22 @@ export async function fileUpstreamDriftIssues(env: Env): Promise<Record<string, 
   let created = 0;
   let updated = 0;
   let skipped = 0;
+  let unchanged = 0;
   for (const report of reports) {
     const existing = (await validateRecordedGitHubIssue(repo, token, report)) ?? (await findGitHubIssueForFingerprint(repo, token, report.fingerprint));
     if (existing) {
+      // Keep the recorded issue reference correct even when the content below turns out unchanged -- this is a
+      // local D1 write (no GitHub API cost), and it is what lets validateRecordedGitHubIssue's fast path replace
+      // the slower findGitHubIssueForFingerprint list-search on every later cycle once a report is discovered.
+      await updateUpstreamDriftReportIssue(env, report.fingerprint, existing);
+      // #4503: skip the PATCH entirely when it would be a no-op -- githubDriftIssuePayload has no always-changing
+      // field (no timestamp), so an unresolved report with unchanged content produces a byte-identical payload
+      // across cycles; PATCHing it anyway wastes a GitHub call and spuriously bumps the issue's "updated" time,
+      // notifying assignees/watchers with no real change.
+      if (driftIssueUnchanged(existing, report, assignees)) {
+        unchanged += 1;
+        continue;
+      }
       const issue = await updateGitHubDriftIssue(repo, token, existing.number, report, assignees);
       if (!issue) {
         skipped += 1;
@@ -314,9 +327,9 @@ export async function fileUpstreamDriftIssues(env: Env): Promise<Record<string, 
   await recordAuditEvent(env, {
     eventType: "upstream.drift_issues_filed",
     outcome: "completed",
-    metadata: { created, updated, skipped, repo },
+    metadata: { created, updated, skipped, unchanged, repo },
   });
-  return { status: "completed", created, updated, skipped };
+  return { status: "completed", created, updated, skipped, unchanged };
 }
 
 export async function buildUpstreamDriftReport(current: UpstreamRulesetSnapshotRecord, previous: UpstreamRulesetSnapshotRecord | null): Promise<UpstreamDriftReportRecord | null> {
@@ -1013,7 +1026,15 @@ function publicDriftReport(report: UpstreamDriftReportRecord): Record<string, Js
   };
 }
 
-async function findGitHubIssueForFingerprint(repo: string, token: string, fingerprint: string): Promise<{ number: number; url: string } | null> {
+/** The subset of a resolved existing GitHub drift issue needed to detect whether a fresh PATCH would be a no-op
+ *  (#4503) -- body/labels/assignees are exactly the three fields updateGitHubDriftIssue's payload writes. */
+type ExistingDriftIssue = { number: number; url: string; body: string | null; labels: string[]; assignees: string[] };
+
+function githubIssueLabelNames(labels: Array<string | { name?: string }> | undefined): string[] {
+  return (labels ?? []).map((label) => (typeof label === "string" ? label : (label.name ?? ""))).filter((name) => name.length > 0);
+}
+
+async function findGitHubIssueForFingerprint(repo: string, token: string, fingerprint: string): Promise<ExistingDriftIssue | null> {
   const [owner, name] = repo.split("/");
   if (!owner || !name) return null;
   try {
@@ -1021,9 +1042,24 @@ async function findGitHubIssueForFingerprint(repo: string, token: string, finger
       const url = `https://api.github.com/repos/${owner}/${name}/issues?state=open&labels=signals&per_page=100&page=${page}`;
       const response = await timeoutFetch(url, { headers: githubHeaders(token, "application/vnd.github+json") });
       if (!response.ok) return null;
-      const issues = (await response.json()) as Array<{ number?: number; html_url?: string; body?: string | null }>;
+      const issues = (await response.json()) as Array<{
+        number?: number;
+        html_url?: string;
+        body?: string | null;
+        labels?: Array<string | { name?: string }>;
+        assignees?: Array<{ login?: string }>;
+      }>;
       const match = issues.find((issue) => issue.body?.includes(`gittensory-upstream-drift:${fingerprint}`));
-      if (match?.number && match.html_url) return { number: match.number, url: match.html_url };
+      if (match?.number && match.html_url)
+        return {
+          number: match.number,
+          url: match.html_url,
+          /* v8 ignore next -- unreachable: `match` only exists when `issue.body?.includes(...)` was truthy above,
+           *  which already requires match.body to be a defined, non-empty string. */
+          body: match.body ?? null,
+          labels: githubIssueLabelNames(match.labels),
+          assignees: (match.assignees ?? []).map((assignee) => assignee.login ?? "").filter((login) => login.length > 0),
+        };
       if (!response.headers.get("link")?.includes('rel="next"')) return null;
     }
   } catch {
@@ -1057,7 +1093,7 @@ async function updateGitHubDriftIssue(repo: string, token: string, issueNumber: 
   return payload.number && payload.html_url ? { number: payload.number, url: payload.html_url } : null;
 }
 
-async function validateRecordedGitHubIssue(repo: string, token: string, report: UpstreamDriftReportRecord): Promise<{ number: number; url: string } | null> {
+async function validateRecordedGitHubIssue(repo: string, token: string, report: UpstreamDriftReportRecord): Promise<ExistingDriftIssue | null> {
   if (!Number.isInteger(report.issueNumber) || !report.issueNumber || report.issueNumber <= 0 || !report.issueUrl) return null;
   const parsedUrl = parseGitHubIssueUrl(report.issueUrl);
   const [owner, name] = repo.split("/");
@@ -1066,14 +1102,29 @@ async function validateRecordedGitHubIssue(repo: string, token: string, report: 
   try {
     const response = await timeoutFetch(`https://api.github.com/repos/${owner}/${name}/issues/${report.issueNumber}`, { headers: githubHeaders(token, "application/vnd.github+json") });
     if (!response.ok) return null;
-    const issue = (await response.json()) as { number?: number; html_url?: string; state?: string; body?: string | null; labels?: Array<string | { name?: string }> };
+    const issue = (await response.json()) as {
+      number?: number;
+      html_url?: string;
+      state?: string;
+      body?: string | null;
+      labels?: Array<string | { name?: string }>;
+      assignees?: Array<{ login?: string }>;
+    };
     if (issue.number !== report.issueNumber || !issue.html_url || issue.state !== "open") return null;
     if (!issue.body?.includes(`gittensory-upstream-drift:${report.fingerprint}`)) return null;
     if (!issue.labels?.some((label) => (typeof label === "string" ? label : label.name)?.toLowerCase() === "signals")) return null;
     const issueUrl = parseGitHubIssueUrl(issue.html_url);
     if (!issueUrl || issueUrl.number !== report.issueNumber) return null;
     if (issueUrl.owner.toLowerCase() !== owner.toLowerCase() || issueUrl.name.toLowerCase() !== name.toLowerCase()) return null;
-    return { number: report.issueNumber, url: issue.html_url };
+    return {
+      number: report.issueNumber,
+      url: issue.html_url,
+      /* v8 ignore next -- unreachable: `issue.body?.includes(...)` above already required issue.body to be a
+       *  defined, non-empty string, or this function would have returned null before reaching here. */
+      body: issue.body ?? null,
+      labels: githubIssueLabelNames(issue.labels),
+      assignees: (issue.assignees ?? []).map((assignee) => assignee.login ?? "").filter((login) => login.length > 0),
+    };
   } catch {
     return null;
   }
@@ -1112,13 +1163,34 @@ export function resolveDriftAssignees(env: Env): string[] {
     .filter((login) => login.length > 0);
 }
 
+function githubDriftIssueLabels(report: UpstreamDriftReportRecord): string[] {
+  return ["signals", "scoring", "data", report.severity === "high" || report.severity === "blocking" ? "high-impact" : "backend"];
+}
+
 function githubDriftIssuePayload(report: UpstreamDriftReportRecord, assignees: string[]): Record<string, JsonValue> {
   return {
     title: githubDriftIssueTitle(report),
     body: githubDriftIssueBody(report),
-    labels: ["signals", "scoring", "data", report.severity === "high" || report.severity === "blocking" ? "high-impact" : "backend"],
+    labels: githubDriftIssueLabels(report),
     assignees,
   };
+}
+
+/** Would a fresh PATCH of `existing` with `report`/`assignees` change anything on GitHub? (#4503) Compares
+ *  against the issue's LIVE state (already fetched by validateRecordedGitHubIssue / findGitHubIssueForFingerprint)
+ *  rather than any locally-stored copy — ground truth, no extra fetch or DB column needed. Body is an exact
+ *  string match: githubDriftIssueBody has no always-changing field (no timestamp), so an unresolved report with
+ *  unchanged content produces a byte-identical body every cycle. Labels/assignees are compared as
+ *  case-insensitive SETS, not ordered arrays — GitHub does not guarantee either the order or the casing it
+ *  echoes back matches what we last sent. */
+function driftIssueUnchanged(existing: ExistingDriftIssue, report: UpstreamDriftReportRecord, assignees: string[]): boolean {
+  if (existing.body !== githubDriftIssueBody(report)) return false;
+  const sameSet = (a: string[], b: string[]): boolean => {
+    const normalizedA = new Set(a.map((value) => value.toLowerCase()));
+    const normalizedB = new Set(b.map((value) => value.toLowerCase()));
+    return normalizedA.size === normalizedB.size && [...normalizedA].every((value) => normalizedB.has(value));
+  };
+  return sameSet(existing.labels, githubDriftIssueLabels(report)) && sameSet(existing.assignees, assignees);
 }
 
 function githubDriftIssueBody(report: UpstreamDriftReportRecord): string {

@@ -271,6 +271,50 @@ describe("worker entrypoint", () => {
     vi.useRealTimers();
   });
 
+  it("REGRESSION (#4506): pre-yields the whole refresh-installation-health job -- zero per-installation fetches -- while the shared GitHub REST budget is exhausted", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const env = createTestEnv();
+    // refresh-installation-health carries no installationId (it loops over every installation internally), so
+    // githubRateLimitAdmissionKeyForJob resolves it to `null` -- its dequeue-time check reads the unscoped
+    // (admissionKey: undefined) latest-observations window, which any recent exhausted REST observation trips.
+    await recordGitHubRateLimitObservation(env, { repoFullName: null, admissionKey: "installation:1", resource: "rest", path: "/app/installations/1", statusCode: 200, limitValue: 5000, remaining: 5, resetAt: "2026-06-24T12:30:00.000Z", observedAt: "2026-06-24T12:00:00.000Z" });
+    const fetchCalls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      fetchCalls.push(input.toString());
+      return new Response("unexpected fetch", { status: 500 });
+    });
+    const acked: string[] = [];
+    const retries: Array<{ delaySeconds?: number } | undefined> = [];
+    const requeued: Array<{ message: import("../../src/types").JobMessage; delaySeconds?: number }> = [];
+    env.JOBS = {
+      async send(message: import("../../src/types").JobMessage, options?: { delaySeconds?: number }) {
+        requeued.push({ message, ...(options?.delaySeconds === undefined ? {} : { delaySeconds: options.delaySeconds }) });
+      },
+    } as unknown as Queue;
+    const batch = {
+      messages: [
+        {
+          id: "installation-health-tick",
+          body: { type: "refresh-installation-health", requestedBy: "schedule" },
+          ack: () => acked.push("installation-health-tick"),
+          retry: (options?: { delaySeconds?: number }) => retries.push(options),
+        },
+      ],
+    } as unknown as MessageBatch<import("../../src/types").JobMessage>;
+
+    await worker.queue(batch, env);
+
+    // Pre-yielded before refreshInstallationHealthRecords' per-installation loop ever starts -- proving the
+    // dequeue-time gate defers the ENTIRE job (not just individual calls within it) when the budget is exhausted,
+    // regardless of how many installations it would otherwise have fetched.
+    expect(fetchCalls).toEqual([]);
+    expect(acked).toEqual(["installation-health-tick"]);
+    expect(retries).toEqual([]);
+    expect(requeued).toEqual([{ message: { type: "refresh-installation-health", requestedBy: "schedule" }, delaySeconds: 900 }]); // delayUntil clamps to [30, 900]
+    vi.useRealTimers();
+  });
+
   it("runs scheduled jobs through waitUntil", async () => {
     const env = createTestEnv();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

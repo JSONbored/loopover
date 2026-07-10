@@ -166,8 +166,11 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     // SKIPS this 30-min tick and hands the remaining budget to webhooks (which drive timely reviews); the next
     // 30-min tick retries, and after the bucket resets the backfill resumes. Queue depth is deliberately not a
     // suppressor here: unrelated pending work can stay nonzero for long periods, while rate admission on the
-    // queued jobs is the precise throttle. The cheap single-call health jobs (repair-data-fidelity,
-    // refresh-installation-health) stay unconditional.
+    // queued jobs is the precise throttle. repair-data-fidelity (a cheap, local-only D1 scan that only
+    // dispatches already-gated jobs) stays unconditional. refresh-installation-health is NOT a single-call job
+    // -- refreshInstallationHealthRecords makes one real GitHub REST call (getAppInstallation) per installation,
+    // sequentially -- but it is likewise left unconditional here since its calls now yield to the shared budget
+    // at dequeue time (GITHUB_BUDGET_BACKGROUND_TYPES, #4505/#4506).
     if (selfHostedReviews && !sweepThrottledUntil) {
       jobs.push({ type: "backfill-registered-repos", requestedBy: "schedule", mode: isFullSyncWindow ? "full" : "light" });
     } else if (selfHostedReviews) {

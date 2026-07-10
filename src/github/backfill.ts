@@ -4438,8 +4438,11 @@ function summarizeSegments(
   };
 }
 
-// #2543: this is the ONLY call site of recordGitHubRateLimitObservation -- one row per outbound GitHub REST/
-// GraphQL response. DELIBERATELY left un-batched (documented decision, not an oversight): the write rate is
+// #2543: this is the primary call site of recordGitHubRateLimitObservation -- one row per outbound GitHub
+// REST/GraphQL response made through this module's bulk-sync path. (getAppInstallation, ../github/app.ts,
+// records its own installation-lookup call directly for #4506 -- it lives outside this module's boundary and
+// this module already imports getAppInstallation FROM app.ts, so importing this function back would cycle.)
+// DELIBERATELY left un-batched (documented decision, not an oversight): the write rate is
 // bounded by GitHub's own REST budget for a single App installation (~5000/hour ≈ 1.4/s sustained, further
 // capped in practice by QUEUE_CONCURRENCY's small worker-pool size), nowhere near a volume where single-row
 // Postgres INSERTs meaningfully pressure the connection pool. shouldWaitForGitHubRateLimit (rate-limit.ts)

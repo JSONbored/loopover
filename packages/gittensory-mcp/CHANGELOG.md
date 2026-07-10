@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.1](https://github.com/JSONbored/gittensory/compare/mcp-v0.7.0...mcp-v0.7.1) (2026-07-08)
+
+
+### Fixes
+
+* **release:** sync package-lock.json via script, not release-please extra-files ([#4179](https://github.com/JSONbored/gittensory/issues/4179)) ([b614317](https://github.com/JSONbored/gittensory/commit/b614317e506fab3b30bf7fc366d67e268952ba02))
+
+## Changelog
+
 ## mcp-v0.7.0 - 2026-07-08
 
 ### Features

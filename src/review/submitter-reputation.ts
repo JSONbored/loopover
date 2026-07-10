@@ -308,3 +308,41 @@ export async function getSubmitterReputation(env: Env, project: string, submitte
   const decided = agg.merged + agg.closed;
   return { ...agg, closeRate: decided > 0 ? agg.closed / decided : 0, signal };
 }
+
+/** Install-wide sibling of {@link getSubmitterReputation} (#4513): the SAME quality-weighted, recency-windowed
+ *  signal derivation, but aggregated across EVERY repo `review_targets` has recorded for this installation_id
+ *  (migrations/0050), not just one project. Closes a real blind spot: a fleet identity spreading thin across
+ *  many repos in one self-hosted install never accumulates same-repo sample density for the per-project
+ *  signal to ever leave "neutral," even while it burns full paid AI-review spend on every submission. Callers
+ *  should reserve this for a CONFIRMED official Gittensor miner identity (this function does not itself check
+ *  that) -- an ordinary contributor's reputation stays intentionally scoped per-repo. The all-time
+ *  submitter_stats aggregate (submissions/merged/closed/manual, /stats-view only, not the signal) is NOT
+ *  widened here: that table is keyed (project, submitter) with no installation_id column, and only the
+ *  SIGNAL — not the display counts — gates the AI-spend decision. Fail-safe: any read error degrades to
+ *  "neutral", identical to the per-project function. */
+export async function getSubmitterReputationAcrossInstall(
+  env: Env,
+  installationId: number,
+  submitter: string | undefined,
+  cfg: ReputationConfig = DEFAULT_REPUTATION_CONFIG,
+): Promise<SubmitterStats> {
+  const neutral: SubmitterStats = { submissions: 0, merged: 0, closed: 0, manual: 0, closeRate: 0, signal: "neutral" };
+  if (!submitter) return neutral;
+  let signal: ReputationSignal = "neutral";
+  try {
+    const result = await storage(env)
+      .prepare(
+        `SELECT status, json_extract(decision_json, '$.reasonCode') AS reasonCode
+           FROM review_targets
+          WHERE installation_id = ? AND submitter = ? AND terminal_at IS NOT NULL AND terminal_at >= datetime('now', ?)
+          ORDER BY terminal_at DESC LIMIT ?`,
+      )
+      .bind(installationId, submitter, `-${cfg.windowDays} days`, REPUTATION_WINDOW_ROW_CAP)
+      .all<{ status: string; reasonCode: string | null }>();
+    const rows = result?.results ?? [];
+    signal = signalFromCounts(countOutcomes(rows), cfg);
+  } catch {
+    signal = "neutral"; // fail-safe — never throw into the gate.
+  }
+  return { ...neutral, signal };
+}

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { reputationOutcomeFromTerminalState, runAiReviewForAdvisory } from "../../src/queue/processors";
 import {
+  getEffectiveSubmitterReputation,
   isReputationEnabled,
   recordReputationOutcome,
   shouldDowngradeToDeterministic,
@@ -10,6 +11,30 @@ import { getSubmitterReputation, recordSubmissionOutcome } from "../../src/revie
 import { evaluateGateCheck } from "../../src/rules/advisory";
 import type { Advisory, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
+import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
+
+// Seeds one terminal review_targets row -- the raw table getSubmitterReputation(AcrossInstall) reads from
+// (not part of the Drizzle schema; migrations/0050 is the source of truth for these columns).
+async function seedReviewTarget(
+  env: Env,
+  args: { project: string; repo: string; number: number; installationId: number; submitter: string; status: string; reasonCode?: string | null },
+) {
+  await env.DB.prepare(
+    `INSERT INTO review_targets (id, project, kind, repo, number, installation_id, submitter, status, decision_json, terminal_at)
+     VALUES (?, ?, 'pull_request', ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+  )
+    .bind(
+      `${args.project}:pull_request:${args.repo}#${args.number}`,
+      args.project,
+      args.repo,
+      args.number,
+      args.installationId,
+      args.submitter,
+      args.status,
+      args.reasonCode === undefined ? null : JSON.stringify({ reasonCode: args.reasonCode }),
+    )
+    .run();
+}
 
 // A submitter who FLOODED the project with submissions but landed almost none — the burst anti-abuse pattern.
 async function seedSubmitter(
@@ -198,6 +223,134 @@ describe("shouldSkipAiForReputation (helper)", () => {
       spy.mockRestore();
       expect(afterQualityOnlyCallCount).toBe(2);
     });
+  });
+});
+
+describe("getEffectiveSubmitterReputation (#4513, install-wide for a confirmed miner)", () => {
+  function stubMinerFetch(githubUsername: string) {
+    return async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([{ githubUsername, githubId: "123", totalPrs: 2, totalMergedPrs: 2, isEligible: true, credibility: 1 }]);
+      if (url === "https://api.gittensor.io/miners/123/prs") return Response.json([]);
+      if (url === "https://api.gittensor.io/miners/123") return Response.json({});
+      if (url === "https://mirror.gittensor.io/api/v1/miners/123/issues") return Response.json({ issues: [] });
+      return Response.json({});
+    };
+  }
+
+  it("widens to the install-wide signal for a CONFIRMED miner when the per-repo signal alone stays neutral", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo-a", full_name: "org/repo-a", owner: { login: "org" } }, 999);
+    // Only 1 sample on repo-a itself -- per-repo signal stays "neutral" (below minSample).
+    await seedReviewTarget(env, { project: "org/repo-a", repo: "org/repo-a", number: 1, installationId: 999, submitter: "farmer99", status: "closed", reasonCode: "dual_review_declined" });
+    // But spread across OTHER repos in the SAME install, farmer99 has a clear serial-decline pattern.
+    for (let i = 0; i < 7; i++) {
+      await seedReviewTarget(env, { project: `org/repo-${i}`, repo: `org/repo-${i}`, number: i + 10, installationId: 999, submitter: "farmer99", status: "closed", reasonCode: "dual_review_declined" });
+    }
+    vi.stubGlobal("fetch", stubMinerFetch("farmer99"));
+    try {
+      const rep = await getEffectiveSubmitterReputation(env, { repoFullName: "org/repo-a", submitter: "farmer99" });
+      expect(rep.signal).toBe("low");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does NOT widen for an UNCONFIRMED submitter with the identical cross-repo pattern -- stays per-repo neutral", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo-a", full_name: "org/repo-a", owner: { login: "org" } }, 999);
+    await seedReviewTarget(env, { project: "org/repo-a", repo: "org/repo-a", number: 1, installationId: 999, submitter: "farmer99", status: "closed", reasonCode: "dual_review_declined" });
+    for (let i = 0; i < 7; i++) {
+      await seedReviewTarget(env, { project: `org/repo-${i}`, repo: `org/repo-${i}`, number: i + 10, installationId: 999, submitter: "farmer99", status: "closed", reasonCode: "dual_review_declined" });
+    }
+    // /miners returns an empty roster -- farmer99 resolves as "not_found", never "confirmed".
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      return Response.json({});
+    });
+    try {
+      const rep = await getEffectiveSubmitterReputation(env, { repoFullName: "org/repo-a", submitter: "farmer99" });
+      expect(rep.signal).toBe("neutral");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("skips the miner-identity lookup entirely when the per-repo signal already justifies downgrading", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo-a", full_name: "org/repo-a", owner: { login: "org" } }, 999);
+    // A clear per-repo serial-decline pattern on its own -- already "low" without any cross-repo help.
+    for (let i = 0; i < 7; i++) {
+      await seedReviewTarget(env, { project: "org/repo-a", repo: "org/repo-a", number: i, installationId: 999, submitter: "farmer99", status: "closed", reasonCode: "dual_review_declined" });
+    }
+    const fetchMock = vi.fn(stubMinerFetch("farmer99"));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const rep = await getEffectiveSubmitterReputation(env, { repoFullName: "org/repo-a", submitter: "farmer99" });
+      expect(rep.signal).toBe("low");
+      // The miner-identity lookup (and therefore the cross-repo query) never ran -- unnecessary once the
+      // per-repo signal alone already justifies caution.
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("a CONFIRMED miner whose cross-repo history is ALSO clean falls back to the (neutral) per-repo result", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo-a", full_name: "org/repo-a", owner: { login: "org" } }, 999);
+    // Only 1 sample per-repo AND only 1 sample install-wide -- neither crosses minSample, so both the
+    // per-repo AND the cross-repo reads land on "neutral"; the ternary's FALSE branch (acrossInstall doesn't
+    // justify downgrading) must return perRepo, not silently substitute the (also-neutral) acrossInstall.
+    await seedReviewTarget(env, { project: "org/repo-a", repo: "org/repo-a", number: 1, installationId: 999, submitter: "farmer99", status: "merged", reasonCode: "dual_review_approved" });
+    vi.stubGlobal("fetch", stubMinerFetch("farmer99"));
+    try {
+      const rep = await getEffectiveSubmitterReputation(env, { repoFullName: "org/repo-a", submitter: "farmer99" });
+      expect(rep.signal).toBe("neutral");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("fails safe to the per-repo result when the repository lookup itself throws", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo-a", full_name: "org/repo-a", owner: { login: "org" } }, 999);
+    await seedReviewTarget(env, { project: "org/repo-a", repo: "org/repo-a", number: 1, installationId: 999, submitter: "farmer99", status: "merged", reasonCode: "dual_review_approved" });
+    vi.stubGlobal("fetch", stubMinerFetch("farmer99"));
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = ((sql: string) => {
+      if (/FROM\s+["`]?repositories["`]?/i.test(sql)) throw new Error("d1 down");
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+    try {
+      const rep = await getEffectiveSubmitterReputation(env, { repoFullName: "org/repo-a", submitter: "farmer99" });
+      expect(rep.signal).toBe("neutral"); // per-repo result (also neutral here), never throws
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("returns the per-repo result unchanged when there is no submitter at all", async () => {
+    const env = createTestEnv();
+    const rep = await getEffectiveSubmitterReputation(env, { repoFullName: "org/repo-a", submitter: undefined });
+    expect(rep.signal).toBe("neutral");
+  });
+
+  it("fails safe to the (already-neutral) per-repo result, without throwing, when the repo has no resolvable installationId", async () => {
+    const env = createTestEnv();
+    // repo-a is never registered -> getRepository resolves to null -> nothing to widen with, even though
+    // farmer99 IS a confirmed miner and has a real cross-repo pattern recorded under installation 999.
+    await seedReviewTarget(env, { project: "org/repo-a", repo: "org/repo-a", number: 1, installationId: 999, submitter: "farmer99", status: "closed", reasonCode: "dual_review_declined" });
+    vi.stubGlobal("fetch", stubMinerFetch("farmer99"));
+    try {
+      const rep = await getEffectiveSubmitterReputation(env, { repoFullName: "org/repo-a", submitter: "farmer99" });
+      // Only 1 sample, below minSample -> the per-repo signal itself is neutral, and with no installationId to
+      // widen with the function must return exactly that (not throw, not fabricate a signal).
+      expect(rep.signal).toBe("neutral");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

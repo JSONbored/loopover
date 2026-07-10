@@ -211,6 +211,7 @@ export {
   type WorktreeRemoveResult,
 } from "./miner/worktree-allocator.js";
 export * from "./miner/worktree-pool.js";
+export * from "./miner/self-reputation-throttle.js";
 export {
   invokeCodingAgentDriver,
   type AttemptLogSink,

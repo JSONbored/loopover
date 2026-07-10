@@ -9,8 +9,18 @@ import { resolveMinerVersion } from "./version.js";
 // this laptop set up correctly). Both are read-only and 100% local — no repo-scanning, no coding-agent invocation,
 // no GitHub writes, and no network calls of any kind. Later phases add the real discover/plan/manage loop.
 
-const require = createRequire(import.meta.url);
-const moduleDir = import.meta.dirname;
+// Lazy, not module-scope: mirrors the gittensory-engine repo-map.ts fix -- this file is CLI-only today, but
+// an eager createRequire(import.meta.url)/import.meta.dirname at module scope would crash on import in any
+// bundler context where import.meta is unavailable (e.g. if a future import chain pulls this into a Worker
+// bundle, the way repo-map.ts was). Deferring construction to first real use keeps this import-safe.
+let cachedRequire = null;
+function requireFromHere() {
+  return (cachedRequire ??= createRequire(import.meta.url));
+}
+let cachedModuleDir = null;
+function moduleDir() {
+  return (cachedModuleDir ??= import.meta.dirname);
+}
 
 const PACKAGE_NAME = "@jsonbored/gittensory-miner";
 const ENGINE_PACKAGE = "@jsonbored/gittensory-engine";
@@ -40,7 +50,7 @@ export function resolveMinerStateDir(env = process.env) {
 // be absent depending on build order, so the declared-dependency version is the reliable, always-available source.)
 function readEngineVersion() {
   try {
-    return require("../package.json").dependencies?.[ENGINE_PACKAGE] ?? null;
+    return requireFromHere()("../package.json").dependencies?.[ENGINE_PACKAGE] ?? null;
   } catch {
     return null;
   }
@@ -75,11 +85,11 @@ export function readInstalledEnginePackageVersionFromPaths(
 export function readInstalledEnginePackageVersion() {
   try {
     return readInstalledEnginePackageVersionFromPaths(
-      require.resolve(ENGINE_PACKAGE),
-      join(moduleDir, "../../gittensory-engine/package.json"),
+      requireFromHere().resolve(ENGINE_PACKAGE),
+      join(moduleDir(), "../../gittensory-engine/package.json"),
     );
   } catch {
-    const workspacePkg = join(moduleDir, "../../gittensory-engine/package.json");
+    const workspacePkg = join(moduleDir(), "../../gittensory-engine/package.json");
     if (existsSync(workspacePkg)) {
       try {
         return JSON.parse(readFileSync(workspacePkg, "utf8")).version ?? null;
@@ -114,8 +124,8 @@ export function readExpectedEnginePackageVersionFromPaths(
 
 export function readExpectedEnginePackageVersion() {
   return readExpectedEnginePackageVersionFromPaths(
-    join(moduleDir, "../../gittensory-engine/package.json"),
-    join(moduleDir, "../expected-engine.version"),
+    join(moduleDir(), "../../gittensory-engine/package.json"),
+    join(moduleDir(), "../expected-engine.version"),
   );
 }
 
@@ -170,7 +180,7 @@ function checkEngineVersionSkew() {
 
 /** The minimum Node major version from the package's `engines.node` floor (e.g. ">=22.13.0" → 22). */
 function requiredNodeMajor() {
-  const engines = require("../package.json").engines;
+  const engines = requireFromHere()("../package.json").engines;
   const match = typeof engines?.node === "string" ? engines.node.match(/(\d+)/) : null;
   return match ? Number(match[1]) : 0;
 }

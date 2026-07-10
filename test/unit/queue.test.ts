@@ -28230,7 +28230,7 @@ describe("one-shot reopen prevention", () => {
     });
 
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } }); // opted into acting autonomy
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } }); // opted into acting autonomy
 
     await processJob(env, {
       type: "github-webhook",
@@ -28264,7 +28264,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     // A maintainer legitimately reopened/re-approved the PR — or a queue retry replayed a stale payload — in
     // the window between the original webhook delivery and this handler's permission/closer-history reads. The
     // live re-check must catch it and deny the re-close rather than overwriting a live maintainer decision.
@@ -28302,7 +28302,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
 
     await processJob(env, { type: "github-webhook", deliveryId: "reopen-promoted", eventName: "pull_request", payload: reopenedPayload("contributor") });
 
@@ -28340,7 +28340,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
 
     await processJob(env, { type: "github-webhook", deliveryId: "reopen-superseded", eventName: "pull_request", payload: reopenedPayload("contributor") });
 
@@ -28369,7 +28369,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
 
     await processJob(env, { type: "github-webhook", deliveryId: "reopen-same-latest", eventName: "pull_request", payload: reopenedPayload("contributor") });
 
@@ -28404,7 +28404,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
 
     await processJob(env, { type: "github-webhook", deliveryId: "reopen-window-stuffed", eventName: "pull_request", payload: reopenedPayload("contributor") });
 
@@ -28435,7 +28435,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
 
     await processJob(env, { type: "github-webhook", deliveryId: "reopen-timeline-error", eventName: "pull_request", payload: reopenedPayload("contributor") });
 
@@ -28463,7 +28463,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
 
     await processJob(env, { type: "github-webhook", deliveryId: "reopen-no-reopen-event", eventName: "pull_request", payload: reopenedPayload("contributor") });
 
@@ -28494,7 +28494,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
 
     await expect(
@@ -28514,7 +28514,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "head_changed", expectedHeadSha: "abc123", liveHeadSha: "def456", liveState: "open" });
     vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
 
@@ -28537,7 +28537,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
 
     await expect(
@@ -28564,7 +28564,7 @@ describe("one-shot reopen prevention", () => {
     });
 
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
 
     await processJob(env, {
       type: "github-webhook",
@@ -28658,7 +28658,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } }); // opted into acting autonomy
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } }); // opted into acting autonomy
     await repositoriesModule.setGlobalAgentFrozen(env, true); // emergency brake on
     await processJob(env, { type: "github-webhook", deliveryId: "reopen-frozen", eventName: "pull_request", payload: reopenedPayload("contributor") });
     expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false); // never closed
@@ -28680,7 +28680,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentDryRun: true, autonomy: { merge: "auto", request_changes: "auto" } });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentDryRun: true, autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     await processJob(env, { type: "github-webhook", deliveryId: "reopen-dryrun", eventName: "pull_request", payload: reopenedPayload("contributor") });
     expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false); // never closed
     const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.reopen_reclosed").first<{ outcome: string; detail: string }>();
@@ -28744,7 +28744,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } }); // opted into acting autonomy
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } }); // opted into acting autonomy
     await processJob(env, { type: "github-webhook", deliveryId: "window-evasion-reclose", eventName: "pull_request", payload: reopenedPayload("contributor") });
     expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(true);
     const audit = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.reopen_reclosed").first<{ detail: string }>();
@@ -28765,7 +28765,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } }); // opted into acting autonomy
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } }); // opted into acting autonomy
     await processJob(env, { type: "github-webhook", deliveryId: "bot-closer-reclose", eventName: "pull_request", payload: reopenedPayload("contributor") });
     expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(true);
   });
@@ -28817,6 +28817,71 @@ describe("one-shot reopen prevention", () => {
     await expect(
       processJob(env, { type: "github-webhook", deliveryId: "reopen-api-fail-safe", eventName: "pull_request", payload: reopenedPayload("contributor") }),
     ).resolves.toBeUndefined();
+  });
+
+  it("REGRESSION (#4602): does NOT re-close a disallowed reopen when close autonomy is unconfigured, even though another class (merge) is auto", async () => {
+    // Before #4602, this guard gated only on isAgentConfigured(autonomy) -- true here because `merge` is
+    // acting -- with no check on the `close` action class specifically. A repo that opts into merge/review
+    // autonomy but deliberately leaves close unconfigured (deny-by-default) must NOT have PRs re-closed here.
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/collaborators/contributor/permission")) return Response.json({ permission: "read" });
+      if (url.endsWith("/collaborators/maintainer/permission")) return Response.json({ permission: "write" });
+      if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }, { event: "reopened", actor: { login: "contributor" } }]);
+      if (url.endsWith("/issues/42/comments")) return Response.json({ id: 99 }, { status: 201 });
+      if (url.endsWith("/pulls/42") && method === "PATCH") return Response.json({ state: "closed" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "reopen-close-autonomy-unconfigured",
+      eventName: "pull_request",
+      payload: reopenedPayload("contributor"),
+    });
+
+    expect(calls.some((call) => call.method === "PATCH" && call.url.endsWith("/pulls/42"))).toBe(false);
+    expect(calls.some((call) => call.method === "POST" && call.url.endsWith("/issues/42/comments"))).toBe(false);
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.reopen_reclosed").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("autonomy for close is not acting");
+    expect(audit?.detail).toContain("reopen re-close not enforced for contributor");
+  });
+
+  it("REGRESSION (#4602): denies with an approval-required message when close autonomy is auto_with_approval", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/collaborators/contributor/permission")) return Response.json({ permission: "read" });
+      if (url.endsWith("/collaborators/maintainer/permission")) return Response.json({ permission: "write" });
+      if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }, { event: "reopened", actor: { login: "contributor" } }]);
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto_with_approval" } });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "reopen-close-autonomy-approval",
+      eventName: "pull_request",
+      payload: reopenedPayload("contributor"),
+    });
+
+    expect(calls.some((call) => call.method === "PATCH" && call.url.endsWith("/pulls/42"))).toBe(false);
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.reopen_reclosed").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("close autonomy requires approval");
   });
 });
 
@@ -29482,6 +29547,57 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
     // doesn't crash. Verify the handler DID reach getGateBlockOutcome, proving branches 196+198 were exercised.
     const verifyBlock = await repositoriesModule.getGateBlockOutcome(env, "noslash", 77);
     expect(verifyBlock?.headSha).toBe("sha-noslash");
+  });
+
+  it("REGRESSION (#4602): does NOT draft-dodge close when close autonomy is unconfigured, even though another PR-write class (approve) is auto and pull_requests:write IS granted", async () => {
+    // Before #4602, resolveAgentPermissionReadiness's missing actionClass:"close" checked the UNION of every
+    // acting class's write-permission grant, not close's specifically -- `approve` is a PR-write class and
+    // pull_requests:write IS granted here (setupRepo's default), so readiness alone used to read "ready" and
+    // let the close proceed despite close itself never being authorized.
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.endsWith("/issues/42/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.endsWith("/pulls/42") && method === "PATCH") return Response.json({ state: "closed" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env, { autonomy: { approve: "auto" } });
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-close-autonomy-unconfigured", eventName: "pull_request", payload: draftPayload("contributor") });
+
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(false);
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("autonomy for close is not acting");
+    expect(audit?.detail).toContain("draft-dodge close not enforced for contributor");
+  });
+
+  it("REGRESSION (#4602): denies with an approval-required message when close autonomy is auto_with_approval", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push({ url, method: init?.method ?? "GET" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env, { autonomy: { close: "auto_with_approval" } });
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-close-autonomy-approval", eventName: "pull_request", payload: draftPayload("contributor") });
+
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("close autonomy requires approval");
   });
 });
 

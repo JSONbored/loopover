@@ -13032,6 +13032,36 @@ async function closeDraftDodgeAttemptIfBlocked(
       agentPaused: settings.agentPaused,
       agentDryRun: settings.agentDryRun,
     });
+    // Close-autonomy gate (#4602): this enforcement path bypasses executeAgentMaintenanceActions entirely
+    // (like every check above), so it never got the standard pipeline's per-action-class autonomy check --
+    // the outer dispatch condition only requires isAgentConfigured (true for ANY acting class), not
+    // specifically close. Without this, a repo that opts into some OTHER autonomy class (e.g. assign: "auto")
+    // while deliberately leaving close unconfigured (deny-by-default) could still have PRs auto-closed here.
+    // Mirrors the review-evasion siblings' identical gate; checked before the live/dry-run branch so a
+    // dry-run never claims "would close" when the repo isn't even configured to close for real.
+    const draftDodgeCloseAutonomy = resolveAutonomy(settings.autonomy, "close");
+    if (draftDodgeCloseAutonomy !== "auto") {
+      await recordAuditEvent(env, {
+        eventType: "github_app.draft_dodge_closed",
+        actor: "gittensory",
+        targetKey: `${repoFullName}#${pr.number}`,
+        outcome: "denied",
+        detail:
+          draftDodgeCloseAutonomy === "auto_with_approval"
+            ? `close autonomy requires approval -- draft-dodge close not enforced for ${pr.authorLogin ?? "unknown"}`
+            : `autonomy for close is not acting -- draft-dodge close not enforced for ${pr.authorLogin ?? "unknown"}`,
+        metadata: {
+          deliveryId,
+          repoFullName,
+          headSha: pr.headSha,
+          blockerCodes: block.blockerCodes,
+        },
+      }).catch(
+        /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler */
+        () => undefined,
+      );
+      return;
+    }
     if (draftMode === "live") {
       // Write-permission readiness (#2134): this close bypasses executeAgentMaintenanceActions entirely
       // (the whole point is to enforce the gate verdict against the CURRENT headSha even though the PR
@@ -13058,6 +13088,7 @@ async function closeDraftDodgeAttemptIfBlocked(
       const draftDodgePermissionReadiness = resolveAgentPermissionReadiness({
         autonomy: settings.autonomy,
         installationPermissions: draftDodgeInstallationPermissions,
+        actionClass: "close",
       });
       if (draftDodgePermissionReadiness !== "ready") {
         /* v8 ignore next -- a deleted-account PR yields a null author login; the fallback is defensive */
@@ -13253,12 +13284,31 @@ async function recloseDisallowedReopenIfNeeded(
   // NOT touch GitHub, and dry-run records the would-be re-close without acting — so a dry-run is truly inert and
   // the global kill-switch is a COMPLETE stop. This close path previously bypassed pause/freeze/dry-run entirely.
   const reopenSettings = await resolveRepositorySettings(env, repoFullName);
-  // Honor the autonomy floor like every other write path (sweepRepoRegate / the live-action handler / the
-  // draft-dodge sibling all gate on isAgentConfigured): on an OBSERVE-only / un-opted-in repo (autonomy {} =
-  // deny-by-default) the agent must take NO action, so do not re-close. resolveAgentActionMode is orthogonal to
-  // autonomy (it only reflects pause/freeze/dry-run) and returns "live" for an unconfigured repo, so without this
-  // the re-close would genuinely reach GitHub on a repo that never authorized any action (#review-audit).
-  if (!isAgentConfigured(reopenSettings.autonomy)) return false;
+  // Close-autonomy gate (#4602): isAgentConfigured alone is too loose here -- it is true whenever ANY autonomy
+  // class is acting (e.g. merge: "auto"), not specifically close, so a repo that opts into some OTHER
+  // autonomy class while deliberately leaving close unconfigured (deny-by-default) could still have a
+  // disallowed reopen re-closed here. Check the close action class directly, mirroring the review-evasion
+  // siblings' identical gate. resolveAgentActionMode below is orthogonal to autonomy (it only reflects
+  // pause/freeze/dry-run) and returns "live" for an unconfigured repo, so without this the re-close would
+  // genuinely reach GitHub on a repo that never authorized the close action specifically (#review-audit).
+  const closeAutonomy = resolveAutonomy(reopenSettings.autonomy, "close");
+  if (closeAutonomy !== "auto") {
+    await recordAuditEvent(env, {
+      eventType: "github_app.reopen_reclosed",
+      actor: "gittensory",
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "denied",
+      detail:
+        closeAutonomy === "auto_with_approval"
+          ? `close autonomy requires approval -- reopen re-close not enforced for ${reopener}`
+          : `autonomy for close is not acting -- reopen re-close not enforced for ${reopener}`,
+      metadata: { deliveryId, repoFullName },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler */
+      () => undefined,
+    );
+    return false;
+  }
   const reopenMode = resolveAgentActionMode({
     globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, reopenSettings.agentGlobalFreezeOverride)),
     agentPaused: reopenSettings.agentPaused,

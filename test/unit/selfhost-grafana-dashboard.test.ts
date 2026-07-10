@@ -327,4 +327,47 @@ describe("maintainer Reviews & PRs Grafana dashboard", () => {
     expect(rows).toContain("owner/repo|2|new|commented|comment|new row|2026-06-29T21:00:00Z");
     expect(rows).not.toContain("old row");
   });
+
+  it("excludes bot-authored PRs from every review_targets panel query, not just the table", () => {
+    const targets = reviewTargets();
+
+    expect(targets.length).toBeGreaterThan(0);
+    for (const target of targets) {
+      expect(target.queryText).toContain("submitter NOT LIKE '%[bot]%'");
+    }
+  });
+
+  (sqliteCliAvailable ? it : it.skip)("drops a bot-authored release PR from the tracked-PR count and table (#4685-follow-up)", () => {
+    const root = tmpRoot();
+    const db = join(root, "reporting.sqlite");
+    sqlite(db, `
+      CREATE TABLE review_targets (
+        repo TEXT NOT NULL,
+        number INTEGER NOT NULL,
+        submitter TEXT,
+        status TEXT NOT NULL,
+        verdict TEXT,
+        title TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO review_targets (repo, number, submitter, status, verdict, title, created_at, updated_at)
+      VALUES
+        ('owner/repo', 1, 'github-actions[bot]', 'merged', 'merge', 'chore(release): cut v1.0.0', '2026-06-29T20:00:00Z', '2026-06-29T20:30:00Z'),
+        ('owner/repo', 2, 'a-human', 'merged', 'merge', 'a real contribution', '2026-06-29T20:00:00Z', '2026-06-29T21:00:00Z'),
+        ('owner/repo', 3, NULL, 'merged', 'merge', 'legacy row, no submitter recorded', '2026-06-29T20:00:00Z', '2026-06-29T21:15:00Z');
+    `);
+
+    const trackedCount = sqlite(db, expandGrafanaRange(targetForPanel(2).queryText!));
+    const mergedCount = sqlite(db, expandGrafanaRange(targetForPanel(3).queryText!));
+    const tableRows = sqlite(db, expandGrafanaRange(targetForPanel(8).queryText!));
+
+    // The bot's own release-automation PR must not inflate either the tracked or the merged tile, but a
+    // NULL submitter (a legacy pre-migration row that never recorded one) is not a bot and must still count.
+    expect(trackedCount).toBe("2");
+    expect(mergedCount).toBe("2");
+    expect(tableRows).toContain("a real contribution");
+    expect(tableRows).toContain("legacy row, no submitter recorded");
+    expect(tableRows).not.toContain("cut v1.0.0");
+  });
 });

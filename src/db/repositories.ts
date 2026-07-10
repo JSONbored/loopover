@@ -5332,7 +5332,10 @@ async function pruneReviewSuppressionsOverCap(env: Env, repoFullName: string): P
     .select({ id: reviewSuppression.id })
     .from(reviewSuppression)
     .where(eq(reviewSuppression.repoFullName, repoFullName))
-    .orderBy(desc(reviewSuppression.createdAt));
+    // #4501: an `id` tiebreak makes eviction deterministic under same-millisecond createdAt ties (e.g. a
+    // `@gittensory resolve` whole-PR command's Promise.all batch of suppression writes) -- without it, which
+    // row is "the oldest" past the cap is query-plan-dependent and can vary run to run.
+    .orderBy(desc(reviewSuppression.createdAt), desc(reviewSuppression.id));
   const overflow = rows.slice(MAX_REVIEW_SUPPRESSIONS_PER_REPO);
   if (overflow.length === 0) return;
   await db.delete(reviewSuppression).where(
@@ -5353,7 +5356,8 @@ export async function listReviewSuppressions(env: Env, repoFullName: string, lim
     .select()
     .from(reviewSuppression)
     .where(eq(reviewSuppression.repoFullName, boundedString(repoFullName, 200)))
-    .orderBy(desc(reviewSuppression.createdAt))
+    // Matches pruneReviewSuppressionsOverCap's tiebreak so the two agree on relative order under ties.
+    .orderBy(desc(reviewSuppression.createdAt), desc(reviewSuppression.id))
     .limit(clampInteger(limit, 1, MAX_REVIEW_SUPPRESSIONS_PER_REPO));
   return rows.map(toReviewSuppressionRecord);
 }
@@ -6539,7 +6543,9 @@ async function upsertProductUsageDailyRollup(env: Env, day: string, generatedAt:
     .select()
     .from(productUsageEvents)
     .where(and(gte(productUsageEvents.occurredAt, startIso), sql`${productUsageEvents.occurredAt} < ${endIso}`))
-    .orderBy(productUsageEvents.occurredAt)
+    // #4501: an `id` tiebreak makes which rows survive the cap below deterministic under same-millisecond
+    // occurredAt ties -- without it, row order (and therefore this persisted rollup) is query-plan-dependent.
+    .orderBy(productUsageEvents.occurredAt, productUsageEvents.id)
     .limit(PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT + 1);
   const capped = rows.length > PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT || sourceEventCount > PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT;
   const events = rows.slice(0, PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT).map(toProductUsageEventRecord);
@@ -6550,7 +6556,7 @@ async function upsertProductUsageDailyRollup(env: Env, day: string, generatedAt:
     .select()
     .from(productUsageEvents)
     .where(retentionWhere)
-    .orderBy(desc(productUsageEvents.occurredAt))
+    .orderBy(desc(productUsageEvents.occurredAt), desc(productUsageEvents.id))
     .limit(PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT + 1);
   const retentionCapped = retentionRows.length > PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT || Number(retentionSourceRow?.count ?? 0) > PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT;
   const retentionEvents = retentionRows.slice(0, PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT).map(toProductUsageEventRecord);

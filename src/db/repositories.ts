@@ -3456,10 +3456,24 @@ export async function sumAiEstimatedNeuronsSince(env: Env, sinceIso: string): Pr
   return Number(row?.total ?? 0);
 }
 
+/** Spend-attempt statuses `countByokAiEventsForRepoSince`/`sumByokAiUsageForRepoSince` count: a real request
+ *  reached the provider, whether or not it returned something usable ("ok") or genuinely failed ("error" --
+ *  timeout/http_error/exception, see e.g. queue/processors.ts's recordVisualVisionUsage). Deliberately an
+ *  ALLOWLIST, not an exclusion of "quota_exceeded": `ai_usage_events` is also reused for BYOK key-lifecycle
+ *  audit rows (recordAiKeyChange's "set"/"replace"/"delete", `model` also `byok:<provider>`-prefixed so they
+ *  match this query's model filter too) -- an exclusion-based filter would silently start counting those
+ *  (or any future non-spend status added to this shared table) as spend. */
+const BYOK_SPEND_ATTEMPT_STATUSES = ["ok", "error"] as const;
+
 /**
  * Count a repo's maintainer-billed (BYOK) AI calls since `sinceIso`, across ALL AI features (review +
  * slop + any future BYOK path). One shared per-repo/day budget governs every BYOK feature, so a repo
  * cannot multiply its frontier-model spend by enabling more capabilities.
+ *
+ * Counts every ATTEMPTED call, not just ones tagged "ok" -- a caller that records a distinct "error" status
+ * for a genuine provider failure still made a real request against the maintainer's key, so it must still
+ * count; excluding attempted-but-failed calls would turn a flaky or misconfigured provider into a way to
+ * bypass this cap entirely via forced failures. See BYOK_SPEND_ATTEMPT_STATUSES for why this is an allowlist.
  */
 export async function countByokAiEventsForRepoSince(env: Env, repoFullName: string, sinceIso: string): Promise<number> {
   const db = getDb(env.DB);
@@ -3469,7 +3483,7 @@ export async function countByokAiEventsForRepoSince(env: Env, repoFullName: stri
     .where(
       and(
         gte(aiUsageEvents.createdAt, sinceIso),
-        eq(aiUsageEvents.status, "ok"),
+        inArray(aiUsageEvents.status, BYOK_SPEND_ATTEMPT_STATUSES),
         sql`${aiUsageEvents.model} like 'byok:%'`,
         sql`json_extract(${aiUsageEvents.metadataJson}, '$.repoFullName') = ${repoFullName}`,
       ),
@@ -3493,6 +3507,10 @@ export async function sumByokAiUsageForRepoSince(
   sinceIso: string,
 ): Promise<{ calls: number; inputTokens: number; outputTokens: number; totalTokens: number; costUsd: number }> {
   const db = getDb(env.DB);
+  // Mirrors countByokAiEventsForRepoSince's own WHERE clause (see BYOK_SPEND_ATTEMPT_STATUSES's doc comment)
+  // -- an attempted-but-failed call still counts as a "call" for reporting purposes, same as it counts toward
+  // the daily cap. A failed attempt's usage columns are all 0/null (no billable usage was ever returned), so
+  // it contributes to `calls` but not to the token/cost sums.
   const [row] = await db
     .select({
       calls: sql<number>`count(*)`,
@@ -3505,7 +3523,7 @@ export async function sumByokAiUsageForRepoSince(
     .where(
       and(
         gte(aiUsageEvents.createdAt, sinceIso),
-        eq(aiUsageEvents.status, "ok"),
+        inArray(aiUsageEvents.status, BYOK_SPEND_ATTEMPT_STATUSES),
         sql`${aiUsageEvents.model} like 'byok:%'`,
         sql`json_extract(${aiUsageEvents.metadataJson}, '$.repoFullName') = ${repoFullName}`,
       ),

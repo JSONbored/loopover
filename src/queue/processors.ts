@@ -8614,11 +8614,17 @@ export async function runVisualVisionForAdvisory(
       visionText = visionResponse.text;
       visionUsage = visionResponse.usage;
       if (!visionText) {
+        // "error" (not "ok") when the provider call itself failed (timeout/http_error/exception) -- matches
+        // runAgentSummary's convention (services/ai-summaries.ts) of a distinct status for a genuine call
+        // failure vs. a call that completed but returned nothing usable. countByokAiEventsForRepoSince
+        // deliberately still counts "error" rows toward the daily cap (it only excludes "quota_exceeded",
+        // not "ok" specifically) -- a repo hitting a flaky/misconfigured provider must not get a free,
+        // uncapped retry budget just because every attempt happens to fail.
         await recordVisualVisionUsage(
           env,
           args,
           visionProviderKey,
-          "ok",
+          visionResponse.failure ? "error" : "ok",
           visionResponse.failure ? `provider failure: ${String(visionResponse.failure)}` : "no usable output",
           visionResponse.usage,
         );

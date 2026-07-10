@@ -269,6 +269,19 @@ describe("runVisualVisionForAdvisory", () => {
     expect(await countByokAiEventsForRepoSince(env, repoFullName, utcDayStartIso())).toBe(0);
   });
 
+  // REGRESSION guard: `ai_usage_events` is shared with BYOK key-lifecycle audit rows (recordAiKeyChange's
+  // "set"/"replace"/"delete", src/db/repositories.ts) whose `model` is ALSO `byok:<provider>`-prefixed, so
+  // they match this query's model filter too -- only their `status` (never "ok" or "error") keeps them out.
+  // upsertRepositoryAiKey (used by nearly every test in this file to seed a BYOK key) always writes exactly
+  // one such "set" row, so this asserts it alone never counts toward the cap.
+  it("does not count a BYOK key-lifecycle audit event (upsertRepositoryAiKey's own 'set' row) toward the daily cap", async () => {
+    const env = byokEnv();
+    await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-vision-key", model: null });
+    const keyChangeEvents = await env.DB.prepare("select status, feature, model from ai_usage_events").all<{ status: string; feature: string; model: string }>();
+    expect(keyChangeEvents.results).toEqual([{ status: "set", feature: "ai_key_change", model: "byok:anthropic" }]);
+    expect(await countByokAiEventsForRepoSince(env, repoFullName, utcDayStartIso())).toBe(0);
+  });
+
   it("records successful visual BYOK calls so later passes count toward the shared daily cap", async () => {
     const env = byokEnv();
     await upsertRepositoryAiKey(env, {
@@ -461,7 +474,7 @@ describe("runVisualVisionForAdvisory", () => {
     expect(adv.findings).toEqual([]);
   });
 
-  it("adds no finding when the provider call itself fails (non-2xx) -- callAiProvider's own fail-safe", async () => {
+  it("adds no finding when the provider call itself fails (non-2xx) -- callAiProvider's own fail-safe, but STILL records the attempt as a distinct 'error' status that counts toward the daily cap", async () => {
     const env = byokEnv();
     await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-vision-key", model: null });
     stubShotsAndProvider(null);
@@ -477,6 +490,13 @@ describe("runVisualVisionForAdvisory", () => {
       routes: [route({ path: "/app", diffUrl: "https://x/gittensory/shot?key=diff", beforeUrl: "https://x/gittensory/shot?key=before", afterUrl: "https://x/gittensory/shot?key=after" })],
     });
     expect(adv.findings).toEqual([]);
+    // A genuine provider failure is a distinct "error" status (not "ok") -- but it's still a real request
+    // against the maintainer's key, so it must still count toward the shared daily cap (see
+    // BYOK_SPEND_ATTEMPT_STATUSES's doc comment, src/db/repositories.ts): a repo hitting a flaky/misconfigured
+    // provider must not get unlimited free retries just because every attempt happens to fail.
+    const events = await env.DB.prepare("select status, detail from ai_usage_events where feature = 'visual_vision'").all<{ status: string; detail: string }>();
+    expect(events.results).toEqual([{ status: "error", detail: "provider failure: http_error" }]);
+    expect(await countByokAiEventsForRepoSince(env, repoFullName, utcDayStartIso())).toBe(1);
   });
 
   it("adds no finding when the provider returns 200 with no usable text (distinct from an http_error failure)", async () => {

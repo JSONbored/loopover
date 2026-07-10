@@ -78,6 +78,13 @@ export {
   type ReplayHarnessStatus,
 } from "./phase7-calibration-loop.js";
 export {
+  buildCalibrationDashboardView,
+  resolveCalibrationDashboardStatus,
+  type CalibrationDashboardRow,
+  type CalibrationDashboardStatus,
+  type CalibrationDashboardView,
+} from "./calibration-dashboard.js";
+export {
   computeFindingSeverityCompositeCalibrationScore,
   ingestFindingSeverityCalibrationSignals,
   renderFindingSeverityCalibrationAuditMarkdown,
@@ -186,9 +193,38 @@ export {
   type CodingAgentDriverTask,
 } from "./miner/coding-agent-driver.js";
 export {
+  createCliSubprocessCodingAgentDriver,
+  type CliSubprocessDriverOptions,
+  type CliSubprocessSpawnFn,
+} from "./miner/cli-subprocess-driver.js";
+export {
+  addWorktree,
+  planWorktree,
+  removeWorktree,
+  shouldRetainWorktree,
+  WORKTREE_BRANCH_PREFIX,
+  WORKTREE_SUBDIR,
+  type WorktreeAddResult,
+  type WorktreeExecFn,
+  type WorktreeExecResult,
+  type WorktreePlan,
+  type WorktreeRemoveResult,
+} from "./miner/worktree-allocator.js";
+export {
   invokeCodingAgentDriver,
   type AttemptLogSink,
 } from "./miner/coding-agent-invoke.js";
+export {
+  classifyLintGuardPackage,
+  guardChangedFiles,
+  guardCodingAgentDriverResult,
+  type LintGuardCheckResult,
+  type LintGuardedDriverResult,
+  type LintGuardOptions,
+  type LintGuardPackage,
+  type LintGuardResult,
+  type LintGuardSpawnFn,
+} from "./miner/lint-guard.js";
 export {
   CODING_AGENT_DRIVER_CONFIG_ENV,
   CODING_AGENT_DRIVER_NAMES,
@@ -202,6 +238,26 @@ export {
   type RunCodingAgentAttemptOptions,
 } from "./miner/driver-factory.js";
 export * from "./miner/attempt-metering.js";
+export {
+  buildRepoMap,
+  extractRepoMapSymbols,
+  renderRepoMap,
+  resolveRepoMapLanguage,
+  type BuildRepoMapOptions,
+  type LoadRepoMapLanguageFn,
+  type RepoMapFileEntry,
+  type RepoMapSkipReason,
+  type RepoMapSourceFile,
+  type RepoMapSymbol,
+  type RepoMapSymbolKind,
+} from "./miner/repo-map.js";
+export {
+  createAgentSdkCodingAgentDriver,
+  type AgentSdkHooks,
+  type AgentSdkQueryFn,
+  type AgentSdkQueryOptions,
+  type CreateAgentSdkDriverOptions,
+} from "./miner/agent-sdk-driver.js";
 export * from "./plan-export.js";
 export { countPlanStepsByStatus } from "./plan-step-stats.js";
 export { countPlanSteps } from "./plan-step-count.js";

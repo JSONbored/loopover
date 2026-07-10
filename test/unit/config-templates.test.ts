@@ -5,6 +5,7 @@ import {
   gateConfigToJson,
   parseFocusManifest,
   parseFocusManifestContent,
+  resolveReviewPathInstructions,
   resolveReviewPromptOverrides,
   reviewConfigToJson,
 } from "../../src/signals/focus-manifest";
@@ -176,5 +177,44 @@ describe("config/examples review templates (#1682)", () => {
     expect(round.warnings).toEqual([]);
     expect(round.gate.enabled).toBe(false);
     expect(isAgentConfigured(round.settings.autonomy)).toBe(false);
+  });
+
+  it("resolves the gate-policy field group (enabled + advisory/block modes) via parse + gateConfigToJson round-trip (#2205)", () => {
+    const full = readConfigExample("gittensory.full.yml");
+    expect(full).toMatch(/^gate:/m);
+    expect(full).toMatch(/linkedIssue:/);
+    // No gate block ⇒ no per-repo gate override (null), so an operator's absent gate policy stays inherited.
+    expect(gateConfigToJson(parseFocusManifest({}).gate)).toBeNull();
+    // Explicit gate policy: the on/off switch + the advisory-vs-block mode controls parse and round-trip
+    // byte-for-byte — the parity the config-generator's gate-policy field group depends on.
+    const on = parseFocusManifest({ gate: { enabled: true, linkedIssue: "block", duplicates: "advisory" } });
+    expect(on.gate.enabled).toBe(true);
+    expect(on.gate.linkedIssue).toBe("block");
+    expect(on.gate.duplicates).toBe("advisory");
+    expect(gateConfigToJson(on.gate)).toEqual({ enabled: true, linkedIssue: "block", duplicates: "advisory" });
+  });
+
+  it("resolves the path-instructions + exclude-paths field group via parse + round-trip + glob application (#2209)", () => {
+    const full = readConfigExample("gittensory.full.yml");
+    expect(full).toMatch(/exclude_paths:/);
+    expect(full).toMatch(/path_instructions:/);
+    // Defaults: both are empty lists — no per-path review instructions, nothing excluded.
+    const def = parseFocusManifest({});
+    expect(def.review.pathInstructions).toEqual([]);
+    expect(def.review.excludePaths).toEqual([]);
+    // Explicit values parse and round-trip byte-for-byte through reviewConfigToJson — the parity the
+    // config-generator's list editors for these two fields emit into.
+    const on = parseFocusManifest({
+      review: { path_instructions: [{ path: "src/**", instructions: "be strict" }], exclude_paths: ["dist/**"] },
+    });
+    expect(on.review.pathInstructions).toEqual([{ path: "src/**", instructions: "be strict" }]);
+    expect(on.review.excludePaths).toEqual(["dist/**"]);
+    expect(reviewConfigToJson(on.review)).toEqual({
+      path_instructions: [{ path: "src/**", instructions: "be strict" }],
+      exclude_paths: ["dist/**"],
+    });
+    // A path instruction applies only to changed files matching its glob (empty string otherwise).
+    expect(resolveReviewPathInstructions(on.review.pathInstructions, ["src/index.ts"])).toContain("be strict");
+    expect(resolveReviewPathInstructions(on.review.pathInstructions, ["docs/readme.md"])).toBe("");
   });
 });

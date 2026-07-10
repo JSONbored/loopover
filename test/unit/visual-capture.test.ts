@@ -391,6 +391,67 @@ describe("mapFilesToRoutes maxRoutes parameter", () => {
   });
 });
 
+describe("mapFilesToRoutes app-folder generalization (#3611 follow-up)", () => {
+  it("maps metagraphed-style apps/ui/src/routes/** files the same way as apps/gittensory-ui/** (identical TanStack flat-file convention, different app folder name)", () => {
+    expect(mapFilesToRoutes(["apps/ui/src/routes/settings.tsx"])).toEqual(["/settings"]);
+    expect(mapFilesToRoutes(["apps/ui/src/routes/accounts.index.tsx"])).toEqual(["/accounts"]);
+  });
+
+  it("still falls back to '/' for a file that matches no app-folder-routes pattern at all", () => {
+    expect(mapFilesToRoutes(["src/components/Widget.tsx"])).toEqual(["/"]);
+  });
+});
+
+describe("review.visual.production_url (#3611 follow-up)", () => {
+  it("prefers visualConfig.productionUrl over the global PUBLIC_SITE_ORIGIN env var for the 'before' shot", async () => {
+    const result = await buildCapture(
+      createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://gittensory.example.com" }),
+      "installation-token",
+      { repoFullName: "owner/metagraphed", prNumber: 50, previewUrl: "https://preview.example.com" },
+      ["apps/ui/src/routes/index.tsx"],
+      undefined,
+      { productionUrl: "https://metagraph.example.com" },
+    );
+    expect(result.routes[0]?.beforeUrl).toContain(encodeURIComponent("https://metagraph.example.com/"));
+    expect(result.routes[0]?.beforeUrl).not.toContain(encodeURIComponent("https://gittensory.example.com"));
+  });
+
+  it("falls back to the global PUBLIC_SITE_ORIGIN when visualConfig.productionUrl is null/unset", async () => {
+    const withNull = await buildCapture(
+      createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://gittensory.example.com" }),
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 51, previewUrl: "https://preview.example.com" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      undefined,
+      { productionUrl: null },
+    );
+    expect(withNull.routes[0]?.beforeUrl).toContain(encodeURIComponent("https://gittensory.example.com/app"));
+
+    const withoutConfig = await buildCapture(
+      createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "https://gittensory.example.com" }),
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 52, previewUrl: "https://preview.example.com" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+    );
+    expect(withoutConfig.routes[0]?.beforeUrl).toContain(encodeURIComponent("https://gittensory.example.com/app"));
+  });
+
+  it("degrades to an empty 'before' base (no page, no shot) when NEITHER productionUrl nor PUBLIC_SITE_ORIGIN is set at all", async () => {
+    const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example" });
+    delete (env as Partial<Env>).PUBLIC_SITE_ORIGIN;
+    const result = await buildCapture(
+      env,
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 53, previewUrl: "https://preview.example.com" },
+      ["apps/gittensory-ui/src/routes/app.index.tsx"],
+      undefined,
+      { productionUrl: null },
+    );
+    expect(result.routes[0]?.beforeUrl).toBeUndefined();
+    expect(result.routes[0]?.beforeUrlMobile).toBeUndefined();
+  });
+});
+
 describe("buildCapture pixel-diff wiring (#3674)", () => {
   it("never calls the diff provider when diffing is unavailable (the real, unmocked default) — byte-identical to pre-#3674", async () => {
     const availableSpy = vi.spyOn(pixelDiffModule, "isVisualDiffAvailable");

@@ -21,6 +21,7 @@ import {
   upsertInstallationHealth,
   upsertRepoSyncSegment,
   upsertRepoSyncState,
+  getPullRequest,
   upsertPullRequestFile,
   upsertPullRequestFromGitHub,
   upsertIssueFromGitHub,
@@ -62,6 +63,125 @@ import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { createTestEnv } from "../helpers/d1";
+
+// #4682 incident (2026-07-10): the stored-body cap used to be 4000 chars -- well under what a compliant
+// screenshot-evidence table (or any sufficiently detailed PR/issue) actually needs -- and every body-content
+// check (screenshotTableGate's matrix parser included) reads the STORED copy, not a live GitHub fetch, so a
+// silently truncated body produced a false "missing evidence" close for a PR that had genuinely complete
+// evidence. The cap now matches GitHub's own issue/PR body limit (65536) so it can only ever bind on content
+// GitHub itself was never going to accept.
+describe("pull request / issue body storage cap (#4682 regression)", () => {
+  it("stores a body well past the OLD 4000-char cap in full, unmangled", async () => {
+    const env = createTestEnv();
+    const longBody = "x".repeat(5160); // matches the real metagraphed#4682 body length that got truncated
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 4682,
+      title: "Long body PR",
+      state: "open",
+      user: { login: "nickmopen" },
+      head: { sha: "abc4682" },
+      labels: [],
+      body: longBody,
+    });
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 4682);
+    expect(stored?.body).toBe(longBody);
+    expect(stored?.body?.length).toBe(5160);
+  });
+
+  it("still caps a body at GitHub's own 65536-char issue/PR body limit, not unboundedly", async () => {
+    const env = createTestEnv();
+    const oversizedBody = "y".repeat(70000);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 4683,
+      title: "Oversized body PR",
+      state: "open",
+      user: { login: "nickmopen" },
+      head: { sha: "abc4683" },
+      labels: [],
+      body: oversizedBody,
+    });
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 4683);
+    expect(stored?.body?.length).toBe(65536);
+    expect(stored?.body).toBe(oversizedBody.slice(0, 65536));
+  });
+
+  it("stores an issue body well past the OLD 4000-char cap in full too (compactGitHubPayload is shared)", async () => {
+    const env = createTestEnv();
+    const longBody = "z".repeat(4500);
+    await upsertIssueFromGitHub(env, "JSONbored/gittensory", {
+      number: 9001,
+      title: "Long issue body",
+      state: "open",
+      user: { login: "nickmopen" },
+      labels: [],
+      body: longBody,
+    });
+    const stored = await listIssues(env, "JSONbored/gittensory");
+    const issue = stored.find((i) => i.number === 9001);
+    expect(issue?.body).toBe(longBody);
+  });
+
+  it("logs a structured, greppable trace the instant a PR body actually gets truncated -- the #4682 failure mode was total silence", async () => {
+    const env = createTestEnv();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 4684,
+        title: "Body past the real GitHub limit",
+        state: "open",
+        user: { login: "nickmopen" },
+        head: { sha: "abc4684" },
+        labels: [],
+        body: "w".repeat(70000),
+      });
+      const traceLine = logSpy.mock.calls.map((c) => String(c[0])).find((line) => line.includes("github_app.body_truncated_on_store"));
+      expect(traceLine).toBeDefined();
+      const parsed = JSON.parse(traceLine as string) as Record<string, unknown>;
+      expect(parsed).toMatchObject({ event: "github_app.body_truncated_on_store", kind: "pull_request", repoFullName: "JSONbored/gittensory", number: 4684, originalLength: 70000, storedLength: 65536 });
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("never logs the truncation trace for a body within the cap (the common case stays silent)", async () => {
+    const env = createTestEnv();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 4685,
+        title: "Ordinary body",
+        state: "open",
+        user: { login: "nickmopen" },
+        head: { sha: "abc4685" },
+        labels: [],
+        body: "normal PR body",
+      });
+      expect(logSpy.mock.calls.map((c) => String(c[0])).some((line) => line.includes("github_app.body_truncated_on_store"))).toBe(false);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("logs the truncation trace for issue bodies too (compactGitHubPayload is shared)", async () => {
+    const env = createTestEnv();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await upsertIssueFromGitHub(env, "JSONbored/gittensory", {
+        number: 9002,
+        title: "Oversized issue body",
+        state: "open",
+        user: { login: "nickmopen" },
+        labels: [],
+        body: "v".repeat(70000),
+      });
+      const traceLine = logSpy.mock.calls.map((c) => String(c[0])).find((line) => line.includes("github_app.body_truncated_on_store"));
+      expect(traceLine).toBeDefined();
+      expect(JSON.parse(traceLine as string)).toMatchObject({ kind: "issue", repoFullName: "JSONbored/gittensory", number: 9002 });
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});
 
 describe("GitHub backfill", () => {
   afterEach(() => {
@@ -2237,6 +2357,182 @@ describe("GitHub backfill", () => {
         expect.objectContaining({ type: "backfill-repo-segment", repoFullName: "JSONbored/gittensory", segment: "open_pull_requests", mode: "resume", force: true }),
       ]),
     );
+  });
+
+  it("INVARIANT (#4497): skips the scheduled per-repo backfill when the prior sync is a fresh success, without touching GitHub or writing any sync-state/segment jobs", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    await seedRegisteredRepo(env);
+    await upsertRepoSyncState(env, {
+      repoFullName: "JSONbored/gittensory",
+      status: "success",
+      sourceKind: "github",
+      openIssuesCount: 5,
+      openPullRequestsCount: 3,
+      recentMergedPullRequestsCount: 10,
+      lastCompletedAt: new Date().toISOString(),
+      warnings: [],
+    });
+    vi.stubGlobal("fetch", async () => new Response("must not be called", { status: 500 }));
+
+    const result = await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light" });
+
+    expect(result).toMatchObject({ status: "skipped", warnings: [expect.stringContaining("Recent GitHub sync completed")] });
+    expect(sent).toEqual([]);
+    // Status stays "success" (unchanged) -- the scheduled path must not stamp "running" over a fresh state.
+    expect(await listRepoSyncStates(env)).toMatchObject([{ status: "success" }]);
+  });
+
+  it("INVARIANT (#4497): a syncState row stamped never_synced (distinct from no row at all) still proceeds with a real sync on the scheduled path", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    await seedRegisteredRepo(env);
+    // A row EXISTS (unlike the "no prior state at all" case above) but its status is the placeholder
+    // "never_synced" -- e.g. stamped by an unrelated write that only carries over display fields (see
+    // fetchAndCachePrStateFields-style callers) before any real sync ever completed. This must never be
+    // mistaken for "a completed sync just happened."
+    await upsertRepoSyncState(env, {
+      repoFullName: "JSONbored/gittensory",
+      status: "never_synced",
+      sourceKind: "github",
+      openIssuesCount: 0,
+      openPullRequestsCount: 0,
+      recentMergedPullRequestsCount: 0,
+      lastCompletedAt: new Date().toISOString(),
+      warnings: [],
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString() === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 1, openPullRequests: 1, mergedPullRequests: 1, closedPullRequests: 0, labels: 0 });
+      return Response.json([]);
+    });
+
+    const result = await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light" });
+
+    expect(result.status).toBe("queued");
+    expect(sent.filter((message) => message.type === "backfill-repo-segment").length).toBeGreaterThan(0);
+  });
+
+  it("INVARIANT (#4497): a syncState past BOTH the fresh-success and error-backoff windows proceeds with a real sync, not a skip", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    await seedRegisteredRepo(env);
+    // 7 hours ago: past FRESH_SYNC_MS (6h) for a success AND past ERROR_BACKOFF_MS (1h) were this an error --
+    // stale enough that the backfill must proceed normally rather than skip.
+    await upsertRepoSyncState(env, {
+      repoFullName: "JSONbored/gittensory",
+      status: "success",
+      sourceKind: "github",
+      openIssuesCount: 2,
+      openPullRequestsCount: 1,
+      recentMergedPullRequestsCount: 3,
+      lastCompletedAt: new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString(),
+      warnings: [],
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString() === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 2, openPullRequests: 1, mergedPullRequests: 3, closedPullRequests: 0, labels: 0 });
+      return Response.json([]);
+    });
+
+    const result = await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light" });
+
+    expect(result.status).toBe("queued");
+    expect(sent.filter((message) => message.type === "backfill-repo-segment").length).toBeGreaterThan(0);
+  });
+
+  it("INVARIANT (#4497): backs off the scheduled per-repo backfill when the prior sync errored recently, instead of retrying every tick", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    await seedRegisteredRepo(env);
+    await upsertRepoSyncState(env, {
+      repoFullName: "JSONbored/gittensory",
+      status: "error",
+      sourceKind: "github",
+      openIssuesCount: 0,
+      openPullRequestsCount: 0,
+      recentMergedPullRequestsCount: 0,
+      lastCompletedAt: new Date().toISOString(),
+      errorSummary: "rate limited",
+      warnings: [],
+    });
+    vi.stubGlobal("fetch", async () => new Response("must not be called", { status: 500 }));
+
+    const result = await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light" });
+
+    expect(result).toMatchObject({ status: "skipped", warnings: [expect.stringContaining("backing off")] });
+    expect(sent).toEqual([]);
+  });
+
+  it("REGRESSION (#4497, endless-scheduled-resync incident): two scheduled dispatches within the freshness window only sync once -- previously every registered repo was re-synced every 30 min forever regardless of freshness or a permanent error state", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    await seedRegisteredRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString() === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 4, openPullRequests: 2, mergedPullRequests: 9, closedPullRequests: 1, labels: 1 });
+      return Response.json([]);
+    });
+
+    // First scheduled tick: no prior sync state -> a real sync proceeds and stamps a fresh success.
+    const first = await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light" });
+    expect(first.status).toBe("queued");
+    const segmentJobsAfterFirst = sent.filter((message) => message.type === "backfill-repo-segment").length;
+    expect(segmentJobsAfterFirst).toBeGreaterThan(0);
+    await upsertRepoSyncState(env, {
+      repoFullName: "JSONbored/gittensory",
+      status: "success",
+      sourceKind: "github",
+      openIssuesCount: 4,
+      openPullRequestsCount: 2,
+      recentMergedPullRequestsCount: 9,
+      lastCompletedAt: new Date().toISOString(),
+      warnings: [],
+    });
+
+    // Second scheduled tick, simulating the next ~30-min cron cadence while still fresh: must be skipped, not
+    // re-synced -- this is the exact incident shape (the scheduled path previously had no freshness check at
+    // all, so this second tick would have unconditionally re-fetched totals and re-enqueued all 4 segments).
+    const second = await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light" });
+    expect(second.status).toBe("skipped");
+    expect(sent.filter((message) => message.type === "backfill-repo-segment").length).toBe(segmentJobsAfterFirst);
+
+    // An explicit force still bypasses the freshness gate -- the override path is preserved.
+    const forced = await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light", force: true });
+    expect(forced.status).toBe("queued");
+    expect(sent.filter((message) => message.type === "backfill-repo-segment").length).toBeGreaterThan(segmentJobsAfterFirst);
   });
 
   it("reuses a fresh repo totals snapshot when queueing segmented backfills", async () => {
@@ -6089,7 +6385,7 @@ describe("GitHub backfill", () => {
       const result = await fetchLinkedIssueFacts(env, "JSONbored/gittensory", 42, "tok");
       expect(result).toEqual({
         status: "found",
-        facts: { number: 42, labels: ["bug", "manual-string-label"], assignees: ["maintainer"], state: "open", authorLogin: "reporter", title: null, body: null },
+        facts: { number: 42, labels: ["bug", "manual-string-label"], assignees: ["maintainer"], state: "open", authorLogin: "reporter", title: null, body: null, closedAt: null },
       });
     });
 
@@ -6117,8 +6413,25 @@ describe("GitHub backfill", () => {
           authorLogin: "reporter",
           title: "Enrich SN74 Gittensor — add SSE stream",
           body: "We need a live SSE stream surface for SN74 Gittensor.",
+          closedAt: null,
         },
       });
+    });
+
+    it("extracts closedAt (#4528) from the same REST payload when the issue is closed", async () => {
+      const env = createTestEnv({});
+      vi.stubGlobal("fetch", async () =>
+        Response.json({ number: 4279, state: "closed", closed_at: "2026-07-09T22:15:14Z" }),
+      );
+      const result = await fetchLinkedIssueFacts(env, "JSONbored/gittensory", 4279, "tok");
+      expect(result.status === "found" && result.facts.closedAt).toBe("2026-07-09T22:15:14Z");
+    });
+
+    it("falls back to null for closedAt (#4528) when the payload omits it or it isn't a string", async () => {
+      const env = createTestEnv({});
+      vi.stubGlobal("fetch", async () => Response.json({ number: 4279, state: "open", closed_at: null }));
+      const result = await fetchLinkedIssueFacts(env, "JSONbored/gittensory", 4279, "tok");
+      expect(result.status === "found" && result.facts.closedAt).toBeNull();
     });
 
     it("falls back to null for title/body when the payload omits them or they are empty strings", async () => {

@@ -642,3 +642,15 @@ safe defaults and `warnings` explains any dropped or invalid fields.
 `.gittensory-miner.yml` → `.github/gittensory-miner.yml` → the `.json` variants). It is IO-free — the caller injects
 the existence check — so a caller reads the returned path and feeds its content to `parseMinerGoalSpecContent`. See
 `.gittensory-miner.yml.example` for the documented fields.
+
+## Repo map builder
+
+`buildRepoMap(files)` gives a coding-agent driver (or the acceptance-criteria/prompt-packet builders upstream of
+it) a compact, structural view of a target repository — function/class/method/interface/type signatures — without
+paying the token cost of dumping full file contents into a prompt. It parses with `web-tree-sitter` (the WASM
+binding, not a native addon, since this package also ships a Cloudflare Workers deployment target) using prebuilt
+grammars from `tree-sitter-wasms`. Supported today: JavaScript/TypeScript/TSX. A file with an unsupported extension
+or a grammar that fails to load/parse is reported via `skipped` on its `RepoMapFileEntry`, never thrown — this
+module's contract is "extract what it safely can," not "block the whole driver invocation." `renderRepoMap(entries)`
+renders a bounded plain-text outline, truncating (with a marker) once a configurable char budget is exceeded so it
+can't blow out a prompt budget on a large repo. (#4280)

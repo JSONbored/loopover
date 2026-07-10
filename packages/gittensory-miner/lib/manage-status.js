@@ -1,5 +1,6 @@
 import { initEventLedger } from "./event-ledger.js";
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
+import { initRunStateStore } from "./run-state.js";
 
 /** Event vocabulary for manage-phase PR snapshots written by manage poll. (#2325) */
 export const MANAGE_PR_UPDATE_EVENT = "manage_pr_update";
@@ -106,6 +107,39 @@ export function collectManageStatus(sources) {
   });
 }
 
+/**
+ * Fold each tracked repo's current discover/plan/prepare run state alongside its managed PR rows into one
+ * "run portfolio" row per repo (#4279). `collectManageStatus` alone is PR-scoped only and never surfaces the
+ * run-state signal, so a repo actively discovering/planning with zero PRs yet is otherwise invisible. A repo
+ * appears here if it has EITHER a recorded run state OR at least one managed PR row.
+ */
+export function collectRunPortfolio(sources) {
+  const runStateStore = sources?.runStateStore;
+  if (!runStateStore || typeof runStateStore.listRunStates !== "function") {
+    throw new Error("invalid_run_state_store");
+  }
+  const prsByRepo = new Map();
+  for (const row of collectManageStatus(sources)) {
+    const list = prsByRepo.get(row.repoFullName) ?? [];
+    list.push(row);
+    prsByRepo.set(row.repoFullName, list);
+  }
+  const runStateByRepo = new Map(runStateStore.listRunStates().map((entry) => [entry.repoFullName, entry]));
+
+  const repoFullNames = new Set([...prsByRepo.keys(), ...runStateByRepo.keys()]);
+  return [...repoFullNames].sort((left, right) => left.localeCompare(right)).map((repoFullName) => {
+    const prs = prsByRepo.get(repoFullName) ?? [];
+    const runState = runStateByRepo.get(repoFullName);
+    return {
+      repoFullName,
+      runState: runState?.state ?? null,
+      runStateUpdatedAt: runState?.updatedAt ?? null,
+      prCount: prs.length,
+      prs,
+    };
+  });
+}
+
 function display(value) {
   if (value === null || value === undefined) return "-";
   return String(value);
@@ -140,6 +174,27 @@ export function renderManageStatusTable(rows) {
   return [header, ...lines].join("\n");
 }
 
+/** One row per tracked repo (run state + PR count), the compact companion to {@link renderManageStatusTable}'s
+ *  per-PR detail (#4279). */
+export function renderRunPortfolioTable(portfolio) {
+  if (!Array.isArray(portfolio) || portfolio.length === 0) return "no tracked repos";
+  const header = [
+    "repo".padEnd(24),
+    "run-state".padEnd(12),
+    "updated".padEnd(20),
+    "prs".padStart(4),
+  ].join(" ");
+  const lines = portfolio.map((entry) =>
+    [
+      entry.repoFullName.padEnd(24),
+      display(entry.runState).padEnd(12),
+      display(entry.runStateUpdatedAt).padEnd(20),
+      String(entry.prCount).padStart(4),
+    ].join(" "),
+  );
+  return [header, ...lines].join("\n");
+}
+
 export function parseManageStatusArgs(args = []) {
   for (const token of args) {
     if (token === "--json") continue;
@@ -158,18 +213,24 @@ export function runManageStatus(args = [], options = {}) {
 
   const ownsPortfolioQueue = options.initPortfolioQueue === undefined;
   const ownsEventLedger = options.initEventLedger === undefined;
+  const ownsRunStateStore = options.initRunStateStore === undefined;
   const portfolioQueue = (options.initPortfolioQueue ?? initPortfolioQueueStore)();
   const eventLedger = (options.initEventLedger ?? initEventLedger)();
+  const runStateStore = (options.initRunStateStore ?? initRunStateStore)();
   try {
     const rows = collectManageStatus({ portfolioQueue, eventLedger });
+    const runPortfolio = collectRunPortfolio({ portfolioQueue, eventLedger, runStateStore });
     if (parsed.json) {
-      console.log(JSON.stringify({ rows }, null, 2));
+      // Additive only (#4279): `rows` keeps its existing shape unchanged; `runPortfolio` is a new key so an
+      // existing consumer parsing this JSON for `rows` alone sees byte-identical output.
+      console.log(JSON.stringify({ rows, runPortfolio }, null, 2));
     } else {
-      console.log(renderManageStatusTable(rows));
+      console.log(`${renderManageStatusTable(rows)}\n\n${renderRunPortfolioTable(runPortfolio)}`);
     }
     return 0;
   } finally {
     if (ownsPortfolioQueue) portfolioQueue.close();
     if (ownsEventLedger) eventLedger.close();
+    if (ownsRunStateStore) runStateStore.close();
   }
 }

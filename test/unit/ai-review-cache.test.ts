@@ -422,7 +422,7 @@ describe("AI review cache (#1)", () => {
       // A newer head SHA exists (the contributor pushed again), but was never independently published.
       await putCachedAiReview(env, "o/r", 51, "sha2", "block", { notes: "never published", reviewerCount: 1 });
 
-      expect(await getLatestPublishedAiReview(env, "o/r", 51, "block")).toEqual({ notes: "first review", reviewerCount: 1, findings: [] });
+      expect(await getLatestPublishedAiReview(env, "o/r", 51, "block")).toEqual({ notes: "first review", reviewerCount: 1, findings: [], headSha: "sha1" });
     });
 
     it("respects the ai_review_mode filter, same as getCachedAiReview", async () => {
@@ -430,7 +430,7 @@ describe("AI review cache (#1)", () => {
       await putCachedAiReview(env, "o/r", 52, "sha1", "advisory", { notes: "advisory mode", reviewerCount: 1 });
       await markAiReviewPublished(env, "o/r", 52, "sha1");
       expect(await getLatestPublishedAiReview(env, "o/r", 52, "block")).toBeNull();
-      expect(await getLatestPublishedAiReview(env, "o/r", 52, "advisory")).toEqual({ notes: "advisory mode", reviewerCount: 1, findings: [] });
+      expect(await getLatestPublishedAiReview(env, "o/r", 52, "advisory")).toEqual({ notes: "advisory mode", reviewerCount: 1, findings: [], headSha: "sha1" });
     });
 
     it("round-trips findings and metadata like getCachedAiReview", async () => {
@@ -446,6 +446,7 @@ describe("AI review cache (#1)", () => {
         notes: "held review",
         reviewerCount: 2,
         findings: [{ code: "ai_review_split", severity: "critical", title: "Split", detail: "One reviewer blocked." }],
+        headSha: "sha1",
         metadata: { inputFingerprint: "fp-v1" },
       });
     });
@@ -462,10 +463,21 @@ describe("AI review cache (#1)", () => {
         await putCachedAiReview(env, "o/r", 54, "sha2", "block", { notes: "newer published review", reviewerCount: 1 });
         await markAiReviewPublished(env, "o/r", 54, "sha2");
 
-        expect(await getLatestPublishedAiReview(env, "o/r", 54, "block")).toEqual({ notes: "newer published review", reviewerCount: 1, findings: [] });
+        expect(await getLatestPublishedAiReview(env, "o/r", 54, "block")).toEqual({ notes: "newer published review", reviewerCount: 1, findings: [], headSha: "sha2" });
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it("omits headSha from the payload when the stored head_sha is empty", async () => {
+      const env = createTestEnv();
+      await env.DB.prepare(
+        `INSERT INTO ai_review_cache (repo_full_name, pull_number, head_sha, ai_review_mode, notes, reviewer_count, findings_json, metadata_json, cacheable, published_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind("o/r", 55, "", "block", "empty head", 1, "[]", "{}", 1, "2026-07-09T00:00:00.000Z", "2026-07-09T00:00:00.000Z")
+        .run();
+      expect(await getLatestPublishedAiReview(env, "o/r", 55, "block")).toEqual({ notes: "empty head", reviewerCount: 1, findings: [] });
     });
   });
 

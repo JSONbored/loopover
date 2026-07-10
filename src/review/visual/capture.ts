@@ -1,6 +1,7 @@
 // Realtime visual capture (reviewbot→gittensory convergence — visual port). taopedia-style before/after.
 //
-// before = production (PUBLIC_SITE_ORIGIN); after = the PR's preview-deploy URL, discovered the
+// before = production (review.visual.production_url, falling back to the global PUBLIC_SITE_ORIGIN env var);
+// after = the PR's preview-deploy URL, discovered the
 // provider-agnostic way (Deployments API → commit checks → cloudflare-bot PR comment). Each page is
 // rendered once here (in the queue consumer, which has the time budget), stored as a PNG in R2
 // (env.REVIEW_AUDIT), and embedded either as <PUBLIC_API_ORIGIN>/gittensory/shot?key=<r2key> (this
@@ -30,7 +31,11 @@ import { encodeScrollGif, isScrollGifAvailable } from "./scroll-gif";
 
 const NAMESPACE = "gittensory";
 const DEFAULT_ROUTES = ["/"];
-const DEFAULT_ROUTE_FILE = /apps\/gittensory-ui\/src\/routes\/(.+?)\.(?:tsx|jsx)$/i;
+// The app-folder segment is a wildcard, not hardcoded to gittensory-ui: metagraphed's UI (apps/ui/src/routes/)
+// uses the identical TanStack flat-file convention `routeForFile` below implements, just under a different app
+// folder name. Only ever matched against the CURRENT repo's own changed-file paths (see mapFilesToRoutes'
+// caller), so widening this carries no cross-repo ambiguity risk.
+const DEFAULT_ROUTE_FILE = /apps\/[^/]+\/src\/routes\/(.+?)\.(?:tsx|jsx)$/i;
 // Each route renders desktop + mobile for before + after (up to 4 PNGs). Cap routes to bound browser-render
 // wall-clock — Browser Rendering is the costliest binding.
 const MAX_ROUTES = 2;
@@ -368,6 +373,11 @@ async function captureScrollGif(
  *  #3612 / #4109). Absent ⇒ byte-identical to today (GitHub-native discovery, automatic route inference,
  *  single default-theme capture, built-in route cap, no scroll-GIF, no localStorage theme forcing). */
 export type VisualCaptureConfig = {
+  /** `review.visual.production_url` (#3611 follow-up): overrides `env.PUBLIC_SITE_ORIGIN` (a single GLOBAL
+   *  value with no per-repo awareness) as the "before" base for THIS repo. ALWAYS wins when set, mirroring
+   *  `preview.urlTemplate`'s precedence over discovery. null/undefined ⇒ falls back to `env.PUBLIC_SITE_ORIGIN`,
+   *  byte-identical to today. */
+  productionUrl?: string | null | undefined;
   preview?: VisualPreviewInput | null | undefined;
   routes?: VisualRoutesInput | null | undefined;
   themes?: readonly ShotTheme[] | null | undefined;
@@ -391,8 +401,10 @@ export type VisualCaptureConfig = {
 export async function buildCapture(env: Env, token: string, target: CaptureTarget, visualFiles: string[], rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey | undefined, visualConfig?: VisualCaptureConfig | null | undefined): Promise<CaptureResult> {
   const repo = parseRepo(target.repoFullName);
   const apiVersion = "2022-11-28";
-  // before = production (PUBLIC_SITE_ORIGIN, e.g. https://gittensory.aethereal.dev).
-  const prodBase = env.PUBLIC_SITE_ORIGIN ?? "";
+  // before = production. review.visual.production_url (#3611 follow-up) ALWAYS wins when set -- PUBLIC_SITE_ORIGIN
+  // is a single GLOBAL env var (e.g. https://gittensory.aethereal.dev) with no per-repo awareness, correct for at
+  // most one repo on a multi-repo self-host instance; every other repo needs its own override here.
+  const prodBase = visualConfig?.productionUrl ? visualConfig.productionUrl : (env.PUBLIC_SITE_ORIGIN ?? "");
 
   // after = the PR's preview deploy. An explicit review.visual.preview.url_template (#3609) ALWAYS wins —
   // a maintainer-configured template is a stronger signal than inference, and is the only option for a

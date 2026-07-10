@@ -358,8 +358,9 @@ export type AgentActionPlanInput = {
   // satisfies the gate, so `matched` here is already false whenever the bot capture succeeded (see
   // evaluateScreenshotTableGate's `botCaptureSatisfied` input). Same zero-hallucination short-circuit shape as
   // blacklistMatch — fires ahead of ALL merit/CI/AI analysis, for a CONTRIBUTOR only, so its close is tagged
-  // `closeKind: "screenshot_table"`. Absent / not-violated ⇒ no effect. `"close"` is the gate's only
-  // enforcement action (#4110 removed the dead request_changes/comment surface — see ScreenshotTableGateAction).
+  // `closeKind: "screenshot_table"`. Absent / not-violated ⇒ no effect. The caller (processors.ts) only ever
+  // populates this field when the gate's configured `action` is `"close"` — an `"advisory"` violation (#4535)
+  // never reaches the planner at all, by construction (see ScreenshotTableGateAction).
   screenshotTableMatch?: { matched: boolean; reason: string | null } | undefined;
   pr: {
     mergeableState?: string | null | undefined;

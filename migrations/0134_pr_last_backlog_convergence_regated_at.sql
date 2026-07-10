@@ -1,0 +1,16 @@
+-- Per-repo draining guard for backlog-convergence-sweep (#4502), mirroring last_regated_at (0062) but scoped
+-- to THIS sweep specifically, not shared with agent-regate-sweep's own marker.
+--
+-- BEFORE: fanOutBacklogConvergenceSweepJobs has no in-flight guard at all -- while a prior cycle's fanned-out
+-- agent-regate-pr jobs (deliveryId "backlog-convergence:...") are still mid-flight, the next 30-min cron tick
+-- re-selects the same candidates and re-enqueues duplicate jobs. A crashed/restarted worker leaves its claimed
+-- row status:"processing" until queueProcessingTimeoutMs() reclaims it (default 30 min) -- almost exactly this
+-- sweep's own cadence -- so a stuck row from one cycle does not stop the next cycle from firing.
+--
+-- AFTER: sweepRepoBacklogConvergence stamps this marker for every candidate AT DISPATCH time (mirroring
+-- #audit-sweep-dispatch-stamp), and fanOutBacklogConvergenceSweepJobs's resolution loop skips a repo whose
+-- freshest stamp is within the sweep's own draining window (isRegateSweepDraining, BACKLOG_CONVERGENCE_SWEEP_FRESHNESS_MS).
+--
+-- gittensory-computed (sweep-written), keyed to the PR, omitted from upsertPullRequestFromGitHub's SET clause so
+-- a later GitHub sync cannot clobber it. Nullable / no default -> backward-compatible.
+ALTER TABLE pull_requests ADD COLUMN last_backlog_convergence_regated_at TEXT;

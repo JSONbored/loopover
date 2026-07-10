@@ -9,7 +9,7 @@
 import type { AiContentBlock, CombineStrategy, OnMerge } from "../services/ai-review";
 import { isConfiguredSelfHostProvider, resolveConfiguredProviderNames } from "./ai-config";
 export { assertNoLegacySharedAiEnv } from "./ai-config";
-import { incr } from "./metrics";
+import { incr, observe } from "./metrics";
 import { withReviewSpan } from "./tracing";
 import { delimiter } from "node:path";
 
@@ -1096,12 +1096,18 @@ async function runProviderWithOtel(
       `circuit_open: provider "${provider.name}" is in cooldown after ${AI_PROVIDER_FAILURE_THRESHOLD} consecutive failures — skipping this attempt`,
     );
   }
+  const requestKindLabel = requestKind(options);
+  const startedAtMs = Date.now();
   try {
     const result = await withReviewSpan(
       "selfhost.ai.provider",
-      { "ai.provider": provider.name, "ai.model": model || "default", "ai.request_kind": requestKind(options) },
+      { "ai.provider": provider.name, "ai.model": model || "default", "ai.request_kind": requestKindLabel },
       () => provider.ai.run(model, options),
     );
+    observe("gittensory_ai_provider_request_duration_seconds", (Date.now() - startedAtMs) / 1000, {
+      provider: provider.name,
+      request_kind: requestKindLabel,
+    });
     aiProviderCircuits.delete(provider.name);
     if (result.usage) {
       return {
@@ -1115,8 +1121,13 @@ async function runProviderWithOtel(
     }
     return result;
   } catch (error) {
+    observe("gittensory_ai_provider_request_duration_seconds", (Date.now() - startedAtMs) / 1000, {
+      provider: provider.name,
+      request_kind: requestKindLabel,
+    });
     if (isExpectedEmbeddingRoutingError(options, error)) throw error;
     incr("gittensory_ai_provider_failures_total", { provider: provider.name });
+    incr("gittensory_ai_provider_request_errors_total", { provider: provider.name, request_kind: requestKindLabel });
     // Re-read the map here rather than reusing the `circuit` captured above: that read happened BEFORE the
     // `await` on the real provider call, so under concurrent same-provider calls it can be stale by the time
     // this catch runs, and computing `failures` from it would clobber a sibling call's write (lost-update race)

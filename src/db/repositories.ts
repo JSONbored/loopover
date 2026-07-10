@@ -180,7 +180,16 @@ import { decryptSecret, encryptSecret, sha256Hex } from "../utils/crypto";
 import { errorMessage, jsonString, nowIso, parseJson, repoParts } from "../utils/json";
 import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN } from "../signals/redaction";
 
-const MAX_STORED_BODY_CHARS = 4000;
+// GitHub's own documented issue/PR body character limit -- this is a defensive backstop, never an
+// intended-to-fire cap. (2026-07-10 incident: the prior 4000-char value silently truncated any body over
+// that length before every body-content-dependent check ever saw it -- screenshotTableGate's viewport/theme
+// matrix parser, linked-issue-satisfaction, slop keyword matching, etc. -- with zero indication anything was
+// cut. Confirmed live on metagraphed#4682: a genuinely complete 12-image Phase C2 table (5160 real chars) got
+// closed for "missing before/after screenshot table" because only the first ~4000 chars (one row) were ever
+// stored. A cap this repo's own contributor-facing evidence format was never sized against is not a safety
+// margin, it's a landmine -- 65536 matches what GitHub itself would already reject, so this can now only ever
+// bind on content GitHub was never going to accept in the first place.)
+const MAX_STORED_BODY_CHARS = 65536;
 const SIGNAL_FRESHNESS_LOOKBACK_MS = 14 * 24 * 60 * 60 * 1000;
 const MAX_SIGNAL_FRESHNESS_TARGETS = 200;
 const MAX_SIGNAL_FRESHNESS_TARGET_KEY_CHARS = 256;
@@ -343,6 +352,7 @@ export async function upsertPullRequestFromGitHub(
   const existingPayload = preserveSparseBody ? parseJson<{ body?: string | null }>(existingClaimRow.payloadJson, {}) : undefined;
   const existingBody = existingPayload?.body ?? null;
   const body = preserveSparseBody ? existingBody : record.body;
+  logIfBodyTruncated("pull_request", repoFullName, pr.number, preserveSparseBody ? existingBody : pr.body);
   const payload = preserveSparseBody ? compactGitHubPayload({ ...pr, body: existingBody }) : compactGitHubPayload(pr);
   const linkedIssues = preserveSparseBody ? parseLinkedIssuesJson(existingClaimRow.linkedIssuesJson) : record.linkedIssues;
   const linkedIssuesJson = preserveSparseBody ? existingClaimRow.linkedIssuesJson : jsonString(linkedIssues);
@@ -436,6 +446,7 @@ export async function upsertIssueFromGitHub(env: Env, repoFullName: string, issu
   const record = toIssueRecord(repoFullName, issue);
   const db = getDb(env.DB);
   const lastSeenOpenAt = issue.state === "open" ? (options.seenOpenAt ?? nowIso()) : null;
+  logIfBodyTruncated("issue", repoFullName, issue.number, issue.body);
   await db
     .insert(issues)
     .values({
@@ -570,7 +581,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       reviewEvasionLabel: DEFAULT_REVIEW_EVASION_LABEL,
       reviewEvasionComment: true,
       mergeTrainMode: "off",
-      screenshotTableGate: { ...DEFAULT_SCREENSHOT_TABLE_GATE, whenLabels: [], whenPaths: [] },
+      screenshotTableGate: { ...DEFAULT_SCREENSHOT_TABLE_GATE, whenLabels: [], whenPaths: [], requireViewports: [], requireThemes: [] },
     };
   }
   return {
@@ -857,7 +868,10 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       screenshotTableGateWhenLabelsJson: jsonString(resolved.screenshotTableGate.whenLabels),
       screenshotTableGateWhenPathsJson: jsonString(resolved.screenshotTableGate.whenPaths),
       screenshotTableGateAction: resolved.screenshotTableGate.action,
+      screenshotTableGateRequireViewportsJson: jsonString(resolved.screenshotTableGate.requireViewports),
+      screenshotTableGateRequireThemesJson: jsonString(resolved.screenshotTableGate.requireThemes),
       screenshotTableGateMessage: resolved.screenshotTableGate.message ?? null,
+      screenshotTableGateSkillFileUrl: resolved.screenshotTableGate.skillFileUrl ?? null,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
@@ -943,7 +957,10 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         screenshotTableGateWhenLabelsJson: jsonString(resolved.screenshotTableGate.whenLabels),
         screenshotTableGateWhenPathsJson: jsonString(resolved.screenshotTableGate.whenPaths),
         screenshotTableGateAction: resolved.screenshotTableGate.action,
+        screenshotTableGateRequireViewportsJson: jsonString(resolved.screenshotTableGate.requireViewports),
+        screenshotTableGateRequireThemesJson: jsonString(resolved.screenshotTableGate.requireThemes),
         screenshotTableGateMessage: resolved.screenshotTableGate.message ?? null,
+        screenshotTableGateSkillFileUrl: resolved.screenshotTableGate.skillFileUrl ?? null,
         updatedAt: nowIso(),
       },
     });
@@ -2536,6 +2553,23 @@ export async function claimRegateFanoutSlot(env: Env, now: string, windowMs: num
   }
 }
 
+/** Atomic backlog-convergence-sweep fan-out dedup (#4502), mirroring {@link claimRegateFanoutSlot} exactly but on
+ *  a DISTINCT singleton column so the two differently-cadenced sweeps' dedup windows never interfere. */
+export async function claimBacklogConvergenceFanoutSlot(env: Env, now: string, windowMs: number): Promise<boolean> {
+  const threshold = new Date(Date.parse(now) - windowMs).toISOString();
+  try {
+    const result = await env.DB.prepare(
+      "UPDATE global_agent_controls SET last_backlog_convergence_fanout_at = ?1 WHERE id = 'singleton' AND (last_backlog_convergence_fanout_at IS NULL OR last_backlog_convergence_fanout_at < ?2)",
+    )
+      .bind(now, threshold)
+      .run();
+    /* v8 ignore next -- D1 update metadata normally includes changes; the ?? 0 fallback protects driver anomalies. */
+    return Number(result.meta.changes ?? 0) === 1;
+  } catch {
+    return true;
+  }
+}
+
 /** Atomic per-period dedup for the cross-repo maintainer recap digest (#2249): claim `periodKey` (the current
  *  UTC date, "YYYY-MM-DD") as the singleton's last-sent period. Mirrors {@link claimRegateFanoutSlot}: the
  *  conditional UPDATE matches only when the stored period is unset or DIFFERENT from `periodKey`, so a retried
@@ -2614,6 +2648,35 @@ export async function hasRecentAuditEventForOtherTarget(env: Env, actor: string,
     .where(and(eq(auditEvents.actor, actor), eq(auditEvents.eventType, eventType), not(eq(auditEvents.targetKey, currentTargetKey)), gte(auditEvents.createdAt, sinceIso)))
     .limit(1);
   return rows.length > 0;
+}
+
+/** Timestamp-returning variant of {@link hasRecentAuditEventForOtherTarget} (#4512): the newest matching
+ *  row's `createdAt`, or `null` when there is none. Backs velocity-aware escalation logic that needs to know
+ *  HOW RECENTLY a prior match happened, not just whether one exists within the window. */
+export async function mostRecentAuditEventForOtherTarget(env: Env, actor: string, eventType: string, currentTargetKey: string, sinceIso: string): Promise<string | null> {
+  const db = getDb(env.DB);
+  const rows = await db
+    .select({ createdAt: auditEvents.createdAt })
+    .from(auditEvents)
+    .where(and(eq(auditEvents.actor, actor), eq(auditEvents.eventType, eventType), not(eq(auditEvents.targetKey, currentTargetKey)), gte(auditEvents.createdAt, sinceIso)))
+    .orderBy(desc(auditEvents.createdAt))
+    .limit(1);
+  return rows[0]?.createdAt ?? null;
+}
+
+/** Count-returning, cross-repo variant (#4515): how many recent events of this type has this actor generated,
+ *  across EVERY target (repo/PR), within the recency window? Unlike {@link countRecentAuditEventsForActorAndTarget}
+ *  (scoped to one target thread), this counts an actor's ACTIVITY VOLUME irrespective of which PR/repo each
+ *  event landed on -- backs a per-actor rate ceiling on an expensive operation (e.g. a paid AI call) that a
+ *  single-target-scoped counter would never catch for an actor spreading attempts across many repos. */
+export async function countRecentAuditEventsForActor(env: Env, actor: string, eventType: string, sinceIso: string): Promise<number> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(auditEvents)
+    .where(and(eq(auditEvents.actor, actor), eq(auditEvents.eventType, eventType), gte(auditEvents.createdAt, sinceIso)));
+  /* v8 ignore next -- count(*) always returns exactly one row; the empty-array guard only satisfies the destructure type. */
+  return row?.count ?? 0;
 }
 
 /** Count-returning variant of {@link hasRecentAuditEvent}, additionally scoped to one `targetKey` (e.g. a single
@@ -3759,6 +3822,20 @@ export async function markPullRequestsRegated(env: Env, fullName: string, number
     .where(and(eq(pullRequests.repoFullName, fullName), inArray(pullRequests.number, numbers)));
 }
 
+/** Batch variant of {@link markPullRequestsRegated} for backlog-convergence-sweep (#4502): stamps the SEPARATE
+ *  last_backlog_convergence_regated_at marker at sweep DISPATCH time, mirroring the same "stamp immediately, not
+ *  in the downstream per-PR job" shape so getLatestBacklogConvergenceRegatedAt reflects this sweep before its
+ *  staggered per-PR jobs complete. */
+export async function markPullRequestsBacklogConvergenceRegated(env: Env, fullName: string, numbers: number[]): Promise<void> {
+  if (numbers.length === 0) return;
+  const db = getDb(env.DB);
+  const now = nowIso();
+  await db
+    .update(pullRequests)
+    .set({ lastBacklogConvergenceRegatedAt: now, updatedAt: now })
+    .where(and(eq(pullRequests.repoFullName, fullName), inArray(pullRequests.number, numbers)));
+}
+
 /** In-flight guard input for the re-gate sweep fan-out (#audit-sweep-fanout): the MOST RECENT last_regated_at
  *  across a repo's OPEN PRs (the freshest sweep stamp), or null if none has been swept. fanOutAgentRegateSweepJobs
  *  passes this to isRegateSweepDraining to skip re-arming a repo whose prior sweep is still draining. */
@@ -3766,6 +3843,19 @@ export async function getLatestRegatedAt(env: Env, fullName: string): Promise<st
   const db = getDb(env.DB);
   const [row] = await db
     .select({ latest: sql<string | null>`max(${pullRequests.lastRegatedAt})` })
+    .from(pullRequests)
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.state, "open")));
+  /* v8 ignore next -- max() always returns exactly one row; the empty-array guard only satisfies the destructure type. */
+  if (!row) return null;
+  return row.latest;
+}
+
+/** In-flight guard input for the backlog-convergence-sweep fan-out (#4502), mirroring {@link getLatestRegatedAt}
+ *  exactly but over the SEPARATE last_backlog_convergence_regated_at marker. */
+export async function getLatestBacklogConvergenceRegatedAt(env: Env, fullName: string): Promise<string | null> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({ latest: sql<string | null>`max(${pullRequests.lastBacklogConvergenceRegatedAt})` })
     .from(pullRequests)
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.state, "open")));
   /* v8 ignore next -- max() always returns exactly one row; the empty-array guard only satisfies the destructure type. */
@@ -4097,12 +4187,23 @@ export async function deletePullRequestFiles(env: Env, fullName: string, pullNum
   await db.delete(pullRequestFiles).where(and(eq(pullRequestFiles.repoFullName, fullName), eq(pullRequestFiles.pullNumber, pullNumber)));
 }
 
+// #linked-issue-satisfaction-cache-fingerprint-stability: an explicit deterministic order is load-bearing,
+// not cosmetic. Without it, row order is whatever the query planner happens to return -- unstable across
+// otherwise-identical repeat calls for the SAME unchanged PR -- and downstream diff building
+// (buildUnifiedReviewDiff) only fully orders files by (priority bucket, added-line count); two files tied on
+// both fall back to THIS function's own (undefined) order. That untied order then flows straight into a
+// SHA-256 content fingerprint (linkedIssueSatisfactionCacheInputFingerprint and friends), so a silent reorder
+// alone changes the hash and defeats the cache even though the diff's actual content never changed --
+// confirmed live: JSONbored/metagraphed#4532 re-ran its linked-issue-satisfaction LLM call 12 times across 7
+// hours on one unchanged head SHA. `path` is unique per (repoFullName, pullNumber) (see the table's own
+// unique index), so it alone is a total, stable order -- no secondary tie-break needed.
 export async function listPullRequestFiles(env: Env, fullName: string, pullNumber: number): Promise<PullRequestFileRecord[]> {
   const db = getDb(env.DB);
   const rows = await db
     .select()
     .from(pullRequestFiles)
-    .where(and(eq(pullRequestFiles.repoFullName, fullName), eq(pullRequestFiles.pullNumber, pullNumber)));
+    .where(and(eq(pullRequestFiles.repoFullName, fullName), eq(pullRequestFiles.pullNumber, pullNumber)))
+    .orderBy(pullRequestFiles.path);
   return rows.map(toPullRequestFileRecord);
 }
 
@@ -4488,19 +4589,20 @@ export async function getLatestPublishedAiReview(
   repoFullName: string,
   pullNumber: number,
   mode: string,
-): Promise<{ notes: string; reviewerCount: number; findings: AdvisoryFinding[]; metadata?: Record<string, unknown> | undefined } | null> {
+): Promise<{ notes: string; reviewerCount: number; findings: AdvisoryFinding[]; headSha?: string | undefined; metadata?: Record<string, unknown> | undefined } | null> {
   const row = await env.DB
     .prepare(
-      "SELECT notes, reviewer_count AS reviewerCount, findings_json AS findingsJson, metadata_json AS metadataJson FROM ai_review_cache WHERE repo_full_name = ? AND pull_number = ? AND ai_review_mode = ? AND published_at IS NOT NULL ORDER BY published_at DESC LIMIT 1",
+      "SELECT notes, reviewer_count AS reviewerCount, head_sha AS headSha, findings_json AS findingsJson, metadata_json AS metadataJson FROM ai_review_cache WHERE repo_full_name = ? AND pull_number = ? AND ai_review_mode = ? AND published_at IS NOT NULL ORDER BY published_at DESC LIMIT 1",
     )
     .bind(repoFullName, pullNumber, mode)
-    .first<{ notes: string; reviewerCount: number; findingsJson: string | null; metadataJson: string | null }>();
+    .first<{ notes: string; reviewerCount: number; headSha: string; findingsJson: string | null; metadataJson: string | null }>();
   if (!row) return null;
   const metadata = parseJson<Record<string, unknown>>(row.metadataJson, {});
   return {
     notes: row.notes,
     reviewerCount: row.reviewerCount,
     findings: parseJson<AdvisoryFinding[]>(row.findingsJson, []),
+    ...(row.headSha ? { headSha: row.headSha } : {}),
     ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
   };
 }
@@ -4685,6 +4787,47 @@ export async function putCachedLinkedIssueSatisfaction(
          input_fingerprint = excluded.input_fingerprint, status = excluded.status, result_json = excluded.result_json, estimated_neurons = excluded.estimated_neurons, created_at = excluded.created_at`,
     )
     .bind(repoFullName, pullNumber, headSha, linkedIssueNumber, inputFingerprint, result.status, jsonString(result.result), result.estimatedNeurons, nowIso())
+    .run();
+}
+
+/** #4499 (grounding-file-content-cache): the stored file content for (repo, path, head SHA), or null on a
+ *  miss. Unlike linked_issue_satisfaction_cache, every stored row is durable with NO input-fingerprint
+ *  dimension -- file content at an immutable head SHA has exactly one correct value, so a hit is always safe
+ *  to reuse verbatim. A nullish head SHA is always a miss (mirrors the sibling caches' contract). */
+export async function getCachedGroundingFileContent(
+  env: Env,
+  repoFullName: string,
+  path: string,
+  headSha: string | null | undefined,
+): Promise<string | null> {
+  if (!headSha) return null;
+  const row = await env.DB
+    .prepare("SELECT content FROM grounding_file_content_cache WHERE repo_full_name = ? AND path = ? AND head_sha = ?")
+    .bind(repoFullName, path, headSha)
+    .first<{ content: string }>();
+  return row?.content ?? null;
+}
+
+/** #4499 (grounding-file-content-cache): upsert the fetched file content for (repo, path, head SHA). A
+ *  nullish head SHA is a no-op (mirrors the sibling caches). The caller is responsible for only calling this
+ *  with a genuinely fetched, non-null content string -- never a fetch failure/skip, which must stay retryable
+ *  rather than being cached as if it were a confirmed-permanent binary/oversized/inaccessible condition. */
+export async function putCachedGroundingFileContent(
+  env: Env,
+  repoFullName: string,
+  path: string,
+  headSha: string | null | undefined,
+  content: string,
+): Promise<void> {
+  if (!headSha) return;
+  await env.DB
+    .prepare(
+      `INSERT INTO grounding_file_content_cache (repo_full_name, path, head_sha, content, fetched_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(repo_full_name, path, head_sha) DO UPDATE SET
+         content = excluded.content, fetched_at = excluded.fetched_at`,
+    )
+    .bind(repoFullName, path, headSha, content, nowIso())
     .run();
 }
 
@@ -5259,7 +5402,10 @@ async function pruneReviewSuppressionsOverCap(env: Env, repoFullName: string): P
     .select({ id: reviewSuppression.id })
     .from(reviewSuppression)
     .where(eq(reviewSuppression.repoFullName, repoFullName))
-    .orderBy(desc(reviewSuppression.createdAt));
+    // #4501: an `id` tiebreak makes eviction deterministic under same-millisecond createdAt ties (e.g. a
+    // `@gittensory resolve` whole-PR command's Promise.all batch of suppression writes) -- without it, which
+    // row is "the oldest" past the cap is query-plan-dependent and can vary run to run.
+    .orderBy(desc(reviewSuppression.createdAt), desc(reviewSuppression.id));
   const overflow = rows.slice(MAX_REVIEW_SUPPRESSIONS_PER_REPO);
   if (overflow.length === 0) return;
   await db.delete(reviewSuppression).where(
@@ -5280,7 +5426,8 @@ export async function listReviewSuppressions(env: Env, repoFullName: string, lim
     .select()
     .from(reviewSuppression)
     .where(eq(reviewSuppression.repoFullName, boundedString(repoFullName, 200)))
-    .orderBy(desc(reviewSuppression.createdAt))
+    // Matches pruneReviewSuppressionsOverCap's tiebreak so the two agree on relative order under ties.
+    .orderBy(desc(reviewSuppression.createdAt), desc(reviewSuppression.id))
     .limit(clampInteger(limit, 1, MAX_REVIEW_SUPPRESSIONS_PER_REPO));
   return rows.map(toReviewSuppressionRecord);
 }
@@ -5955,6 +6102,27 @@ function truncateBody(body: string | null | undefined): string | null {
   return body.length > MAX_STORED_BODY_CHARS ? body.slice(0, MAX_STORED_BODY_CHARS) : body;
 }
 
+/** Structured, greppable trace the instant a body-content check (screenshotTableGate, linked-issue
+ *  satisfaction, slop keyword matching, ...) could see a truncated body instead of the real one -- the #4682
+ *  incident's entire failure mode was that this was previously SILENT (no log, no audit row, nothing), so a
+ *  4000-char cap quietly corrupted every check reading `pr.body`/`issue.body` for months before anyone
+ *  noticed. MAX_STORED_BODY_CHARS now matches GitHub's own issue/PR body limit, so this should never actually
+ *  fire in practice -- if it ever does, that fact belongs in the logs immediately, not rediscovered later via
+ *  manual DB archaeology. */
+function logIfBodyTruncated(kind: "pull_request" | "issue", repoFullName: string, number: number, body: string | null | undefined): void {
+  if (!body || body.length <= MAX_STORED_BODY_CHARS) return;
+  console.log(
+    JSON.stringify({
+      event: "github_app.body_truncated_on_store",
+      kind,
+      repoFullName,
+      number,
+      originalLength: body.length,
+      storedLength: MAX_STORED_BODY_CHARS,
+    }),
+  );
+}
+
 function toIssueRecordFromRow(row: typeof issues.$inferSelect): IssueRecord {
   const payload = parseJson<{ body?: string | null; created_at?: string | null; updated_at?: string | null; closed_at?: string | null }>(row.payloadJson, {});
   return {
@@ -6466,7 +6634,9 @@ async function upsertProductUsageDailyRollup(env: Env, day: string, generatedAt:
     .select()
     .from(productUsageEvents)
     .where(and(gte(productUsageEvents.occurredAt, startIso), sql`${productUsageEvents.occurredAt} < ${endIso}`))
-    .orderBy(productUsageEvents.occurredAt)
+    // #4501: an `id` tiebreak makes which rows survive the cap below deterministic under same-millisecond
+    // occurredAt ties -- without it, row order (and therefore this persisted rollup) is query-plan-dependent.
+    .orderBy(productUsageEvents.occurredAt, productUsageEvents.id)
     .limit(PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT + 1);
   const capped = rows.length > PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT || sourceEventCount > PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT;
   const events = rows.slice(0, PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT).map(toProductUsageEventRecord);
@@ -6477,7 +6647,7 @@ async function upsertProductUsageDailyRollup(env: Env, day: string, generatedAt:
     .select()
     .from(productUsageEvents)
     .where(retentionWhere)
-    .orderBy(desc(productUsageEvents.occurredAt))
+    .orderBy(desc(productUsageEvents.occurredAt), desc(productUsageEvents.id))
     .limit(PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT + 1);
   const retentionCapped = retentionRows.length > PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT || Number(retentionSourceRow?.count ?? 0) > PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT;
   const retentionEvents = retentionRows.slice(0, PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT).map(toProductUsageEventRecord);
@@ -7263,7 +7433,10 @@ function parseScreenshotTableGateRow(row: typeof repositorySettings.$inferSelect
     whenLabels: parseJsonStringArray(row.screenshotTableGateWhenLabelsJson),
     whenPaths: parseJsonStringArray(row.screenshotTableGateWhenPathsJson),
     action: isScreenshotTableGateAction(row.screenshotTableGateAction) ? row.screenshotTableGateAction : DEFAULT_SCREENSHOT_TABLE_GATE.action,
+    requireViewports: parseJsonStringArray(row.screenshotTableGateRequireViewportsJson),
+    requireThemes: parseJsonStringArray(row.screenshotTableGateRequireThemesJson),
     ...(row.screenshotTableGateMessage ? { message: row.screenshotTableGateMessage } : {}),
+    ...(row.screenshotTableGateSkillFileUrl ? { skillFileUrl: row.screenshotTableGateSkillFileUrl } : {}),
   };
 }
 

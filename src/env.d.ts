@@ -125,11 +125,18 @@ declare global {
      *  admin/bot contributor may have open ACROSS EVERY repo this install gates, combined. Purely an
      *  install-scoped aggregate over this same database (no cross-instance networking) -- catches an actor
      *  spreading low-volume spam/farming PRs across several gated repos in one self-hosted install, which no
-     *  single repo's own contributorOpenPrCap/contributorOpenIssueCap can see. Unset/invalid (the default) = no
-     *  cap, byte-identical to today. Checked IN ADDITION TO (not instead of) the existing per-repo caps, in the
+     *  single repo's own contributorOpenPrCap/contributorOpenIssueCap can see. Unset/invalid falls back to a
+     *  real default (20) rather than "no cap" (#4511) -- set to the literal string "off" for the old
+     *  unconditional-no-cap behavior. Checked IN ADDITION TO (not instead of) the existing per-repo caps, in the
      *  same contributor_cap short-circuit (src/settings/agent-actions.ts). A positive integer string (e.g. "20");
      *  see src/settings/global-contributor-cap.ts for parsing. */
     GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP?: string;
+    /** Same shape as {@link GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP}, but for a CONFIRMED official Gittensor miner
+     *  specifically (#4511) -- a verified miner identity gets this cap instead of the human one, since a
+     *  legitimate fleet spread across many repos in one install is expected to run more concurrent open items
+     *  than a single human contributor. Unset/invalid falls back to a higher real default (50); "off" exempts
+     *  confirmed miners from the install-wide cap entirely while humans stay capped. */
+    GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP_MINER?: string;
     /** Install-wide default for the per-repo contributorCapCancelCi setting (#2462): "true"/"1"/"yes"/"on"
      *  (case-insensitive) enables cancelling in-flight CI runs on a contributor_cap close for every repo that
      *  hasn't explicitly configured its own value. Unset/blank/anything else = off (the existing behavior). A

@@ -111,6 +111,8 @@ const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["gittensory_ai_total_tokens_total", { help: "AI provider total tokens observed.", type: "counter" }],
   ["gittensory_ai_provider_circuit_open_total", { help: "AI provider circuit-open events.", type: "counter" }],
   ["gittensory_ai_provider_failures_total", { help: "AI provider failures by provider.", type: "counter" }],
+  ["gittensory_ai_provider_request_duration_seconds", { help: "AI provider request duration in seconds, by provider and request kind.", type: "histogram" }],
+  ["gittensory_ai_provider_request_errors_total", { help: "AI provider request errors, by provider and request kind (excludes expected embedding-routing fallbacks).", type: "counter" }],
   ["gittensory_ai_review_cache_hit_total", { help: "AI review cache hits.", type: "counter" }],
   ["gittensory_ai_review_cache_miss_total", { help: "AI review cache misses.", type: "counter" }],
   ["gittensory_ai_review_cache_write_error_total", { help: "AI review cache write errors.", type: "counter" }],

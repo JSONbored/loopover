@@ -910,6 +910,172 @@ describe("upstream ruleset drift tracking", () => {
     await expect(fileUpstreamDriftIssues(failingEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
   });
 
+  it("INVARIANT (#4503): a second run against an UNCHANGED open drift issue makes zero PATCH calls", async () => {
+    const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(env, driftReport("stable-fingerprint"));
+    const createCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 101, url: "https://github.com/JSONbored/gittensory/issues/101" }, calls: createCalls }));
+    await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, unchanged: 0 });
+    const posted = createCalls.find((call) => call.method === "POST")?.body;
+
+    // Second run: the "existing" issue's GET reflects EXACTLY what was just posted -- a fresh PATCH would be a no-op.
+    const secondCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal(
+      "fetch",
+      githubIssueFetch({
+        issue: {
+          number: 101,
+          url: "https://github.com/JSONbored/gittensory/issues/101",
+          fingerprint: "stable-fingerprint",
+          body: String(posted?.body),
+          labels: posted?.labels as string[],
+          assignees: posted?.assignees as string[],
+        },
+        calls: secondCalls,
+      }),
+    );
+    await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, unchanged: 1 });
+    expect(secondCalls.some((call) => call.method === "PATCH")).toBe(false);
+  });
+
+  it("REGRESSION (#4503): two consecutive cycles against an unchanged report only PATCH on the first", async () => {
+    const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(env, driftReport("cycle-fingerprint", { issueNumber: 202, issueUrl: "https://github.com/JSONbored/gittensory/issues/202" }));
+
+    // Cycle 1: the recorded issue's live body/labels are STALE (drift from before the report's current content) --
+    // this cycle must PATCH to bring them into sync.
+    const firstCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal(
+      "fetch",
+      githubIssueFetch({
+        issue: { number: 202, url: "https://github.com/JSONbored/gittensory/issues/202", fingerprint: "cycle-fingerprint", body: "<!-- gittensory-upstream-drift:cycle-fingerprint -->\nstale", labels: ["signals"] },
+        calls: firstCalls,
+      }),
+    );
+    await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, unchanged: 0 });
+    const firstPatchBody = firstCalls.find((call) => call.method === "PATCH")?.body;
+
+    // Cycle 2 (the next 6-hour tick): the live issue now reflects exactly what cycle 1 just wrote -- zero PATCH calls.
+    const secondCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal(
+      "fetch",
+      githubIssueFetch({
+        issue: {
+          number: 202,
+          url: "https://github.com/JSONbored/gittensory/issues/202",
+          fingerprint: "cycle-fingerprint",
+          body: String(firstPatchBody?.body),
+          labels: firstPatchBody?.labels as string[],
+          assignees: firstPatchBody?.assignees as string[],
+        },
+        calls: secondCalls,
+      }),
+    );
+    await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, unchanged: 1 });
+    expect(secondCalls.filter((call) => call.method === "PATCH")).toHaveLength(0);
+  });
+
+  it("negative-path (#4503): a genuinely changed report (severity escalation) still triggers a fresh PATCH", async () => {
+    const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(env, driftReport("escalating-fingerprint", { severity: "low" }));
+    const createCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 303, url: "https://github.com/JSONbored/gittensory/issues/303" }, calls: createCalls }));
+    await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, unchanged: 0 });
+    const posted = createCalls.find((call) => call.method === "POST")?.body;
+
+    // The SAME fingerprint's report is re-upserted with an ESCALATED severity -- both the body (severity line) and
+    // the labels ("backend" -> "high-impact") change; the live issue still reflects the OLD (low-severity) content.
+    await upsertUpstreamDriftReport(env, driftReport("escalating-fingerprint", { severity: "blocking" }));
+    const secondCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal(
+      "fetch",
+      githubIssueFetch({
+        issue: {
+          number: 303,
+          url: "https://github.com/JSONbored/gittensory/issues/303",
+          fingerprint: "escalating-fingerprint",
+          body: String(posted?.body),
+          labels: posted?.labels as string[],
+        },
+        calls: secondCalls,
+      }),
+    );
+    await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, unchanged: 0 });
+    const escalatedPatch = secondCalls.find((call) => call.method === "PATCH")?.body;
+    expect(escalatedPatch?.labels).toEqual(["signals", "scoring", "data", "high-impact"]);
+    expect(String(escalatedPatch?.body)).toContain("Severity: blocking");
+  });
+
+  it("REGRESSION (#4503): the list-search fallback tolerates malformed label/assignee shapes (missing name/login) without crashing", async () => {
+    const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(env, driftReport("malformed-shape-fingerprint"));
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/issues?state=open&labels=signals&per_page=100&page=")) {
+        return Response.json([
+          {
+            number: 404,
+            html_url: "https://github.com/JSONbored/gittensory/issues/404",
+            body: "<!-- gittensory-upstream-drift:malformed-shape-fingerprint -->",
+            // A nameless label object and a loginless assignee object -- both must be dropped, not crash the map.
+            labels: [{}, "signals"],
+            assignees: [{}, { login: "jsonbored" }],
+          },
+        ]);
+      }
+      if (url.match(/\/issues\/404$/) && method === "PATCH") return Response.json({ number: 404, html_url: "https://github.com/JSONbored/gittensory/issues/404" });
+      return new Response("not found", { status: 404 });
+    });
+
+    // Content genuinely differs (the mocked body is just the fingerprint comment, not a full drift body), so this
+    // still PATCHes -- the point of this test is that resolving the malformed shapes above never throws.
+    await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, skipped: 0 });
+  });
+
+  it("REGRESSION (#4503): validateRecordedGitHubIssue's fast path tolerates a malformed (loginless) assignee without crashing", async () => {
+    const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(env, driftReport("malformed-assignee-fingerprint", { issueNumber: 505, issueUrl: "https://github.com/JSONbored/gittensory/issues/505" }));
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.match(/\/issues\/505$/) && method === "GET") {
+        return Response.json({
+          number: 505,
+          html_url: "https://github.com/JSONbored/gittensory/issues/505",
+          state: "open",
+          body: "<!-- gittensory-upstream-drift:malformed-assignee-fingerprint -->",
+          labels: ["signals"],
+          // A loginless assignee object -- must be dropped, not crash the map.
+          assignees: [{}, { login: "jsonbored" }],
+        });
+      }
+      if (url.match(/\/issues\/505$/) && method === "PATCH") return Response.json({ number: 505, html_url: "https://github.com/JSONbored/gittensory/issues/505" });
+      return new Response("not found", { status: 404 });
+    });
+
+    // Content genuinely differs (the mocked body is just the fingerprint comment), so this still PATCHes -- the
+    // point of this test is that resolving the malformed assignee shape above never throws.
+    await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, skipped: 0 });
+  });
+
+  it("REGRESSION (#4503): validateRecordedGitHubIssue tolerates an issue response with the assignees field entirely absent", async () => {
+    const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(env, driftReport("no-assignees-field-fingerprint", { issueNumber: 606, issueUrl: "https://github.com/JSONbored/gittensory/issues/606" }));
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.match(/\/issues\/606$/) && method === "GET") {
+        // No `assignees` key at all -- distinct from an explicit empty array.
+        return Response.json({ number: 606, html_url: "https://github.com/JSONbored/gittensory/issues/606", state: "open", body: "<!-- gittensory-upstream-drift:no-assignees-field-fingerprint -->", labels: ["signals"] });
+      }
+      if (url.match(/\/issues\/606$/) && method === "PATCH") return Response.json({ number: 606, html_url: "https://github.com/JSONbored/gittensory/issues/606" });
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, skipped: 0 });
+  });
+
   it("assigns filed drift issues to GITTENSORY_DRIFT_ISSUE_ASSIGNEES when a self-host operator sets it", async () => {
     const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token", GITTENSORY_DRIFT_ISSUE_ASSIGNEES: "alice, ,bob" });
     await upsertUpstreamDriftReport(env, driftReport("assignee-override"));
@@ -1301,7 +1467,7 @@ function githubIssueFetch(options: {
   create?: { number: number; url: string };
   createPayload?: Record<string, unknown>;
   update?: { number: number; url: string };
-  issue?: { number: number; url: string; fingerprint: string; state?: string; labels?: Array<string | { name?: string }>; body?: string | null };
+  issue?: { number: number; url: string; fingerprint: string; state?: string; labels?: Array<string | { name?: string }>; body?: string | null; assignees?: string[] };
   updatePayload?: Record<string, unknown>;
   issueStatus?: number | undefined;
   listStatus?: number;
@@ -1339,6 +1505,7 @@ function githubIssueFetch(options: {
         state: options.issue.state ?? "open",
         body: options.issue.body === undefined ? `<!-- gittensory-upstream-drift:${options.issue.fingerprint} -->` : options.issue.body,
         labels: options.issue.labels ?? ["signals"],
+        assignees: (options.issue.assignees ?? []).map((login) => ({ login })),
       });
     }
     if (issueMatch && method === "PATCH") {

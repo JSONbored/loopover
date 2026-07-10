@@ -1,7 +1,9 @@
 /** RFC-4180-style CSV cell escaping for client-side ledger exports (#2198). */
 export function escapeCsvCell(value: string): string {
-  const needsQuotes = /[",\n\r]/.test(value);
-  const escaped = value.replace(/"/g, '""');
+  const needsFormulaGuard = /^[=+\-@]/.test(value);
+  const guarded = needsFormulaGuard ? `'${value}` : value;
+  const needsQuotes = /[",\n\r]/.test(guarded);
+  const escaped = guarded.replace(/"/g, '""');
   return needsQuotes ? `"${escaped}"` : escaped;
 }
 

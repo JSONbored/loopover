@@ -97,6 +97,62 @@ describe("check-engine-parity script", () => {
     expect(pairs.some((pair: EngineParityPair) => pair.fileName === "check-names.ts")).toBe(false);
   });
 
+  describe("recursive nested-directory discovery (#4605)", () => {
+    it("discovers a pair nested one directory deeper on BOTH sides, invisible to a top-level-only scan", () => {
+      const body = "export const NESTED = 1;\n";
+      const readFile = (_root: string, relativePath: string) => {
+        if (relativePath === "src/review/sub/nested.ts") return body;
+        if (relativePath === "packages/gittensory-engine/src/review/sub/nested.ts") return body;
+        throw new Error(`unexpected read: ${relativePath}`);
+      };
+      const listDir = (_root: string, relativePath: string) => {
+        if (relativePath === "src/review") return ["sub"];
+        if (relativePath === "src/review/sub") return ["nested.ts"];
+        if (relativePath === "packages/gittensory-engine/src/review") return ["sub"];
+        if (relativePath === "packages/gittensory-engine/src/review/sub") return ["nested.ts"];
+        return [];
+      };
+      const pairs = discoverEngineParityPairs({ root: "/fake", readFile, listDir });
+      expect(pairs).toHaveLength(1);
+      expect(pairs[0]!.fileName).toBe("sub/nested.ts");
+      expect(pairs[0]!.hostRelative).toBe("src/review/sub/nested.ts");
+      expect(pairs[0]!.engineRelative).toBe("packages/gittensory-engine/src/review/sub/nested.ts");
+    });
+
+    it("still requires an identical sub-path on both sides — a depth MISMATCH stays invisible to the scan (needs its own NAMED_TWIN_PAIRS entry)", () => {
+      const body = "export const MISMATCHED = 1;\n";
+      const readFile = (_root: string, relativePath: string) => {
+        if (relativePath === "src/review/sub/mismatch.ts") return body;
+        if (relativePath === "packages/gittensory-engine/src/review/mismatch.ts") return body;
+        throw new Error(`unexpected read: ${relativePath}`);
+      };
+      const listDir = (_root: string, relativePath: string) => {
+        if (relativePath === "src/review") return ["sub"];
+        if (relativePath === "src/review/sub") return ["mismatch.ts"];
+        if (relativePath === "packages/gittensory-engine/src/review") return ["mismatch.ts"];
+        return [];
+      };
+      const pairs = discoverEngineParityPairs({ root: "/fake", readFile, listDir });
+      expect(pairs).toHaveLength(0);
+    });
+
+    it("treats an empty listDir result for a non-.ts entry as a leaf (not a directory) rather than throwing", () => {
+      // A plain file with no extension (or an empty real subdirectory) both resolve to listDir(...) === [];
+      // collectTsFilesRecursive must not recurse into it or blow up either way — just contribute zero files.
+      const listDir = (_root: string, relativePath: string) => {
+        if (relativePath === "src/review") return ["not-a-directory-or-ts-file"];
+        return [];
+      };
+      const pairs = discoverEngineParityPairs({ root: "/fake", readFile: () => "", listDir });
+      expect(pairs).toEqual([]);
+    });
+
+    it("does not re-discover the already-invisible content-lane/safe-url.ts pair via recursion (depth mismatch, unchanged from before #4605's recursive fix)", () => {
+      const scanned = discoverEngineParityPairs({ root: process.cwd() });
+      expect(scanned.some((discovered) => discovered.fileName.endsWith("safe-url.ts"))).toBe(false);
+    });
+  });
+
   it("the real repo's hand-duplicated pairs agree after normalization (regression guard)", () => {
     const result = checkEngineParityDrift({ root: process.cwd() });
     expect(result.failures).toEqual([]);

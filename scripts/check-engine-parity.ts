@@ -173,9 +173,36 @@ export function isEngineStubPair(srcText: string, engineText: string): boolean {
   return engineCompact > 0 && srcCompact > engineCompact * 3 && engineCompact < 250;
 }
 
+/** Recursively collect `.ts` file paths under `dirRelative` (relative to `root`), reusing the same
+ *  pluggable `listDir(root, relativePath)` shape `discoverEngineParityPairs` already accepted (#4605
+ *  Finding 2: the old scan only listed the immediate children of each area directory, so a duplicate
+ *  nested one level deeper -- e.g. `content-lane/` -- was invisible by construction even though the
+ *  filter/shim/stub checks below it would have handled it fine). An entry ending in `.ts` is treated as a
+ *  leaf file; anything else is probed with another `listDir` call and treated as a subdirectory only if
+ *  that call returns at least one entry -- `defaultListDir` already resolves a non-directory path (or a
+ *  missing one) to `[]` via its catch-all, so this reuses that existing convention rather than requiring
+ *  callers to distinguish files from directories themselves (a plain `readdirSync` result can't tell them
+ *  apart without an extra stat call per entry). An empty real subdirectory is indistinguishable from "not a
+ *  directory" under this convention, which is harmless -- either way it contributes zero `.ts` files. */
+function collectTsFilesRecursive(root: string, dirRelative: string, listDir: EngineParityListDir): string[] {
+  const results: string[] = [];
+  for (const entry of listDir(root, dirRelative)) {
+    if (entry.endsWith(".ts")) {
+      results.push(join(dirRelative, entry));
+      continue;
+    }
+    const subRelative = join(dirRelative, entry);
+    const subEntries = listDir(root, subRelative);
+    if (subEntries.length > 0) results.push(...collectTsFilesRecursive(root, subRelative, listDir));
+  }
+  return results;
+}
+
 /**
- * Discover in-scope hand-duplicated twins under src/{review,settings,signals} that also exist in the engine tree
- * and are neither host shims nor engine stubs.
+ * Discover in-scope hand-duplicated twins under src/{review,settings,signals} (at any nesting depth, matched
+ * by identical sub-path on both sides -- a depth MISMATCH, like `content-lane/safe-url.ts` on the host vs a
+ * flat `safe-url.ts` on the engine, still needs its own `NAMED_TWIN_PAIRS` entry, same as before) that also
+ * exist in the engine tree and are neither host shims nor engine stubs.
  */
 export function discoverEngineParityPairs({
   root,
@@ -190,17 +217,17 @@ export function discoverEngineParityPairs({
   for (const area of ENGINE_PARITY_AREAS) {
     const hostDir = join(HOST_SRC_ROOT, area);
     const engineDir = join(ENGINE_SRC_ROOT, area);
-    const hostFiles = listDir(root, hostDir).filter((name) => name.endsWith(".ts"));
-    const engineFiles = new Set(listDir(root, engineDir).filter((name) => name.endsWith(".ts")));
-    for (const fileName of hostFiles.sort()) {
-      if (!engineFiles.has(fileName)) continue;
-      const hostRelative = join(hostDir, fileName);
-      const engineRelative = join(engineDir, fileName);
+    const hostFiles = collectTsFilesRecursive(root, hostDir, listDir);
+    const engineFiles = new Set(collectTsFilesRecursive(root, engineDir, listDir));
+    for (const hostRelative of hostFiles.sort()) {
+      const subPath = hostRelative.slice(hostDir.length + 1);
+      const engineRelative = join(engineDir, subPath);
+      if (!engineFiles.has(engineRelative)) continue;
       const hostText = readFile(root, hostRelative);
       const engineText = readFile(root, engineRelative);
       if (isThinEngineReExportShim(hostText)) continue;
       if (isEngineStubPair(hostText, engineText)) continue;
-      pairs.push({ area, fileName, hostRelative, engineRelative, hostText, engineText });
+      pairs.push({ area, fileName: subPath, hostRelative, engineRelative, hostText, engineText });
     }
   }
   return pairs;

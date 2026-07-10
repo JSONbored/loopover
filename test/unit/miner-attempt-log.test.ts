@@ -159,7 +159,7 @@ describe("gittensory-miner attempt log (#4294)", () => {
     log.appendAttemptLogEvent({ eventType: "attempt_started", ...baseEvent });
     expect(() =>
       log.appendAttemptLogEvent({
-        eventType: "bogus",
+        eventType: "bogus" as "attempt_started",
         ...baseEvent,
       }),
     ).toThrow(/invalid_event_type/);

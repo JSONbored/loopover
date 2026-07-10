@@ -220,6 +220,9 @@ export function requiredScreenshotMatrixPairs(config: ScreenshotTableGateConfig)
  *  `pair.theme` (case-insensitive substring match -- tolerant of whatever separator character the contributor
  *  used between them) AND that row has at least two image-bearing cells among the rest (before + after). */
 function rowSatisfiesMatrixPair(row: string[], pair: ScreenshotMatrixPair): boolean {
+  // `?? ""` only exists to satisfy noUncheckedIndexedAccess -- `extractTableRows`'s `.split("|")` always
+  // produces at least one cell, even for an empty-string row, so `row[0]` is never actually undefined here.
+  /* v8 ignore next -- defensive: see the comment above. */
   const label = (row[0] ?? "").toLowerCase();
   if (!label.includes(pair.viewport.toLowerCase())) return false;
   if (pair.theme !== null && !label.includes(pair.theme.toLowerCase())) return false;

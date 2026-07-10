@@ -6,9 +6,10 @@
 // review path at all (the caller guards on this flag before doing any D1 read or matching), so the review
 // stays byte-identical to today.
 
-import { listReviewSuppressions } from "../db/repositories";
+import { listReviewSuppressions, recordAuditEvent } from "../db/repositories";
 import { matchSuppressions, type ReviewMemoryFindingInput } from "./review-memory-match";
 import type { AdvisoryFinding, ReviewSuppressionRecord } from "../types";
+import { incr } from "../selfhost/metrics";
 
 /** True when repeat-false-positive suppression is enabled at the operator level. Flag-OFF (default) → the
  *  caller takes no new branch, so no suppression-store read and no matcher call ever happens. Truthy follows
@@ -43,7 +44,27 @@ const reviewSuppressionCache = new Map<string, { signals: ReviewSuppressionRecor
  *  cache decision. */
 export async function getCachedReviewSuppressions(env: Env, repoFullName: string, nowMs: number): Promise<ReviewSuppressionRecord[]> {
   const hit = reviewSuppressionCache.get(repoFullName);
-  if (hit && nowMs - hit.at < REVIEW_SUPPRESSION_CACHE_TTL_MS) return hit.signals;
+  if (hit && nowMs - hit.at < REVIEW_SUPPRESSION_CACHE_TTL_MS) {
+    // #4448: mirrors repo-culture-profile's #4509 cache hit/miss instrumentation exactly -- one of the six
+    // AI-touching capabilities that had no reuse-rate signal at all before this.
+    incr("gittensory_review_memory_cache_hit_total");
+    await recordAuditEvent(env, {
+      eventType: "github_app.review_memory_cache_hit",
+      targetKey: repoFullName,
+      outcome: "completed",
+      detail: "reused the in-isolate cached suppression list instead of re-reading D1",
+      metadata: { repoFullName },
+    }).catch(() => undefined);
+    return hit.signals;
+  }
+  incr("gittensory_review_memory_cache_miss_total");
+  await recordAuditEvent(env, {
+    eventType: "github_app.review_memory_cache_miss",
+    targetKey: repoFullName,
+    outcome: "completed",
+    detail: "no fresh cached suppression list; reading fresh from D1",
+    metadata: { repoFullName },
+  }).catch(() => undefined);
   const signals = await listReviewSuppressions(env, repoFullName);
   reviewSuppressionCache.set(repoFullName, { signals, at: nowMs });
   return signals;

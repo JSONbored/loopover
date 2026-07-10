@@ -13,9 +13,10 @@
 
 import { createInstallationToken } from "../github/app";
 import { githubRateLimitAdmissionKeyForInstallation, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../github/client";
-import { getCachedGroundingFileContent, putCachedGroundingFileContent } from "../db/repositories";
+import { getCachedGroundingFileContent, putCachedGroundingFileContent, recordAuditEvent } from "../db/repositories";
 import type { CheckSummaryRecord, PullRequestFileRecord } from "../types";
 import { repoParts } from "../utils/json";
+import { incr } from "../selfhost/metrics";
 import { isConvergenceRepoAllowed } from "./cutover-gate";
 import {
   buildGrounding,
@@ -141,7 +142,27 @@ export async function makeGithubFileFetcher(env: Env, repoFullName: string, inst
       // network fetch below; only a genuinely successful fetch is ever written back (see the .catch-free write
       // after the try block), so a transient failure is never mistaken for a confirmed-permanent one.
       const cached = await getCachedGroundingFileContent(env, repoFullName, path, ref).catch(() => null);
-      if (cached !== null) return cached;
+      if (cached !== null) {
+        // #4448: mirrors repo-culture-profile's #4509 cache hit/miss instrumentation exactly -- one of the six
+        // AI-touching capabilities that had no reuse-rate signal at all before this.
+        incr("gittensory_grounding_cache_hit_total");
+        await recordAuditEvent(env, {
+          eventType: "github_app.grounding_cache_hit",
+          targetKey: repoFullName,
+          outcome: "completed",
+          detail: "reused a cached grounding file blob instead of re-fetching from GitHub",
+          metadata: { repoFullName, path },
+        }).catch(() => undefined);
+        return cached;
+      }
+      incr("gittensory_grounding_cache_miss_total");
+      await recordAuditEvent(env, {
+        eventType: "github_app.grounding_cache_miss",
+        targetKey: repoFullName,
+        outcome: "completed",
+        detail: "no reusable cached grounding file blob; fetching fresh from GitHub",
+        metadata: { repoFullName, path },
+      }).catch(() => undefined);
       try {
         const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contents/${path
           .split("/")

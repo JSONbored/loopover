@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_REVIEW_SUPPRESSIONS_PER_REPO, listReviewSuppressions, recordReviewSuppression } from "../../src/db/repositories";
 import * as repositoriesModule from "../../src/db/repositories";
 import { clearReviewSuppressionCacheForTest, getCachedReviewSuppressions, invalidateReviewSuppressionCache } from "../../src/review/review-memory-wire";
+import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { createTestEnv } from "../helpers/d1";
 
 // Review memory (#2178, data-model slice of #1964): insert/list repository accessors over the
@@ -264,5 +265,77 @@ describe("getCachedReviewSuppressions / invalidateReviewSuppressionCache (#4508)
     const b = await getCachedReviewSuppressions(env, "owner/repo-b", t0);
     expect(a).toHaveLength(1);
     expect(b).toHaveLength(0);
+  });
+});
+
+describe("getCachedReviewSuppressions: cache hit/miss telemetry (#4448)", () => {
+  afterEach(() => resetMetrics());
+
+  async function auditEvent(env: Env, eventType: string, repoFullName: string) {
+    return env.DB.prepare("SELECT outcome, target_key FROM audit_events WHERE event_type = ? AND target_key = ?")
+      .bind(eventType, repoFullName)
+      .first<{ outcome: string; target_key: string }>();
+  }
+
+  it("INVARIANT: a cache HIT (within TTL) fires exactly the hit counter/audit-event pair, and NOT the miss pair", async () => {
+    clearReviewSuppressionCacheForTest();
+    const env = createTestEnv();
+    const t0 = 5_000_000;
+    await getCachedReviewSuppressions(env, "owner/telemetry-repo", t0); // first call: a miss (cold cache)
+    resetMetrics();
+    await env.DB.prepare("DELETE FROM audit_events").run(); // isolate to the SECOND call's telemetry only
+
+    const second = await getCachedReviewSuppressions(env, "owner/telemetry-repo", t0 + 30_000); // within the 60s TTL
+    expect(second).toEqual([]);
+
+    const rendered = await renderMetrics();
+    expect(rendered).toContain("gittensory_review_memory_cache_hit_total 1");
+    expect(rendered).not.toContain("gittensory_review_memory_cache_miss_total");
+    const hitEvent = await auditEvent(env, "github_app.review_memory_cache_hit", "owner/telemetry-repo");
+    expect(hitEvent?.outcome).toBe("completed");
+    expect(await auditEvent(env, "github_app.review_memory_cache_miss", "owner/telemetry-repo")).toBeUndefined();
+  });
+
+  it("INVARIANT: a cache MISS (cold cache) fires exactly the miss counter/audit-event pair, and NOT the hit pair", async () => {
+    clearReviewSuppressionCacheForTest();
+    const env = createTestEnv();
+    const first = await getCachedReviewSuppressions(env, "owner/telemetry-repo-2", 6_000_000);
+    expect(first).toEqual([]);
+
+    const rendered = await renderMetrics();
+    expect(rendered).toContain("gittensory_review_memory_cache_miss_total 1");
+    expect(rendered).not.toContain("gittensory_review_memory_cache_hit_total");
+    const missEvent = await auditEvent(env, "github_app.review_memory_cache_miss", "owner/telemetry-repo-2");
+    expect(missEvent?.outcome).toBe("completed");
+    expect(await auditEvent(env, "github_app.review_memory_cache_hit", "owner/telemetry-repo-2")).toBeUndefined();
+  });
+
+  it("REGRESSION: TTL expiry is correctly counted as a miss, not silently uninstrumented", async () => {
+    clearReviewSuppressionCacheForTest();
+    const env = createTestEnv();
+    const t0 = 7_000_000;
+    await getCachedReviewSuppressions(env, "owner/telemetry-repo-3", t0); // populates the cache
+    resetMetrics();
+    await env.DB.prepare("DELETE FROM audit_events").run();
+
+    await getCachedReviewSuppressions(env, "owner/telemetry-repo-3", t0 + 60_001); // past the 60s TTL
+
+    const rendered = await renderMetrics();
+    expect(rendered).toContain("gittensory_review_memory_cache_miss_total 1");
+    expect(rendered).not.toContain("gittensory_review_memory_cache_hit_total");
+  });
+
+  it("swallows a failing cache-hit audit-event write without throwing, still returning the cached suppression list", async () => {
+    clearReviewSuppressionCacheForTest();
+    const env = createTestEnv();
+    const t0 = 8_000_000;
+    await recordReviewSuppression(env, { repoFullName: "owner/telemetry-repo-4", category: "ai_review_split", patternHash: "hash-swallow" });
+    await getCachedReviewSuppressions(env, "owner/telemetry-repo-4", t0); // populates the cache
+
+    const writeSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
+    const second = await getCachedReviewSuppressions(env, "owner/telemetry-repo-4", t0 + 30_000); // a cache hit
+    writeSpy.mockRestore();
+
+    expect(second).toHaveLength(1); // the failed audit write never surfaces to the caller
   });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runGittensoryAiReview } from "../../src/services/ai-review";
 import { runAiReviewForAdvisory } from "../../src/queue/processors";
 import {
@@ -9,8 +9,10 @@ import {
   makeGithubFileFetcher,
 } from "../../src/review/grounding-wire";
 import { getCachedGroundingFileContent, putCachedGroundingFileContent, upsertCheckSummary, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import * as repositoriesModule from "../../src/db/repositories";
 import * as githubApp from "../../src/github/app";
 import { githubRateLimitAdmissionKeyForInstallation, latestGitHubRestRateLimitObservation } from "../../src/github/client";
+import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import type { Advisory, CheckSummaryRecord, JsonValue, PullRequestFileRecord, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -396,6 +398,64 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
     expect(second).toBe("export const cached = true;");
     expect(fetchCount).toBe(1);
     fetchSpy.mockRestore();
+  });
+
+  describe("cache hit/miss telemetry (#4448)", () => {
+    afterEach(() => resetMetrics());
+
+    async function auditEvent(env: Env, eventType: string, repoFullName: string) {
+      return env.DB.prepare("SELECT outcome, target_key FROM audit_events WHERE event_type = ? AND target_key = ?")
+        .bind(eventType, repoFullName)
+        .first<{ outcome: string; target_key: string }>();
+    }
+
+    it("INVARIANT: a cache HIT fires exactly the hit counter/audit-event pair, and NOT the miss pair", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("export const v = 1;", { status: 200 }));
+      await (await makeGithubFileFetcher(env, "acme/telemetry", null)).getFileContent("hit.ts", "sha7"); // first call: a miss
+      resetMetrics();
+      await env.DB.prepare("DELETE FROM audit_events").run(); // isolate to the SECOND call's telemetry only
+
+      const second = await (await makeGithubFileFetcher(env, "acme/telemetry", null)).getFileContent("hit.ts", "sha7"); // same (repo, path, ref) -- a hit
+      expect(second).toBe("export const v = 1;");
+
+      const rendered = await renderMetrics();
+      expect(rendered).toContain("gittensory_grounding_cache_hit_total 1");
+      expect(rendered).not.toContain("gittensory_grounding_cache_miss_total");
+      const hitEvent = await auditEvent(env, "github_app.grounding_cache_hit", "acme/telemetry");
+      expect(hitEvent?.outcome).toBe("completed");
+      expect(await auditEvent(env, "github_app.grounding_cache_miss", "acme/telemetry")).toBeUndefined();
+      fetchSpy.mockRestore();
+    });
+
+    it("INVARIANT: a cache MISS fires exactly the miss counter/audit-event pair, and NOT the hit pair", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("export const v = 1;", { status: 200 }));
+
+      const first = await (await makeGithubFileFetcher(env, "acme/telemetry", null)).getFileContent("miss.ts", "sha7");
+      expect(first).toBe("export const v = 1;");
+
+      const rendered = await renderMetrics();
+      expect(rendered).toContain("gittensory_grounding_cache_miss_total 1");
+      expect(rendered).not.toContain("gittensory_grounding_cache_hit_total");
+      const missEvent = await auditEvent(env, "github_app.grounding_cache_miss", "acme/telemetry");
+      expect(missEvent?.outcome).toBe("completed");
+      expect(await auditEvent(env, "github_app.grounding_cache_hit", "acme/telemetry")).toBeUndefined();
+      fetchSpy.mockRestore();
+    });
+
+    it("swallows a failing cache-hit audit-event write without throwing, still returning the cached content", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("export const v = 1;", { status: 200 }));
+      await (await makeGithubFileFetcher(env, "acme/telemetry", null)).getFileContent("swallow.ts", "sha7"); // populates the cache
+
+      const writeSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
+      const second = await (await makeGithubFileFetcher(env, "acme/telemetry", null)).getFileContent("swallow.ts", "sha7"); // a cache hit
+      writeSpy.mockRestore();
+
+      expect(second).toBe("export const v = 1;"); // the failed audit write never surfaces to the caller
+      fetchSpy.mockRestore();
+    });
   });
 
   it("REGRESSION (#4499, grounding-refetch incident): repeated cooldown-driven calls on an unchanged head SHA only fetch once total, not once per call", async () => {

@@ -1379,10 +1379,14 @@ function backfillJobForegroundLanes(driver: SqliteDriver): number {
  *  distinguishes "queue large but intentionally deferred" from "queue stuck, nothing runnable" without manual
  *  SQL. Host load is an independent, optional signal (see host-pressure.ts). */
 function maintenancePressureSignals(driver: SqliteDriver, now: number): MaintenancePressureSignals {
+  // runnable_cnt/oldest_runnable count a row as genuinely active RIGHT NOW when it's either already
+  // 'processing' (real, in-flight resource use) or 'pending' AND due (run_after<=now) -- NOT merely present
+  // in the outer pending/processing set, which also includes work deliberately deferred to the future (see
+  // maintenance-admission.ts's MaintenancePressureSignals doc comments).
   const live = driver.query(
     `SELECT COUNT(*) as cnt, MIN(created_at) as oldest,
-            SUM(CASE WHEN status='pending' AND run_after<=? THEN 1 ELSE 0 END) as runnable_cnt,
-            MIN(CASE WHEN status='pending' AND run_after<=? THEN created_at ELSE NULL END) as oldest_runnable
+            SUM(CASE WHEN status='processing' OR run_after<=? THEN 1 ELSE 0 END) as runnable_cnt,
+            MIN(CASE WHEN status='processing' OR run_after<=? THEN created_at ELSE NULL END) as oldest_runnable
        FROM ${TABLE} WHERE status IN ('pending','processing') AND priority>=?`,
     [now, now, FOREGROUND_QUEUE_PRIORITY_FLOOR],
   ).rows[0] as { cnt: number; oldest: number | null; runnable_cnt: number | null; oldest_runnable: number | null };

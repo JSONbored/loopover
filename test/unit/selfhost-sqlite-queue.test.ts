@@ -3379,7 +3379,10 @@ describe("createSqliteQueue (durable #980)", () => {
     });
 
     // Directly occupies rows the way currently-pending/processing live work would, without needing worker-slot
-    // choreography -- the admission check reads real table state, not the consumer callback.
+    // choreography -- the admission check reads real table state, not the consumer callback. Defaults to
+    // 'processing' (stably occupied for the whole test, unlike a genuinely due 'pending' row which this
+    // queue's own pump would claim and complete during drain()) -- liveRunnableNowCount counts 'processing'
+    // rows as genuine current pressure alongside due-and-unclaimed 'pending' ones (see maintenance-admission.ts).
     function seedLiveRows(driver: ReturnType<typeof makeDriver>, count: number, status: "pending" | "processing" = "processing"): void {
       const now = Date.now();
       for (let i = 0; i < count; i += 1) {

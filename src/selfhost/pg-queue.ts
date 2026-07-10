@@ -416,10 +416,14 @@ export function createPgQueue(
    *  distinguishes "queue large but intentionally deferred" from "queue stuck, nothing runnable" without
    *  manual SQL. Host load is an independent, optional signal. */
   async function maintenancePressureSignals(now: number): Promise<MaintenancePressureSignals> {
+    // runnable_cnt/oldest_runnable count a row as genuinely active RIGHT NOW when it's either already
+    // 'processing' (real, in-flight resource use) or 'pending' AND due (run_after<=now) -- NOT merely present
+    // in the outer pending/processing set, which also includes work deliberately deferred to the future (see
+    // maintenance-admission.ts's MaintenancePressureSignals doc comments).
     const liveRes = await pool.query(
       `SELECT COUNT(*) AS cnt, MIN(created_at) AS oldest,
-              COUNT(*) FILTER (WHERE status='pending' AND run_after<=$2) AS runnable_cnt,
-              MIN(created_at) FILTER (WHERE status='pending' AND run_after<=$2) AS oldest_runnable
+              COUNT(*) FILTER (WHERE status='processing' OR run_after<=$2) AS runnable_cnt,
+              MIN(created_at) FILTER (WHERE status='processing' OR run_after<=$2) AS oldest_runnable
          FROM ${TABLE} WHERE status IN ('pending','processing') AND priority>=$1`,
       [FOREGROUND_QUEUE_PRIORITY_FLOOR, now],
     );

@@ -3217,7 +3217,7 @@ describe("createPgQueue (durable #977)", () => {
 
     it("defers a maintenance job when live queue pressure is high", async () => {
       const m = makePool();
-      m.setPressureSignals({ live: { cnt: 6, oldest: now } }); // default threshold is 5
+      m.setPressureSignals({ live: { cnt: 6, oldest: now, runnableCnt: 6 } }); // default threshold is 5
       m.enqueueResult({ rows: [], rowCount: 0 }); // empty foreground claim
       m.enqueueResult({ rows: [maintenanceRow], rowCount: 1 }); // background claim
       const started: string[] = [];
@@ -3236,7 +3236,7 @@ describe("createPgQueue (durable #977)", () => {
 
     it("logs a deferred maintenance admission at info level, not warn (#selfhost-backpressure-noise)", async () => {
       const m = makePool();
-      m.setPressureSignals({ live: { cnt: 6, oldest: now } }); // default threshold is 5
+      m.setPressureSignals({ live: { cnt: 6, oldest: now, runnableCnt: 6 } }); // default threshold is 5
       m.enqueueResult({ rows: [], rowCount: 0 }); // empty foreground claim
       m.enqueueResult({ rows: [maintenanceRow], rowCount: 1 }); // background claim
       const logged = vi.spyOn(console, "log").mockImplementation(() => undefined);

@@ -73,18 +73,31 @@ export function isMaintenanceJobType(type: string): boolean {
 }
 
 export interface MaintenancePressureSignals {
+  /** Foreground-priority rows in pending/processing regardless of run_after -- includes work deliberately
+   *  scheduled for later (e.g. agent-regate-pr's staggered/rate-deferred per-PR backlog, index.ts:24-29's
+   *  "normal, expected, can legitimately stay nonzero for long periods"). Retained ONLY for the
+   *  gittensory_queue_live_pending observability gauge (server.ts) -- evaluateMaintenanceAdmission deliberately
+   *  does NOT gate on this (#selfhost-maintenance-admission-runnable-signal): a raw count would starve
+   *  maintenance on backlog that was never actually competing for a claim slot. Use liveRunnableNowCount for
+   *  any real pressure decision. */
   livePendingCount: number;
+  /** Age in ms of the oldest live row by created_at, regardless of run_after -- same "observability only,
+   *  not an admission signal" caveat as livePendingCount above; a deliberately future-scheduled job inflates
+   *  this without meaning anything is stuck. Use oldestLiveRunnableAgeMs for a real pressure decision. */
   oldestLivePendingAgeMs: number | null;
-  /** Foreground-priority pending jobs that are RUNNABLE right now (run_after<=now), i.e. not currently
-   *  deferred by any mechanism -- distinct from livePendingCount, which also includes deferred/processing
-   *  work. #selfhost-queue-liveness's own diagnostic: "queue large but intentionally deferred" (this count can
-   *  be 0 with livePendingCount > 0, transiently, and that is fine) vs. "queue stuck" (this count stays 0
-   *  while oldestLiveRunnableAgeMs -- once something IS runnable -- climbs, or while releaseStaleForegroundDeferrals
-   *  keeps finding stale work every sweep). */
+  /** Foreground-priority jobs that are genuinely active RIGHT NOW: either 'processing' (already claimed,
+   *  real in-flight resource use) or 'pending' AND due (run_after<=now, not currently deferred by any
+   *  mechanism) -- distinct from livePendingCount, which also includes work deliberately deferred to the
+   *  future. #selfhost-queue-liveness's own diagnostic: "queue large but intentionally deferred" (this count
+   *  can be 0 with livePendingCount > 0, transiently, and that is fine) vs. "queue stuck" (this count stays 0
+   *  while oldestLiveRunnableAgeMs -- once something IS active -- climbs, or while releaseStaleForegroundDeferrals
+   *  keeps finding stale work every sweep). This is the field evaluateMaintenanceAdmission's live_pending_high
+   *  check actually gates on. */
   liveRunnableNowCount: number;
-  /** Age in ms of the oldest RUNNABLE (run_after<=now) foreground pending job -- null when none is runnable
-   *  right now. Distinct from oldestLivePendingAgeMs, which is dominated by a job intentionally scheduled far
-   *  in the future and says nothing about how long already-due work has sat unclaimed. */
+  /** Age in ms of the oldest genuinely-active (processing, or pending AND due) foreground job -- null when
+   *  none qualifies right now. Distinct from oldestLivePendingAgeMs, which is dominated by a job intentionally
+   *  scheduled far in the future and says nothing about how long already-active work has sat unclaimed/running.
+   *  This is the field evaluateMaintenanceAdmission's live_job_age_high check actually gates on. */
   oldestLiveRunnableAgeMs: number | null;
   maintenancePendingCount: number;
   oldestMaintenancePendingAgeMs: number | null;
@@ -220,8 +233,14 @@ export function evaluateMaintenanceAdmission(
 ): MaintenanceAdmissionDecision {
   if (!config.enabled) return { admit: true, reason: "disabled" };
   if (nowMs - pendingSinceMs >= config.maxDeferAgeMs) return { admit: true, reason: "trickle_max_defer_age" };
-  if (signals.livePendingCount > config.maxLivePendingCount) return { admit: false, reason: "live_pending_high" };
-  if (signals.oldestLivePendingAgeMs !== null && signals.oldestLivePendingAgeMs > config.maxLiveJobAgeMs) {
+  // Gated on genuinely ACTIVE live work (processing, or pending AND due), not the raw pending/processing
+  // count (#selfhost-maintenance-admission-runnable-signal): agent-regate-pr's normal, expected, staggered/
+  // rate-deferred per-PR backlog (index.ts:24-29) sits in 'pending' for a long time by design without being
+  // due yet, so counting it here would starve maintenance on work that was never actually competing for a
+  // claim slot -- exactly the "queue large but intentionally deferred" case liveRunnableNowCount's own doc
+  // comment (above) distinguishes from a genuinely stuck queue.
+  if (signals.liveRunnableNowCount > config.maxLivePendingCount) return { admit: false, reason: "live_pending_high" };
+  if (signals.oldestLiveRunnableAgeMs !== null && signals.oldestLiveRunnableAgeMs > config.maxLiveJobAgeMs) {
     return { admit: false, reason: "live_job_age_high" };
   }
   if (signals.backlogConvergencePendingCount > config.maxBacklogConvergencePendingCount) {

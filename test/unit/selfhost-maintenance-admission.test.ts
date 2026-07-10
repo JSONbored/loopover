@@ -71,7 +71,7 @@ describe("evaluateMaintenanceAdmission", () => {
 
   it("admits unconditionally when disabled, even under extreme pressure", () => {
     const decision = evaluateMaintenanceAdmission(
-      { ...CLEAR_SIGNALS, livePendingCount: 999 },
+      { ...CLEAR_SIGNALS, liveRunnableNowCount: 999 },
       { ...CONFIG, enabled: false },
       now - 1_000,
       now,
@@ -79,9 +79,9 @@ describe("evaluateMaintenanceAdmission", () => {
     expect(decision).toEqual({ admit: true, reason: "disabled" });
   });
 
-  it("defers when live pending count exceeds the threshold", () => {
+  it("defers when live runnable-now count exceeds the threshold", () => {
     const decision = evaluateMaintenanceAdmission(
-      { ...CLEAR_SIGNALS, livePendingCount: 6 },
+      { ...CLEAR_SIGNALS, liveRunnableNowCount: 6 },
       CONFIG,
       now - 1_000,
       now,
@@ -89,9 +89,9 @@ describe("evaluateMaintenanceAdmission", () => {
     expect(decision).toEqual({ admit: false, reason: "live_pending_high" });
   });
 
-  it("admits when live pending count is AT (not over) the threshold", () => {
+  it("admits when live runnable-now count is AT (not over) the threshold", () => {
     const decision = evaluateMaintenanceAdmission(
-      { ...CLEAR_SIGNALS, livePendingCount: 5 },
+      { ...CLEAR_SIGNALS, liveRunnableNowCount: 5 },
       CONFIG,
       now - 1_000,
       now,
@@ -99,9 +99,23 @@ describe("evaluateMaintenanceAdmission", () => {
     expect(decision.admit).toBe(true);
   });
 
-  it("defers when the oldest live job has waited past the max age", () => {
+  // Regression (#4669): a raw pending/processing count includes agent-regate-pr's normal, expected,
+  // staggered/rate-deferred per-PR backlog (index.ts:24-29), which can sit well above maxLivePendingCount for
+  // long periods without any of it actually being due -- before this fix, that alone starved the maintenance
+  // lane even with zero real live pressure.
+  it("does NOT defer on a high raw live-pending count alone when nothing is actually runnable", () => {
     const decision = evaluateMaintenanceAdmission(
-      { ...CLEAR_SIGNALS, oldestLivePendingAgeMs: 120_001 },
+      { ...CLEAR_SIGNALS, livePendingCount: 999, liveRunnableNowCount: 0 },
+      CONFIG,
+      now - 1_000,
+      now,
+    );
+    expect(decision).toEqual({ admit: true, reason: "pressure_clear" });
+  });
+
+  it("defers when the oldest RUNNABLE live job has waited past the max age", () => {
+    const decision = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, oldestLiveRunnableAgeMs: 120_001 },
       CONFIG,
       now - 1_000,
       now,
@@ -109,14 +123,27 @@ describe("evaluateMaintenanceAdmission", () => {
     expect(decision).toEqual({ admit: false, reason: "live_job_age_high" });
   });
 
-  it("admits when there is no live job at all (null oldest age)", () => {
+  it("admits when there is no runnable live job at all (null oldest runnable age)", () => {
     const decision = evaluateMaintenanceAdmission(
-      { ...CLEAR_SIGNALS, oldestLivePendingAgeMs: null },
+      { ...CLEAR_SIGNALS, oldestLiveRunnableAgeMs: null },
       CONFIG,
       now - 1_000,
       now,
     );
     expect(decision.admit).toBe(true);
+  });
+
+  // Regression (#4669): oldestLivePendingAgeMs is created_at-based, not run_after-based, so it is dominated by
+  // a job intentionally scheduled far in the future -- before this fix, a deliberately staggered/deferred job
+  // could trip this the same way a genuinely stuck job would.
+  it("does NOT defer on a high raw oldest-live-pending age alone when nothing runnable is stale", () => {
+    const decision = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, oldestLivePendingAgeMs: 999_999_999, oldestLiveRunnableAgeMs: null },
+      CONFIG,
+      now - 1_000,
+      now,
+    );
+    expect(decision).toEqual({ admit: true, reason: "pressure_clear" });
   });
 
   it("defers when the maintenance lane itself is already backed up", () => {
@@ -226,9 +253,9 @@ describe("evaluateMaintenanceAdmission", () => {
     expect(decision).toEqual({ admit: true, reason: "pressure_clear" });
   });
 
-  it("admits when the oldest live job's age is AT (not over) the threshold", () => {
+  it("admits when the oldest runnable live job's age is AT (not over) the threshold", () => {
     const decision = evaluateMaintenanceAdmission(
-      { ...CLEAR_SIGNALS, oldestLivePendingAgeMs: 120_000 },
+      { ...CLEAR_SIGNALS, oldestLiveRunnableAgeMs: 120_000 },
       CONFIG,
       now - 1_000,
       now,
@@ -238,7 +265,7 @@ describe("evaluateMaintenanceAdmission", () => {
 
   it("force-admits via trickle once pending since exceeds the max defer age, even under pressure", () => {
     const decision = evaluateMaintenanceAdmission(
-      { ...CLEAR_SIGNALS, livePendingCount: 999, hostLoadAvg1PerCore: 99 },
+      { ...CLEAR_SIGNALS, liveRunnableNowCount: 999, hostLoadAvg1PerCore: 99 },
       CONFIG,
       now - CONFIG.maxDeferAgeMs,
       now,
@@ -248,7 +275,7 @@ describe("evaluateMaintenanceAdmission", () => {
 
   it("does not trickle-admit a job that hasn't waited long enough yet", () => {
     const decision = evaluateMaintenanceAdmission(
-      { ...CLEAR_SIGNALS, livePendingCount: 999 },
+      { ...CLEAR_SIGNALS, liveRunnableNowCount: 999 },
       CONFIG,
       now - (CONFIG.maxDeferAgeMs - 1),
       now,
@@ -258,7 +285,7 @@ describe("evaluateMaintenanceAdmission", () => {
 
   it("checks live pressure before maintenance-lane pressure (priority order)", () => {
     const decision = evaluateMaintenanceAdmission(
-      { ...CLEAR_SIGNALS, livePendingCount: 6, maintenancePendingCount: 16 },
+      { ...CLEAR_SIGNALS, liveRunnableNowCount: 6, maintenancePendingCount: 16 },
       CONFIG,
       now - 1_000,
       now,
@@ -266,9 +293,9 @@ describe("evaluateMaintenanceAdmission", () => {
     expect(decision.reason).toBe("live_pending_high");
   });
 
-  it("checks the oldest-live-job age before maintenance-lane pressure (priority order)", () => {
+  it("checks the oldest-runnable-live-job age before maintenance-lane pressure (priority order)", () => {
     const decision = evaluateMaintenanceAdmission(
-      { ...CLEAR_SIGNALS, oldestLivePendingAgeMs: 120_001, maintenancePendingCount: 16 },
+      { ...CLEAR_SIGNALS, oldestLiveRunnableAgeMs: 120_001, maintenancePendingCount: 16 },
       CONFIG,
       now - 1_000,
       now,
@@ -305,7 +332,7 @@ describe("evaluateMaintenanceAdmission", () => {
     );
     expect(beforeMaintenance.reason).toBe("backlog_convergence_high");
     const afterLive = evaluateMaintenanceAdmission(
-      { ...CLEAR_SIGNALS, backlogConvergencePendingCount: 11, livePendingCount: 6 },
+      { ...CLEAR_SIGNALS, backlogConvergencePendingCount: 11, liveRunnableNowCount: 6 },
       CONFIG,
       now - 1_000,
       now,

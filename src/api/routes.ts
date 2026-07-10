@@ -5246,7 +5246,13 @@ const VALIDATE_FOCUS_MANIFEST_PATH = "/v1/validate/focus-manifest";
 const LINT_SLOP_RISK_PATH = "/v1/lint/slop-risk";
 const LINT_ISSUE_SLOP_PATH = "/v1/lint/issue-slop";
 function stripMaintainerFocusManifestSettings(raw: unknown): unknown {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  // Split out from the rest of the guard below: this call site's only caller already 400s on a null body
+  // before ever reaching here, so this specific arm is unreachable in practice -- kept as defense-in-depth
+  // (typeof null === "object" in JS, so without it a null raw would fall through to the property access
+  // below and throw) for any future caller of this currently-unexported function.
+  /* v8 ignore next */
+  if (raw === null) return raw;
+  if (typeof raw !== "object" || Array.isArray(raw)) return raw;
   const record = raw as Record<string, JsonValue>;
   const settings = record.settings;
   if (settings === null || typeof settings !== "object" || Array.isArray(settings) || !("agentGlobalFreezeOverride" in settings)) return raw;

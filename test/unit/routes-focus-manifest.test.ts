@@ -125,6 +125,38 @@ describe("focus-manifest route auth", () => {
     expect(await isDbFrozenForRepo(env, effective.agentGlobalFreezeOverride)).toBe(true);
   });
 
+  // stripMaintainerFocusManifestSettings's guard is a compound OR chain (raw not-an-object / raw array /
+  // settings null / settings not-an-object / settings array / settings missing the override key) -- each of
+  // these leaves the body untouched (no strip), same as the pre-fix behavior, but for a different structural
+  // reason each time. Covering every arm here, not just the "settings HAS the key" happy path above.
+  it.each([
+    ["a top-level non-object body", "just a string"],
+    ["a top-level array body", ["src/"]],
+    ["settings: null", { wantedPaths: ["src/"], settings: null }],
+    ["settings as a non-object", { wantedPaths: ["src/"], settings: "not-an-object" }],
+    ["settings as an array", { wantedPaths: ["src/"], settings: ["not", "a", "record"] }],
+    ["settings with no freeze-override key", { wantedPaths: ["src/"], settings: { agentDryRun: true } }],
+  ])("does not crash and passes the body through unstripped for %s", async (_label, body) => {
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
+    await seedRegisteredInstalledRepo(env, 201, "repo-owner", "owned-repo");
+    mockedPermission.mockResolvedValue("write");
+    const { token } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
+
+    const response = await app.request(
+      OWNED_REPO_PATH,
+      {
+        method: "PUT",
+        headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ repoFullName: "repo-owner/owned-repo" });
+  });
+
   it("rejects focus-manifest writes from sessions without live GitHub write permission", async () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });

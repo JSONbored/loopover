@@ -697,6 +697,78 @@ describe("world-class backend signals", () => {
     expect(typeof minimalBundle.role).toBe("string");
   });
 
+  it("regression (#4606): buildPublicCommentSignalBundle agrees with the public panel on linkedIssueGateMode alone", () => {
+    // A repo that opts into the linked-issue gate purely via `.gittensory.yml` (linkedIssueGateMode !== "off")
+    // and never touches the legacy `requireLinkedIssue` boolean must still surface `missing_linked_issue` in
+    // the AI-rewrite signal bundle -- previously the bundle checked `requireLinkedIssue` alone and silently
+    // dropped the finding in exactly this configuration.
+    const currentPr: PullRequestRecord = {
+      ...pullRequests[0]!,
+      linkedIssues: [],
+      title: "Improve dashboard cache refresh handling",
+      body: "Rewrites the refresh path to avoid a stale cache after reconnect.",
+    };
+    const detection = detectGittensorContributor("oktofeesh1", currentPr, [currentPr], []);
+    const settings: RepositorySettings = {
+      repoFullName: repo.fullName,
+      commentMode: "detected_contributors_only",
+      publicAudienceMode: "gittensor_only",
+      publicSignalLevel: "standard",
+      checkRunMode: "off",
+      checkRunDetailLevel: "minimal",
+      gateCheckMode: "off",
+      regateSweepOrderMode: "staleness",
+      reviewCheckMode: "disabled",
+      gatePack: "gittensor",
+      linkedIssueGateMode: "block",
+      duplicatePrGateMode: "advisory",
+      qualityGateMode: "advisory",
+      slopGateMode: "off",
+      mergeReadinessGateMode: "off",
+      manifestPolicyGateMode: "off",
+      selfAuthoredLinkedIssueGateMode: "advisory",
+      linkedIssueSatisfactionGateMode: "off",
+      firstTimeContributorGrace: false,
+      slopAiAdvisory: false,
+      qualityGateMinScore: null,
+      autoLabelEnabled: true,
+      gittensorLabel: "gittensor",
+      createMissingLabel: true,
+      publicSurface: "comment_and_label",
+      includeMaintainerAuthors: false,
+      requireLinkedIssue: false,
+      backfillEnabled: true,
+      aiReviewMode: "off" as const,
+      aiReviewByok: false,
+      aiReviewAllAuthors: false,
+      closeOwnerAuthors: false,
+    };
+    const collisions = buildCollisionReport(repo.fullName, issues, [currentPr]);
+    const queueHealth = buildQueueHealth(repo, issues, [currentPr], collisions);
+    const preflight = buildPreflightResult({ repoFullName: repo.fullName, title: currentPr.title, body: currentPr.body ?? undefined, linkedIssues: [] }, repo, issues, [currentPr]);
+    const profile = buildContributorProfile("oktofeesh1", { login: "oktofeesh1", topLanguages: ["TypeScript"], source: "github" }, [currentPr], []);
+    // Sanity: the scenario actually produces the finding this test is about (no accidental no-issue rationale match).
+    expect(preflight.findings.some((finding) => finding.code === "missing_linked_issue")).toBe(true);
+
+    const blockedBundle = buildPublicCommentSignalBundle({ repo, pr: currentPr, profile, detection, queueHealth, collisions, preflight, settings });
+    expect(blockedBundle.requireLinkedIssue).toBe(false);
+    expect(blockedBundle.publicFindingTitles as string[]).toContain("No linked issue detected");
+
+    // The other side of the same `||`: when the gate is fully off AND requireLinkedIssue is false, the
+    // finding is correctly dropped from the bundle -- this was already correct before the fix.
+    const gateOffBundle = buildPublicCommentSignalBundle({
+      repo,
+      pr: currentPr,
+      profile,
+      detection,
+      queueHealth,
+      collisions,
+      preflight,
+      settings: { ...settings, linkedIssueGateMode: "off" },
+    });
+    expect(gateOffBundle.publicFindingTitles as string[]).not.toContain("No linked issue detected");
+  });
+
   it("classifies every participation lane boundary", () => {
     const inactive = buildLaneAdvice({ ...repo, registryConfig: { ...repo.registryConfig!, emissionShare: 0 } }, repo.fullName);
     const issueDiscovery = buildLaneAdvice({ ...repo, registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 1 } }, repo.fullName);

@@ -5175,12 +5175,9 @@ export function buildPublicCommentSignalBundle(args: {
     issues: [],
     profile: args.profile,
   });
-  const publicFindingTitles = args.preflight.findings
-    .filter((finding) => finding.severity !== "critical")
-    .filter((finding) => args.settings.requireLinkedIssue || finding.code !== "missing_linked_issue")
-    .filter((finding) => !containsPrivatePublicTerm([finding.code, finding.title].filter(Boolean).join(" ")))
-    .slice(0, args.settings.publicSignalLevel === "minimal" ? 2 : 5)
-    .map((finding) => finding.title);
+  // Reuse the single-source filter (severity, linked-issue-gate, bounty-lifecycle, private-term, slice)
+  // instead of re-deriving it here -- a third independent copy is exactly how this drifted before (#4606).
+  const publicFindingTitles = publicSafePreflightFindings(args.preflight, args.settings).map((finding) => finding.title);
   return {
     confirmedMiner,
     minerSignalDetected: confirmedMiner,

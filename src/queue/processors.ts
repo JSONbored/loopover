@@ -302,6 +302,7 @@ import {
   MAX_REVIEW_NAG_COOLDOWN_DAYS,
   isProtectedAutomationAuthor,
   planAgentMaintenanceActions,
+  resolveNullableLabel,
   type AgentActionPlanInput,
   type AgentDispositionLabelSettings,
   type PlannedAgentAction,
@@ -14319,7 +14320,7 @@ async function closeReviewEvasionSelfCloseIfActive(
       () => undefined,
     );
   }
-  const label = settings.reviewEvasionLabel === null ? null : (settings.reviewEvasionLabel ?? DEFAULT_REVIEW_EVASION_LABEL);
+  const label = resolveNullableLabel(settings.reviewEvasionLabel, DEFAULT_REVIEW_EVASION_LABEL);
   if (label !== null) {
     await ensurePullRequestLabel(env, installationId, repoFullName, pr.number, label, { createMissingLabel: true }).catch(() => undefined);
   }
@@ -14468,7 +14469,7 @@ async function closeReviewEvasionDraftConversionIfActive(
       () => undefined,
     );
   }
-  const label = settings.reviewEvasionLabel === null ? null : (settings.reviewEvasionLabel ?? DEFAULT_REVIEW_EVASION_LABEL);
+  const label = resolveNullableLabel(settings.reviewEvasionLabel, DEFAULT_REVIEW_EVASION_LABEL);
   if (label !== null) {
     await ensurePullRequestLabel(env, installationId, repoFullName, pr.number, label, { createMissingLabel: true }).catch(() => undefined);
   }
@@ -14632,7 +14633,7 @@ async function closeRepeatedDraftCyclingIfDetected(
       () => undefined,
     );
   }
-  const label = settings.reviewEvasionLabel === null ? null : (settings.reviewEvasionLabel ?? DEFAULT_REVIEW_EVASION_LABEL);
+  const label = resolveNullableLabel(settings.reviewEvasionLabel, DEFAULT_REVIEW_EVASION_LABEL);
   if (label !== null) {
     await ensurePullRequestLabel(env, installationId, repoFullName, pr.number, label, { createMissingLabel: true }).catch(() => undefined);
   }

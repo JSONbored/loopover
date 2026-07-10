@@ -52,6 +52,14 @@ export const AGENT_LABEL_NEEDS_REVIEW = "manual-review";
 // recurring failure mode separately from an ordinary guardrail hold.
 export const AGENT_LABEL_MIGRATION_COLLISION = "migration-collision";
 
+// #label-scoping (#4618): every per-repo configurable close/hold label shares this shape -- explicit `null`
+// means "act without any label" (an operator opt-out), `undefined` (never configured) falls back to the
+// operator-facing default below. Factored out of ~9 independently hand-copied ternaries of the exact same
+// idiom across this file and queue/processors.ts. PURE.
+export function resolveNullableLabel(configured: string | null | undefined, fallback: string): string | null {
+  return configured === null ? null : (configured ?? fallback);
+}
+
 // Maintainer-managed automation accounts whose PRs are never auto-closed. A recurring accumulator (e.g.
 // github-actions[bot] opening automation/readme-refresh) or a dependency PR must not be killed by a duplicate
 // or slop heuristic — the maintainer owns its lifecycle. (reviewbot wrongly auto-closed such an accumulator,
@@ -439,11 +447,11 @@ type ResolvedAgentDispositionLabels = {
 
 function resolveAgentDispositionLabels(settings: AgentDispositionLabelSettings): ResolvedAgentDispositionLabels {
   return {
-    manualReview: settings.manualReviewLabel === null ? null : (settings.manualReviewLabel ?? AGENT_LABEL_NEEDS_REVIEW),
-    readyToMerge: settings.readyToMergeLabel === null ? null : (settings.readyToMergeLabel ?? AGENT_LABEL_READY),
-    changesRequested: settings.changesRequestedLabel === null ? null : (settings.changesRequestedLabel ?? AGENT_LABEL_CHANGES),
-    migrationCollision: settings.migrationCollisionLabel === null ? null : (settings.migrationCollisionLabel ?? AGENT_LABEL_MIGRATION_COLLISION),
-    pendingClosure: settings.pendingClosureLabel === null ? null : (settings.pendingClosureLabel ?? AGENT_LABEL_PENDING_CLOSURE),
+    manualReview: resolveNullableLabel(settings.manualReviewLabel, AGENT_LABEL_NEEDS_REVIEW),
+    readyToMerge: resolveNullableLabel(settings.readyToMergeLabel, AGENT_LABEL_READY),
+    changesRequested: resolveNullableLabel(settings.changesRequestedLabel, AGENT_LABEL_CHANGES),
+    migrationCollision: resolveNullableLabel(settings.migrationCollisionLabel, AGENT_LABEL_MIGRATION_COLLISION),
+    pendingClosure: resolveNullableLabel(settings.pendingClosureLabel, AGENT_LABEL_PENDING_CLOSURE),
   };
 }
 
@@ -630,7 +638,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     // #label-scoping: this label is inseparable metadata on the close below, so it rides on `close` autonomy,
     // NOT the generic `label` class — a repo can enable close without also opting into the broad label dial.
     // Explicit `null` (vs. absent/undefined) means "close without any label."
-    const label = input.blacklistLabel === null ? null : (input.blacklistLabel ?? DEFAULT_BLACKLIST_LABEL);
+    const label = resolveNullableLabel(input.blacklistLabel, DEFAULT_BLACKLIST_LABEL);
     // Close is pushed BEFORE its coupled label (#label-close-split-brain) so the executor's outcome-correlation
     // guard always has the close's outcome already recorded by the time it evaluates the label.
     if (acting("close")) {
@@ -658,7 +666,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   if (input.contributorCapMatch?.matched === true && capContributor) {
     const { authorLogin, openCount, cap, itemKind, scope } = input.contributorCapMatch;
     // #label-scoping: same close-autonomy-gated, null-clearable shape as the blacklist label above.
-    const label = input.contributorCapLabel === null ? null : (input.contributorCapLabel ?? DEFAULT_CONTRIBUTOR_CAP_LABEL);
+    const label = resolveNullableLabel(input.contributorCapLabel, DEFAULT_CONTRIBUTOR_CAP_LABEL);
     // Close is pushed BEFORE its coupled label (#label-close-split-brain) — see the closeKind doc comment above.
     if (acting("close")) {
       actions.push({
@@ -683,7 +691,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   if (input.reviewNagMatch?.matched === true && reviewNagContributor) {
     const { authorLogin, pingCount, maxPings } = input.reviewNagMatch;
     // #label-scoping: same close-autonomy-gated, null-clearable shape as the blacklist label above.
-    const label = input.reviewNagLabel === null ? null : (input.reviewNagLabel ?? DEFAULT_REVIEW_NAG_LABEL);
+    const label = resolveNullableLabel(input.reviewNagLabel, DEFAULT_REVIEW_NAG_LABEL);
     // Close is pushed BEFORE its coupled label (#label-close-split-brain) — see the closeKind doc comment above.
     if (acting("close")) {
       actions.push({

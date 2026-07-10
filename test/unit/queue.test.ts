@@ -26954,16 +26954,19 @@ describe("queue processors", () => {
         if (url === "https://api.gittensor.io/miners") return Response.json([]);
         if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
         if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
-        if (url.includes("/git/commits/checkbox-4589-commit-sha") && method === "GET") return Response.json({ tree: { sha: "base-tree" } });
-        if (url.includes("/git/trees") && method === "POST") {
+        if (url.endsWith("/pulls/6011") && method === "GET") {
+          return Response.json({ head: { ref: "feature/checkout-retry", sha: "checkbox-4589-commit-sha", repo: { full_name: repoFullName } } });
+        }
+        if (url.endsWith("/git/commits/checkbox-4589-commit-sha") && method === "GET") return Response.json({ tree: { sha: "base-tree" } });
+        if (url.endsWith("/git/trees") && method === "POST") {
           gitWrites.push("tree");
           return Response.json({ sha: "new-tree" });
         }
-        if (url.includes("/git/commits") && method === "POST") {
+        if (url.endsWith("/git/commits") && method === "POST") {
           gitWrites.push("commit");
           return Response.json({ sha: "new-commit" });
         }
-        if (url.includes("/git/refs/") && method === "PATCH") {
+        if (method === "PATCH") {
           gitWrites.push("ref");
           return Response.json({});
         }

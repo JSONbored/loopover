@@ -24,6 +24,7 @@ describe("miner deployment guide (#2330)", () => {
 
   it("ships a fleet Dockerfile with non-root runtime and no baked secrets (#4295)", () => {
     const dockerfile = readFileSync(join(process.cwd(), "packages/gittensory-miner/Dockerfile"), "utf8");
+    const dockerignore = readFileSync(join(process.cwd(), ".dockerignore"), "utf8");
     expect(dockerfile).toContain("COPY . .");
     expect(dockerfile).toContain("npm prune --omit=dev --ignore-scripts");
     expect(dockerfile).toContain("@jsonbored/gittensory-engine");
@@ -32,6 +33,12 @@ describe("miner deployment guide (#2330)", () => {
     expect(dockerfile).toContain("VOLUME");
     expect(dockerfile).toMatch(/No HEALTHCHECK/i);
     expect(dockerfile).not.toMatch(/GITHUB_TOKEN|ghp_|github_pat_/i);
+    expect(dockerignore).toContain(".npmrc");
+    expect(dockerignore).toContain("**/.npmrc");
+    expect(dockerignore).toContain("*.pem");
+    expect(dockerignore).toContain("**/*.pem");
+    expect(dockerignore).toContain("*private*key*");
+    expect(dockerignore).toContain("**/*private*key*");
   });
 
   it("is linked from the miner package README", () => {

@@ -37,4 +37,10 @@ review-enrichment
 .env
 .env.*
 .dev.vars
+.npmrc
+**/.npmrc
+*.pem
+**/*.pem
+*private*key*
+**/*private*key*
 !.env.example

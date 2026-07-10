@@ -9603,6 +9603,56 @@ describe("queue processors", () => {
     });
   });
 
+  it("REGRESSION: installation-created telemetry falls back to repoFullName as the targetKey when the payload carries no installation.id", async () => {
+    const env = createTestEnv();
+    // `handleInstallationCreatedWebhookEvent`'s own guard is `eventName === "installation" && action === "created"`
+    // -- unlike the sibling installation_repositories handler, it does NOT also require `installation.id`, so a
+    // malformed/partial delivery (no `installation` object at all) still enters the block. The per-repo
+    // `targetKey: payload.installation?.id ? \`installation:${id}\` : repoFullName` ternary must then take its
+    // `repoFullName` fallback arm instead of throwing or omitting the field.
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "install-created-no-installation-id",
+      eventName: "installation",
+      payload: {
+        action: "created",
+        repository: { name: "my-repo", full_name: "no-installation-org/my-repo", private: false, owner: { login: "no-installation-org" } },
+      },
+    });
+    const events = await listProductUsageEvents(env, { limit: 50 });
+    const created = events.filter((e) => e.eventName === "github_installation_created");
+    expect(created).toHaveLength(1);
+    // No installation/sender on the payload -> installationActor is undefined -> no actor redaction applies, so
+    // both fields surface the real (unredacted) value here.
+    expect(created[0]).toMatchObject({
+      eventName: "github_installation_created",
+      repoFullName: "no-installation-org/my-repo",
+      targetKey: "no-installation-org/my-repo",
+    });
+  });
+
+  it("REGRESSION: a deployment_status webhook for an allowlisted repo re-reviews the correlated PR and short-circuits before the other wake triggers", async () => {
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory" });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    // Deliberately no stored PR #4242 -- reReviewStoredPullRequest's own `if (!pr || pr.state !== "open") return;`
+    // no-ops immediately, so this test stays focused on maybeCaptureOnDeploymentStatus's early-return contract
+    // (processGitHubWebhook must `return` right after it, never falling through to the other wake-trigger checks)
+    // without needing to mock the full re-review pipeline.
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "deployment-status-4242",
+      eventName: "deployment_status",
+      payload: {
+        installation: { id: 123 },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        deployment_status: { state: "success", environment_url: "https://preview.example.test" },
+        deployment: { sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", ref: "feature", payload: JSON.stringify({ pr: 4242 }) },
+      },
+    } as never);
+    const stored = await env.DB.prepare("select status from webhook_events where delivery_id = ?").bind("deployment-status-4242").first<{ status: string }>();
+    expect(stored?.status).toBe("processed");
+  });
+
   it("publishes an opt-in gate without comment output, blocking a non-confirmed author normally (#gate-nonconfirmed)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(

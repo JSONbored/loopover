@@ -5920,6 +5920,7 @@ async function handleInstallationRepositoriesWebhookEvent(
           {
             actor: installationActor,
             repoFullName,
+            /* v8 ignore next -- defensive: the enclosing `if` above already requires payload.installation?.id truthy to reach this block, so the ternary's `repoFullName` fallback arm is unreachable via any real invocation. */
             targetKey: payload.installation?.id
               ? `installation:${payload.installation.id}`
               : repoFullName,
@@ -5939,6 +5940,7 @@ async function handleInstallationRepositoriesWebhookEvent(
           {
             actor: installationActor,
             repoFullName,
+            /* v8 ignore next -- defensive: the enclosing `if` above already requires payload.installation?.id truthy to reach this block, so the ternary's `repoFullName` fallback arm is unreachable via any real invocation. */
             targetKey: payload.installation?.id
               ? `installation:${payload.installation.id}`
               : repoFullName,
@@ -6258,6 +6260,7 @@ async function handlePullRequestWebhookEvent(
     // miss; other pull_request actions (labeled, edited, etc.) don't change these fields and are left untouched
     // to avoid spurious cache churn / extra writes on high-frequency low-signal actions.
     if (eventName === "pull_request" && (payload.action === "synchronize" || payload.action === "closed" || payload.action === "reopened")) {
+      /* v8 ignore next -- best-effort: invalidatePrStateCache never rejects against a healthy D1, and a cache-invalidation failure here must never block the webhook. */
       await invalidatePrStateCache(env, repoFullName, pr.number).catch(() => undefined);
     }
     // Review-evasion protection (#review-evasion-protection): a head change (synchronize) invalidates any
@@ -6267,6 +6270,7 @@ async function handlePullRequestWebhookEvent(
     // those checks must read the row before this general cleanup would otherwise clear it out from under
     // them.
     if (eventName === "pull_request" && payload.action === "synchronize") {
+      /* v8 ignore next -- best-effort: the guarded CAS update never rejects against a healthy D1, and a cleanup failure here must never block the webhook. */
       await terminalizeActiveReviewTracking(env, repoFullName, pr.number).catch(() => undefined);
     }
     // Reopen-prevention (#one-shot-reopen): a CONTRIBUTOR may not reopen a PR that gittensory or a maintainer
@@ -6446,6 +6450,7 @@ async function handlePullRequestWebhookEvent(
     // close (which already terminalizes internally, scoped to its own head) both land here too; the
     // guarded CAS update is a safe no-op in both of those already-terminal cases.
     if (eventName === "pull_request" && payload.action === "closed") {
+      /* v8 ignore next -- best-effort: the guarded CAS update never rejects against a healthy D1, and a cleanup failure here must never block the webhook. */
       await terminalizeActiveReviewTracking(env, repoFullName, pr.number).catch(() => undefined);
     }
     if (

@@ -4105,6 +4105,10 @@ export function buildPublicReadinessScore(args: {
 
 export const PR_PANEL_RETRIGGER_MARKER = "<!-- gittensory-rerun-review:v1 -->";
 
+// #4589: the generate-tests checkbox marker -- a sibling of PR_PANEL_RETRIGGER_MARKER above, same
+// detect-via-marker / re-authorize-on-toggle mechanism, see maybeProcessPrPanelGenerateTests in processors.ts.
+export const PR_PANEL_GENERATE_TESTS_MARKER = "<!-- gittensory-generate-tests:v1 -->";
+
 /** Earn-CTA target for a public-comment footer. The repo-scoped miner page is only meaningful for
  *  repos registered on Gittensor (per `gittensorRepoEarnUrl`'s documented contract); for an
  *  unregistered repo the page has no miner data, so fall back to the general Gittensor home URL
@@ -4139,6 +4143,14 @@ type PublicSafeCollapsibleArgs = {
   queueHealth: QueueHealth;
   review?: FocusManifestReviewConfig | undefined;
   duplicateWinnerEnabled?: boolean | undefined;
+  /** #4589: the already-computed, public-safe `manifest_missing_tests` finding for this PR (its detail/action
+   *  text), when it fired -- reused here rather than a second, independent coverage-gap detection. Absent when
+   *  the PR has no coverage gap, so the "Test coverage" collapsible below renders empty (and thus invisible). */
+  missingTestsFinding?: Pick<AdvisoryFinding, "detail"> | undefined;
+  /** #4589: whether the generate-tests checkbox is actually available for this repo/PR (the SAME
+   *  resolveConvergedFeature("e2eTests") check the checkbox itself is gated on) -- controls whether the
+   *  collapsible below points the reader at the checkbox, or just states the gap with no next step. */
+  e2eTestGenAvailable?: boolean | undefined;
 };
 
 /** "Signal definitions" body — a static legend for the readiness signals. No inputs. */
@@ -4149,6 +4161,23 @@ function signalDefinitionsBody(): string[] {
     "- Validation posture = whether the PR provides enough public validation/test evidence for maintainer review.",
     "- Contributor workload = public contributor activity and cleanup pressure, not a repo-wide quality failure.",
     "- Contributor context = public GitHub/Gittensor identity context; non-Gittensor status is not a blocker.",
+  ];
+}
+
+/** "Test coverage" body (#4589) — reuses the already-computed `manifest_missing_tests` finding rather than a
+ *  second detection pass. Empty when there's no coverage gap, OR the gap exists but `e2eTests` isn't enabled
+ *  for this repo (the caller's empty-body check then skips rendering the collapsible entirely, same
+ *  convention every other collapsible here already follows, and the same "never mention a command that would
+ *  bounce with not enabled" principle #4583's inline CTA already established). The checkbox itself can't live
+ *  inside this collapsible (GitHub disables interactive checkboxes inside the alert blockquote every
+ *  collapsible renders within; see renderUnifiedReviewComment's own comment on the re-run checkbox for the
+ *  same constraint), so it renders as a top-level line below the whole comment instead -- this collapsible
+ *  only points the reader at it. */
+function testCoverageBody(args: PublicSafeCollapsibleArgs): string[] {
+  if (!args.missingTestsFinding || !args.e2eTestGenAvailable) return [];
+  return [
+    `- ${args.missingTestsFinding.detail}`,
+    "- Check the box below to generate an AI Playwright test for this PR, or comment `@gittensory generate-tests`.",
   ];
 }
 
@@ -4195,6 +4224,9 @@ export function buildPublicSafeCollapsibles(args: PublicSafeCollapsibleArgs): Un
     { title: "Review context", body: reviewContextBody(args).join("\n") },
     { title: "Contributor next steps", body: contributorNextStepsBody(publicSafeNextSteps(args)).join("\n") },
     { title: "Signal definitions", body: signalDefinitionsBody().join("\n") },
+    // #4589: last, after Signal definitions -- empty (thus invisible, per the caller's empty-body skip) unless
+    // there's an actual coverage gap AND the generate-tests checkbox is available for this repo.
+    { title: "Test coverage", body: testCoverageBody(args).join("\n") },
   ];
 }
 

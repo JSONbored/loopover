@@ -52,6 +52,7 @@ describe("commitE2eTestToPrBranch (#4197)", () => {
       const url = input.toString();
       if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
       const method = init?.method ?? "GET";
+      if (url.endsWith("/pulls/42") && method === "GET") return Response.json({ head: { ref: "feature/my-branch", sha: "head-commit-sha", repo: { full_name: REPO } } });
       calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : {} });
       if (url.endsWith("/git/commits/head-commit-sha") && method === "GET") return Response.json({ tree: { sha: "base-tree-sha" } });
       if (url.endsWith("/git/trees") && method === "POST") return Response.json({ sha: "new-tree-sha" });
@@ -86,6 +87,7 @@ describe("commitE2eTestToPrBranch (#4197)", () => {
       const url = input.toString();
       if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
       const method = init?.method ?? "GET";
+      if (url.endsWith("/pulls/42") && method === "GET") return Response.json({ head: { ref: "feature/my-branch", sha: "head-commit-sha", repo: { full_name: REPO } } });
       if (url.endsWith("/git/commits/head-commit-sha") && method === "GET") return Response.json({ tree: { sha: "base-tree-sha" } });
       if (url.endsWith("/git/trees") && method === "POST") {
         treeBody = init?.body ? JSON.parse(String(init.body)) : {};
@@ -101,12 +103,47 @@ describe("commitE2eTestToPrBranch (#4197)", () => {
     expect((treeBody.tree as Array<{ path: string }>)[0]?.path).toBe("test/e2e/custom.spec.ts");
   });
 
+  it("declines fork PR commit delivery before any git write", async () => {
+    const env = envWithKey();
+    const calls: Array<{ method: string; url: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
+      const method = init?.method ?? "GET";
+      calls.push({ method, url });
+      if (url.endsWith("/pulls/42") && method === "GET") return Response.json({ head: { ref: "feature/my-branch", sha: "head-commit-sha", repo: { full_name: "fork/widgets" } } });
+      return new Response("unexpected", { status: 500 });
+    });
+
+    const result = await commitE2eTestToPrBranch(env, baseArgs);
+
+    expect(result).toEqual({ status: "declined", reason: "commit delivery is only supported for same-repository PR branches" });
+    expect(calls.some((call) => call.url.includes("/git/"))).toBe(false);
+  });
+
+  it("declines when the live PR head no longer matches the cached branch and sha", async () => {
+    const env = envWithKey();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/pulls/42") && method === "GET") return Response.json({ head: { ref: "feature/new", sha: "new-head-sha", repo: { full_name: REPO } } });
+      return new Response("unexpected", { status: 500 });
+    });
+
+    const result = await commitE2eTestToPrBranch(env, baseArgs);
+
+    expect(result).toMatchObject({ status: "declined" });
+    if (result.status !== "declined") throw new Error("unreachable");
+    expect(result.reason).toContain("live PR head no longer matches");
+  });
+
   it("declines with a clear reason on a 403/404 (no write access -- fork without maintainer edits)", async () => {
     const env = envWithKey();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
-      if (url.endsWith("/git/commits/head-commit-sha")) return new Response("forbidden", { status: 403 });
+      if (url.endsWith("/pulls/42")) return new Response("forbidden", { status: 403 });
       return new Response("unexpected", { status: 500 });
     });
 
@@ -122,6 +159,7 @@ describe("commitE2eTestToPrBranch (#4197)", () => {
       const url = input.toString();
       if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
       const method = init?.method ?? "GET";
+      if (url.endsWith("/pulls/42") && method === "GET") return Response.json({ head: { ref: "feature/my-branch", sha: "head-commit-sha", repo: { full_name: REPO } } });
       if (url.endsWith("/git/commits/head-commit-sha") && method === "GET") return Response.json({ tree: { sha: "base-tree-sha" } });
       if (url.endsWith("/git/trees") && method === "POST") return Response.json({ sha: "new-tree-sha" });
       if (url.endsWith("/git/commits") && method === "POST") return Response.json({ sha: "new-commit-sha" });
@@ -140,7 +178,7 @@ describe("commitE2eTestToPrBranch (#4197)", () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
-      if (url.endsWith("/git/commits/head-commit-sha")) return new Response("server exploded", { status: 500 });
+      if (url.endsWith("/pulls/42")) return new Response("server exploded", { status: 500 });
       return new Response("unexpected", { status: 500 });
     });
 

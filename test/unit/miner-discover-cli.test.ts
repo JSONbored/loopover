@@ -10,6 +10,7 @@ import {
   parseDiscoverArgs,
   renderDiscoverSummary,
   runDiscover,
+  sanitizeDiscoverDisplayText,
 } from "../../packages/gittensory-miner/lib/discover-cli.js";
 import { bin, runCapture } from "./support/miner-cli-harness";
 
@@ -119,6 +120,34 @@ describe("renderDiscoverSummary (#4247)", () => {
     expect(text).toContain("enqueued: 2");
     expect(text).toContain("acme/widgets#1  score=0.8000  Add retry helper");
     expect(text).not.toContain("skipped (below min rank)");
+  });
+
+  it("strips terminal control sequences from candidate titles", () => {
+    const text = renderDiscoverSummary({
+      fanOutCount: 1,
+      warnings: [],
+      ranked: [
+        {
+          repoFullName: "acme/widgets",
+          issueNumber: 1,
+          title:
+            "normal\nSPOOFED: enqueued: 999\u001b[31m red \u001b]8;;https://attacker.example\u0007CLICK\u001b]8;;\u0007 cod\u202eexe",
+          rankScore: 0.8,
+        },
+      ],
+      enqueueSummary: { enqueued: 1, skippedBelowMinRank: 0, skippedInvalid: 0, eventsAppended: 0 },
+    });
+
+    expect(text).toContain("normal SPOOFED: enqueued: 999 red CLICK codexe");
+    expect(text).not.toContain("\u001b");
+    expect(text).not.toContain("\u0007");
+    expect(text).not.toContain("\u202e");
+    expect(text.split("\n").filter((line) => line.includes("SPOOFED"))).toHaveLength(1);
+  });
+
+  it("bounds sanitized title display text and handles nullish values", () => {
+    expect(sanitizeDiscoverDisplayText(null)).toBe("");
+    expect(sanitizeDiscoverDisplayText(`safe ${"x".repeat(300)}`)).toHaveLength(240);
   });
 
   it("reports skipped-below-min-rank counts and an empty-result message", () => {

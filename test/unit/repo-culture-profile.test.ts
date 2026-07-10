@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { upsertRecentMergedPullRequest } from "../../src/db/repositories";
+import * as repositoriesModule from "../../src/db/repositories";
 import {
   deriveRepoCultureProfile,
   extractRepoCultureProfile,
@@ -7,6 +8,7 @@ import {
   prSizeBand,
   REPO_CULTURE_PROFILE_SCHEMA_VERSION,
 } from "../../src/review/repo-culture-profile";
+import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import type { RecentMergedPullRequestRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -434,5 +436,89 @@ describe("extractRepoCultureProfile: cache + invalidation", () => {
     expect(profile.present).toBe(true);
     if (!profile.present) throw new Error("expected present profile");
     expect(profile.commonLabels).toEqual([{ label: "", frequency: 0 }]);
+  });
+});
+
+// ── cache hit/miss telemetry (#4509) ────────────────────────────────────────────────────────────
+
+describe("extractRepoCultureProfile: cache hit/miss telemetry (#4509)", () => {
+  afterEach(() => resetMetrics());
+
+  async function auditEvent(env: ReturnType<typeof createTestEnv>, eventType: string) {
+    return env.DB.prepare("SELECT outcome, target_key FROM audit_events WHERE event_type = ? AND target_key = ?")
+      .bind(eventType, REPO)
+      .first<{ outcome: string; target_key: string }>();
+  }
+
+  it("INVARIANT: a cache HIT fires exactly the hit counter/audit-event pair, and NOT the miss pair", async () => {
+    const env = createTestEnv({});
+    for (let i = 1; i <= MIN_SAMPLE_PULL_REQUESTS; i++) await seedMergedPr(env, { number: i });
+    await extractRepoCultureProfile(env, REPO, { now: "2026-07-05T00:00:00.000Z" }); // first call: a miss (cold cache)
+    resetMetrics();
+    await env.DB.prepare("DELETE FROM audit_events").run(); // isolate to the SECOND call's telemetry only
+
+    const second = await extractRepoCultureProfile(env, REPO, { now: "2026-07-05T00:30:00.000Z" }); // within TTL, no drift
+    expect(second.present).toBe(true);
+
+    const rendered = await renderMetrics();
+    expect(rendered).toContain("gittensory_repo_culture_profile_cache_hit_total 1");
+    expect(rendered).not.toContain("gittensory_repo_culture_profile_cache_miss_total");
+    const hitEvent = await auditEvent(env, "github_app.repo_culture_profile_cache_hit");
+    expect(hitEvent?.outcome).toBe("completed");
+    expect(await auditEvent(env, "github_app.repo_culture_profile_cache_miss")).toBeUndefined();
+  });
+
+  it("swallows a failing cache-hit audit-event write without throwing, still returning the cached profile", async () => {
+    const env = createTestEnv({});
+    for (let i = 1; i <= MIN_SAMPLE_PULL_REQUESTS; i++) await seedMergedPr(env, { number: i });
+    await extractRepoCultureProfile(env, REPO, { now: "2026-07-05T00:00:00.000Z" }); // populates the cache
+
+    const writeSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
+    const second = await extractRepoCultureProfile(env, REPO, { now: "2026-07-05T00:30:00.000Z" }); // a cache hit
+    writeSpy.mockRestore();
+
+    expect(second.present).toBe(true); // the failed audit write never surfaces to the caller
+  });
+
+  it("INVARIANT: a cache MISS (TTL expired) fires exactly the miss counter/audit-event pair, and NOT the hit pair", async () => {
+    const env = createTestEnv({});
+    for (let i = 1; i <= MIN_SAMPLE_PULL_REQUESTS; i++) await seedMergedPr(env, { number: i });
+    await extractRepoCultureProfile(env, REPO, { now: "2026-07-05T00:00:00.000Z" }); // first call populates the cache
+    resetMetrics();
+    await env.DB.prepare("DELETE FROM audit_events").run();
+
+    // maxAgeMs: -1 makes the freshly-written snapshot immediately stale, forcing a miss/re-derive.
+    const second = await extractRepoCultureProfile(env, REPO, { now: "2026-07-05T00:00:00.000Z", maxAgeMs: -1 });
+    expect(second.present).toBe(true);
+
+    const rendered = await renderMetrics();
+    expect(rendered).toContain("gittensory_repo_culture_profile_cache_miss_total 1");
+    expect(rendered).not.toContain("gittensory_repo_culture_profile_cache_hit_total");
+    const missEvent = await auditEvent(env, "github_app.repo_culture_profile_cache_miss");
+    expect(missEvent?.outcome).toBe("completed");
+    expect(await auditEvent(env, "github_app.repo_culture_profile_cache_hit")).toBeUndefined();
+  });
+
+  it("REGRESSION: the merged-PR-count drift-invalidation path is correctly counted as a miss, not silently uninstrumented", async () => {
+    const env = createTestEnv({});
+    for (let i = 1; i <= MIN_SAMPLE_PULL_REQUESTS; i++) await seedMergedPr(env, { number: i });
+    const first = await extractRepoCultureProfile(env, REPO, { now: "2026-07-05T00:00:00.000Z" });
+    expect(first.present).toBe(true);
+
+    // A new merged PR lands — the cached snapshot's sampleCountAtGeneration no longer matches the live COUNT,
+    // even though the TTL (maxAgeMs: POSITIVE_INFINITY below) never expires.
+    await seedMergedPr(env, { number: MIN_SAMPLE_PULL_REQUESTS + 1 });
+    resetMetrics();
+    await env.DB.prepare("DELETE FROM audit_events").run();
+
+    const refreshed = await extractRepoCultureProfile(env, REPO, { now: "2026-07-05T01:00:00.000Z", maxAgeMs: Number.POSITIVE_INFINITY });
+    expect(refreshed.present).toBe(true);
+    if (!refreshed.present) throw new Error("expected present profile");
+    expect(refreshed.pullRequestNorms.sampleSize).toBe(MIN_SAMPLE_PULL_REQUESTS + 1); // confirms the drift path actually re-derived
+
+    const rendered = await renderMetrics();
+    expect(rendered).toContain("gittensory_repo_culture_profile_cache_miss_total 1");
+    expect(rendered).not.toContain("gittensory_repo_culture_profile_cache_hit_total");
+    expect((await auditEvent(env, "github_app.repo_culture_profile_cache_miss"))?.outcome).toBe("completed");
   });
 });

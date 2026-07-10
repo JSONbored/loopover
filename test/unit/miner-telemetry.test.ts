@@ -70,6 +70,19 @@ describe("miner-telemetry schema (#4301)", () => {
     expect(() => normalizeMinerTelemetryEvent({ ...base, metrics: null })).toThrow("invalid_metrics");
   });
 
+  it("rejects metric names that could carry raw identifiers or free text", () => {
+    expect(() =>
+      normalizeMinerTelemetryEvent({
+        ...base,
+        metrics: { "acme/private-repo#123 leaked issue title": 1 },
+      }),
+    ).toThrow("invalid_metrics");
+    expect(() => normalizeMinerTelemetryEvent({ ...base, metrics: { "rank-ms": 3 } })).toThrow(
+      "invalid_metrics",
+    );
+    expect(() => normalizeMinerTelemetryEvent({ ...base, metrics: { "": 1 } })).toThrow("invalid_metrics");
+  });
+
   it("is re-exported from the package barrel", async () => {
     const barrel = await import("../../packages/gittensory-engine/src/index");
     expect(typeof barrel.normalizeMinerTelemetryEvent).toBe("function");

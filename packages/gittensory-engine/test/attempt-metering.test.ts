@@ -82,3 +82,15 @@ test("evaluateAttemptBudget: a breach mid-attempt is detectable from accumulated
   });
   assert.deepEqual(withinAfterEachStep, [true, true, false]); // breach at the 3rd turn
 });
+
+test("accumulateAttemptUsage rejects negative and non-finite usage before totals can be reduced or poisoned", () => {
+  assert.throws(() => accumulateAttemptUsage(u(10, 1, 100, 0), u(-1, 0, 0, 0)), /next\.tokens/);
+  assert.throws(() => accumulateAttemptUsage(u(Number.NaN, 1, 100, 0), u(1, 0, 0, 0)), /total\.tokens/);
+  assert.throws(() => meterAttemptUsage([u(1, 1, Number.POSITIVE_INFINITY, 0)]), /next\.wallClockMs/);
+});
+
+test("evaluateAttemptBudget rejects malformed totals and ceilings instead of failing open", () => {
+  assert.throws(() => evaluateAttemptBudget(u(Number.NaN, 0, 0, 0), { maxTokens: 1 }), /totals\.tokens/);
+  assert.throws(() => evaluateAttemptBudget(u(100, 0, 0, 0), { maxTokens: Number.NaN }), /budget\.maxTokens/);
+  assert.throws(() => evaluateAttemptBudget(u(0, 0, 0, 0), { maxCostUsd: -1 }), /budget\.maxCostUsd/);
+});

@@ -175,6 +175,40 @@ describe("renderUnifiedReviewComment", () => {
     expect(bodyAbove.every((l) => l.startsWith(">"))).toBe(true);
   });
 
+  // #4589: the generate-tests checkbox is a sibling of the re-run checkbox — same top-level-outside-the-
+  // blockquote placement, for the same GitHub-disables-checkboxes-in-a-blockquote reason.
+  it("renders the generate-tests checkbox OUTSIDE the blockquote too, alongside the re-run checkbox", () => {
+    const md = renderUnifiedReviewComment(
+      { ...base, decision: "merge" },
+      { ...ctx, generateTestsLabel: "Generate an AI Playwright test for this PR" },
+    );
+    const lines = md.split("\n");
+    const reRunLine = lines.find((l) => l.includes("Re-run Gittensory review"));
+    const generateTestsLine = lines.find((l) => l.includes("Generate an AI Playwright test for this PR"));
+    expect(reRunLine).toBeDefined();
+    expect(generateTestsLine).toBeDefined();
+    expect(reRunLine!.startsWith(">")).toBe(false);
+    expect(generateTestsLine!.startsWith(">")).toBe(false);
+    expect(generateTestsLine).toBe(`- [ ] ${"Generate an AI Playwright test for this PR"}`);
+    // Stable order: re-run first, generate-tests second (matches the order the two features shipped in).
+    expect(lines.indexOf(reRunLine!)).toBeLessThan(lines.indexOf(generateTestsLine!));
+  });
+
+  it("renders the generate-tests checkbox alone when reRunLabel is absent", () => {
+    const { reRunLabel: _reRunLabel, ...ctxWithoutReRun } = ctx;
+    const md = renderUnifiedReviewComment(
+      { ...base, decision: "merge" },
+      { ...ctxWithoutReRun, generateTestsLabel: "Generate an AI Playwright test for this PR" },
+    );
+    expect(md).not.toContain("Re-run Gittensory review");
+    expect(md).toContain("- [ ] Generate an AI Playwright test for this PR");
+  });
+
+  it("omits the generate-tests checkbox entirely when the host doesn't supply one", () => {
+    const md = renderUnifiedReviewComment({ ...base, decision: "merge" }, ctx);
+    expect(md).not.toContain("Generate an AI Playwright test");
+  });
+
   it("blocked state uses the caution alert, red bar, and an expanded blockers section", () => {
     const md = renderUnifiedReviewComment(
       { ...base, decision: "close", recommendations: ["close", "close"], blockers: ["Introduces a hardcoded secret."] },

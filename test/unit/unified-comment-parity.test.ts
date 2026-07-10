@@ -130,12 +130,17 @@ describe("converged comment ↔ legacy panel parity (#unified-comment)", () => {
     expect(body).not.toContain("Review details");
     // PRIVATE — the maintainer-notes / advisory-findings section must NEVER appear in the public converged comment.
     expect(body).not.toContain("Maintainer notes");
+    // #4589: no coverage gap was supplied here, so "Test coverage" stays an empty (thus invisible) collapsible.
+    expect(body).not.toContain("Test coverage");
   });
 
   it("never includes a duplicate AI 'Review details' collapsible", () => {
     const { currentPr, detection, collisions, queueHealth, preflight, profile } = buildFixtures();
     const collapsibles = buildPublicSafeCollapsibles({ repo, pr: currentPr, profile, detection, settings, collisions, preflight, queueHealth });
-    expect(collapsibles.map((section) => section.title)).toEqual(["Review context", "Contributor next steps", "Signal definitions"]);
+    // #4589: "Test coverage" is always present (title-wise) after Signal definitions, but its body is empty
+    // (thus invisible when rendered) whenever missingTestsFinding/e2eTestGenAvailable aren't supplied, as here.
+    expect(collapsibles.map((section) => section.title)).toEqual(["Review context", "Contributor next steps", "Signal definitions", "Test coverage"]);
+    expect(collapsibles.find((section) => section.title === "Test coverage")?.body).toBe("");
     expect(collapsibles.map((section) => section.title)).not.toContain("Review details");
     // No section may carry the private maintainer-notes content.
     expect(collapsibles.map((section) => section.title)).not.toContain("Maintainer notes");
@@ -165,5 +170,42 @@ describe("converged comment ↔ legacy panel parity (#unified-comment)", () => {
     const { currentPr, detection, collisions, queueHealth, preflight, profile } = buildFixtures();
     const legacy = buildPublicPrIntelligenceComment({ repo, pr: currentPr, profile, detection, queueHealth, collisions, preflight, settings });
     expect(legacy).toContain("Maintainer notes");
+  });
+
+  // #4589: the "Test coverage" collapsible reuses the already-computed manifest_missing_tests finding rather
+  // than a second detection pass -- it only has real content when BOTH a gap exists AND the checkbox would
+  // actually work for this repo, mirroring #4583's own "never mention a command that would bounce" principle.
+  describe("Test coverage collapsible (#4589)", () => {
+    it("renders the gap detail + a pointer to the checkbox when a coverage gap exists AND e2eTests is available", () => {
+      const { currentPr, detection, collisions, queueHealth, preflight, profile } = buildFixtures();
+      const collapsibles = buildPublicSafeCollapsibles({
+        repo, pr: currentPr, profile, detection, settings, collisions, preflight, queueHealth,
+        missingTestsFinding: { detail: "No changed test files or passing validation evidence were detected for this PR." },
+        e2eTestGenAvailable: true,
+      });
+      const testCoverage = collapsibles.find((section) => section.title === "Test coverage");
+      expect(testCoverage?.body).toContain("No changed test files or passing validation evidence were detected for this PR.");
+      expect(testCoverage?.body).toContain("Check the box below to generate an AI Playwright test for this PR");
+      expect(testCoverage?.body).toContain("@gittensory generate-tests");
+    });
+
+    it("stays empty when a coverage gap exists but e2eTests is NOT available for this repo", () => {
+      const { currentPr, detection, collisions, queueHealth, preflight, profile } = buildFixtures();
+      const collapsibles = buildPublicSafeCollapsibles({
+        repo, pr: currentPr, profile, detection, settings, collisions, preflight, queueHealth,
+        missingTestsFinding: { detail: "No changed test files or passing validation evidence were detected for this PR." },
+        e2eTestGenAvailable: false,
+      });
+      expect(collapsibles.find((section) => section.title === "Test coverage")?.body).toBe("");
+    });
+
+    it("stays empty when e2eTests is available but there is no coverage gap to report", () => {
+      const { currentPr, detection, collisions, queueHealth, preflight, profile } = buildFixtures();
+      const collapsibles = buildPublicSafeCollapsibles({
+        repo, pr: currentPr, profile, detection, settings, collisions, preflight, queueHealth,
+        e2eTestGenAvailable: true,
+      });
+      expect(collapsibles.find((section) => section.title === "Test coverage")?.body).toBe("");
+    });
   });
 });

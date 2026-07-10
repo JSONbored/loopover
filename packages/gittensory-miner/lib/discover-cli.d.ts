@@ -60,6 +60,8 @@ export type RunDiscoverOptions = {
 
 export function parseDiscoverArgs(args: string[]): ParsedDiscoverArgs;
 
+export function sanitizeDiscoverDisplayText(value: unknown): string;
+
 export function renderDiscoverSummary(result: DiscoverResult): string;
 
 export function runDiscover(args: string[], options?: RunDiscoverOptions): Promise<number>;

@@ -6,6 +6,7 @@
 // review path at all (the caller guards on this flag before doing any D1 read or matching), so the review
 // stays byte-identical to today.
 
+import { listReviewSuppressions } from "../db/repositories";
 import { matchSuppressions, type ReviewMemoryFindingInput } from "./review-memory-match";
 import type { AdvisoryFinding, ReviewSuppressionRecord } from "../types";
 
@@ -26,6 +27,42 @@ export function shouldApplyReviewMemory(
 ): boolean {
   return isReviewMemoryEnabled(env) && manifestReviewMemoryEnabled;
 }
+// Short in-isolate TTL cache for listReviewSuppressions (#4508), mirroring rag.ts's chunkCountCache: repeated
+// unified-comment renders for the same repo within a short window (the 3 independent maybePublishPrPublicSurface
+// call sites -- auto re-review, webhook-triggered review, manual panel retrigger -- can each fire this
+// independently) reuse the same suppression set instead of re-reading D1 each time. Unlike chunkCountCache's
+// "only cache the positive" (cold→hot is one-way), a suppression set can grow at any time via `@gittensory
+// resolve`, so this is explicitly invalidated on every write (invalidateReviewSuppressionCache below) rather than
+// relying on TTL expiry alone -- a maintainer's fresh suppression must take effect on the very next render, not
+// be masked by a stale cached set.
+const REVIEW_SUPPRESSION_CACHE_TTL_MS = 60_000;
+const reviewSuppressionCache = new Map<string, { signals: ReviewSuppressionRecord[]; at: number }>();
+
+/** Cached read of listReviewSuppressions, keyed by repoFullName. `nowMs` is threaded in by the caller (mirrors
+ *  rag.ts's hasIndexedChunks) rather than read internally, so a caller under fake timers gets a deterministic
+ *  cache decision. */
+export async function getCachedReviewSuppressions(env: Env, repoFullName: string, nowMs: number): Promise<ReviewSuppressionRecord[]> {
+  const hit = reviewSuppressionCache.get(repoFullName);
+  if (hit && nowMs - hit.at < REVIEW_SUPPRESSION_CACHE_TTL_MS) return hit.signals;
+  const signals = await listReviewSuppressions(env, repoFullName);
+  reviewSuppressionCache.set(repoFullName, { signals, at: nowMs });
+  return signals;
+}
+
+/** Evict repoFullName's cached suppression set immediately. Called after recordReviewSuppression so the very
+ *  next render sees the fresh write, instead of waiting out the TTL. */
+export function invalidateReviewSuppressionCache(repoFullName: string): void {
+  reviewSuppressionCache.delete(repoFullName);
+}
+
+/** Test-only: clears every cached entry, mirroring clearInstallationTokenCacheForTest/
+ *  clearGitHubResponseCacheForTest. Without this, a test suite running many cases against the SAME repoFullName
+ *  under fake timers (a fixed `Date.now()` reset per test) would otherwise see one test's cached read leak into
+ *  the next. */
+export function clearReviewSuppressionCacheForTest(): void {
+  reviewSuppressionCache.clear();
+}
+
 const RESOLVE_FINDING_CODE = /^[a-z][a-z0-9_]{0,199}$/;
 export function normalizeResolveFindingRef(raw: string | null | undefined): { ok: true; scope: "whole_pr" } | { ok: true; scope: "single"; findingCode: string } | { ok: false; reason: "malformed_finding_id" } { const trimmed = (raw ?? "").trim(); if (trimmed.length === 0) return { ok: true, scope: "whole_pr" }; const normalized = trimmed.toLowerCase().replace(/^finding-/, ""); if (!RESOLVE_FINDING_CODE.test(normalized)) return { ok: false, reason: "malformed_finding_id" }; return { ok: true, scope: "single", findingCode: normalized }; }
 export function selectWarningsForResolve(warnings: ReadonlyArray<AdvisoryFinding>, ref: { ok: true; scope: "whole_pr" } | { ok: true; scope: "single"; findingCode: string }): { findings: AdvisoryFinding[]; reason?: "finding_not_found" } { if (ref.scope === "whole_pr") return { findings: [...warnings] }; const matches = warnings.filter((finding) => finding.code === ref.findingCode); if (matches.length === 0) return { findings: [], reason: "finding_not_found" }; return { findings: matches }; }

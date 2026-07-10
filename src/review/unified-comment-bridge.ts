@@ -322,6 +322,8 @@ export type UnifiedCommentBridgeArgs = {
   footerMarkdown: string;
   /** The re-run checkbox label. */
   reRunLabel?: string | undefined;
+  /** #4589: the generate-tests checkbox label. */
+  generateTestsLabel?: string | undefined;
   /** Extra collapsed sections (e.g. signal definitions / contributor next steps). */
   extraCollapsibles?: UnifiedCollapsible[] | undefined;
   /** Headline brand (default "Gittensory review"). */
@@ -817,6 +819,7 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
     footerMarkdown: args.footerMarkdown,
     reviewedAt: args.reviewedAt ?? new Date(),
     ...(args.reRunLabel !== undefined ? { reRunLabel: args.reRunLabel } : {}),
+    ...(args.generateTestsLabel !== undefined ? { generateTestsLabel: args.generateTestsLabel } : {}),
     ...(extraCollapsibles !== undefined ? { extraCollapsibles } : {}),
     ...(args.heldForReview ? { heldForReview: true } : {}),
     ...(args.neverClosed ? { neverClosed: true } : {}),

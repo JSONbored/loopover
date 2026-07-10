@@ -23,8 +23,9 @@
 // explicit `{ present: false, reason }` branch, never a partial/misleading guess -- callers must treat that as
 // "no grounding to add", never a signal in itself, and NEVER a gate/scoring input (this is advisory prompt
 // context only, per the issue's explicit "no new scored gate dimension" requirement).
-import { listSignalSnapshots, persistSignalSnapshot } from "../db/repositories";
+import { listSignalSnapshots, persistSignalSnapshot, recordAuditEvent } from "../db/repositories";
 import { countRecentMergedPullRequests, listRecentMergedPullRequests } from "../db/repositories";
+import { incr } from "../selfhost/metrics";
 import type { RecentMergedPullRequestRecord } from "../types";
 import { nowIso } from "../utils/json";
 
@@ -280,8 +281,31 @@ export async function extractRepoCultureProfile(env: Env, repoFullName: string, 
   const maxAgeMs = options.maxAgeMs ?? REPO_CULTURE_PROFILE_MAX_AGE_MS;
   if (!options.refresh) {
     const cached = await readCachedCultureProfile(env, repoFullName, maxAgeMs);
-    if (cached) return cached;
+    if (cached) {
+      // #4509: mirrors the ai_review cache's hit/miss instrumentation (processors.ts) exactly -- this cache
+      // works correctly (unlike the #4481 linked_issue_satisfaction bug class) but previously had zero
+      // hit/miss telemetry, one of the six capability gaps #4448 identified. readCachedCultureProfile's null
+      // return covers EVERY invalidation reason uniformly (no snapshot, TTL expiry, drift, malformed row), so
+      // this single hit/miss branch point correctly counts the merged-PR-count drift path as a miss too.
+      incr("gittensory_repo_culture_profile_cache_hit_total");
+      await recordAuditEvent(env, {
+        eventType: "github_app.repo_culture_profile_cache_hit",
+        targetKey: repoFullName,
+        outcome: "completed",
+        detail: "reused a cached repo-culture profile instead of re-deriving from merged-PR history",
+        metadata: { repoFullName },
+      }).catch(() => undefined);
+      return cached;
+    }
   }
+  incr("gittensory_repo_culture_profile_cache_miss_total");
+  await recordAuditEvent(env, {
+    eventType: "github_app.repo_culture_profile_cache_miss",
+    targetKey: repoFullName,
+    outcome: "completed",
+    detail: "no reusable cached repo-culture profile; deriving fresh from merged-PR history",
+    metadata: { repoFullName },
+  }).catch(() => undefined);
   try {
     const prs = await listRecentMergedPullRequests(env, repoFullName);
     const sampleCountAtGeneration = await countRecentMergedPullRequests(env, repoFullName);

@@ -62,6 +62,15 @@ export async function commitE2eTestToPrBranch(
     return await withInstallationTokenRetry(env, args.installationId, async (token) => {
       const octokit = makeInstallationOctokit(env, token, args.mode, githubRateLimitAdmissionKeyForInstallation(args.installationId));
 
+      const livePr = await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", { owner, repo, pull_number: args.prNumber });
+      const liveHead = (livePr.data as { head?: { ref?: string | null; sha?: string | null; repo?: { full_name?: string | null } | null } }).head;
+      if (liveHead?.repo?.full_name !== args.repoFullName) {
+        return { status: "declined", reason: "commit delivery is only supported for same-repository PR branches" };
+      }
+      if (liveHead.ref !== args.headRef || liveHead.sha !== args.headSha) {
+        return { status: "declined", reason: "the live PR head no longer matches the cached branch/commit — try the command again" };
+      }
+
       const headCommit = await octokit.request("GET /repos/{owner}/{repo}/git/commits/{commit_sha}", { owner, repo, commit_sha: args.headSha });
       const baseTreeSha = (headCommit.data as { tree: { sha: string } }).tree.sha;
 

@@ -60,6 +60,7 @@ export type NormalizedMinerTelemetryEvent = {
 
 const telemetryEventTypeSet = new Set<string>(MINER_TELEMETRY_EVENT_TYPES);
 const telemetryOutcomeSet = new Set<string>(MINER_TELEMETRY_OUTCOME_BUCKETS);
+const metricNamePattern = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 
 /** Coerce an optional anonymized identifier. Present values must be a non-empty opaque hash — an anti-leak guard
  *  rejects anything that looks like a RAW identifier (contains `/`, i.e. `owner/repo`, or any whitespace), so a
@@ -72,13 +73,15 @@ function normalizeOptionalHash(value: unknown, code: string): string | null {
   return trimmed;
 }
 
-/** Serialize the count-only metrics map, rejecting any non-finite-number value (so no free text or NaN/Infinity can
- *  slip into the telemetry payload). Absent metrics normalize to an empty object. */
+/** Serialize the count-only metrics map, rejecting any free-text metric name or non-finite-number value (so no raw identifiers,
+ *  free text, or NaN/Infinity can slip into the telemetry payload). Absent metrics normalize to an empty object. */
 function normalizeMetrics(metrics: unknown): string {
   if (metrics === undefined) return "{}";
   if (metrics === null || typeof metrics !== "object" || Array.isArray(metrics)) throw new Error("invalid_metrics");
-  for (const value of Object.values(metrics as Record<string, unknown>)) {
-    if (typeof value !== "number" || !Number.isFinite(value)) throw new Error("invalid_metrics");
+  for (const [name, value] of Object.entries(metrics as Record<string, unknown>)) {
+    if (!metricNamePattern.test(name) || typeof value !== "number" || !Number.isFinite(value)) {
+      throw new Error("invalid_metrics");
+    }
   }
   return JSON.stringify(metrics);
 }

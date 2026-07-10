@@ -4,6 +4,7 @@ import { buildQueueHealth, buildCollisionReport } from "../../src/signals/engine
 import {
   buildMaintainerSlopDuplicateTrend,
   slopBandLabelFromRate,
+  trendPointFromQueueHealth,
   SLOP_DUPLICATE_TREND_WEEKS,
 } from "../../src/services/maintainer-slop-duplicate-trend";
 import type { IssueRecord, PullRequestRecord, RepositoryRecord } from "../../src/types";
@@ -145,6 +146,91 @@ describe("buildMaintainerSlopDuplicateTrend", () => {
     expect(trend.summary).toContain("No queue-health snapshot history");
   });
 
+  it("uses explicit duplicate counts and ignores invalid snapshot points", () => {
+    const trend = buildMaintainerSlopDuplicateTrend({
+      generatedAt: "2026-06-14T12:00:00.000Z",
+      stale: true,
+      nowMs: Date.parse("2026-06-14T12:00:00.000Z"),
+      repos: [
+        {
+          repoFullName: "octo/demo",
+          queueHealthSnapshots: [
+            { ...queueHealthSnapshot("2026-06-09T00:00:00.000Z", { openPullRequests: 5, duplicateFlaggedPullRequests: 2 }), generatedAt: "" },
+            queueHealthSnapshot("2026-06-09T00:00:00.000Z", {
+              openPullRequests: 5,
+              slopFlaggedPullRequests: 0,
+              duplicateFlaggedPullRequests: 2,
+            }),
+            queueHealthSnapshot("invalid-date", { openPullRequests: 99 }),
+          ],
+        },
+      ],
+    });
+    expect(trend.stale).toBe(true);
+    const week = trend.weeks.find((entry) => entry.duplicateFlagRatePct !== null);
+    expect(week?.duplicateFlagRatePct).toBe(40);
+  });
+
+  it("aggregates the latest snapshot per repo within a week", () => {
+    const trend = buildMaintainerSlopDuplicateTrend({
+      generatedAt: "2026-06-14T12:00:00.000Z",
+      nowMs: Date.parse("2026-06-14T12:00:00.000Z"),
+      repos: [
+        {
+          repoFullName: "octo/demo",
+          queueHealthSnapshots: [
+            queueHealthSnapshot("2026-06-09T08:00:00.000Z", { openPullRequests: 4, slopFlaggedPullRequests: 1 }),
+            queueHealthSnapshot("2026-06-09T18:00:00.000Z", { openPullRequests: 8, slopFlaggedPullRequests: 4 }),
+          ],
+        },
+        {
+          repoFullName: "octo/other",
+          queueHealthSnapshots: [
+            queueHealthSnapshot("2026-06-09T12:00:00.000Z", { openPullRequests: 2, slopFlaggedPullRequests: 1 }),
+          ],
+        },
+      ],
+    });
+    const week = trend.weeks.find((entry) => entry.slopFlagRatePct !== null);
+    expect(week?.slopFlagRatePct).toBe(50);
+  });
+
+  it("returns null rates for legacy snapshots with no open PR sample", () => {
+    const trend = buildMaintainerSlopDuplicateTrend({
+      generatedAt: "2026-06-14T12:00:00.000Z",
+      nowMs: Date.parse("2026-06-14T12:00:00.000Z"),
+      repos: [
+        {
+          repoFullName: "octo/demo",
+          queueHealthSnapshots: [queueHealthSnapshot("2026-06-09T00:00:00.000Z", { openPullRequests: 0, collisionClusters: 3 })],
+        },
+      ],
+    });
+    expect(trend.weeks.every((week) => week.duplicateFlagRatePct === null)).toBe(true);
+  });
+
+  it("skips snapshots without queue-health signals", () => {
+    const trend = buildMaintainerSlopDuplicateTrend({
+      generatedAt: "2026-06-14T12:00:00.000Z",
+      repos: [
+        {
+          repoFullName: "octo/demo",
+          queueHealthSnapshots: [
+            {
+              id: crypto.randomUUID(),
+              signalType: "queue-health",
+              targetKey: "octo/demo",
+              repoFullName: "octo/demo",
+              payload: {},
+              generatedAt: "2026-06-09T00:00:00.000Z",
+            },
+          ],
+        },
+      ],
+    });
+    expect(trend.summary).toContain("No queue-health snapshot history");
+  });
+
   it("uses live queue-health for the current week when provided", () => {
     const issues = [issue(101), issue(102)];
     const pullRequests = [
@@ -154,6 +240,11 @@ describe("buildMaintainerSlopDuplicateTrend", () => {
     ];
     const collisions = buildCollisionReport("octo/demo", issues, pullRequests);
     const queueHealth = buildQueueHealth(repo("octo/demo"), issues, pullRequests, collisions);
+    expect(trendPointFromQueueHealth(queueHealth)).toMatchObject({
+      openPullRequests: queueHealth.signals.openPullRequests,
+      slopFlaggedPullRequests: queueHealth.signals.slopFlaggedPullRequests,
+      duplicateFlaggedPullRequests: queueHealth.signals.duplicateFlaggedPullRequests,
+    });
     const trend = buildMaintainerSlopDuplicateTrend({
       generatedAt: queueHealth.generatedAt,
       nowMs: Date.parse(queueHealth.generatedAt),
@@ -178,6 +269,25 @@ describe("buildQueueHealth slop + duplicate counts", () => {
     const health = buildQueueHealth(repo("octo/demo"), issues, pullRequests, collisions);
     expect(health.signals.slopFlaggedPullRequests).toBe(2);
     expect(health.signals.duplicateFlaggedPullRequests).toBeGreaterThanOrEqual(0);
+  });
+
+  it("counts open PRs in high-risk duplicate collision clusters", () => {
+    const sharedIssue = issue(10);
+    const pullRequests = [
+      pr(11, {
+        linkedIssues: [10],
+        title: "Add cursor pagination to the labels endpoint",
+        authorLogin: "alice",
+      }),
+      pr(12, {
+        linkedIssues: [10],
+        title: "Add cursor pagination to the labels endpoint",
+        authorLogin: "bob",
+      }),
+    ];
+    const collisions = buildCollisionReport("octo/demo", [sharedIssue], pullRequests);
+    const health = buildQueueHealth(repo("octo/demo"), [sharedIssue], pullRequests, collisions);
+    expect(health.signals.duplicateFlaggedPullRequests).toBe(2);
   });
 
   it("treats a collision report without clusters as zero duplicate flags", () => {

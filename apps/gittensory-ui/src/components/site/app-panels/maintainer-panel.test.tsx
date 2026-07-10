@@ -90,3 +90,51 @@ describe("MaintainerPanel install health — Orb broker mode (#selfhost-runtime-
     expect(screen.queryAllByText(/n\/a \(broker\)/)).toHaveLength(2); // scoped to the brokered install only
   });
 });
+
+describe("MaintainerPanel slop + duplicate trend card (#2202)", () => {
+  const trendCard = {
+    generatedAt: "2026-06-14T12:00:00.000Z",
+    stale: false,
+    summary: "8-week slop + duplicate flag rates across 1 shaped repo(s).",
+    weeks: [
+      {
+        weekStart: "2026-06-09",
+        slopFlagRatePct: 12.5,
+        slopBandLabel: "low" as const,
+        duplicateFlagRatePct: 25,
+      },
+    ],
+  };
+
+  it("renders the slop + duplicate trend card when qualityDashboard includes trend data", () => {
+    useSession.mockReturnValue({
+      session: { login: "maint", roles: ["maintainer"] },
+      hydrated: true,
+    });
+    useApiResource.mockReturnValue({
+      status: "ready",
+      data: {
+        metrics: [{ label: "Installations", value: 1, spark: [1] }],
+        health: [
+          {
+            installationId: 1,
+            accountLogin: "preview-org",
+            installedReposCount: 1,
+            status: "healthy" as const,
+            missingPermissions: [],
+            missingEvents: [],
+            checkedAt: "2026-07-10T00:00:00.000Z",
+          },
+        ],
+        reviewability: [],
+        settingsPreview: { removed: [], added: [] },
+        qualityDashboard: { slopDuplicateTrend: trendCard },
+      },
+      reload: () => {},
+      error: null,
+    });
+
+    render(<MaintainerPanel />);
+    expect(screen.getByText("Slop + duplicate trend")).toBeTruthy();
+  });
+});

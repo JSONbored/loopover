@@ -147,7 +147,9 @@ function LegendItem({
     <div className="flex items-center gap-2">
       <span className="inline-block h-2 w-6 rounded-full" style={{ backgroundColor: color }} />
       <span className="text-foreground">{label}</span>
-      <span className={cn("text-muted-foreground", bandLabel ? SLOP_BAND_TONE[bandLabel] : undefined)}>
+      <span
+        className={cn("text-muted-foreground", bandLabel ? SLOP_BAND_TONE[bandLabel] : undefined)}
+      >
         {detail}
       </span>
     </div>

@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 import { SlopDuplicateTrendCard } from "@/components/site/app-panels/slop-duplicate-trend-card";
 import type { MaintainerSlopDuplicateTrend } from "@/components/site/app-panels/slop-duplicate-trend-card-model";
 
-function trend(overrides: Partial<MaintainerSlopDuplicateTrend> = {}): MaintainerSlopDuplicateTrend {
+function trend(
+  overrides: Partial<MaintainerSlopDuplicateTrend> = {},
+): MaintainerSlopDuplicateTrend {
   return {
     generatedAt: "2026-06-14T12:00:00.000Z",
     stale: false,
@@ -32,6 +34,44 @@ describe("SlopDuplicateTrendCard", () => {
     expect(screen.getAllByLabelText("Trend chart")).toHaveLength(2);
   });
 
+  it("shows a one-series-empty branch when only slop samples exist", () => {
+    render(
+      <SlopDuplicateTrendCard
+        trend={trend({
+          weeks: [
+            {
+              weekStart: "2026-06-09",
+              slopFlagRatePct: 33,
+              slopBandLabel: "elevated",
+              duplicateFlagRatePct: null,
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText(/latest band: elevated/i)).toBeTruthy();
+    expect(screen.getByText("No duplicate-flag samples in the snapshot window yet.")).toBeTruthy();
+    expect(screen.getByLabelText("Trend chart")).toBeTruthy();
+  });
+
+  it("shows slop latest rate when band label is absent", () => {
+    render(
+      <SlopDuplicateTrendCard
+        trend={trend({
+          weeks: [
+            {
+              weekStart: "2026-06-09",
+              slopFlagRatePct: 15,
+              slopBandLabel: null,
+              duplicateFlagRatePct: 10,
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText(/latest: 15%/i)).toBeTruthy();
+  });
+
   it("shows a one-series-empty branch when only duplicate samples exist", () => {
     render(
       <SlopDuplicateTrendCard
@@ -56,7 +96,8 @@ describe("SlopDuplicateTrendCard", () => {
     render(
       <SlopDuplicateTrendCard
         trend={trend({
-          summary: "No queue-health snapshot history yet for slop + duplicate trends across 1 shaped repo(s).",
+          summary:
+            "No queue-health snapshot history yet for slop + duplicate trends across 1 shaped repo(s).",
           weeks: [
             {
               weekStart: "2026-06-09",
@@ -69,7 +110,9 @@ describe("SlopDuplicateTrendCard", () => {
       />,
     );
     expect(
-      screen.getByText(/Queue-health snapshot history will appear here after signal snapshot jobs run/i),
+      screen.getByText(
+        /Queue-health snapshot history will appear here after signal snapshot jobs run/i,
+      ),
     ).toBeTruthy();
     expect(screen.queryByLabelText("Trend chart")).toBeNull();
   });

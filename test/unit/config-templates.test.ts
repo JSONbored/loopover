@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { isAgentConfigured } from "../../src/settings/autonomy";
+import { isAgentConfigured, resolveAutonomy } from "../../src/settings/autonomy";
 import {
   gateConfigToJson,
   parseFocusManifest,
@@ -216,5 +216,22 @@ describe("config/examples review templates (#1682)", () => {
     // A path instruction applies only to changed files matching its glob (empty string otherwise).
     expect(resolveReviewPathInstructions(on.review.pathInstructions, ["src/index.ts"])).toContain("be strict");
     expect(resolveReviewPathInstructions(on.review.pathInstructions, ["docs/readme.md"])).toBe("");
+  });
+
+  it("resolves the autonomy-level field group (per-action dial) via parse + resolveAutonomy (#2213)", () => {
+    const full = readConfigExample("gittensory.full.yml");
+    expect(full).toMatch(/autonomy:/);
+    // Default: no autonomy config ⇒ not configured, and every action class resolves to the safe "observe" default.
+    const def = parseFocusManifest({});
+    expect(isAgentConfigured(def.settings.autonomy)).toBe(false);
+    expect(resolveAutonomy(def.settings.autonomy, "review")).toBe("observe");
+    // Explicit per-action levels parse; each set action resolves to its level, unset actions stay "observe" —
+    // the parity the config-generator's autonomy-level dial emits into.
+    const on = parseFocusManifest({ settings: { autonomy: { review: "suggest", merge: "auto" } } });
+    expect(on.settings.autonomy).toEqual({ review: "suggest", merge: "auto" });
+    expect(isAgentConfigured(on.settings.autonomy)).toBe(true);
+    expect(resolveAutonomy(on.settings.autonomy, "review")).toBe("suggest");
+    expect(resolveAutonomy(on.settings.autonomy, "merge")).toBe("auto");
+    expect(resolveAutonomy(on.settings.autonomy, "close")).toBe("observe"); // unset action ⇒ default
   });
 });

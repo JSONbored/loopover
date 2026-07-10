@@ -1117,6 +1117,11 @@ export type ScreenshotTableGateConfig = {
   whenLabels: string[];
   whenPaths: string[];
   action: ScreenshotTableGateAction;
+  /** Full replacement for the rejection reason -- when set, this is used verbatim and NEITHER the
+   *  auto-generated matrix "still missing: ..." list NOR `skillFileUrl` appear (a maintainer who sets
+   *  this owns the entire message). Leave unset to get the auto-generated, always-accurate message
+   *  (naming the exact missing pairs in matrix mode) with `skillFileUrl` appended when configured --
+   *  that combination is usually what you want; only set `message` for total control over the wording. */
   message?: string | undefined;
   /** Viewport x theme completeness matrix (#4535). Both empty (the default) ⇒ byte-identical to the original
    *  presence-only check (some image-bearing table, anywhere). A non-empty `requireViewports` switches the
@@ -1126,6 +1131,11 @@ export type ScreenshotTableGateConfig = {
    *  empty) has no effect -- the viewport dimension is what turns matrix mode on. */
   requireViewports: string[];
   requireThemes: string[];
+  /** A link to this repo's contributor skill file, appended to the AUTO-GENERATED rejection message
+   *  (#4540 follow-up) so a closed contributor always gets pointed at the exact format/contract instead
+   *  of just being told evidence is missing. Ignored when `message` is set (a full override already
+   *  owns the entire text -- append the link into that string yourself if you want it there too). */
+  skillFileUrl?: string | undefined;
 };
 
 export type CommandAuthorizationRole = "maintainer" | "collaborator" | "pr_author" | "confirmed_miner";

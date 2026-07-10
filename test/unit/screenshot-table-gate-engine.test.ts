@@ -279,6 +279,23 @@ describe("normalizeScreenshotTableGateConfig", () => {
     expect(result.requireViewports.length).toBe(12);
     expect(warnings.some((w) => w.includes("capped"))).toBe(true);
   });
+
+  it("accepts a valid skillFileUrl and trims it (#4540 follow-up)", () => {
+    const url = "  https://github.com/JSONbored/metagraphed/blob/main/.claude/skills/metagraphed/SKILL.md  ";
+    expect(normalizeScreenshotTableGateConfig({ skillFileUrl: url }, []).skillFileUrl).toBe(url.trim());
+  });
+
+  it("defaults skillFileUrl to undefined when unset", () => {
+    expect(normalizeScreenshotTableGateConfig({}, []).skillFileUrl).toBeUndefined();
+  });
+
+  it("rejects a non-string/empty/overlong skillFileUrl with a warning, falling back to undefined", () => {
+    const warnings: string[] = [];
+    expect(normalizeScreenshotTableGateConfig({ skillFileUrl: "   " }, warnings).skillFileUrl).toBeUndefined();
+    expect(normalizeScreenshotTableGateConfig({ skillFileUrl: 42 }, []).skillFileUrl).toBeUndefined();
+    expect(normalizeScreenshotTableGateConfig({ skillFileUrl: "x".repeat(301) }, []).skillFileUrl).toBeUndefined();
+    expect(warnings.some((w) => w.includes("skillFileUrl"))).toBe(true);
+  });
 });
 
 describe("requiredScreenshotMatrixPairs (#4535)", () => {
@@ -460,6 +477,34 @@ describe("evaluateScreenshotTableGate", () => {
     expect(result.reason).toBe("Please add screenshots, thanks!");
   });
 
+  describe("skillFileUrl (#4540 follow-up)", () => {
+    it("appends the skill-file link to the auto-generated presence-mode message", () => {
+      const result = evaluateScreenshotTableGate({
+        config: config({ enabled: true, skillFileUrl: "https://github.com/acme/widget/blob/main/SKILL.md" }),
+        prBody: "no table",
+        prLabels: [],
+        changedFiles: [],
+      });
+      expect(result.reason).toContain(DEFAULT_SCREENSHOT_CONTRACT_MESSAGE);
+      expect(result.reason).toContain("https://github.com/acme/widget/blob/main/SKILL.md");
+    });
+
+    it("does not append anything when skillFileUrl is unset (byte-identical to the plain default)", () => {
+      const result = evaluateScreenshotTableGate({ config: config({ enabled: true }), prBody: "no table", prLabels: [], changedFiles: [] });
+      expect(result.reason).toBe(DEFAULT_SCREENSHOT_CONTRACT_MESSAGE);
+    });
+
+    it("a custom message override wins entirely -- skillFileUrl is ignored, never appended", () => {
+      const result = evaluateScreenshotTableGate({
+        config: config({ enabled: true, message: "Custom text", skillFileUrl: "https://github.com/acme/widget/blob/main/SKILL.md" }),
+        prBody: "no table",
+        prLabels: [],
+        changedFiles: [],
+      });
+      expect(result.reason).toBe("Custom text");
+    });
+  });
+
   it("handles a null/undefined PR body without throwing (treated as no table)", () => {
     expect(evaluateScreenshotTableGate({ config: config({ enabled: true }), prBody: null, prLabels: [], changedFiles: [] }).violated).toBe(true);
     expect(evaluateScreenshotTableGate({ config: config({ enabled: true }), prBody: undefined, prLabels: [], changedFiles: [] }).violated).toBe(true);
@@ -575,6 +620,28 @@ describe("evaluateScreenshotTableGate", () => {
 
     it("a configured message override still wins over the auto-generated matrix message", () => {
       const result = evaluateScreenshotTableGate({ config: matrixConfig({ message: "Custom matrix rejection text" }), prBody: "no table", prLabels: [], changedFiles: [] });
+      expect(result.reason).toBe("Custom matrix rejection text");
+    });
+
+    it("appends the skill-file link to the auto-generated matrix message, keeping the specific missing-pairs list (#4540 follow-up)", () => {
+      const result = evaluateScreenshotTableGate({
+        config: matrixConfig({ skillFileUrl: "https://github.com/JSONbored/metagraphed/blob/main/.claude/skills/metagraphed/SKILL.md" }),
+        prBody: "no table",
+        prLabels: [],
+        changedFiles: [],
+      });
+      expect(result.reason).toContain("Still missing:");
+      expect(result.reason).toContain("Desktop · Light");
+      expect(result.reason).toContain("https://github.com/JSONbored/metagraphed/blob/main/.claude/skills/metagraphed/SKILL.md");
+    });
+
+    it("a message override in matrix mode also ignores skillFileUrl entirely", () => {
+      const result = evaluateScreenshotTableGate({
+        config: matrixConfig({ message: "Custom matrix rejection text", skillFileUrl: "https://github.com/JSONbored/metagraphed/blob/main/.claude/skills/metagraphed/SKILL.md" }),
+        prBody: "no table",
+        prLabels: [],
+        changedFiles: [],
+      });
       expect(result.reason).toBe("Custom matrix rejection text");
     });
 

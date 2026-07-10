@@ -9498,6 +9498,9 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "skillFileUrl": {
+                "type": "string"
               }
             },
             "required": [

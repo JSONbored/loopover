@@ -27,11 +27,16 @@ export type ScreenshotTableGateConfig = {
   whenLabels: string[];
   whenPaths: string[];
   action: ScreenshotTableGateAction;
+  // Full replacement for the rejection reason -- see src/types.ts's mirror of this type for the full
+  // rationale (unset ⇒ auto-generated message + skillFileUrl; set ⇒ used verbatim, skillFileUrl ignored).
   message?: string | undefined;
   // Viewport x theme completeness matrix (#4535) -- see src/types.ts's mirror of this type for the full
   // rationale.
   requireViewports: string[];
   requireThemes: string[];
+  // Contributor skill-file link appended to the auto-generated message (#4540 follow-up) -- see
+  // src/types.ts's mirror of this type for the full rationale.
+  skillFileUrl?: string | undefined;
 };
 
 export type CommandAuthorizationRole = "maintainer" | "collaborator" | "pr_author" | "confirmed_miner";

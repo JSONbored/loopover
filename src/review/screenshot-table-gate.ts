@@ -16,6 +16,7 @@ const MAX_LABEL_CHARS = 100;
 const MAX_PATH_CHARS = 300;
 const MAX_MATRIX_DIMENSION = 12;
 const MAX_MATRIX_TOKEN_CHARS = 40;
+const MAX_SKILL_FILE_URL_CHARS = 300;
 
 // Extensions treated as "an image file" for the committed-image-file check below. Deliberately excludes SVG:
 // an SVG can embed script/foreign-object content, so it is never accepted as review evidence anywhere in this
@@ -83,6 +84,7 @@ export function normalizeScreenshotTableGateConfig(input: unknown, warnings: str
   if (record.message !== undefined && message === undefined) {
     warnings.push("settings.requireScreenshotTable.message must be a non-empty string; using the default message.");
   }
+  const skillFileUrl = normalizeSkillFileUrl(record.skillFileUrl, warnings);
   return {
     enabled,
     whenLabels: normalizeStringList(record.whenLabels, "whenLabels", MAX_LABELS, MAX_LABEL_CHARS, warnings),
@@ -91,7 +93,21 @@ export function normalizeScreenshotTableGateConfig(input: unknown, warnings: str
     requireViewports: normalizeStringList(record.requireViewports, "requireViewports", MAX_MATRIX_DIMENSION, MAX_MATRIX_TOKEN_CHARS, warnings),
     requireThemes: normalizeStringList(record.requireThemes, "requireThemes", MAX_MATRIX_DIMENSION, MAX_MATRIX_TOKEN_CHARS, warnings),
     ...(message !== undefined ? { message } : {}),
+    ...(skillFileUrl !== undefined ? { skillFileUrl } : {}),
   };
+}
+
+/** Validate a `skillFileUrl` override: same trust/validation level as `message` above (a trusted
+ *  maintainer-authored config value, never fetched server-side -- it is only ever embedded as TEXT in a
+ *  GitHub comment/close reason, so there is no SSRF surface here to guard against, unlike a URL the
+ *  server would dereference). Malformed values are dropped with a warning, never silently coerced. */
+function normalizeSkillFileUrl(value: unknown, warnings: string[]): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim().length === 0 || value.trim().length > MAX_SKILL_FILE_URL_CHARS) {
+    warnings.push(`settings.requireScreenshotTable.skillFileUrl must be a non-empty string no longer than ${MAX_SKILL_FILE_URL_CHARS} characters; ignoring it.`);
+    return undefined;
+  }
+  return value.trim();
 }
 
 /** Linear-time markdown table separator check. The previous single-regex form nested unbounded `\\s*` inside a
@@ -255,6 +271,13 @@ export function buildScreenshotMatrixMessage(missing: ScreenshotMatrixPair[]): s
   );
 }
 
+/** Append a contributor skill-file link to an auto-generated rejection message (#4540 follow-up). A no-op
+ *  when `skillFileUrl` is unset -- callers only reach this on the AUTO-GENERATED path (a `message`
+ *  override already owns its entire text and is never passed through here). */
+function appendSkillLink(text: string, skillFileUrl: string | undefined): string {
+  return skillFileUrl ? `${text}\n\nSee ${skillFileUrl} for the exact format and examples.` : text;
+}
+
 /** True when the PR is IN SCOPE for the gate: it carries one of `config.whenLabels` OR touches a path matching
  *  one of `config.whenPaths`. Both empty ⇒ every PR is in scope (an operator who enables the gate with no
  *  scoping at all wants it enforced everywhere). Only one non-empty list configured ⇒ that list alone decides
@@ -313,12 +336,12 @@ export function evaluateScreenshotTableGate(input: {
   if (matrixPairs.length > 0) {
     const missing = missingScreenshotMatrixPairs(input.prBody, matrixPairs);
     if (missing.length === 0) return NO_VIOLATION;
-    return { violated: true, reason: config.message ?? buildScreenshotMatrixMessage(missing) };
+    return { violated: true, reason: config.message ?? appendSkillLink(buildScreenshotMatrixMessage(missing), config.skillFileUrl) };
   }
 
   const hasTable = hasImageBearingMarkdownTable(input.prBody);
   const outsideTable = hasImageOutsideTable(input.prBody);
   const committedImage = hasCommittedImageFile(input.changedFiles, config.whenPaths);
   if (hasTable && !outsideTable && !committedImage) return NO_VIOLATION;
-  return { violated: true, reason: config.message ?? DEFAULT_SCREENSHOT_CONTRACT_MESSAGE };
+  return { violated: true, reason: config.message ?? appendSkillLink(DEFAULT_SCREENSHOT_CONTRACT_MESSAGE, config.skillFileUrl) };
 }

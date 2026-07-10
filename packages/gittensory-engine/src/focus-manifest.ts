@@ -1883,6 +1883,7 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[],
     if (typeof rawGate.message === "string" && rawGate.message.trim().length > 0) sparseGate.message = validated.message;
     if (Array.isArray(rawGate.requireViewports)) sparseGate.requireViewports = validated.requireViewports;
     if (Array.isArray(rawGate.requireThemes)) sparseGate.requireThemes = validated.requireThemes;
+    if (typeof rawGate.skillFileUrl === "string" && rawGate.skillFileUrl.trim().length > 0) sparseGate.skillFileUrl = validated.skillFileUrl;
     out.screenshotTableGate = sparseGate;
   } else if (r.screenshotTableGate !== undefined) {
     warnings.push(`Manifest "settings.screenshotTableGate" must be an object; ignoring it and keeping any existing policy.`);

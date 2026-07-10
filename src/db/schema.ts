@@ -189,6 +189,9 @@ export const repositorySettings = sqliteTable("repository_settings", {
   // labeled before/after row per configured viewport (x theme, when requireThemes is also set).
   screenshotTableGateRequireViewportsJson: text("screenshot_table_gate_require_viewports_json").notNull().default("[]"),
   screenshotTableGateRequireThemesJson: text("screenshot_table_gate_require_themes_json").notNull().default("[]"),
+  // Contributor skill-file link appended to the auto-generated matrix/presence rejection message (#4540
+  // follow-up). Nullable, same "no override configured" shape as screenshotTableGateMessage above.
+  screenshotTableGateSkillFileUrl: text("screenshot_table_gate_skill_file_url"),
   createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });

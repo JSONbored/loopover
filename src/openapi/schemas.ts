@@ -792,6 +792,7 @@ export const RepositorySettingsSchema = z
         requireViewports: z.array(z.string()),
         requireThemes: z.array(z.string()),
         message: z.string().optional(),
+        skillFileUrl: z.string().optional(),
       })
       .optional(),
     createdAt: z.string().nullable().optional(),

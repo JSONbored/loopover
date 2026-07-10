@@ -860,6 +860,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       screenshotTableGateRequireViewportsJson: jsonString(resolved.screenshotTableGate.requireViewports),
       screenshotTableGateRequireThemesJson: jsonString(resolved.screenshotTableGate.requireThemes),
       screenshotTableGateMessage: resolved.screenshotTableGate.message ?? null,
+      screenshotTableGateSkillFileUrl: resolved.screenshotTableGate.skillFileUrl ?? null,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
@@ -948,6 +949,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         screenshotTableGateRequireViewportsJson: jsonString(resolved.screenshotTableGate.requireViewports),
         screenshotTableGateRequireThemesJson: jsonString(resolved.screenshotTableGate.requireThemes),
         screenshotTableGateMessage: resolved.screenshotTableGate.message ?? null,
+        screenshotTableGateSkillFileUrl: resolved.screenshotTableGate.skillFileUrl ?? null,
         updatedAt: nowIso(),
       },
     });
@@ -7337,6 +7339,7 @@ function parseScreenshotTableGateRow(row: typeof repositorySettings.$inferSelect
     requireViewports: parseJsonStringArray(row.screenshotTableGateRequireViewportsJson),
     requireThemes: parseJsonStringArray(row.screenshotTableGateRequireThemesJson),
     ...(row.screenshotTableGateMessage ? { message: row.screenshotTableGateMessage } : {}),
+    ...(row.screenshotTableGateSkillFileUrl ? { skillFileUrl: row.screenshotTableGateSkillFileUrl } : {}),
   };
 }
 

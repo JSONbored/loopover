@@ -569,6 +569,7 @@ export function resolveEffectiveSettings(
       requireViewports: screenshotTableGateOverride.requireViewports ?? base.requireViewports,
       requireThemes: screenshotTableGateOverride.requireThemes ?? base.requireThemes,
       message: screenshotTableGateOverride.message ?? base.message,
+      skillFileUrl: screenshotTableGateOverride.skillFileUrl ?? base.skillFileUrl,
     };
   }
   if (advisoryAiRoutingOverride !== undefined) {

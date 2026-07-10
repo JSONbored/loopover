@@ -45,6 +45,31 @@ describe("repository_settings: screenshotTableGate (#2006)", () => {
     });
   });
 
+  it("round-trips skillFileUrl alongside a custom message (#4540 follow-up)", async () => {
+    const env = createTestEnv();
+    await upsertRepositorySettings(env, {
+      repoFullName: "acme/skill-link",
+      screenshotTableGate: {
+        enabled: true,
+        whenLabels: [],
+        whenPaths: [],
+        action: "close",
+        requireViewports: [],
+        requireThemes: [],
+        skillFileUrl: "https://github.com/acme/widget/blob/main/SKILL.md",
+      },
+    });
+    const settings = await getRepositorySettings(env, "acme/skill-link");
+    expect(settings.screenshotTableGate?.skillFileUrl).toBe("https://github.com/acme/widget/blob/main/SKILL.md");
+  });
+
+  it("omits `skillFileUrl` entirely when unset (never persists an empty string) (#4540 follow-up)", async () => {
+    const env = createTestEnv();
+    await upsertRepositorySettings(env, { repoFullName: "acme/no-skill-link", screenshotTableGate: { enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [] } });
+    const settings = await getRepositorySettings(env, "acme/no-skill-link");
+    expect(settings.screenshotTableGate?.skillFileUrl).toBeUndefined();
+  });
+
   it("a true read-modify-write caller carries the persisted value forward explicitly (no DB merge)", async () => {
     const env = createTestEnv();
     await upsertRepositorySettings(env, { repoFullName: "acme/round-trip", screenshotTableGate: { enabled: true, whenLabels: ["visual"], whenPaths: [], action: "close", requireViewports: [], requireThemes: [] } });

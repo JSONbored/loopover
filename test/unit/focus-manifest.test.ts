@@ -2948,6 +2948,29 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: ["Desktop"], requireThemes: ["Light"] });
   });
 
+  it("wires settings.screenshotTableGate.skillFileUrl into the manifest parser as a sparse override (#4540 follow-up)", () => {
+    const url = "https://github.com/JSONbored/metagraphed/blob/main/.claude/skills/metagraphed/SKILL.md";
+    const parsed = parseFocusManifest({ settings: { screenshotTableGate: { skillFileUrl: url } } });
+    expect(parsed.settings.screenshotTableGate).toEqual({ skillFileUrl: url });
+  });
+
+  it("omits skillFileUrl from the sparse override when the raw manifest doesn't name it (#4540 follow-up)", () => {
+    const parsed = parseFocusManifest({ settings: { screenshotTableGate: { enabled: true } } });
+    expect(parsed.settings.screenshotTableGate).not.toHaveProperty("skillFileUrl");
+  });
+
+  it("resolveEffectiveSettings merges skillFileUrl without clearing the DB layer's other fields (#4540 follow-up)", () => {
+    const db = { screenshotTableGate: { enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [] } } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { screenshotTableGate: { skillFileUrl: "https://github.com/acme/widget/blob/main/SKILL.md" } } }));
+    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [], skillFileUrl: "https://github.com/acme/widget/blob/main/SKILL.md" });
+  });
+
+  it("resolveEffectiveSettings keeps the DB layer's skillFileUrl when the manifest override omits it (#4540 follow-up)", () => {
+    const db = { screenshotTableGate: { enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [], skillFileUrl: "https://github.com/acme/widget/blob/main/SKILL.md" } } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { screenshotTableGate: { enabled: true } } }));
+    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [], skillFileUrl: "https://github.com/acme/widget/blob/main/SKILL.md" });
+  });
+
   it("wires settings.advisoryAiRouting into the manifest parser as a sparse override (#4364)", () => {
     const parsed = parseFocusManifest({ settings: { advisoryAiRouting: { slop: true, summaries: true } } });
     expect(parsed.settings.advisoryAiRouting).toEqual({ slop: true, summaries: true });

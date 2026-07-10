@@ -27,7 +27,12 @@ import type {
 } from "../types";
 import { computeFleetAnalytics, type FleetAnalytics } from "../orb/analytics";
 import { computeGateEval, type GateEvalReport } from "../review/parity";
-import { computeCycleTimeAggregate, type CycleTimeAggregate } from "../review/stats";
+import {
+  computeCycleTimeAggregate,
+  computeSlopBandCalibrationAggregate,
+  type CycleTimeAggregate,
+  type SlopOutcomeCalibration,
+} from "../review/stats";
 import { loadUpstreamStatus, type UpstreamStatus } from "../upstream/ruleset";
 import { nowIso } from "../utils/json";
 import { buildRecommendationQualityReport, type RecommendationQualityReport } from "./recommendation-quality-report";
@@ -66,6 +71,8 @@ export type OperatorDashboardPayload = {
   gateEval: GateEvalReport;
   // PR review cycle-time percentiles (#2194): gate decision → outcome from review_audit; fail-safe empty aggregate.
   cycleTime: CycleTimeAggregate;
+  // Slop-band calibration (#2196): predicted band vs realized merge/close outcome; bands only, never raw scores.
+  slopBandCalibration: SlopOutcomeCalibration;
 };
 
 const USAGE_WINDOW_DAYS = 7;
@@ -91,6 +98,7 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     fleetMetrics,
     gateEval,
     cycleTime,
+    slopBandCalibration,
   ] = await Promise.all([
     listRepositories(env),
     listInstallations(env),
@@ -112,6 +120,7 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     computeGateEval(env, { days: 90, nowMs: Date.now() }),
     // #2194: cycle-time percentiles from the stats feed; fails safe to an empty aggregate.
     computeCycleTimeAggregate(env, { days: 90, nowMs: Date.now() }),
+    computeSlopBandCalibrationAggregate(env, { days: 90, nowMs: Date.now() }),
   ]);
   const weeklyValueReport = buildWeeklyValueReport({
     generatedAt: nowIso(),
@@ -207,6 +216,7 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     fleetMetrics,
     gateEval,
     cycleTime,
+    slopBandCalibration,
   };
 }
 

@@ -4,9 +4,11 @@ import {
   aggregateCycleTimePercentiles,
   aggregateReviewEffort,
   buildCycleTimeDistribution,
+  computeSlopBandCalibrationAggregate,
   computeStats,
   cycleTimeMs,
   EMPTY_CYCLE_TIME,
+  EMPTY_SLOP_BAND_CALIBRATION,
   handleParity,
   handleStats,
   isParityCutoverReady,
@@ -16,6 +18,7 @@ import {
   type GateParityRow,
   type StatsEvalDeps,
 } from "../../src/review/stats";
+import { updatePullRequestSlopAssessment, upsertPullRequestFromGitHub } from "../../src/db/repositories";
 
 // Stub D1: route by table name — review_audit → reversals, else decision rows.
 function stubEnv(extra: Record<string, unknown> = {}): Env {
@@ -86,6 +89,7 @@ describe("computeStats — D1 aggregate for the dashboard", () => {
     expect(out.cycleTime.sampleSize).toBe(2);
     expect(out.cycleTime.p50Ms).toBe(300_000);
     expect(out.cycleTime.distribution.length).toBeGreaterThan(0);
+    expect(out.slopBandCalibration).toEqual(EMPTY_SLOP_BAND_CALIBRATION);
   });
 
   it("clamps an absurd window and falls back to a safe bucket", async () => {
@@ -423,6 +427,7 @@ describe("computeStats — NaN window + null D1 results (the ?? [] fallbacks)", 
     expect(out.verdicts).toEqual([]);
     expect(out.reviewEffort).toEqual({ avgBand: null, totalEstimatedMinutes: 0 });
     expect(out.cycleTime).toEqual(EMPTY_CYCLE_TIME);
+    expect(out.slopBandCalibration).toEqual(EMPTY_SLOP_BAND_CALIBRATION);
   });
 });
 
@@ -558,6 +563,53 @@ describe("cycle-time aggregation (#2194)", () => {
     const { computeCycleTimeAggregate } = await import("../../src/review/stats");
     expect(await computeCycleTimeAggregate(env, { days: 30, nowMs: NOW })).toEqual(EMPTY_CYCLE_TIME);
     expect(await computeCycleTimeAggregate(envWithBadRows, { days: 30, nowMs: NOW })).toEqual(EMPTY_CYCLE_TIME);
+  });
+});
+
+describe("slop-band calibration aggregation (#2196)", () => {
+  it("computeSlopBandCalibrationAggregate folds resolved PR bands in the stats window", async () => {
+    const env = createTestEnv();
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 1,
+      title: "clean merged",
+      state: "closed",
+      user: { login: "alice" },
+      merged_at: "2026-06-10T12:00:00.000Z",
+    });
+    await updatePullRequestSlopAssessment(env, "owner/repo", 1, { slopRisk: 0, slopBand: "clean" });
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 2,
+      title: "high closed",
+      state: "closed",
+      user: { login: "bob" },
+      updated_at: "2026-06-11T12:00:00.000Z",
+    });
+    await updatePullRequestSlopAssessment(env, "owner/repo", 2, { slopRisk: 80, slopBand: "high" });
+    const agg = await computeSlopBandCalibrationAggregate(env, { days: 90, nowMs: NOW });
+    expect(agg.totalResolved).toBe(2);
+    expect(agg.bands.find((row) => row.band === "clean")).toMatchObject({ sampleSize: 1, merged: 1, closed: 0 });
+    expect(agg.bands.find((row) => row.band === "high")).toMatchObject({ sampleSize: 1, merged: 0, closed: 1 });
+  });
+
+  it("computeSlopBandCalibrationAggregate fails safe to EMPTY_SLOP_BAND_CALIBRATION when reads reject", async () => {
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({ all: async () => { throw new Error("d1 down"); } }),
+        }),
+        select: () => { throw new Error("d1 down"); },
+      },
+    } as unknown as Env;
+    expect(await computeSlopBandCalibrationAggregate(env, { days: 30, nowMs: NOW })).toEqual(
+      EMPTY_SLOP_BAND_CALIBRATION,
+    );
+  });
+
+  it("computeSlopBandCalibrationAggregate defaults non-finite days to 90", async () => {
+    const env = createTestEnv();
+    expect(await computeSlopBandCalibrationAggregate(env, { days: Number.NaN, nowMs: NOW })).toEqual(
+      EMPTY_SLOP_BAND_CALIBRATION,
+    );
   });
 });
 

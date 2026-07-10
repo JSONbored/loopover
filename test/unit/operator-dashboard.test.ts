@@ -33,6 +33,17 @@ describe("operator dashboard payload", () => {
       distribution: [],
       sampleSize: 0,
     });
+    expect(payload.slopBandCalibration).toEqual({
+      totalResolved: 0,
+      overallMergeRate: null,
+      discriminates: null,
+      bands: [
+        { band: "clean", sampleSize: 0, merged: 0, closed: 0, mergeRate: 0 },
+        { band: "low", sampleSize: 0, merged: 0, closed: 0, mergeRate: 0 },
+        { band: "elevated", sampleSize: 0, merged: 0, closed: 0, mergeRate: 0 },
+        { band: "high", sampleSize: 0, merged: 0, closed: 0, mergeRate: 0 },
+      ],
+    });
     // Empty fleet → instanceCount 0, null precision card ("—"), no-outlier delta.
     expect(payload.fleetMetrics.instanceCount).toBe(0);
     expect(payload.metrics).toEqual(

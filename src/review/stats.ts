@@ -20,7 +20,15 @@
 // `review_audit` ledgers above, but the maintainer dashboard's complexity read comes from the ACTIVE `audit_events`
 // ledger (same `github_app.pr_public_surface_published` rows + `reviewEffortMinutes` metadata public-stats.ts uses).
 // Bearer-gated here only — never folded into the public homepage counter.
+import { listAllPullRequests } from "../db/repositories";
+import {
+  buildSlopOutcomeCalibration,
+  type SlopOutcomeCalibration,
+} from "../services/outcome-calibration";
+import type { PullRequestRecord } from "../types";
 import { bandFromMinutes } from "./review-effort";
+
+export type { SlopOutcomeCalibration };
 
 // ── Inlined report types (ported shapes from reviewbot src/core/{eval,tuning}.ts) ────────────────
 
@@ -195,6 +203,8 @@ export const EMPTY_CYCLE_TIME: CycleTimeAggregate = {
   sampleSize: 0,
 };
 
+export const EMPTY_SLOP_BAND_CALIBRATION: SlopOutcomeCalibration = buildSlopOutcomeCalibration([]);
+
 export interface StatsPayload {
   generatedAt: string;
   window: { fromIso: string; days: number; bucket: string };
@@ -216,6 +226,8 @@ export interface StatsPayload {
   gateParity: GateParityReport & { cutoverReady: Array<{ project: string; ready: boolean }> };
   /** PR review cycle-time percentiles (gate decision → outcome) from review_audit (#2194). */
   cycleTime: CycleTimeAggregate;
+  /** Slop-band merge/close calibration over resolved PRs carrying a persisted band (#2196). Bands only — never raw scores. */
+  slopBandCalibration: SlopOutcomeCalibration;
 }
 
 /** ms between the gate decision and the resolution; null if implausible (NaN or negative). */
@@ -296,6 +308,32 @@ export async function computeCycleTimeAggregate(
   }
 }
 
+function pullRequestResolvedInWindow(pr: PullRequestRecord, fromMs: number): boolean {
+  const outcomeAt =
+    pr.mergedAt ??
+    pr.closedAt ??
+    (pr.state === "closed" || pr.state === "merged" ? pr.updatedAt : null);
+  if (!outcomeAt) return false;
+  const ms = new Date(outcomeAt).getTime();
+  return Number.isFinite(ms) && ms >= fromMs;
+}
+
+/** Fleet-wide slop-band calibration for the stats feed (#2196). Fail-safe → empty calibration. */
+export async function computeSlopBandCalibrationAggregate(
+  env: Env,
+  opts: { days: number; nowMs: number },
+): Promise<SlopOutcomeCalibration> {
+  const days = Number.isFinite(opts.days) && opts.days > 0 ? Math.min(opts.days, 730) : 90;
+  const fromMs = opts.nowMs - days * 86_400_000;
+  try {
+    const pullRequests = await listAllPullRequests(env);
+    const inWindow = pullRequests.filter((pr) => pullRequestResolvedInWindow(pr, fromMs));
+    return buildSlopOutcomeCalibration(inWindow);
+  } catch {
+    return EMPTY_SLOP_BAND_CALIBRATION;
+  }
+}
+
 /** Fold per-PR persisted minutes into the maintainer aggregate (avg band + total minutes). */
 export function aggregateReviewEffort(perPrMinutes: number[]): ReviewEffortAggregate {
   if (perPrMinutes.length === 0) {
@@ -324,7 +362,7 @@ export async function computeStats(
   const bucketExpr = BUCKET_SQL[bucket] ?? BUCKET_SQL.day;
   const fromIso = new Date(opts.nowMs - days * 86_400_000).toISOString().slice(0, 10); // YYYY-MM-DD
 
-  const [decisionRows, reversalRows, effortRows, cycleTime] = await Promise.all([
+  const [decisionRows, reversalRows, effortRows, cycleTime, slopBandCalibration] = await Promise.all([
     storage(env).prepare(
       `SELECT ${bucketExpr} AS bucket, project, COALESCE(verdict, status) AS verdict, COUNT(*) AS n
        FROM review_targets
@@ -359,6 +397,7 @@ export async function computeStats(
     ).bind(fromIso).all<{ minutes: number }>()
       .catch(() => ({ results: [] as Array<{ minutes: number }> })),
     computeCycleTimeAggregate(env, { days, nowMs: opts.nowMs }),
+    computeSlopBandCalibrationAggregate(env, { days, nowMs: opts.nowMs }),
   ]);
 
   // Non-content gate decisions (incl. SHADOW would-actions) — recorded as `gate_decision` audit rows with
@@ -396,6 +435,7 @@ export async function computeStats(
     recommendations,
     gateParity: { ...parity, cutoverReady: parity.rows.map((r) => ({ project: r.project, ready: isParityCutoverReady(r) })) },
     cycleTime,
+    slopBandCalibration,
   };
 }
 

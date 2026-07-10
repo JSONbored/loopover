@@ -162,6 +162,7 @@ import { loadUpstreamStatus } from "../upstream/ruleset";
 import { simulateOpenPrPressure, type OpenPrPressureInput } from "../services/open-pr-pressure-scenarios";
 import { buildFindingTaxonomyDocument, FINDING_TAXONOMY_URI } from "../review/finding-taxonomy";
 import { buildEnrichmentAnalyzersTaxonomyDocument, ENRICHMENT_ANALYZERS_URI } from "../review/enrichment-analyzers-taxonomy";
+import { recordPredictedGateCall } from "../review/predicted-gate-calls";
 
 type AppContext = Context<{ Bindings: Env }>;
 type ToolPayload = {
@@ -2957,6 +2958,13 @@ export class GittensoryMcp {
       confirmedContributor,
       ...(input.changedPaths === undefined ? {} : { changedPaths: input.changedPaths }),
     });
+    // #predicted-live-gate-agreement: record this call so a later real gate decision for the same
+    // (repo, login) can be paired against it (src/review/predicted-gate-agreement.ts). Shared by BOTH
+    // predictGate and explainGateDisposition (this function backs both tools) -- a caller that invokes both
+    // for what is really one logical check records two rows, a small, acceptable volume over-count rather
+    // than threading a request-scoped dedup key through a read-only prediction path. Best-effort; never
+    // blocks or fails the tool response.
+    await recordPredictedGateCall(this.env, { login: input.login, project: repoFullName, verdict });
     return { repoFullName, verdict };
   }
 

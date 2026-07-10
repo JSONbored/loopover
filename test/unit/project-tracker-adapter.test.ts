@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import {
+  DEFAULT_AUTO_APPLY_MIN_SCORE,
   GitHubMilestonesAdapter,
   GitHubProjectsAdapter,
   PROJECT_TRACKER_SUGGEST_COMMENT_MARKER,
+  maybeAutoApplyProjectOrMilestoneMatch,
   maybeSuggestMilestoneMatchForPr,
   maybeSuggestProjectOrMilestoneMatch,
   matchOpenTrackerItems,
@@ -881,5 +883,173 @@ describe("maybeSuggestMilestoneMatchForPr (#3183 webhook-level gating)", () => {
     const logged = JSON.parse(String(consoleError.mock.calls[0]?.[0]));
     expect(logged).toMatchObject({ event: "milestone_suggest_failed", deliveryId: "delivery-42", repoFullName: "JSONbored/gittensory", pullNumber: 4 });
     consoleError.mockRestore();
+  });
+});
+
+describe("maybeAutoApplyProjectOrMilestoneMatch (#3185)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const MILESTONE_TITLE = "database migration rollback safety checklist";
+  const STRONG_TITLE = "database migration rollback safety"; // scores 1.0 against MILESTONE_TITLE
+  const WEAK_TITLE = "database migration rollback tooling"; // scores 0.75: clears the 0.65 suggest floor, below the 0.85 auto default
+  const PR_URL = "https://github.com/JSONbored/gittensory/pull/4";
+
+  const ctx = () => ({
+    env: createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" }),
+    installationId: 123,
+    repoFullName: "JSONbored/gittensory",
+  });
+
+  type MilestoneAttachRecord = { patchedMilestone?: number | undefined; patchCalled: boolean };
+  function milestoneAttachFetch(record: MilestoneAttachRecord, opts: { patchStatus?: number } = {}) {
+    return async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones")) return Response.json([{ number: 20, title: MILESTONE_TITLE }]);
+      if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
+      if (url.includes("/issues/4") && method === "PATCH") {
+        record.patchCalled = true;
+        if (opts.patchStatus && opts.patchStatus >= 400) return new Response("boom", { status: opts.patchStatus });
+        record.patchedMilestone = (JSON.parse(String(init?.body ?? "{}")) as { milestone?: number }).milestone;
+        return Response.json({ number: 4, milestone: { number: 20 } });
+      }
+      return new Response("unexpected", { status: 500 });
+    };
+  }
+
+  it("attaches a milestone that clears the default confidence threshold", async () => {
+    const record: MilestoneAttachRecord = { patchCalled: false };
+    vi.stubGlobal("fetch", milestoneAttachFetch(record));
+    const result = await maybeAutoApplyProjectOrMilestoneMatch(ctx(), 4, STRONG_TITLE, null, "github", PR_URL);
+    expect(result).toEqual({ attachedMilestone: true, attachedProject: false });
+    expect(record.patchedMilestone).toBe(20);
+  });
+
+  it("does NOT attach a match below the default threshold (a 0.75 fuzzy match is suggest-worthy, not auto-apply-worthy)", async () => {
+    const record: MilestoneAttachRecord = { patchCalled: false };
+    vi.stubGlobal("fetch", milestoneAttachFetch(record));
+    const result = await maybeAutoApplyProjectOrMilestoneMatch(ctx(), 4, WEAK_TITLE, null, "github", PR_URL);
+    expect(result).toEqual({ attachedMilestone: false, attachedProject: false });
+    expect(record.patchCalled).toBe(false);
+  });
+
+  it("honors a lowered threshold override: the same 0.75 match attaches once the bar drops below its score", async () => {
+    const record: MilestoneAttachRecord = { patchCalled: false };
+    vi.stubGlobal("fetch", milestoneAttachFetch(record));
+    const result = await maybeAutoApplyProjectOrMilestoneMatch(ctx(), 4, WEAK_TITLE, null, "github", PR_URL, 0.7);
+    expect(result).toEqual({ attachedMilestone: true, attachedProject: false });
+    expect(record.patchedMilestone).toBe(20);
+  });
+
+  it("attaches a matching Projects v2 item via GraphQL when it clears the threshold", async () => {
+    let mutationVariables: unknown;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones")) return Response.json([]);
+      if (url.includes("/pulls/4") && method === "GET") return Response.json({ number: 4, node_id: "PR_kwABC" });
+      if (url.endsWith("/graphql")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { query?: string; variables?: unknown };
+        if (body.query?.includes("addProjectV2ItemById")) {
+          mutationVariables = body.variables;
+          return Response.json({ data: { addProjectV2ItemById: { item: { id: "PVTI_x" } } } });
+        }
+        return Response.json({
+          data: { repositoryOwner: { __typename: "Organization", projectsV2: { nodes: [{ id: "PVT_1", title: MILESTONE_TITLE, closed: false, public: true }], pageInfo: { hasNextPage: false, endCursor: null } } } },
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const result = await maybeAutoApplyProjectOrMilestoneMatch(ctx(), 4, STRONG_TITLE, null, "github", PR_URL);
+    expect(result).toEqual({ attachedMilestone: false, attachedProject: true });
+    expect(mutationVariables).toEqual({ projectId: "PVT_1", contentId: "PR_kwABC" });
+  });
+
+  it("attaches nothing for a Linear backend, whose attach is inert (best-effort, no throw)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/graphql")) return Response.json({ data: { viewer: { organization: null }, organization: null } });
+      return new Response("[]", { status: 200 });
+    });
+    const result = await maybeAutoApplyProjectOrMilestoneMatch(ctx(), 4, STRONG_TITLE, null, "linear", PR_URL);
+    expect(result).toEqual({ attachedMilestone: false, attachedProject: false });
+  });
+
+  it('routes mode "auto" through maybeSuggestMilestoneMatchForPr to an attach, never a suggestion comment', async () => {
+    let patchedMilestone: number | undefined;
+    let commentPosted = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones")) return Response.json([{ number: 20, title: MILESTONE_TITLE }]);
+      if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
+      if (url.includes("/issues/4/comments") && method === "POST") {
+        commentPosted = true;
+        return Response.json({ id: 1 });
+      }
+      if (url.includes("/issues/4/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/4") && method === "PATCH") {
+        patchedMilestone = (JSON.parse(String(init?.body ?? "{}")) as { milestone?: number }).milestone;
+        return Response.json({ number: 4 });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    await expect(
+      maybeSuggestMilestoneMatchForPr({
+        env: createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" }),
+        installationId: 123,
+        repoFullName: "JSONbored/gittensory",
+        pullNumber: 4,
+        prState: "open",
+        prTitle: STRONG_TITLE,
+        prBody: null,
+        prUrl: null, // GitHub backend ignores prUrl (only Linear's native-link path uses it); also covers the prUrl ?? "" fallback
+        mode: "auto",
+        backend: "github",
+        deliveryId: "d1",
+        eventName: "pull_request",
+        action: "opened",
+      }),
+    ).resolves.toBeUndefined();
+    expect(patchedMilestone).toBe(20);
+    expect(commentPosted).toBe(false);
+  });
+
+  it('is best-effort in "auto" mode: a failing attach is logged and swallowed, never blocking the maintenance step', async () => {
+    const record: MilestoneAttachRecord = { patchCalled: false };
+    vi.stubGlobal("fetch", milestoneAttachFetch(record, { patchStatus: 500 }));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(
+      maybeSuggestMilestoneMatchForPr({
+        env: createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" }),
+        installationId: 123,
+        repoFullName: "JSONbored/gittensory",
+        pullNumber: 4,
+        prState: "open",
+        prTitle: STRONG_TITLE,
+        prBody: null,
+        prUrl: PR_URL,
+        mode: "auto",
+        backend: "github",
+        deliveryId: "delivery-99",
+        eventName: "pull_request",
+        action: "opened",
+      }),
+    ).resolves.toBeUndefined();
+    expect(record.patchCalled).toBe(true);
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(consoleError.mock.calls[0]?.[0]))).toMatchObject({ event: "milestone_auto_apply_failed", deliveryId: "delivery-99" });
+    consoleError.mockRestore();
+  });
+
+  it("keeps the auto-apply confidence bar above the suggest-mode floor and within [0, 1]", () => {
+    expect(DEFAULT_AUTO_APPLY_MIN_SCORE).toBeGreaterThan(0.65);
+    expect(DEFAULT_AUTO_APPLY_MIN_SCORE).toBeLessThanOrEqual(1);
   });
 });

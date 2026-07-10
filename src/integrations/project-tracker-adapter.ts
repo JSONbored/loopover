@@ -255,6 +255,13 @@ export class GitHubProjectsAdapter implements ProjectTrackerAdapter {
 const TRACKER_MATCH_MIN_SCORE = 0.65;
 const TRACKER_MATCH_MIN_SHARED = 3;
 
+// Auto-apply (#3185) uses a deliberately higher confidence bar than the suggest-mode floor above: a wrong
+// auto-attach silently mislabels a PR, whereas a wrong suggestion is only an advisory comment a maintainer can
+// ignore. Only a match at or above this title/body term-overlap score is attached automatically; a "native"
+// confirmed link (score 1, e.g. Linear's own GitHub integration) always clears it. A repo can tighten this per
+// its observed suggest-mode false-positive rate via the `threshold` argument.
+export const DEFAULT_AUTO_APPLY_MIN_SCORE = 0.85;
+
 export type ProjectTrackerMatch = {
   item: ProjectTrackerRef;
   // "native" (#3186): a CONFIRMED link (e.g. Linear's own GitHub integration already linked this PR), not a
@@ -405,6 +412,45 @@ export async function maybeSuggestProjectOrMilestoneMatch(
   return { suggested: true };
 }
 
+export type ProjectMilestoneAutoApplyResult = {
+  attachedMilestone: boolean;
+  attachedProject: boolean;
+};
+
+/**
+ * Auto-apply mode (#3185): resolve matches against the repo's configured backend and ACTUALLY attach whichever
+ * milestone/project clears `threshold` (default {@link DEFAULT_AUTO_APPLY_MIN_SCORE}) -- via the very same
+ * adapters suggest mode uses -- instead of only commenting. Attaching is idempotent (re-PATCHing the same
+ * milestone / re-adding the same Projects v2 item is a no-op), so a repeated maintenance/webhook sweep never
+ * double-applies or spams. A below-threshold match is deliberately left untouched -- guessing wrong in auto mode
+ * silently mislabels a PR, whereas a wrong suggestion is only an advisory comment. This can THROW on a tracker
+ * API error; the webhook entry point {@link maybeSuggestMilestoneMatchForPr} runs it best-effort so an attach
+ * failure is logged and swallowed rather than breaking the maintenance step.
+ */
+export async function maybeAutoApplyProjectOrMilestoneMatch(
+  ctx: ProjectTrackerContext,
+  pullNumber: number,
+  prTitle: string,
+  prBody: string | null | undefined,
+  backend: ProjectMilestoneMatchBackendInput,
+  prUrl: string,
+  threshold: number = DEFAULT_AUTO_APPLY_MIN_SCORE,
+): Promise<ProjectMilestoneAutoApplyResult> {
+  const matches = await resolveTrackerMatches(ctx, backend, prTitle, prBody, prUrl);
+  const isLinear = backend === "linear";
+  const milestoneAdapter: ProjectTrackerAdapter = isLinear ? new LinearAdapter() : new GitHubMilestonesAdapter();
+  const projectAdapter: ProjectTrackerAdapter = isLinear ? new LinearAdapter() : new GitHubProjectsAdapter();
+  let attachedMilestone = false;
+  let attachedProject = false;
+  if (matches.milestone && matches.milestone.score >= threshold) {
+    attachedMilestone = (await milestoneAdapter.attachToMilestone(ctx, pullNumber, matches.milestone.item.id)).attached;
+  }
+  if (matches.project && matches.project.score >= threshold) {
+    attachedProject = (await projectAdapter.attachToProject(ctx, pullNumber, matches.project.item.id)).attached;
+  }
+  return { attachedMilestone, attachedProject };
+}
+
 /**
  * Webhook-level entry point (#3183): folds the "should this even run" gating (installed app, PR still open,
  * feature opted in, and a PR lifecycle/title-body webhook) AND the best-effort error logging into one call, so
@@ -432,8 +478,26 @@ export async function maybeSuggestMilestoneMatchForPr(args: {
   if (!args.installationId) return;
   if (args.prState !== "open") return;
   if (!args.mode || args.mode === "off") return;
+  const ctx = { env: args.env, installationId: args.installationId, repoFullName: args.repoFullName };
+  if (args.mode === "auto") {
+    // "auto": actually attach the high-confidence match(es) instead of only commenting (#3185). Best-effort --
+    // an attach failure is logged and swallowed, never blocking the maintenance step, same as suggest mode.
+    await maybeAutoApplyProjectOrMilestoneMatch(ctx, args.pullNumber, args.prTitle, args.prBody, args.backend, args.prUrl ?? "").catch((error) => {
+      console.error(
+        JSON.stringify({
+          level: "warn",
+          event: "milestone_auto_apply_failed",
+          deliveryId: args.deliveryId,
+          repoFullName: args.repoFullName,
+          pullNumber: args.pullNumber,
+          error: errorMessage(error),
+        }),
+      );
+    });
+    return;
+  }
   await maybeSuggestProjectOrMilestoneMatch(
-    { env: args.env, installationId: args.installationId, repoFullName: args.repoFullName },
+    ctx,
     args.pullNumber,
     args.prTitle,
     args.prBody,

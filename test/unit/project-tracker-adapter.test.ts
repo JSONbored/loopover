@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import {
+  DEFAULT_AUTO_PROJECT_MILESTONE_MATCH_THRESHOLD,
   GitHubMilestonesAdapter,
   GitHubProjectsAdapter,
+  PROJECT_TRACKER_AUTO_APPLY_COMMENT_MARKER,
   PROJECT_TRACKER_SUGGEST_COMMENT_MARKER,
+  maybeAutoApplyProjectOrMilestoneMatch,
   maybeSuggestMilestoneMatchForPr,
   maybeSuggestProjectOrMilestoneMatch,
   matchOpenTrackerItems,
+  matchPassesAutoApplyThreshold,
+  filterMatchesForAutoApply,
+  resolveAutoProjectMilestoneMatchThreshold,
   resolveProjectV2Fields,
   type ProjectTrackerRef,
 } from "../../src/integrations/project-tracker-adapter";
@@ -721,6 +727,104 @@ describe("maybeSuggestProjectOrMilestoneMatch (#3183/#3184)", () => {
   });
 });
 
+describe("auto-apply threshold helpers (#3185)", () => {
+  it("defaults to 65 when unset or malformed", () => {
+    expect(resolveAutoProjectMilestoneMatchThreshold(null)).toBe(DEFAULT_AUTO_PROJECT_MILESTONE_MATCH_THRESHOLD);
+    expect(resolveAutoProjectMilestoneMatchThreshold(undefined)).toBe(DEFAULT_AUTO_PROJECT_MILESTONE_MATCH_THRESHOLD);
+    expect(resolveAutoProjectMilestoneMatchThreshold(Number.NaN)).toBe(DEFAULT_AUTO_PROJECT_MILESTONE_MATCH_THRESHOLD);
+  });
+
+  it("clamps configured thresholds to 0-100", () => {
+    expect(resolveAutoProjectMilestoneMatchThreshold(80.4)).toBe(80);
+    expect(resolveAutoProjectMilestoneMatchThreshold(150)).toBe(100);
+  });
+
+  it("always allows native links and gates fuzzy matches on the threshold", () => {
+    expect(matchPassesAutoApplyThreshold({ item: { id: "1", title: "x" }, source: "native", score: 1, shared: 0 }, 100)).toBe(true);
+    expect(matchPassesAutoApplyThreshold({ item: { id: "1", title: "x" }, source: "fuzzy", score: 0.64, shared: 3 }, 65)).toBe(false);
+    expect(matchPassesAutoApplyThreshold({ item: { id: "1", title: "x" }, source: "fuzzy", score: 0.66, shared: 3 }, 65)).toBe(true);
+  });
+
+  it("filters fuzzy matches below the configured threshold before attach", () => {
+    const matches = {
+      milestone: { item: { id: "14", title: "Self-host reliability roadmap" }, source: "fuzzy" as const, score: 0.66, shared: 3 },
+      project: null,
+    };
+    expect(filterMatchesForAutoApply(matches, 65).milestone).not.toBeNull();
+    expect(filterMatchesForAutoApply(matches, 67).milestone).toBeNull();
+    expect(filterMatchesForAutoApply({ ...matches, milestone: { ...matches.milestone!, source: "native" } }, 100).milestone).not.toBeNull();
+  });
+});
+
+describe("maybeAutoApplyProjectOrMilestoneMatch (#3185)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("PATCHes the milestone and posts a confirmation comment when a match clears the threshold", async () => {
+    let patched = false;
+    const posted: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones")) return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
+      if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
+      if (url.includes("/issues/4/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/4") && method === "PATCH") {
+        patched = true;
+        return Response.json({ number: 4, milestone: { number: 14 } });
+      }
+      if (url.includes("/issues/4/comments") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { body?: string };
+        posted.push(body.body ?? "");
+        return Response.json({ id: 1 });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const result = await maybeAutoApplyProjectOrMilestoneMatch(
+      { env, installationId: 123, repoFullName: "JSONbored/gittensory" },
+      4,
+      "Improve self-host reliability roadmap convergence",
+      "Follow-up on the self-host reliability roadmap work",
+      "github",
+      "https://github.com/JSONbored/gittensory/pull/4",
+      65,
+    );
+    expect(result).toEqual({ applied: true });
+    expect(patched).toBe(true);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toContain(PROJECT_TRACKER_AUTO_APPLY_COMMENT_MARKER);
+    expect(posted[0]).toContain("milestone");
+  });
+
+  it("does not throw when attach fails (best-effort, gate never blocked)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones")) return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
+      if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
+      if (url.includes("/issues/4/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/4") && method === "PATCH") return new Response("boom", { status: 500 });
+      return new Response("unexpected", { status: 500 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await expect(
+      maybeAutoApplyProjectOrMilestoneMatch(
+        { env, installationId: 123, repoFullName: "JSONbored/gittensory" },
+        4,
+        "Improve self-host reliability roadmap convergence",
+        "Follow-up on the self-host reliability roadmap work",
+        "github",
+        "https://github.com/JSONbored/gittensory/pull/4",
+        65,
+      ),
+    ).resolves.toEqual({ applied: false });
+  });
+});
+
 describe("maybeSuggestMilestoneMatchForPr (#3183 webhook-level gating)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -847,24 +951,45 @@ describe("maybeSuggestMilestoneMatchForPr (#3183 webhook-level gating)", () => {
     expect(milestonesFetched).toBe(true);
   });
 
-  it("runs the match when mode is auto (identical to suggest until #3185)", async () => {
-    let milestonesFetched = false;
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+  it("auto-applies when mode is auto and every gate passes", async () => {
+    let patched = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
+      const method = init?.method ?? "GET";
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
-      if (url.includes("/milestones")) {
-        milestonesFetched = true;
-        return Response.json([]);
-      }
+      if (url.includes("/milestones")) return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
       if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
+      if (url.includes("/issues/4/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/4") && method === "PATCH") {
+        patched = true;
+        return Response.json({ number: 4, milestone: { number: 14 } });
+      }
+      if (url.includes("/issues/4/comments") && method === "POST") return Response.json({ id: 1 });
       return new Response("unexpected", { status: 500 });
     });
-    await maybeSuggestMilestoneMatchForPr(baseArgs({ mode: "auto" }));
-    expect(milestonesFetched).toBe(true);
+    await maybeSuggestMilestoneMatchForPr(baseArgs({ mode: "auto", autoApplyThreshold: 65 }));
+    expect(patched).toBe(true);
   });
 
-  it("logs a failure instead of throwing", async () => {
-    // The milestone/project lookups themselves are fail-open (#3183/#3184 fail-open fix) and can no longer
+  it("logs auto-apply failures instead of throwing", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones")) return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
+      if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
+      if (url.includes("/issues/4/comments") && method === "GET") return new Response("boom", { status: 500 });
+      return new Response("unexpected", { status: 500 });
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(maybeSuggestMilestoneMatchForPr(baseArgs({ mode: "auto", deliveryId: "delivery-auto" }))).resolves.toBeUndefined();
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    const logged = JSON.parse(String(consoleError.mock.calls[0]?.[0]));
+    expect(logged).toMatchObject({ event: "milestone_auto_apply_failed", deliveryId: "delivery-auto" });
+    consoleError.mockRestore();
+  });
+
+  it("logs a suggest failure instead of throwing", async () => {
     // reach this outer catch -- so this test drives a real match (milestone lookup succeeds) and fails the
     // still-unprotected comment-marker search instead, to prove the outer best-effort catch is still live.
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

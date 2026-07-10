@@ -2,9 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getRepositorySettings, upsertRepositorySettings } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
-// #3183: autoProjectMilestoneMatch is the tri-state config for auto-project/milestone matching, mirroring the
-// reviewCheckMode template (#2852). "off" is the conservative, opt-in default; "suggest" and "auto" currently
-// behave identically (post a comment) since real milestone attachment isn't wired until #3185.
+// #3183/#3185: autoProjectMilestoneMatch is the tri-state config for auto-project/milestone matching.
 describe("repository_settings: autoProjectMilestoneMatch default + round-trip (#3183)", () => {
   it("getRepositorySettings returns off for a repo with no DB row at all (conservative, opt-in default)", async () => {
     const env = createTestEnv();
@@ -44,6 +42,30 @@ describe("repository_settings: autoProjectMilestoneMatch default + round-trip (#
     await env.DB.prepare("UPDATE repository_settings SET project_milestone_match_mode = ? WHERE repo_full_name = ?").bind("sometimes", "acme/malformed").run();
     const settings = await getRepositorySettings(env, "acme/malformed");
     expect(settings.autoProjectMilestoneMatch).toBe("off");
+  });
+});
+
+describe("repository_settings: autoProjectMilestoneMatchThreshold default + round-trip (#3185)", () => {
+  it("getRepositorySettings returns null for a repo with no DB row (built-in default 65 at apply time)", async () => {
+    const env = createTestEnv();
+    const settings = await getRepositorySettings(env, "acme/brand-new-repo");
+    expect(settings.autoProjectMilestoneMatchThreshold).toBeNull();
+  });
+
+  it("an explicit threshold round-trips through a re-upsert", async () => {
+    const env = createTestEnv();
+    await upsertRepositorySettings(env, { repoFullName: "acme/threshold", autoProjectMilestoneMatchThreshold: 80 });
+    const settings = await getRepositorySettings(env, "acme/threshold");
+    expect(settings.autoProjectMilestoneMatchThreshold).toBe(80);
+    await upsertRepositorySettings(env, { ...settings, repoFullName: "acme/threshold" });
+    expect((await getRepositorySettings(env, "acme/threshold")).autoProjectMilestoneMatchThreshold).toBe(80);
+  });
+
+  it("clamps malformed persisted values on read", async () => {
+    const env = createTestEnv();
+    await upsertRepositorySettings(env, { repoFullName: "acme/clamped" });
+    await env.DB.prepare("UPDATE repository_settings SET auto_project_milestone_match_threshold = ? WHERE repo_full_name = ?").bind(150, "acme/clamped").run();
+    expect((await getRepositorySettings(env, "acme/clamped")).autoProjectMilestoneMatchThreshold).toBe(100);
   });
 });
 

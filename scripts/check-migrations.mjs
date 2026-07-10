@@ -26,6 +26,8 @@
 //   • 0090 — both 0090_contributor_cap_label (#2479) and 0090_pull_request_detail_sync_head_sha (#2527)
 //     merged with bare ADD COLUMN statements. Preserve both filenames so already-applied databases never
 //     replay either ALTER under a new migration name.
+//   • 0134 — three independent PRs (#4502, #4514, #4558) each grabbed 0134 before the guard caught the
+//     collision; all three merged to main and were applied in production under their original filenames.
 import { readdirSync, readFileSync } from "node:fs";
 import { detectMigrationCollisions, extractMigrationNumber, KNOWN_MIGRATION_DUPLICATES, MIGRATION_FILENAME_PATTERN } from "../src/db/migration-collisions.ts";
 import { detectColumnCollisions } from "../src/db/migration-column-extraction.ts";

@@ -160,6 +160,9 @@ export type RepositorySettings = {
    *  Always populated by the DB layer (default `"github"`); optional so existing settings fixtures/callers need
    *  not be touched. */
   autoProjectMilestoneMatchBackend?: ProjectMilestoneMatchBackend | undefined;
+  /** Fuzzy-match confidence floor (0-100) for auto-apply mode (#3185). Always populated by the DB layer as
+   *  null when unset (built-in default 65); optional so existing settings fixtures/callers need not be touched. */
+  autoProjectMilestoneMatchThreshold?: number | null | undefined;
   /** Policy pack the gate evaluates under (#692). Default `gittensor` (registry-aware; threads confirmed
    *  status for scoring only). `oss-anti-slop` runs the deterministic rules against any author on any repo. */
   gatePack: GatePolicyPack;

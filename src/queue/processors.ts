@@ -6145,6 +6145,7 @@ async function processGitHubWebhook(
         prUrl: pr.htmlUrl,
         mode: settings.autoProjectMilestoneMatch,
         backend: settings.autoProjectMilestoneMatchBackend,
+        autoApplyThreshold: settings.autoProjectMilestoneMatchThreshold,
         deliveryId,
         eventName,
         action: payload.action,

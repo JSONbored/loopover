@@ -57,6 +57,8 @@ export const repositorySettings = sqliteTable("repository_settings", {
   reviewCheckMode: text("review_check_mode").notNull().default("disabled"),
   projectMilestoneMatchMode: text("project_milestone_match_mode").notNull().default("off"),
   autoProjectMilestoneMatchBackend: text("auto_project_milestone_match_backend").notNull().default("github"),
+  // Fuzzy-match confidence floor (0-100) for auto-apply mode (#3185). NULL = built-in default (65).
+  autoProjectMilestoneMatchThreshold: integer("auto_project_milestone_match_threshold"),
   gatePack: text("gate_pack").notNull().default("gittensor"),
   // Missing a linked issue is advisory-only by default -- issues aren't always available, so it only
   // blocks when a repo explicitly opts in (linkedIssueGateMode: "block" or the requireLinkedIssue toggle;

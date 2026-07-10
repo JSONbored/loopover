@@ -617,12 +617,10 @@ export type CopycatGateMode = "off" | "warn" | "label" | "block";
  *                  cannot do this on the operator's behalf -- it is a GitHub branch-protection setting). */
 export type ReviewCheckMode = "required" | "visible" | "disabled";
 
-/** Auto-project/milestone matching (#3183): detects when a PR is likely part of an open GitHub Milestone even
- *  with no closing-keyword issue link, and posts a bot-comment suggestion. `"off"` (default) runs no matching
- *  at all; `"suggest"` matches and posts a single advisory comment, never mutating the PR; `"auto"` is accepted
- *  by config today but behaves identically to `"suggest"` until #3185 wires real milestone attachment -- no
- *  attach/auto-apply code exists yet, so treating it as inert-but-silent would be a worse failure mode than
- *  degrading to the safe, visible suggest behavior. */
+/** Auto-project/milestone matching (#3183/#3185): detects when a PR is likely part of an open GitHub Milestone
+ *  or Project even with no closing-keyword issue link. `"off"` (default) runs no matching at all; `"suggest"`
+ *  matches and posts a single advisory comment, never mutating the PR; `"auto"` matches and best-effort attaches
+ *  via the configured backend when the match clears {@link RepositorySettings.autoProjectMilestoneMatchThreshold}. */
 export type ProjectMilestoneMatchMode = "off" | "suggest" | "auto";
 
 /** Which backend {@link ProjectMilestoneMatchMode} matches against (#3186). `"github"` (default) uses the
@@ -702,6 +700,9 @@ export type RepositorySettings = {
    *  Always populated by the DB layer (default `"github"`); optional so existing settings fixtures/callers need
    *  not be touched. */
   autoProjectMilestoneMatchBackend?: ProjectMilestoneMatchBackend | undefined;
+  /** Fuzzy-match confidence floor (0-100) for {@link ProjectMilestoneMatchMode} `"auto"` (#3185). Native/confirmed
+   *  links always auto-apply regardless. NULL/absent = built-in default (65, the same bar suggest-mode uses). */
+  autoProjectMilestoneMatchThreshold?: number | null | undefined;
   /** Policy pack the gate evaluates under (#692). Default `gittensor` (registry-aware; threads confirmed
    *  status for scoring only). `oss-anti-slop` runs the deterministic rules against any author on any repo. */
   gatePack: GatePolicyPack;

@@ -636,6 +636,8 @@ settings:
   # Auto-assign a merged/linked-issue PR to a matching GitHub Project/Milestone (#3186). off | suggest |
   # auto. Default: off. "suggest" posts an advisory note only; "auto" applies the match directly.
   # autoProjectMilestoneMatch: off
+  # Confidence floor (0-100) for fuzzy matches in auto mode. Default: 65 (same bar as suggest-mode).
+  # autoProjectMilestoneMatchThreshold: 65
   # Which backend the match runs against. github | linear. Default: github. "linear" matches against a
   # Linear workspace via a per-repo encrypted API key (set via the dashboard, never here).
   # autoProjectMilestoneMatchBackend: github

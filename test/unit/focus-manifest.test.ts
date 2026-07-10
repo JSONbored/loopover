@@ -307,6 +307,7 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     reviewCheckMode: "checkMode:", // `gate.checkMode` above documents the same underlying knob.
     autoProjectMilestoneMatch: "autoProjectMilestoneMatch:",
     autoProjectMilestoneMatchBackend: "autoProjectMilestoneMatchBackend:",
+    autoProjectMilestoneMatchThreshold: "autoProjectMilestoneMatchThreshold:",
     closeOwnerAuthors: "closeOwnerAuthors:",
     autoLabelEnabled: "autoLabelEnabled:",
     typeLabelsEnabled: "typeLabelsEnabled:",
@@ -2466,6 +2467,24 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
       expect(overridden.autoProjectMilestoneMatchBackend).toBe("linear");
       const noOverride = resolveEffectiveSettings({ autoProjectMilestoneMatchBackend: "linear" } as unknown as RepositorySettings, parseFocusManifest({}));
       expect(noOverride.autoProjectMilestoneMatchBackend).toBe("linear");
+    });
+  });
+
+  describe("autoProjectMilestoneMatchThreshold precedence (#3185)", () => {
+    it("parses settings.autoProjectMilestoneMatchThreshold and drops an invalid value with a warning", () => {
+      const m = parseFocusManifest({ settings: { autoProjectMilestoneMatchThreshold: 80 } });
+      expect(m.settings.autoProjectMilestoneMatchThreshold).toBe(80);
+      const invalid = parseFocusManifest({ settings: { autoProjectMilestoneMatchThreshold: "high" as never } });
+      expect(invalid.settings.autoProjectMilestoneMatchThreshold).toBeUndefined();
+      expect(invalid.warnings.some((w) => /settings\.autoProjectMilestoneMatchThreshold/.test(w))).toBe(true);
+    });
+
+    it("settings.autoProjectMilestoneMatchThreshold overlays the DB value when set", () => {
+      const overridden = resolveEffectiveSettings(
+        { autoProjectMilestoneMatchThreshold: null } as unknown as RepositorySettings,
+        parseFocusManifest({ settings: { autoProjectMilestoneMatchThreshold: 90 } }),
+      );
+      expect(overridden.autoProjectMilestoneMatchThreshold).toBe(90);
     });
   });
 

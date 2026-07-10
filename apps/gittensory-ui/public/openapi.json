@@ -3811,6 +3811,12 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "autoProjectMilestoneMatchThreshold": {
+                "type": "integer",
+                "nullable": true,
+                "minimum": 0,
+                "maximum": 100
               }
             },
             "required": [
@@ -9522,6 +9528,12 @@
           },
           "agentGlobalFreezeOverride": {
             "type": "boolean"
+          },
+          "autoProjectMilestoneMatchThreshold": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "maximum": 100
           }
         },
         "required": [
@@ -9647,6 +9659,12 @@
                     },
                     "autoLabelEnabled": {
                       "type": "boolean"
+                    },
+                    "autoProjectMilestoneMatchThreshold": {
+                      "type": "integer",
+                      "nullable": true,
+                      "minimum": 0,
+                      "maximum": 100
                     }
                   },
                   "required": [
@@ -10259,6 +10277,12 @@
                   "defaultAllowed",
                   "commandOverrides"
                 ]
+              },
+              "autoProjectMilestoneMatchThreshold": {
+                "type": "integer",
+                "nullable": true,
+                "minimum": 0,
+                "maximum": 100
               }
             },
             "required": [

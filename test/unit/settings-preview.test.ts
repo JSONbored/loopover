@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRepoSettingsPreview, decidePublicSurface, type InstallationHealthSummary } from "../../src/signals/settings-preview";
+import { buildRepoSettingsPreview, buildSampleCheckRunReadiness, decidePublicSurface, type InstallationHealthSummary } from "../../src/signals/settings-preview";
 import { REQUIRED_INSTALLATION_PERMISSIONS } from "../../src/github/backfill";
 import { RepoSettingsPreviewSchema } from "../../src/openapi/schemas";
 import type { IssueRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../../src/types";
@@ -252,6 +252,76 @@ describe("buildRepoSettingsPreview", () => {
     });
     expect(withoutChecks.checkRun).toBeNull();
     expect(withoutChecks.warnings.some((warning) => /Checks: write/.test(warning))).toBe(false);
+  });
+
+  it("REGRESSION (#2216): omits checkRunReadiness at minimal detail level and includes public-safe bands at standard", () => {
+    const minimal = buildRepoSettingsPreview({env: {},
+      ...base,
+      settings: settings({ checkRunMode: "enabled", checkRunDetailLevel: "minimal" }),
+      installation: healthyInstall,
+      sample: { authorLogin: "miner", minerStatus: "confirmed" },
+    });
+    expect(minimal.checkRun).toMatchObject({ willCreate: true, detailLevel: "minimal" });
+    expect(minimal.checkRunReadiness).toBeNull();
+
+    const standard = buildRepoSettingsPreview({env: {},
+      ...base,
+      settings: settings({ checkRunMode: "enabled", checkRunDetailLevel: "standard" }),
+      installation: healthyInstall,
+      sample: { authorLogin: "miner", minerStatus: "confirmed" },
+    });
+    expect(standard.checkRunReadiness).toMatchObject({
+      readinessBand: expect.stringMatching(/^(strong|developing|early)$/),
+      components: expect.arrayContaining([
+        expect.objectContaining({
+          key: expect.any(String),
+          label: expect.any(String),
+          band: expect.stringMatching(/^(met|partial|unmet)$/),
+          evidence: expect.any(String),
+          action: expect.any(String),
+        }),
+      ]),
+    });
+    expect(JSON.stringify(standard.checkRunReadiness)).not.toMatch(FORBIDDEN_INSTALL_PREVIEW_PUBLIC_LANGUAGE);
+  });
+
+  it("buildSampleCheckRunReadiness returns null when the surface decision will not publish a check run", () => {
+    const skipped = buildSampleCheckRunReadiness({
+      repoFullName: repo.fullName,
+      repo,
+      settings: settings({ checkRunMode: "off", checkRunDetailLevel: "standard" }),
+      issues,
+      pullRequests,
+      sample: { authorLogin: "miner", authorAssociation: "CONTRIBUTOR", minerStatus: "confirmed", title: "Sample", labels: [], linkedIssues: [] },
+      body: null,
+      decision: decidePublicSurface({ settings: settings({ checkRunMode: "off" }), authorLogin: "miner", minerStatus: "confirmed" }),
+    });
+    expect(skipped).toBeNull();
+  });
+
+  it("buildSampleCheckRunReadiness stays available with gate enabled or disabled (both gate branches)", () => {
+    const gateOff = buildSampleCheckRunReadiness({
+      repoFullName: repo.fullName,
+      repo,
+      settings: settings({ checkRunMode: "enabled", checkRunDetailLevel: "standard", gateCheckMode: "off" }),
+      issues,
+      pullRequests,
+      sample: { authorLogin: "miner", authorAssociation: "CONTRIBUTOR", minerStatus: "confirmed", title: "Sample", labels: [], linkedIssues: [] },
+      body: null,
+      decision: decidePublicSurface({ settings: settings({ checkRunMode: "enabled" }), authorLogin: "miner", minerStatus: "confirmed" }),
+    });
+    const gateOn = buildSampleCheckRunReadiness({
+      repoFullName: repo.fullName,
+      repo,
+      settings: settings({ checkRunMode: "enabled", checkRunDetailLevel: "standard", gateCheckMode: "enabled" }),
+      issues,
+      pullRequests,
+      sample: { authorLogin: "miner", authorAssociation: "CONTRIBUTOR", minerStatus: "confirmed", title: "Sample", labels: [], linkedIssues: [] },
+      body: null,
+      decision: decidePublicSurface({ settings: settings({ checkRunMode: "enabled", gateCheckMode: "enabled" }), authorLogin: "miner", minerStatus: "confirmed" }),
+    });
+    expect(gateOff?.components.length).toBeGreaterThan(0);
+    expect(gateOn?.components.length).toBeGreaterThan(0);
   });
 
   it("requires Issues: write for detected-contributors comment mode even when previewing a non-confirmed sample", () => {

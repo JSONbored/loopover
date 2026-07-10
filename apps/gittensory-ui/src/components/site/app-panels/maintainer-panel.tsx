@@ -20,6 +20,8 @@ import {
 import { ActivationPreview } from "@/components/site/app-panels/activation-preview";
 import { AiReviewSettings } from "@/components/site/app-panels/ai-review-settings";
 import { MaintainerSettings } from "@/components/site/app-panels/maintainer-settings";
+import { CheckRunReadinessTable } from "@/components/site/check-run-readiness-table";
+import type { CheckRunReadinessTableData } from "@/components/site/check-run-readiness-model";
 import { StatCard } from "@/components/site/primitives";
 import { RefreshMeta } from "@/components/site/refresh-meta";
 import { EmptyState, LoadingState, StateBoundary } from "@/components/site/state-views";
@@ -154,6 +156,7 @@ type SettingsPreviewResponse = {
   previewComment: string | null;
   appliedLabel: string | null;
   checkRun: { willCreate: boolean; title: string; detailLevel: string } | null;
+  checkRunReadiness: CheckRunReadinessTableData | null;
   installPreview: InstallPreview;
   warnings: string[];
   summary: string;
@@ -168,7 +171,7 @@ const MAINTAINER_ROLES = ["maintainer", "owner", "operator"] as const;
  * dashboard query and the BYOK form from ever mounting for a non-maintainer (defense-in-depth + a clean
  * message instead of a raw 403). The backend remains the source of truth.
  */
-export function MaintainerPanel() {
+export function MaintainerPanel({ initialRepoFullName }: { initialRepoFullName?: string | undefined } = {}) {
   const { session, hydrated } = useSession();
   const isMaintainer = (session?.roles ?? []).some((role) =>
     MAINTAINER_ROLES.includes(role as (typeof MAINTAINER_ROLES)[number]),
@@ -183,10 +186,10 @@ export function MaintainerPanel() {
       />
     );
   }
-  return <MaintainerDashboardView />;
+  return <MaintainerDashboardView initialRepoFullName={initialRepoFullName} />;
 }
 
-function MaintainerDashboardView() {
+function MaintainerDashboardView({ initialRepoFullName }: { initialRepoFullName?: string | undefined }) {
   const dashboard = useApiResource<MaintainerDashboard>(
     "/v1/app/maintainer-dashboard",
     "Maintainer dashboard",
@@ -360,7 +363,7 @@ function MaintainerDashboardView() {
 
           <ActivationPreview reviewability={data.reviewability} />
 
-          <SurfacePreview reviewability={data.reviewability} />
+          <SurfacePreview reviewability={data.reviewability} initialRepoFullName={initialRepoFullName} />
 
           <MaintainerSettings reviewability={data.reviewability} />
 
@@ -373,12 +376,14 @@ function MaintainerDashboardView() {
 
 function SurfacePreview({
   reviewability,
+  initialRepoFullName,
 }: {
   reviewability: MaintainerDashboard["reviewability"];
+  initialRepoFullName?: string | undefined;
 }) {
   const repoOptions = useMemo(() => extractPreviewRepoOptions(reviewability), [reviewability]);
   const [form, setForm] = useState<PreviewFormState>({
-    repoFullName: repoOptions[0] ?? "",
+    repoFullName: initialRepoFullName ?? repoOptions[0] ?? "",
     scenarioId: "confirmed-miner",
     title: "Sample pull request",
     labels: "bug",
@@ -395,6 +400,15 @@ function SurfacePreview({
       setForm((current) => ({ ...current, repoFullName: repoOptions[0] }));
     }
   }, [form.repoFullName, repoOptions]);
+
+  useEffect(() => {
+    if (!initialRepoFullName) return;
+    setForm((current) =>
+      current.repoFullName === initialRepoFullName
+        ? current
+        : { ...current, repoFullName: initialRepoFullName },
+    );
+  }, [initialRepoFullName]);
 
   async function runPreview(nextForm = form) {
     const target = splitRepoFullName(nextForm.repoFullName);
@@ -680,6 +694,13 @@ function PreviewResult({
             </tbody>
           </table>
         </div>
+      ) : null}
+
+      {preview.checkRun?.willCreate ? (
+        <CheckRunReadinessTable
+          detailLevel={preview.checkRun.detailLevel as "minimal" | "standard" | "deep"}
+          readiness={preview.checkRunReadiness}
+        />
       ) : null}
 
       <div>

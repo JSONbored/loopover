@@ -10,9 +10,11 @@ import {
   buildContributorProfile,
   buildPreflightResult,
   buildPublicPrIntelligenceComment,
+  buildPublicReadinessScore,
   buildQueueHealth,
   type ContributorDetection,
 } from "./engine";
+import { buildExtensionPrStatus, type ExtensionPrStatus } from "./extension-contributor-context";
 import { REQUIRED_INSTALLATION_PERMISSIONS } from "../github/backfill";
 import type { GittensoryFooterEnv } from "../github/footer";
 import { GITTENSORY_GATE_CHECK_NAME, shouldPublishReviewCheck } from "../review/check-names";
@@ -243,6 +245,9 @@ export type RepoSettingsPreview = {
   previewComment: string | null;
   appliedLabel: string | null;
   checkRun: { willCreate: boolean; title: string; detailLevel: RepositorySettings["checkRunDetailLevel"] } | null;
+  /** Public-safe readiness bands for the Context check details page (#2216). Null when check runs are off,
+   *  detail level is minimal, or the sample would not publish a check run. */
+  checkRunReadiness: Pick<ExtensionPrStatus, "readinessBand" | "components"> | null;
   installPreview: RepoInstallPreview;
   warnings: string[];
   summary: string;
@@ -359,6 +364,16 @@ export function buildRepoSettingsPreview(args: {
     previewComment,
     appliedLabel: decision.willLabel ? settings.gittensorLabel : null,
     checkRun: decision.willCheckRun ? { willCreate: true, title: "Gittensory Context", detailLevel: settings.checkRunDetailLevel } : null,
+    checkRunReadiness: buildSampleCheckRunReadiness({
+      repoFullName,
+      repo,
+      settings,
+      issues: args.issues,
+      pullRequests: args.pullRequests,
+      sample,
+      body: args.sample.body ?? null,
+      decision,
+    }),
     installPreview,
     warnings,
     summary: decision.skipped
@@ -584,6 +599,50 @@ function publicOutputsFor(decision: PublicSurfaceDecision, appliedLabel: string 
 function publicOutputSummary(decision: PublicSurfaceDecision): string {
   if (decision.skipped) return `Current sample is skipped: ${decision.summary}`;
   return decision.actions.includes("none") ? "The sample qualifies, but no public output action is enabled." : `Current sample would create: ${decision.actions.join(", ")}.`;
+}
+
+/** Build the public-safe readiness table payload for the Context check details page (#2216). */
+export function buildSampleCheckRunReadiness(args: {
+  repoFullName: string;
+  repo: RepositoryRecord | null;
+  settings: RepositorySettings;
+  issues: IssueRecord[];
+  pullRequests: PullRequestRecord[];
+  sample: { authorLogin: string; authorAssociation: string; minerStatus: "confirmed" | "not_found" | "unavailable"; title: string; labels: string[]; linkedIssues: number[] };
+  body: string | null;
+  decision: PublicSurfaceDecision;
+}): Pick<ExtensionPrStatus, "readinessBand" | "components"> | null {
+  if (!args.decision.willCheckRun || args.settings.checkRunDetailLevel === "minimal") return null;
+  const samplePr: PullRequestRecord = {
+    repoFullName: args.repoFullName,
+    number: 0,
+    title: args.sample.title,
+    state: "open",
+    authorLogin: args.sample.authorLogin,
+    authorAssociation: args.sample.authorAssociation,
+    labels: args.sample.labels,
+    linkedIssues: args.sample.linkedIssues,
+    body: args.body,
+  };
+  const collisions = buildCollisionReport(args.repoFullName, args.issues, args.pullRequests);
+  const queueHealth = buildQueueHealth(args.repo, args.issues, args.pullRequests, collisions);
+  const preflight = buildPreflightResult(
+    {
+      repoFullName: args.repoFullName,
+      contributorLogin: args.sample.authorLogin,
+      title: args.sample.title,
+      body: args.body ?? undefined,
+      labels: args.sample.labels,
+      linkedIssues: args.sample.linkedIssues,
+      authorAssociation: args.sample.authorAssociation,
+    },
+    args.repo,
+    args.issues,
+    args.pullRequests,
+  );
+  const readiness = buildPublicReadinessScore({ pr: samplePr, preflight, queueHealth });
+  const status = buildExtensionPrStatus({ repoFullName: args.repoFullName, pullNumber: 0, readiness });
+  return { readinessBand: status.readinessBand, components: status.components };
 }
 
 function buildSamplePreviewComment(args: {

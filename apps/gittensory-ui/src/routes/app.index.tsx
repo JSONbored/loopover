@@ -1,4 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useEffect } from "react";
 import {
   ArrowRight,
   Activity,
@@ -103,6 +104,20 @@ function AppOverview() {
   const { session } = useSession();
   const { status, connection } = useApiStatus();
   const overview = useApiResource<AppOverviewResponse>("/v1/app/overview", "App overview");
+  const navigate = useNavigate();
+
+  // Context check details_url uses /app?view=maintainer&repo=… — route to the maintainer console (#2216).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("view") !== "maintainer") return;
+    const repo = params.get("repo")?.trim();
+    void navigate({
+      to: "/app/maintainer",
+      search: repo ? { repo } : {},
+      replace: true,
+    });
+  }, [navigate]);
+
   if (!session) return null;
 
   const live = connection === "online" && (status === "ok" || status === "degraded");

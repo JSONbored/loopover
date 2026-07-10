@@ -10820,6 +10820,67 @@
           },
           "summary": {
             "type": "string"
+          },
+          "checkRunReadiness": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "readinessBand": {
+                "type": "string",
+                "enum": [
+                  "strong",
+                  "developing",
+                  "early"
+                ]
+              },
+              "components": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "enum": [
+                        "traceability",
+                        "related_work",
+                        "change_scope",
+                        "validation",
+                        "pr_state",
+                        "queue_pressure"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "band": {
+                      "type": "string",
+                      "enum": [
+                        "met",
+                        "partial",
+                        "unmet"
+                      ]
+                    },
+                    "evidence": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "label",
+                    "band",
+                    "evidence",
+                    "action"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "readinessBand",
+              "components"
+            ]
           }
         },
         "required": [
@@ -10833,6 +10894,7 @@
           "previewComment",
           "appliedLabel",
           "checkRun",
+          "checkRunReadiness",
           "installPreview",
           "warnings",
           "summary"

@@ -933,6 +933,20 @@ export const RepoSettingsPreviewSchema = z
         detailLevel: z.enum(["minimal", "standard", "deep"]),
       })
       .nullable(),
+    checkRunReadiness: z
+      .object({
+        readinessBand: z.enum(["strong", "developing", "early"]),
+        components: z.array(
+          z.object({
+            key: z.enum(["traceability", "related_work", "change_scope", "validation", "pr_state", "queue_pressure"]),
+            label: z.string(),
+            band: z.enum(["met", "partial", "unmet"]),
+            evidence: z.string(),
+            action: z.string(),
+          }),
+        ),
+      })
+      .nullable(),
     installPreview: z.object({
       status: z.enum(["ready", "needs_attention", "blocked"]),
       summary: z.string(),

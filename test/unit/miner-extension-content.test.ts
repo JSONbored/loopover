@@ -23,8 +23,8 @@ function rawIssue(overrides: Record<string, unknown> = {}) {
     createdAt: "2026-07-01T00:00:00.000Z",
     updatedAt: "2026-07-02T00:00:00.000Z",
     htmlUrl: "https://github.com/JSONbored/gittensory/issues/145",
-    aiPolicyAllowed: true,
-    aiPolicySource: "CONTRIBUTING.md",
+    aiPolicyAllowed: true as const,
+    aiPolicySource: "CONTRIBUTING.md" as const,
     ...overrides,
   };
 }

@@ -1,7 +1,9 @@
+const badgeApi = globalThis.__gittensoryMinerOpportunityBadge;
+
 const target = matchGitHubIssueTarget(location.pathname);
 
 if (target?.kind === "issue") {
-  mountIssueShell(target);
+  mountOpportunityBadge(target);
 }
 
 function matchGitHubIssueTarget(pathname) {
@@ -11,17 +13,33 @@ function matchGitHubIssueTarget(pathname) {
   return { kind: "issue", owner, repo, issueNumber: Number(number) };
 }
 
-function mountIssueShell(target) {
-  if (document.querySelector("[data-gittensory-miner-issue-shell]")) return;
+function mountOpportunityBadge(target) {
+  if (document.querySelector("[data-gittensory-miner-opportunity-badge]")) return;
+  const host = findIssueSidebar();
   const container = document.createElement("aside");
-  container.className = "gittensory-miner-issue-shell";
-  container.dataset.gittensoryMinerIssueShell = "true";
+  container.className = host
+    ? "gittensory-miner-opportunity-badge"
+    : "gittensory-miner-opportunity-badge gittensory-miner-opportunity-badge--floating";
+  container.dataset.gittensoryMinerOpportunityBadge = "true";
   container.hidden = true;
-  document.body.appendChild(container);
-  void loadIssueShell(container, target);
+  if (host) {
+    host.prepend(container);
+  } else {
+    document.body.appendChild(container);
+  }
+  void loadOpportunityBadge(container, target);
 }
 
-async function loadIssueShell(container, target) {
+function findIssueSidebar() {
+  return (
+    document.querySelector("#partial-discussion-sidebar") ||
+    document.querySelector("[data-testid='issue-sidebar']") ||
+    document.querySelector(".Layout-sidebar") ||
+    document.querySelector(".discussion-sidebar")
+  );
+}
+
+async function loadOpportunityBadge(container, target) {
   const response = await chrome.runtime.sendMessage({
     type: "gittensory-miner:issue-context",
     owner: target.owner,
@@ -29,28 +47,30 @@ async function loadIssueShell(container, target) {
     issueNumber: target.issueNumber,
   });
   if (!response?.ok) {
-    container.hidden = true;
+    container.remove();
     return;
   }
-  renderIssueShell(container, response.payload);
+  renderOpportunityBadge(container, response.payload);
 }
 
-function renderIssueShell(container, payload) {
-  if (!payload?.watched) {
-    container.hidden = true;
+function renderOpportunityBadge(container, payload) {
+  if (!payload?.watched || !payload?.badge) {
+    container.remove();
+    return;
+  }
+  const markup = badgeApi?.renderOpportunityBadgeMarkup?.(payload.badge);
+  if (!markup) {
+    container.remove();
     return;
   }
   container.hidden = false;
-  container.textContent = "";
-  const label = document.createElement("span");
-  label.className = "gittensory-miner-issue-shell__label";
-  label.textContent = "Gittensory miner opportunity shell";
-  container.appendChild(label);
+  container.innerHTML = markup;
 }
 
 if (globalThis.__GITTENSORY_MINER_EXTENSION_TEST__) {
   globalThis.__gittensoryMinerContentInternals = {
     matchGitHubIssueTarget,
-    renderIssueShell,
+    findIssueSidebar,
+    renderOpportunityBadge,
   };
 }

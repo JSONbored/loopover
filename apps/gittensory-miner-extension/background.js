@@ -1,3 +1,8 @@
+import {
+  formatOpportunityBadge,
+  lookupRankedOpportunity,
+} from "./opportunity-badge.js";
+
 const PING_MESSAGE = "gittensory-miner:ping";
 const ISSUE_CONTEXT_MESSAGE = "gittensory-miner:issue-context";
 
@@ -8,7 +13,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return false;
   }
   if (message.type === ISSUE_CONTEXT_MESSAGE) {
-    const task = loadIssueContextShell(message);
+    const task = loadIssueOpportunityContext(message);
     void task.then((payload) => sendResponse({ ok: true, payload })).catch((error) =>
       sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }),
     );
@@ -17,32 +22,64 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return false;
 });
 
-async function loadIssueContextShell(message) {
+async function loadIssueOpportunityContext(message) {
   const settings = await loadMinerExtensionSettings();
   const repoFullName = `${message.owner}/${message.repo}`;
-  const watched = settings.watchedRepos.includes(repoFullName);
+  const watched = settings.watchedRepos.some(
+    (repo) => repo.trim().toLowerCase() === repoFullName.toLowerCase(),
+  );
+  if (!watched) {
+    return {
+      watched: false,
+      issueNumber: message.issueNumber,
+      repoFullName,
+      badge: null,
+      status: "repo-not-watched",
+    };
+  }
+
+  const rankedCandidates = await loadRankedCandidates();
+  const rankedEntry = lookupRankedOpportunity(rankedCandidates, repoFullName, message.issueNumber);
+  if (!rankedEntry) {
+    return {
+      watched: true,
+      issueNumber: message.issueNumber,
+      repoFullName,
+      badge: null,
+      status: "no-signal",
+    };
+  }
+
   return {
-    watched,
+    watched: true,
     issueNumber: message.issueNumber,
     repoFullName,
-    badge: null,
-    status: watched ? "shell-ready" : "repo-not-watched",
+    badge: formatOpportunityBadge(rankedEntry),
+    status: "ready",
   };
 }
 
 async function loadMinerExtensionSettings() {
-  const stored = await chrome.storage.sync.get({ watchedRepos: [] });
+  const stored = await chrome.storage.sync.get({ watchedRepos: [], discoveryIndexUrl: "" });
   const watchedRepos = Array.isArray(stored.watchedRepos)
     ? stored.watchedRepos.map((value) => String(value).trim()).filter(Boolean)
     : [];
-  return { watchedRepos };
+  const discoveryIndexUrl =
+    typeof stored.discoveryIndexUrl === "string" ? stored.discoveryIndexUrl.trim() : "";
+  return { watchedRepos, discoveryIndexUrl };
+}
+
+async function loadRankedCandidates() {
+  const stored = await chrome.storage.local.get({ rankedCandidates: [] });
+  return Array.isArray(stored.rankedCandidates) ? stored.rankedCandidates : [];
 }
 
 if (globalThis.__GITTENSORY_MINER_EXTENSION_TEST__) {
   globalThis.__gittensoryMinerBackgroundInternals = {
     PING_MESSAGE,
     ISSUE_CONTEXT_MESSAGE,
-    loadIssueContextShell,
+    loadIssueOpportunityContext,
     loadMinerExtensionSettings,
+    loadRankedCandidates,
   };
 }

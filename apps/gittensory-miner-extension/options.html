@@ -21,14 +21,17 @@
         gap: 6px;
         margin-top: 16px;
       }
+      input,
       textarea {
         border: 1px solid rgba(255, 255, 255, 0.16);
         border-radius: 7px;
         background: rgba(255, 255, 255, 0.06);
         color: inherit;
         font: inherit;
-        min-height: 120px;
         padding: 9px 10px;
+      }
+      textarea {
+        min-height: 120px;
         resize: vertical;
       }
       button {
@@ -60,6 +63,18 @@
         <label>
           Watched repositories
           <textarea id="watchedRepos" name="watchedRepos" placeholder="owner/repo, one per line"></textarea>
+        </label>
+        <label>
+          Discovery index URL (optional)
+          <input id="discoveryIndexUrl" name="discoveryIndexUrl" placeholder="https://example.com/discovery-index" />
+        </label>
+        <label>
+          Ranked candidates JSON (local cache)
+          <textarea
+            id="rankedCandidatesJson"
+            name="rankedCandidatesJson"
+            placeholder='[{"repoFullName":"owner/repo","issueNumber":1,"rankScore":0.82,...}]'
+          ></textarea>
         </label>
         <button type="submit">Save</button>
       </form>

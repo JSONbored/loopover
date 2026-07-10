@@ -12,7 +12,8 @@
   "content_scripts": [
     {
       "matches": ["https://github.com/*/*/issues/*"],
-      "js": ["content.js"],
+      "js": ["opportunity-badge.js", "content.js"],
+      "css": ["styles.css"],
       "run_at": "document_idle"
     }
   ],

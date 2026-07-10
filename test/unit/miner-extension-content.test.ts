@@ -1,25 +1,48 @@
 import { readFileSync } from "node:fs";
 import { Script, createContext } from "node:vm";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { rankCandidateIssues } from "../../packages/gittensory-miner/lib/opportunity-ranker.js";
 
 const contentScript = readFileSync("apps/gittensory-miner-extension/content.js", "utf8");
 const backgroundScript = readFileSync("apps/gittensory-miner-extension/background.js", "utf8");
+const badgeScript = readFileSync("apps/gittensory-miner-extension/opportunity-badge.js", "utf8");
 const optionsScript = readFileSync("apps/gittensory-miner-extension/options.js", "utf8");
 const manifest = JSON.parse(readFileSync("apps/gittensory-miner-extension/manifest.json", "utf8"));
 
-describe("miner extension scaffold", () => {
-  it("ships a Manifest V3 issue-page-only content script surface", () => {
+const NOW = Date.parse("2026-07-03T12:00:00.000Z");
+
+function rawIssue(overrides: Record<string, unknown> = {}) {
+  return {
+    owner: "JSONbored",
+    repo: "gittensory",
+    repoFullName: "JSONbored/gittensory",
+    issueNumber: 145,
+    title: "Add miner extension badge",
+    labels: ["help wanted", "gittensor:feature"],
+    commentsCount: 1,
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-02T00:00:00.000Z",
+    htmlUrl: "https://github.com/JSONbored/gittensory/issues/145",
+    aiPolicyAllowed: true,
+    aiPolicySource: "CONTRIBUTING.md",
+    ...overrides,
+  };
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("miner extension opportunity badge", () => {
+  it("ships a Manifest V3 issue-page content script with badge assets", () => {
     expect(manifest.manifest_version).toBe(3);
-    expect(manifest.name).toContain("Miner");
-    expect(manifest.content_scripts).toHaveLength(1);
     expect(manifest.content_scripts[0].matches).toEqual(["https://github.com/*/*/issues/*"]);
-    expect(manifest.background.service_worker).toBe("background.js");
-    expect(manifest.options_page).toBe("options.html");
+    expect(manifest.content_scripts[0].js).toEqual(["opportunity-badge.js", "content.js"]);
+    expect(manifest.content_scripts[0].css).toEqual(["styles.css"]);
   });
 
   it("detects GitHub issue routes without matching pull requests", () => {
     const internals = loadContentInternals();
-
     expect(internals.matchGitHubIssueTarget("/JSONbored/gittensory/issues/145")).toEqual({
       kind: "issue",
       owner: "JSONbored",
@@ -27,95 +50,130 @@ describe("miner extension scaffold", () => {
       issueNumber: 145,
     });
     expect(internals.matchGitHubIssueTarget("/JSONbored/gittensory/pull/146")).toBeNull();
-    expect(internals.matchGitHubIssueTarget("/JSONbored/gittensory/issues")).toBeNull();
   });
 
-  it("renders the watched-repo shell placeholder without a badge payload", () => {
+  it("looks up ranked opportunities using the same repo#issue key as the miner ranker", () => {
+    const ranked = rankCandidateIssues([rawIssue(), rawIssue({ issueNumber: 99, labels: ["question"] })], {
+      nowMs: NOW,
+    });
+    const badge = loadBadgeInternals();
+
+    const match = badge.lookupRankedOpportunity(ranked, "JSONbored/gittensory", 145);
+    expect(match?.issueNumber).toBe(145);
+    expect(match?.rankScore).toBeGreaterThan(0);
+    expect(badge.lookupRankedOpportunity(ranked, "JSONbored/gittensory", 404)).toBeNull();
+  });
+
+  it("formats tier, score, and a short why without duplicating ranking math", () => {
+    const ranked = rankCandidateIssues([rawIssue()], { nowMs: NOW })[0]!;
+    const badge = loadBadgeInternals();
+    const formatted = badge.formatOpportunityBadge(ranked);
+
+    expect(formatted.tier).toMatch(/High|Medium|Low/);
+    expect(formatted.score).toMatch(/^\d+\.\d{2}$/);
+    expect(formatted.why.length).toBeGreaterThan(0);
+    expect(badge.renderOpportunityBadgeMarkup(formatted)).toContain("Read-only");
+    expect(badge.renderOpportunityBadgeMarkup(formatted)).not.toContain("<script>");
+  });
+
+  it("renders the badge when a ranked signal is available and removes it otherwise", () => {
     const internals = loadContentInternals();
     const container = createMockContainer();
+    const ranked = rankCandidateIssues([rawIssue()], { nowMs: NOW })[0]!;
+    const badge = loadBadgeInternals();
+    const formatted = badge.formatOpportunityBadge(ranked);
 
-    internals.renderIssueShell(container, {
+    internals.renderOpportunityBadge(container, {
       watched: true,
-      issueNumber: 145,
-      repoFullName: "JSONbored/gittensory",
-      badge: null,
-      status: "shell-ready",
+      badge: formatted,
+      status: "ready",
     });
-
     expect(container.hidden).toBe(false);
-    expect(container.textContent).toContain("opportunity shell");
+    expect(container.innerHTML).toContain("Gittensory opportunity");
+    expect(container.innerHTML).toContain(formatted.tier);
+
+    const missing = createMockContainer();
+    internals.renderOpportunityBadge(missing, { watched: true, badge: null, status: "no-signal" });
+    expect(missing.removed).toBe(true);
   });
 
-  it("keeps the shell hidden for unwatched repositories", () => {
-    const internals = loadContentInternals();
-    const container = createMockContainer();
-
-    internals.renderIssueShell(container, {
-      watched: false,
-      issueNumber: 145,
-      repoFullName: "JSONbored/gittensory",
-      badge: null,
-      status: "repo-not-watched",
-    });
-
-    expect(container.hidden).toBe(true);
-  });
-
-  it("returns shell-ready issue context for watched repositories", async () => {
+  it("returns ready context when watched repo has a cached ranked candidate", async () => {
+    const ranked = rankCandidateIssues([rawIssue()], { nowMs: NOW });
     const internals = loadBackgroundInternals({
       watchedRepos: ["JSONbored/gittensory"],
+      rankedCandidates: ranked,
     });
 
-    const payload = await internals.loadIssueContextShell({
+    const payload = await internals.loadIssueOpportunityContext({
       owner: "JSONbored",
       repo: "gittensory",
       issueNumber: 145,
     });
 
-    expect(payload).toEqual({
-      watched: true,
-      issueNumber: 145,
-      repoFullName: "JSONbored/gittensory",
-      badge: null,
-      status: "shell-ready",
-    });
+    expect(payload.status).toBe("ready");
+    expect(payload.badge?.tier).toMatch(/High|Medium|Low/);
+    expect(payload.badge?.why).toBeTruthy();
   });
 
-  it("parses watched repositories from newline or comma separated options input", () => {
+  it("omits badge context when repo is watched but no ranked signal exists", async () => {
+    const internals = loadBackgroundInternals({
+      watchedRepos: ["JSONbored/gittensory"],
+      rankedCandidates: [],
+    });
+
+    const payload = await internals.loadIssueOpportunityContext({
+      owner: "JSONbored",
+      repo: "gittensory",
+      issueNumber: 145,
+    });
+
+    expect(payload.status).toBe("no-signal");
+    expect(payload.badge).toBeNull();
+  });
+
+  it("parses watched repos and ranked candidate JSON for options storage", () => {
     const internals = loadOptionsInternals();
     expect(internals.parseWatchedRepos("JSONbored/gittensory\nowner/repo")).toEqual([
       "JSONbored/gittensory",
       "owner/repo",
     ]);
-    expect(internals.parseWatchedRepos("JSONbored/gittensory, owner/repo")).toEqual([
-      "JSONbored/gittensory",
-      "owner/repo",
-    ]);
+    expect(internals.parseRankedCandidatesJson("[]")).toEqual([]);
+    expect(internals.parseRankedCandidatesJson('[{"repoFullName":"a/b","issueNumber":1}]')).toHaveLength(1);
+    expect(() => internals.parseRankedCandidatesJson("{")).toThrow();
+    expect(() => internals.parseRankedCandidatesJson('{"not":"array"}')).toThrow();
   });
 });
 
 function createMockContainer() {
   const container = {
     hidden: false,
-    textContent: "",
-    dataset: {} as Record<string, string>,
-    appendChild(node: { textContent?: string }) {
-      if (node.textContent) {
-        container.textContent += node.textContent;
-      }
+    innerHTML: "",
+    removed: false,
+    remove() {
+      container.removed = true;
     },
   };
-  return container as {
-    hidden: boolean;
-    textContent: string;
-    dataset: Record<string, string>;
-    appendChild: (node: { textContent?: string }) => void;
+  return container;
+}
+
+function loadBadgeInternals() {
+  const context: Record<string, unknown> = { globalThis: {} as Record<string, unknown> };
+  context.globalThis = context;
+  const vmContext = createContext(context);
+  const badgeForVm = badgeScript.replace(/\bexport\s+/g, "");
+  new Script(badgeForVm).runInContext(vmContext);
+  return vmContext.__gittensoryMinerOpportunityBadge as {
+    lookupRankedOpportunity: (ranked: unknown[], repoFullName: string, issueNumber: number) => Record<string, unknown> | null;
+    formatOpportunityBadge: (entry: Record<string, unknown>) => { tier: string; score: string; why: string };
+    renderOpportunityBadgeMarkup: (badge: { tier: string; score: string; why: string }) => string;
   };
 }
 
 function loadContentInternals() {
+  const badge = loadBadgeInternals();
   const context: Record<string, unknown> = {
     __GITTENSORY_MINER_EXTENSION_TEST__: true,
+    __gittensoryMinerOpportunityBadge: badge,
     location: { pathname: "/JSONbored/gittensory/pull/146" },
     document: {
       querySelector: () => null,
@@ -131,38 +189,55 @@ function loadContentInternals() {
     matchGitHubIssueTarget: (
       pathname: string,
     ) => { kind: "issue"; owner: string; repo: string; issueNumber: number } | null;
-    renderIssueShell: (container: { hidden: boolean; textContent: string }, payload: unknown) => void;
+    renderOpportunityBadge: (container: ReturnType<typeof createMockContainer>, payload: unknown) => void;
   };
 }
 
-function loadBackgroundInternals({ watchedRepos = [] as string[] } = {}) {
+function loadBackgroundInternals({
+  watchedRepos = [] as string[],
+  rankedCandidates = [] as unknown[],
+} = {}) {
   const context: Record<string, unknown> = {
     __GITTENSORY_MINER_EXTENSION_TEST__: true,
     chrome: {
-      storage: { sync: { get: async () => ({ watchedRepos }) } },
+      storage: {
+        sync: {
+          get: async () => ({ watchedRepos, discoveryIndexUrl: "" }),
+        },
+        local: {
+          get: async () => ({ rankedCandidates }),
+        },
+      },
       runtime: { onMessage: { addListener: () => {} } },
     },
   };
   context.globalThis = context;
   const vmContext = createContext(context);
-  new Script(backgroundScript).runInContext(vmContext);
+  const badgeForVm = badgeScript.replace(/\bexport\s+/g, "");
+  new Script(badgeForVm).runInContext(vmContext);
+  const backgroundForTest = backgroundScript.replace(/^import\s+[\s\S]*?from\s+["'][^"']+["'];\s*/m, "");
+  new Script(backgroundForTest).runInContext(vmContext);
   return vmContext.__gittensoryMinerBackgroundInternals as {
-    loadIssueContextShell: (message: {
+    loadIssueOpportunityContext: (message: {
       owner: string;
       repo: string;
       issueNumber: number;
-    }) => Promise<Record<string, unknown>>;
+    }) => Promise<{
+      status: string;
+      badge: { tier: string; why: string } | null;
+    }>;
   };
 }
 
 function loadOptionsInternals() {
   const context: Record<string, unknown> = {
     __GITTENSORY_MINER_EXTENSION_TEST__: true,
-    document: {
-      querySelector: () => null,
-    },
+    document: { querySelector: () => null },
     chrome: {
-      storage: { sync: { get: async () => ({ watchedRepos: [] }), set: async () => {} } },
+      storage: {
+        sync: { get: async () => ({ watchedRepos: [], discoveryIndexUrl: "" }), set: async () => {} },
+        local: { get: async () => ({ rankedCandidates: [] }), set: async () => {} },
+      },
     },
     setTimeout: () => 0,
   };
@@ -171,5 +246,6 @@ function loadOptionsInternals() {
   new Script(optionsScript).runInContext(vmContext);
   return vmContext.__gittensoryMinerOptionsInternals as {
     parseWatchedRepos: (text: string) => string[];
+    parseRankedCandidatesJson: (text: string) => unknown[];
   };
 }

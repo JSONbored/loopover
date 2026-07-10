@@ -28,6 +28,7 @@ const dashboard = {
     },
   ],
   settingsPreview: { removed: [], added: [] },
+  qualityDashboard: { topContributors: [] },
 };
 
 vi.mock("@/lib/api/use-api-resource", () => ({

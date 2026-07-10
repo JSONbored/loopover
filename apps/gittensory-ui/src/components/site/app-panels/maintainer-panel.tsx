@@ -19,6 +19,8 @@ import {
 } from "@/components/site/control-primitives";
 import { ActivationPreview } from "@/components/site/app-panels/activation-preview";
 import { AiReviewSettings } from "@/components/site/app-panels/ai-review-settings";
+import { ContributorQualityTable } from "@/components/site/app-panels/contributor-quality-table";
+import type { MaintainerTopContributor } from "@/components/site/app-panels/contributor-quality-table-model";
 import { MaintainerSettings } from "@/components/site/app-panels/maintainer-settings";
 import { StatCard } from "@/components/site/primitives";
 import { EmptyState, LoadingState, StateBoundary } from "@/components/site/state-views";
@@ -76,6 +78,7 @@ type MaintainerDashboard = {
     slop?: { risk: number; band: string } | null;
   }>;
   settingsPreview: { removed: string[]; added: string[] };
+  qualityDashboard: { topContributors: MaintainerTopContributor[] };
 };
 
 type TrustChecklistStatus = "ready" | "needs_attention" | "blocked";
@@ -351,6 +354,8 @@ function MaintainerDashboardView() {
               </tbody>
             </table>
           </section>
+
+          <ContributorQualityTable topContributors={data.qualityDashboard.topContributors} />
 
           <ActivationPreview reviewability={data.reviewability} />
 

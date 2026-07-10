@@ -66,6 +66,7 @@ describe("MaintainerPanel install health — Orb broker mode (#selfhost-runtime-
     ],
     reviewability: [],
     settingsPreview: { removed: [], added: [] },
+    qualityDashboard: { topContributors: [] },
   };
 
   it("shows a neutral 'n/a (broker)' pill instead of a fabricated perms/webhook verdict for a brokered install", () => {

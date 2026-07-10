@@ -259,6 +259,7 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     aiReviewModel: "model:",
     aiReviewAllAuthors: "allAuthors:",
     aiReviewCloseConfidence: "closeConfidence:",
+    aiReviewLowConfidenceDisposition: "lowConfidenceDisposition:",
     aiReviewCombine: "combine:",
     aiReviewOnMerge: "onMerge:",
     aiReviewReviewers: "reviewers:",
@@ -825,7 +826,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, checkMode: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null },
+      gate: { present: false, enabled: null, checkMode: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: null, e2eTestDelivery: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null, grounding: null, e2eTests: null },
@@ -1136,7 +1137,7 @@ describe("parseFocusManifest gate config", () => {
     // the block→advisory deprecation-downgrade behavior itself is covered separately below.
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "advisory", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, checkMode: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, checkMode: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null });
   });
 
   it("parses gate.mergeReadiness + gate.firstTimeContributorGrace, round-trips them, and warns on bad values (#822)", () => {
@@ -1468,6 +1469,29 @@ describe("parseFocusManifest gate config", () => {
     const noFlag = parseFocusManifest({ gate: { aiReview: { mode: "advisory" } } });
     expect(noFlag.gate.aiReviewCloseConfidence).toBeNull();
     expect(resolveEffectiveSettings({ aiReviewCloseConfidence: 0.6 } as unknown as RepositorySettings, noFlag).aiReviewCloseConfidence).toBe(0.6);
+  });
+
+  it("parses gate.aiReview.lowConfidenceDisposition, makes the gate present, round-trips + resolves it, and warns on a bad value (#4603)", () => {
+    // lowConfidenceDisposition alone makes the gate present, serializes back under
+    // gate.aiReview.lowConfidenceDisposition, and the gate alias projects it onto effective settings.
+    const m = parseFocusManifest({ gate: { aiReview: { lowConfidenceDisposition: "advisory_only" } } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.aiReviewLowConfidenceDisposition).toBe("advisory_only");
+    expect((gateConfigToJson(m.gate) as { aiReview: { lowConfidenceDisposition: string } }).aiReview.lowConfidenceDisposition).toBe("advisory_only");
+    expect(parseFocusManifest({ gate: gateConfigToJson(m.gate) }).gate).toEqual(m.gate); // round-trips
+    // Every valid enum value parses.
+    for (const value of ["one_shot", "hold_for_review", "advisory_only"] as const) {
+      expect(parseFocusManifest({ gate: { aiReview: { lowConfidenceDisposition: value } } }).gate.aiReviewLowConfidenceDisposition).toBe(value);
+    }
+    // An invalid value warns and is dropped (stays null).
+    expect(parseFocusManifest({ gate: { aiReview: { lowConfidenceDisposition: "sometimes" } } }).warnings.some((w) => /gate\.aiReview\.lowConfidenceDisposition/.test(w))).toBe(true);
+    expect(parseFocusManifest({ gate: { aiReview: { lowConfidenceDisposition: "sometimes" } } }).gate.aiReviewLowConfidenceDisposition).toBeNull();
+    // The gate alias projects it onto effective settings; absent ⇒ null ⇒ the DB value (here "hold_for_review") is untouched.
+    const eff = resolveEffectiveSettings({ aiReviewLowConfidenceDisposition: "hold_for_review" } as unknown as RepositorySettings, m);
+    expect(eff.aiReviewLowConfidenceDisposition).toBe("advisory_only");
+    const noFlag = parseFocusManifest({ gate: { aiReview: { mode: "advisory" } } });
+    expect(noFlag.gate.aiReviewLowConfidenceDisposition).toBeNull();
+    expect(resolveEffectiveSettings({ aiReviewLowConfidenceDisposition: "one_shot" } as unknown as RepositorySettings, noFlag).aiReviewLowConfidenceDisposition).toBe("one_shot");
   });
 
   it("parses gate.aiReview.combine, makes the gate present, round-trips + resolves it, and warns on a bad value (#2567)", () => {

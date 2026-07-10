@@ -93,6 +93,59 @@ describe("maintainer AI-review config route", () => {
     expect(res.status).toBe(400);
   });
 
+  it("sets aiReviewLowConfidenceDisposition (#4603) and preserves unrelated settings", async () => {
+    const app = createApp();
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    await upsertRepositorySettings(env, { repoFullName: REPO, gateCheckMode: "enabled", gittensorLabel: "custom-label" });
+    const res = await app.request(
+      `/v1/repos/${REPO}/ai-review`,
+      { method: "PUT", headers: apiHeaders(env), body: JSON.stringify({ mode: "block", byok: false, lowConfidenceDisposition: "advisory_only" }) },
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ aiReviewMode: "block", aiReviewLowConfidenceDisposition: "advisory_only" });
+    const settings = await getRepositorySettings(env, REPO);
+    expect(settings.aiReviewLowConfidenceDisposition).toBe("advisory_only"); // persisted + read back (DB column round-trip)
+    expect(settings.gateCheckMode).toBe("enabled"); // preserved
+    expect(settings.gittensorLabel).toBe("custom-label"); // preserved
+  });
+
+  it("defaults aiReviewLowConfidenceDisposition to hold_for_review when the AI-review config omits it (fresh repo, no row)", async () => {
+    const app = createApp();
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    const res = await app.request(
+      `/v1/repos/${REPO}/ai-review`,
+      { method: "PUT", headers: apiHeaders(env), body: JSON.stringify({ mode: "advisory", byok: false }) },
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ aiReviewLowConfidenceDisposition: "hold_for_review" });
+    expect((await getRepositorySettings(env, REPO)).aiReviewLowConfidenceDisposition).toBe("hold_for_review");
+  });
+
+  it("preserves aiReviewLowConfidenceDisposition when an AI-review update omits it (read-modify-write, not a reset)", async () => {
+    const app = createApp();
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    await upsertRepositorySettings(env, { repoFullName: REPO, aiReviewLowConfidenceDisposition: "one_shot" });
+
+    const res = await app.request(
+      `/v1/repos/${REPO}/ai-review`,
+      { method: "PUT", headers: apiHeaders(env), body: JSON.stringify({ mode: "advisory", byok: false }) },
+      env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ aiReviewMode: "advisory", aiReviewLowConfidenceDisposition: "one_shot" });
+    expect((await getRepositorySettings(env, REPO)).aiReviewLowConfidenceDisposition).toBe("one_shot");
+  });
+
+  it("rejects an invalid aiReviewLowConfidenceDisposition value", async () => {
+    const app = createApp();
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    const res = await app.request(`/v1/repos/${REPO}/ai-review`, { method: "PUT", headers: apiHeaders(env), body: JSON.stringify({ mode: "block", lowConfidenceDisposition: "sometimes" }) }, env);
+    expect(res.status).toBe(400);
+  });
+
   it("lets maintainer settings set closeOwnerAuthors without resetting unrelated fields", async () => {
     const app = createApp();
     const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });

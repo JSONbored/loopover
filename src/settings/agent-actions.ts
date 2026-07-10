@@ -351,6 +351,15 @@ export type AgentActionPlanInput = {
   // AI semantic-match verdict, and a systematically-wrong match must not become breaker-proof just because
   // it repeated. Mutually exclusive with unlinkedIssueMatchHold -- the resolver only ever returns one.
   unlinkedIssueMatchClose?: { reason: string; comment: string } | undefined;
+  // AI-review low-confidence guardrail (#4603). The trigger (runAgentMaintenancePlanAndExecute) has already run
+  // resolveAiReviewLowConfidenceHold (src/rules/advisory.ts) against the gate evaluation -- this input is already
+  // the resolved "yes, hold this close" verdict (or absent, meaning the gate didn't fail solely on a sub-floor
+  // AI-judgment finding under the `hold_for_review` disposition). UNLIKE migrationCollisionHold/unlinkedIssueMatchHold
+  // (which suppress a would-MERGE), this suppresses a would-CLOSE: `willClose` below narrows its own
+  // `conclusion === "failure"` arm on this field so a genuinely different adverse signal (red CI, a base conflict)
+  // still closes normally -- only the "verdict=failure, driven solely by this AI-judgment blocker" path is held. The
+  // gate check itself still reports failure (the merge stays blocked) -- only the one-shot CLOSE is suppressed.
+  aiReviewLowConfidenceHold?: { reason: string; comment: string } | undefined;
   // Screenshot-table gate (#2006): a DETERMINISTIC verdict (no AI, zero hallucination risk) that an in-scope
   // visual/frontend PR's body is missing a before/after screenshot table (or has an image outside a table, or
   // a screenshot committed to the repo instead of uploaded to the PR) AND (#4110) the bot's own visual-capture
@@ -809,7 +818,10 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // Owner/automation PRs are never closed unless owner-close is explicitly enabled. Guardrails do not soften
   // blockers/conflicts/red CI; they hold only otherwise-ready PRs for manual review.
   // (Rebase-if-behind already ran above, so a red CI here is on the latest base — not a stale-base artifact.) (#ci-fail-closes-guarded)
-  const willClose = closeEligible && acting("close") && (ciFailed || conclusion === "failure" || isConflict);
+  // aiReviewLowConfidenceHold (#4603) narrows ONLY the `conclusion === "failure"` arm -- ciFailed/isConflict still
+  // close normally even when a sub-floor AI-judgment finding also happens to be present, matching how a real
+  // guardrail hold never softens those two either (see the comment above).
+  const willClose = closeEligible && acting("close") && (ciFailed || (conclusion === "failure" && input.aiReviewLowConfidenceHold === undefined) || isConflict);
   // Unlinked-issue-match REPEAT close (#unlinked-issue-guardrail-followup): a CONFIRMED repeat of the
   // credibility-gate-farming pattern (tracked via audit_events in resolveUnlinkedIssueMatchDisposition) — not
   // an immediate close on the first occurrence (that stays a hold, unlinkedIssueMatchHold), only once the same
@@ -1237,6 +1249,11 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       reason: manualHoldReason,
       label: labels.manualReview,
       labelOp: "add",
+      // aiReviewLowConfidenceHold (#4603) is the only reason this generic fallback carries a comment -- it
+      // mirrors the migrationCollisionHold/unlinkedIssueMatchHold fallbacks' own comment-attaching shape (section
+      // 1c/1d above), but those apply only to a would-MERGE hold (reviewGood); this hold applies to a would-CLOSE
+      // suppression instead, so it belongs in this generic not-review-good fallback, not sections 1c/1d.
+      ...(!reviewGood && input.aiReviewLowConfidenceHold !== undefined ? { comment: sanitizePublicComment(input.aiReviewLowConfidenceHold.comment) } : {}),
     });
   }
 

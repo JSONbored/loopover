@@ -3,6 +3,7 @@ import type {
   AdvisoryConclusion,
   AdvisoryFinding,
   AdvisorySeverity,
+  AiReviewLowConfidenceDisposition,
   GateRuleMode,
   IssueRecord,
   PullRequestFileRecord,
@@ -32,10 +33,18 @@ export type GateCheckPolicy = {
   /** When `block`, a dual-model AI consensus defect (`ai_consensus_defect` finding) becomes a hard
    *  blocker. Defaults to advisory — AI never blocks unless the maintainer opts in. */
   aiReviewGateMode?: GateRuleMode | undefined;
-  /** Minimum calibrated confidence (0-1) configured for AI close calibration. AI defect findings still block under
-   *  `aiReviewGateMode: block` even when below this floor; the floor remains configurable context, never a guardrail
-   *  that downgrades a blocker to manual review. `null`/undefined ⇒ the 0.93 default. */
+  /** Minimum calibrated confidence (0-1) configured for AI close calibration. AI defect findings still BLOCK the
+   *  gate under `aiReviewGateMode: block` even when below this floor — the floor never turns a real defect into a
+   *  non-blocker on its own. What varies below the floor is {@link aiReviewLowConfidenceDisposition}: `null`/undefined
+   *  ⇒ the 0.93 default. */
   aiReviewCloseConfidence?: number | null | undefined;
+  /** Disposition for a sub-floor `ai_consensus_defect`/`ai_review_split` finding (#4603) — see the type's own doc
+   *  comment (`src/types.ts`) for the full semantics of `one_shot` / `hold_for_review` / `advisory_only`.
+   *  `null`/undefined ⇒ `hold_for_review` (the shipped default). Only `advisory_only` changes what
+   *  `isConfiguredGateBlocker` returns for these codes; `one_shot` and `hold_for_review` both still block the gate
+   *  identically — `hold_for_review`'s difference is downstream, in the disposition planner (see
+   *  `resolveAiReviewLowConfidenceHold`). */
+  aiReviewLowConfidenceDisposition?: AiReviewLowConfidenceDisposition | null | undefined;
   readinessScore?: number | null | undefined;
   /** When `block`, the deterministic slop score becomes a hard blocker once `slopRisk >= slopGateMinScore`
    *  (default threshold 60, the `high` band). Defaults to off/advisory — slop never blocks unless opted in. */
@@ -130,6 +139,37 @@ export const AI_JUDGMENT_BLOCKER_CODES = new Set<string>(["ai_consensus_defect",
  *  An empty blocker list is NOT an AI-judgment-only failure. PURE. */
 export function isAiJudgmentOnlyFailure(evaluation: GateCheckEvaluation): boolean {
   return evaluation.conclusion === "failure" && evaluation.blockers.length > 0 && evaluation.blockers.every((blocker) => AI_JUDGMENT_BLOCKER_CODES.has(blocker.code));
+}
+
+/**
+ * Resolve the `hold_for_review` disposition (#4603) for a gate evaluation that FAILED solely on a sub-floor
+ * `ai_consensus_defect`/`ai_review_split` finding — the mirror of `migrationCollisionHold`/`unlinkedIssueMatchHold`
+ * (`src/settings/agent-actions.ts`) for this specific guardrail. Returns `undefined` (no hold) when:
+ *   - the resolved disposition isn't `hold_for_review` (default) -- `one_shot` and `advisory_only` never hold here
+ *     (`advisory_only` already dropped the finding out of `blockers` entirely in `isConfiguredGateBlocker`, so a
+ *     gate that failed for that reason can't reach this function with the finding still present as a blocker);
+ *   - the failure ISN'T solely AI-judgment (a concrete blocker like `secret_leak` sits alongside it) -- a hold
+ *     here must never soften a genuinely different, non-AI blocker into manual review, mirroring how
+ *     `migrationCollisionHold`/guardrail holds never downgrade a real blocker/conflict/red-CI close either; or
+ *   - every AI-judgment blocker is AT OR ABOVE the floor (nothing below it to hold on).
+ * PURE — the caller (processors.ts) threads the `{ reason, comment }` result into `AgentActionPlanInput.
+ * aiReviewLowConfidenceHold`, which the planner uses to route a would-be one-shot close into the existing
+ * held-for-manual-review path instead (see `willClose` in `src/settings/agent-actions.ts`).
+ */
+export function resolveAiReviewLowConfidenceHold(
+  evaluation: GateCheckEvaluation,
+  policy: Pick<GateCheckPolicy, "aiReviewLowConfidenceDisposition" | "aiReviewCloseConfidence">,
+): { reason: string; comment: string } | undefined {
+  if ((policy.aiReviewLowConfidenceDisposition ?? "hold_for_review") !== "hold_for_review") return undefined;
+  if (!isAiJudgmentOnlyFailure(evaluation)) return undefined;
+  const floor = policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE;
+  const belowFloor = evaluation.blockers.some((blocker) => (blocker.confidence ?? 1) < floor);
+  if (!belowFloor) return undefined;
+  return {
+    reason: `an AI-reviewer defect finding's confidence is below the configured close-confidence floor (${floor})`,
+    comment:
+      "An AI reviewer flagged a likely defect, but its confidence was below this repository's configured close-confidence floor, so this is held for a maintainer to confirm instead of closing automatically. Resolve the flagged defect (see the review notes), or ask a maintainer to override.",
+  };
 }
 
 // DUPLICATE-ONLY blocker codes: findings whose own severity is always "warning" (advisory by nature — a
@@ -865,9 +905,11 @@ function isEvaluationBlocker(code: string, policy: GateCheckPolicy): boolean {
   return false;
 }
 
-// Default configured close-confidence floor (#7) retained for settings compatibility and public calibration text.
-// It must not be used to downgrade an AI defect blocker into manual review.
-const DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE = 0.93;
+// Default configured close-confidence floor (#7). A sub-floor AI-judgment finding still blocks the gate under
+// aiReviewGateMode: block (see isConfiguredGateBlocker) UNLESS the resolved aiReviewLowConfidenceDisposition
+// (#4603) is "advisory_only" -- the floor never softens a blocker into a non-blocker on its own. Exported for
+// resolveAiReviewLowConfidenceHold (below) and for the packages/gittensory-engine gate-decision twin's own copy.
+export const DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE = 0.93;
 
 function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPolicy): boolean {
   const code = finding.code;
@@ -879,11 +921,18 @@ function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPoli
   // most conservative AI signal (two independent models) but still confirmed-contributor gated by
   // evaluateGateCheck, and advisory by default.
   // A consensus defect (both reviewers) OR a SPLIT (one reviewer flagged a blocker the other did not) both block
-  // when aiReviewGateMode is `block`. The configured close-confidence floor remains calibration context; it does
-  // not turn a blocker into a manual hold for normal contributors. (#ai-review-split)
+  // when aiReviewGateMode is `block`. (#ai-review-split) The close-confidence floor + disposition (#4603) decide
+  // what happens to a SUB-floor finding: `one_shot`/`hold_for_review` (both still block here -- hold_for_review's
+  // difference is downstream, in resolveAiReviewLowConfidenceHold below) leave this branch's return unchanged;
+  // only `advisory_only` demotes a sub-floor finding to a non-blocker.
   if (code === "ai_consensus_defect" || code === "ai_review_split") {
-    void (policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE);
-    return gateMode(policy.aiReviewGateMode ?? "advisory") === "block";
+    if (gateMode(policy.aiReviewGateMode ?? "advisory") !== "block") return false;
+    if ((policy.aiReviewLowConfidenceDisposition ?? "hold_for_review") === "advisory_only") {
+      const floor = policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE;
+      const confidence = finding.confidence ?? 1;
+      if (confidence < floor) return false;
+    }
+    return true;
   }
   if (code === REVIEW_THREAD_BLOCKER_CODE) return true;
   // A leaked-secret finding (`secret_leak`) ALWAYS hard-blocks: a committed credential must be removed and

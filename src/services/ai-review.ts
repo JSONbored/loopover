@@ -392,10 +392,13 @@ export type ModelReview = {
   blockers: string[];
   nits: string[];
   suggestions: string[];
-  // Calibrated confidence in [0,1] (#8): the reviewer's own probability that its blocker(s) are a REAL defect. Drives
-  // the gate's `aiReviewCloseConfidence` floor (clear ⇒ block; below ⇒ human-review hold). parseModelReview
-  // sets it from the model's `confidence` field; an absent/unparseable/out-of-range value degrades to 1.0 (FALLBACK),
-  // so behavior matches the historical hardcoded `confidence: 1` until a calibrated value is actually present.
+  // Calibrated confidence in [0,1] (#8): the reviewer's own probability that its blocker(s) are a REAL defect. A
+  // consensus/split defect blocks the gate regardless of where this falls relative to `aiReviewCloseConfidence`;
+  // the floor instead selects the DISPOSITION of a sub-floor finding via `aiReviewLowConfidenceDisposition` (#4603)
+  // -- hold_for_review (default) ⇒ manual-review hold instead of one-shot-close; advisory_only ⇒ non-blocking;
+  // one_shot ⇒ the floor is ignored. parseModelReview sets it from the model's `confidence` field; an
+  // absent/unparseable/out-of-range value degrades to 1.0 (FALLBACK), so behavior matches the historical hardcoded
+  // `confidence: 1` until a calibrated value is actually present.
   confidence: number;
   // Line-anchored findings for inline PR review comments (#inline-comments). ALWAYS present (parseModelReview
   // sets []); populated only when the caller asked for them (input.inlineFindings) AND the model emitted any.
@@ -1422,8 +1425,12 @@ export function composeInlineFindings(reviews: ModelReview[]): InlineFinding[] {
 
 /** A CONSENSUS defect = BOTH reviews independently name at least one concrete blocker (the severity-disciplined
  *  reviewbot model: a lone blocker in a dual review is a split, not a hard block). Requiring two independent
- *  models to AGREE is itself the precision mechanism; the calibrated confidence (#8) ADDS a numeric floor on top —
- *  a consensus is only as strong as its WEAKER reviewer, so the defect carries `min(a.confidence, b.confidence)`. */
+ *  models to AGREE is itself the precision mechanism; the calibrated confidence (#8) — a consensus is only as
+ *  strong as its WEAKER reviewer, so the defect carries `min(a.confidence, b.confidence)` — feeds the gate's
+ *  `aiReviewLowConfidenceDisposition` (#4603): the defect always blocks under `aiReviewGateMode: block`, but a
+ *  sub-`aiReviewCloseConfidence`-floor confidence changes what happens next (manual-review hold by default,
+ *  non-blocking under `advisory_only`, or ignored under `one_shot`) rather than adding a second floor on top of
+ *  the block decision itself. */
 export function consensusDefectOf(
   a: ModelReview,
   b: ModelReview,
@@ -2204,8 +2211,9 @@ export async function runGittensoryAiReview(
     advisoryNotes,
     consensusDefect,
     split: aiReviewSplit,
-    // Carry the split's calibrated confidence (#8) so the caller can gate `ai_review_split` on the same floor as a
-    // consensus defect. Only present on a split (combineReviews leaves it undefined otherwise).
+    // Carry the split's calibrated confidence (#8) so the caller can apply the same `aiReviewCloseConfidence`
+    // floor + `aiReviewLowConfidenceDisposition` (#4603) to `ai_review_split` as to a consensus defect. Only
+    // present on a split (combineReviews leaves it undefined otherwise).
     ...(splitConfidence !== undefined ? { splitConfidence } : {}),
     inconclusive,
     estimatedNeurons,

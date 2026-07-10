@@ -212,6 +212,7 @@ import {
   buildIssueAdvisory,
   buildPullRequestAdvisory,
   evaluateGateCheck,
+  resolveAiReviewLowConfidenceHold,
 } from "../rules/advisory";
 import { hasValidationNote, isTestPath } from "../signals/test-evidence";
 import { detectNotificationEvents } from "../notifications/events";
@@ -3204,6 +3205,11 @@ async function runAgentMaintenancePlanAndExecute(
     (liveReviewDecision ?? pr.reviewDecision) === "APPROVED";
   const duplicateWinnerEnabled = env.GITTENSORY_DUPLICATE_WINNER === "true";
   const openDuplicateSiblings = linkedIssueDuplicatePullRequestRecordsForGate(pr, otherOpenPullRequests);
+  // AI-review low-confidence guardrail (#4603): resolved PURELY from this pass's own gate evaluation + settings
+  // (no extra network/DB call, unlike migrationCollisionHold/unlinkedIssueMatchHold above) -- undefined unless the
+  // gate failed SOLELY on a sub-aiReviewCloseConfidence-floor ai_consensus_defect/ai_review_split finding under
+  // the (default) hold_for_review disposition. See resolveAiReviewLowConfidenceHold's own doc comment.
+  const aiReviewLowConfidenceHold = resolveAiReviewLowConfidenceHold(gate, settings);
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
     blockerTitles: gate.blockers.map((blocker) => blocker.title),
@@ -3247,6 +3253,7 @@ async function runAgentMaintenancePlanAndExecute(
     },
     ...(migrationCollisionHold !== undefined ? { migrationCollisionHold } : {}),
     ...(unlinkedIssueMatchHold !== undefined ? { unlinkedIssueMatchHold } : {}),
+    ...(aiReviewLowConfidenceHold !== undefined ? { aiReviewLowConfidenceHold } : {}),
     ...(unlinkedIssueMatchClose !== undefined ? { unlinkedIssueMatchClose } : {}),
     pr: {
       mergeableState: liveMergeState ?? pr.mergeableState,
@@ -6860,6 +6867,10 @@ export function gateCheckPolicy(
     // Calibrated AI close-confidence floor (#7) — config-as-code via `.gittensory.yml gate.aiReview.closeConfidence`,
     // resolved into settings upstream. `null`/undefined ⇒ advisory.ts applies the 0.93 default.
     aiReviewCloseConfidence: settings.aiReviewCloseConfidence ?? null,
+    // Sub-floor AI-judgment disposition (#4603) — DB-backed (dashboard-settable) + `.gittensory.yml
+    // gate.aiReview.lowConfidenceDisposition` override, resolved into settings upstream. `null`/undefined ⇒
+    // advisory.ts applies the "hold_for_review" default.
+    aiReviewLowConfidenceDisposition: settings.aiReviewLowConfidenceDisposition ?? null,
     readinessScore: readinessScore ?? null,
     slopGateMode: settings.slopGateMode,
     mergeReadinessGateMode: settings.mergeReadinessGateMode,
@@ -7642,7 +7653,12 @@ export async function runAiReviewForAdvisory(
         detail: result.consensusDefect.detail,
         action:
           "Resolve the flagged defect, or override if the AI reviewers are mistaken, then re-run the gate.",
-        // Calibrated confidence (#8): clears aiReviewCloseConfidence ⇒ block; below it ⇒ human-review hold.
+        // Calibrated confidence (#8). This finding ALWAYS blocks under aiReviewGateMode: block regardless of
+        // where it falls relative to aiReviewCloseConfidence (isConfiguredGateBlocker never refutes a blocker
+        // on confidence alone) -- what varies below the floor is the DISPOSITION (#4603,
+        // aiReviewLowConfidenceDisposition): hold_for_review (default) routes the would-be close to manual
+        // review instead of one-shot-closing; advisory_only drops it to non-blocking; one_shot ignores the
+        // floor. See resolveAiReviewLowConfidenceHold in src/rules/advisory.ts.
         confidence: result.consensusDefect.confidence,
       });
     } else if (result.split) {
@@ -7657,10 +7673,14 @@ export async function runAiReviewForAdvisory(
           "One AI reviewer independently flagged a concrete must-fix defect in this change (the other did not). Under the quorum rule, a single rejection closes the PR; see the review notes for specifics.",
         action:
           "Resolve the flagged defect and open a new pull request, or override if the reviewers are mistaken.",
-        // Calibrated confidence (#8) of the lone flagging reviewer; clears aiReviewCloseConfidence ⇒ block,
-        // below it ⇒ human-review hold. A consensus split ALWAYS carries this (combineReviews sets it whenever
+        // Calibrated confidence (#8) of the lone flagging reviewer. Like the consensus-defect finding above, this
+        // ALWAYS blocks under aiReviewGateMode: block regardless of the aiReviewCloseConfidence floor -- the
+        // floor only selects the DISPOSITION of a sub-floor finding (#4603, aiReviewLowConfidenceDisposition):
+        // hold_for_review (default) holds instead of one-shot-closing; advisory_only drops it to non-blocking;
+        // one_shot ignores the floor. A consensus split ALWAYS carries this (combineReviews sets it whenever
         // split is true), so the spread is effectively unconditional; the guard is a defensive belt-and-braces —
-        // an absent value degrades to 1.0 in the threshold check (advisory.ts `?? 1`), matching today's always-block.
+        // an absent value degrades to 1.0 in the threshold check (advisory.ts `?? 1`), matching an at-or-above-floor
+        // confidence.
         /* v8 ignore next 3 -- a split always carries splitConfidence; the absent arm is an unreachable guard. */
         ...(result.splitConfidence !== undefined
           ? { confidence: result.splitConfidence }

@@ -357,12 +357,22 @@ gate:
     # String or null. Default: null (the key record's model, else a conservative
     # per-provider default).
     model: null
-    # Minimum calibrated AI-reviewer confidence (0-1) recorded for cache and
-    # calibration context. Under `mode: block`, consensus and split AI-review
-    # defects still block regardless of this floor. Number 0–1, or null.
-    # Default: null (engine uses 0.93). Config-as-code only — no DB column or
-    # dashboard toggle; this can only be set here.
+    # Minimum calibrated AI-reviewer confidence (0-1). Under `mode: block`,
+    # consensus and split AI-review defects still BLOCK the gate regardless of
+    # this floor — what varies below it is `lowConfidenceDisposition` below.
+    # Number 0-1, or null. Default: null (engine uses 0.93). Config-as-code
+    # only — no DB column or dashboard toggle; this can only be set here.
     closeConfidence: null
+    # Disposition for a sub-closeConfidence-floor consensus/split defect (#4603).
+    #   one_shot         — ignore the floor; always one-shot-close (today's
+    #                      pre-#4603 behavior). Opt-in only.
+    #   hold_for_review  — DEFAULT. Still blocks the merge, but holds for a
+    #                      maintainer instead of one-shot-closing.
+    #   advisory_only    — drop to a fully non-blocking advisory below the floor.
+    # one_shot | hold_for_review | advisory_only, or null. Default: null (engine
+    # uses hold_for_review). DB-backed (dashboard-settable too, via the
+    # maintainer AI-review settings); this overrides the stored value.
+    lowConfidenceDisposition: null
     # Per-repo override of the self-host operator's dual-AI combine strategy (#2567).
     # single | consensus | synthesis, or null. Default: null (the operator's own
     # AI_REVIEW_PLAN.combine env default, itself "consensus" if unset). A refinement

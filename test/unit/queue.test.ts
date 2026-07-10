@@ -6292,6 +6292,142 @@ describe("queue processors", () => {
     expect(mergeAudit?.n).toBe(0);
   });
 
+  // Shared cache-input-fingerprint builder for the #4603 pair below -- mirrors "#1"'s own inline fingerprint,
+  // parameterized only by PR title/number/sha so both tests get a genuine cache HIT (aiCalls stays 0) instead of
+  // silently falling through to a real (unmocked-defect) AI call on a fingerprint mismatch.
+  async function cachedSubFloorDefectFingerprint(title: string): Promise<string> {
+    return aiReviewCacheInputFingerprint({
+      title,
+      mode: "block",
+      byok: false,
+      provider: null,
+      model: null,
+      aiReviewAllAuthors: false,
+      aiReviewCloseConfidence: undefined,
+      aiReviewCombine: null,
+      aiReviewOnMerge: null,
+      aiReviewReviewers: null,
+      gatePack: "oss-anti-slop",
+      reviewerPlan: undefined,
+      selfHostProviderConfig: null,
+      selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null, ollamaModel: null, openaiModel: null, openaiCompatibleModel: null, anthropicModel: null },
+      reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = value.length;", additions: 1, deletions: 0 }],
+      profile: null,
+      securityFocus: false,
+      inlineComments: false,
+      pathInstructions: [],
+      pathGuidance: "",
+      repoInstructions: null,
+      excludePaths: [],
+      pathFilters: [],
+      changedPaths: ["src/a.ts"],
+      features: { grounding: false, rag: false, enrichment: false, reputation: false, cultureProfile: false, impactMap: false },
+    });
+  }
+
+  it("#4603: a sub-floor cached ai_consensus_defect under hold_for_review (default) still fails the gate but does NOT one-shot-close", async () => {
+    let aiCalls = 0;
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    // aiReviewLowConfidenceDisposition left UNSET — the shipped default (hold_for_review) is what's under test.
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { close: "auto" }, aiReviewMode: "block", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 8, title: "Sub-floor defect PR", state: "open", user: { login: "contributor" }, head: { sha: "b8" }, labels: [], body: "Closes #1" });
+    await upsertPullRequestFile(env, { repoFullName: "owner/agent-repo", pullNumber: 8, path: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: "@@\n+export const ok = value.length;" } });
+    const inputFingerprint = await cachedSubFloorDefectFingerprint("Sub-floor defect PR");
+    await putCachedAiReview(env, "owner/agent-repo", 8, "b8", "block", {
+      notes: "cached review",
+      reviewerCount: 2,
+      // 0.3 is well below the default 0.93 close-confidence floor.
+      findings: [{ code: "ai_consensus_defect", severity: "critical", title: "Cached defect", detail: "Cached critical defect.", confidence: 0.3 }],
+      metadata: { inputFingerprint },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/8/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = value.length;" }]);
+      if (url.endsWith("/pulls/8") && init?.method === "PATCH") return Response.json({ number: 8, state: "closed" });
+      if (url.endsWith("/pulls/8")) return Response.json({ number: 8, title: "Sub-floor defect PR", state: "open", user: { login: "contributor" }, head: { sha: "b8" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/b8/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/b8/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.endsWith("/pulls/8/reviews") && init?.method === "POST") return Response.json({ id: 1 });
+      if (url.endsWith("/pulls/8/reviews")) return Response.json([]);
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await sweepAndDrainPerPr(env, "owner/agent-repo");
+
+    expect(aiCalls).toBe(0); // the cached AI review was reused — the LLM was never called for this head SHA
+    // The gate still failed on the AI-judgment blocker (the merge stays blocked).
+    const blocker = await env.DB.prepare("select blocker_codes_json from gate_outcomes where repo_full_name = ? and pull_number = ? order by rowid desc limit 1").bind("owner/agent-repo", 8).first<{ blocker_codes_json: string }>();
+    expect(blocker?.blocker_codes_json).toContain("ai_consensus_defect");
+    // But it was NOT one-shot-closed -- the hold suppressed the close autonomy would otherwise have taken.
+    const closeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and detail like ?").bind("agent.action.close", "%closed%").first<{ n: number }>();
+    expect(closeAudit?.n).toBe(0);
+    const pr8 = await getPullRequest(env, "owner/agent-repo", 8);
+    expect(pr8?.state).toBe("open");
+  });
+
+  it("#4603: the SAME sub-floor defect one-shot-closes when aiReviewLowConfidenceDisposition is explicitly one_shot", async () => {
+    let aiCalls = 0;
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write" }, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { close: "auto" }, aiReviewMode: "block", aiReviewLowConfidenceDisposition: "one_shot", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 9, title: "Sub-floor defect PR (one_shot)", state: "open", user: { login: "contributor" }, head: { sha: "c9" }, labels: [], body: "Closes #1" });
+    await upsertPullRequestFile(env, { repoFullName: "owner/agent-repo", pullNumber: 9, path: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: "@@\n+export const ok = value.length;" } });
+    const inputFingerprint = await cachedSubFloorDefectFingerprint("Sub-floor defect PR (one_shot)");
+    await putCachedAiReview(env, "owner/agent-repo", 9, "c9", "block", {
+      notes: "cached review",
+      reviewerCount: 2,
+      findings: [{ code: "ai_consensus_defect", severity: "critical", title: "Cached defect", detail: "Cached critical defect.", confidence: 0.3 }],
+      metadata: { inputFingerprint },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/9/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = value.length;" }]);
+      if (url.endsWith("/pulls/9") && init?.method === "PATCH") return Response.json({ number: 9, state: "closed" });
+      if (url.endsWith("/pulls/9")) return Response.json({ number: 9, title: "Sub-floor defect PR (one_shot)", state: "open", user: { login: "contributor" }, head: { sha: "c9" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/c9/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/c9/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.endsWith("/pulls/9/reviews") && init?.method === "POST") return Response.json({ id: 1 });
+      if (url.endsWith("/pulls/9/reviews")) return Response.json([]);
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await sweepAndDrainPerPr(env, "owner/agent-repo");
+
+    expect(aiCalls).toBe(0);
+    const blocker = await env.DB.prepare("select blocker_codes_json from gate_outcomes where repo_full_name = ? and pull_number = ? order by rowid desc limit 1").bind("owner/agent-repo", 9).first<{ blocker_codes_json: string }>();
+    expect(blocker?.blocker_codes_json).toContain("ai_consensus_defect");
+    // one_shot ignores the floor: the close autonomy actually fires this time (contrast with the hold_for_review
+    // test above, whose closeAudit count is 0). The PR row's `state` column only flips once GitHub's own
+    // `closed` webhook round-trips back through the normal sync path -- a separate delivery this sweep-driven
+    // test does not simulate (see the identical gap documented at this file's #linked-issue-hard-rule-persistence
+    // two-pass test), so the disposition planner's own audit record is the observable proof instead.
+    const close = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by rowid desc limit 1").bind("agent.action.close").first<{ outcome: string; detail: string }>();
+    expect(close?.outcome).toBe("completed");
+  });
+
   it("posts the 🟪 reviewing placeholder before the AI review runs, then overwrites it with the verdict (#reviewing-placeholder)", async () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),

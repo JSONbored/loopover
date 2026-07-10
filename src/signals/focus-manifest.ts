@@ -462,6 +462,7 @@ function applyGateConfigOverrides(effective: RepositorySettings, gate: FocusMani
   if (gate.aiReviewModel !== null) effective.aiReviewModel = gate.aiReviewModel;
   if (gate.aiReviewAllAuthors !== null) effective.aiReviewAllAuthors = gate.aiReviewAllAuthors;
   if (gate.aiReviewCloseConfidence !== null) effective.aiReviewCloseConfidence = gate.aiReviewCloseConfidence;
+  if (gate.aiReviewLowConfidenceDisposition !== null) effective.aiReviewLowConfidenceDisposition = gate.aiReviewLowConfidenceDisposition;
   // Dual-AI combine/onMerge/reviewers overrides (#2567) are projected onto `effective` unclamped here — they are
   // a REFINEMENT of the operator's AI_REVIEW_PLAN, not a replacement for it, so the actual operator-floor clamp
   // (onMerge can only TIGHTEN, never loosen) happens where both the per-repo value AND the operator's plan are

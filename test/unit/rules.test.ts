@@ -5,6 +5,7 @@ import {
   buildPullRequestAdvisory,
   buildRepositoryAdvisory,
   CHECK_RUN_ANNOTATION_LIMIT,
+  DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE,
   evaluateGateCheck,
   firstAddedLineFromPatch,
   formatCheckRunOutput,
@@ -12,6 +13,7 @@ import {
   isAiJudgmentOnlyFailure,
   isDuplicateOnlyFailure,
   reconcileGateEvaluationForGreenCi,
+  resolveAiReviewLowConfidenceHold,
 } from "../../src/rules/advisory";
 import type { CollisionReport } from "../../src/signals/engine";
 import type { IssueRecord, PullRequestRecord, PullRequestFileRecord, RepositoryRecord } from "../../src/types";
@@ -376,6 +378,146 @@ describe("advisory rules", () => {
     expect(evaluateGateCheck(splitAdvisory, { aiReviewGateMode: "block" }).conclusion).toBe("failure");
     expect(evaluateGateCheck(splitAdvisory, { aiReviewGateMode: "advisory" }).conclusion).toBe("success");
     expect(evaluateGateCheck(splitAdvisory).conclusion).toBe("success");
+  });
+
+  describe("aiReviewLowConfidenceDisposition (#4603)", () => {
+    const consensusAdvisory = (confidence: number) => ({
+      ...buildPullRequestAdvisory(repo, null),
+      findings: [
+        {
+          code: "ai_consensus_defect",
+          title: "AI reviewers agree on a likely critical defect",
+          severity: "critical" as const,
+          detail: "Both reviewers flagged the same blocker.",
+          confidence,
+        },
+      ],
+    });
+    const belowFloor = DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE - 0.1;
+    const atFloor = DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE;
+
+    it("acceptance (4): at-or-above-floor confidence blocks identically across all three dispositions", () => {
+      const advisory = consensusAdvisory(atFloor);
+      for (const disposition of ["one_shot", "hold_for_review", "advisory_only"] as const) {
+        expect(evaluateGateCheck(advisory, { aiReviewGateMode: "block", aiReviewLowConfidenceDisposition: disposition }).conclusion).toBe("failure");
+      }
+    });
+
+    it("acceptance (2): sub-floor + one_shot closes exactly like today (still a blocker)", () => {
+      const advisory = consensusAdvisory(belowFloor);
+      expect(evaluateGateCheck(advisory, { aiReviewGateMode: "block", aiReviewLowConfidenceDisposition: "one_shot" }).conclusion).toBe("failure");
+    });
+
+    it("sub-floor + hold_for_review (default, explicit or unset) still blocks the gate — the hold is downstream", () => {
+      const advisory = consensusAdvisory(belowFloor);
+      expect(evaluateGateCheck(advisory, { aiReviewGateMode: "block", aiReviewLowConfidenceDisposition: "hold_for_review" }).conclusion).toBe("failure");
+      // Unset ⇒ hold_for_review is the default.
+      expect(evaluateGateCheck(advisory, { aiReviewGateMode: "block" }).conclusion).toBe("failure");
+    });
+
+    it("acceptance (3): sub-floor + advisory_only drops the finding to fully non-blocking", () => {
+      const advisory = consensusAdvisory(belowFloor);
+      const evaluation = evaluateGateCheck(advisory, { aiReviewGateMode: "block", aiReviewLowConfidenceDisposition: "advisory_only" });
+      expect(evaluation.conclusion).toBe("success");
+      expect(evaluation.blockers).toHaveLength(0);
+    });
+
+    it("advisory_only respects a custom aiReviewCloseConfidence floor, not just the 0.93 default", () => {
+      const advisory = consensusAdvisory(0.5);
+      // 0.5 is below a custom 0.6 floor ⇒ non-blocking.
+      expect(evaluateGateCheck(advisory, { aiReviewGateMode: "block", aiReviewLowConfidenceDisposition: "advisory_only", aiReviewCloseConfidence: 0.6 }).conclusion).toBe("success");
+      // 0.5 clears a custom 0.4 floor ⇒ still blocks.
+      expect(evaluateGateCheck(advisory, { aiReviewGateMode: "block", aiReviewLowConfidenceDisposition: "advisory_only", aiReviewCloseConfidence: 0.4 }).conclusion).toBe("failure");
+    });
+
+    it("an absent confidence degrades to 1.0 (at-or-above any floor), matching an at-or-above-floor confidence", () => {
+      const advisory = {
+        ...buildPullRequestAdvisory(repo, null),
+        findings: [{ code: "ai_consensus_defect", title: "t", severity: "critical" as const, detail: "d" }],
+      };
+      expect(evaluateGateCheck(advisory, { aiReviewGateMode: "block", aiReviewLowConfidenceDisposition: "advisory_only" }).conclusion).toBe("failure");
+    });
+
+    it("aiReviewGateMode !== block stays non-blocking regardless of disposition (unchanged from today)", () => {
+      const advisory = consensusAdvisory(belowFloor);
+      for (const disposition of ["one_shot", "hold_for_review", "advisory_only"] as const) {
+        expect(evaluateGateCheck(advisory, { aiReviewGateMode: "advisory", aiReviewLowConfidenceDisposition: disposition }).conclusion).toBe("success");
+      }
+    });
+  });
+
+  describe("resolveAiReviewLowConfidenceHold (#4603)", () => {
+    const finding = (code: string, confidence?: number): import("../../src/types").AdvisoryFinding => ({
+      code,
+      severity: "critical",
+      title: `t:${code}`,
+      detail: `d:${code}`,
+      ...(confidence !== undefined ? { confidence } : {}),
+    });
+    const failure = (findings: import("../../src/types").AdvisoryFinding[]): import("../../src/rules/advisory").GateCheckEvaluation => ({
+      enabled: true,
+      conclusion: "failure",
+      title: "Gittensory Orb Review Agent: blocked",
+      summary: "A hard blocker was found.",
+      blockers: findings,
+      warnings: [],
+    });
+    const belowFloor = DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE - 0.1;
+    const atFloor = DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE;
+
+    it("acceptance (1): sub-floor consensus defect + hold_for_review (default) → returns the hold", () => {
+      const evaluation = failure([finding("ai_consensus_defect", belowFloor)]);
+      const hold = resolveAiReviewLowConfidenceHold(evaluation, {});
+      expect(hold).toBeDefined();
+      expect(hold?.reason).toContain("confidence");
+      expect(hold?.comment.length).toBeGreaterThan(0);
+      // Explicit hold_for_review is identical to the unset default.
+      expect(resolveAiReviewLowConfidenceHold(evaluation, { aiReviewLowConfidenceDisposition: "hold_for_review" })).toEqual(hold);
+    });
+
+    it("acceptance (2): sub-floor + one_shot → no hold (closes exactly like today)", () => {
+      const evaluation = failure([finding("ai_consensus_defect", belowFloor)]);
+      expect(resolveAiReviewLowConfidenceHold(evaluation, { aiReviewLowConfidenceDisposition: "one_shot" })).toBeUndefined();
+    });
+
+    it("acceptance (3): sub-floor + advisory_only → no hold (the finding is non-blocking, not held)", () => {
+      const evaluation = failure([finding("ai_consensus_defect", belowFloor)]);
+      expect(resolveAiReviewLowConfidenceHold(evaluation, { aiReviewLowConfidenceDisposition: "advisory_only" })).toBeUndefined();
+    });
+
+    it("acceptance (4): at-or-above-floor confidence → no hold across every disposition (nothing to hold)", () => {
+      const evaluation = failure([finding("ai_consensus_defect", atFloor)]);
+      for (const disposition of ["one_shot", "hold_for_review", "advisory_only"] as const) {
+        expect(resolveAiReviewLowConfidenceHold(evaluation, { aiReviewLowConfidenceDisposition: disposition })).toBeUndefined();
+      }
+    });
+
+    it("respects a custom aiReviewCloseConfidence floor", () => {
+      const evaluation = failure([finding("ai_consensus_defect", 0.5)]);
+      expect(resolveAiReviewLowConfidenceHold(evaluation, { aiReviewCloseConfidence: 0.6 })).toBeDefined();
+      expect(resolveAiReviewLowConfidenceHold(evaluation, { aiReviewCloseConfidence: 0.4 })).toBeUndefined();
+    });
+
+    it("never holds a mixed failure — a genuinely different blocker alongside the AI defect must still close", () => {
+      const evaluation = failure([finding("ai_consensus_defect", belowFloor), finding("secret_leak")]);
+      expect(resolveAiReviewLowConfidenceHold(evaluation, {})).toBeUndefined();
+    });
+
+    it("applies to ai_review_split exactly like a consensus defect", () => {
+      const evaluation = failure([finding("ai_review_split", belowFloor)]);
+      expect(resolveAiReviewLowConfidenceHold(evaluation, {})).toBeDefined();
+    });
+
+    it("an absent confidence degrades to 1.0 — never holds", () => {
+      const evaluation = failure([finding("ai_consensus_defect")]);
+      expect(resolveAiReviewLowConfidenceHold(evaluation, {})).toBeUndefined();
+    });
+
+    it("never holds a non-failure conclusion or an empty blocker list", () => {
+      const evaluation = failure([finding("ai_consensus_defect", belowFloor)]);
+      expect(resolveAiReviewLowConfidenceHold({ ...evaluation, conclusion: "success" }, {})).toBeUndefined();
+      expect(resolveAiReviewLowConfidenceHold({ ...evaluation, blockers: [] }, {})).toBeUndefined();
+    });
   });
 
   it("keeps readiness score advisory even when legacy config says block", () => {

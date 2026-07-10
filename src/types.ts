@@ -456,9 +456,13 @@ export type AdvisoryFinding = {
   publicText?: string;
   /** Calibrated confidence in [0,1] for an AI-judgment finding (`ai_consensus_defect` / `ai_review_split`) — the
    *  reviewer's own probability that the flagged blocker is a real defect (#8). The gate's `aiReviewCloseConfidence`
-   *  threshold uses it: an AI defect blocks ONLY when this clears the floor. Absent for deterministic findings (they
-   *  carry no model confidence); an absent/unparseable reviewer confidence degrades to 1.0 upstream, so omitting it
-   *  here behaves exactly like today. */
+   *  floor and `aiReviewLowConfidenceDisposition` (#4603) use it: a sub-floor finding still blocks the gate when
+   *  `aiReviewMode` is `block`, but its DISPOSITION varies — `hold_for_review` (default) routes the PR to a manual
+   *  hold instead of a one-shot close, `advisory_only` drops it to a non-blocking finding entirely, and `one_shot`
+   *  ignores the floor (today's unconditional-close behavior). See `isConfiguredGateBlocker` and
+   *  `resolveAiReviewLowConfidenceHold` in `src/rules/advisory.ts`. Absent for deterministic findings (they carry
+   *  no model confidence); an absent/unparseable reviewer confidence degrades to 1.0 upstream, so omitting it here
+   *  behaves exactly like an at-or-above-floor confidence. */
   confidence?: number;
 };
 
@@ -657,6 +661,25 @@ export type CombineStrategy = "single" | "consensus" | "synthesis";
 export type OnMerge = "either" | "both";
 
 /**
+ * Disposition for an `ai_consensus_defect` / `ai_review_split` finding whose confidence is BELOW the
+ * configured `aiReviewCloseConfidence` floor (#4603, resolving the dead-floor audit finding from commit
+ * `311b7613d` / #1781). Only matters under `aiReviewMode: block` — a sub-floor finding is otherwise-identical
+ * across all three values once confidence clears the floor.
+ *   • `one_shot`        — today's live (pre-#4603) behavior: confidence is ignored, the defect always
+ *                          one-shot-closes. Opt-in only, for maintainers who want max automation and accept
+ *                          the false-positive risk.
+ *   • `hold_for_review`  — the SHIPPED DEFAULT. The defect still blocks the merge (the gate check still fails,
+ *                          a contributor still cannot merge as-is), but does NOT one-shot-close — it is routed
+ *                          through the same held-for-manual-review mechanism the disposition planner already
+ *                          uses for `migrationCollisionHold`/`unlinkedIssueMatchHold`
+ *                          (`src/settings/agent-actions.ts`), not a second hold mechanism.
+ *   • `advisory_only`    — a sub-floor finding drops to a fully non-blocking advisory (never a gate blocker).
+ *                          For maintainers who would rather lean on other deterministic gates and never see a
+ *                          review-hold queue.
+ */
+export type AiReviewLowConfidenceDisposition = "one_shot" | "hold_for_review" | "advisory_only";
+
+/**
  * A multimodal content block for an AI provider message (#4111 — advisory-only AI-vision analysis of
  * before/after visual captures). Canonical definition lives here for the same UI-safety reason as
  * {@link CombineStrategy} above: this type carries no ambient Workers/Node types, so any file that needs it
@@ -830,11 +853,20 @@ export type RepositorySettings = {
    *  `aiReviewMode`: `off` still means no AI; this only widens WHO an enabled review covers. */
   aiReviewAllAuthors: boolean;
   /** Configured AI-reviewer confidence floor (0-1) for close calibration (#7). Under `aiReviewMode: block`, AI
-   *  defect findings remain blockers even when their confidence is below this floor; the floor is retained as
-   *  configurable context, not a manual-review downgrade. Config-as-code only — set via `.gittensory.yml
-   *  gate.aiReview.closeConfidence` (no dashboard/DB column); unset ⇒ the gate uses the 0.93 default. Clamped to
-   *  [0,1] at parse time. */
+   *  defect findings remain BLOCKERS even when their confidence is below this floor — the floor never turns a
+   *  real defect into a non-blocker on its own. What DOES vary below the floor is governed by the separate
+   *  {@link aiReviewLowConfidenceDisposition} field (#4603): `hold_for_review` (default) routes a sub-floor
+   *  blocker to manual review instead of one-shot-closing; `advisory_only` drops it to non-blocking; `one_shot`
+   *  ignores the floor entirely. Config-as-code only — set via `.gittensory.yml gate.aiReview.closeConfidence`
+   *  (no dashboard/DB column); unset ⇒ the gate uses the 0.93 default. Clamped to [0,1] at parse time. */
   aiReviewCloseConfidence?: number | null | undefined;
+  /** Disposition for a sub-floor `ai_consensus_defect`/`ai_review_split` finding (#4603) — see
+   *  {@link AiReviewLowConfidenceDisposition} for the full semantics of each value. Default `"hold_for_review"`.
+   *  Unlike {@link aiReviewCloseConfidence}, this IS DB-backed/dashboard-settable (via the `/ai-review` route,
+   *  alongside `aiReviewMode`) and also overridable via `.gittensory.yml gate.aiReview.lowConfidenceDisposition`
+   *  — yml > DB > this default, resolved through the normal `resolveEffectiveSettings` chain like every other
+   *  gate-setting field. */
+  aiReviewLowConfidenceDisposition?: AiReviewLowConfidenceDisposition | null | undefined;
   /** Per-repo dual-AI combine-strategy override (#2567). Config-as-code only — set via `.gittensory.yml
    *  gate.aiReview.combine` (no dashboard/DB column); unset ⇒ the self-host operator's `AI_REVIEW_PLAN.combine`
    *  boot config (or `consensus` if the operator set nothing). A REFINEMENT of the operator's plan, not a

@@ -10,6 +10,7 @@
 import { parse as parseYaml } from "yaml";
 import type {
   AdvisoryAiRoutingConfig,
+  AiReviewLowConfidenceDisposition,
   CombineStrategy,
   GatePolicyPack,
   GateRuleMode,
@@ -101,6 +102,11 @@ export type FocusManifestGateConfig = {
   /** `gate.aiReview.closeConfidence` (#7): minimum calibrated AI-reviewer confidence (0-1) for an AI defect to BLOCK
    *  under `aiReview.mode: block`. null (unset) ⇒ the gate's 0.93 default. Clamped to [0,1] at parse time. */
   aiReviewCloseConfidence: number | null;
+  /** `gate.aiReview.lowConfidenceDisposition` (#4603): disposition for a sub-`closeConfidence`-floor
+   *  `ai_consensus_defect`/`ai_review_split` finding. null (unset) ⇒ `hold_for_review` (the shipped default).
+   *  DB-backed (dashboard-settable too, via the `/ai-review` route); this overrides the stored value -- mirrors
+   *  `aiReviewMode` above, not the config-as-code-only `closeConfidence` sibling field just above. */
+  aiReviewLowConfidenceDisposition: AiReviewLowConfidenceDisposition | null;
   /** `gate.aiReview.combine` (#2567): per-repo override of the self-host operator's `AI_REVIEW_PLAN.combine`
    *  boot default (single/consensus/synthesis). null (unset) ⇒ the operator's plan (or `consensus`). A
    *  REFINEMENT only — see {@link aiReviewOnMerge} for the operator-floor clamp `runGittensoryAiReview` applies
@@ -911,6 +917,7 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   aiReviewModel: null,
   aiReviewAllAuthors: null,
   aiReviewCloseConfidence: null,
+  aiReviewLowConfidenceDisposition: null,
   aiReviewCombine: null,
   aiReviewOnMerge: null,
   aiReviewReviewers: null,
@@ -1263,6 +1270,12 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     aiReviewModel: normalizeOptionalString(aiReviewRecord?.model, "gate.aiReview.model", warnings),
     aiReviewAllAuthors: normalizeOptionalBoolean(aiReviewRecord?.allAuthors, "gate.aiReview.allAuthors", warnings),
     aiReviewCloseConfidence: normalizeOptionalConfidence(aiReviewRecord?.closeConfidence, "gate.aiReview.closeConfidence", warnings),
+    aiReviewLowConfidenceDisposition: normalizeOptionalEnum(
+      aiReviewRecord?.lowConfidenceDisposition,
+      "gate.aiReview.lowConfidenceDisposition",
+      ["one_shot", "hold_for_review", "advisory_only"] as const,
+      warnings,
+    ),
     aiReviewCombine: normalizeOptionalEnum(aiReviewRecord?.combine, "gate.aiReview.combine", ["single", "consensus", "synthesis"] as const, warnings),
     aiReviewOnMerge: normalizeOptionalEnum(aiReviewRecord?.onMerge, "gate.aiReview.onMerge", ["either", "both"] as const, warnings),
     aiReviewReviewers: normalizeOptionalReviewers(aiReviewRecord?.reviewers, "gate.aiReview.reviewers", warnings),
@@ -1309,6 +1322,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.aiReviewModel !== null ||
     gate.aiReviewAllAuthors !== null ||
     gate.aiReviewCloseConfidence !== null ||
+    gate.aiReviewLowConfidenceDisposition !== null ||
     gate.aiReviewCombine !== null ||
     gate.aiReviewOnMerge !== null ||
     gate.aiReviewReviewers !== null ||
@@ -1365,6 +1379,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     gate.aiReviewModel !== null ||
     gate.aiReviewAllAuthors !== null ||
     gate.aiReviewCloseConfidence !== null ||
+    gate.aiReviewLowConfidenceDisposition !== null ||
     gate.aiReviewCombine !== null ||
     gate.aiReviewOnMerge !== null ||
     gate.aiReviewReviewers !== null
@@ -1376,6 +1391,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     if (gate.aiReviewModel !== null) aiReview.model = gate.aiReviewModel;
     if (gate.aiReviewAllAuthors !== null) aiReview.allAuthors = gate.aiReviewAllAuthors;
     if (gate.aiReviewCloseConfidence !== null) aiReview.closeConfidence = gate.aiReviewCloseConfidence;
+    if (gate.aiReviewLowConfidenceDisposition !== null) aiReview.lowConfidenceDisposition = gate.aiReviewLowConfidenceDisposition;
     if (gate.aiReviewCombine !== null) aiReview.combine = gate.aiReviewCombine;
     if (gate.aiReviewOnMerge !== null) aiReview.onMerge = gate.aiReviewOnMerge;
     if (gate.aiReviewReviewers !== null) {

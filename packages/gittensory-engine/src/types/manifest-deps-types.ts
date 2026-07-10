@@ -18,6 +18,10 @@ export type CombineStrategy = "single" | "consensus" | "synthesis";
 
 export type OnMerge = "either" | "both";
 
+// Disposition for a sub-aiReviewCloseConfidence-floor ai_consensus_defect/ai_review_split finding (#4603) --
+// see src/types.ts's mirror of this type (AiReviewLowConfidenceDisposition) for the full semantics of each value.
+export type AiReviewLowConfidenceDisposition = "one_shot" | "hold_for_review" | "advisory_only";
+
 // #4110: `request_changes`/`comment` were REMOVED (see src/types.ts's mirror of this type for why).
 // `"advisory"` (#4535) is a NEW, actually-wired value -- see src/types.ts's mirror for the full rationale.
 export type ScreenshotTableGateAction = "close" | "advisory";

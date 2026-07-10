@@ -571,6 +571,57 @@ describe("planAgentMaintenanceActions (#778)", () => {
     });
   });
 
+  describe("AI-review low-confidence hold (#4603): a sub-floor consensus/split defect under hold_for_review must not one-shot-close", () => {
+    const held = {
+      aiReviewLowConfidenceHold: {
+        reason: "an AI-reviewer defect finding's confidence is below the configured close-confidence floor (0.93)",
+        comment: "An AI reviewer flagged a likely defect, but its confidence was below this repository's configured close-confidence floor, so this is held for a maintainer to confirm instead of closing automatically.",
+      },
+    };
+
+    it("BASELINE: without the hold, a failure verdict one-shot-closes a contributor PR (proves the hold is what changes behavior)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["AI reviewers agree on a likely critical defect"] })));
+      expect(plan).toContain("close");
+    });
+
+    it("suppresses the one-shot CLOSE when present — the gate still failed, but the PR is held instead", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["AI reviewers agree on a likely critical defect"], ...held })));
+      expect(plan).not.toContain("close");
+    });
+
+    it("labels the held PR manual-review (via the generic manualHoldReason fallback, close autonomy class) with the hold's comment attached", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, manualReviewLabel: "human-review", blockerTitles: ["AI reviewers agree on a likely critical defect"], ...held }));
+      expect(plan).toEqual([
+        expect.objectContaining({ actionClass: "label", autonomyClass: "close", label: "human-review", labelOp: "add", comment: held.aiReviewLowConfidenceHold.comment }),
+      ]);
+    });
+
+    it("does NOT suppress a close driven by red CI, even when the hold is also present", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "failed", blockerTitles: ["AI reviewers agree on a likely critical defect"], ...held })));
+      expect(plan).toContain("close");
+    });
+
+    it("does NOT suppress a close driven by a base conflict, even when the hold is also present", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["AI reviewers agree on a likely critical defect"], ...held, pr: { labels: [], mergeableState: "dirty" } })));
+      expect(plan).toContain("close");
+    });
+
+    it("never applies to a success/neutral verdict — no hold-driven label without a failure to hold", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", merge: "auto" }, ...held, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
+      expect(plan).toContain("merge");
+    });
+
+    it("has no effect for the owner/automation-bot branch (never close-eligible regardless)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, authorIsOwner: true, blockerTitles: ["AI reviewers agree on a likely critical defect"], ...held })));
+      expect(plan).not.toContain("close");
+    });
+
+    it("absent (undefined) is byte-identical to today — a failure verdict still closes", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"] })));
+      expect(plan).toContain("close");
+    });
+  });
+
   describe("unlinked-issue-match hold (#unlinked-issue-guardrail, credibility-gate-farming defense)", () => {
     const matched = { unlinkedIssueMatchHold: { reason: "this PR links no issue, but appears to directly solve open issue #42 without linking it (adds the missing dedup key)", comment: "This PR doesn't link an issue, but its diff appears to directly solve #42. Please add a linking reference." } };
 

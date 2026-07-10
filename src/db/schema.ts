@@ -88,6 +88,11 @@ export const repositorySettings = sqliteTable("repository_settings", {
   aiReviewProvider: text("ai_review_provider"),
   aiReviewModel: text("ai_review_model"),
   aiReviewAllAuthors: integer("ai_review_all_authors", { mode: "boolean" }).notNull().default(false),
+  // AI-review low-confidence disposition (#4603): one_shot | hold_for_review | advisory_only. Governs a
+  // sub-aiReviewCloseConfidence-floor ai_consensus_defect/ai_review_split finding. Default hold_for_review --
+  // see migrations/0140_ai_review_low_confidence_disposition.sql and src/rules/advisory.ts's
+  // isConfiguredGateBlocker / resolveAiReviewLowConfidenceHold for the full rationale.
+  aiReviewLowConfidenceDisposition: text("ai_review_low_confidence_disposition").notNull().default("hold_for_review"),
   closeOwnerAuthors: integer("close_owner_authors", { mode: "boolean" }).notNull().default(false),
   autoLabelEnabled: integer("auto_label_enabled", { mode: "boolean" }).notNull().default(true),
   gittensorLabel: text("gittensor_label").notNull().default("gittensor"),

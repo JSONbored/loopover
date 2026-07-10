@@ -66,6 +66,7 @@ import { MAX_CONTRIBUTOR_OPEN_ITEM_CAP } from "../types";
 import type {
   Advisory,
   AdvisoryFinding,
+  AiReviewLowConfidenceDisposition,
   AgentActionRecord,
   AgentActionStatus,
   AgentActionType,
@@ -534,6 +535,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       aiReviewProvider: null,
       aiReviewModel: null,
       aiReviewAllAuthors: false,
+      aiReviewLowConfidenceDisposition: "hold_for_review",
       closeOwnerAuthors: false,
       autoLabelEnabled: true,
       typeLabelsEnabled: true,
@@ -614,6 +616,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     aiReviewProvider: normalizeAiReviewProvider(row.aiReviewProvider),
     aiReviewModel: row.aiReviewModel ?? null,
     aiReviewAllAuthors: row.aiReviewAllAuthors,
+    aiReviewLowConfidenceDisposition: parseAiReviewLowConfidenceDisposition(row.aiReviewLowConfidenceDisposition),
     closeOwnerAuthors: row.closeOwnerAuthors,
     autoLabelEnabled: row.autoLabelEnabled,
     typeLabelsEnabled: row.typeLabelsEnabled,
@@ -737,6 +740,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     aiReviewProvider: normalizeAiReviewProvider(settings.aiReviewProvider),
     aiReviewModel: typeof settings.aiReviewModel === "string" && settings.aiReviewModel.trim() ? settings.aiReviewModel.trim() : null,
     aiReviewAllAuthors: settings.aiReviewAllAuthors ?? false,
+    aiReviewLowConfidenceDisposition: parseAiReviewLowConfidenceDisposition(settings.aiReviewLowConfidenceDisposition),
     closeOwnerAuthors: settings.closeOwnerAuthors ?? false,
     autoLabelEnabled: settings.autoLabelEnabled ?? true,
     typeLabelsEnabled: settings.typeLabelsEnabled ?? true,
@@ -818,6 +822,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       aiReviewProvider: resolved.aiReviewProvider,
       aiReviewModel: resolved.aiReviewModel,
       aiReviewAllAuthors: resolved.aiReviewAllAuthors,
+      aiReviewLowConfidenceDisposition: resolved.aiReviewLowConfidenceDisposition,
       closeOwnerAuthors: resolved.closeOwnerAuthors,
       autoLabelEnabled: resolved.autoLabelEnabled,
       typeLabelsEnabled: resolved.typeLabelsEnabled,
@@ -907,6 +912,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         aiReviewProvider: resolved.aiReviewProvider,
         aiReviewModel: resolved.aiReviewModel,
         aiReviewAllAuthors: resolved.aiReviewAllAuthors,
+        aiReviewLowConfidenceDisposition: resolved.aiReviewLowConfidenceDisposition,
         closeOwnerAuthors: resolved.closeOwnerAuthors,
         autoLabelEnabled: resolved.autoLabelEnabled,
         typeLabelsEnabled: resolved.typeLabelsEnabled,
@@ -7378,6 +7384,14 @@ function parseGateRuleMode(value: string): RepositorySettings["linkedIssueGateMo
 
 function normalizeAiReviewProvider(value: string | null | undefined): "anthropic" | "openai" | null {
   return value === "anthropic" || value === "openai" ? value : null;
+}
+
+// AI-review low-confidence disposition (#4603): one_shot | hold_for_review | advisory_only. Unrecognized/absent
+// falls back to "hold_for_review" -- the shipped, safe default (see migrations/0140_ai_review_low_confidence_
+// disposition.sql's own column DEFAULT, which this mirrors client-side for any legacy/malformed row).
+function parseAiReviewLowConfidenceDisposition(value: string | null | undefined): AiReviewLowConfidenceDisposition {
+  if (value === "one_shot" || value === "advisory_only") return value;
+  return "hold_for_review";
 }
 
 function normalizeQualityGateMinScore(value: number | null | undefined): number | null {

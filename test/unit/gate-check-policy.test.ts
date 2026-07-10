@@ -397,6 +397,30 @@ describe("AI close-confidence threshold gate (#7)", () => {
     expect(eff.aiReviewMode).toBe("block");
     expect(evaluateGateCheck(aiDefectWith(0.5), gateCheckPolicy(eff, null, true)).conclusion).toBe("failure");
   });
+
+  it("resolveEffectiveSettings maps gate.aiReview.lowConfidenceDisposition into the policy (#4603)", () => {
+    const eff = resolveEffectiveSettings(
+      settings({ aiReviewMode: "off", aiReviewLowConfidenceDisposition: "hold_for_review" } as Partial<RepositorySettings>),
+      parseFocusManifest({ gate: { aiReview: { mode: "block", lowConfidenceDisposition: "advisory_only" } } }),
+    );
+    expect(eff.aiReviewLowConfidenceDisposition).toBe("advisory_only");
+    expect(eff.aiReviewMode).toBe("block");
+    // A sub-floor defect drops to non-blocking under the resolved advisory_only disposition.
+    expect(evaluateGateCheck(aiDefectWith(0.5), gateCheckPolicy(eff, null, true)).conclusion).toBe("success");
+  });
+
+  it("threads aiReviewLowConfidenceDisposition from settings onto the policy unchanged (#4603)", () => {
+    const policy = gateCheckPolicy(settings({ aiReviewMode: "block", aiReviewLowConfidenceDisposition: "one_shot" } as Partial<RepositorySettings>), null, true);
+    expect(policy.aiReviewLowConfidenceDisposition).toBe("one_shot");
+    // one_shot ignores the floor -- still blocks below it, same as the unset default.
+    expect(evaluateGateCheck(aiDefectWith(0.5), policy).conclusion).toBe("failure");
+  });
+
+  it("absent aiReviewLowConfidenceDisposition threads as null, matching the advisory.ts hold_for_review default", () => {
+    const policy = gateCheckPolicy(settings({ aiReviewMode: "block" }), null, true);
+    expect(policy.aiReviewLowConfidenceDisposition).toBeNull();
+    expect(evaluateGateCheck(aiDefectWith(0.5), policy).conclusion).toBe("failure");
+  });
 });
 
 describe("slop gate (#530/#532)", () => {

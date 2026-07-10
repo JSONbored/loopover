@@ -9554,6 +9554,16 @@
           },
           "agentGlobalFreezeOverride": {
             "type": "boolean"
+          },
+          "aiReviewLowConfidenceDisposition": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "one_shot",
+              "hold_for_review",
+              "advisory_only",
+              null
+            ]
           }
         },
         "required": [

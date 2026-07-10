@@ -683,6 +683,7 @@ const repositorySettingsSchema = z.object({
   aiReviewProvider: z.enum(["anthropic", "openai"]).nullable().optional(),
   aiReviewModel: z.string().trim().min(1).max(120).nullable().optional(),
   aiReviewAllAuthors: z.boolean().default(false),
+  aiReviewLowConfidenceDisposition: z.enum(["one_shot", "hold_for_review", "advisory_only"]).default("hold_for_review"),
   closeOwnerAuthors: z.boolean().default(false),
   autoLabelEnabled: z.boolean().default(true),
   gittensorLabel: z.string().trim().min(1).max(50).default("gittensor"),
@@ -806,6 +807,10 @@ const repositoryAiReviewSchema = z.object({
   model: z.string().trim().min(1).max(120).nullable().optional(),
   allAuthors: z.boolean().default(false),
   closeOwnerAuthors: z.boolean().optional(),
+  // Disposition for a sub-aiReviewCloseConfidence-floor ai_consensus_defect/ai_review_split finding (#4603).
+  // Optional so a caller that only ever cared about mode/byok/provider/model keeps its historical effect --
+  // upsertRepositorySettings applies its own "hold_for_review" default when omitted.
+  lowConfidenceDisposition: z.enum(["one_shot", "hold_for_review", "advisory_only"]).optional(),
 });
 
 const contributorIssueDraftGenerateSchema = z.object({
@@ -2560,6 +2565,7 @@ export function createApp() {
       aiReviewProvider: parsed.data.provider,
       aiReviewModel: parsed.data.model,
       aiReviewAllAuthors: parsed.data.allAuthors,
+      aiReviewLowConfidenceDisposition: parsed.data.lowConfidenceDisposition ?? current.aiReviewLowConfidenceDisposition,
       closeOwnerAuthors: parsed.data.closeOwnerAuthors ?? current.closeOwnerAuthors,
     });
     // getRepositorySettings normalizes these to a concrete value or null (never undefined).
@@ -2569,6 +2575,7 @@ export function createApp() {
       aiReviewProvider: updated.aiReviewProvider ?? null,
       aiReviewModel: updated.aiReviewModel ?? null,
       aiReviewAllAuthors: updated.aiReviewAllAuthors,
+      aiReviewLowConfidenceDisposition: updated.aiReviewLowConfidenceDisposition ?? "hold_for_review",
       closeOwnerAuthors: updated.closeOwnerAuthors,
     });
   });
@@ -3895,6 +3902,7 @@ export function createApp() {
         aiReviewProvider: parsed.data.aiReviewProvider,
         aiReviewModel: parsed.data.aiReviewModel,
         aiReviewAllAuthors: parsed.data.aiReviewAllAuthors,
+        aiReviewLowConfidenceDisposition: parsed.data.aiReviewLowConfidenceDisposition,
         closeOwnerAuthors: parsed.data.closeOwnerAuthors,
         autoLabelEnabled: parsed.data.autoLabelEnabled,
         gittensorLabel: parsed.data.gittensorLabel,

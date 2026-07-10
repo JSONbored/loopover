@@ -8732,8 +8732,7 @@
             "type": "string",
             "enum": [
               "minimal",
-              "standard",
-              "deep"
+              "standard"
             ]
           },
           "gateCheckMode": {
@@ -10138,8 +10137,7 @@
                 "type": "string",
                 "enum": [
                   "minimal",
-                  "standard",
-                  "deep"
+                  "standard"
                 ]
               },
               "gateCheckMode": {
@@ -10655,8 +10653,7 @@
                 "type": "string",
                 "enum": [
                   "minimal",
-                  "standard",
-                  "deep"
+                  "standard"
                 ]
               }
             },

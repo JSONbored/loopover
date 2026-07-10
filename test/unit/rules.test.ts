@@ -777,10 +777,6 @@ describe("advisory rules", () => {
     const standard = formatCheckRunOutput(advisory, "standard");
     expect(standard.text).not.toContain("No detailed findings are published");
     expect(standard.text).toMatch(/⚠️|ℹ️/);
-
-    const deep = formatCheckRunOutput(advisory, "deep");
-    expect(deep.text).not.toContain("No detailed findings are published");
-    expect(deep.text).toMatch(/⚠️|ℹ️/);
   });
 
   it("formatCheckRunOutput sanitizes forbidden terms at every detail level", () => {
@@ -798,7 +794,7 @@ describe("advisory rules", () => {
         },
       ],
     };
-    for (const level of ["minimal", "standard", "deep"] as const) {
+    for (const level of ["minimal", "standard"] as const) {
       const out = formatCheckRunOutput(poisoned, level);
       expect(out.title).not.toMatch(/rewards?|wallets?|hotkeys?|trust score|score estimate|reviewability|scoreability|farming/i);
       expect(out.summary).not.toMatch(/rewards?|wallets?|hotkeys?|trust score|score estimate|reviewability|scoreability|farming/i);
@@ -829,7 +825,7 @@ describe("advisory rules", () => {
           },
         ],
       },
-      "deep",
+      "standard",
     );
 
     expect(output.text).toContain("Safe public repo context");
@@ -1147,7 +1143,7 @@ describe("advisory rules", () => {
       ],
     };
 
-    const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions, pullNumber: 15 }, "deep");
+    const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions, pullNumber: 15 }, "standard");
     expect(annotations.some((entry) => entry.annotation_level === "notice" && entry.title === "Configured lane")).toBe(true);
     expect(annotations.some((entry) => entry.annotation_level === "warning" && entry.title === "Queue pressure")).toBe(true);
     expect(annotations.some((entry) => entry.title === "   ")).toBe(false);
@@ -1171,11 +1167,11 @@ describe("advisory rules", () => {
       clusters: [],
     };
 
-    const { annotations, omittedCount } = buildCheckRunAnnotations(advisory, { files, collisions, pullNumber: 99 }, "deep");
+    const { annotations, omittedCount } = buildCheckRunAnnotations(advisory, { files, collisions, pullNumber: 99 }, "standard");
     expect(annotations).toHaveLength(CHECK_RUN_ANNOTATION_LIMIT);
     expect(omittedCount).toBe(5);
 
-    const output = formatCheckRunOutput(advisory, "deep", { files, collisions, pullNumber: 99 });
+    const output = formatCheckRunOutput(advisory, "standard", { files, collisions, pullNumber: 99 });
     expect(output.annotations).toHaveLength(CHECK_RUN_ANNOTATION_LIMIT);
     expect(output.text).toContain("…5 more hotspot annotation(s) omitted from inline check output.");
   });

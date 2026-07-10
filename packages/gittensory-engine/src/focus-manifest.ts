@@ -1712,7 +1712,7 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[],
   if (publicSignalLevel !== null) out.publicSignalLevel = publicSignalLevel;
   const checkRunMode = normalizeOptionalEnum(r.checkRunMode, "settings.checkRunMode", ["off", "enabled"] as const, warnings);
   if (checkRunMode !== null) out.checkRunMode = checkRunMode;
-  const checkRunDetailLevel = normalizeOptionalEnum(r.checkRunDetailLevel, "settings.checkRunDetailLevel", ["minimal", "standard", "deep"] as const, warnings);
+  const checkRunDetailLevel = normalizeOptionalEnum(r.checkRunDetailLevel, "settings.checkRunDetailLevel", ["minimal", "standard"] as const, warnings);
   if (checkRunDetailLevel !== null) out.checkRunDetailLevel = checkRunDetailLevel;
   // #4618: gateCheckMode is deprecated (a computed read-back value everywhere else) but this yml key still
   // parses for back-compat with existing `.gittensory.yml` files. A manifest setting ONLY gateCheckMode

@@ -697,7 +697,7 @@ export async function createOrUpdateCheckRun(
   installationId: number,
   repoFullName: string,
   advisory: Advisory,
-  detailLevel: "minimal" | "standard" | "deep" = "minimal",
+  detailLevel: "minimal" | "standard" = "minimal",
   annotationContext?: CheckRunAnnotationContext,
   mode: AgentActionMode = "live",
 ): Promise<CheckRunOutcome | null> {

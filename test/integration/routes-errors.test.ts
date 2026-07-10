@@ -1170,14 +1170,14 @@ describe("api route guards and error branches", () => {
         body: JSON.stringify({
           commentMode: "all_prs",
           publicSignalLevel: "minimal",
-          checkRunDetailLevel: "deep",
+          checkRunDetailLevel: "standard",
           backfillEnabled: false,
         }),
       },
       env,
     );
     expect(updated.status).toBe(200);
-    await expect(updated.json()).resolves.toMatchObject({ commentMode: "all_prs", checkRunDetailLevel: "deep", backfillEnabled: false });
+    await expect(updated.json()).resolves.toMatchObject({ commentMode: "all_prs", checkRunDetailLevel: "standard", backfillEnabled: false });
   });
 });
 

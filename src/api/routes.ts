@@ -667,7 +667,7 @@ const repositorySettingsSchema = z.object({
   // Matches repository_settings.check_run_detail_level's own column default (#2907) -- the Context check's
   // public output is intentionally minimal by design (see formatCheckRunOutput's doc comment), so a caller of
   // this full-replace route that omits this field must land on the same safe default as a never-configured row.
-  checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]).default("minimal"),
+  checkRunDetailLevel: z.enum(["minimal", "standard"]).default("minimal"),
   regateSweepOrderMode: z.enum(["staleness", "oldest-first"]).default("staleness"),
   // #4618: gateCheckMode dropped from this write schema -- it is a computed read-back value only (see its
   // doc comment on RepositorySettings). Set reviewCheckMode directly.
@@ -720,7 +720,7 @@ const maintainerSettingsSchema = z
     publicSignalLevel: z.enum(["minimal", "standard"]),
     publicSurface: z.enum(["off", "comment_and_label", "comment_only", "label_only"]),
     checkRunMode: z.enum(["off", "enabled"]),
-    checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]),
+    checkRunDetailLevel: z.enum(["minimal", "standard"]),
     regateSweepOrderMode: z.enum(["staleness", "oldest-first"]),
     reviewCheckMode: z.enum(["required", "visible", "disabled"]),
     gatePack: z.enum(["gittensor", "oss-anti-slop"]),

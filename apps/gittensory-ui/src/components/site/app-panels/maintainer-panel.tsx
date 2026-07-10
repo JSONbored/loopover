@@ -716,7 +716,7 @@ export function PreviewResult({
 
       {preview.checkRun?.willCreate ? (
         <CheckRunReadinessTable
-          detailLevel={preview.checkRun.detailLevel as "minimal" | "standard" | "deep"}
+          detailLevel={preview.checkRun.detailLevel as "minimal" | "standard"}
           readiness={preview.checkRunReadiness}
         />
       ) : null}

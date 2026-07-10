@@ -20,7 +20,7 @@ type MaintainerSettings = {
   publicSignalLevel: "minimal" | "standard";
   publicSurface: "off" | "comment_and_label" | "comment_only" | "label_only";
   checkRunMode: "off" | "enabled";
-  checkRunDetailLevel: "minimal" | "standard" | "deep";
+  checkRunDetailLevel: "minimal" | "standard";
   // #4618: gateCheckMode is deprecated (a computed read-back value only) -- reviewCheckMode is the real,
   // writable authority for whether the review-agent check-run publishes.
   reviewCheckMode: "required" | "visible" | "disabled";
@@ -266,7 +266,6 @@ const SURFACE_FIELDS: FieldDef[] = [
     options: [
       ["minimal", "minimal"],
       ["standard", "standard"],
-      ["deep", "deep"],
     ],
   },
   { key: "includeMaintainerAuthors", label: "Include maintainer-authored PRs", kind: "toggle" },

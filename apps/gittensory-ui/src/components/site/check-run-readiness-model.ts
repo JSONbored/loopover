@@ -2,7 +2,7 @@
 // details slice — mirrors the public-safe band shape from buildExtensionPrStatus (src/signals/
 // extension-contributor-context.ts) so the UI never renders raw readiness scores.
 
-export type CheckRunDetailLevel = "minimal" | "standard" | "deep";
+export type CheckRunDetailLevel = "minimal" | "standard";
 
 export type ReadinessComponentBand = "met" | "partial" | "unmet";
 

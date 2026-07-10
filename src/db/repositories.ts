@@ -7344,8 +7344,9 @@ function parseCheckRunMode(value: string): RepositorySettings["checkRunMode"] {
 }
 
 function parseCheckRunDetailLevel(value: string): RepositorySettings["checkRunDetailLevel"] {
-  if (value === "minimal" || value === "deep") return value;
-  return "standard";
+  // #4620: a pre-#4620 row persisted as "deep" degrades to "standard" here -- the two were always
+  // behaviorally identical (see the type's own doc comment), so this is a display-only fallback.
+  return value === "minimal" ? "minimal" : "standard";
 }
 
 function parseRegateSweepOrderMode(value: string): RepositorySettings["regateSweepOrderMode"] {

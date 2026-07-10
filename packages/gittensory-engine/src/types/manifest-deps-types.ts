@@ -143,7 +143,7 @@ export type RepositorySettings = {
   publicAudienceMode: "oss_maintainer" | "gittensor_only";
   publicSignalLevel: "minimal" | "standard";
   checkRunMode: "off" | "enabled";
-  checkRunDetailLevel: "minimal" | "standard" | "deep";
+  checkRunDetailLevel: "minimal" | "standard";
   gateCheckMode: "off" | "enabled";
   /** Scheduled re-gate sweep candidate ordering (#3815). `staleness` (default) picks whichever open PR the
    *  sweep has gone longest WITHOUT re-gating (see selectRegateCandidates), which is what gives the sweep its

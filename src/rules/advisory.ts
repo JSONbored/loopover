@@ -382,7 +382,7 @@ function annotatablePullRequestFiles(files: PullRequestFileRecord[]): PullReques
 export function buildCheckRunAnnotations(
   advisoryResult: Advisory,
   annotationContext: CheckRunAnnotationContext | undefined,
-  detailLevel: "minimal" | "standard" | "deep" = "minimal",
+  detailLevel: "minimal" | "standard" = "minimal",
 ): CheckRunAnnotationBuildResult {
   if (detailLevel === "minimal" || !annotationContext) {
     return { annotations: [], omittedCount: 0 };
@@ -462,7 +462,7 @@ export function buildCheckRunAnnotations(
 
 export function formatCheckRunOutput(
   advisoryResult: Advisory,
-  detailLevel: "minimal" | "standard" | "deep" = "minimal",
+  detailLevel: "minimal" | "standard" = "minimal",
   annotationContext?: CheckRunAnnotationContext,
 ): CheckRunOutput {
   const title = advisoryResult.conclusion === "success" ? "Gittensory context checked" : "Gittensory context posted";

@@ -669,7 +669,7 @@ export const RepositorySettingsSchema = z
     publicAudienceMode: z.enum(["oss_maintainer", "gittensor_only"]),
     publicSignalLevel: z.enum(["minimal", "standard"]),
     checkRunMode: z.enum(["off", "enabled"]),
-    checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]),
+    checkRunDetailLevel: z.enum(["minimal", "standard"]),
     gateCheckMode: z.enum(["off", "enabled"]),
     regateSweepOrderMode: z.enum(["staleness", "oldest-first"]),
     reviewCheckMode: z.enum(["required", "visible", "disabled"]),
@@ -848,7 +848,7 @@ export const RepoSettingsPreviewSchema = z
       publicAudienceMode: z.enum(["oss_maintainer", "gittensor_only"]),
       publicSignalLevel: z.enum(["minimal", "standard"]),
       checkRunMode: z.enum(["off", "enabled"]),
-      checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]),
+      checkRunDetailLevel: z.enum(["minimal", "standard"]),
       gateCheckMode: z.enum(["off", "enabled"]),
       regateSweepOrderMode: z.enum(["staleness", "oldest-first"]),
       reviewCheckMode: z.enum(["required", "visible", "disabled"]),
@@ -943,7 +943,7 @@ export const RepoSettingsPreviewSchema = z
       .object({
         willCreate: z.boolean(),
         title: z.string(),
-        detailLevel: z.enum(["minimal", "standard", "deep"]),
+        detailLevel: z.enum(["minimal", "standard"]),
       })
       .nullable(),
     checkRunReadiness: z

@@ -1933,7 +1933,7 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
         publicAudienceMode: "gittensor_only",
         publicSignalLevel: "minimal",
         checkRunMode: "enabled",
-        checkRunDetailLevel: "deep",
+        checkRunDetailLevel: "standard",
         gateCheckMode: "enabled",
         linkedIssueGateMode: "block",
         duplicatePrGateMode: "off",
@@ -1955,7 +1955,7 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
       publicAudienceMode: "gittensor_only",
       publicSignalLevel: "minimal",
       checkRunMode: "enabled",
-      checkRunDetailLevel: "deep",
+      checkRunDetailLevel: "standard",
       gateCheckMode: "enabled",
       // #4618: gateCheckMode is deprecated -- setting it alone (no explicit reviewCheckMode) still derives
       // reviewCheckMode, so its historical effect on the actual publish authority is preserved.

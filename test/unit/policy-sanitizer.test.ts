@@ -563,7 +563,7 @@ describe("validation guidance sanitizer", () => {
     const preview = buildRepoSettingsPreview({env: {},
       repoFullName: repo.fullName,
       repo,
-      settings: settingsFor(repo.fullName, { checkRunMode: "enabled", checkRunDetailLevel: "deep" }),
+      settings: settingsFor(repo.fullName, { checkRunMode: "enabled", checkRunDetailLevel: "standard" }),
       installation: previewHealthyInstall,
       issues: [],
       pullRequests: [],

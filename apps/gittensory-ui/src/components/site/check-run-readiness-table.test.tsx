@@ -22,10 +22,9 @@ const SAMPLE: CheckRunReadinessTableData = {
 };
 
 describe("shouldShowCheckRunReadinessTable", () => {
-  it("shows at standard and deep, hides at minimal", () => {
+  it("shows at standard, hides at minimal", () => {
     expect(shouldShowCheckRunReadinessTable("minimal")).toBe(false);
     expect(shouldShowCheckRunReadinessTable("standard")).toBe(true);
-    expect(shouldShowCheckRunReadinessTable("deep")).toBe(true);
   });
 });
 
@@ -34,10 +33,9 @@ describe("resolveCheckRunReadinessView", () => {
     expect(resolveCheckRunReadinessView({ detailLevel: "minimal", readiness: SAMPLE })).toBeNull();
   });
 
-  it("returns null for an empty readiness component set at standard (both gate-off and gate-on shapes)", () => {
+  it("returns null for an empty readiness component set at standard", () => {
     const empty: CheckRunReadinessTableData = { readinessBand: "early", components: [] };
     expect(resolveCheckRunReadinessView({ detailLevel: "standard", readiness: empty })).toBeNull();
-    expect(resolveCheckRunReadinessView({ detailLevel: "deep", readiness: empty })).toBeNull();
   });
 
   it("returns the readiness payload at standard when components are present", () => {

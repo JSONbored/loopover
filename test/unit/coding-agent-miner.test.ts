@@ -7,6 +7,7 @@ import {
   codingAgentModeExecutes,
   createAttemptLogBuffer,
   createCodingAgentDriver,
+  createDefaultCliSubprocessSpawn,
   createFakeCodingAgentDriver,
   createFakeCodingAgentDriverForFactory,
   createNoopCodingAgentDriver,
@@ -21,6 +22,8 @@ import {
   resolveCodingAgentModeFromConfig,
   resolveConfiguredCodingAgentDriverNames,
   runCodingAgentAttempt,
+  type AgentSdkQueryFn,
+  type CliSubprocessSpawnFn,
   type CodingAgentDriverResult,
   type CodingAgentDriverTask,
   type LintGuardSpawnFn,
@@ -296,21 +299,27 @@ describe("invokeCodingAgentDriver (#4313)", () => {
 });
 
 describe("coding-agent driver factory (#4289)", () => {
-  it("exposes the noop provider registry", () => {
-    expect([...CODING_AGENT_DRIVER_NAMES]).toEqual(["noop"]);
+  it("exposes the noop + concrete provider registry", () => {
+    expect([...CODING_AGENT_DRIVER_NAMES]).toEqual(["noop", "cli-subprocess", "agent-sdk"]);
     expect(CODING_AGENT_DRIVER_CONFIG_ENV.noop).toEqual({});
+    expect(CODING_AGENT_DRIVER_CONFIG_ENV["cli-subprocess"].command).toBe("MINER_CODING_AGENT_CLI");
+    expect(CODING_AGENT_DRIVER_CONFIG_ENV["agent-sdk"].model).toBe("MINER_CODING_AGENT_SDK_MODEL");
   });
 
   it("isConfiguredCodingAgentDriver is deny-by-default for unknown names", () => {
     expect(isConfiguredCodingAgentDriver("noop", {})).toBe(true);
+    expect(isConfiguredCodingAgentDriver("cli-subprocess", {})).toBe(true);
+    expect(isConfiguredCodingAgentDriver("agent-sdk", {})).toBe(true);
     expect(isConfiguredCodingAgentDriver("claude-code", {})).toBe(false);
     expect(isConfiguredCodingAgentDriver("unknown", {})).toBe(false);
   });
 
   it("resolveConfiguredCodingAgentDriverNames filters to configured providers only", () => {
     expect(
-      resolveConfiguredCodingAgentDriverNames({ MINER_CODING_AGENT_PROVIDER: " noop , unknown , " }),
-    ).toEqual(["noop"]);
+      resolveConfiguredCodingAgentDriverNames({
+        MINER_CODING_AGENT_PROVIDER: " noop , cli-subprocess , unknown , agent-sdk , ",
+      }),
+    ).toEqual(["noop", "cli-subprocess", "agent-sdk"]);
     expect(resolveConfiguredCodingAgentDriverNames({})).toEqual([]);
   });
 
@@ -321,6 +330,110 @@ describe("coding-agent driver factory (#4289)", () => {
       createNoopCodingAgentDriver().constructor,
     );
     expect(() => createCodingAgentDriver({ providerName: "unknown" })).toThrow(/unconfigured_coding_agent_driver/);
+  });
+
+  it("createCodingAgentDriver resolves cli-subprocess with injected spawn and env/option overrides", async () => {
+    const calls: Array<{ cmd: string; opts: Parameters<CliSubprocessSpawnFn>[2] }> = [];
+    const spawn: CliSubprocessSpawnFn = async (cmd, _args, opts) => {
+      calls.push({ cmd, opts });
+      return { stdout: "ok", code: 0 };
+    };
+
+    const fromEnv = createCodingAgentDriver({
+      providerName: "cli-subprocess",
+      env: { MINER_CODING_AGENT_CLI: "codex", MINER_CODING_AGENT_TIMEOUT_MS: "45000" },
+      spawn,
+    });
+    await fromEnv.run(task);
+    expect(calls[0]?.cmd).toBe("codex");
+    expect(calls[0]?.opts.timeoutMs).toBe(45_000);
+
+    const fromOptions = createCodingAgentDriver({
+      providerName: " CLI-SUBPROCESS ",
+      command: "claude",
+      timeoutMs: 9_000,
+      spawn,
+    });
+    await fromOptions.run(task);
+    expect(calls[1]?.cmd).toBe("claude");
+    expect(calls[1]?.opts.timeoutMs).toBe(9_000);
+
+    const defaults = createCodingAgentDriver({ providerName: "cli-subprocess", spawn });
+    await defaults.run(task);
+    expect(calls[2]?.cmd).toBe("claude");
+    expect(calls[2]?.opts.timeoutMs).toBe(120_000);
+
+    // Malformed / empty timeout env falls back to the default ceiling.
+    const badTimeout = createCodingAgentDriver({
+      providerName: "cli-subprocess",
+      env: { MINER_CODING_AGENT_TIMEOUT_MS: "not-a-number" },
+      spawn,
+    });
+    await badTimeout.run(task);
+    expect(calls[3]?.opts.timeoutMs).toBe(120_000);
+
+    const emptyTimeout = createCodingAgentDriver({
+      providerName: "cli-subprocess",
+      env: { MINER_CODING_AGENT_TIMEOUT_MS: "   " },
+      spawn,
+    });
+    await emptyTimeout.run(task);
+    expect(calls[4]?.opts.timeoutMs).toBe(120_000);
+
+    const blankCommand = createCodingAgentDriver({
+      providerName: "cli-subprocess",
+      env: { MINER_CODING_AGENT_CLI: "  " },
+      spawn,
+    });
+    await blankCommand.run(task);
+    expect(calls[5]?.cmd).toBe("claude");
+  });
+
+  it("createCodingAgentDriver resolves agent-sdk with an injected query and forwards hooks", async () => {
+    const seen: Array<{ prompt: string; hooks: unknown }> = [];
+    const query: AgentSdkQueryFn = async function* ({ prompt, options }) {
+      seen.push({ prompt, hooks: options.hooks });
+      yield { type: "result", subtype: "success", result: "done", num_turns: 1 };
+    };
+    const hooks = { PreToolUse: [] };
+    const driver = createCodingAgentDriver({
+      providerName: "agent-sdk",
+      query,
+      hooks,
+    });
+    const result = await driver.run(task);
+    expect(result.ok).toBe(true);
+    expect(seen[0]).toEqual({ prompt: task.instructions, hooks });
+  });
+
+  it("createCodingAgentDriver builds concrete drivers without injected backends (default seams)", () => {
+    // Covers the `spawn ?? createDefaultCliSubprocessSpawn()` and `query`/`hooks` undefined arms without IO.
+    expect(createCodingAgentDriver({ providerName: "cli-subprocess" }).run).toBeTypeOf("function");
+    expect(createCodingAgentDriver({ providerName: "agent-sdk" }).run).toBeTypeOf("function");
+    expect(createDefaultCliSubprocessSpawn()).toBeTypeOf("function");
+  });
+
+  it("runCodingAgentAttempt forwards spawn/query onto the resolved concrete driver", async () => {
+    const spawn: CliSubprocessSpawnFn = async () => ({ stdout: "cli-ok", code: 0 });
+    const cli = await runCodingAgentAttempt({
+      providerName: "cli-subprocess",
+      task,
+      spawn,
+    });
+    expect(cli.mode).toBe("live");
+    expect(cli.result.ok).toBe(true);
+    expect(cli.result.summary).toContain("claude completed");
+
+    const query: AgentSdkQueryFn = async function* () {
+      yield { type: "result", subtype: "success", result: "sdk-ok", num_turns: 1 };
+    };
+    const sdk = await runCodingAgentAttempt({
+      providerName: "agent-sdk",
+      task,
+      query,
+    });
+    expect(sdk.result.ok).toBe(true);
+    expect(sdk.result.summary).toContain("sdk-ok");
   });
 
   it("createFakeCodingAgentDriverForFactory is an identity helper", () => {

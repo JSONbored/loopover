@@ -44,10 +44,11 @@ interface CodingAgentDriver {
 }
 ```
 
-Two reference implementations ship today for tests: `createFakeCodingAgentDriver` (records the last task, no IO) and
+Two reference implementations ship for tests: `createFakeCodingAgentDriver` (records the last task, no IO) and
 `createNoopCodingAgentDriver` (default-OFF stub). The two real backends — a CLI-subprocess driver (#4266) and an
-Agent-SDK driver (#4267) — are the seam's first concrete implementations; until they land, `createCodingAgentDriver`
-resolves the built-in `noop` driver (`CODING_AGENT_DRIVER_NAMES` currently `["noop"]`).
+Agent-SDK driver (#4267) — are registered in the factory as `cli-subprocess` and `agent-sdk`
+(`CODING_AGENT_DRIVER_NAMES` is `["noop", "cli-subprocess", "agent-sdk"]`). Select one via
+`MINER_CODING_AGENT_PROVIDER` (comma-separated; unknown names are denied by default).
 
 ## The surrounding primitives
 
@@ -87,7 +88,7 @@ To add a driver beyond the CLI-subprocess and Agent-SDK backends:
 runCodingAgentAttempt(options)
   ├─ resolveCodingAgentExecutionMode(...)         → paused | dry_run | live
   ├─ if !codingAgentModeExecutes(mode):           → record a shadow/no-op attempt-log event, return without spawning
-  ├─ createCodingAgentDriver({ name, ... })        → the configured driver (today: noop)
+  ├─ createCodingAgentDriver({ name, ... })        → noop | cli-subprocess | agent-sdk
   └─ invokeCodingAgentDriver(driver, task, mode, log)
        ├─ log: attempt started
        ├─ driver.run(task)                          → edits inside task.workingDirectory only, ≤ task.maxTurns

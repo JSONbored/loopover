@@ -229,6 +229,7 @@ export {
   CODING_AGENT_DRIVER_CONFIG_ENV,
   CODING_AGENT_DRIVER_NAMES,
   createCodingAgentDriver,
+  createDefaultCliSubprocessSpawn,
   createFakeCodingAgentDriverForFactory,
   isConfiguredCodingAgentDriver,
   resolveConfiguredCodingAgentDriverNames,

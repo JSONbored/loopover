@@ -9201,6 +9201,128 @@ export function reviewDurationMsSince(startedAt: string | null, nowMs: number): 
   return Number.isFinite(ms) && ms >= 0 ? ms : undefined;
 }
 
+/**
+ * Focus-manifest policy gate (#555, opt-in via `manifestPolicyGateMode`). Reloads the CACHED manifest (the
+ * settings resolver discards the raw manifest, but loadRepoFocusManifest is cached so this is cheap),
+ * recomputes the guidance over the PR's changed files, and pushes ONLY the three enforceable policy findings
+ * onto the advisory so isConfiguredGateBlocker can block under `manifestPolicy: block`. Also runs the E2E
+ * test-generation auto-trigger (#4196, part of the #4189 epic) — see the inline comments below for the full
+ * rationale of each step. `manifestPolicyGateMode: "off"` (the default) is a no-op, so the advisory/gate
+ * stays byte-identical to today. Extracted from maybePublishPrPublicSurface (#4607) — pure code motion;
+ * every branch, condition, and comment is preserved verbatim and in the same order.
+ */
+async function maybeApplyManifestPolicyGate(
+  env: Env,
+  args: {
+    repoFullName: string;
+    installationId: number;
+    pr: Awaited<ReturnType<typeof upsertPullRequestFromGitHub>>;
+    repo: Awaited<ReturnType<typeof getRepository>>;
+    settings: RepositorySettings;
+    advisory: Awaited<ReturnType<typeof buildPullRequestAdvisory>>;
+    webhook: { liveFacts: LiveGithubFacts; deliveryId: string };
+    gateFiles: Awaited<ReturnType<typeof listPullRequestFiles>> | null;
+    author: string | null;
+  },
+): Promise<void> {
+  // Focus-manifest policy (#555, opt-in via manifestPolicyGateMode). Reload the CACHED manifest (the
+  // settings resolver discards the raw manifest, but loadRepoFocusManifest is cached so this is cheap),
+  // recompute the guidance over the PR's changed files, and push ONLY the three enforceable policy
+  // findings into the advisory so isConfiguredGateBlocker can block under manifestPolicy: block.
+  if (args.settings.manifestPolicyGateMode !== "off") {
+    // `gateFiles` is threaded in by the ONLY caller (maybePublishPrPublicSurface) already resolved via
+    // getReviewFiles() whenever manifestPolicyGateMode is not "off" -- the same condition gating this whole
+    // block -- so it is never actually null here; the `| null` on the parameter type exists only because the
+    // caller's own local starts as `let gateFiles: ... | null = null` for TypeScript soundness before that
+    // conditional assignment runs. The `?? []` fallback is unreachable on this webhook-integration path
+    // (pre-existing on origin/main before this function was extracted from maybePublishPrPublicSurface, #4607).
+    /* v8 ignore next -- see the comment above */
+    const manifestFiles = args.gateFiles ?? [];
+    const manifest = await loadRepoFocusManifest(env, args.repoFullName);
+    const testFileCount = manifestFiles.filter((file) => isTestPath(file.path)).length;
+    const passedValidationCount = await resolveManifestPassedValidationCount(env, {
+      repoFullName: args.repoFullName,
+      installationId: args.installationId,
+      prNumber: args.pr.number,
+      headSha: args.pr.headSha,
+      baseRef: args.pr.baseRef ?? args.repo?.defaultBranch,
+      body: args.pr.body,
+      expectedCiContexts: args.settings.expectedCiContexts,
+      liveFacts: args.webhook.liveFacts,
+      testExpectationsConfigured: manifest.testExpectations.length > 0,
+      testFileCount,
+    });
+    const guidance = buildFocusManifestGuidance({
+      manifest,
+      changedPaths: manifestFiles.map((file) => file.path),
+      labels: args.pr.labels,
+      linkedIssueCount: args.pr.linkedIssues.length,
+      testFileCount,
+      passedValidationCount,
+      hasNoIssueRationale: hasClearNoIssueRationale(args.pr),
+    });
+    const policyCodes = new Set([
+      "manifest_blocked_path",
+      "manifest_linked_issue_required",
+      "manifest_missing_tests",
+    ]);
+    // Keep deterministic manifest policy findings independent from AI-review eligibility: ignored authors
+    // suppress review/public output only, never maintainer-configured gate blockers or their downstream triggers.
+    const policyFindings = guidance.findings;
+    // Computed once and reused below for the #4196 auto-trigger check -- same feature gate, one call. Also
+    // feeds #4583's inline CTA so the missing-tests finding surfaces `@gittensory generate-tests` right in
+    // ORB's own comment (mirrors CodeRabbit's inline walkthrough checkbox) only when the command would
+    // actually work for this repo, never as noise on a repo that hasn't opted in.
+    const e2eTestGenAvailable = resolveConvergedFeature(env, manifest, "e2eTests", args.repoFullName);
+    for (const finding of policyFindings) {
+      if (!policyCodes.has(finding.code)) continue;
+      args.advisory.findings.push(publicSafeManifestPolicyFinding(finding, { e2eTestGenAvailable }));
+    }
+    // E2E test-generation auto-trigger (#4196, part of the #4189 epic): promotes the deterministic
+    // manifest_missing_tests finding above from advisory-only text into an actual trigger for #4192/#4194's
+    // generation-and-render path -- additive to, never a replacement for, the explicit `@gittensory
+    // generate-tests` command (#4195), which stays available regardless of whether this signal fired.
+    // Filters the SAME policyFindings just computed above rather than re-deriving "PR probably needs
+    // tests" from scratch, per the issue's own requirement -- this is why the auto-trigger lives inside this
+    // exact manifestPolicyGateMode-gated block instead of a parallel code path: that is the only place this
+    // finding is computed at all today.
+    if (args.pr.headSha && policyFindings.some((finding) => finding.code === "manifest_missing_tests") && e2eTestGenAvailable) {
+      const e2eTargetKey = `${args.repoFullName}#${args.pr.number}`;
+      // Double-generation guard: an unchanged head SHA re-entering this pass (a re-review/sweep tick, not a
+      // new push) must never re-spend an LLM call or repost a duplicate suggestion. A genuinely NEW push
+      // (a new head SHA) is always a fresh miss here regardless of how many prior SHAs already fired. The
+      // explicit command deliberately does NOT consult this guard -- a maintainer typing the command always
+      // gets a fresh generation, even on a SHA the auto-trigger already covered (simplicity over a cache that
+      // would need its own invalidation rules; the daily neuron budget shared by both paths already bounds
+      // the cost of a maintainer choosing to ask twice).
+      const alreadyTriggered = await hasAuditEventForHeadSha(env, "github_app.e2e_tests_generation", e2eTargetKey, args.pr.headSha);
+      if (!alreadyTriggered) {
+        const e2eMode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, args.settings.agentGlobalFreezeOverride)), agentPaused: args.settings.agentPaused, agentDryRun: args.settings.agentDryRun });
+        if (e2eMode === "live") {
+          await runE2eTestGenerationAndDeliver(env, {
+            repoFullName: args.repoFullName,
+            installationId: args.installationId,
+            pr: args.pr,
+            settings: args.settings,
+            manifest,
+            files: manifestFiles,
+            // No comment-invoker exists for an automated trigger -- the PR's own author is the closest
+            // analogue to "who this generated test is for" (unlike the explicit command, where `actor` is
+            // whoever typed the command).
+            actor: args.author ?? "the PR author",
+            mode: e2eMode,
+            deliveryId: args.webhook.deliveryId,
+            targetKey: e2eTargetKey,
+            trigger: "auto",
+          });
+        } else {
+          await recordGenerateTestsSkip(env, args.webhook.deliveryId, args.repoFullName, e2eTargetKey, args.author, e2eMode === "dry_run" ? "dry_run" : "agent_paused");
+        }
+      }
+    }
+  }
+}
+
 async function maybePublishPrPublicSurface(
   env: Env,
   installationId: number,
@@ -10080,95 +10202,18 @@ async function maybePublishPrPublicSurface(
         });
       }
     }
-    // Focus-manifest policy (#555, opt-in via manifestPolicyGateMode). Reload the CACHED manifest (the
-    // settings resolver discards the raw manifest, but loadRepoFocusManifest is cached so this is cheap),
-    // recompute the guidance over the PR's changed files, and push ONLY the three enforceable policy
-    // findings into the advisory so isConfiguredGateBlocker can block under manifestPolicy: block.
-    if (settings.manifestPolicyGateMode !== "off") {
-      const manifestFiles = gateFiles ?? [];
-      const manifest = await loadRepoFocusManifest(env, repoFullName);
-      const testFileCount = manifestFiles.filter((file) => isTestPath(file.path)).length;
-      const passedValidationCount = await resolveManifestPassedValidationCount(env, {
-        repoFullName,
-        installationId,
-        prNumber: pr.number,
-        headSha: pr.headSha,
-        baseRef: pr.baseRef ?? repo?.defaultBranch,
-        body: pr.body,
-        expectedCiContexts: settings.expectedCiContexts,
-        liveFacts: webhook.liveFacts,
-        testExpectationsConfigured: manifest.testExpectations.length > 0,
-        testFileCount,
-      });
-      const guidance = buildFocusManifestGuidance({
-        manifest,
-        changedPaths: manifestFiles.map((file) => file.path),
-        labels: pr.labels,
-        linkedIssueCount: pr.linkedIssues.length,
-        testFileCount,
-        passedValidationCount,
-        hasNoIssueRationale: hasClearNoIssueRationale(pr),
-      });
-      const policyCodes = new Set([
-        "manifest_blocked_path",
-        "manifest_linked_issue_required",
-        "manifest_missing_tests",
-      ]);
-      // Keep deterministic manifest policy findings independent from AI-review eligibility: ignored authors
-      // suppress review/public output only, never maintainer-configured gate blockers or their downstream triggers.
-      const policyFindings = guidance.findings;
-      // Computed once and reused below for the #4196 auto-trigger check -- same feature gate, one call. Also
-      // feeds #4583's inline CTA so the missing-tests finding surfaces `@gittensory generate-tests` right in
-      // ORB's own comment (mirrors CodeRabbit's inline walkthrough checkbox) only when the command would
-      // actually work for this repo, never as noise on a repo that hasn't opted in.
-      const e2eTestGenAvailable = resolveConvergedFeature(env, manifest, "e2eTests", repoFullName);
-      for (const finding of policyFindings) {
-        if (!policyCodes.has(finding.code)) continue;
-        advisory.findings.push(publicSafeManifestPolicyFinding(finding, { e2eTestGenAvailable }));
-      }
-      // E2E test-generation auto-trigger (#4196, part of the #4189 epic): promotes the deterministic
-      // manifest_missing_tests finding above from advisory-only text into an actual trigger for #4192/#4194's
-      // generation-and-render path -- additive to, never a replacement for, the explicit `@gittensory
-      // generate-tests` command (#4195), which stays available regardless of whether this signal fired.
-      // Filters the SAME policyFindings just computed above rather than re-deriving "PR probably needs
-      // tests" from scratch, per the issue's own requirement -- this is why the auto-trigger lives inside this
-      // exact manifestPolicyGateMode-gated block instead of a parallel code path: that is the only place this
-      // finding is computed at all today.
-      if (pr.headSha && policyFindings.some((finding) => finding.code === "manifest_missing_tests") && e2eTestGenAvailable) {
-        const e2eTargetKey = `${repoFullName}#${pr.number}`;
-        // Double-generation guard: an unchanged head SHA re-entering this pass (a re-review/sweep tick, not a
-        // new push) must never re-spend an LLM call or repost a duplicate suggestion. A genuinely NEW push
-        // (a new head SHA) is always a fresh miss here regardless of how many prior SHAs already fired. The
-        // explicit command deliberately does NOT consult this guard -- a maintainer typing the command always
-        // gets a fresh generation, even on a SHA the auto-trigger already covered (simplicity over a cache that
-        // would need its own invalidation rules; the daily neuron budget shared by both paths already bounds
-        // the cost of a maintainer choosing to ask twice).
-        const alreadyTriggered = await hasAuditEventForHeadSha(env, "github_app.e2e_tests_generation", e2eTargetKey, pr.headSha);
-        if (!alreadyTriggered) {
-          const e2eMode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
-          if (e2eMode === "live") {
-            await runE2eTestGenerationAndDeliver(env, {
-              repoFullName,
-              installationId,
-              pr,
-              settings,
-              manifest,
-              files: manifestFiles,
-              // No comment-invoker exists for an automated trigger -- the PR's own author is the closest
-              // analogue to "who this generated test is for" (unlike the explicit command, where `actor` is
-              // whoever typed the command).
-              actor: author ?? "the PR author",
-              mode: e2eMode,
-              deliveryId: webhook.deliveryId,
-              targetKey: e2eTargetKey,
-              trigger: "auto",
-            });
-          } else {
-            await recordGenerateTestsSkip(env, webhook.deliveryId, repoFullName, e2eTargetKey, author, e2eMode === "dry_run" ? "dry_run" : "agent_paused");
-          }
-        }
-      }
-    }
+    // Focus-manifest policy gate (#555) -- see maybeApplyManifestPolicyGate's own doc comment.
+    await maybeApplyManifestPolicyGate(env, {
+      repoFullName,
+      installationId,
+      pr,
+      repo,
+      settings,
+      advisory,
+      webhook,
+      gateFiles,
+      author,
+    });
     // Pre-merge checks (#review-pre-merge-checks, opt-in via .gittensory.yml review.pre_merge_checks). DETERMINISTIC
     // content assertions (title/description must contain a phrase, a label must be present), optionally path-gated.
     // Each FAILED check appends an advisory `pre_merge_check_failed` finding — or a blocking `pre_merge_check_required`

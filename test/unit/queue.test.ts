@@ -10015,6 +10015,105 @@ describe("queue processors", () => {
     expect(JSON.stringify(gatePatches[0])).toContain("Configured validation evidence missing");
   });
 
+  // #4607 (maybeApplyManifestPolicyGate extraction): buildFocusManifestGuidance can produce findings whose
+  // code is NOT one of the three enforceable manifest-policy codes (manifest_blocked_path /
+  // manifest_linked_issue_required / manifest_missing_tests) -- e.g. manifest_off_focus, when wantedPaths is
+  // configured and no changed path matches it. Those non-enforceable findings must be filtered out before
+  // ever reaching the advisory/gate, never published alongside an enforceable one from the same pass.
+  it("filters out a non-enforceable manifest finding (manifest_off_focus) while still surfacing an enforceable one", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertInstallation(env, {
+      installation: {
+        id: 123,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+        events: ["pull_request"],
+      },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+      manifestPolicyGateMode: "block",
+      requireLinkedIssue: false,
+      typeLabelsEnabled: false,
+    });
+    // wantedPaths configured + a changed file outside it produces manifest_off_focus (NOT one of the three
+    // enforceable codes); testExpectations configured + no evidence produces manifest_missing_tests (IS
+    // enforceable) -- so this single pass yields one filtered finding and one published finding.
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", {
+      wantedPaths: ["docs/"],
+      testExpectations: ["Run npm run test:ci."],
+    });
+    await upsertPullRequestFile(env, {
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 45,
+      path: "src/feature.ts",
+      status: "modified",
+      additions: 1,
+      deletions: 0,
+      changes: 1,
+      payload: {},
+    });
+
+    const gatePatches: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/gate-off-focus/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 903 }, { status: 201 });
+      if (url.includes("/check-runs/903") && method === "PATCH") {
+        gatePatches.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+        return Response.json({ id: 903, html_url: "https://github.com/checks/903" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-off-focus-filtered",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: {
+          number: 45,
+          title: "Out of focus change",
+          state: "open",
+          user: { login: "contributor" },
+          head: { sha: "gate-off-focus" },
+          labels: [],
+          body: "No tests run.",
+        },
+      },
+    });
+
+    expect(gatePatches).toHaveLength(1);
+    // The enforceable finding (manifest_missing_tests) is published...
+    expect(JSON.stringify(gatePatches[0])).toContain("Configured validation evidence missing");
+    // ...but the non-enforceable finding (manifest_off_focus) is filtered out before it ever reaches the advisory.
+    expect(JSON.stringify(gatePatches[0])).not.toContain("Change is outside maintainer-wanted areas");
+    expect(JSON.stringify(gatePatches[0])).not.toContain("manifest_off_focus");
+  });
+
   // REGRESSION (#3304): a PR with no body at all (GitHub sends `body: null` for an empty description) must
   // fall back to treating validation evidence as absent, not throw or silently pass the manifest gate.
   it("still flags manifest_missing_tests for a PR with a null body", async () => {

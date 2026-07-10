@@ -231,6 +231,77 @@ describe("fetchLinkedIssueLabelsForPropagation (#priority-linked-issue-gate)", (
     expect(result).toEqual([]);
   });
 
+  describe("closed-by-own-merge trust (#4528 — merging a PR auto-closes its linked issue)", () => {
+    it("REGRESSION (PR #4494 shape): still propagates when the linked issue was closed at or after THIS PR's own merge", async () => {
+      stubFetch((url) => {
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.endsWith("/issues/4279"))
+          return Response.json({
+            number: 4279,
+            state: "closed",
+            closed_at: "2026-07-09T22:15:14Z",
+            user: { login: "contrib" },
+            labels: ["gittensor:feature", "gittensor:priority"],
+          });
+        return new Response("not found", { status: 404 });
+      });
+      const env = createTestEnv({});
+      const result = await fetchLinkedIssueLabelsForPropagation({
+        env,
+        repoFullName: "owner/repo",
+        linkedIssues: [4279],
+        installationId: 123,
+        prAuthorLogin: "contrib",
+        prMergedAt: "2026-07-09T22:15:13Z",
+      });
+      expect(result).toEqual(["gittensor:feature", "gittensor:priority"]);
+    });
+
+    it("does NOT propagate when the linked issue was already closed BEFORE this PR merged (anti-gaming: an unrelated, already-resolved issue can't be borrowed)", async () => {
+      stubFetch((url) => {
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.endsWith("/issues/777"))
+          return Response.json({
+            number: 777,
+            state: "closed",
+            closed_at: "2026-07-01T00:00:00Z",
+            user: { login: "contrib" },
+            labels: ["gittensor:priority"],
+          });
+        return new Response("not found", { status: 404 });
+      });
+      const env = createTestEnv({});
+      const result = await fetchLinkedIssueLabelsForPropagation({
+        env,
+        repoFullName: "owner/repo",
+        linkedIssues: [777],
+        installationId: 123,
+        prAuthorLogin: "contrib",
+        prMergedAt: "2026-07-09T22:15:13Z",
+      });
+      expect(result).toEqual([]);
+    });
+
+    it("does not propagate a closed issue missing closed_at even when prMergedAt is present (defensive: no provable closing-time relationship)", async () => {
+      stubFetch((url) => {
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.endsWith("/issues/778"))
+          return Response.json({ number: 778, state: "closed", user: { login: "contrib" }, labels: ["gittensor:priority"] });
+        return new Response("not found", { status: 404 });
+      });
+      const env = createTestEnv({});
+      const result = await fetchLinkedIssueLabelsForPropagation({
+        env,
+        repoFullName: "owner/repo",
+        linkedIssues: [778],
+        installationId: 123,
+        prAuthorLogin: "contrib",
+        prMergedAt: "2026-07-09T22:15:13Z",
+      });
+      expect(result).toEqual([]);
+    });
+  });
+
   it("does not propagate labels when the PR author is missing", async () => {
     stubFetch((url) => {
       if (url.includes("/access_tokens"))

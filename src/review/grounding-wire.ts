@@ -13,6 +13,7 @@
 
 import { createInstallationToken } from "../github/app";
 import { githubRateLimitAdmissionKeyForInstallation, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../github/client";
+import { getCachedGroundingFileContent, putCachedGroundingFileContent } from "../db/repositories";
 import type { CheckSummaryRecord, PullRequestFileRecord } from "../types";
 import { repoParts } from "../utils/json";
 import { isConvergenceRepoAllowed } from "./cutover-gate";
@@ -135,6 +136,12 @@ export async function makeGithubFileFetcher(env: Env, repoFullName: string, inst
   const { owner, name } = repoParts(repoFullName);
   return {
     async getFileContent(path: string, ref: string, maxChars = 24_001): Promise<string | null> {
+      // #4499: content for a given (repo, path, ref) is a git blob at an immutable commit -- it never changes,
+      // so a cache hit is always safe to reuse verbatim, skipping the GitHub call entirely. Checked BEFORE the
+      // network fetch below; only a genuinely successful fetch is ever written back (see the .catch-free write
+      // after the try block), so a transient failure is never mistaken for a confirmed-permanent one.
+      const cached = await getCachedGroundingFileContent(env, repoFullName, path, ref).catch(() => null);
+      if (cached !== null) return cached;
       try {
         const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contents/${path
           .split("/")
@@ -142,6 +149,7 @@ export async function makeGithubFileFetcher(env: Env, repoFullName: string, inst
           .join("/")}?ref=${encodeURIComponent(ref)}`;
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 10_000);
+        let content: string | null;
         try {
           const response = await timeoutFetch(url, {
             signal: controller.signal,
@@ -157,11 +165,18 @@ export async function makeGithubFileFetcher(env: Env, repoFullName: string, inst
           });
           if (!response.ok) return null;
           const contentLength = response.headers.get("content-length");
-          if (contentLength && Number(contentLength) > maxChars) return " ".repeat(maxChars + 1);
-          return await readTextWithLimit(response, maxChars);
+          content = contentLength && Number(contentLength) > maxChars ? " ".repeat(maxChars + 1) : await readTextWithLimit(response, maxChars);
         } finally {
           clearTimeout(timeout);
         }
+        /* v8 ignore next -- readTextWithLimit's `string | null` return type is defensive; both of its actual
+         * return paths (text.slice(...) / text) always produce a string, never null, so this guard's false
+         * side is unreachable via the current implementation. Kept so a future readTextWithLimit change that
+         * legitimately returns null can never get cached as if it were real fetched content. */
+        if (content !== null) {
+          await putCachedGroundingFileContent(env, repoFullName, path, ref, content).catch(() => undefined);
+        }
+        return content;
       } catch {
         return null; // network / decode failure → skip this file (fail-safe)
       }

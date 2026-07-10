@@ -67,22 +67,32 @@ function hasLongSequentialRun(value: string): boolean {
   return false;
 }
 
-// #3041: fixture names like "installation-token" are common in this repo and should not trip the
-// generic token-assignment heuristic. Keep that carve-out key-aware and two-word-only: lowercase
-// hyphenated values assigned to password/passwd/client_secret remain plausible passphrase-style credentials.
-const LOWERCASE_HYPHENATED_TOKEN_FIXTURE_PATTERN = /^[a-z]+-[a-z]+$/;
 // Lowercase hyphenated mock names are fixtures; mixed-case/digit-bearing values containing "mock" remain
 // plausible credentials and must still be reported by the generic assignment scanner.
 const LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN = /^(?:[a-z]+-)*mock(?:-[a-z]+)*$/;
 
+// All-lowercase-letters value check, shared by the self-naming-suffix exclusion below.
+const ALL_LOWERCASE_SEGMENTS_PATTERN = /^[a-z]+(?:[-_][a-z]+)*$/;
+
+// #4579-followup (metagraphed/gittensory#4524 "token = default-session-token"/"beta-session-token",
+// awesome-claude#4758 "embedded_secret: unsafe_install_or_secret" -- both confirmed live, no real secret
+// present): a value whose OWN last hyphen/underscore-separated segment is itself one of the same secret-shaped
+// trigger words reads as a NAME for a concept ("this is a kind of token/secret"), not an opaque credential --
+// a real generated token/key value never ends by literally restating what kind of thing it is. Deliberately
+// NARROWER than "any multi-segment lowercase phrase": a Diceware-style passphrase like
+// "alpha-bravo-charlie-delta" doesn't end in a trigger word, so it still correctly flags (regression guard
+// below) -- only values that self-identify as a token/secret/key/password NAME are excluded.
+const SELF_NAMING_FIXTURE_SUFFIX_PATTERN = /[-_](?:token|secret|key|password|passwd)$/i;
+
 /** True for an obvious non-secret filler value: a known placeholder phrase, a string built from at most 2
  *  distinct characters (e.g. "xxxxxxxxxxxxxxxx", "----------------"), a long monotonic character-code run
- *  (e.g. "abcdefghijklmnop123"), or a narrow token fixture name (e.g. "installation-token"). */
-function isPlaceholderSecretValue(key: string, value: string): boolean {
+ *  (e.g. "abcdefghijklmnop123"), or a lowercase identifier whose own last segment self-names as a secret kind
+ *  (e.g. "default-session-token", "unsafe_install_or_secret"). */
+function isPlaceholderSecretValue(value: string): boolean {
   if (PLACEHOLDER_VALUE_PATTERN.test(value)) return true;
   if (new Set(value.toLowerCase()).size <= 2) return true;
   if (LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN.test(value)) return true;
-  if (key.toLowerCase() === "token" && LOWERCASE_HYPHENATED_TOKEN_FIXTURE_PATTERN.test(value)) return true;
+  if (ALL_LOWERCASE_SEGMENTS_PATTERN.test(value) && SELF_NAMING_FIXTURE_SUFFIX_PATTERN.test(value)) return true;
   return hasLongSequentialRun(value);
 }
 
@@ -94,7 +104,7 @@ function hasGenericSecretAssignment(text: string): boolean {
   while ((match = GENERIC_SECRET_ASSIGNMENT_PATTERN.exec(text)) !== null) {
     // The key and value groups are mandatory (not `?`/`*`-wrapped), so both are always present
     // whenever the overall match succeeds -- non-null by construction, not runtime branches.
-    if (!isPlaceholderSecretValue(match[1]!, match[2]!)) return true;
+    if (!isPlaceholderSecretValue(match[2]!)) return true;
   }
   return false;
 }

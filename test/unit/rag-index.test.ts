@@ -992,8 +992,10 @@ describe("merged-PR incremental re-index trigger (webhook)", () => {
     // REGRESSION (#rate-limit-admission-attribution): installationId must be threaded through so the queue's
     // admission check attributes this job to the repo's OWN installation bucket, not the shared public-token
     // bucket -- omitting it starves an installed repo's re-index behind unrelated public-token traffic.
+    // paths reflects listPullRequestFiles's deterministic path-ascending order (#linked-issue-satisfaction-cache-fingerprint-stability),
+    // not the seed/insertion order above -- "README.md" sorts before "src/a.ts".
     expect(ragJobs).toEqual([
-      { type: "rag-index-repo", requestedBy: "webhook", repoFullName: "JSONbored/gittensory", paths: ["src/a.ts", "README.md"], installationId: 123 },
+      { type: "rag-index-repo", requestedBy: "webhook", repoFullName: "JSONbored/gittensory", paths: ["README.md", "src/a.ts"], installationId: 123 },
     ]);
   });
 

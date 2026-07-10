@@ -34,6 +34,7 @@ test("parseMinerGoalSpec: valid raw config normalizes every field and keeps non-
     blockedLabels: ["duplicate", " duplicate "],
     maxConcurrentClaims: 2.9,
     issueDiscoveryPolicy: "encouraged",
+    feasibilityGate: { enabled: false, suppressedReasons: ["duplicate_cluster_high"] },
   });
 
   assert.equal(parsed.present, true);
@@ -45,8 +46,30 @@ test("parseMinerGoalSpec: valid raw config normalizes every field and keeps non-
     blockedLabels: ["duplicate"],
     maxConcurrentClaims: 2,
     issueDiscoveryPolicy: "encouraged",
+    feasibilityGate: { enabled: false, suppressedReasons: ["duplicate_cluster_high"] },
   });
   assert.deepEqual(parsed.warnings, []);
+});
+
+test("parseMinerGoalSpec: feasibilityGate sub-fields normalize independently and reject a non-mapping value", () => {
+  const valid = parseMinerGoalSpec({
+    wantedPaths: ["src/**"],
+    feasibilityGate: { enabled: false, suppressedReasons: ["issue_missing"] },
+  });
+  assert.deepEqual(valid.spec.feasibilityGate, { enabled: false, suppressedReasons: ["issue_missing"] });
+  assert.deepEqual(valid.warnings, []);
+
+  const malformed = parseMinerGoalSpec({
+    wantedPaths: ["src/**"],
+    feasibilityGate: { enabled: "nope", suppressedReasons: "not a list" },
+  });
+  assert.deepEqual(malformed.spec.feasibilityGate, { enabled: true, suppressedReasons: [] });
+  assert.match(malformed.warnings.join(" "), /feasibilityGate\.enabled/i);
+  assert.match(malformed.warnings.join(" "), /feasibilityGate\.suppressedReasons/i);
+
+  const arrayValue = parseMinerGoalSpec({ wantedPaths: ["src/**"], feasibilityGate: ["not", "a", "mapping"] });
+  assert.deepEqual(arrayValue.spec.feasibilityGate, { enabled: true, suppressedReasons: [] });
+  assert.match(arrayValue.warnings.join(" "), /feasibilityGate.*must be a mapping/i);
 });
 
 test("parseMinerGoalSpec: exactly 100 unique entries are accepted without a cap warning", () => {
@@ -119,6 +142,7 @@ test("parseMinerGoalSpec: malformed fields fall back independently with targeted
     blockedLabels: [123, " wontfix "],
     maxConcurrentClaims: 0.9,
     issueDiscoveryPolicy: "always",
+    feasibilityGate: "not a mapping",
   });
 
   assert.equal(parsed.present, true);
@@ -130,6 +154,7 @@ test("parseMinerGoalSpec: malformed fields fall back independently with targeted
     blockedLabels: ["wontfix"],
     maxConcurrentClaims: 1,
     issueDiscoveryPolicy: "neutral",
+    feasibilityGate: { enabled: true, suppressedReasons: [] },
   });
   const warningText = parsed.warnings.join(" ");
   assert.match(warningText, /minerEnabled/i);
@@ -139,6 +164,7 @@ test("parseMinerGoalSpec: malformed fields fall back independently with targeted
   assert.match(warningText, /blockedLabels/i);
   assert.match(warningText, /maxConcurrentClaims/i);
   assert.match(warningText, /issueDiscoveryPolicy/i);
+  assert.match(warningText, /feasibilityGate/i);
   assert.match(warningText, /truncated an over-long entry/i);
 });
 
@@ -156,6 +182,7 @@ test("parseMinerGoalSpec: unknown-only or default-only content stays absent with
     blockedLabels: [],
     maxConcurrentClaims: 1,
     issueDiscoveryPolicy: "neutral",
+    feasibilityGate: { enabled: true, suppressedReasons: [] },
   });
   assert.equal(explicitDefaults.present, false);
   assert.deepEqual(explicitDefaults.spec, DEFAULT_MINER_GOAL_SPEC);

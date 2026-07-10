@@ -144,14 +144,15 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(replayed).toMatchObject({ actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "alice" });
   });
 
-  it("REGRESSION (#priority-linked-issue-gate-ownership): actionParams round-trips assignLinkedIssues through approval replay", () => {
+  it("REGRESSION: actionParams drops legacy assignLinkedIssues so staged assignment cannot fan out to linked issues", () => {
     const assign: PlannedAgentAction = { actionClass: "assign", requiresApproval: true, reason: "auto-assign PR opener", assignee: "alice", assignLinkedIssues: [42, 43] };
 
     const persisted = actionParams(assign);
     const replayed = pendingActionToPlanned({ actionClass: "assign", params: persisted, reason: assign.reason });
 
-    expect(persisted).toEqual({ assignee: "alice", assignLinkedIssues: [42, 43] });
-    expect(replayed).toMatchObject({ actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "alice", assignLinkedIssues: [42, 43] });
+    expect(persisted).toEqual({ assignee: "alice" });
+    expect(replayed).toMatchObject({ actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "alice" });
+    expect(replayed).not.toHaveProperty("assignLinkedIssues");
   });
 
   it("actionParams round-trips structured closeReasons so approval replay preserves every close cause", () => {
@@ -864,28 +865,13 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(audit?.detail).toBe("assignee refused by GitHub — fell back to a by:external-contributor label");
   });
 
-  it("LIVE assign (#priority-linked-issue-gate-ownership): also assigns the PR's linked issues, not just the PR itself", async () => {
+  it("LIVE assign: ignores legacy assignLinkedIssues and assigns only the PR itself", async () => {
     const env = createTestEnv({});
     const assign: PlannedAgentAction = { actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "alice", assignLinkedIssues: [42, 43] };
     const outcomes = await executeAgentMaintenanceActions(env, ctx({ autonomy: { assign: "auto" } }), [assign]);
-    expect(ensurePullRequestAssignee).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "alice"); // the PR itself
-    expect(ensurePullRequestAssignee).toHaveBeenCalledWith(env, 123, "owner/repo", 42, "alice"); // linked issue #42
-    expect(ensurePullRequestAssignee).toHaveBeenCalledWith(env, 123, "owner/repo", 43, "alice"); // linked issue #43
-    expect(ensurePullRequestAssignee).toHaveBeenCalledTimes(3);
-    expect(outcomes[0]?.outcome).toBe("completed");
-  });
-
-  it("LIVE assign: a linked issue's assignment failing does not affect the PR-assign outcome or the other linked issue", async () => {
-    const env = createTestEnv({});
-    vi.mocked(ensurePullRequestAssignee).mockImplementation(async (_env, _installationId, _repoFullName, issueOrPrNumber) => {
-      if (issueOrPrNumber === 42) throw new Error("boom");
-      return { applied: true };
-    });
-    const assign: PlannedAgentAction = { actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "alice", assignLinkedIssues: [42, 43] };
-    const outcomes = await executeAgentMaintenanceActions(env, ctx({ autonomy: { assign: "auto" } }), [assign]);
-    expect(outcomes[0]?.outcome).toBe("completed");
     expect(ensurePullRequestAssignee).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "alice");
-    expect(ensurePullRequestAssignee).toHaveBeenCalledWith(env, 123, "owner/repo", 43, "alice");
+    expect(ensurePullRequestAssignee).toHaveBeenCalledTimes(1);
+    expect(outcomes[0]?.outcome).toBe("completed");
   });
 
   it("LIVE assign: no linkedIssues means no extra assignee calls beyond the PR itself", async () => {

@@ -566,7 +566,10 @@ export function resolveEffectiveSettings(
       whenLabels: screenshotTableGateOverride.whenLabels ?? base.whenLabels,
       whenPaths: screenshotTableGateOverride.whenPaths ?? base.whenPaths,
       action: screenshotTableGateOverride.action ?? base.action,
+      requireViewports: screenshotTableGateOverride.requireViewports ?? base.requireViewports,
+      requireThemes: screenshotTableGateOverride.requireThemes ?? base.requireThemes,
       message: screenshotTableGateOverride.message ?? base.message,
+      skillFileUrl: screenshotTableGateOverride.skillFileUrl ?? base.skillFileUrl,
     };
   }
   if (advisoryAiRoutingOverride !== undefined) {

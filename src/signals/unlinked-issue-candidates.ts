@@ -27,8 +27,10 @@ export type FindUnlinkedIssueCandidatesInput = {
 };
 
 // Bound the AI-verifier fan-out per PR: even a repo with hundreds of open issues only ever sends its
-// top-scoring handful for a real (paid/self-host-compute) AI call.
-const MAX_CANDIDATES = 3;
+// top-scoring handful for a real (paid/self-host-compute) AI call. Exported so the guardrail orchestrator
+// (unlinked-issue-guardrail.ts, #4515) can size its own worst-case per-PR AI-spend estimate off the same
+// number, rather than a second, driftable copy of this constant.
+export const MAX_CANDIDATES = 3;
 // A path/basename mention is a much stronger signal than shared vocabulary — worth several tokens' score,
 // and (deliberately) enough on its own to qualify a candidate even with zero token overlap (an issue that
 // names the exact file this PR touches is worth checking regardless of shared wording).

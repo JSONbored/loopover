@@ -1,7 +1,4 @@
-import { chmodSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 
 // The miner's local portfolio/queue store (#2292): a 100% client-side, prioritized backlog of candidate work
 // items across every repo the miner has been pointed at ("what should I look at next, across everything I'm
@@ -15,26 +12,11 @@ const defaultDbFileName = "portfolio-queue.sqlite3";
 let defaultPortfolioQueueStore = null;
 
 export function resolvePortfolioQueueDbPath(env = process.env) {
-  const explicitPath = typeof env.GITTENSORY_MINER_PORTFOLIO_QUEUE_DB === "string"
-    ? env.GITTENSORY_MINER_PORTFOLIO_QUEUE_DB.trim()
-    : "";
-  if (explicitPath) return explicitPath;
-
-  const explicitConfigDir = typeof env.GITTENSORY_MINER_CONFIG_DIR === "string"
-    ? env.GITTENSORY_MINER_CONFIG_DIR.trim()
-    : "";
-  if (explicitConfigDir) return join(explicitConfigDir, defaultDbFileName);
-
-  const configHome = typeof env.XDG_CONFIG_HOME === "string" && env.XDG_CONFIG_HOME.trim()
-    ? env.XDG_CONFIG_HOME.trim()
-    : join(homedir(), ".config");
-  return join(configHome, "gittensory-miner", defaultDbFileName);
+  return resolveLocalStoreDbPath(defaultDbFileName, "GITTENSORY_MINER_PORTFOLIO_QUEUE_DB", env);
 }
 
 function normalizeDbPath(dbPath) {
-  const raw = dbPath ?? resolvePortfolioQueueDbPath();
-  if (typeof raw !== "string" || !raw.trim()) throw new Error("invalid_portfolio_queue_db_path");
-  return raw.trim();
+  return normalizeLocalStoreDbPath(dbPath, resolvePortfolioQueueDbPath(), "invalid_portfolio_queue_db_path");
 }
 
 function normalizeRepoFullName(repoFullName) {
@@ -78,14 +60,8 @@ function rowToEntry(row) {
  */
 export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) {
   const resolvedPath = normalizeDbPath(dbPath);
-  // The store is a persistent local file; the special in-memory path (':memory:') has no file to create or chmod.
-  if (resolvedPath !== ":memory:") {
-    mkdirSync(dirname(resolvedPath), { recursive: true, mode: 0o700 });
-  }
-  const db = new DatabaseSync(resolvedPath);
-  if (resolvedPath !== ":memory:") chmodSync(resolvedPath, 0o600);
-  // Wait (rather than fail) for a concurrent writer's lock so two queue instances on the same file serialize.
-  db.exec("PRAGMA busy_timeout = 5000");
+  // openLocalStoreDb skips mkdir/chmod for the special in-memory path (':memory:'), which has no file on disk.
+  const db = openLocalStoreDb(resolvedPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS miner_portfolio_queue (
       repo_full_name TEXT NOT NULL,
@@ -133,6 +109,14 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
   const listRepoStatement = db.prepare(
     `SELECT * FROM miner_portfolio_queue WHERE repo_full_name = ? ${ORDER}`,
   );
+  const listActiveStatement = db.prepare(
+    `SELECT * FROM miner_portfolio_queue WHERE status IN ('queued', 'in_progress') ${ORDER}`,
+  );
+  const claimTargetStatement = db.prepare(`
+    UPDATE miner_portfolio_queue SET status = 'in_progress'
+    WHERE repo_full_name = ? AND identifier = ? AND status = 'queued'
+    RETURNING *
+  `);
 
   return {
     dbPath: resolvedPath,
@@ -161,6 +145,31 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
       if (result.changes === 0) return null;
       const row = getStatement.get(normalizedRepo, normalizedIdentifier);
       return row ? rowToEntry(row) : null;
+    },
+    /**
+     * Transactional caps-aware batch claim hook used by portfolio-queue-manager.js: re-read active rows under an
+     * exclusive lock, let the caller pick targets, then atomically flip each still-queued row to `in_progress`.
+     */
+    batchClaim(selectFn) {
+      if (typeof selectFn !== "function") throw new Error("invalid_batch_claim_selector");
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const entries = listActiveStatement.all().map(rowToEntry);
+        const targets = selectFn(entries);
+        if (!Array.isArray(targets)) throw new Error("invalid_batch_claim_selection");
+        const claimed = [];
+        for (const target of targets) {
+          const repoFullName = normalizeRepoFullName(target?.repoFullName);
+          const identifier = normalizeIdentifier(target?.identifier);
+          const row = claimTargetStatement.get(repoFullName, identifier);
+          if (row) claimed.push(rowToEntry(row));
+        }
+        db.exec("COMMIT");
+        return claimed;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
     },
     close() {
       db.close();

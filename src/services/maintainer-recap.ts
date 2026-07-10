@@ -11,9 +11,11 @@
 // PREDICTION precision; this is MULTI-repo and sourced from the realized gate-block + recommendation-outcome
 // calibration ledgers (blocked-then-merged false positives, maintainer overrides, recommendation reversals).
 import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN, PUBLIC_UNSAFE_PATTERN } from "../signals/redaction";
+import { deliverRecapToDiscord, deliverRecapToSlack } from "./notify-discord";
 import type { GatePrecisionReport } from "./gate-precision";
 import type { OutcomeCalibration } from "./outcome-calibration";
 import type { MaintainerRecapRepo, RecapReport } from "../types";
+import { nowIso } from "../utils/json";
 
 const DEFAULT_WINDOW_DAYS = 7;
 const MIN_WINDOW_DAYS = 1;
@@ -149,4 +151,51 @@ export function formatMaintainerRecap(report: RecapReport): string {
     ...recapSectionLines(perRepoLines, "_No repositories in this window._"),
   ];
   return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`;
+}
+
+export type RunMaintainerRecapResult =
+  | { skipped: true; reason: "disabled" }
+  | {
+      skipped: false;
+      report: RecapReport;
+      formatted: string;
+      delivery: {
+        discord: { sent: boolean; reason?: string };
+        slack: { sent: boolean; reason?: string };
+      };
+    };
+
+/**
+ * End-to-end maintainer recap orchestration (#2252): build (or accept an injected report) →
+ * {@link formatMaintainerRecap} → fan out to Discord + Slack independently. Each deliverer is best-effort and
+ * never throws, so a single-channel outage does not abort the other. When `enabled === false`, short-circuits
+ * before any I/O (the flag-OFF arm mirrored by the cron/job processor).
+ */
+export async function runMaintainerRecap(
+  env: Env,
+  options: {
+    windowDays?: number;
+    generatedAt?: string;
+    repos?: MaintainerRecapRepoInput[];
+    /** Pre-built report for test injection; skips {@link buildMaintainerRecap} when set. */
+    report?: RecapReport;
+    /** When explicitly false, short-circuits before build/format/delivery. Default: run. */
+    enabled?: boolean;
+  } = {},
+): Promise<RunMaintainerRecapResult> {
+  if (options.enabled === false) return { skipped: true, reason: "disabled" };
+
+  const report =
+    options.report ??
+    buildMaintainerRecap({
+      generatedAt: options.generatedAt ?? nowIso(),
+      windowDays: options.windowDays,
+      repos: options.repos ?? [],
+    });
+  const formatted = formatMaintainerRecap(report);
+  const [discord, slack] = await Promise.all([
+    deliverRecapToDiscord(env, report, formatted),
+    deliverRecapToSlack(env, report, formatted),
+  ]);
+  return { skipped: false, report, formatted, delivery: { discord, slack } };
 }

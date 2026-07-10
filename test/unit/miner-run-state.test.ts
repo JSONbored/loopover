@@ -8,6 +8,7 @@ import {
   closeDefaultRunStateStore,
   getRunState,
   initRunStateStore,
+  listRunStates,
   resolveRunStateDbPath,
   setRunState,
 } from "../../packages/gittensory-miner/lib/run-state.js";
@@ -154,5 +155,61 @@ describe("gittensory-miner run-state store (#2289)", () => {
     } finally {
       store.close();
     }
+  });
+
+  it("listRunStates returns every recorded repo sorted by repoFullName (#4279)", () => {
+    const dbPath = join(tempRoot(), "run-state.sqlite3");
+    const store = initRunStateStore(dbPath);
+    try {
+      expect(store.listRunStates()).toEqual([]);
+
+      store.setRunState("acme/widgets", "planning");
+      store.setRunState("acme/aaa", "idle");
+
+      const rows = store.listRunStates();
+      expect(rows.map((row) => row.repoFullName)).toEqual(["acme/aaa", "acme/widgets"]);
+      expect(rows[0]).toMatchObject({ repoFullName: "acme/aaa", state: "idle" });
+      expect(Date.parse(rows[0]!.updatedAt)).not.toBeNaN();
+    } finally {
+      store.close();
+    }
+  });
+
+  it("listRunStates fails closed by dropping a legacy row with an unknown state", () => {
+    const dbPath = join(tempRoot(), "legacy-list.sqlite3");
+    const legacy = new DatabaseSync(dbPath);
+    legacy.exec(`
+      CREATE TABLE miner_run_state (
+        repo_full_name TEXT PRIMARY KEY,
+        state TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    legacy
+      .prepare("INSERT INTO miner_run_state (repo_full_name, state, updated_at) VALUES (?, ?, ?)")
+      .run("acme/legacy", "paused", "2026-07-02T00:00:00.000Z");
+    legacy
+      .prepare("INSERT INTO miner_run_state (repo_full_name, state, updated_at) VALUES (?, ?, ?)")
+      .run("acme/widgets", "planning", "2026-07-02T00:00:00.000Z");
+    legacy.close();
+
+    const store = initRunStateStore(dbPath);
+    try {
+      expect(store.listRunStates()).toEqual([
+        { repoFullName: "acme/widgets", state: "planning", updatedAt: "2026-07-02T00:00:00.000Z" },
+      ]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("exposes the module-level listRunStates helper backed by the default local DB path", () => {
+    vi.stubEnv("GITTENSORY_MINER_RUN_STATE_DB", join(tempRoot(), "default-list.sqlite3"));
+
+    expect(listRunStates()).toEqual([]);
+    setRunState("acme/widgets", "preparing");
+    expect(listRunStates()).toEqual([
+      expect.objectContaining({ repoFullName: "acme/widgets", state: "preparing" }),
+    ]);
   });
 });

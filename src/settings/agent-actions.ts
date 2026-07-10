@@ -150,11 +150,9 @@ export type PlannedAgentAction = {
   // contributor. GitHub silently drops an assignee lacking push/triage access rather than erroring, so the
   // executor falls back to a per-login label when the real assignment doesn't stick.
   assignee?: string;
-  // For an `assign` action (#priority-linked-issue-gate-ownership): the SAME login also best-effort-assigned to
-  // each of these linked issue numbers (already capped, see maybePlanAssign). Without this, a contributor is
-  // assigned to their own PR but never to the issue(s) it closes -- and gittensor:priority propagation
-  // (resolveIssueLabelsForPropagation, linked-issue-label-propagation-fetch.ts) requires the PR author to be the
-  // linked issue's own author OR assignee, which an issue-opened-for-open-pickup contributor otherwise never is.
+  // Legacy approval-queue rows may contain this field from the reverted linked-issue assignment fan-out. New
+  // plans do not set it, actionParams does not persist it, and the executor ignores it because linked issue
+  // assignment is an authorization signal granted by maintainers, not by PR-body closing references.
   assignLinkedIssues?: number[];
 };
 
@@ -360,8 +358,9 @@ export type AgentActionPlanInput = {
   // satisfies the gate, so `matched` here is already false whenever the bot capture succeeded (see
   // evaluateScreenshotTableGate's `botCaptureSatisfied` input). Same zero-hallucination short-circuit shape as
   // blacklistMatch — fires ahead of ALL merit/CI/AI analysis, for a CONTRIBUTOR only, so its close is tagged
-  // `closeKind: "screenshot_table"`. Absent / not-violated ⇒ no effect. `"close"` is the gate's only
-  // enforcement action (#4110 removed the dead request_changes/comment surface — see ScreenshotTableGateAction).
+  // `closeKind: "screenshot_table"`. Absent / not-violated ⇒ no effect. The caller (processors.ts) only ever
+  // populates this field when the gate's configured `action` is `"close"` — an `"advisory"` violation (#4535)
+  // never reaches the planner at all, by construction (see ScreenshotTableGateAction).
   screenshotTableMatch?: { matched: boolean; reason: string | null } | undefined;
   pr: {
     mergeableState?: string | null | undefined;
@@ -558,12 +557,6 @@ function screenshotTableCloseMessage(reason: string): string {
   return `${reason} This is an automated maintenance action.`;
 }
 
-// Best-effort assign-to-linked-issue fan-out cap (#priority-linked-issue-gate-ownership): a PR overwhelmingly
-// closes 1 (rarely 2-3) issues. `pr.linkedIssues` is already capped much higher (50, MAX_LINKED_ISSUE_NUMBERS)
-// for extraction/storage purposes only -- this narrower cap bounds the number of extra GitHub assignee-WRITE
-// calls the executor makes for one `assign` action.
-const ASSIGN_LINKED_ISSUES_MAX = 10;
-
 /**
  * Plan best-effort assignment of the PR's opening contributor (#3182), independent of merge/close/CI outcome.
  * MUST run before the CI-pending settle-before-decide return below (#assign-before-ci-pending) — a PR that has
@@ -571,26 +564,18 @@ const ASSIGN_LINKED_ISSUES_MAX = 10;
  * unrelated check is still pending; assign has no bearing on mergeability so it never needs CI to settle first.
  * Gated purely on its own `assign` autonomy class, same as every other independent action here.
  *
- * Also best-effort assigns the SAME contributor to the PR's own linked issues (#priority-linked-issue-gate-
- * ownership), capped at ASSIGN_LINKED_ISSUES_MAX. Without this, gittensor:priority propagation could never fire
- * in practice for a contributor's PR: resolveIssueLabelsForPropagation only unlocks that label when the PR
- * author is the linked issue's own author OR a GitHub assignee of it, but our issues are almost always opened
- * for open pickup and rarely formally assigned (see the propagation config's own comment in
- * gittensory-repo-focus-manifest.ts) -- so before this, only the PR itself ever got an assignee, never the
- * issue it closes.
+ * Do NOT mirror this assignment to PR-body linked issues. Those issue numbers are contributor-controlled
+ * closing references, while downstream linked-issue ownership checks intentionally treat issue assignees as a
+ * maintainer-granted authorization signal.
  */
 function maybePlanAssign(actions: PlannedAgentAction[], input: AgentActionPlanInput): void {
   const level = resolveAutonomy(input.autonomy, "assign");
   if (!isActingAutonomyLevel(level) || !input.pr.authorLogin) return;
-  const linkedIssues = input.pr.linkedIssues;
   actions.push({
     actionClass: "assign",
     requiresApproval: autonomyRequiresApproval(level),
     reason: "auto-assign PR opener",
     assignee: input.pr.authorLogin,
-    ...(linkedIssues && linkedIssues.length > 0
-      ? { assignLinkedIssues: linkedIssues.slice(0, ASSIGN_LINKED_ISSUES_MAX) }
-      : {}),
   });
 }
 

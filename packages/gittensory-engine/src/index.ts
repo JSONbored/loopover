@@ -78,6 +78,13 @@ export {
   type ReplayHarnessStatus,
 } from "./phase7-calibration-loop.js";
 export {
+  buildCalibrationDashboardView,
+  resolveCalibrationDashboardStatus,
+  type CalibrationDashboardRow,
+  type CalibrationDashboardStatus,
+  type CalibrationDashboardView,
+} from "./calibration-dashboard.js";
+export {
   computeFindingSeverityCompositeCalibrationScore,
   ingestFindingSeverityCalibrationSignals,
   renderFindingSeverityCalibrationAuditMarkdown,
@@ -147,6 +154,13 @@ export {
   type NormalizedMinerTelemetryEvent,
 } from "./miner-telemetry.js";
 export {
+  MINER_PREDICTIONS_TOTAL,
+  MINER_PREDICTION_CORRECT_TOTAL,
+  MINER_PREDICTION_INCORRECT_TOTAL,
+  renderMinerPredictionMetrics,
+  type MinerPredictionMetricRow,
+} from "./miner-prediction-metrics.js";
+export {
   ATTEMPT_LOG_EVENT_TYPES,
   createAttemptLogBuffer,
   formatAttemptLogJsonl,
@@ -179,9 +193,38 @@ export {
   type CodingAgentDriverTask,
 } from "./miner/coding-agent-driver.js";
 export {
+  createCliSubprocessCodingAgentDriver,
+  type CliSubprocessDriverOptions,
+  type CliSubprocessSpawnFn,
+} from "./miner/cli-subprocess-driver.js";
+export {
+  addWorktree,
+  planWorktree,
+  removeWorktree,
+  shouldRetainWorktree,
+  WORKTREE_BRANCH_PREFIX,
+  WORKTREE_SUBDIR,
+  type WorktreeAddResult,
+  type WorktreeExecFn,
+  type WorktreeExecResult,
+  type WorktreePlan,
+  type WorktreeRemoveResult,
+} from "./miner/worktree-allocator.js";
+export {
   invokeCodingAgentDriver,
   type AttemptLogSink,
 } from "./miner/coding-agent-invoke.js";
+export {
+  classifyLintGuardPackage,
+  guardChangedFiles,
+  guardCodingAgentDriverResult,
+  type LintGuardCheckResult,
+  type LintGuardedDriverResult,
+  type LintGuardOptions,
+  type LintGuardPackage,
+  type LintGuardResult,
+  type LintGuardSpawnFn,
+} from "./miner/lint-guard.js";
 export {
   CODING_AGENT_DRIVER_CONFIG_ENV,
   CODING_AGENT_DRIVER_NAMES,
@@ -195,6 +238,26 @@ export {
   type RunCodingAgentAttemptOptions,
 } from "./miner/driver-factory.js";
 export * from "./miner/attempt-metering.js";
+export {
+  buildRepoMap,
+  extractRepoMapSymbols,
+  renderRepoMap,
+  resolveRepoMapLanguage,
+  type BuildRepoMapOptions,
+  type LoadRepoMapLanguageFn,
+  type RepoMapFileEntry,
+  type RepoMapSkipReason,
+  type RepoMapSourceFile,
+  type RepoMapSymbol,
+  type RepoMapSymbolKind,
+} from "./miner/repo-map.js";
+export {
+  createAgentSdkCodingAgentDriver,
+  type AgentSdkHooks,
+  type AgentSdkQueryFn,
+  type AgentSdkQueryOptions,
+  type CreateAgentSdkDriverOptions,
+} from "./miner/agent-sdk-driver.js";
 export * from "./plan-export.js";
 export { countPlanStepsByStatus } from "./plan-step-stats.js";
 export { countPlanSteps } from "./plan-step-count.js";
@@ -253,6 +316,7 @@ export {
   parseMinerGoalSpecContent,
   discoverMinerGoalSpecPath,
   MINER_GOAL_SPEC_FILENAMES,
+  type FeasibilityGatePolicy,
   type MinerGoalSpec,
   type MinerIssueDiscoveryPolicy,
   type ParsedMinerGoalSpec,
@@ -448,3 +512,12 @@ export {
   type MaintainerNoiseReport,
   type PullRequestReviewability,
 } from "./reward-risk.js";
+
+// Shared subprocess env-allowlist + secret-redaction helpers (#4284) — one source of truth for every driver that
+// spawns a locally-authenticated CLI subprocess (src/selfhost/ai.ts and the coming gittensory-miner drivers).
+export {
+  SUBPROCESS_CLI_ENV_ALLOWLIST,
+  buildAllowlistedEnv,
+  SECRET_PATTERNS,
+  redactSecrets,
+} from "./subprocess-env.js";

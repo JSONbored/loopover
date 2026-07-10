@@ -70,6 +70,58 @@ export const REPUTATION_WINDOW_DAYS = 90;
 // Hard ceiling on rows pulled for one submitter's window so a pathological history can't blow the query up.
 const REPUTATION_WINDOW_ROW_CAP = 500;
 
+// ── Submission-cadence signal (#4514). Every signal above is QUALITY-based (was the outcome good or bad) --
+// none of them have a TIMING dimension, so a fast, well-formed, strategically-low-value submitter is
+// invisible to the one dimension (superhuman pace) that would otherwise be a strong tell. This is queried
+// from ALL review_targets rows (not just terminal ones, unlike the quality signal above) -- a fresh burst of
+// still-open submissions is exactly the case this needs to catch, and by the time they become terminal the
+// (paid) AI review has already run on each one. ──
+const CADENCE_WINDOW_HOURS = 24;
+// Need at least this many recent submissions before judging pace at all -- a lone fast submission (a real
+// contributor who happened to open two PRs close together) is not a pattern.
+const CADENCE_MIN_SAMPLE = 5;
+// A human contributor, even a fast one, does not sustain a sub-10-minute median gap between distinct PR
+// submissions across many consecutive attempts -- reading, writing, and testing each change takes real time.
+const CADENCE_MAX_MEDIAN_GAP_MS = 10 * 60 * 1000;
+
+export type SubmissionCadence = { count: number; medianGapMs: number | null };
+
+/** Pure: the median gap (ms) between consecutive submissions, given their created_at timestamps in any order.
+ *  `medianGapMs` is `null` when there are fewer than 2 samples (no gap to measure). */
+export function computeSubmissionCadence(createdAtIsoTimestamps: readonly string[]): SubmissionCadence {
+  const sorted = [...createdAtIsoTimestamps].map((t) => new Date(t).getTime()).sort((a, b) => a - b);
+  if (sorted.length < 2) return { count: sorted.length, medianGapMs: null };
+  const gaps: number[] = [];
+  for (let i = 1; i < sorted.length; i++) gaps.push(sorted[i]! - sorted[i - 1]!);
+  gaps.sort((a, b) => a - b);
+  const mid = Math.floor(gaps.length / 2);
+  const medianGapMs = gaps.length % 2 === 0 ? (gaps[mid - 1]! + gaps[mid]!) / 2 : gaps[mid]!;
+  return { count: sorted.length, medianGapMs };
+}
+
+/** Pure: does this cadence read as machine-paced? Needs both a real sample size AND a gap tighter than any
+ *  human contributor plausibly sustains across that many consecutive attempts. */
+export function isMachinePacedCadence(cadence: SubmissionCadence): boolean {
+  return cadence.count >= CADENCE_MIN_SAMPLE && cadence.medianGapMs !== null && cadence.medianGapMs < CADENCE_MAX_MEDIAN_GAP_MS;
+}
+
+/** Per-repo submission cadence for one submitter over the last {@link CADENCE_WINDOW_HOURS}. Fail-safe:
+ *  any read error degrades to `{ count: 0, medianGapMs: null }` (never machine-paced), identical in spirit to
+ *  {@link getSubmitterReputation}'s fail-safe-to-neutral. */
+export async function getSubmitterCadence(env: Env, project: string, submitter: string | undefined): Promise<SubmissionCadence> {
+  if (!submitter) return { count: 0, medianGapMs: null };
+  try {
+    const result = await storage(env)
+      .prepare(`SELECT created_at AS createdAt FROM review_targets WHERE project = ? AND submitter = ? AND created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT ?`)
+      .bind(project, submitter, `-${CADENCE_WINDOW_HOURS} hours`, REPUTATION_WINDOW_ROW_CAP)
+      .all<{ createdAt: string }>();
+    const createdAts = (result?.results ?? []).map((r) => r.createdAt);
+    return computeSubmissionCadence(createdAts);
+  } catch {
+    return { count: 0, medianGapMs: null };
+  }
+}
+
 // ── reasonCode → quality bucket (#reputation-redesign). Buckets reflect the LIVE D1 reasonCode taxonomy. ──
 //   SUCCESS: a genuine reviewer/merge approval.
 //   QUALITY_FAIL: a genuine RECENT reviewer reject (real quality signal).

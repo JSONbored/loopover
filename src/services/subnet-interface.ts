@@ -14,6 +14,7 @@ const CONTRIBUTION_MCP_TOOLS: ReadonlyArray<{ name: string; summary: string }> =
   { name: "gittensory_validate_linked_issue", summary: "Confirm whether a planned PR has a linked issue before opening it." },
   { name: "gittensory_preflight_pr", summary: "Preflight a planned PR for lane fit, duplicate risk, and review burden." },
   { name: "gittensory_monitor_open_prs", summary: "Track your open PRs and what to clean up first." },
+  { name: "gittensory_get_pr_ai_review_findings", summary: "Read structured AI-review findings on your submitted PR (category, path, severity)." },
   { name: "gittensory_list_notifications", summary: "See review feedback (e.g. changes requested) on your PRs." },
   { name: "gittensory_agent_plan_next_work", summary: "Suggest useful next gittensor contribution actions from current repo and PR context." },
 ];

@@ -10,6 +10,7 @@ import {
 test("ATTEMPT_LOG_EVENT_TYPES is a fixed vocabulary", () => {
   assert.deepEqual([...ATTEMPT_LOG_EVENT_TYPES], [
     "attempt_started",
+    "attempt_tool_edit",
     "attempt_shadow",
     "attempt_succeeded",
     "attempt_failed",

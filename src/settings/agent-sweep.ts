@@ -49,6 +49,12 @@ export const SWEEP_FRESHNESS_MS = 2 * 60 * 1000;
 // behind a per-PR backlog and drained together).
 export const SWEEP_FANOUT_DEDUP_MS = 90 * 1000;
 
+// Draining window for backlog-convergence-sweep (#4502), the isRegateSweepDraining windowMs for THIS sweep
+// specifically -- distinct from SWEEP_FRESHNESS_MS because this sweep runs every ~30 min (not ~2 min), so its
+// own per-PR dispatch batch can legitimately still be draining minutes after fan-out. Sized to roughly match its
+// own cron cadence, mirroring how SWEEP_FRESHNESS_MS is sized to the ~2-min regate-sweep cadence.
+export const BACKLOG_CONVERGENCE_SWEEP_FRESHNESS_MS = 30 * 60 * 1000;
+
 // Candidate ordering mode (#3815, RepositorySettings["regateSweepOrderMode"]). "staleness" (default) is
 // selectRegateCandidates' original ordering; "oldest-first" is opt-in per repo. See the function doc comment
 // for the convergence-guarantee rationale each preserves.
@@ -152,12 +158,23 @@ export function selectRegateCandidates(input: {
   };
   const hasRepairPriority = (pr: PullRequestRecord): boolean =>
     priorityPullNumbers.has(pr.number);
+  // One-shot review, fail-closed (#never-endless-reregate, incident 2026-07-09): a PR the sweep has ALREADY
+  // regated even once is permanently ineligible for future sweep candidacy -- full stop, no re-check-for-drift
+  // window, no periodic revisit. This deliberately drops the "catch silent drift" behavior the sweep used to
+  // provide (a moved base, a merged sibling duplicate, a changed focus-manifest could previously go unnoticed
+  // until the next real push) -- a PR gets exactly one automatic review at a given head SHA. Re-review is
+  // opt-in only, through two channels neither of which is this sweep: (1) a genuinely new push stamps a new
+  // headSha and is handled entirely by the real-time webhook path, never this sort (see doc comment above);
+  // (2) an explicit maintainer-triggered re-review (the PR panel's re-run checkbox, role-gated, never
+  // identity-hardlocked) also runs through the webhook path, not the sweep. `hasRepairPriority` remains a
+  // narrow bypass: it means THIS PR's prior review never actually landed (a crashed/incomplete publish), so
+  // retrying it delivers the one review it was owed, not a second one.
+  const candidates = eligible.filter(
+    (pr) => !hasBeenRegated(pr) || hasRepairPriority(pr),
+  );
   const oldestFirstInitialDrain =
     orderMode === "oldest-first" &&
-    eligible.some((pr) => !hasBeenRegated(pr) && !hasRepairPriority(pr));
-  const candidates = oldestFirstInitialDrain
-    ? eligible.filter((pr) => !hasBeenRegated(pr) || hasRepairPriority(pr))
-    : eligible;
+    candidates.some((pr) => !hasBeenRegated(pr) && !hasRepairPriority(pr));
   const orderKey =
     orderMode === "oldest-first" && oldestFirstInitialDrain
       ? creationOrder

@@ -63,12 +63,27 @@ function hasLongSequentialRun(value: string): boolean {
   return false;
 }
 
+// All-lowercase-letters value check, shared by the self-naming-suffix exclusion below.
+const ALL_LOWERCASE_SEGMENTS_PATTERN = /^[a-z]+(?:[-_][a-z]+)*$/;
+
+// #4579-followup (metagraphed/gittensory#4524 "token = default-session-token"/"beta-session-token",
+// awesome-claude#4758 "embedded_secret: unsafe_install_or_secret" -- both confirmed live, no real secret
+// present): a value whose OWN last hyphen/underscore-separated segment is itself one of the same secret-shaped
+// trigger words reads as a NAME for a concept ("this is a kind of token/secret"), not an opaque credential --
+// a real generated token/key value never ends by literally restating what kind of thing it is. Deliberately
+// NARROWER than "any multi-segment lowercase phrase": a Diceware-style passphrase like
+// "alpha-bravo-charlie-delta" doesn't end in a trigger word, so it still correctly flags -- only values that
+// self-identify as a token/secret/key/password NAME are excluded.
+const SELF_NAMING_FIXTURE_SUFFIX_PATTERN = /[-_](?:token|secret|key|password|passwd)$/i;
+
 /** True for an obvious non-secret filler value: a known placeholder phrase, a string built from at most 2
- *  distinct characters (e.g. "xxxxxxxxxxxxxxxx", "----------------"), or a long monotonic character-code run
- *  (e.g. "abcdefghijklmnop123") — real high-entropy secrets never look like any of these. */
+ *  distinct characters (e.g. "xxxxxxxxxxxxxxxx", "----------------"), a long monotonic character-code run
+ *  (e.g. "abcdefghijklmnop123"), or a lowercase identifier whose own last segment self-names as a secret kind
+ *  (e.g. "default-session-token", "unsafe_install_or_secret") — real high-entropy secrets never look like any of these. */
 function isPlaceholderSecretValue(value: string): boolean {
   if (PLACEHOLDER_VALUE_PATTERN.test(value)) return true;
   if (new Set(value.toLowerCase()).size <= 2) return true;
+  if (ALL_LOWERCASE_SEGMENTS_PATTERN.test(value) && SELF_NAMING_FIXTURE_SUFFIX_PATTERN.test(value)) return true;
   return hasLongSequentialRun(value);
 }
 
@@ -139,7 +154,11 @@ const PIPED_INSTALL_RE = /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:sh|bash|zs
 function firstLineMatching(text: string, re: RegExp): { n: number; text: string } | null {
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i += 1) {
-    if (re.test(lines[i] ?? "")) return { n: i + 1, text: (lines[i] ?? "").trim().slice(0, 160) };
+    // `?? ""` only exists to satisfy noUncheckedIndexedAccess -- the loop bound above guarantees lines[i] is
+    // always defined here (`.split()` never produces holes), so the fallback branch is unreachable in practice.
+    /* v8 ignore next */
+    const line = lines[i] ?? "";
+    if (re.test(line)) return { n: i + 1, text: line.trim().slice(0, 160) };
   }
   return null;
 }

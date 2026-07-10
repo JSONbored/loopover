@@ -1101,9 +1101,14 @@ export type RepositorySettings = {
 
 /** #4110: `request_changes`/`comment` were REMOVED (not just left unused) -- they were fully typed/validated
  *  but `src/queue/processors.ts` only ever branched on `=== "close"`, so setting either in `.gittensory.yml`
- *  silently did nothing. `"close"` is the only value this gate has ever enforced; a legacy config with either
- *  removed value normalizes to the default ("close") with a warning, exactly like any other invalid value. */
-export type ScreenshotTableGateAction = "close";
+ *  silently did nothing. A legacy config with either removed value normalizes to the default ("close") with a
+ *  warning, exactly like any other invalid value.
+ *  `"advisory"` (#4535) is a NEW, actually-wired value, not a resurrection of either removed one: the gate
+ *  still computes the violation and its reason, but `src/queue/processors.ts` only ever folds the result into
+ *  the close-triggering `screenshotTableMatch` when `action === "close"` -- so `"advisory"` is a real no-op on
+ *  merge/close by construction, with visibility left to the AI reviewer's own commentary (its context is
+ *  expected to mention the same completeness requirement -- see the review-context sync in the #4540 PR). */
+export type ScreenshotTableGateAction = "close" | "advisory";
 
 /** Per-repo config for the before/after screenshot-table gate (#2006). See {@link RepositorySettings.screenshotTableGate}
  *  and `review/screenshot-table-gate.ts` for the normalizer + pure evaluator. */
@@ -1112,7 +1117,25 @@ export type ScreenshotTableGateConfig = {
   whenLabels: string[];
   whenPaths: string[];
   action: ScreenshotTableGateAction;
+  /** Full replacement for the rejection reason -- when set, this is used verbatim and NEITHER the
+   *  auto-generated matrix "still missing: ..." list NOR `skillFileUrl` appear (a maintainer who sets
+   *  this owns the entire message). Leave unset to get the auto-generated, always-accurate message
+   *  (naming the exact missing pairs in matrix mode) with `skillFileUrl` appended when configured --
+   *  that combination is usually what you want; only set `message` for total control over the wording. */
   message?: string | undefined;
+  /** Viewport x theme completeness matrix (#4535). Both empty (the default) ⇒ byte-identical to the original
+   *  presence-only check (some image-bearing table, anywhere). A non-empty `requireViewports` switches the
+   *  evaluator into matrix mode: every configured viewport (crossed with every configured theme, when
+   *  `requireThemes` is also non-empty) must have its own labeled before/after row in the PR body's table --
+   *  see `review/screenshot-table-gate.ts` for the row-matching heuristic. `requireThemes` alone (viewports
+   *  empty) has no effect -- the viewport dimension is what turns matrix mode on. */
+  requireViewports: string[];
+  requireThemes: string[];
+  /** A link to this repo's contributor skill file, appended to the AUTO-GENERATED rejection message
+   *  (#4540 follow-up) so a closed contributor always gets pointed at the exact format/contract instead
+   *  of just being told evidence is missing. Ignored when `message` is set (a full override already
+   *  owns the entire text -- append the link into that string yourself if you want it there too). */
+  skillFileUrl?: string | undefined;
 };
 
 export type CommandAuthorizationRole = "maintainer" | "collaborator" | "pr_author" | "confirmed_miner";
@@ -1276,8 +1299,9 @@ export type AgentPendingActionParams = {
   mergeMethod?: AutoMergeMethod;
   // For an `assign` action (#3182): the GitHub login to assign when a staged action is accepted.
   assignee?: string;
-  // For an `assign` action (#priority-linked-issue-gate-ownership): the linked issue numbers to ALSO assign
-  // `assignee` to when a staged action is accepted (see PlannedAgentAction.assignLinkedIssues).
+  // Legacy approval-queue rows may contain this field from the reverted linked-issue assignment fan-out. New
+  // plans do not set it, actionParams does not persist it, and the executor ignores it because linked issue
+  // assignment is an authorization signal granted by maintainers, not by PR-body closing references.
   assignLinkedIssues?: number[];
   closeComment?: string;
   // Individual close reasons, persisted for approval-queue replay so the eventual audit row keeps the structured

@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { scanPatch } from "../dist/analyzers/secret-scan.js";
+import { scanAddedLinesForSecrets, scanPatch } from "../dist/analyzers/secret-scan.js";
 
 const hunk = (lines) => `@@ -1,0 +1,${lines.length} @@\n${lines.map((l) => `+${l}`).join("\n")}`;
 
@@ -121,6 +121,42 @@ test("scanPatch flags a generic secret assignment", () => {
   assert.equal(findings.length, 1);
   assert.equal(findings[0].kind, "generic_secret_assignment");
   assert.equal(findings[0].confidence, "medium");
+});
+
+// #4579-followup: confirmed live false positives (metagraphed/gittensory#4524 "token = default-session-token"/
+// "beta-session-token", awesome-claude#4758 "embedded_secret: unsafe_install_or_secret") -- none was a real
+// secret, both were test fixtures / enum-category labels whose own last segment self-names as a secret kind.
+test("scanPatch does NOT flag a self-naming multi-segment fixture value (#4579-followup)", () => {
+  const findings = scanPatch("src/config.ts", hunk([`const token = "default-session-token";`]));
+  assert.equal(
+    findings.some((f) => f.kind === "generic_secret_assignment"),
+    false,
+  );
+});
+
+test("scanPatch does NOT flag an underscore-separated self-naming enum label (#4579-followup)", () => {
+  const findings = scanPatch("src/config.ts", hunk([`const embedded_secret = "unsafe_install_or_secret";`]));
+  assert.equal(
+    findings.some((f) => f.kind === "generic_secret_assignment"),
+    false,
+  );
+});
+
+test("scanPatch still flags a generic multi-segment lowercase passphrase that does NOT self-name as a secret kind (regression guard for #4579-followup)", () => {
+  // Same shape as the excluded fixtures above (all-lowercase, hyphen-separated, no digits) but the value's
+  // own last segment is "delta", not token/secret/key/password/passwd -- a real Diceware-style passphrase
+  // must not be swept in by the new self-naming-suffix exclusion.
+  const findings = scanPatch("src/config.ts", hunk([`const token = "alpha-bravo-charlie-delta";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "generic_secret_assignment");
+});
+
+test("scanAddedLinesForSecrets applies the same self-naming-fixture exclusion as scanPatch (#4579-followup)", () => {
+  const findings = scanAddedLinesForSecrets([{ file: "src/config.ts", line: 1, text: `const token = "default-session-token";` }]);
+  assert.equal(
+    findings.some((f) => f.kind === "generic_secret_assignment"),
+    false,
+  );
 });
 
 test("scanPatch reports nothing for clean code", () => {

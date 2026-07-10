@@ -149,7 +149,9 @@ All tools are metadata-only (no source upload). Run in this order:
 6. `gittensory_predict_gate` — `{login, owner, repo, title, body, labels, linkedIssues}` → predicted
    conclusion + blockers + warnings + readiness score.
 
-(Auth'd extras: `gittensory_preflight_pr` / `…_local_diff` for lane fit + collision + queue health.)
+(Auth'd extras: `gittensory_preflight_pr` / `…_local_diff` for lane fit + collision + queue health;
+`gittensory_get_pr_ai_review_findings` — `{login, owner, repo, pullNumber}` → structured post-submission
+AI-review inline findings (category/path/severity) for your own PR.)
 
 ---
 

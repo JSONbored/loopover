@@ -20,6 +20,9 @@ export type PortfolioQueueStore = {
   dequeueNext(): QueueEntry | null;
   listQueue(repoFullName?: string | null): QueueEntry[];
   markDone(repoFullName: string, identifier: string): QueueEntry | null;
+  batchClaim(
+    selectFn: (entries: QueueEntry[]) => Array<{ repoFullName: string; identifier: string }>,
+  ): QueueEntry[];
   close(): void;
 };
 

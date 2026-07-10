@@ -16,6 +16,7 @@ describe("review.visual wiring (#3609 / #3610)", () => {
     const loadSpy = vi.spyOn(focusManifestLoader, "loadRepoFocusManifest").mockResolvedValue(manifest);
 
     await expect(resolveVisualCaptureConfig({} as Env, "acme/widgets")).resolves.toEqual({
+      productionUrl: null,
       preview: { urlTemplate: "https://pr-{number}.preview.example.com" },
       routes: { paths: ["/pricing"], maxRoutes: 3 },
       themes: [],

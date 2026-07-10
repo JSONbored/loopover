@@ -54,11 +54,14 @@ import {
   getCachedLinkedIssueSatisfaction,
   putCachedLinkedIssueSatisfaction,
   markPullRequestsRegated,
+  markPullRequestsBacklogConvergenceRegated,
   markPullRequestReviewsInvalidated,
   markPullRequestSurfacePublished,
   markPullRequestVisualCaptureSatisfied,
   getLatestRegatedAt,
+  getLatestBacklogConvergenceRegatedAt,
   claimRegateFanoutSlot,
+  claimBacklogConvergenceFanoutSlot,
   recordAgentCommandFeedback,
   recordAuditEvent,
   countRecentAuditEventsForActorAndTarget,
@@ -265,6 +268,7 @@ import {
   ISSUE_WAKE_MAX_PRS,
   MERGE_WAKE_MAX_PRS,
   SWEEP_FANOUT_DEDUP_MS,
+  BACKLOG_CONVERGENCE_SWEEP_FRESHNESS_MS,
   SWEEP_MAX_PRS,
   isRegateSweepDraining,
   selectRegateCandidates,
@@ -296,7 +300,7 @@ import {
   type PlannedAgentAction,
 } from "../settings/agent-actions";
 import { isAutoCloseExempt } from "../settings/auto-close-exempt";
-import { resolveGlobalContributorOpenItemCap } from "../settings/global-contributor-cap";
+import { resolveGlobalContributorOpenItemCap, resolveGlobalContributorOpenItemCapForMiner } from "../settings/global-contributor-cap";
 import { detectMigrationCollisions, extractMigrationNumber, KNOWN_MIGRATION_DUPLICATES } from "../db/migration-collisions";
 import { listMigrationFilenamesAtRef } from "../github/migration-tree";
 import {
@@ -565,6 +569,7 @@ import {
 } from "../review/outcomes-wire";
 import { neutralHoldReasonCode, nativeGateActionFromConclusion, recordNativeGateDecision } from "../review/parity-wire";
 import { recordContributorGateDecision } from "../review/contributor-calibration";
+import { recordPredictedGateCalibration } from "../review/predicted-gate-calibration-ledger";
 import { getSubmitterReputation, type SubmissionOutcome } from "../review/submitter-reputation";
 import type {
   AdvisoryFinding,
@@ -613,6 +618,14 @@ interface LiveGithubFacts {
   requiredContexts: Map<string, Promise<RequiredStatusContextsLookup>>;
   ciAggregates: Map<string, Promise<LiveCiAggregate>>;
   mergeStates: Map<string, Promise<string | undefined>>;
+  // #4498: which ciAggregates/mergeStates keys were populated by a FORCED (refreshLiveCiAggregate/
+  // refreshLiveMergeState) write THIS pass, as opposed to a cached* reader's write -- the cached* variants can
+  // populate the SAME map/key from the DURABLE cross-webhook cache (potentially stale, e.g. readiness's own
+  // cachedLiveCiAggregate check), so a plain "is there anything in the map for this key" check cannot tell a
+  // genuinely-fresh forced value apart from a possibly-stale cached one. reuseOrRefreshLiveCiAggregate/
+  // reuseOrRefreshLiveMergeState only ever reuse a memoized value when its key is ALSO in these sets.
+  forcedCiAggregateKeys: Set<string>;
+  forcedMergeStateKeys: Set<string>;
 }
 
 function createLiveGithubFacts(): LiveGithubFacts {
@@ -620,6 +633,8 @@ function createLiveGithubFacts(): LiveGithubFacts {
     requiredContexts: new Map(),
     ciAggregates: new Map(),
     mergeStates: new Map(),
+    forcedCiAggregateKeys: new Set(),
+    forcedMergeStateKeys: new Set(),
   };
 }
 
@@ -873,6 +888,7 @@ function refreshLiveCiAggregate(
     ),
   );
   facts.ciAggregates.set(key, next);
+  facts.forcedCiAggregateKeys.add(key);
   return next;
 }
 
@@ -920,7 +936,51 @@ function refreshLiveMergeState(
     fetchLivePullRequestMergeState(env, repoFullName, prNumber, token, admissionKey),
   );
   facts.mergeStates.set(key, next);
+  facts.forcedMergeStateKeys.add(key);
   return next;
+}
+
+// #4498: reuses THIS PASS's own already-FORCED-live-refreshed value when an earlier refreshLiveMergeState/
+// refreshLiveCiAggregate call in the SAME webhook pass (sharing the SAME `facts` object and key -- e.g.
+// maybePublishPrPublicSurface's own post-gate-publish refresh) already populated the request-local memo,
+// instead of re-fetching the identical resource from GitHub a second time. Deliberately NOT a plain "is
+// something in facts.mergeStates/ciAggregates for this key" check: cachedLiveMergeState/cachedLiveCiAggregate
+// (the READINESS-path reader) populate the SAME map/key from the DURABLE cross-webhook cache on their own
+// request-local miss -- a durable-cache HIT there can be an OLDER webhook's snapshot, exactly what
+// refreshLiveMergeState's #4220 doc comment above prohibits for this act-boundary-adjacent disposition input.
+// So this only reuses a memoized value when its key is ALSO in forcedMergeStateKeys/forcedCiAggregateKeys --
+// i.e. it was written by a FORCED (genuinely-live-this-pass) call, never by a cached-path reader. On a genuine
+// miss (no forced call ran yet this pass, e.g. unifiedCommentAllowed was false) this falls through to a REAL
+// live refresh, so behavior can only ever improve (fewer calls) over the pre-fix code, never go staler.
+function reuseOrRefreshLiveMergeState(
+  env: Env,
+  repoFullName: string,
+  facts: LiveGithubFacts,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const key = liveFactKey(repoFullName, prNumber, liveFactTokenPart(token));
+  const cached = facts.forcedMergeStateKeys.has(key) ? facts.mergeStates.get(key) : undefined;
+  if (cached) return cached;
+  return refreshLiveMergeState(env, repoFullName, facts, prNumber, token, admissionKey);
+}
+
+function reuseOrRefreshLiveCiAggregate(
+  env: Env,
+  repoFullName: string,
+  facts: LiveGithubFacts,
+  prNumber: number,
+  headSha: string | null | undefined,
+  baseRef: string | null | undefined,
+  token: string | undefined,
+  expectedCiContexts: ReadonlyArray<string> | null | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<LiveCiAggregate> {
+  const key = liveFactKey(repoFullName, headSha, baseRef, liveFactTokenPart(token), expectedCiContextsKeyPart(expectedCiContexts));
+  const cached = facts.forcedCiAggregateKeys.has(key) ? facts.ciAggregates.get(key) : undefined;
+  if (cached) return cached;
+  return refreshLiveCiAggregate(env, repoFullName, facts, prNumber, headSha, baseRef, token, expectedCiContexts, admissionKey);
 }
 
 /**
@@ -969,10 +1029,16 @@ const PUBLIC_MANIFEST_POLICY_FINDING_OVERRIDES: Partial<
   },
 };
 
+// #4583: surfaces the AI test-generation command right where a maintainer already sees the missing-coverage
+// finding, mirroring CodeRabbit's inline "Generate unit tests" walkthrough checkbox instead of requiring the
+// maintainer to already know the `@gittensory generate-tests` command exists from documentation alone.
+const E2E_TEST_GEN_CTA = "Maintainers can also comment `@gittensory generate-tests` for an AI-generated Playwright test.";
+
 export function publicSafeManifestPolicyFinding(
   finding: FocusManifestFinding,
+  options: { e2eTestGenAvailable?: boolean } = {},
 ): AdvisoryFinding {
-  return {
+  const base: AdvisoryFinding = {
     code: finding.code,
     severity: finding.severity,
     title: finding.title,
@@ -983,6 +1049,16 @@ export function publicSafeManifestPolicyFinding(
     // private blocked-path globs / test expectations; codes absent from the table keep their already-generic text.
     ...PUBLIC_MANIFEST_POLICY_FINDING_OVERRIDES[finding.code],
   };
+  // Only appended when e2eTests is actually enabled for this repo (the SAME resolveConvergedFeature check the
+  // #4196 auto-trigger already gates on), so an unconfigured repo is never told about a command that would just
+  // bounce with "not enabled" -- and only for the missing-tests finding, the one case where the command is a
+  // directly relevant next step rather than noise on an unrelated finding. base.action is always defined here
+  // (PUBLIC_MANIFEST_POLICY_FINDING_OVERRIDES.manifest_missing_tests always sets one), the same always-populated
+  // guarantee the v8-ignore above already documents for this code path.
+  if (finding.code === "manifest_missing_tests" && options.e2eTestGenAvailable) {
+    return { ...base, action: `${base.action} ${E2E_TEST_GEN_CTA}` };
+  }
+  return base;
 }
 
 export async function processJob(env: Env, message: JobMessage): Promise<void> {
@@ -1116,7 +1192,7 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       // override #2250). Defense-in-depth: the cron only ENQUEUES this when enabled, but a stale in-flight job
       // that lands after a flag-flip (env OR manifest) must still no-op, so disabled does zero work here too.
       const maintainerRecapOverride = await resolveMaintainerRecapManifestOverride(env);
-      if (isRecapEnabled(env, maintainerRecapOverride)) await runMaintainerRecapJob(env, message.windowDays);
+      if (isRecapEnabled(env, maintainerRecapOverride)) await runMaintainerRecapJob(env, message.windowDays, maintainerRecapOverride);
       return;
     }
     case "agent-regate-sweep":
@@ -2025,15 +2101,26 @@ async function sweepRepoRegate(
 
 // #selfhost-backlog-convergence: the cron (index.ts) enqueues one fan-out trigger periodically; this enqueues a
 // per-repo sweep job for every repo eligible for convergence (the SAME repo selection as the re-gate sweep, so
-// a repo that opted the agent in — or is explicitly convergence-allowlisted — gets both). Deliberately has no
-// fan-out dedup CAS (contrast fanOutAgentRegateSweepJobs): unlike that sweep, this one stamps nothing
-// optimistically, so a second overlapping trigger just re-reads current state and re-enqueues, which coalesces
-// harmlessly into the same pending agent-regate-pr rows (queue-common.ts's job_key coalescing) rather than
-// duplicating work.
+// a repo that opted the agent in — or is explicitly convergence-allowlisted — gets both). #4502: now mirrors
+// fanOutAgentRegateSweepJobs's three-layer anti-duplication shape exactly — an atomic fan-out-slot claim
+// (claimBacklogConvergenceFanoutSlot) collapses a BURST of this trigger, and the per-repo resolution below skips
+// any repo whose prior fan-out is still draining (getLatestBacklogConvergenceRegatedAt / isRegateSweepDraining) —
+// closing the gap where a crashed/restarted worker's stuck "processing" trigger row went unnoticed by the next
+// 30-min tick and re-enqueued duplicate per-repo (and per-PR) jobs underneath the still-in-flight one.
 async function fanOutBacklogConvergenceSweepJobs(
   env: Env,
   requestedBy: "schedule" | "api" | "test",
 ): Promise<void> {
+  const now = nowIso();
+  if (!(await claimBacklogConvergenceFanoutSlot(env, now, SWEEP_FANOUT_DEDUP_MS))) {
+    await recordAuditEvent(env, {
+      eventType: "agent.sweep.backlog_convergence.fanout",
+      outcome: "denied",
+      detail: "backlog-convergence fan-out deduped: another fan-out already claimed this window",
+      metadata: { requestedBy, deduped: true },
+    });
+    return;
+  }
   const repositoriesByKey = new Map((await listRepositories(env)).map((repo) => [repo.fullName.toLowerCase(), repo]));
   const byKey = new Map<string, { fullName: string; installationId?: number }>();
   for (const repo of repositoriesByKey.values())
@@ -2045,12 +2132,39 @@ async function fanOutBacklogConvergenceSweepJobs(
       ...(typeof repo?.installationId === "number" ? { installationId: repo.installationId } : {}),
     });
   }
+  // #4502 (ports #3899): resolve every repo's settings + drain-state CONCURRENTLY (bounded), not one at a time —
+  // mirrors fanOutAgentRegateSweepJobs's own port of this fix, the same "many small per-repo D1/KV reads" shape.
+  const outcomes = await mapWithConcurrencyLimit(
+    [...byKey.values()],
+    SWEEP_FANOUT_RESOLUTION_CONCURRENCY,
+    async (repo): Promise<SweepFanoutResolutionOutcome> => {
+      const repoFullName = repo.fullName;
+      try {
+        const settings = await resolveRepositorySettings(env, repoFullName);
+        if (!(isConvergenceRepoAllowed(env, repoFullName) || isAgentConfigured(settings.autonomy))) return { kind: "ineligible" };
+        if (isRegateSweepDraining(await getLatestBacklogConvergenceRegatedAt(env, repoFullName), now, BACKLOG_CONVERGENCE_SWEEP_FRESHNESS_MS))
+          return { kind: "draining" };
+        return { kind: "configured", repo };
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "backlog_convergence_fanout_repo_check_failed",
+            repository: repoFullName,
+            error: errorMessage(error),
+          }),
+        );
+        return { kind: "errored" };
+      }
+    },
+  );
   const configured: Array<{ fullName: string; installationId?: number }> = [];
-  for (const repo of byKey.values()) {
-    const settings = await resolveRepositorySettings(env, repo.fullName);
-    if (isConvergenceRepoAllowed(env, repo.fullName) || isAgentConfigured(settings.autonomy)) {
-      configured.push(repo);
-    }
+  let skippedDraining = 0;
+  let skippedErrored = 0;
+  for (const outcome of outcomes) {
+    if (outcome.kind === "configured") configured.push(outcome.repo);
+    else if (outcome.kind === "draining") skippedDraining += 1;
+    else if (outcome.kind === "errored") skippedErrored += 1;
   }
   await Promise.all(
     configured.map((repo, index) => {
@@ -2061,15 +2175,25 @@ async function fanOutBacklogConvergenceSweepJobs(
         ...(typeof repo.installationId === "number" ? { installationId: repo.installationId } : {}),
       };
       const delaySeconds = Math.min(index * 10, 600);
-      return delaySeconds > 0
-        ? env.JOBS.send(message, { delaySeconds })
-        : env.JOBS.send(message);
+      const send = delaySeconds > 0 ? env.JOBS.send(message, { delaySeconds }) : env.JOBS.send(message);
+      // #audit-sweep-fanout-isolation (mirrors fanOutAgentRegateSweepJobs): one repo's dispatch failure must not
+      // reject this Promise.all and abort every OTHER repo's already-in-flight send.
+      return send.catch((error) => {
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "backlog_convergence_fanout_dispatch_failed",
+            repository: repo.fullName,
+            error: errorMessage(error),
+          }),
+        );
+      });
     }),
   );
   await recordAuditEvent(env, {
     eventType: "agent.sweep.backlog_convergence.fanout",
     outcome: "queued",
-    metadata: { repoCount: configured.length, requestedBy },
+    metadata: { repoCount: configured.length, skippedDraining, skippedErrored, requestedBy },
   });
 }
 
@@ -2164,6 +2288,24 @@ async function sweepRepoBacklogConvergence(
   const openPullRequests = await listOpenPullRequests(env, repoFullName);
   const candidates = selectBacklogConvergenceCandidates({ pulls: openPullRequests });
   if (candidates.length === 0) return;
+  // Stamp the backlog-convergence draining marker for EVERY candidate NOW, at dispatch — not in the downstream
+  // per-PR job (#4502, mirrors #audit-sweep-dispatch-stamp). This makes getLatestBacklogConvergenceRegatedAt
+  // reflect this sweep immediately, so fanOutBacklogConvergenceSweepJobs's in-flight guard skips re-arming this
+  // repo on the next cron tick BEFORE the staggered per-PR re-reviews finish. A plain D1 write → dry-run stays inert.
+  await markPullRequestsBacklogConvergenceRegated(
+    env,
+    repoFullName,
+    candidates.map((pr) => pr.number),
+  ).catch((error) => {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "backlog_convergence_mark_regated_failed",
+        repository: repoFullName,
+        error: errorMessage(error),
+      }),
+    );
+  });
   await Promise.all(
     candidates.map((pr, index) => {
       const job: JobMessage = {
@@ -2709,8 +2851,10 @@ async function runAgentMaintenancePlanAndExecute(
       admissionKey,
     ),
     // Live mergeable_state after the gate's own publish/review/check mutations. Readiness may have seen the PR as
-    // blocked before the bot approval/check landed, so this boundary must refresh instead of replaying the cache.
-    refreshLiveMergeState(env, repoFullName, args.liveFacts, pr.number, token, admissionKey),
+    // blocked before the bot approval/check landed, so this boundary must never replay the durable cross-webhook
+    // cache -- but maybePublishPrPublicSurface's OWN post-publish refresh (same pass, same liveFacts object) has
+    // typically already paid for this exact live read moments earlier (#4498); reuse it instead of fetching twice.
+    reuseOrRefreshLiveMergeState(env, repoFullName, args.liveFacts, pr.number, token, admissionKey),
     // RC1: live reviewDecision so the approve/request-changes dedup is accurate. The STORED reviewDecision is
     // only written by the open-PR backfill and goes stale → the planner re-posted a review every cycle (the
     // re-review loop with 14-23 stacked reviews). With the live value, an already-approved/changes-requested PR
@@ -2718,7 +2862,8 @@ async function runAgentMaintenancePlanAndExecute(
     fetchLivePullRequestReviewDecision(env, repoFullName, pr.number, token, admissionKey),
   ]);
   const requiredContexts = requiredContextsLookup.requiredContexts;
-  const ciAggregate = await refreshLiveCiAggregate(
+  // Same reuse-this-pass-else-refresh-live rationale as reuseOrRefreshLiveMergeState above (#4498).
+  const ciAggregate = await reuseOrRefreshLiveCiAggregate(
     env,
     repoFullName,
     args.liveFacts,
@@ -3000,12 +3145,27 @@ async function runAgentMaintenancePlanAndExecute(
 
   // Install-wide contributor open-item cap (#2562, anti-abuse): IN ADDITION TO the per-repo cap above, not
   // instead of it -- only evaluated when the per-repo cap didn't already match (short-circuit: no need for a
-  // second cross-repo DB read once this PR is already being closed). Off by default (resolveGlobalContributorOpenItemCap
-  // returns null when GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP is unset/invalid) ⇒ zero extra queries, zero behavior
-  // change for an install that hasn't opted in. Reuses the shared autoCloseExemptLogins list (#2463) so a
-  // maintainer-named login is exempt here exactly like the per-repo caps and review-nag cooldown.
-  if (contributorCapMatch === undefined && pr.authorLogin && !isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) {
-    const globalCap = resolveGlobalContributorOpenItemCap(env);
+  // second cross-repo DB read once this PR is already being closed). Defaults to a real cap even when unset
+  // (#4511) -- a CONFIRMED official Gittensor miner gets its own, higher fleet-appropriate default instead of
+  // either "no cap" or the plain human default, since a legitimate fleet spread across many repos in one
+  // install is expected to run more concurrent open items than a single human contributor. Reuses the shared
+  // autoCloseExemptLogins list (#2463) so a maintainer-named login is exempt here exactly like the per-repo
+  // caps and review-nag cooldown.
+  const prGlobalCapForHuman = resolveGlobalContributorOpenItemCap(env);
+  const prGlobalCapForMiner = resolveGlobalContributorOpenItemCapForMiner(env);
+  if (
+    contributorCapMatch === undefined &&
+    pr.authorLogin &&
+    (prGlobalCapForHuman !== null || prGlobalCapForMiner !== null) &&
+    !isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)
+  ) {
+    // Deferred until we know at least one of the two resolvers is actually active (#4511): the identity
+    // lookup below is cached but still a DB/network round trip, and both resolvers above are plain env reads.
+    const officialMiner = await getCachedOfficialMinerDetection(env, pr.authorLogin, {
+      targetKey: `${repoFullName}#${pr.number}`,
+      deliveryId,
+    });
+    const globalCap = officialMiner.status === "confirmed" ? prGlobalCapForMiner : prGlobalCapForHuman;
     if (globalCap !== null) {
       const globalOpenCount = await verifiedGlobalOpenItemCount(env, installationId, pr.authorLogin, {
         repoFullName,
@@ -3167,6 +3327,16 @@ async function runAgentMaintenancePlanAndExecute(
   // above -- see src/review/contributor-calibration.ts's doc comment. Currently write-only; nothing reads
   // contributor_gate_history yet.
   await recordContributorGateDecision(env, {
+    login: pr.authorLogin,
+    project: repoFullName,
+    pullNumber: pr.number,
+    headSha: pr.headSha,
+    decision: disposition.actionClass,
+  });
+  // #4517: pair this REAL decision against a recent predict_gate call from the same login/repo, if one
+  // exists -- see src/review/predicted-gate-calibration-ledger.ts's doc comment. Cold start (no prior
+  // prediction) records nothing.
+  await recordPredictedGateCalibration(env, {
     login: pr.authorLogin,
     project: repoFullName,
     pullNumber: pr.number,
@@ -5352,15 +5522,19 @@ async function verifiedGlobalOpenItemCount(
  */
 async function maybeCloseIssueOverContributorCap(
   env: Env,
-  args: { installationId: number; repoFullName: string; issue: IssueRecord; settings: RepositorySettings },
+  args: { installationId: number; repoFullName: string; issue: IssueRecord; settings: RepositorySettings; deliveryId: string },
 ): Promise<void> {
-  const { installationId, repoFullName, issue, settings } = args;
+  const { installationId, repoFullName, issue, settings, deliveryId } = args;
   const cap = settings.contributorOpenIssueCap;
   const authorLogin = issue.authorLogin;
   // Install-wide cap (#2562) is checked IN ADDITION TO the per-repo cap, so this function must still run when
-  // ONLY the global cap is configured (the per-repo cap stays optional/off, its usual default).
-  const globalCap = resolveGlobalContributorOpenItemCap(env);
-  if ((typeof cap !== "number" && globalCap === null) || !authorLogin) return;
+  // ONLY a global cap is configured (the per-repo cap stays optional/off, its usual default). Both global
+  // resolvers now default to a real number even when unset (#4511) -- a CONFIRMED official Gittensor miner
+  // gets its own fleet-appropriate cap instead of the human one, checked separately below once we know at
+  // least one of the two is active (both resolvers here are plain env reads; the identity check isn't).
+  const globalCapForHuman = resolveGlobalContributorOpenItemCap(env);
+  const globalCapForMiner = resolveGlobalContributorOpenItemCapForMiner(env);
+  if ((typeof cap !== "number" && globalCapForHuman === null && globalCapForMiner === null) || !authorLogin) return;
 
   const repoOwner = repoOwnerLoginFromFullName(repoFullName);
   const authorIsOwner = authorLogin.toLowerCase() === repoOwner.toLowerCase();
@@ -5375,7 +5549,13 @@ async function maybeCloseIssueOverContributorCap(
   // Install-wide check first (#2562): reuses the shared autoCloseExemptLogins list, same as the PR path.
   // verifiedGlobalOpenItemCount live-verifies every OTHER counted item before trusting it toward an
   // irreversible close (#2562 gate-review follow-up), mirroring the per-repo cap's own sibling live-verify.
-  if (globalCap !== null && !isAutoCloseExempt(authorLogin, settings.autoCloseExemptLogins)) {
+  if ((globalCapForHuman !== null || globalCapForMiner !== null) && !isAutoCloseExempt(authorLogin, settings.autoCloseExemptLogins)) {
+    const officialMiner = await getCachedOfficialMinerDetection(env, authorLogin, {
+      targetKey: `${repoFullName}#${issue.number}`,
+      deliveryId,
+    });
+    const globalCap = officialMiner.status === "confirmed" ? globalCapForMiner : globalCapForHuman;
+    if (globalCap === null) return;
     const globalOpenCount = await verifiedGlobalOpenItemCount(env, installationId, authorLogin, {
       repoFullName,
       number: issue.number,
@@ -6342,6 +6522,7 @@ async function processGitHubWebhook(
           repoFullName: payload.repository.full_name,
           issue,
           settings: issueSettings,
+          deliveryId,
         }).catch((error) => {
           /* v8 ignore next -- best-effort: an issue-cap enforcement failure is logged, never surfaced to the webhook. */
           console.error(
@@ -6825,11 +7006,20 @@ export async function shouldStartAiReviewForAdvisory(
     author: string | null;
     confirmedContributor: boolean;
     skipAiReview?: boolean | undefined;
+    // #4507: the caller's own already-computed shouldSkipAiForReputation result, from the SAME gate condition
+    // this function uses below (isReputationEnabled && isConvergenceRepoAllowed) -- threaded in so this call makes
+    // no second REPUTATION_WINDOW_ROW_CAP-bounded review_targets scan when the caller already ran one this pass.
+    // Absent (every existing/direct caller) ⇒ computed here exactly as before.
+    preComputedReputationSkip?: boolean | undefined;
   },
 ): Promise<boolean> {
   if (!shouldRequirePublicAiReviewForAdvisory(env, args)) return false;
   if (args.settings.aiReviewAllAuthors) return true;
-  return !(isReputationEnabled(env) && isConvergenceRepoAllowed(env, args.repoFullName) && (await shouldSkipAiForReputation(env, { project: args.repoFullName, submitter: args.author })));
+  if (!(isReputationEnabled(env) && isConvergenceRepoAllowed(env, args.repoFullName))) return true;
+  const reputationSkip =
+    args.preComputedReputationSkip ??
+    (await shouldSkipAiForReputation(env, { project: args.repoFullName, submitter: args.author }));
+  return !reputationSkip;
 }
 
 export function maybeAddRequiredAutoReviewSkipHold(
@@ -7089,6 +7279,15 @@ export async function runAiReviewForAdvisory(
     // default, and every existing caller) ⇒ this function claims + releases its own lock exactly as before —
     // byte-identical to today.
     preAcquiredAiReviewLock?: TransientLockClaim | undefined;
+    // #4507: the caller's own already-computed shouldSkipAiForReputation result, threaded in exactly like
+    // preAcquiredAiReviewLock above, so this function's OWN reputationActive gate (below) reuses it instead of
+    // re-deriving a second REPUTATION_WINDOW_ROW_CAP-bounded review_targets scan -- but ONLY when it's actually
+    // present. Absent (the caller's own plain-allowlist gate condition didn't apply, or a direct/test caller
+    // that doesn't thread it) ⇒ this function computes its own, independently authoritative check exactly as
+    // before -- correctly handling a per-repo manifest override that disagrees with the allowlist (the
+    // divergent-config case where only one of the two call sites' gates evaluates true in practice, so the
+    // other's threaded value is never populated to begin with).
+    preComputedReputationSkip?: boolean | undefined;
   },
 ): Promise<
   | {
@@ -7171,10 +7370,11 @@ export async function runAiReviewForAdvisory(
   if (
     reputationActive &&
     !args.settings.aiReviewAllAuthors &&
-    (await shouldSkipAiForReputation(env, {
-      project: args.repoFullName,
-      submitter: args.author,
-    }))
+    (args.preComputedReputationSkip ??
+      (await shouldSkipAiForReputation(env, {
+        project: args.repoFullName,
+        submitter: args.author,
+      })))
   )
     return undefined;
   // Per-(repo, PR, head SHA, mode) advisory lock (#confirmed-bug, mirrors #2129/#2368's claimPrActuationLock):
@@ -8692,6 +8892,10 @@ async function maybePublishPrPublicSurface(
               installationId,
               prAuthorLogin: pr.authorLogin,
               mappings: propagation.mappings,
+              // #4528: lets a closed linked issue still count when THIS PR's own merge is what closed it
+              // (the standard "Closes #N" auto-close), instead of losing propagation authority the instant
+              // the merge that's supposed to earn the label also closes its evidence.
+              prMergedAt: pr.mergedAt ?? null,
             })
           : [];
       const decisionResult = resolvePrTypeLabel({
@@ -9277,9 +9481,14 @@ async function maybePublishPrPublicSurface(
       // Keep deterministic manifest policy findings independent from AI-review eligibility: ignored authors
       // suppress review/public output only, never maintainer-configured gate blockers or their downstream triggers.
       const policyFindings = guidance.findings;
+      // Computed once and reused below for the #4196 auto-trigger check -- same feature gate, one call. Also
+      // feeds #4583's inline CTA so the missing-tests finding surfaces `@gittensory generate-tests` right in
+      // ORB's own comment (mirrors CodeRabbit's inline walkthrough checkbox) only when the command would
+      // actually work for this repo, never as noise on a repo that hasn't opted in.
+      const e2eTestGenAvailable = resolveConvergedFeature(env, manifest, "e2eTests", repoFullName);
       for (const finding of policyFindings) {
         if (!policyCodes.has(finding.code)) continue;
-        advisory.findings.push(publicSafeManifestPolicyFinding(finding));
+        advisory.findings.push(publicSafeManifestPolicyFinding(finding, { e2eTestGenAvailable }));
       }
       // E2E test-generation auto-trigger (#4196, part of the #4189 epic): promotes the deterministic
       // manifest_missing_tests finding above from advisory-only text into an actual trigger for #4192/#4194's
@@ -9289,7 +9498,7 @@ async function maybePublishPrPublicSurface(
       // tests" from scratch, per the issue's own requirement -- this is why the auto-trigger lives inside this
       // exact manifestPolicyGateMode-gated block instead of a parallel code path: that is the only place this
       // finding is computed at all today.
-      if (pr.headSha && policyFindings.some((finding) => finding.code === "manifest_missing_tests") && resolveConvergedFeature(env, manifest, "e2eTests", repoFullName)) {
+      if (pr.headSha && policyFindings.some((finding) => finding.code === "manifest_missing_tests") && e2eTestGenAvailable) {
         const e2eTargetKey = `${repoFullName}#${pr.number}`;
         // Double-generation guard: an unchanged head SHA re-entering this pass (a re-review/sweep tick, not a
         // new push) must never re-spend an LLM call or repost a duplicate suggestion. A genuinely NEW push
@@ -9472,6 +9681,16 @@ async function maybePublishPrPublicSurface(
       skipAiReview: webhook.skipAiReview,
       autoReviewSkipReason,
     });
+    // #4507: computed ONCE here (the same isReputationEnabled/isConvergenceRepoAllowed gate
+    // shouldStartAiReviewForAdvisory uses internally) and threaded into both shouldStartAiReviewForAdvisory below
+    // and runAiReviewForAdvisory further down, instead of each independently re-deriving it -- a second
+    // REPUTATION_WINDOW_ROW_CAP-bounded review_targets scan for the identical (repo, submitter) within the same
+    // pass. undefined when this pass's gate condition doesn't apply; both downstream call sites then fall back to
+    // their own fresh (and, for runAiReviewForAdvisory, manifest-override-aware) check.
+    const preComputedReputationSkip =
+      isReputationEnabled(env) && isConvergenceRepoAllowed(env, repoFullName)
+        ? await shouldSkipAiForReputation(env, { project: repoFullName, submitter: author })
+        : undefined;
     const aiReviewWillRun =
       !authorBlacklisted &&
       !isFrozenForManualReview &&
@@ -9483,6 +9702,7 @@ async function maybePublishPrPublicSurface(
         author,
         confirmedContributor,
         skipAiReview: webhook.skipAiReview,
+        preComputedReputationSkip,
       }));
     aiReviewExpected = aiReviewWillRun;
     if (isFrozenForManualReview) {
@@ -9911,6 +10131,7 @@ async function maybePublishPrPublicSurface(
               // losing) against itself, and does not release it before the cache write below runs.
               preAcquiredAiReviewLock: aiReviewLock,
               deliveryId: webhook.deliveryId,
+              preComputedReputationSkip,
             });
             // `persistable === false` (only the lock-contention placeholder — see runAiReviewForAdvisory's return
             // type doc comment) is excluded from EVERY write, not just the durable one: it describes a transient
@@ -9945,6 +10166,12 @@ async function maybePublishPrPublicSurface(
                     /* v8 ignore next -- runAiReviewForAdvisory (the sole path reaching here) always sets metadata on its "ok" returns; the nullish fallback is a type-level (optional field) safeguard, not a reachable runtime path. */
                     ...(aiReview.metadata ?? {}),
                     inputFingerprint,
+                    // Persist line-anchored findings for post-submission MCP readback (#4519). Inline comments
+                    // themselves are still only posted on a fresh review (see inlineFindings hoisting above);
+                    // this metadata is read-only structured output, not a cache-replay trigger.
+                    ...(aiReview.inlineFindings && aiReview.inlineFindings.length > 0
+                      ? { inlineFindings: aiReview.inlineFindings }
+                      : {}),
                   },
                 },
               ).catch((error) => {
@@ -10164,6 +10391,14 @@ async function maybePublishPrPublicSurface(
       /* v8 ignore else */
       if (contributorDecision !== null) {
         await recordContributorGateDecision(env, {
+          login: pr.authorLogin,
+          project: repoFullName,
+          pullNumber: pr.number,
+          headSha: pr.headSha,
+          decision: contributorDecision,
+        });
+        // #4517: same pairing as the other recordContributorGateDecision call site above.
+        await recordPredictedGateCalibration(env, {
           login: pr.authorLogin,
           project: repoFullName,
           pullNumber: pr.number,

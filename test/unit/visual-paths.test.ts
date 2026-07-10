@@ -10,6 +10,13 @@ describe("isVisualPath (web-visible-only capture gate)", () => {
     expect(isVisualPath("apps/gittensory-ui/README.md")).toBe(true);
   });
 
+  it("matches ANY app folder, not just gittensory-ui (#3611 follow-up — e.g. metagraphed's apps/ui/**)", () => {
+    expect(isVisualPath("apps/ui/src/routes/index.tsx")).toBe(true);
+    // Same non-extension-matching-file case as gittensory-ui above, now for a different app folder name.
+    expect(isVisualPath("apps/ui/components.json")).toBe(true);
+    expect(isVisualPath("apps/marketing-site/README.md")).toBe(true);
+  });
+
   it("matches public asset paths (public/** — OG images etc.) at any depth", () => {
     expect(isVisualPath("public/og-image.png")).toBe(true);
     expect(isVisualPath("apps/web/public/banner.jpg")).toBe(true);

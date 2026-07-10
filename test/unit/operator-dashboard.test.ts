@@ -26,6 +26,13 @@ describe("operator dashboard payload", () => {
     // #2191: gate-eval report is surfaced read-only; with no review_audit signal it fails safe to an empty
     // report (no rows, no signal) rather than being absent.
     expect(payload.gateEval).toEqual({ rows: [], hasSignal: false });
+    expect(payload.cycleTime).toEqual({
+      p50Ms: null,
+      p90Ms: null,
+      p99Ms: null,
+      distribution: [],
+      sampleSize: 0,
+    });
     // Empty fleet → instanceCount 0, null precision card ("—"), no-outlier delta.
     expect(payload.fleetMetrics.instanceCount).toBe(0);
     expect(payload.metrics).toEqual(

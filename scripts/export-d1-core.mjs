@@ -6,8 +6,19 @@ import { createHash } from "node:crypto";
 
 // Tables NEVER exported: SQLite/Drizzle internals, the cloud's own migration ledger (the self-host applies its
 // own forward migrations), plus private cloud-only calibration signals that must not cross instance boundaries.
+// predicted_gate_calls (0137) and predicted_gate_calibration_ledger (0138) are both login-keyed, LOCAL-ONLY by
+// their own migration docstrings ("never wired into exportOrbBatch or any other cross-instance/public export
+// path") — same sensitivity class, same exclusion.
 // Keep this conservative — excluding a real table loses data; the importer also skips it.
-export const EXCLUDED_TABLES = new Set(["sqlite_sequence", "sqlite_stat1", "d1_migrations", "_cf_KV", "__drizzle_migrations", "predicted_gate_calibration_ledger"]);
+export const EXCLUDED_TABLES = new Set([
+  "sqlite_sequence",
+  "sqlite_stat1",
+  "d1_migrations",
+  "_cf_KV",
+  "__drizzle_migrations",
+  "predicted_gate_calibration_ledger",
+  "predicted_gate_calls",
+]);
 
 // Columns dropped per table on export — cloud-specific secrets/hashes that are dead or unsafe on self-host. A
 // committed credential never crosses the boundary (#selfhost-migration DO-NOT-MIGRATE list):

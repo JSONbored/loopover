@@ -85,6 +85,14 @@ export {
   type CalibrationDashboardView,
 } from "./calibration-dashboard.js";
 export {
+  buildCalibrationTrendView,
+  calibrationSnapshotFromResult,
+  type CalibrationTrendDirection,
+  type CalibrationTrendPoint,
+  type CalibrationTrendSnapshot,
+  type CalibrationTrendView,
+} from "./calibration-trend.js";
+export {
   computeFindingSeverityCompositeCalibrationScore,
   ingestFindingSeverityCalibrationSignals,
   renderFindingSeverityCalibrationAuditMarkdown,

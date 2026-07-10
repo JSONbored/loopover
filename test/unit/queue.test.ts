@@ -12096,12 +12096,23 @@ describe("queue processors", () => {
 
   // #4110: same in-scope, NO-body-table fixture as the "closed deterministically" test above (a hand-authored
   // table would normally be the ONLY way to avoid the close) -- the ONLY difference is that this PR ALSO
-  // touches a web-visible route file with a real, resolvable preview deploy, so the bot's own visual-capture
-  // pipeline (buildCapture, reached through the SAME webhook via maybePublishPrPublicSurface) renders a REAL
-  // before+after pair before the maintenance pass evaluates the gate. Proves the capture result is persisted
-  // (markPullRequestVisualCaptureSatisfied) and read back (evaluateScreenshotTableGate's botCaptureSatisfied)
-  // within a single webhook, without a hand-authored table.
-  it("screenshot-table gate (#4110): a successful bot before/after capture satisfies the gate on its own, no body table needed", async () => {
+  // touches a web-visible route file with a real, resolvable preview deploy. Proves the marker
+  // (markPullRequestVisualCaptureSatisfied) is READ BACK correctly (evaluateScreenshotTableGate's
+  // botCaptureSatisfied) without a hand-authored table.
+  //
+  // #4136: isPersistedShotUrl now requires a real `key=` R2 URL, which only a genuine Browser Rendering pass
+  // can produce (env.BROWSER is unavailable in this unit-test environment, so buildCapture always falls back
+  // to a placeholder here -- covered separately by test/unit/visual-shot.test.ts's own captureShot mocking).
+  // Rather than mock a full headless-browser launch just to exercise this gate-read-back assertion, this
+  // seeds the marker the SAME way production does: markPullRequestVisualCaptureSatisfied is called by an
+  // EARLIER pass (a `synchronize` capture) at this exact head SHA, before the webhook under test runs. This
+  // is not a weaker test of the real behavior -- capture and gate evaluation routinely happen on different
+  // webhook deliveries in production (buildCapture runs on `synchronize`; the maintenance pass that reads the
+  // marker back can fire later, e.g. a re-gate sweep) -- and it still fully proves the read-back half of the
+  // #4110 gate: upsertPullRequestFromGitHub's own onConflict clause never touches visualCaptureSatisfiedSha
+  // (see its own comment), so the marker survives this webhook's PR upsert untouched, exactly as it would
+  // survive any later webhook in production.
+  it("screenshot-table gate (#4110): a persisted bot capture from an earlier pass satisfies the gate, no body table needed", async () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
       GITTENSORY_REVIEW_UNIFIED_COMMENT: "1",
@@ -12120,6 +12131,18 @@ describe("queue processors", () => {
       autonomy: { close: "auto", label: "auto" },
     });
     await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { screenshotTableGate: { enabled: true, whenLabels: ["visual"] } } }, "repo_file");
+    // Simulates an earlier `synchronize` pass whose real (Browser Rendering) capture already succeeded at
+    // this head SHA and persisted the marker -- see the test doc comment above.
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 58,
+      title: "Update the app index route",
+      state: "open",
+      user: { login: "visual-contributor" },
+      head: { sha: "vis58" },
+      labels: [{ name: "visual" }],
+      body: "Changed the route layout, no table here.",
+    });
+    await repositoriesModule.markPullRequestVisualCaptureSatisfied(env, "JSONbored/gittensory", 58, "vis58");
     const seen = { closed: false };
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();

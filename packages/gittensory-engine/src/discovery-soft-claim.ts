@@ -32,8 +32,7 @@ export type SoftClaimRecord = {
   note?: string | null;
 };
 
-/** Optional caller context. `instanceId` is an opaque, caller-anonymized fleet handle — NOT a wallet/hotkey or any
- *  identity secret; it is copied through verbatim and never interpreted here. */
+/** Optional caller context. Reserved for future public-safe, anonymized coordination metadata. */
 export type SoftClaimRequestContext = {
   instanceId?: string;
 };
@@ -73,7 +72,7 @@ function isSoftClaimStatus(value: unknown): value is SoftClaimStatus {
  * statuses map to a request). Only the fixed set of known fields is copied onto the request, so the payload stays
  * metadata-only by construction.
  */
-export function buildSoftClaimRequest(claim: unknown, context: SoftClaimRequestContext = {}): SoftClaimRequest | null {
+export function buildSoftClaimRequest(claim: unknown, _context: SoftClaimRequestContext = {}): SoftClaimRequest | null {
   if (!claim || typeof claim !== "object" || Array.isArray(claim)) return null;
   const record = claim as Record<string, unknown>;
   const repoFullName = normalizeRepoFullName(record.repoFullName);
@@ -82,15 +81,15 @@ export function buildSoftClaimRequest(claim: unknown, context: SoftClaimRequestC
   if (typeof issueNumber !== "number" || !Number.isInteger(issueNumber) || issueNumber <= 0) return null;
   if (typeof record.claimedAt !== "string" || record.claimedAt.trim() === "") return null;
   if (!isSoftClaimStatus(record.status)) return null;
-  const note = typeof record.note === "string" && record.note.trim() !== "" ? record.note : null;
-  const instanceId = typeof context.instanceId === "string" && context.instanceId.trim() !== "" ? context.instanceId : null;
   return {
     contractVersion: DISCOVERY_INDEX_CONTRACT_VERSION,
     action: softClaimActionForStatus(record.status),
     repoFullName,
     issueNumber,
     claimedAt: record.claimedAt,
-    note,
-    instanceId,
+    // Local claim-ledger notes and caller instance IDs may contain operator prose or private identifiers. The hosted
+    // discovery plane only receives fixed public metadata, so keep both fields empty.
+    note: null,
+    instanceId: null,
   };
 }

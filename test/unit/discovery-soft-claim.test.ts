@@ -20,7 +20,7 @@ describe("soft-claim coordination request builder (#4302)", () => {
     expect(typeof softClaimActionForStatus).toBe("function");
   });
 
-  it("builds a public-safe claim request from an active claim, copying only known fields", () => {
+  it("builds a public-safe claim request from an active claim, copying only fixed metadata", () => {
     const req = buildSoftClaimRequest(ACTIVE_CLAIM, { instanceId: "inst-abc" });
     expect(req).toEqual({
       contractVersion: DISCOVERY_INDEX_CONTRACT_VERSION,
@@ -28,10 +28,10 @@ describe("soft-claim coordination request builder (#4302)", () => {
       repoFullName: "owner/repo",
       issueNumber: 42,
       claimedAt: "2026-01-01T00:00:00Z",
-      note: "picked from the miner lane",
-      instanceId: "inst-abc",
+      note: null,
+      instanceId: null,
     });
-    // the local ledger `id` is not leaked into the outbound request
+    // Local-only ledger and caller context fields are not leaked into the outbound request.
     expect(Object.keys(req ?? {})).not.toContain("id");
   });
 
@@ -43,13 +43,16 @@ describe("soft-claim coordination request builder (#4302)", () => {
     expect(buildSoftClaimRequest({ ...ACTIVE_CLAIM, status: "expired" })?.action).toBe("release");
   });
 
-  it("normalizes note and instanceId to null when blank, non-string, or absent", () => {
-    expect(buildSoftClaimRequest({ ...ACTIVE_CLAIM, note: "   " })?.note).toBeNull();
-    expect(buildSoftClaimRequest({ ...ACTIVE_CLAIM, note: 5 })?.note).toBeNull();
-    expect(buildSoftClaimRequest({ ...ACTIVE_CLAIM, note: undefined })?.note).toBeNull();
-    expect(buildSoftClaimRequest(ACTIVE_CLAIM)?.instanceId).toBeNull();
-    expect(buildSoftClaimRequest(ACTIVE_CLAIM, { instanceId: "   " })?.instanceId).toBeNull();
-    expect(buildSoftClaimRequest(ACTIVE_CLAIM, { instanceId: 9 as unknown as string })?.instanceId).toBeNull();
+  it("omits local free-text notes and caller instance identifiers from the hosted-plane payload", () => {
+    const sensitiveClaim = {
+      ...ACTIVE_CLAIM,
+      note: "operator note: private coordination details for a local-only workflow",
+    };
+    const req = buildSoftClaimRequest(sensitiveClaim, {
+      instanceId: "host=builder-01 private local identifier",
+    });
+    expect(req?.note).toBeNull();
+    expect(req?.instanceId).toBeNull();
   });
 
   it("returns null for a non-object claim", () => {

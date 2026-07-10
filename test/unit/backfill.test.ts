@@ -120,6 +120,67 @@ describe("pull request / issue body storage cap (#4682 regression)", () => {
     const issue = stored.find((i) => i.number === 9001);
     expect(issue?.body).toBe(longBody);
   });
+
+  it("logs a structured, greppable trace the instant a PR body actually gets truncated -- the #4682 failure mode was total silence", async () => {
+    const env = createTestEnv();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 4684,
+        title: "Body past the real GitHub limit",
+        state: "open",
+        user: { login: "nickmopen" },
+        head: { sha: "abc4684" },
+        labels: [],
+        body: "w".repeat(70000),
+      });
+      const traceLine = logSpy.mock.calls.map((c) => String(c[0])).find((line) => line.includes("github_app.body_truncated_on_store"));
+      expect(traceLine).toBeDefined();
+      const parsed = JSON.parse(traceLine as string) as Record<string, unknown>;
+      expect(parsed).toMatchObject({ event: "github_app.body_truncated_on_store", kind: "pull_request", repoFullName: "JSONbored/gittensory", number: 4684, originalLength: 70000, storedLength: 65536 });
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("never logs the truncation trace for a body within the cap (the common case stays silent)", async () => {
+    const env = createTestEnv();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 4685,
+        title: "Ordinary body",
+        state: "open",
+        user: { login: "nickmopen" },
+        head: { sha: "abc4685" },
+        labels: [],
+        body: "normal PR body",
+      });
+      expect(logSpy.mock.calls.map((c) => String(c[0])).some((line) => line.includes("github_app.body_truncated_on_store"))).toBe(false);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("logs the truncation trace for issue bodies too (compactGitHubPayload is shared)", async () => {
+    const env = createTestEnv();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await upsertIssueFromGitHub(env, "JSONbored/gittensory", {
+        number: 9002,
+        title: "Oversized issue body",
+        state: "open",
+        user: { login: "nickmopen" },
+        labels: [],
+        body: "v".repeat(70000),
+      });
+      const traceLine = logSpy.mock.calls.map((c) => String(c[0])).find((line) => line.includes("github_app.body_truncated_on_store"));
+      expect(traceLine).toBeDefined();
+      expect(JSON.parse(traceLine as string)).toMatchObject({ kind: "issue", repoFullName: "JSONbored/gittensory", number: 9002 });
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
 });
 
 describe("GitHub backfill", () => {

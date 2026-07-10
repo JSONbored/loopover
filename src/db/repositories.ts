@@ -352,6 +352,7 @@ export async function upsertPullRequestFromGitHub(
   const existingPayload = preserveSparseBody ? parseJson<{ body?: string | null }>(existingClaimRow.payloadJson, {}) : undefined;
   const existingBody = existingPayload?.body ?? null;
   const body = preserveSparseBody ? existingBody : record.body;
+  logIfBodyTruncated("pull_request", repoFullName, pr.number, preserveSparseBody ? existingBody : pr.body);
   const payload = preserveSparseBody ? compactGitHubPayload({ ...pr, body: existingBody }) : compactGitHubPayload(pr);
   const linkedIssues = preserveSparseBody ? parseLinkedIssuesJson(existingClaimRow.linkedIssuesJson) : record.linkedIssues;
   const linkedIssuesJson = preserveSparseBody ? existingClaimRow.linkedIssuesJson : jsonString(linkedIssues);
@@ -445,6 +446,7 @@ export async function upsertIssueFromGitHub(env: Env, repoFullName: string, issu
   const record = toIssueRecord(repoFullName, issue);
   const db = getDb(env.DB);
   const lastSeenOpenAt = issue.state === "open" ? (options.seenOpenAt ?? nowIso()) : null;
+  logIfBodyTruncated("issue", repoFullName, issue.number, issue.body);
   await db
     .insert(issues)
     .values({
@@ -6098,6 +6100,27 @@ function mergeableBooleanState(value: boolean | null | undefined): string | unde
 function truncateBody(body: string | null | undefined): string | null {
   if (!body) return body ?? null;
   return body.length > MAX_STORED_BODY_CHARS ? body.slice(0, MAX_STORED_BODY_CHARS) : body;
+}
+
+/** Structured, greppable trace the instant a body-content check (screenshotTableGate, linked-issue
+ *  satisfaction, slop keyword matching, ...) could see a truncated body instead of the real one -- the #4682
+ *  incident's entire failure mode was that this was previously SILENT (no log, no audit row, nothing), so a
+ *  4000-char cap quietly corrupted every check reading `pr.body`/`issue.body` for months before anyone
+ *  noticed. MAX_STORED_BODY_CHARS now matches GitHub's own issue/PR body limit, so this should never actually
+ *  fire in practice -- if it ever does, that fact belongs in the logs immediately, not rediscovered later via
+ *  manual DB archaeology. */
+function logIfBodyTruncated(kind: "pull_request" | "issue", repoFullName: string, number: number, body: string | null | undefined): void {
+  if (!body || body.length <= MAX_STORED_BODY_CHARS) return;
+  console.log(
+    JSON.stringify({
+      event: "github_app.body_truncated_on_store",
+      kind,
+      repoFullName,
+      number,
+      originalLength: body.length,
+      storedLength: MAX_STORED_BODY_CHARS,
+    }),
+  );
 }
 
 function toIssueRecordFromRow(row: typeof issues.$inferSelect): IssueRecord {

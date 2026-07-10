@@ -309,6 +309,21 @@ DISCORD_REPO_WEBHOOKS={"owner/repoA":"https://discord.com/api/webhooks/...","own
             </tr>
             <tr>
               <td className="py-2 pr-4 align-top">
+                + <code>--profile gpu</code>
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">Near-zero</td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Tens of MiB — a single Go binary shelling out to <code>nvidia-smi</code>
+              </td>
+              <td className="py-2 align-top text-muted-foreground">
+                Estimated. Adds <code>gpu-exporter</code> (nvidia_gpu_exporter) feeding the{" "}
+                <code>gpu</code> Prometheus job and the GPU metrics Grafana dashboard — requires the
+                NVIDIA Container Toolkit on the host; a device reservation only takes effect once
+                this profile is activated, so a non-GPU host is unaffected either way.
+              </td>
+            </tr>
+            <tr>
+              <td className="py-2 pr-4 align-top">
                 + <code>--profile backup</code>
               </td>
               <td className="py-2 pr-4 align-top text-muted-foreground">

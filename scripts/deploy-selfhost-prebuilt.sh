@@ -35,7 +35,7 @@ run_node_build() {
     -v "$PWD:/work" \
     -w /work \
     "$NODE_IMAGE" \
-    sh -lc 'npm ci --ignore-scripts && node scripts/build-selfhost.mjs --all && node scripts/validate-selfhost-sourcemap.mjs'
+    sh -lc 'npm ci --ignore-scripts && npm --workspace @jsonbored/gittensory-engine run build && node scripts/build-selfhost.mjs --all && node scripts/validate-selfhost-sourcemap.mjs'
 }
 
 run_sentry_upload() {

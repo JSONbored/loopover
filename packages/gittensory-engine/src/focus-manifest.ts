@@ -719,6 +719,13 @@ export const EMPTY_SELF_HOST_AI_MODEL_CONFIG: SelfHostAiModelConfig = {
 /** Per-repo before/after screenshot-capture config under `review.visual` (#3609 / #3610). Generic by design —
  *  every self-hoster wires their OWN repo's preview-deploy setup and route shape with config, not code. */
 export type VisualConfig = {
+  /** `review.visual.production_url`: the repo's "before" production URL — e.g. `https://metagraph.sh` for a
+   *  repo whose live site differs from the operator's own `PUBLIC_SITE_ORIGIN` env var (a single GLOBAL value
+   *  with no per-repo awareness, correct for at most one repo on a multi-repo self-host instance). ALWAYS wins
+   *  over `PUBLIC_SITE_ORIGIN` when set, mirroring `preview.url_template`'s precedence over GitHub-native
+   *  discovery. null (default) ⇒ byte-identical to today (falls back to `PUBLIC_SITE_ORIGIN`). Validated at
+   *  parse time against the same SSRF guard (`isSafeHttpUrl`) the renderer itself unconditionally applies. */
+  productionUrl: string | null;
   preview: VisualPreviewConfig;
   routes: VisualRoutesConfig;
   themes: VisualTheme[];
@@ -787,6 +794,7 @@ export type VisualRoutesConfig = {
 };
 
 export const EMPTY_VISUAL_CONFIG: VisualConfig = {
+  productionUrl: null,
   preview: { urlTemplate: null },
   routes: { paths: [], maxRoutes: null },
   themes: [],
@@ -1881,6 +1889,9 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[],
     if (Array.isArray(rawGate.whenPaths)) sparseGate.whenPaths = validated.whenPaths;
     if (isScreenshotTableGateAction(rawGate.action)) sparseGate.action = validated.action;
     if (typeof rawGate.message === "string" && rawGate.message.trim().length > 0) sparseGate.message = validated.message;
+    if (Array.isArray(rawGate.requireViewports)) sparseGate.requireViewports = validated.requireViewports;
+    if (Array.isArray(rawGate.requireThemes)) sparseGate.requireThemes = validated.requireThemes;
+    if (typeof rawGate.skillFileUrl === "string" && rawGate.skillFileUrl.trim().length > 0) sparseGate.skillFileUrl = validated.skillFileUrl;
     out.screenshotTableGate = sparseGate;
   } else if (r.screenshotTableGate !== undefined) {
     warnings.push(`Manifest "settings.screenshotTableGate" must be an object; ignoring it and keeping any existing policy.`);
@@ -2298,6 +2309,7 @@ function overlaySelfHostAiModelConfig(base: SelfHostAiModelConfig, override: Sel
 
 function overlayVisualConfig(base: VisualConfig, override: VisualConfig): VisualConfig {
   return {
+    productionUrl: pickOverlayNullable(override.productionUrl, base.productionUrl),
     preview: { urlTemplate: pickOverlayNullable(override.preview.urlTemplate, base.preview.urlTemplate) },
     routes: {
       paths: pickOverlayStringList(override.routes.paths, base.routes.paths),
@@ -2540,6 +2552,7 @@ function parseSelfHostAiModelConfig(value: JsonValue | undefined, warnings: stri
 
 function visualConfigPresent(config: VisualConfig): boolean {
   return (
+    config.productionUrl !== null ||
     config.preview.urlTemplate !== null ||
     config.routes.paths.length > 0 ||
     config.routes.maxRoutes !== null ||
@@ -2585,6 +2598,20 @@ const VISUAL_URL_TEMPLATE_DUMMY_VARS: Record<string, string> = {
   "{head_sha}": "0000000000000000000000000000000000000000",
 };
 
+/** Parse `review.visual.production_url` — validated at CONFIG-READ time against the exact same SSRF guard
+ *  (`isSafeHttpUrl`) the renderer itself unconditionally applies to every URL it navigates to. Unlike
+ *  `preview.url_template`, this is a plain static origin with no `{number}`/`{head_sha}` placeholders to
+ *  substitute — the "before" shot is always the SAME production page, just at a different path per route. */
+function parseVisualProductionUrl(value: JsonValue | undefined, warnings: string[]): string | null {
+  const url = parsePublicSafeText(value, "review.visual.production_url", warnings);
+  if (url === null) return null;
+  if (!isSafeHttpUrl(url)) {
+    warnings.push(`Manifest "review.visual.production_url" must be a valid HTTPS URL targeting a public host; ignoring it.`);
+    return null;
+  }
+  return url;
+}
+
 /** Parse `review.visual.preview.url_template` — validated at CONFIG-READ time against the exact same SSRF
  *  guard (`isSafeHttpUrl`) the renderer itself unconditionally applies to every URL it navigates to,
  *  regardless of source (`src/review/visual/shot.ts`). This is deliberately redundant with that runtime
@@ -2614,6 +2641,8 @@ function parseVisualConfig(value: JsonValue | undefined, warnings: string[]): Vi
   }
   const record = value as Record<string, JsonValue>;
 
+  const productionUrl = parseVisualProductionUrl(record.production_url, warnings);
+
   const previewRecord = record.preview !== null && typeof record.preview === "object" && !Array.isArray(record.preview) ? (record.preview as Record<string, JsonValue>) : undefined;
   if (record.preview !== undefined && record.preview !== null && previewRecord === undefined) {
     warnings.push(`Manifest "review.visual.preview" must be a mapping; ignoring it.`);
@@ -2633,7 +2662,7 @@ function parseVisualConfig(value: JsonValue | undefined, warnings: string[]): Vi
   const themeStorageKey = parsePublicSafeText(record.theme_storage_key, "review.visual.theme_storage_key", warnings);
   const actionsFallback = normalizeOptionalBoolean(record.actions_fallback, "review.visual.actions_fallback", warnings) === true;
 
-  return { preview: { urlTemplate }, routes: { paths, maxRoutes }, themes, gif, enabled, themeStorageKey, actionsFallback };
+  return { productionUrl, preview: { urlTemplate }, routes: { paths, maxRoutes }, themes, gif, enabled, themeStorageKey, actionsFallback };
 }
 
 function parseAutoReviewTitleKeywords(value: JsonValue | undefined, warnings: string[]): string[] {
@@ -2940,6 +2969,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   }
   if (visualConfigPresent(review.visual)) {
     const visual: Record<string, JsonValue> = {};
+    if (review.visual.productionUrl !== null) visual.production_url = review.visual.productionUrl;
     if (review.visual.preview.urlTemplate !== null) visual.preview = { url_template: review.visual.preview.urlTemplate };
     if (review.visual.routes.paths.length > 0 || review.visual.routes.maxRoutes !== null) {
       const routes: Record<string, JsonValue> = {};

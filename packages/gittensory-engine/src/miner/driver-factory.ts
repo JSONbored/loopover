@@ -16,6 +16,7 @@ import {
   type CodingAgentExecutionMode,
 } from "./coding-agent-mode.js";
 import type { CodingAgentDriverResult, CodingAgentDriverTask } from "./coding-agent-driver.js";
+import { guardCodingAgentDriverResult, type LintGuardOptions, type LintGuardResult } from "./lint-guard.js";
 
 /** Provider names the factory knows how to resolve today. Concrete CLI/SDK drivers land in #4266/#4267. */
 export const CODING_AGENT_DRIVER_NAMES = Object.freeze(["noop"] as const);
@@ -86,12 +87,19 @@ export type RunCodingAgentAttemptOptions = {
   task: CodingAgentDriverTask;
   log?: AttemptLogSink | undefined;
   driver?: CodingAgentDriver | undefined;
+  /** When supplied, the driver result is run through the lint guard (#4276) before being returned, so a
+   *  live coding-agent edit that fails its own package's typecheck/node --check never reads as `ok: true`. */
+  lintGuard?: LintGuardOptions | undefined;
 };
 
-/** End-to-end entry: resolve mode from config, pick the driver, invoke under mode gating + attempt log. */
+/** End-to-end entry: resolve mode from config, pick the driver, invoke under mode gating + attempt log, then
+ *  (when `lintGuard` is supplied) run the changed files through the lint guard before the caller sees the result. */
 export async function runCodingAgentAttempt(
   options: RunCodingAgentAttemptOptions,
-): Promise<{ mode: CodingAgentExecutionMode; result: CodingAgentDriverResult }> {
+): Promise<{
+  mode: CodingAgentExecutionMode;
+  result: CodingAgentDriverResult & { lintGuard?: LintGuardResult };
+}> {
   const mode = resolveCodingAgentModeFromConfig({
     env: options.env,
     agentPaused: options.agentPaused,
@@ -103,7 +111,8 @@ export async function runCodingAgentAttempt(
     driver: options.driver,
   });
   const result = await invokeCodingAgentDriver(driver, mode, options.task, options.log);
-  return { mode, result };
+  if (!options.lintGuard) return { mode, result };
+  return { mode, result: await guardCodingAgentDriverResult(result, options.lintGuard) };
 }
 
 /** Exported for parity tests — wraps a driver without changing its behavior (identity helper). */

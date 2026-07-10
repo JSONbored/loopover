@@ -5,10 +5,27 @@
 // the normalized bodies diverge. Also compares the workspace-installed @jsonbored/gittensory-engine semver against
 // the monorepo engine package's declared version (version-skew tripwire; no live-gate round-trip).
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ENGINE_PARITY_AREAS = Object.freeze(["review", "settings", "signals"] as const);
+
+/** Hand-duplicated gate-decision twins live outside src/{review,settings,signals} (#4518). */
+export const GATE_DECISION_TWIN_PAIR = Object.freeze({
+  area: "gate-decision",
+  hostRelative: "src/rules/advisory.ts",
+  engineRelative: "packages/gittensory-engine/src/advisory/gate-advisory.ts",
+  hostFileName: "advisory.ts",
+  engineFileName: "gate-advisory.ts",
+} as const);
+
+export const GATE_DECISION_CORE_MARKERS = Object.freeze([
+  "function evaluateGateCheckCore",
+  "function isConfiguredGateBlocker",
+  "export function buildPullRequestAdvisory",
+  "export function evaluateGateCheck",
+] as const);
 const ENGINE_SRC_ROOT = "packages/gittensory-engine/src";
 const HOST_SRC_ROOT = "src";
 const ENGINE_PACKAGE_JSON = "packages/gittensory-engine/package.json";
@@ -111,6 +128,186 @@ export function discoverEngineParityPairs({
     }
   }
   return pairs;
+}
+
+/** Normalize git diff paths for stable comparisons across platforms. */
+export function normalizeChangedPath(path: string): string {
+  return String(path ?? "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "");
+}
+
+/** Load the explicit gate-decision twin pair for monitoring and PR version-bump enforcement. */
+export function discoverGateDecisionTwinPair({
+  root,
+  readFile = defaultReadFile,
+  pair = GATE_DECISION_TWIN_PAIR,
+}: {
+  root: string;
+  readFile?: EngineParityReadFile;
+  pair?: typeof GATE_DECISION_TWIN_PAIR;
+}): EngineParityPair {
+  return {
+    area: pair.area,
+    fileName: `${pair.hostFileName}<->${pair.engineFileName}`,
+    hostRelative: pair.hostRelative,
+    engineRelative: pair.engineRelative,
+    hostText: readFile(root, pair.hostRelative),
+    engineText: readFile(root, pair.engineRelative),
+  };
+}
+
+/** Structural guard: both gate-decision twins still expose the core gate entrypoints (#4518). */
+export function checkGateDecisionTwinPresence({
+  root,
+  readFile = defaultReadFile,
+  pair = GATE_DECISION_TWIN_PAIR,
+  markers = GATE_DECISION_CORE_MARKERS,
+}: {
+  root: string;
+  readFile?: EngineParityReadFile;
+  pair?: typeof GATE_DECISION_TWIN_PAIR;
+  markers?: readonly string[];
+}): { failures: string[]; pairChecked: EngineParityPair } {
+  let twin: EngineParityPair;
+  try {
+    twin = discoverGateDecisionTwinPair({ root, readFile, pair });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      failures: [`Could not load gate-decision twin files: ${message}`],
+      pairChecked: {
+        area: pair.area,
+        fileName: `${pair.hostFileName}<->${pair.engineFileName}`,
+        hostRelative: pair.hostRelative,
+        engineRelative: pair.engineRelative,
+        hostText: "",
+        engineText: "",
+      },
+    };
+  }
+  const failures: string[] = [];
+  for (const marker of markers) {
+    if (!twin.hostText.includes(marker)) {
+      failures.push(`${pair.hostRelative} is missing gate-decision marker ${JSON.stringify(marker)}.`);
+    }
+    if (!twin.engineText.includes(marker)) {
+      failures.push(`${pair.engineRelative} is missing gate-decision marker ${JSON.stringify(marker)}.`);
+    }
+  }
+  return { failures, pairChecked: twin };
+}
+
+export function parseEnginePackageVersion(text: string): string | null {
+  try {
+    const version = JSON.parse(text).version;
+    return typeof version === "string" && version.trim() ? version.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True when the head engine package version is strictly greater than the base version. */
+export function enginePackageVersionIncreased(baseVersion: string | null, headVersion: string | null): boolean {
+  if (!baseVersion || !headVersion) return false;
+  return compareSemver(headVersion, baseVersion) > 0;
+}
+
+/**
+ * Fail PRs that touch only one gate-decision twin without bumping packages/gittensory-engine/package.json.
+ * Updating both twins together is allowed without a version bump; a single-sided edit requires a bump.
+ */
+export function checkGateDecisionVersionBump({
+  changedFiles,
+  pair = GATE_DECISION_TWIN_PAIR,
+  enginePackageJson = ENGINE_PACKAGE_JSON,
+  baseEngineVersion,
+  headEngineVersion,
+}: {
+  changedFiles: readonly string[];
+  pair?: typeof GATE_DECISION_TWIN_PAIR;
+  enginePackageJson?: string;
+  baseEngineVersion: string | null;
+  headEngineVersion: string | null;
+}): { failures: string[] } {
+  const normalized = changedFiles.map(normalizeChangedPath).filter(Boolean);
+  const touchedHost = normalized.includes(pair.hostRelative);
+  const touchedEngine = normalized.includes(pair.engineRelative);
+  const touchedEnginePackage = normalized.includes(enginePackageJson);
+  const failures: string[] = [];
+
+  if (!touchedHost && !touchedEngine) return { failures };
+  if (touchedHost && touchedEngine) return { failures };
+  if (touchedEnginePackage && enginePackageVersionIncreased(baseEngineVersion, headEngineVersion)) {
+    return { failures };
+  }
+
+  const touched = touchedHost ? pair.hostRelative : pair.engineRelative;
+  failures.push(
+    [
+      `Gate-decision logic change in ${touched} requires either:`,
+      `  • a matching edit to the other twin (${touchedHost ? pair.engineRelative : pair.hostRelative}), or`,
+      `  • a version bump in ${enginePackageJson} (currently ${headEngineVersion ?? "unknown"} vs base ${baseEngineVersion ?? "unknown"}).`,
+    ].join("\n"),
+  );
+  return { failures };
+}
+
+export type EngineParityExecGit = (args: string[], cwd: string) => string;
+
+function defaultExecGit(args: string[], cwd: string): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+/** Best-effort changed-file list for PR/push validation; returns [] outside git/PR contexts. */
+export function listChangedEngineParityFiles({
+  root,
+  execGit = defaultExecGit,
+  baseRef = process.env.GITTENSORY_ENGINE_PARITY_BASE_REF ?? process.env.GITHUB_BASE_SHA ?? "",
+  headRef = process.env.GITTENSORY_ENGINE_PARITY_HEAD_REF ?? "HEAD",
+}: {
+  root: string;
+  execGit?: EngineParityExecGit;
+  baseRef?: string;
+  headRef?: string;
+}): string[] {
+  try {
+    const base =
+      baseRef ||
+      execGit(["merge-base", headRef, "origin/main"], root) ||
+      execGit(["merge-base", headRef, "upstream/main"], root);
+    if (!base) return [];
+    return execGit(["diff", "--name-only", `${base}...${headRef}`], root)
+      .split("\n")
+      .map(normalizeChangedPath)
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export function readEnginePackageVersionAtRef({
+  root,
+  ref,
+  enginePackageJson = ENGINE_PACKAGE_JSON,
+  execGit = defaultExecGit,
+  readFile = defaultReadFile,
+}: {
+  root: string;
+  ref: string;
+  enginePackageJson?: string;
+  execGit?: EngineParityExecGit;
+  readFile?: EngineParityReadFile;
+}): string | null {
+  try {
+    if (ref === "HEAD" || ref === "WORKTREE") {
+      return parseEnginePackageVersion(readFile(root, enginePackageJson));
+    }
+    return parseEnginePackageVersion(execGit(["show", `${ref}:${enginePackageJson}`], root));
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -259,31 +456,74 @@ export function checkMinerEngineVersionPinSync({
   return { failures, expected, pin };
 }
 
-/** Run both the file-pair drift check and the version-skew check. */
+/** Run drift, gate-decision, version-skew, and optional PR version-bump checks. */
 export function runEngineParityChecks(options: {
   root: string;
   readFile?: EngineParityReadFile;
   listDir?: EngineParityListDir;
   resolveInstalled?: (root: string) => string | null;
   readExpected?: (root: string) => string | null;
+  changedFiles?: readonly string[];
+  baseEngineVersion?: string | null;
+  headEngineVersion?: string | null;
 }): {
   failures: string[];
   pairsChecked: EngineParityPair[];
   versionSkew: EngineVersionSkewResult;
 } {
   const drift = checkEngineParityDrift(options);
+  const gateDecision = checkGateDecisionTwinPresence(options);
   const skew = checkEngineVersionSkew(options);
   const pinSync = checkMinerEngineVersionPinSync(options);
+  const readFile = options.readFile ?? defaultReadFile;
+  let headEngineVersion = options.headEngineVersion;
+  if (headEngineVersion === undefined) {
+    try {
+      headEngineVersion = parseEnginePackageVersion(readFile(options.root, ENGINE_PACKAGE_JSON));
+    } catch {
+      headEngineVersion = null;
+    }
+  }
+  const baseEngineVersion = options.baseEngineVersion ?? headEngineVersion;
+  const changedFiles = options.changedFiles ?? listChangedEngineParityFiles({ root: options.root });
+  const versionBump =
+    changedFiles.length > 0 && headEngineVersion
+      ? checkGateDecisionVersionBump({
+          changedFiles,
+          baseEngineVersion,
+          headEngineVersion,
+        })
+      : { failures: [] as string[] };
   return {
-    failures: [...drift.failures, ...skew.failures, ...pinSync.failures],
-    pairsChecked: drift.pairsChecked,
+    failures: [
+      ...drift.failures,
+      ...gateDecision.failures,
+      ...versionBump.failures,
+      ...skew.failures,
+      ...pinSync.failures,
+    ],
+    pairsChecked: [...drift.pairsChecked, gateDecision.pairChecked],
     versionSkew: skew,
   };
 }
 
 /** @internal Exported for subprocess-free unit tests of the CLI success/failure paths. */
 export function runEngineParityMain(root: string = process.cwd()): number {
-  const { failures, pairsChecked, versionSkew } = runEngineParityChecks({ root });
+  const changedFiles = listChangedEngineParityFiles({ root });
+  const headEngineVersion = readEnginePackageVersionAtRef({ root, ref: "HEAD" });
+  const baseEngineVersion =
+    changedFiles.length > 0
+      ? readEnginePackageVersionAtRef({
+          root,
+          ref: process.env.GITTENSORY_ENGINE_PARITY_BASE_REF ?? process.env.GITHUB_BASE_SHA ?? "origin/main",
+        }) ?? headEngineVersion
+      : headEngineVersion;
+  const { failures, pairsChecked, versionSkew } = runEngineParityChecks({
+    root,
+    changedFiles,
+    baseEngineVersion,
+    headEngineVersion,
+  });
 
   if (failures.length > 0) {
     console.error(`Engine-parity check found ${failures.length} issue(s):`);

@@ -255,6 +255,7 @@ import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadGatePrecisionReport } from "../services/gate-precision";
 import { computeOpsStats, isOpsEnabled } from "../review/ops-wire";
 import { computeParityReadiness, isParityAuditEnabled } from "../review/parity-wire";
+import { computePredictedGateAgreement } from "../review/predicted-gate-agreement";
 import { isRagEnabled } from "../review/rag-wire";
 import { getPublicStats, isPublicStatsEnabled } from "../review/public-stats";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
@@ -3496,6 +3497,18 @@ export function createApp() {
   app.get("/v1/internal/parity", async (c) => {
     if (!isParityAuditEnabled(c.env)) return c.json({ error: "not_found" }, 404);
     return c.json(await computeParityReadiness(c.env));
+  });
+
+  // #predicted-live-gate-agreement (maintainer review-stack x AMS integration audit, 2026-07-09): how often the
+  // MCP predict_gate/explain_gate_disposition verdict agrees with the REAL gate decision a contributor's PR
+  // later receives -- a DIFFERENT question than /v1/internal/parity's reviewbot-vs-gittensory migration parity
+  // (see src/review/predicted-gate-agreement.ts's module header). Same gate/auth contract as /v1/internal/parity:
+  // bearer-gated by the `/v1/internal/*` middleware, 404 when GITTENSORY_REVIEW_PARITY_AUDIT is off so the
+  // endpoint does not exist on a deploy not running this telemetry family. Aggregate counts only — no PR
+  // content / actor logins (see that module's privacy note on why a per-login breakdown never belongs here).
+  app.get("/v1/internal/predicted-agreement", async (c) => {
+    if (!isParityAuditEnabled(c.env)) return c.json({ error: "not_found" }, 404);
+    return c.json(await computePredictedGateAgreement(c.env, { days: 90, nowMs: Date.now() }));
   });
 
   app.post("/v1/internal/jobs/refresh-registry", async (c) => {

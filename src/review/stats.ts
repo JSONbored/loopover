@@ -175,6 +175,26 @@ export interface ReviewEffortAggregate {
   totalEstimatedMinutes: number;
 }
 
+/** PR review cycle-time percentiles (gate decision → PR outcome) for the maintainer stats feed (#2194). */
+export interface CycleTimeAggregate {
+  /** Milliseconds from gate decision to PR outcome; null when no samples in the window. */
+  p50Ms: number | null;
+  p90Ms: number | null;
+  p99Ms: number | null;
+  /** Histogram bucket counts for sparkbar visualization; empty when there are no samples. */
+  distribution: number[];
+  /** Count of PRs with a paired gate_decision + pr_outcome in the window. */
+  sampleSize: number;
+}
+
+export const EMPTY_CYCLE_TIME: CycleTimeAggregate = {
+  p50Ms: null,
+  p90Ms: null,
+  p99Ms: null,
+  distribution: [],
+  sampleSize: 0,
+};
+
 export interface StatsPayload {
   generatedAt: string;
   window: { fromIso: string; days: number; bucket: string };
@@ -194,6 +214,86 @@ export interface StatsPayload {
   recommendations: TuningRec[];
   /** Cross-system gate-decision parity: a SHADOW writer's gate decisions vs the authoritative ones. */
   gateParity: GateParityReport & { cutoverReady: Array<{ project: string; ready: boolean }> };
+  /** PR review cycle-time percentiles (gate decision → outcome) from review_audit (#2194). */
+  cycleTime: CycleTimeAggregate;
+}
+
+/** ms between the gate decision and the resolution; null if implausible (NaN or negative). */
+export function cycleTimeMs(decidedAt: string, outcomeAt: string): number | null {
+  const ms = new Date(outcomeAt).getTime() - new Date(decidedAt).getTime();
+  return Number.isFinite(ms) && ms >= 0 ? ms : null;
+}
+
+/** Nearest-rank percentile on a pre-sorted sample; null when empty (mirrors orb/analytics.ts). */
+export function percentileNearestRank(sorted: number[], p: number): number | null {
+  if (sorted.length === 0) return null;
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[idx]!;
+}
+
+/** Fold cycle-time samples into histogram buckets for the sparkbar; empty input → []. */
+export function buildCycleTimeDistribution(samplesMs: number[], bucketCount = 12): number[] {
+  if (samplesMs.length === 0) return [];
+  const max = Math.max(...samplesMs);
+  const min = Math.min(...samplesMs);
+  if (max === min) return [samplesMs.length];
+  const buckets = Array.from({ length: bucketCount }, () => 0);
+  const span = max - min;
+  for (const ms of samplesMs) {
+    const idx = Math.min(bucketCount - 1, Math.floor(((ms - min) / span) * bucketCount));
+    buckets[idx]! += 1;
+  }
+  return buckets;
+}
+
+/** Pure fold: cycle-time samples → p50/p90/p99 + distribution (#2194). */
+export function aggregateCycleTimePercentiles(samplesMs: number[]): CycleTimeAggregate {
+  const sorted = samplesMs.filter((ms) => Number.isFinite(ms) && ms >= 0).sort((a, b) => a - b);
+  if (sorted.length === 0) return EMPTY_CYCLE_TIME;
+  return {
+    p50Ms: percentileNearestRank(sorted, 50),
+    p90Ms: percentileNearestRank(sorted, 90),
+    p99Ms: percentileNearestRank(sorted, 99),
+    distribution: buildCycleTimeDistribution(sorted),
+    sampleSize: sorted.length,
+  };
+}
+
+const CYCLE_TIME_SQL = `WITH gd AS (
+  SELECT target_id, created_at AS decided_at,
+  ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY created_at DESC) AS rn
+  FROM review_audit
+  WHERE event_type = 'gate_decision' AND decision IS NOT NULL AND created_at >= ?
+),
+po AS (
+  SELECT target_id, created_at AS outcome_at, ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY created_at DESC) AS rn
+  FROM review_audit
+  WHERE event_type = 'pr_outcome' AND decision IS NOT NULL AND created_at >= ?
+)
+SELECT gd.decided_at AS decided_at, po.outcome_at AS outcome_at
+FROM gd
+JOIN po ON gd.target_id = po.target_id
+WHERE gd.rn = 1 AND po.rn = 1`;
+
+/** Load paired gate_decision → pr_outcome cycle times for the stats window. Fail-safe → empty aggregate. */
+export async function computeCycleTimeAggregate(
+  env: Env,
+  opts: { days: number; nowMs: number },
+): Promise<CycleTimeAggregate> {
+  const days = Number.isFinite(opts.days) && opts.days > 0 ? Math.min(opts.days, 730) : 90;
+  const fromIso = new Date(opts.nowMs - days * 86_400_000).toISOString().slice(0, 10);
+  try {
+    const rows = await storage(env)
+      .prepare(CYCLE_TIME_SQL)
+      .bind(fromIso, fromIso)
+      .all<{ decided_at: string; outcome_at: string }>();
+    const samples = (rows.results ?? [])
+      .map((row) => cycleTimeMs(row.decided_at, row.outcome_at))
+      .filter((ms): ms is number => ms !== null);
+    return aggregateCycleTimePercentiles(samples);
+  } catch {
+    return EMPTY_CYCLE_TIME;
+  }
 }
 
 /** Fold per-PR persisted minutes into the maintainer aggregate (avg band + total minutes). */
@@ -224,7 +324,7 @@ export async function computeStats(
   const bucketExpr = BUCKET_SQL[bucket] ?? BUCKET_SQL.day;
   const fromIso = new Date(opts.nowMs - days * 86_400_000).toISOString().slice(0, 10); // YYYY-MM-DD
 
-  const [decisionRows, reversalRows, effortRows] = await Promise.all([
+  const [decisionRows, reversalRows, effortRows, cycleTime] = await Promise.all([
     storage(env).prepare(
       `SELECT ${bucketExpr} AS bucket, project, COALESCE(verdict, status) AS verdict, COUNT(*) AS n
        FROM review_targets
@@ -258,6 +358,7 @@ export async function computeStats(
        )`,
     ).bind(fromIso).all<{ minutes: number }>()
       .catch(() => ({ results: [] as Array<{ minutes: number }> })),
+    computeCycleTimeAggregate(env, { days, nowMs: opts.nowMs }),
   ]);
 
   // Non-content gate decisions (incl. SHADOW would-actions) — recorded as `gate_decision` audit rows with
@@ -294,6 +395,7 @@ export async function computeStats(
     gateEval,
     recommendations,
     gateParity: { ...parity, cutoverReady: parity.rows.map((r) => ({ project: r.project, ready: isParityCutoverReady(r) })) },
+    cycleTime,
   };
 }
 

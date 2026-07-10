@@ -95,6 +95,29 @@ const GITHUB_BUDGET_BACKGROUND_TYPES = new Set<string>([
   "refresh-contributor-activity",
   "build-burden-forecasts",
   "rag-index-repo",
+  // #4505: found via a systematic audit of every MAINTENANCE_JOB_TYPES member against this set (prompted by
+  // reconcile-open-prs below) -- each of these five genuinely makes real GitHub REST calls (directly, or
+  // transitively via resolveRepositorySettings -> loadRepoFocusManifest's cache-miss fetch of .gittensory.json)
+  // but was missing from this set, contradicting this module's own header comment.
+  //
+  // runOpenPrReconciliation makes real, potentially large paginated GitHub REST calls per watched repo (up to
+  // RECONCILE_OPEN_PRS_MAX_PAGES per repo, plus a catch-up fetch per missing PR found). Flag-gated OFF by
+  // default today (GITTENSORY_PR_RECONCILIATION) -- this closes the gap before anyone enables it.
+  "reconcile-open-prs",
+  // fanOutBacklogConvergenceSweepJobs / sweepRepoBacklogConvergence both call resolveRepositorySettings per
+  // repo. Runs every 30 min, unconditional for self-hosted runtimes -- active in production today.
+  "backlog-convergence-sweep",
+  // selfTuneRepos calls resolveRepositorySettings per registered repo to check acting-autonomy + the per-repo
+  // opt-out. Hourly, flag-gated OFF by default (GITTENSORY_REVIEW_SELFTUNE).
+  "selftune",
+  // refreshInstallationHealthRecords calls getAppInstallation (a direct, unprotected `GET /app/installations/{id}`
+  // REST call) per installation, PLUS resolveRepositorySettings per installed repo. Runs every 30 min,
+  // UNCONDITIONAL (not behind any flag) -- the most severe of these five, since it is exercised in every
+  // deployment today, not just after an operator opts into a flag.
+  "refresh-installation-health",
+  // runReviewRecapJob calls loadRepoFocusManifest directly for its one repo. Not yet cron-enqueued (manual/API
+  // trigger only today, per its own doc comment), but still worth gating against a rapid repeated manual trigger.
+  "generate-review-recap",
 ]);
 const PRIORITY_BY_TYPE = new Map([
   ["agent-regate-pr", AGENT_REGATE_PRIORITY],
@@ -915,6 +938,7 @@ export function jobCoalesceKey(payload: string): string | null {
       case "ops-alerts":
       case "selftune":
       case "retry-orb-relay":
+      case "reconcile-open-prs":
         return type;
       case "backfill-registered-repos":
         return keyOf(
@@ -941,6 +965,10 @@ export function jobCoalesceKey(payload: string): string | null {
         );
       case "generate-signal-snapshots":
       case "build-burden-forecasts":
+      // #4505: no case existed for this single-repo job type at all, so it fell through to the untyped `null`
+      // below -- every enqueue (repeated manual/API triggers today; a future cron trigger per its own doc
+      // comment) inserted a fresh duplicate row instead of coalescing into an already-pending/processing one.
+      case "generate-review-recap":
         return keyOf(type, normalizedRepo(message.repoFullName) ?? "all");
       case "build-contributor-evidence":
       case "build-contributor-decision-packs": {

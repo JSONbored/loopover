@@ -30,6 +30,13 @@ scrape_configs:
       - targets: ["postgres-exporter:9187"]
     scrape_interval: 30s
 
+  # GPU utilization/VRAM/temp/power from nvidia_gpu_exporter (#4367). The exporter starts only with
+  # --profile gpu; on a non-GPU install this target just shows as absent/down, no alert fires on it.
+  - job_name: gpu
+    static_configs:
+      - targets: ["gpu-exporter:9835"]
+    scrape_interval: 15s
+
   # Backup freshness from the read-only backup-exporter sidecar. The metrics exist only when the backup
   # profile is active, which keeps backup alerts opt-in with the backup feature.
   - job_name: gittensory-backup

@@ -3,7 +3,7 @@ import {
   fetchBrokeredInstallationToken,
   isOrbBrokerMode,
 } from "../orb/broker-client";
-import { updateInstallationPermissions } from "../db/repositories";
+import { recordGitHubRateLimitObservation, updateInstallationPermissions } from "../db/repositories";
 import { recordClockSkewFromResponse } from "../selfhost/clock-skew";
 import {
   clearGitHubResponseCacheForTest,
@@ -373,12 +373,33 @@ export async function getAppInstallation(
   installationId: number,
 ): Promise<NonNullable<GitHubWebhookPayload["installation"]>> {
   const jwt = await createAppJwt(env);
-  const response = await timeoutFetch(
-    `https://api.github.com/app/installations/${installationId}`,
-    {
-      headers: githubHeaders(`Bearer ${jwt}`),
-    },
-  );
+  const admissionKey = githubRateLimitAdmissionKeyForInstallation(installationId);
+  const path = `/app/installations/${installationId}`;
+  // Deliberately NOT passed as timeoutFetch's githubRateLimitAdmissionKey option here: that option also drives the
+  // GET response-cache key (responseCacheKey, ./client), and `installation:{id}` collides across different calling
+  // Apps for the same installation id -- this endpoint's response depends on WHICH App's JWT is asking, so the
+  // cache must stay keyed off the Authorization header (the no-admission-key fallback) to preserve per-App-identity
+  // isolation (#1940). recordGitHubRateLimitObservation below records the SAME admissionKey directly instead.
+  const response = await timeoutFetch(`https://api.github.com${path}`, {
+    headers: githubHeaders(`Bearer ${jwt}`),
+  });
+  // #4506: refreshInstallationHealthRecords's per-installation loop (backfill.ts) makes one of these calls per
+  // installation, but this call lives outside backfill.ts's module boundary -- and backfill.ts already imports
+  // getAppInstallation FROM this file, so importing its recordGitHubResponse back here would cycle. Mirrors that
+  // function's header-parsing inline instead (see its doc comment, backfill.ts, for the full write-path rationale).
+  // Recorded before the ok-check: an exhausted/rate-limited (non-2xx) response's headers are exactly the signal
+  // shouldWaitForGitHubRateLimit needs to back off later jobs.
+  const resetHeader = response.headers.get("x-ratelimit-reset");
+  await recordGitHubRateLimitObservation(env, {
+    repoFullName: null,
+    admissionKey,
+    resource: "rest",
+    path,
+    statusCode: response.status,
+    limitValue: parseNullableRateLimitHeader(response.headers.get("x-ratelimit-limit")),
+    remaining: parseNullableRateLimitHeader(response.headers.get("x-ratelimit-remaining")),
+    resetAt: resetHeader && Number.isFinite(Number(resetHeader)) ? new Date(Number(resetHeader) * 1000).toISOString() : undefined,
+  });
   if (!response.ok) {
     const body = await response.text();
     throw new Error(
@@ -391,6 +412,12 @@ export async function getAppInstallation(
   if (!payload.id)
     throw new Error("GitHub installation response did not include an id.");
   return payload;
+}
+
+function parseNullableRateLimitHeader(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 export type GitHubRepositoryCollaboratorPermission =

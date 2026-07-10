@@ -184,6 +184,14 @@ export const repositorySettings = sqliteTable("repository_settings", {
   screenshotTableGateWhenPathsJson: text("screenshot_table_gate_when_paths_json").notNull().default("[]"),
   screenshotTableGateAction: text("screenshot_table_gate_action").notNull().default("close"),
   screenshotTableGateMessage: text("screenshot_table_gate_message"),
+  // Viewport x theme completeness matrix (#4535): empty (default) keeps today's presence-only check
+  // byte-identical; a non-empty requireViewports switches the evaluator into matrix mode, requiring a
+  // labeled before/after row per configured viewport (x theme, when requireThemes is also set).
+  screenshotTableGateRequireViewportsJson: text("screenshot_table_gate_require_viewports_json").notNull().default("[]"),
+  screenshotTableGateRequireThemesJson: text("screenshot_table_gate_require_themes_json").notNull().default("[]"),
+  // Contributor skill-file link appended to the auto-generated matrix/presence rejection message (#4540
+  // follow-up). Nullable, same "no override configured" shape as screenshotTableGateMessage above.
+  screenshotTableGateSkillFileUrl: text("screenshot_table_gate_skill_file_url"),
   createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });
@@ -462,6 +470,11 @@ export const pullRequests = sqliteTable(
     // review WRITE that would bump updated_at is suppressed (dry-run / paused). gittensory-computed (sweep-written),
     // omitted from the GitHub-sync SET clause so a later sync cannot clobber it. (Mirrors approved_head_sha.)
     lastRegatedAt: text("last_regated_at"),
+    // Draining guard for backlog-convergence-sweep (#4502), mirroring lastRegatedAt but scoped to THIS sweep --
+    // stamped at dispatch by sweepRepoBacklogConvergence, read by fanOutBacklogConvergenceSweepJobs to skip a
+    // repo whose prior fan-out is still draining. Kept separate from lastRegatedAt so the two differently-cadenced
+    // sweeps' in-flight signals never conflate. gittensory-computed, omitted from the GitHub-sync SET clause.
+    lastBacklogConvergenceRegatedAt: text("last_backlog_convergence_regated_at"),
     // Public-surface marker: the head SHA at which the public surface (comment/label/check-run) was LAST published.
     // Used for reporting and stale-surface diagnostics, not as a hard sweep skip; GitHub comments/checks can still
     // be stale or partial while this marker matches headSha. gittensory-computed (publish-written), omitted from
@@ -1447,5 +1460,52 @@ export const linkedIssueSatisfactionCache = sqliteTable(
   },
   (table) => ({
     primary: primaryKey({ columns: [table.repoFullName, table.pullNumber, table.headSha, table.linkedIssueNumber] }),
+  }),
+);
+
+// Grounding file-content cache (#4499): makeGithubFileFetcher re-fetches every changed file's full post-change
+// body from GitHub with zero caching; content for a given (repo, path, headSha) triple is a git blob at an
+// immutable commit, so it's safe to cache durably. NOT scoped to pullNumber (unlike linkedIssueSatisfactionCache
+// above) -- file content at a given head SHA is universal, not PR-specific. Only a successful fetch is ever
+// stored; a transient failure must never be cached as if it were a confirmed-permanent one.
+export const groundingFileContentCache = sqliteTable(
+  "grounding_file_content_cache",
+  {
+    repoFullName: text("repo_full_name").notNull(),
+    path: text("path").notNull(),
+    headSha: text("head_sha").notNull(),
+    content: text("content").notNull(),
+    /* v8 ignore next -- this default only fires for a Drizzle query-builder insert omitting fetchedAt;
+     * putCachedGroundingFileContent always writes via raw SQL with an explicit fetched_at value, so this
+     * callback is never actually invoked by the real code path (defensive schema-level default only). */
+    fetchedAt: text("fetched_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    primary: primaryKey({ columns: [table.repoFullName, table.path, table.headSha] }),
+  }),
+);
+
+// Impact-map query cache (#4500): computeImpactMap issues one retrieveContextWithMetrics call per
+// changed-symbol file with no result cache -- only a 60-second cold-index existence check is memoized. Unlike
+// linkedIssueSatisfactionCache, this DOES need a TTL (checked at the read site, not a schema constraint): the
+// underlying vector index can change as new commits get embedded, so an identical query issued later could
+// legitimately have a different correct answer.
+export const impactMapQueryCache = sqliteTable(
+  "impact_map_query_cache",
+  {
+    project: text("project").notNull(),
+    repo: text("repo").notNull(),
+    // Hashes every input that affects the result (queryText, excludePaths, topK, minScore, reranker) -- all of
+    // them vary meaningfully; excludePaths in particular varies per changed file (each excludes itself).
+    queryFingerprint: text("query_fingerprint").notNull(),
+    context: text("context").notNull(),
+    metricsJson: text("metrics_json").notNull(),
+    /* v8 ignore next -- this default only fires for a Drizzle query-builder insert omitting fetchedAt;
+     * putCachedImpactMapQuery always writes via raw SQL with an explicit fetched_at value, so this callback
+     * is never actually invoked by the real code path (defensive schema-level default only). */
+    fetchedAt: text("fetched_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    primary: primaryKey({ columns: [table.project, table.repo, table.queryFingerprint] }),
   }),
 );

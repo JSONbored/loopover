@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   checkEngineParityDrift,
+  checkGateDecisionTwinPresence,
+  checkGateDecisionVersionBump,
   checkEngineVersionSkew,
   checkMinerEngineVersionPinSync,
   compareSemver,
@@ -12,11 +14,16 @@ import {
   defaultResolveInstalledEngineVersion,
   describeEngineVersionSkew,
   discoverEngineParityPairs,
+  discoverGateDecisionTwinPair,
+  enginePackageVersionIncreased,
+  GATE_DECISION_TWIN_PAIR,
   type EngineParityPair,
   isEngineStubPair,
   isThinEngineReExportShim,
+  normalizeChangedPath,
   normalizeEngineParityText,
   normalizeImportSpec,
+  parseEnginePackageVersion,
   runEngineParityChecks,
   runEngineParityMain,
 } from "../../scripts/check-engine-parity";
@@ -86,6 +93,89 @@ describe("check-engine-parity script", () => {
   it("the real repo's hand-duplicated pairs agree after normalization (regression guard)", () => {
     const result = checkEngineParityDrift({ root: process.cwd() });
     expect(result.failures).toEqual([]);
+  });
+
+  describe("gate-decision twin coverage (#4518)", () => {
+    it("discovers the advisory.ts <-> gate-advisory.ts pair outside ENGINE_PARITY_AREAS", () => {
+      const pair = discoverGateDecisionTwinPair({ root: process.cwd() });
+      expect(pair.hostRelative).toBe(GATE_DECISION_TWIN_PAIR.hostRelative);
+      expect(pair.engineRelative).toBe(GATE_DECISION_TWIN_PAIR.engineRelative);
+      expect(pair.hostText).toContain("function evaluateGateCheckCore");
+      expect(pair.engineText).toContain("function evaluateGateCheckCore");
+    });
+
+    it("passes when both gate-decision twins change together without a version bump", () => {
+      const result = checkGateDecisionVersionBump({
+        changedFiles: [GATE_DECISION_TWIN_PAIR.hostRelative, GATE_DECISION_TWIN_PAIR.engineRelative],
+        baseEngineVersion: "0.2.0",
+        headEngineVersion: "0.2.0",
+      });
+      expect(result.failures).toEqual([]);
+    });
+
+    it("fails when only one gate-decision twin changes without an engine package version bump", () => {
+      const hostOnly = checkGateDecisionVersionBump({
+        changedFiles: [GATE_DECISION_TWIN_PAIR.hostRelative],
+        baseEngineVersion: "0.2.0",
+        headEngineVersion: "0.2.0",
+      });
+      expect(hostOnly.failures).toHaveLength(1);
+      expect(hostOnly.failures[0]).toContain(GATE_DECISION_TWIN_PAIR.hostRelative);
+
+      const engineOnly = checkGateDecisionVersionBump({
+        changedFiles: [GATE_DECISION_TWIN_PAIR.engineRelative],
+        baseEngineVersion: "0.2.0",
+        headEngineVersion: "0.2.0",
+      });
+      expect(engineOnly.failures).toHaveLength(1);
+      expect(engineOnly.failures[0]).toContain(GATE_DECISION_TWIN_PAIR.engineRelative);
+    });
+
+    it("passes when a single-sided gate-decision edit includes an engine package version bump", () => {
+      const result = checkGateDecisionVersionBump({
+        changedFiles: [GATE_DECISION_TWIN_PAIR.hostRelative, "packages/gittensory-engine/package.json"],
+        baseEngineVersion: "0.2.0",
+        headEngineVersion: "0.2.1",
+      });
+      expect(result.failures).toEqual([]);
+      expect(enginePackageVersionIncreased("0.2.0", "0.2.1")).toBe(true);
+      expect(parseEnginePackageVersion(JSON.stringify({ version: "0.2.1" }))).toBe("0.2.1");
+      expect(normalizeChangedPath(".\\src\\rules\\advisory.ts")).toBe("src/rules/advisory.ts");
+    });
+
+    it("includes the gate-decision twin in runEngineParityChecks pair coverage", () => {
+      const gateBody = [
+        "export function evaluateGateCheck() {}",
+        "function evaluateGateCheckCore() {}",
+        "function isConfiguredGateBlocker() {}",
+        "export function buildPullRequestAdvisory() {}",
+      ].join("\n");
+      const combined = runEngineParityChecks({
+        root: "/fake",
+        readFile: (_root, relativePath) => {
+          if (relativePath === "packages/gittensory-engine/package.json") return JSON.stringify({ version: "0.2.0" });
+          if (relativePath === GATE_DECISION_TWIN_PAIR.hostRelative) return gateBody;
+          if (relativePath === GATE_DECISION_TWIN_PAIR.engineRelative) return gateBody;
+          throw new Error(`unexpected read: ${relativePath}`);
+        },
+        listDir: () => [],
+        resolveInstalled: () => "0.2.0",
+        readExpected: () => "0.2.0",
+        changedFiles: [GATE_DECISION_TWIN_PAIR.hostRelative],
+        baseEngineVersion: "0.2.0",
+        headEngineVersion: "0.2.0",
+      });
+      expect(combined.pairsChecked.some((pair) => pair.area === "gate-decision")).toBe(true);
+      expect(combined.failures.some((failure) => failure.includes("Gate-decision logic change"))).toBe(true);
+      expect(checkGateDecisionTwinPresence({
+        root: "/fake",
+        readFile: (_root, relativePath) => {
+          if (relativePath === GATE_DECISION_TWIN_PAIR.hostRelative) return gateBody;
+          if (relativePath === GATE_DECISION_TWIN_PAIR.engineRelative) return gateBody;
+          throw new Error(`unexpected read: ${relativePath}`);
+        },
+      }).failures).toEqual([]);
+    });
   });
 
   describe("engine version skew", () => {
@@ -233,6 +323,12 @@ describe("check-engine-parity script", () => {
         if (relativePath === "packages/gittensory-engine/package.json") return JSON.stringify({ version: "0.2.0" });
         if (relativePath === "src/settings/autonomy.ts") return "export const MODE = 'strict';\n";
         if (relativePath === "packages/gittensory-engine/src/settings/autonomy.ts") return "export const MODE = 'relaxed';\n";
+        if (relativePath === GATE_DECISION_TWIN_PAIR.hostRelative) {
+          return "export function evaluateGateCheck() {}\nfunction evaluateGateCheckCore() {}\nfunction isConfiguredGateBlocker() {}\nexport function buildPullRequestAdvisory() {}\n";
+        }
+        if (relativePath === GATE_DECISION_TWIN_PAIR.engineRelative) {
+          return "export function evaluateGateCheck() {}\nfunction evaluateGateCheckCore() {}\nfunction isConfiguredGateBlocker() {}\nexport function buildPullRequestAdvisory() {}\n";
+        }
         throw new Error(`unexpected read: ${relativePath}`);
       },
       listDir: (_root: string, relativePath: string) => {

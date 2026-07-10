@@ -2903,7 +2903,7 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
   it("resolveEffectiveSettings falls back to the built-in default when the DB layer has no screenshotTableGate at all (#2006)", () => {
     const db = {} as unknown as RepositorySettings;
     const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { screenshotTableGate: { enabled: true } } }));
-    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: [], whenPaths: [], action: "close" });
+    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [] });
   });
 
   it("resolveEffectiveSettings keeps the DB layer's enabled/action when the manifest override omits them (#2006)", () => {
@@ -2922,6 +2922,53 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     const parsed = parseFocusManifest({ settings: { screenshotTableGate: "oops" } });
     expect(parsed.settings.screenshotTableGate).toBeUndefined();
     expect(parsed.warnings).toContain(`Manifest "settings.screenshotTableGate" must be an object; ignoring it and keeping any existing policy.`);
+  });
+
+  it("wires settings.screenshotTableGate.requireViewports/requireThemes into the manifest parser as a sparse override (#4535)", () => {
+    const parsed = parseFocusManifest({ settings: { screenshotTableGate: { requireViewports: ["Desktop", "Tablet", "Mobile"], requireThemes: ["Light", "Dark"] } } });
+    expect(parsed.settings.screenshotTableGate).toEqual({ requireViewports: ["Desktop", "Tablet", "Mobile"], requireThemes: ["Light", "Dark"] });
+  });
+
+  it("omits requireViewports/requireThemes from the sparse override when the raw manifest doesn't name them (#4535)", () => {
+    const parsed = parseFocusManifest({ settings: { screenshotTableGate: { enabled: true } } });
+    expect(parsed.settings.screenshotTableGate).toEqual({ enabled: true });
+    expect(parsed.settings.screenshotTableGate).not.toHaveProperty("requireViewports");
+    expect(parsed.settings.screenshotTableGate).not.toHaveProperty("requireThemes");
+  });
+
+  it("resolveEffectiveSettings merges requireViewports/requireThemes without clearing the DB layer's other fields (#4535)", () => {
+    const db = { screenshotTableGate: { enabled: true, whenLabels: ["frontend"], whenPaths: [], action: "close", requireViewports: [], requireThemes: [] } } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { screenshotTableGate: { requireViewports: ["Desktop"], requireThemes: ["Light", "Dark"] } } }));
+    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: ["frontend"], whenPaths: [], action: "close", requireViewports: ["Desktop"], requireThemes: ["Light", "Dark"] });
+  });
+
+  it("resolveEffectiveSettings keeps the DB layer's requireViewports/requireThemes when the manifest override omits them (#4535)", () => {
+    const db = { screenshotTableGate: { enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: ["Desktop"], requireThemes: ["Light"] } } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { screenshotTableGate: { enabled: true } } }));
+    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: ["Desktop"], requireThemes: ["Light"] });
+  });
+
+  it("wires settings.screenshotTableGate.skillFileUrl into the manifest parser as a sparse override (#4540 follow-up)", () => {
+    const url = "https://github.com/JSONbored/metagraphed/blob/main/.claude/skills/metagraphed/SKILL.md";
+    const parsed = parseFocusManifest({ settings: { screenshotTableGate: { skillFileUrl: url } } });
+    expect(parsed.settings.screenshotTableGate).toEqual({ skillFileUrl: url });
+  });
+
+  it("omits skillFileUrl from the sparse override when the raw manifest doesn't name it (#4540 follow-up)", () => {
+    const parsed = parseFocusManifest({ settings: { screenshotTableGate: { enabled: true } } });
+    expect(parsed.settings.screenshotTableGate).not.toHaveProperty("skillFileUrl");
+  });
+
+  it("resolveEffectiveSettings merges skillFileUrl without clearing the DB layer's other fields (#4540 follow-up)", () => {
+    const db = { screenshotTableGate: { enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [] } } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { screenshotTableGate: { skillFileUrl: "https://github.com/acme/widget/blob/main/SKILL.md" } } }));
+    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [], skillFileUrl: "https://github.com/acme/widget/blob/main/SKILL.md" });
+  });
+
+  it("resolveEffectiveSettings keeps the DB layer's skillFileUrl when the manifest override omits it (#4540 follow-up)", () => {
+    const db = { screenshotTableGate: { enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [], skillFileUrl: "https://github.com/acme/widget/blob/main/SKILL.md" } } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { screenshotTableGate: { enabled: true } } }));
+    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [], skillFileUrl: "https://github.com/acme/widget/blob/main/SKILL.md" });
   });
 
   it("wires settings.advisoryAiRouting into the manifest parser as a sparse override (#4364)", () => {
@@ -3941,6 +3988,7 @@ describe("review.visual (#3609 preview.url_template / #3610 routes)", () => {
       },
     });
     expect(m.review.visual).toEqual({
+      productionUrl: null,
       preview: { urlTemplate: "https://pr-{number}.preview.example.com" },
       routes: { paths: ["/pricing", "/docs"], maxRoutes: 3 },
       themes: [],
@@ -4043,7 +4091,68 @@ describe("review.visual (#3609 preview.url_template / #3610 routes)", () => {
   it("resolveReviewVisualConfig: null manifest yields empty defaults; a set manifest passes through", () => {
     expect(resolveReviewVisualConfig(null)).toEqual({ ...EMPTY_VISUAL_CONFIG });
     const manifest = parseFocusManifest({ review: { visual: { routes: { paths: ["/app"] } } } });
-    expect(resolveReviewVisualConfig(manifest)).toEqual({ preview: { urlTemplate: null }, routes: { paths: ["/app"], maxRoutes: null }, themes: [], gif: false, enabled: null, themeStorageKey: null, actionsFallback: false });
+    expect(resolveReviewVisualConfig(manifest)).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: ["/app"], maxRoutes: null }, themes: [], gif: false, enabled: null, themeStorageKey: null, actionsFallback: false });
+  });
+});
+
+describe("review.visual.production_url (#3611 follow-up — per-repo override of the global PUBLIC_SITE_ORIGIN env var)", () => {
+  it("parses a valid production_url, marks present, and round-trips", () => {
+    const m = parseFocusManifest({ review: { visual: { production_url: "https://metagraph.sh" } } });
+    expect(m.review.visual.productionUrl).toBe("https://metagraph.sh");
+    expect(m.review.present).toBe(true);
+    expect(reviewConfigToJson(m.review)).toEqual({ visual: { production_url: "https://metagraph.sh" } });
+  });
+
+  it("absent production_url stays null and does not mark review present on its own", () => {
+    expect(parseFocusManifest({}).review.visual.productionUrl).toBeNull();
+    expect(parseFocusManifest({ review: { visual: {} } }).review.present).toBe(false);
+  });
+
+  it("rejects a non-HTTPS production_url with a warning", () => {
+    const bad = parseFocusManifest({ review: { visual: { production_url: "http://metagraph.sh" } } });
+    expect(bad.review.visual.productionUrl).toBeNull();
+    expect(bad.warnings.some((w) => /review\.visual\.production_url.*valid HTTPS URL/.test(w))).toBe(true);
+  });
+
+  it("rejects a production_url resolving to a private/internal host with a warning", () => {
+    const bad = parseFocusManifest({ review: { visual: { production_url: "https://prod.internal" } } });
+    expect(bad.review.visual.productionUrl).toBeNull();
+    expect(bad.warnings.some((w) => /review\.visual\.production_url.*valid HTTPS URL/.test(w))).toBe(true);
+  });
+
+  it("rejects a malformed production_url with a warning", () => {
+    const bad = parseFocusManifest({ review: { visual: { production_url: "not-a-url-at-all" } } });
+    expect(bad.review.visual.productionUrl).toBeNull();
+    expect(bad.warnings.some((w) => /review\.visual\.production_url.*valid HTTPS URL/.test(w))).toBe(true);
+  });
+
+  it("composes with preview.url_template — both configured independently and both round-trip", () => {
+    const m = parseFocusManifest({
+      review: { visual: { production_url: "https://metagraph.sh", preview: { url_template: "https://pr-{number}.example.com" } } },
+    });
+    expect(m.review.visual.productionUrl).toBe("https://metagraph.sh");
+    expect(m.review.visual.preview.urlTemplate).toBe("https://pr-{number}.example.com");
+    expect(reviewConfigToJson(m.review)).toEqual({
+      visual: { production_url: "https://metagraph.sh", preview: { url_template: "https://pr-{number}.example.com" } },
+    });
+  });
+
+  it("resolveReviewVisualConfig passes a configured production_url through", () => {
+    const manifest = parseFocusManifest({ review: { visual: { production_url: "https://metagraph.sh" } } });
+    expect(resolveReviewVisualConfig(manifest).productionUrl).toBe("https://metagraph.sh");
+  });
+
+  it("overlay: a per-repo production_url wins over a global-default value", () => {
+    const globalDefault = parseReviewConfigMapping({ visual: { production_url: "https://gittensory.aethereal.dev" } }, []);
+    const perRepo = parseReviewConfigMapping({ visual: { production_url: "https://metagraph.sh" } }, []);
+    expect(overlayReviewConfig(globalDefault, perRepo).visual.productionUrl).toBe("https://metagraph.sh");
+  });
+
+  it("overlay: an unset per-repo production_url falls back to the global-default value", () => {
+    const globalDefault = parseReviewConfigMapping({ visual: { production_url: "https://gittensory.aethereal.dev" } }, []);
+    const perRepo = parseReviewConfigMapping({ visual: { routes: { paths: ["/app"] } } }, []);
+    expect(overlayReviewConfig(globalDefault, perRepo).visual.productionUrl).toBe("https://gittensory.aethereal.dev");
+    expect(overlayReviewConfig(globalDefault, perRepo).visual.routes.paths).toEqual(["/app"]);
   });
 });
 
@@ -4128,7 +4237,7 @@ describe("review.visual.gif (#3612 scroll-through GIF capture)", () => {
 
   it("composes with themes — both configured independently and both round-trip", () => {
     const m = parseFocusManifest({ review: { visual: { gif: true, themes: ["dark"] } } });
-    expect(m.review.visual).toEqual({ preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: true, enabled: null, themeStorageKey: null, actionsFallback: false });
+    expect(m.review.visual).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: true, enabled: null, themeStorageKey: null, actionsFallback: false });
     expect(reviewConfigToJson(m.review)).toEqual({ visual: { themes: ["dark"], gif: true } });
   });
 
@@ -4231,7 +4340,7 @@ describe("review.visual.theme_storage_key (#4109 localStorage theme-forcing fall
 
   it("composes with themes — both configured independently and both round-trip", () => {
     const m = parseFocusManifest({ review: { visual: { themes: ["dark"], theme_storage_key: "theme" } } });
-    expect(m.review.visual).toEqual({ preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: false, enabled: null, themeStorageKey: "theme", actionsFallback: false });
+    expect(m.review.visual).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: false, enabled: null, themeStorageKey: "theme", actionsFallback: false });
     expect(reviewConfigToJson(m.review)).toEqual({ visual: { themes: ["dark"], theme_storage_key: "theme" } });
   });
 
@@ -4286,7 +4395,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
 
   it("composes with gif — both configured independently and both round-trip", () => {
     const m = parseFocusManifest({ review: { visual: { actions_fallback: true, gif: true } } });
-    expect(m.review.visual).toEqual({ preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: [], gif: true, enabled: null, themeStorageKey: null, actionsFallback: true });
+    expect(m.review.visual).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: [], gif: true, enabled: null, themeStorageKey: null, actionsFallback: true });
     expect(reviewConfigToJson(m.review)).toEqual({ visual: { gif: true, actions_fallback: true } });
   });
 

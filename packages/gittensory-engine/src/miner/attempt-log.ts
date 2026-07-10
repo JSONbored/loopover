@@ -1,11 +1,12 @@
 // Driver-level structured attempt log — pure event shapes (#4294). Mirrors `governor-ledger.ts`: fixed vocabulary,
-// fail-closed normalization, JSON-round-trip-verified payloads. Persistence (SQLite/JSONL export) is a miner-package
-// follow-up; this module is the engine-side contract the invoke layer writes into.
+// fail-closed normalization, JSON-round-trip-verified payloads. SQLite persistence + JSONL export live in
+// `packages/gittensory-miner/lib/attempt-log.js`, which imports this normalizer from the engine package.
 
 import type { CodingAgentExecutionMode } from "./coding-agent-mode.js";
 
 export const ATTEMPT_LOG_EVENT_TYPES = Object.freeze([
   "attempt_started",
+  "attempt_tool_edit",
   "attempt_shadow",
   "attempt_succeeded",
   "attempt_failed",
@@ -104,7 +105,7 @@ export function formatAttemptLogJsonl(events: readonly NormalizedAttemptLogEvent
   return events.map((event) => JSON.stringify(event)).join("\n");
 }
 
-/** In-memory appender for tests and local tooling — production persistence imports the normalizer only. */
+/** In-memory appender for tests and local tooling — production persistence uses `gittensory-miner/lib/attempt-log.js`. */
 export function createAttemptLogBuffer(): {
   append: (event: AttemptLogEvent) => NormalizedAttemptLogEvent;
   events: () => readonly NormalizedAttemptLogEvent[];

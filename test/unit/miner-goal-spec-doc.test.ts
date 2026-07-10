@@ -17,6 +17,7 @@ const SPEC_FIELDS = [
   "blockedLabels",
   "maxConcurrentClaims",
   "issueDiscoveryPolicy",
+  "feasibilityGate",
 ] as const;
 
 describe("miner goal spec docs (#2300)", () => {
@@ -53,6 +54,7 @@ describe("miner goal spec docs (#2300)", () => {
       blockedLabels: ["wontfix", "duplicate"],
       maxConcurrentClaims: 1,
       issueDiscoveryPolicy: "neutral",
+      feasibilityGate: { enabled: true, suppressedReasons: [] },
     });
     expect(parsed.warnings).toEqual([]);
   });

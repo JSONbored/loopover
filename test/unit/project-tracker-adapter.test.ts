@@ -3,6 +3,8 @@ import { generateKeyPairSync } from "node:crypto";
 import {
   GitHubMilestonesAdapter,
   GitHubProjectsAdapter,
+  GitHubCompositeProjectTrackerAdapter,
+  createProjectTrackerAdapter,
   PROJECT_TRACKER_SUGGEST_COMMENT_MARKER,
   maybeSuggestMilestoneMatchForPr,
   maybeSuggestProjectOrMilestoneMatch,
@@ -10,6 +12,8 @@ import {
   resolveProjectV2Fields,
   type ProjectTrackerRef,
 } from "../../src/integrations/project-tracker-adapter";
+import { LinearAdapter } from "../../src/integrations/linear-adapter";
+import { upsertRepositoryLinearKey } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 function generateRsaPrivateKeyPem(): string {
@@ -22,6 +26,90 @@ function generateRsaPrivateKeyPem(): string {
 function noOpenProjectsGraphQlBody(): unknown {
   return { data: { repositoryOwner: { __typename: "User" } } };
 }
+
+const SECRET = "example-unit-test-encryption-secret-32-bytes-long";
+const PR_URL = "https://github.com/JSONbored/gittensory/pull/4";
+
+function suggestTestEnv() {
+  return createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET, GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+}
+
+describe("createProjectTrackerAdapter (#3186)", () => {
+  it("returns a LinearAdapter for the linear backend", () => {
+    const adapter = createProjectTrackerAdapter("linear");
+    expect(adapter).toBeInstanceOf(LinearAdapter);
+  });
+
+  it("returns a GitHub composite adapter for the github backend and for null/undefined", () => {
+    for (const backend of ["github", null, undefined] as const) {
+      const adapter = createProjectTrackerAdapter(backend);
+      expect(adapter).toBeInstanceOf(GitHubCompositeProjectTrackerAdapter);
+    }
+  });
+});
+
+describe("GitHubCompositeProjectTrackerAdapter (#3186)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("delegates listOpenMilestones to GitHubMilestonesAdapter", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones")) return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
+      return new Response("unexpected", { status: 500 });
+    });
+    const adapter = new GitHubCompositeProjectTrackerAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    const result = await adapter.listOpenMilestones({ env, installationId: 123, repoFullName: "JSONbored/gittensory" });
+    expect(result).toEqual([{ id: "14", title: "Self-host reliability roadmap" }]);
+  });
+
+  it("delegates listOpenProjects to GitHubProjectsAdapter", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/graphql")) {
+        return Response.json({
+          data: {
+            repositoryOwner: {
+              __typename: "Organization",
+              projectsV2: { nodes: [{ id: "PVT_1", title: "Self-host reliability roadmap", closed: false, public: true }], pageInfo: { hasNextPage: false, endCursor: null } },
+            },
+          },
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const adapter = new GitHubCompositeProjectTrackerAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    const result = await adapter.listOpenProjects({ env, installationId: 123, repoFullName: "some-org/gittensory" });
+    expect(result).toEqual([{ id: "PVT_1", title: "Self-host reliability roadmap" }]);
+  });
+
+  it("delegates attachToProject and attachToMilestone to the underlying GitHub adapters", async () => {
+    let patchedBody: unknown;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/4") && method === "GET") return Response.json({ number: 4, node_id: "PR_kwABC" });
+      if (url.endsWith("/graphql")) return Response.json({ data: { addProjectV2ItemById: { item: { id: "PVTI_xyz" } } } });
+      if (url.includes("/issues/4") && method === "PATCH") {
+        patchedBody = JSON.parse(String(init?.body ?? "{}"));
+        return Response.json({ number: 4, milestone: { number: 14 } });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const adapter = new GitHubCompositeProjectTrackerAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    const ctx = { env, installationId: 123, repoFullName: "some-org/gittensory" };
+    await expect(adapter.attachToProject(ctx, 4, "PVT_1")).resolves.toEqual({ attached: true });
+    await expect(adapter.attachToMilestone(ctx, 4, "14")).resolves.toEqual({ attached: true });
+    expect(patchedBody).toMatchObject({ milestone: 14 });
+  });
+});
 
 describe("matchOpenTrackerItems (#3183/#3184)", () => {
   const milestones: ProjectTrackerRef[] = [{ id: "14", title: "Self-host reliability roadmap" }, { id: "9", title: "Bounty Wave 2" }];
@@ -881,5 +969,40 @@ describe("maybeSuggestMilestoneMatchForPr (#3183 webhook-level gating)", () => {
     const logged = JSON.parse(String(consoleError.mock.calls[0]?.[0]));
     expect(logged).toMatchObject({ event: "milestone_suggest_failed", deliveryId: "delivery-42", repoFullName: "JSONbored/gittensory", pullNumber: 4 });
     consoleError.mockRestore();
+  });
+
+  it("runs the linear backend path when configured, preferring native links over fuzzy project matching", async () => {
+    const env = suggestTestEnv();
+    await upsertRepositoryLinearKey(env, { repoFullName: "JSONbored/gittensory", key: "lin_api_test_key" });
+    let projectsListed = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url === "https://api.linear.app/graphql") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { query: string };
+        if (body.query.includes("attachmentsForURL")) {
+          return Response.json({ data: { attachmentsForURL: { nodes: [{ issue: { project: { id: "proj-1", name: "Roadmap" }, projectMilestone: null } }] } } });
+        }
+        projectsListed = true;
+        return Response.json({ data: { projects: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } });
+      }
+      if (url.includes("/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/comments") && method === "POST") return Response.json({ id: 1 });
+      return new Response("unexpected", { status: 500 });
+    });
+    await maybeSuggestMilestoneMatchForPr(baseArgs({ backend: "linear" }));
+    expect(projectsListed).toBe(false);
+  });
+
+  it("does not throw for the linear backend when Linear is unreachable (fail-open miss)", async () => {
+    const env = suggestTestEnv();
+    await upsertRepositoryLinearKey(env, { repoFullName: "JSONbored/gittensory", key: "lin_api_test_key" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      return new Response("Service Unavailable", { status: 503 });
+    });
+    await expect(maybeSuggestMilestoneMatchForPr(baseArgs({ backend: "linear", deliveryId: "linear-outage" }))).resolves.toBeUndefined();
   });
 });

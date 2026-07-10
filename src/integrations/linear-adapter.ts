@@ -31,18 +31,20 @@ async function linearGraphQl<T>(apiKey: string, query: string, variables: Record
 }
 
 type LinearProjectNode = { id: string; name: string };
+type LinearProjectMilestoneNode = { id: string; name: string };
 type ListProjectsResponse = {
   projects: { nodes: LinearProjectNode[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
 };
+type ListProjectMilestonesResponse = {
+  projectMilestones: { nodes: LinearProjectMilestoneNode[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
+};
 
 /**
- * GraphQL implementation of {@link ProjectTrackerAdapter} for Linear (#3186). Only the Project half maps
- * naturally -- Linear's milestone-equivalent (`ProjectMilestone`) is scoped WITHIN a project rather than a
- * flat, listable workspace collection the way GitHub milestones are, so `listOpenMilestones` stays inert here
- * (a milestone-level match still surfaces through {@link findLinearNativeLink}'s `issue.projectMilestone`
- * read when Linear's own GitHub integration has already linked the PR). `attachToProject`/`attachToMilestone`
- * are also inert: writing to Linear requires resolving or creating a Linear Issue for this PR first, which is
- * a materially bigger design question deferred beyond #3186's suggest-only scope.
+ * GraphQL implementation of {@link ProjectTrackerAdapter} for Linear (#3186). Lists open workspace projects and
+ * project-milestones for fuzzy fallback matching when Linear's own GitHub integration has not already linked
+ * the PR via {@link findLinearNativeLink}. A confirmed native link still wins over any fuzzy guess.
+ * `attachToProject`/`attachToMilestone` are inert: writing to Linear requires resolving or creating a Linear
+ * Issue for this PR first, which is a materially bigger design question deferred beyond #3186's suggest-only scope.
  */
 export class LinearAdapter implements ProjectTrackerAdapter {
   async listOpenProjects(ctx: ProjectTrackerContext): Promise<ProjectTrackerRef[]> {
@@ -68,9 +70,27 @@ export class LinearAdapter implements ProjectTrackerAdapter {
     return projects.map((project) => ({ id: project.id, title: project.name }));
   }
 
-  // Inert -- see the class doc comment above.
-  async listOpenMilestones(): Promise<ProjectTrackerRef[]> {
-    return [];
+  async listOpenMilestones(ctx: ProjectTrackerContext): Promise<ProjectTrackerRef[]> {
+    const apiKey = await getDecryptedRepositoryLinearKey(ctx.env, ctx.repoFullName);
+    if (!apiKey) return [];
+    const milestones: LinearProjectMilestoneNode[] = [];
+    let after: string | null = null;
+    for (let page = 1; page <= LINEAR_LIST_PAGE_LIMIT; page += 1) {
+      const data: ListProjectMilestonesResponse = await linearGraphQl(
+        apiKey,
+        `query($after: String) {
+          projectMilestones(first: 100, after: $after, includeArchived: false) {
+            nodes { id name }
+            pageInfo { hasNextPage endCursor }
+          }
+        }`,
+        { after },
+      );
+      milestones.push(...data.projectMilestones.nodes);
+      if (!data.projectMilestones.pageInfo.hasNextPage) break;
+      after = data.projectMilestones.pageInfo.endCursor;
+    }
+    return milestones.map((milestone) => ({ id: milestone.id, title: milestone.name }));
   }
 
   // Inert -- see the class doc comment above.
@@ -109,6 +129,29 @@ export type LinearNativeLinkResult = {
  * `{project: null, milestone: null}` on a missing key, a transport error, or no matching attachment/link --
  * never throws, so a Linear outage degrades to the fuzzy-matching fallback rather than blocking the feature.
  */
+export type LinearWorkspaceProbe = {
+  reachable: boolean;
+  openProjectCount: number;
+  openMilestoneCount: number;
+};
+
+/**
+ * Best-effort connectivity probe for a repo's configured Linear workspace (#3186). Used by maintainer
+ * diagnostics to confirm a stored API key can list open projects/milestones before enabling the linear backend.
+ * Never throws -- a misconfigured key or Linear outage returns `{ reachable: false, ... }`.
+ */
+export async function probeLinearWorkspaceAccess(ctx: ProjectTrackerContext): Promise<LinearWorkspaceProbe> {
+  const apiKey = await getDecryptedRepositoryLinearKey(ctx.env, ctx.repoFullName);
+  if (!apiKey) return { reachable: false, openProjectCount: 0, openMilestoneCount: 0 };
+  const adapter = new LinearAdapter();
+  try {
+    const [projects, milestones] = await Promise.all([adapter.listOpenProjects(ctx), adapter.listOpenMilestones(ctx)]);
+    return { reachable: true, openProjectCount: projects.length, openMilestoneCount: milestones.length };
+  } catch {
+    return { reachable: false, openProjectCount: 0, openMilestoneCount: 0 };
+  }
+}
+
 export async function findLinearNativeLink(ctx: ProjectTrackerContext, prUrl: string): Promise<LinearNativeLinkResult> {
   const none: LinearNativeLinkResult = { project: null, milestone: null };
   const apiKey = await getDecryptedRepositoryLinearKey(ctx.env, ctx.repoFullName);

@@ -6168,6 +6168,142 @@ describe("queue processors", () => {
 
         expect(aiCalls).toBeGreaterThan(0); // the fleet-wide env default applied since the repo set no override
       });
+
+      it("swallows a hasPublishedAiSlopAdvisory read failure and a slop one-shot-skip audit write failure without throwing", async () => {
+        let aiCalls = 0;
+        const env = createTestEnv({
+          GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+          AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ risk: "low", rationale: "fine" }) }; } } as unknown as Ai,
+          AI_SUMMARIES_ENABLED: "true",
+          AI_PUBLIC_COMMENTS_ENABLED: "true",
+          AI_DAILY_NEURON_BUDGET: "100000",
+        });
+        await seedRegateChurnRepo(env, { publicSurface: "comment_only", aiReviewMode: "off", slopGateMode: "advisory", slopAiAdvisory: true });
+        await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 98, title: "Slop flaky-read PR", state: "open", user: { login: "contributor" }, head: { sha: "a98" }, labels: [], body: "Closes #1" });
+        await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 98, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = input.toString();
+          const method = init?.method ?? "GET";
+          if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+          if (url.includes("/pulls/98/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+          if (url.endsWith("/pulls/98")) return Response.json({ number: 98, title: "Slop flaky-read PR", state: "open", user: { login: "contributor" }, head: { sha: "a98" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+          if (url.includes("/commits/a98/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+          if (url.includes("/commits/a98/status")) return Response.json({ state: "success", statuses: [] });
+          if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+          if (url.includes("/issues/98/comments")) return method === "GET" ? Response.json([]) : Response.json({ id: 1 }, { status: 201 });
+          if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+          return Response.json({});
+        });
+
+        const readSpy = vi.spyOn(repositoriesModule, "hasPublishedAiSlopAdvisory").mockRejectedValueOnce(new Error("D1 read error"));
+        await expect(
+          processJob(env, { type: "agent-regate-pr", deliveryId: "slop-existence-read-fails", repoFullName: "JSONbored/gittensory", prNumber: 98, installationId: 123 }),
+        ).resolves.toBeUndefined();
+        readSpy.mockRestore();
+        expect(aiCalls).toBeGreaterThan(0); // fail-safe treats the read failure as "not skipped" -- a fresh slop call still runs
+
+        await putCachedAiSlopAdvisory(env, "JSONbored/gittensory", 98, "a98", "seed-fp", { status: "ok", band: "low", finding: null, estimatedNeurons: 4 });
+        const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
+        const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
+          if (event.eventType === "github_app.ai_slop_one_shot_skip") throw new Error("audit DB down");
+          await originalRecordAuditEvent(auditEnv, event);
+        });
+        await expect(
+          processJob(env, { type: "agent-regate-pr", deliveryId: "slop-skip-audit-fails", repoFullName: "JSONbored/gittensory", prNumber: 98, installationId: 123 }),
+        ).resolves.toBeUndefined();
+        auditSpy.mockRestore();
+      });
+
+      it("swallows a hasPublishedLinkedIssueSatisfaction read failure and a linked-issue one-shot-skip audit write failure without throwing", async () => {
+        let aiCalls = 0;
+        const env = createTestEnv({
+          GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+          AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ status: "addressed", rationale: "looks done" }) }; } } as unknown as Ai,
+          AI_SUMMARIES_ENABLED: "true",
+          AI_PUBLIC_COMMENTS_ENABLED: "true",
+          AI_DAILY_NEURON_BUDGET: "100000",
+        });
+        await seedRegateChurnRepo(env, { publicSurface: "comment_only", aiReviewMode: "off", linkedIssueSatisfactionGateMode: "advisory" });
+        await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 99, title: "Linked-issue flaky-read PR", state: "open", user: { login: "contributor" }, head: { sha: "a99" }, labels: [], body: "Closes #1" });
+        await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 99, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = input.toString();
+          const method = init?.method ?? "GET";
+          if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+          if (url.includes("/pulls/99/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+          if (url.endsWith("/pulls/99")) return Response.json({ number: 99, title: "Linked-issue flaky-read PR", state: "open", user: { login: "contributor" }, head: { sha: "a99" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+          if (url.includes("/commits/a99/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+          if (url.includes("/commits/a99/status")) return Response.json({ state: "success", statuses: [] });
+          if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+          if (url.includes("/issues/99/comments")) return method === "GET" ? Response.json([]) : Response.json({ id: 1 }, { status: 201 });
+          if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+          return Response.json({});
+        });
+
+        const readSpy = vi.spyOn(repositoriesModule, "hasPublishedLinkedIssueSatisfaction").mockRejectedValueOnce(new Error("D1 read error"));
+        await expect(
+          processJob(env, { type: "agent-regate-pr", deliveryId: "linked-issue-existence-read-fails", repoFullName: "JSONbored/gittensory", prNumber: 99, installationId: 123 }),
+        ).resolves.toBeUndefined();
+        readSpy.mockRestore();
+        expect(aiCalls).toBeGreaterThan(0); // fail-safe treats the read failure as "not skipped" -- a fresh assessment still runs
+
+        await putCachedLinkedIssueSatisfaction(env, "JSONbored/gittensory", 99, "a99", 1, "seed-fp", { status: "ok", result: { status: "addressed", rationale: "already done", confidence: 0.9 }, estimatedNeurons: 4 });
+        const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
+        const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
+          if (event.eventType === "github_app.linked_issue_satisfaction_one_shot_skip") throw new Error("audit DB down");
+          await originalRecordAuditEvent(auditEnv, event);
+        });
+        await expect(
+          processJob(env, { type: "agent-regate-pr", deliveryId: "linked-issue-skip-audit-fails", repoFullName: "JSONbored/gittensory", prNumber: 99, installationId: 123 }),
+        ).resolves.toBeUndefined();
+        auditSpy.mockRestore();
+      });
+
+      it("swallows a one-shot-reuse getLatestPublishedAiReview read failure and a one-shot-reuse audit write failure without throwing", async () => {
+        let aiCalls = 0;
+        const env = createTestEnv({
+          GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+          AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Fresh.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+          AI_SUMMARIES_ENABLED: "true",
+          AI_PUBLIC_COMMENTS_ENABLED: "true",
+          AI_DAILY_NEURON_BUDGET: "100000",
+        });
+        await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
+        await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 100, title: "One-shot flaky-read PR", state: "open", user: { login: "contributor" }, head: { sha: "a100" }, labels: [], body: "Closes #1" });
+        await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 100, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+        await putCachedAiReview(env, "JSONbored/gittensory", 100, "a100-old", "block", { notes: "Old.", reviewerCount: 1 });
+        await markAiReviewPublished(env, "JSONbored/gittensory", 100, "a100-old");
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = input.toString();
+          const method = init?.method ?? "GET";
+          if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+          if (url.includes("/pulls/100/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+          if (url.endsWith("/pulls/100")) return Response.json({ number: 100, title: "One-shot flaky-read PR", state: "open", user: { login: "contributor" }, head: { sha: "a100" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+          if (url.includes("/commits/a100/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+          if (url.includes("/commits/a100/status")) return Response.json({ state: "success", statuses: [] });
+          if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+          if (url.includes("/issues/100/comments")) return method === "POST" || method === "PATCH" ? Response.json({ id: 1 }, { status: 201 }) : Response.json([]);
+          if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+          return Response.json({});
+        });
+
+        const readSpy = vi.spyOn(repositoriesModule, "getLatestPublishedAiReview").mockRejectedValueOnce(new Error("D1 read error"));
+        await expect(
+          processJob(env, { type: "agent-regate-pr", deliveryId: "one-shot-reuse-read-fails", repoFullName: "JSONbored/gittensory", prNumber: 100, installationId: 123 }),
+        ).resolves.toBeUndefined();
+        readSpy.mockRestore();
+        expect(aiCalls).toBeGreaterThan(0); // fail-safe treats the read failure as "nothing to reuse" -- a fresh review still runs
+
+        const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
+        const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
+          if (event.eventType === "github_app.ai_review_one_shot_reuse") throw new Error("audit DB down");
+          await originalRecordAuditEvent(auditEnv, event);
+        });
+        await expect(
+          processJob(env, { type: "agent-regate-pr", deliveryId: "one-shot-reuse-audit-fails", repoFullName: "JSONbored/gittensory", prNumber: 100, installationId: 123 }),
+        ).resolves.toBeUndefined();
+        auditSpy.mockRestore();
+      });
     });
 
     it("#freeze-owner-exemption (incident, confirmed live on PR #3476): the repo owner's OWN held PR is never frozen -- a new push gets a fresh AI review", async () => {

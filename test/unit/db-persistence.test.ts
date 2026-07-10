@@ -6,10 +6,13 @@ import {
   hasActiveReviewForHeadSha,
   listContributorRepoStats,
   listLatestRepoGithubTotalsSnapshots,
+  listLatestSignalSnapshotsForTargets,
   listRepoPullRequestFilePaths,
+  listSignalSnapshots,
   persistBountyLifecycleEvent,
   persistRegistryDriftEvents,
   persistRepoGithubTotalsSnapshot,
+  persistSignalSnapshot,
   startActiveReviewTracking,
   terminalizeActiveReviewTracking,
   updateUpstreamDriftReportIssue,
@@ -430,6 +433,62 @@ describe("active-review tracking (#review-evasion-protection)", () => {
       const row = await rawRow(env, "owner/repo", 1);
       await terminalizeActiveReviewTracking(env, "owner/repo", 1);
       expect(await getActiveReviewStartedAt(env, "owner/repo", 1, "sha1")).toBe(row?.started_at);
+    });
+  });
+
+  // signal_snapshots' "latest" tiebreak (investigated per an out-of-scope-flagged follow-up): generatedAt is
+  // millisecond-precision, so two writes for the same (signalType, targetKey) within one millisecond tie: SQLite
+  // itself makes no guarantee about tie order ("the order ... is undefined" -- sqlite.org/lang_select.html), so
+  // an id-string-based tiebreak (the desc(id) convention used elsewhere in this file, e.g. audit_events,
+  // review_suppression) can't substitute for real insertion order -- id here is a random crypto.randomUUID(),
+  // not a sortable sequence. rowid (SQLite's own monotonic per-insert counter) is the only value that actually
+  // reflects insertion order, matching this table's own documented invariant in retention.ts's
+  // dedupeSignalSnapshots ("'Latest' is the highest rowid per key ... rowid, unlike generated_at, can never
+  // tie") and the same tiebreak orb/relay.ts already uses for its own "most recently inserted" read.
+  describe("signal_snapshots: rowid tiebreak on a generatedAt tie", () => {
+    async function seedTiedPair(env: Env, targetKey: string, firstId: string, secondId: string, generatedAt: string) {
+      // Deliberately adversarial ids: `firstId` (inserted FIRST) sorts ALPHABETICALLY AFTER `secondId` (inserted
+      // SECOND). A tiebreak that (wrongly) compared `id` strings instead of `rowid` would pick the WRONG row --
+      // this is what actually discriminates "genuine insertion order" from "an id string happens to sort right".
+      await persistSignalSnapshot(env, { id: firstId, signalType: "debug-signal", targetKey, repoFullName: null, payload: { marker: "first" }, generatedAt });
+      await persistSignalSnapshot(env, { id: secondId, signalType: "debug-signal", targetKey, repoFullName: null, payload: { marker: "second" }, generatedAt });
+    }
+
+    it("listSignalSnapshots: the row inserted SECOND sorts first on a tie, even when its id sorts alphabetically BEFORE the first row's id", async () => {
+      const env = createTestEnv();
+      await seedTiedPair(env, "repo-a", "zzz-inserted-first", "aaa-inserted-second", "2026-01-01T00:00:00.000Z");
+
+      const rows = await listSignalSnapshots(env, "debug-signal", "repo-a");
+      expect(rows).toHaveLength(2);
+      expect(rows[0]?.id).toBe("aaa-inserted-second");
+      expect(rows[0]?.payload).toMatchObject({ marker: "second" });
+      expect(rows[1]?.id).toBe("zzz-inserted-first");
+    });
+
+    it("REGRESSION: a THIRD write with an id that sorts alphabetically in the MIDDLE still slots by insertion order, not id order", async () => {
+      const env = createTestEnv();
+      await seedTiedPair(env, "repo-b", "zzz-first", "aaa-second", "2026-01-01T00:00:00.000Z");
+      await persistSignalSnapshot(env, { id: "mmm-third", signalType: "debug-signal", targetKey: "repo-b", repoFullName: null, payload: { marker: "third" }, generatedAt: "2026-01-01T00:00:00.000Z" });
+
+      const rows = await listSignalSnapshots(env, "debug-signal", "repo-b");
+      expect(rows.map((r) => r.payload.marker)).toEqual(["third", "second", "first"]); // reverse insertion order
+    });
+
+    it("listLatestSignalSnapshotsForTargets: the row inserted SECOND wins the per-target 'latest' rank, even when its id sorts alphabetically BEFORE the first row's id", async () => {
+      const env = createTestEnv();
+      await seedTiedPair(env, "repo-c", "zzz-inserted-first", "aaa-inserted-second", "2026-01-01T00:00:00.000Z");
+
+      const latest = await listLatestSignalSnapshotsForTargets(env, "debug-signal", ["repo-c"]);
+      expect(latest.get("repo-c")?.id).toBe("aaa-inserted-second");
+    });
+
+    it("a genuinely later generatedAt still wins outright, tiebreak or not", async () => {
+      const env = createTestEnv();
+      await persistSignalSnapshot(env, { id: "old-row", signalType: "debug-signal", targetKey: "repo-d", repoFullName: null, payload: { marker: "old" }, generatedAt: "2026-01-01T00:00:00.000Z" });
+      await persistSignalSnapshot(env, { id: "new-row", signalType: "debug-signal", targetKey: "repo-d", repoFullName: null, payload: { marker: "new" }, generatedAt: "2026-01-02T00:00:00.000Z" });
+
+      const rows = await listSignalSnapshots(env, "debug-signal", "repo-d");
+      expect(rows[0]?.id).toBe("new-row");
     });
   });
 });

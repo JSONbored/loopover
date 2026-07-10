@@ -4933,7 +4933,18 @@ export async function listSignalSnapshots(env: Env, signalType: string, targetKe
     .select()
     .from(signalSnapshots)
     .where(and(eq(signalSnapshots.signalType, signalType), eq(signalSnapshots.targetKey, targetKey)))
-    .orderBy(desc(signalSnapshots.generatedAt))
+    // A `rowid` tiebreak, not `id` (a random UUID with no insertion-order relationship): two writes for the
+    // same key within one millisecond (e.g. an API-record write immediately after a prior one) tie on
+    // generatedAt. SQLite's own docs guarantee nothing about which row an unbroken ORDER BY tie returns ("the
+    // order ... is undefined", sqlite.org/lang_select.html) -- an apparent insertion-order fallback here is an
+    // accident of the current query plan, not a contract, and the sibling window-function query below
+    // (listLatestSignalSnapshotsForTargets) proves the accident can genuinely go the wrong way: it used
+    // `id DESC` for this exact tiebreak and reliably picked the WRONG "latest" row once an id happened to sort
+    // out of insertion order (confirmed via an adversarial-id regression test, not just theory) before being
+    // fixed here too. Matches dedupeSignalSnapshots' own documented invariant for this exact table
+    // (retention.ts: "'Latest' is the highest rowid per key ... rowid, unlike generated_at, can never tie") and
+    // the same pattern orb/relay.ts already uses for its own "most recently inserted" read.
+    .orderBy(desc(signalSnapshots.generatedAt), desc(sql`rowid`))
     .limit(100);
   return rows.map(toSignalSnapshotRecord);
 }
@@ -4961,7 +4972,11 @@ export async function listLatestSignalSnapshotsForTargets(
         FROM (
           SELECT
             id, signal_type, target_key, repo_full_name, generated_at,
-            row_number() OVER (PARTITION BY target_key ORDER BY generated_at DESC, id DESC) AS snapshot_rank
+            -- rowid, not id (a random UUID): the previous "generated_at DESC, id DESC" tiebreak reliably
+            -- returned the WRONG "latest" row on a same-millisecond tie whenever the two ids happened to sort
+            -- out of insertion order (confirmed via an adversarial-id regression test in db-persistence.test.ts,
+            -- not just theory). Matches listSignalSnapshots' own tiebreak -- see that function's doc comment.
+            row_number() OVER (PARTITION BY target_key ORDER BY generated_at DESC, rowid DESC) AS snapshot_rank
           FROM signal_snapshots
           WHERE signal_type = ? AND target_key IN (${placeholders})
         )

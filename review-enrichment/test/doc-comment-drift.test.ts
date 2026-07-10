@@ -3,7 +3,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  reconstructOldContent,
   extractFunctionParams,
   parseDocParams,
   parseFunctionParams,
@@ -25,12 +24,6 @@ const oldParams = (entries) => new Map(entries.map(([name, ids]) => [name, new S
 
 const DRIFTED = `/**\n * @param oldName the old one\n */\nexport function doThing(newName) {\n  return newName;\n}\n`;
 const DRIFT_PATCH = `@@ -1,6 +1,6 @@\n /**\n  * @param oldName the old one\n  */\n-export function doThing(oldName) {\n+export function doThing(newName) {\n   return newName;\n }`;
-
-test("reconstructOldContent: reverse-applies a patch to rebuild the pre-PR file", () => {
-  const old = reconstructOldContent(DRIFTED, DRIFT_PATCH);
-  assert.match(old, /function doThing\(oldName\)/); // the old parameter name is restored
-  assert.doesNotMatch(old, /newName\) \{/); // the added signature line is dropped
-});
 
 test("extractFunctionParams: maps each enumerable named function to its parameter set", () => {
   const map = extractFunctionParams(`export function f(a, b) {}\nfunction g({ x }) {}\nfunction h(c) {}\n`);
@@ -63,25 +56,6 @@ test("extractFunctionParams: strips a TS type annotation and a default value fro
 test("extractFunctionParams: skips a TS `this` pseudo-parameter, keeping the real args", () => {
   const map = extractFunctionParams("function qux(this: T, a) {}\n");
   assert.deepEqual([...map.get("qux")], ["a"]);
-});
-
-test("reconstructOldContent: bails (null) when the patch context does not match the head content", () => {
-  // The context line ` other` doesn't exist in newContent → misaligned patch → fail closed.
-  assert.equal(reconstructOldContent(`a\nb\n`, `@@ -1,2 +1,2 @@\n-x\n+a\n other`), null);
-});
-
-test("reconstructOldContent: rebuilds across MULTIPLE hunks, filling the unchanged gap between them", () => {
-  // new file: a / X / c / d. Hunk 1 changed Y→X (line 2); hunk 2 changed D→d (line 4); `c` is the untouched gap.
-  const old = reconstructOldContent(
-    `a\nX\nc\nd\n`,
-    `@@ -1,2 +1,2 @@\n a\n-Y\n+X\n@@ -4,1 +4,1 @@\n-D\n+d`,
-  );
-  assert.equal(old, `a\nY\nc\nD\n`);
-});
-
-test("reconstructOldContent: bails (null) when a hunk starts beyond the head content's length", () => {
-  // A hunk anchored at line 99 of a 2-line file can't align → fail closed rather than fabricate old content.
-  assert.equal(reconstructOldContent(`a\nb\n`, `@@ -99,1 +99,1 @@\n a`), null);
 });
 
 test("findDocCommentDrift: a duplicate-named function is skipped (no cross-declaration false positive)", () => {

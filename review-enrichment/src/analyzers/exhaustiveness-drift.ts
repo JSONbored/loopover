@@ -5,7 +5,7 @@
 // file-fetch caps; fail-safe on missing token/headSha, bad slug, or fetch errors.
 import type { EnrichRequest, ExhaustivenessFinding } from "../types.js";
 import { githubHeaders } from "../github-headers.js";
-import { reconstructOldContent } from "./doc-comment-drift.js";
+import { reconstructOldContent } from "./reconstruct-old-content.js";
 import { isDiffFileHeaderLine } from "./diff-lines.js";
 import { isTestPath } from "./test-ratio.js";
 import { DEFAULT_MAX_FINDINGS } from "./limits.js";

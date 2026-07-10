@@ -6,6 +6,7 @@
 // non-finding. Deliberately conservative: only NAMED `function` declarations whose parameters are confidently
 // enumerable (any destructuring / non-identifier param → skip the function). Reports symbol + stale params + line.
 import type { EnrichRequest, DocCommentDriftFinding } from "../types.js";
+import { reconstructOldContent } from "./reconstruct-old-content.js";
 
 const MAX_FILES = 20;
 const MAX_FINDINGS = 50;
@@ -49,47 +50,6 @@ async function readBoundedText(resp: Response, signal?: AbortSignal): Promise<st
   } finally {
     reader.releaseLock();
   }
-}
-
-/** Reconstruct the pre-PR content of a file by reverse-applying its unified `patch` to the post-PR `newContent`:
- *  context and removed (`-`) lines rebuild the old text; added (`+`) lines are dropped. Returns null if a hunk's
- *  position runs past the content (so the caller falls back to "no old parameters" and reports nothing). Pure. */
-export function reconstructOldContent(newContent: string, patch: string): string | null {
-  const newLines = newContent.split("\n");
-  const patchLines = patch.split("\n");
-  const out: string[] = [];
-  let cursor = 0; // next unconsumed index into newLines
-  let i = 0;
-  while (i < patchLines.length) {
-    const header = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(patchLines[i]!);
-    if (!header) {
-      i += 1;
-      continue;
-    }
-    const hunkStart = Number(header[1]) - 1; // 0-based new-file line the hunk begins at
-    if (hunkStart < cursor || hunkStart > newLines.length) return null;
-    while (cursor < hunkStart) out.push(newLines[cursor++]!); // unchanged lines before the hunk
-    i += 1;
-    while (i < patchLines.length && !patchLines[i]!.startsWith("@@")) {
-      const l = patchLines[i]!;
-      if (!l.startsWith("\\")) {
-        const sign = l[0];
-        const body = l.slice(1);
-        if (sign === "-") {
-          out.push(body); // removed: present in old only
-        } else {
-          // added or context lines must match the fetched head content at the cursor; a mismatch means the patch
-          // doesn't align with `newContent` (malformed/truncated input) → bail so we never trust a bad old signature.
-          if (newLines[cursor] !== body) return null;
-          if (sign !== "+") out.push(body); // context is present in old too; an added line is not
-          cursor += 1;
-        }
-      }
-      i += 1;
-    }
-  }
-  while (cursor < newLines.length) out.push(newLines[cursor++]!);
-  return out.join("\n");
 }
 
 /** Map every named `function NAME` declaration in `content` to its enumerable parameter-name set. A function whose

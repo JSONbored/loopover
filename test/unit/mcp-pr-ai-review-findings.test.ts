@@ -92,6 +92,45 @@ describe("MCP gittensory_get_pr_ai_review_findings (#4519)", () => {
     expect(data.status).toBe("not_found");
     expect(data.findings).toEqual([]);
     expect(data.categoryCounts).toEqual({});
+    expect(JSON.stringify(result.content)).toMatch(/No published AI review findings for acme\/widgets#7/i);
+  });
+
+  it("returns not_found when the pull request row does not exist", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets", private: false, owner: { login: "acme" } });
+    const result = await (await connect(env)).callTool({
+      name: "gittensory_get_pr_ai_review_findings",
+      arguments: { login: "miner1", owner: "acme", repo: "widgets", pullNumber: 404 },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as { status: string; findings: unknown[] };
+    expect(data.status).toBe("not_found");
+    expect(data.findings).toEqual([]);
+    expect(JSON.stringify(result.content)).toMatch(/No pull request acme\/widgets#404/i);
+  });
+
+  it("returns a zero-finding ready summary when the published review has no inline findings", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets", private: false, owner: { login: "acme" } });
+    await upsertRepositorySettings(env, { repoFullName: "acme/widgets", aiReviewMode: "block" });
+    await upsertPullRequestFromGitHub(env, "acme/widgets", {
+      number: 99,
+      title: "Clean",
+      state: "open",
+      user: { login: "miner1" },
+      head: { sha: "sha-clean" },
+      labels: [],
+      body: "x",
+    });
+    await putCachedAiReview(env, "acme/widgets", 99, "sha-clean", "block", { notes: "No inline findings.", reviewerCount: 1 });
+    await markAiReviewPublished(env, "acme/widgets", 99, "sha-clean");
+    const result = await (await connect(env)).callTool({
+      name: "gittensory_get_pr_ai_review_findings",
+      arguments: { login: "miner1", owner: "acme", repo: "widgets", pullNumber: 99 },
+    });
+    expect(result.isError).toBeFalsy();
+    expect((result.structuredContent as { status: string; findings: unknown[] }).status).toBe("ready");
+    expect(JSON.stringify(result.content)).toMatch(/0 AI-review finding\(s\)/i);
   });
 
   it("returns ai_review_off when the repo has AI review disabled", async () => {
@@ -113,6 +152,7 @@ describe("MCP gittensory_get_pr_ai_review_findings (#4519)", () => {
     });
     expect(result.isError).toBeFalsy();
     expect((result.structuredContent as { status: string }).status).toBe("ai_review_off");
+    expect(JSON.stringify(result.content)).toMatch(/AI review is off for acme\/widgets/i);
   });
 
   it("forbids reading another contributor's PR findings", async () => {

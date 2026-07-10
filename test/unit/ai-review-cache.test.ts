@@ -468,6 +468,17 @@ describe("AI review cache (#1)", () => {
         vi.useRealTimers();
       }
     });
+
+    it("omits headSha from the payload when the stored head_sha is empty", async () => {
+      const env = createTestEnv();
+      await env.DB.prepare(
+        `INSERT INTO ai_review_cache (repo_full_name, pull_number, head_sha, ai_review_mode, notes, reviewer_count, findings_json, metadata_json, cacheable, published_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind("o/r", 55, "", "block", "empty head", 1, "[]", "{}", 1, "2026-07-09T00:00:00.000Z", "2026-07-09T00:00:00.000Z")
+        .run();
+      expect(await getLatestPublishedAiReview(env, "o/r", 55, "block")).toEqual({ notes: "empty head", reviewerCount: 1, findings: [] });
+    });
   });
 
   describe("countPublishedAiReviewHeads — auto_pause_after_reviewed_commits (#2042)", () => {

@@ -51,6 +51,12 @@ const MAX_TRANSCRIPT_CHARS = 8000;
 const MAX_ERROR_DETAIL_CHARS = 500;
 
 function defaultBuildArgs(task: CodingAgentDriverTask): string[] {
+  return defaultCliSubprocessArgs(task);
+}
+
+/** The default argv contract, exported so the factory (#4289) can PREFIX provider config (e.g. a configured
+ *  model flag) without re-inventing — and silently drifting from — this baseline argv shape. */
+export function defaultCliSubprocessArgs(task: CodingAgentDriverTask): string[] {
   return [
     "--max-turns",
     String(task.maxTurns),

@@ -20,6 +20,7 @@ import {
   resolveCodingAgentExecutionMode,
   resolveCodingAgentModeFromConfig,
   resolveConfiguredCodingAgentDriverNames,
+  resolveFirstConfiguredCodingAgentDriverName,
   runCodingAgentAttempt,
   type CodingAgentDriverResult,
   type CodingAgentDriverTask,
@@ -297,9 +298,14 @@ describe("invokeCodingAgentDriver (#4313)", () => {
 });
 
 describe("coding-agent driver factory (#4289)", () => {
-  it("exposes the noop provider registry", () => {
-    expect([...CODING_AGENT_DRIVER_NAMES]).toEqual(["noop"]);
+  it("exposes the provider registry", () => {
+    expect([...CODING_AGENT_DRIVER_NAMES]).toEqual(["noop", "claude-cli", "codex-cli", "agent-sdk"]);
     expect(CODING_AGENT_DRIVER_CONFIG_ENV.noop).toEqual({});
+    expect(CODING_AGENT_DRIVER_CONFIG_ENV["claude-cli"]).toEqual({
+      model: "MINER_CODING_AGENT_CLAUDE_MODEL",
+      timeoutMs: "MINER_CODING_AGENT_TIMEOUT_MS",
+    });
+    expect(CODING_AGENT_DRIVER_CONFIG_ENV["agent-sdk"]).toEqual({});
   });
 
   it("isConfiguredCodingAgentDriver is deny-by-default for unknown names", () => {
@@ -402,6 +408,164 @@ describe("coding-agent driver factory (#4289)", () => {
     });
     expect(live.result.ok).toBe(true);
     expect(live.result.lintGuard?.ok).toBe(true);
+  });
+});
+
+describe("createCodingAgentDriver provider resolution (#4289)", () => {
+  const cliTask: CodingAgentDriverTask = {
+    attemptId: "attempt-factory-1",
+    workingDirectory: "/tmp/worktrees/attempt-factory-1",
+    acceptanceCriteriaPath: "/tmp/worktrees/attempt-factory-1/ACCEPTANCE-CRITERIA.md",
+    instructions: "Apply the fix.",
+    maxTurns: 4,
+  };
+
+  function recordingSpawn() {
+    const calls: Array<{ cmd: string; args: readonly string[]; opts: { cwd: string; env: Record<string, string | undefined>; timeoutMs: number } }> = [];
+    const spawn = async (cmd: string, args: readonly string[], opts: { cwd: string; env: Record<string, string | undefined>; timeoutMs: number }) => {
+      calls.push({ cmd, args, opts });
+      return { stdout: "done", code: 0 };
+    };
+    return { spawn, calls };
+  }
+
+  it("accepts every concrete provider name (locally-authenticated, always configured)", () => {
+    for (const name of ["claude-cli", "codex-cli", "agent-sdk"]) {
+      expect(isConfiguredCodingAgentDriver(name, {})).toBe(true);
+    }
+  });
+
+  it("claude-cli spawns the claude command with the driver's default argv when no model is configured", async () => {
+    const { spawn, calls } = recordingSpawn();
+    const driver = createCodingAgentDriver({ providerName: "claude-cli", spawn, env: {} });
+    const result = await driver.run(cliTask);
+    expect(result.ok).toBe(true);
+    expect(calls[0]!.cmd).toBe("claude");
+    expect(calls[0]!.args).not.toContain("--model");
+    expect(calls[0]!.args).toContain("--max-turns");
+    expect(calls[0]!.opts.cwd).toBe(cliTask.workingDirectory);
+  });
+
+  it("CONSUMES the declared model env key: MINER_CODING_AGENT_CLAUDE_MODEL lands in the claude argv", async () => {
+    const { spawn, calls } = recordingSpawn();
+    const driver = createCodingAgentDriver({
+      providerName: "claude-cli",
+      spawn,
+      env: { MINER_CODING_AGENT_CLAUDE_MODEL: "claude-sonnet-5" },
+    });
+    await driver.run(cliTask);
+    const args = [...calls[0]!.args];
+    expect(args.slice(0, 2)).toEqual(["--model", "claude-sonnet-5"]);
+    expect(args).toContain("--max-turns");
+  });
+
+  it("codex-cli reads ITS OWN model key and ignores claude's", async () => {
+    const { spawn, calls } = recordingSpawn();
+    const driver = createCodingAgentDriver({
+      providerName: "codex-cli",
+      spawn,
+      env: { MINER_CODING_AGENT_CODEX_MODEL: "gpt-5.1-codex", MINER_CODING_AGENT_CLAUDE_MODEL: "ignored" },
+    });
+    await driver.run(cliTask);
+    expect(calls[0]!.cmd).toBe("codex");
+    expect([...calls[0]!.args].slice(0, 2)).toEqual(["--model", "gpt-5.1-codex"]);
+  });
+
+  it("CONSUMES the declared timeout env key when it is a positive integer, else defers to the driver default", async () => {
+    const { spawn, calls } = recordingSpawn();
+    await createCodingAgentDriver({ providerName: "claude-cli", spawn, env: { MINER_CODING_AGENT_TIMEOUT_MS: "90000" } }).run(cliTask);
+    expect(calls[0]!.opts.timeoutMs).toBe(90_000);
+    for (const bad of ["not-a-number", "-5", "0", "1.5", "  "]) {
+      const rec = recordingSpawn();
+      await createCodingAgentDriver({ providerName: "claude-cli", spawn: rec.spawn, env: { MINER_CODING_AGENT_TIMEOUT_MS: bad } }).run(cliTask);
+      expect(rec.calls[0]!.opts.timeoutMs).toBe(120_000);
+    }
+  });
+
+  it("a whitespace-only model env value is treated as unset", async () => {
+    const { spawn, calls } = recordingSpawn();
+    await createCodingAgentDriver({ providerName: "claude-cli", spawn, env: { MINER_CODING_AGENT_CLAUDE_MODEL: "   " } }).run(cliTask);
+    expect(calls[0]!.args).not.toContain("--model");
+  });
+
+  it("fails closed when a CLI provider has no spawn dependency", () => {
+    expect(() => createCodingAgentDriver({ providerName: "claude-cli" })).toThrowError(
+      "unconfigured_coding_agent_driver_missing_spawn:claude-cli",
+    );
+    expect(() => createCodingAgentDriver({ providerName: "codex-cli", env: {} })).toThrowError(
+      "unconfigured_coding_agent_driver_missing_spawn:codex-cli",
+    );
+  });
+
+  it("forwards knownSecrets to the CLI driver's redaction", async () => {
+    const secretValue = ["long-injected", "auth-value"].join("-");
+    const spawn = async () => ({ stdout: `echoed ${secretValue}`, code: 0 });
+    const driver = createCodingAgentDriver({ providerName: "claude-cli", spawn, knownSecrets: [secretValue] });
+    const result = await driver.run(cliTask);
+    expect(result.transcript).not.toContain(secretValue);
+    expect(result.transcript).toContain("[redacted]");
+  });
+
+  it("agent-sdk resolves with an injected query loop and forwards hooks to the session", async () => {
+    let captured: { options: { hooks?: unknown } } | undefined;
+    const hooks = { PreToolUse: [{ hooks: ["policy"] }] };
+    const driver = createCodingAgentDriver({
+      providerName: "agent-sdk",
+      hooks,
+      query: (input) => {
+        captured = input;
+        return (async function* (): AsyncGenerator<Record<string, unknown>> {
+          yield { type: "result", subtype: "success", is_error: false, num_turns: 1, result: "ok" };
+        })();
+      },
+    });
+    const result = await driver.run(cliTask);
+    expect(result.ok).toBe(true);
+    expect(captured!.options.hooks).toBe(hooks);
+  });
+
+  it("agent-sdk constructs without any injected deps (real-SDK default) without invoking it", () => {
+    const driver = createCodingAgentDriver({ providerName: "agent-sdk" });
+    expect(typeof driver.run).toBe("function");
+  });
+
+  it("normalizes provider-name case and whitespace", async () => {
+    const { spawn, calls } = recordingSpawn();
+    const driver = createCodingAgentDriver({ providerName: "  Claude-CLI ", spawn });
+    await driver.run(cliTask);
+    expect(calls[0]!.cmd).toBe("claude");
+  });
+
+  it("resolveFirstConfiguredCodingAgentDriverName skips unknown names (primary-then-fallback) and fails closed on none", () => {
+    expect(resolveFirstConfiguredCodingAgentDriverName({ MINER_CODING_AGENT_PROVIDER: "mystery, agent-sdk, noop" })).toBe("agent-sdk");
+    expect(resolveFirstConfiguredCodingAgentDriverName({ MINER_CODING_AGENT_PROVIDER: "mystery,unknown" })).toBeUndefined();
+    expect(resolveFirstConfiguredCodingAgentDriverName({})).toBeUndefined();
+  });
+
+  it("runCodingAgentAttempt threads provider deps end-to-end (claude-cli under live mode)", async () => {
+    const { spawn, calls } = recordingSpawn();
+    const { mode, result } = await runCodingAgentAttempt({
+      providerName: "claude-cli",
+      env: { MINER_CODING_AGENT_CLAUDE_MODEL: "claude-sonnet-5" },
+      spawn,
+      task: cliTask,
+    });
+    expect(mode).toBe("live");
+    expect(result.ok).toBe(true);
+    expect([...calls[0]!.args].slice(0, 2)).toEqual(["--model", "claude-sonnet-5"]);
+  });
+
+  it("runCodingAgentAttempt dry_run with claude-cli does not require spawn (shadow event only)", async () => {
+    const log = createAttemptLogBuffer();
+    const dry = await runCodingAgentAttempt({
+      providerName: "claude-cli",
+      agentDryRun: true,
+      task: cliTask,
+      log,
+    });
+    expect(dry.mode).toBe("dry_run");
+    expect(dry.result.ok).toBe(true);
+    expect(log.events().at(-1)?.eventType).toBe("attempt_shadow");
   });
 });
 

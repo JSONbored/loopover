@@ -194,6 +194,7 @@ export {
 } from "./miner/coding-agent-driver.js";
 export {
   createCliSubprocessCodingAgentDriver,
+  defaultCliSubprocessArgs,
   type CliSubprocessDriverOptions,
   type CliSubprocessSpawnFn,
 } from "./miner/cli-subprocess-driver.js";
@@ -232,6 +233,7 @@ export {
   createFakeCodingAgentDriverForFactory,
   isConfiguredCodingAgentDriver,
   resolveConfiguredCodingAgentDriverNames,
+  resolveFirstConfiguredCodingAgentDriverName,
   runCodingAgentAttempt,
   type CodingAgentDriverName,
   type CreateCodingAgentDriverOptions,

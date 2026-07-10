@@ -12,22 +12,56 @@ import {
   type AttemptLogSink,
 } from "./coding-agent-invoke.js";
 import {
+  codingAgentModeExecutes,
   resolveCodingAgentModeFromConfig,
   type CodingAgentExecutionMode,
 } from "./coding-agent-mode.js";
 import type { CodingAgentDriverResult, CodingAgentDriverTask } from "./coding-agent-driver.js";
 import { guardCodingAgentDriverResult, type LintGuardOptions, type LintGuardResult } from "./lint-guard.js";
+import {
+  createCliSubprocessCodingAgentDriver,
+  defaultCliSubprocessArgs,
+  type CliSubprocessSpawnFn,
+} from "./cli-subprocess-driver.js";
+import {
+  createAgentSdkCodingAgentDriver,
+  type AgentSdkHooks,
+  type AgentSdkQueryFn,
+} from "./agent-sdk-driver.js";
 
-/** Provider names the factory knows how to resolve today. Concrete CLI/SDK drivers land in #4266/#4267. */
-export const CODING_AGENT_DRIVER_NAMES = Object.freeze(["noop"] as const);
+/** Provider names the factory resolves: the two concrete drivers from #4266/#4267 (`claude-cli`/`codex-cli`
+ *  spawn the respective CLI; `agent-sdk` runs in-process via the Agent SDK) plus the `noop` stub. All are
+ *  locally-authenticated (no API-key env requirement), mirroring how `isConfiguredSelfHostProvider` treats
+ *  `claude-code`/`codex` as always-configured. */
+export const CODING_AGENT_DRIVER_NAMES = Object.freeze(["noop", "claude-cli", "codex-cli", "agent-sdk"] as const);
 
 export type CodingAgentDriverName = (typeof CODING_AGENT_DRIVER_NAMES)[number];
 
-/** Per-provider env keys for coding-agent configuration (mirrors `SELF_HOST_REVIEWER_MODEL_ENV`). */
-export const CODING_AGENT_DRIVER_CONFIG_ENV: Readonly<Record<CodingAgentDriverName, { model?: string; maxTurns?: string }>> =
+/** Per-provider env keys for coding-agent configuration (mirrors `SELF_HOST_REVIEWER_MODEL_ENV`). Every key
+ *  declared here is CONSUMED by `createCodingAgentDriver` below — a declared-but-unread entry is dead,
+ *  misleading config-as-code surface. Deliberately NOT declared: a max-turns key (the turn budget is task-level
+ *  input — `CodingAgentDriverTask.maxTurns` — set by the orchestrator per attempt, not per-provider config) and
+ *  an agent-sdk model key (the SDK session uses the account/CLI default; it exposes no model option on the
+ *  driver today). */
+export const CODING_AGENT_DRIVER_CONFIG_ENV: Readonly<Record<CodingAgentDriverName, { model?: string; timeoutMs?: string }>> =
   Object.freeze({
     noop: {},
+    "claude-cli": { model: "MINER_CODING_AGENT_CLAUDE_MODEL", timeoutMs: "MINER_CODING_AGENT_TIMEOUT_MS" },
+    "codex-cli": { model: "MINER_CODING_AGENT_CODEX_MODEL", timeoutMs: "MINER_CODING_AGENT_TIMEOUT_MS" },
+    "agent-sdk": {},
   });
+
+/** `firstConfigured` (src/selfhost/ai.ts:117-134) pattern: a set-and-non-empty env value, else undefined. */
+function firstConfiguredEnvValue(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+/** Positive-integer env parse for the CLI wall-clock ceiling; anything else defers to the driver default. */
+function configuredTimeoutMs(env: Record<string, string | undefined>): number | undefined {
+  const raw = Number(firstConfiguredEnvValue(env.MINER_CODING_AGENT_TIMEOUT_MS));
+  return Number.isFinite(raw) && Number.isInteger(raw) && raw > 0 ? raw : undefined;
+}
 
 function parseDriverNames(env: Record<string, string | undefined>): string[] {
   return (env.MINER_CODING_AGENT_PROVIDER ?? "")
@@ -43,6 +77,9 @@ export function isConfiguredCodingAgentDriver(
 ): boolean {
   switch (name) {
     case "noop":
+    case "claude-cli":
+    case "codex-cli":
+    case "agent-sdk":
       return true;
     default:
       return false;
@@ -55,12 +92,64 @@ export function resolveConfiguredCodingAgentDriverNames(
   return parseDriverNames(env).filter((name) => isConfiguredCodingAgentDriver(name, env));
 }
 
+/** Primary-then-fallback resolution over `MINER_CODING_AGENT_PROVIDER`'s comma-separated list (the same
+ *  fallback-chain semantic `AiRunOptions.fallback` gives reviewers): the FIRST configured name wins; unknown
+ *  names are skipped (deny-by-default), and an all-unknown/empty list resolves to undefined so the caller
+ *  fails closed rather than falling through to some implicit default driver. */
+export function resolveFirstConfiguredCodingAgentDriverName(
+  env: Record<string, string | undefined>,
+): string | undefined {
+  return resolveConfiguredCodingAgentDriverNames(env)[0];
+}
+
 export type CreateCodingAgentDriverOptions = {
   providerName: string;
   env?: Record<string, string | undefined> | undefined;
   /** Test seam — inject a fake driver instead of constructing the named provider. */
   driver?: CodingAgentDriver | undefined;
+  /** Subprocess runner for the CLI providers (`claude-cli`/`codex-cli`). REQUIRED for those providers — the
+   *  engine package ships no default spawn, so constructing a CLI driver without one fails closed rather than
+   *  producing a driver that can never run. */
+  spawn?: CliSubprocessSpawnFn | undefined;
+  /** Optional injected `query()` loop for the `agent-sdk` provider (defaults to the real SDK import). */
+  query?: AgentSdkQueryFn | undefined;
+  /** Forwarded to the `agent-sdk` provider's session (#2343's PreToolUse interception point). */
+  hooks?: AgentSdkHooks | undefined;
+  /** Known secret values the CLI providers strip from surfaced output, on top of the token-shape patterns. */
+  knownSecrets?: readonly string[] | undefined;
 };
+
+/** Build a CLI provider's argv: the driver's own default argv contract, prefixed with the CONFIGURED model
+ *  flag when the provider's `CODING_AGENT_DRIVER_CONFIG_ENV` model key is set — this is where that declared
+ *  config is actually consumed. */
+function buildCliArgsWithConfiguredModel(model: string | undefined): ((task: CodingAgentDriverTask) => readonly string[]) | undefined {
+  if (model === undefined) return undefined;
+  return (task) => ["--model", model, ...defaultCliSubprocessArgs(task)];
+}
+
+function createCliProvider(
+  command: "claude" | "codex",
+  modelEnvKey: string,
+  options: CreateCodingAgentDriverOptions,
+  env: Record<string, string | undefined>,
+): CodingAgentDriver {
+  if (!options.spawn) {
+    // Fail-closed (resolveAutonomy's deny-by-default precedent): a CLI provider without a spawn dependency is
+    // unconfigured in the way that matters — never hand back a driver whose every run() would throw.
+    throw new Error(`unconfigured_coding_agent_driver_missing_spawn:${command}-cli`);
+  }
+  const model = firstConfiguredEnvValue(env[modelEnvKey]);
+  const timeoutMs = configuredTimeoutMs(env);
+  const buildArgs = buildCliArgsWithConfiguredModel(model);
+  return createCliSubprocessCodingAgentDriver({
+    command,
+    spawn: options.spawn,
+    parentEnv: env,
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(buildArgs !== undefined ? { buildArgs } : {}),
+    ...(options.knownSecrets !== undefined ? { knownSecrets: options.knownSecrets } : {}),
+  });
+}
 
 /** Resolve a concrete driver for `providerName`. Throws on unknown/unconfigured providers (fail-closed). */
 export function createCodingAgentDriver(options: CreateCodingAgentDriverOptions): CodingAgentDriver {
@@ -73,7 +162,17 @@ export function createCodingAgentDriver(options: CreateCodingAgentDriverOptions)
   switch (name) {
     case "noop":
       return createNoopCodingAgentDriver();
-    /* v8 ignore next -- isConfiguredCodingAgentDriver already rejects unknown names before this switch. */
+    case "claude-cli":
+      return createCliProvider("claude", "MINER_CODING_AGENT_CLAUDE_MODEL", options, env);
+    case "codex-cli":
+      return createCliProvider("codex", "MINER_CODING_AGENT_CODEX_MODEL", options, env);
+    case "agent-sdk":
+      // No model/timeout config today — the SDK session uses the account default; hooks/query are optional.
+      return createAgentSdkCodingAgentDriver({
+        ...(options.query !== undefined ? { query: options.query } : {}),
+        ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
+      });
+    /* v8 ignore next 2 -- isConfiguredCodingAgentDriver already rejects unknown names before this switch. */
     default:
       throw new Error(`unconfigured_coding_agent_driver:${name}`);
   }
@@ -87,10 +186,31 @@ export type RunCodingAgentAttemptOptions = {
   task: CodingAgentDriverTask;
   log?: AttemptLogSink | undefined;
   driver?: CodingAgentDriver | undefined;
+  /** Provider dependencies, forwarded to `createCodingAgentDriver` (see `CreateCodingAgentDriverOptions`). */
+  spawn?: CliSubprocessSpawnFn | undefined;
+  query?: AgentSdkQueryFn | undefined;
+  hooks?: AgentSdkHooks | undefined;
+  knownSecrets?: readonly string[] | undefined;
   /** When supplied, the driver result is run through the lint guard (#4276) before being returned, so a
    *  live coding-agent edit that fails its own package's typecheck/node --check never reads as `ok: true`. */
   lintGuard?: LintGuardOptions | undefined;
 };
+
+function resolveDriverForAttempt(options: RunCodingAgentAttemptOptions, mode: CodingAgentExecutionMode): CodingAgentDriver {
+  if (options.driver) return options.driver;
+  // Dry-run/paused attempts never call `driver.run()` (see coding-agent-driver.md lifecycle). Constructing a
+  // CLI provider here would require spawn/query deps even though they would never be used — use the noop stub
+  // as a stand-in so shadow/paused attempts stay dependency-free (#4289 / gate fix for #4593).
+  if (!codingAgentModeExecutes(mode)) return createNoopCodingAgentDriver();
+  return createCodingAgentDriver({
+    providerName: options.providerName,
+    env: options.env,
+    spawn: options.spawn,
+    query: options.query,
+    hooks: options.hooks,
+    knownSecrets: options.knownSecrets,
+  });
+}
 
 /** End-to-end entry: resolve mode from config, pick the driver, invoke under mode gating + attempt log, then
  *  (when `lintGuard` is supplied) run the changed files through the lint guard before the caller sees the result. */
@@ -105,11 +225,7 @@ export async function runCodingAgentAttempt(
     agentPaused: options.agentPaused,
     agentDryRun: options.agentDryRun,
   });
-  const driver = createCodingAgentDriver({
-    providerName: options.providerName,
-    env: options.env,
-    driver: options.driver,
-  });
+  const driver = resolveDriverForAttempt(options, mode);
   const result = await invokeCodingAgentDriver(driver, mode, options.task, options.log);
   if (!options.lintGuard) return { mode, result };
   return { mode, result: await guardCodingAgentDriverResult(result, options.lintGuard) };

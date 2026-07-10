@@ -46,8 +46,8 @@ interface CodingAgentDriver {
 
 Two reference implementations ship today for tests: `createFakeCodingAgentDriver` (records the last task, no IO) and
 `createNoopCodingAgentDriver` (default-OFF stub). The two real backends — a CLI-subprocess driver (#4266) and an
-Agent-SDK driver (#4267) — are the seam's first concrete implementations; until they land, `createCodingAgentDriver`
-resolves the built-in `noop` driver (`CODING_AGENT_DRIVER_NAMES` currently `["noop"]`).
+Agent-SDK driver (#4267) — register in `createCodingAgentDriver` as `claude-cli`, `codex-cli`, and `agent-sdk`
+(`CODING_AGENT_DRIVER_NAMES`: `["noop", "claude-cli", "codex-cli", "agent-sdk"]`).
 
 ## The surrounding primitives
 
@@ -87,7 +87,8 @@ To add a driver beyond the CLI-subprocess and Agent-SDK backends:
 runCodingAgentAttempt(options)
   ├─ resolveCodingAgentExecutionMode(...)         → paused | dry_run | live
   ├─ if !codingAgentModeExecutes(mode):           → record a shadow/no-op attempt-log event, return without spawning
-  ├─ createCodingAgentDriver({ name, ... })        → the configured driver (today: noop)
+  │     (uses the noop driver stand-in — CLI providers do NOT require spawn/query deps in this branch)
+  ├─ createCodingAgentDriver({ name, ... })        → the configured driver
   └─ invokeCodingAgentDriver(driver, task, mode, log)
        ├─ log: attempt started
        ├─ driver.run(task)                          → edits inside task.workingDirectory only, ≤ task.maxTurns

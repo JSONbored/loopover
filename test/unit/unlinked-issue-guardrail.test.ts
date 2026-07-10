@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { createTestEnv } from "../helpers/d1";
-import { upsertIssueFromGitHub, hasRecentAuditEvent } from "../../src/db/repositories";
-import { resolveUnlinkedIssueMatchDisposition, UNLINKED_ISSUE_MATCH_AUDIT_EVENT_TYPE } from "../../src/review/unlinked-issue-guardrail";
+import { countRecentAuditEventsForActor, recordAuditEvent, upsertIssueFromGitHub, hasRecentAuditEvent } from "../../src/db/repositories";
+import {
+  resolveUnlinkedIssueMatchDisposition,
+  UNLINKED_ISSUE_MATCH_AUDIT_EVENT_TYPE,
+  UNLINKED_ISSUE_VERIFY_ATTEMPT_AUDIT_EVENT_TYPE,
+} from "../../src/review/unlinked-issue-guardrail";
 import type { UnlinkedIssueGuardrailConfig } from "../../src/types";
 
 function config(overrides: Partial<UnlinkedIssueGuardrailConfig> = {}): UnlinkedIssueGuardrailConfig {
@@ -362,6 +366,113 @@ describe("resolveUnlinkedIssueMatchDisposition", () => {
       expect(first?.kind).toBe("hold");
       const second = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, prAuthorLogin: "   ", config: config() });
       expect(second?.kind).toBe("hold");
+    });
+  });
+
+  describe("cost-control gates ahead of the AI verifier (#4515)", () => {
+    async function seedVerifyAttempts(env: Awaited<ReturnType<typeof createTestEnv>>, actor: string, count: number) {
+      for (let i = 0; i < count; i++) {
+        await recordAuditEvent(env, {
+          eventType: UNLINKED_ISSUE_VERIFY_ATTEMPT_AUDIT_EVENT_TYPE,
+          actor,
+          targetKey: `owner/other-repo#${900 + i}`,
+          outcome: "completed",
+          detail: "seed",
+        });
+      }
+    }
+
+    it("skips AI verification entirely once the per-actor rate ceiling is already met, even on a brand new PR", async () => {
+      const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+      const env = createTestEnv({ AI: { run } as unknown as Ai });
+      await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+      await seedVerifyAttempts(env, "contributor-a", 15);
+
+      const result = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+      expect(result).toBeUndefined();
+      expect(run).not.toHaveBeenCalled();
+    });
+
+    it("still verifies normally just below the rate ceiling (boundary check)", async () => {
+      const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+      const env = createTestEnv({ AI: { run } as unknown as Ai });
+      await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+      await seedVerifyAttempts(env, "contributor-a", 14);
+
+      const result = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+      expect(result?.kind).toBe("hold");
+      expect(run).toHaveBeenCalled();
+    });
+
+    it("does not count a DIFFERENT actor's verify attempts toward this actor's ceiling", async () => {
+      const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+      const env = createTestEnv({ AI: { run } as unknown as Ai });
+      await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+      await seedVerifyAttempts(env, "someone-else", 20);
+
+      const result = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+      expect(result?.kind).toBe("hold");
+      expect(run).toHaveBeenCalled();
+    });
+
+    it("records a verify-attempt audit event for the candidate it checks, so the ceiling accumulates across separate PRs", async () => {
+      const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+      const env = createTestEnv({ AI: { run } as unknown as Ai });
+      await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+
+      await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+
+      expect(await countRecentAuditEventsForActor(env, "contributor-a", UNLINKED_ISSUE_VERIFY_ATTEMPT_AUDIT_EVENT_TYPE, "2000-01-01T00:00:00.000Z")).toBe(1);
+    });
+
+    it("fails open (verification still runs) when the rate-ceiling read itself errors", async () => {
+      const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+      const env = createTestEnv({ AI: { run } as unknown as Ai });
+      await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+      const realPrepare = env.DB.prepare.bind(env.DB);
+      env.DB.prepare = ((sql: string) => {
+        if (/SELECT.*FROM.*audit_events/i.test(sql)) throw new Error("d1 down");
+        return realPrepare(sql);
+      }) as typeof env.DB.prepare;
+
+      const result = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+      expect(result?.kind).toBe("hold");
+      expect(run).toHaveBeenCalled();
+    });
+
+    it("skips AI verification entirely when the shared daily neuron budget is exhausted", async () => {
+      const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+      const env = createTestEnv({ AI: { run } as unknown as Ai, AI_DAILY_NEURON_BUDGET: "1" });
+      await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+
+      const result = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+      expect(result).toBeUndefined();
+      expect(run).not.toHaveBeenCalled();
+    });
+
+    it("defaults the shared neuron budget HIGH (10M) when AI_DAILY_NEURON_BUDGET is unset — does not spuriously block verification", async () => {
+      const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+      const env = createTestEnv({ AI: { run } as unknown as Ai, AI_DAILY_NEURON_BUDGET: "" });
+      await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+
+      const result = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+      expect(result?.kind).toBe("hold");
+      expect(run).toHaveBeenCalled();
+    });
+
+    it("fails open (verification still runs) when the shared-budget read itself errors", async () => {
+      const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+      const env = createTestEnv({ AI: { run } as unknown as Ai });
+      await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+      const realPrepare = env.DB.prepare.bind(env.DB);
+      env.DB.prepare = ((sql: string) => {
+        if (/SELECT.*FROM.*ai_usage_events/i.test(sql)) throw new Error("d1 down");
+        return realPrepare(sql);
+      }) as typeof env.DB.prepare;
+
+      const result = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+      expect(result?.kind).toBe("hold");
+      expect(run).toHaveBeenCalled();
     });
   });
 });

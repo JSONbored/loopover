@@ -13,11 +13,20 @@
 // repo that hasn't opted in (the default) or a PR that already links an issue (the common case) pays
 // nothing beyond two boolean checks.
 
-import { getFreshOfficialMinerDetection, mostRecentAuditEventForOtherTarget, listOpenIssues, recordAuditEvent, upsertOfficialMinerDetection } from "../db/repositories";
+import {
+  countRecentAuditEventsForActor,
+  getFreshOfficialMinerDetection,
+  mostRecentAuditEventForOtherTarget,
+  listOpenIssues,
+  recordAuditEvent,
+  sumAiEstimatedNeuronsSince,
+  upsertOfficialMinerDetection,
+} from "../db/repositories";
 import { fetchOfficialGittensorMiner } from "../gittensor/api";
-import { findUnlinkedIssueCandidates, type CandidateOpenIssue } from "../signals/unlinked-issue-candidates";
+import { clampNumber, estimateNeurons, utcDayStartIso } from "../services/ai-review";
+import { findUnlinkedIssueCandidates, MAX_CANDIDATES, type CandidateOpenIssue } from "../signals/unlinked-issue-candidates";
 import type { UnlinkedIssueGuardrailConfig } from "../types";
-import { verifyUnlinkedIssueMatch } from "./unlinked-issue-match";
+import { DIFF_CHAR_BUDGET, MAX_TOKENS, verifyUnlinkedIssueMatch } from "./unlinked-issue-match";
 
 /** Shared with any future reader that wants to correlate these holds/closes across repos for one contributor. */
 export const UNLINKED_ISSUE_MATCH_AUDIT_EVENT_TYPE = "github_app.unlinked_issue_match_hold";
@@ -34,6 +43,56 @@ const VELOCITY_EXCEPTION_MAX_GAP_MS = 60 * 60 * 1000;
 // a circular dependency, since processors.ts is the one that imports FROM this module).
 const OFFICIAL_MINER_DETECTION_TTL_MS = 5 * 60 * 1000;
 const OFFICIAL_MINER_DETECTION_UNAVAILABLE_TTL_MS = 60 * 1000;
+
+// #4515: every candidate below costs one real (if small) AI call, so two cost-control gates run ahead of the
+// loop -- a per-actor RATE ceiling, and a check against the shared daily neuron budget every other free-tier
+// AI feature draws from (sumAiEstimatedNeuronsSince/AI_DAILY_NEURON_BUDGET, mirroring ai-slop.ts's own
+// pre-call budget check). Both are cost controls, not correctness gates: on any read failure they fail
+// toward "proceed as if this layer didn't exist" (full verification runs), never toward silently disabling
+// the guardrail they sit in front of by skipping straight to `undefined`.
+export const UNLINKED_ISSUE_VERIFY_ATTEMPT_AUDIT_EVENT_TYPE = "github_app.unlinked_issue_verify_attempt";
+// Generous by design: a legitimate contributor never approaches this in an hour even opening several PRs
+// back-to-back. Sized to catch a scripted/abusive burst hammering the AI verifier, not ordinary human cadence.
+const VERIFY_RATE_CEILING_MAX_ATTEMPTS = 15;
+const VERIFY_RATE_CEILING_WINDOW_MS = 60 * 60 * 1000;
+// Flat overhead for the parts of the verifier's prompt that aren't the (already-bounded) diff -- the system
+// prompt, PR title/body, and candidate issue title/body. None of these are cheaply boundable per candidate
+// ahead of time, so this deliberately over-, never under-, estimates: a budget check must never undercount.
+const VERIFY_PROMPT_OVERHEAD_CHAR_ESTIMATE = 2_000;
+// verifyUnlinkedIssueMatch tries a primary model and, ONLY on a thrown error, a fallback -- two calls is the
+// real worst case per candidate, not the common case, but this budget check must size for the worst case.
+const VERIFY_MAX_MODEL_ATTEMPTS_PER_CANDIDATE = 2;
+
+/** Has this actor already run the AI verifier at or beyond the rate ceiling in the last window, across every
+ *  repo/PR? Fail-safe: a read error resolves to "not rate-limited," so the pre-#4515 unconditional-
+ *  verification behavior takes over rather than a DB hiccup silently disabling this guardrail. */
+async function isOverUnlinkedIssueVerifyRateCeiling(env: Env, authorLogin: string): Promise<boolean> {
+  const sinceIso = new Date(Date.now() - VERIFY_RATE_CEILING_WINDOW_MS).toISOString();
+  const count = await countRecentAuditEventsForActor(env, authorLogin, UNLINKED_ISSUE_VERIFY_ATTEMPT_AUDIT_EVENT_TYPE, sinceIso).catch(() => 0);
+  return count >= VERIFY_RATE_CEILING_MAX_ATTEMPTS;
+}
+
+/** Would verifying `candidateCount` candidates (each up to {@link VERIFY_MAX_MODEL_ATTEMPTS_PER_CANDIDATE}
+ *  model calls) risk exceeding the shared daily AI neuron budget -- the same counter/env var every other
+ *  free-tier AI feature draws from? `candidateCount` is defensively re-clamped to {@link MAX_CANDIDATES}: the
+ *  caller already bounds it there, but this estimate must never balloon even if that invariant ever slips.
+ *  Fail-safe for the same reason as the rate ceiling above: a read error resolves to "budget available." */
+async function isUnlinkedIssueVerifyBudgetExceeded(env: Env, candidateCount: number): Promise<boolean> {
+  const worstCaseCandidateCount = Math.min(candidateCount, MAX_CANDIDATES);
+  const estimatedNeurons = estimateNeurons(
+    DIFF_CHAR_BUDGET + VERIFY_PROMPT_OVERHEAD_CHAR_ESTIMATE,
+    MAX_TOKENS,
+    worstCaseCandidateCount * VERIFY_MAX_MODEL_ATTEMPTS_PER_CANDIDATE,
+  );
+  // Resolved IDENTICALLY to ai-slop.ts's own pre-call check -- both features sum into the same
+  // sumAiEstimatedNeuronsSince counter, so a divergent default/ceiling here would under- or over-count
+  // against the one real shared budget.
+  const rawNeuronBudget = Number(env.AI_DAILY_NEURON_BUDGET);
+  const budget = clampNumber(env.AI_DAILY_NEURON_BUDGET && Number.isFinite(rawNeuronBudget) ? rawNeuronBudget : 10_000_000, 0, 10_000_000);
+  const used = await sumAiEstimatedNeuronsSince(env, utcDayStartIso()).catch(() => 0);
+  const remainingBudget = Math.max(0, budget - used);
+  return estimatedNeurons > remainingBudget;
+}
 
 /** Minimal cached miner-identity check, deliberately independent of processors.ts's getCachedOfficialMinerDetection
  *  (same cache table and TTLs, no audit-log side effect -- this call site doesn't need one). Fail-safe: any
@@ -101,6 +160,19 @@ async function recordUnlinkedIssueMatchOccurrence(env: Env, repoFullName: string
   }).catch(() => undefined);
 }
 
+/** Record that the AI verifier actually ran against one candidate, so {@link isOverUnlinkedIssueVerifyRateCeiling}
+ *  accumulates this actor's volume correctly across every repo/PR they touch, not just this thread. Fire-and-
+ *  forget, same rationale as {@link recordUnlinkedIssueMatchOccurrence}: a write failure must never block the gate. */
+async function recordUnlinkedIssueVerifyAttempt(env: Env, repoFullName: string, pullNumber: number, authorLogin: string): Promise<void> {
+  await recordAuditEvent(env, {
+    eventType: UNLINKED_ISSUE_VERIFY_ATTEMPT_AUDIT_EVENT_TYPE,
+    actor: authorLogin,
+    targetKey: unlinkedIssueMatchTargetKey(repoFullName, pullNumber),
+    outcome: "completed",
+    detail: "unlinked-issue-match AI verifier invoked",
+  }).catch(() => undefined);
+}
+
 /**
  * Resolve the unlinked-issue-match disposition for one PR, or `undefined` when nothing should hold or close
  * it. Checks candidates in the pre-filter's ranked order and acts on the FIRST one that clears
@@ -124,7 +196,12 @@ export async function resolveUnlinkedIssueMatchDisposition(env: Env, input: Reso
   });
   if (candidates.length === 0) return undefined;
   const authorLogin = input.prAuthorLogin?.trim() || null;
+  // #4515: cost-control gates ahead of the AI loop below. An unidentifiable author can't be rate-limited
+  // individually (nothing to key the ceiling on), so only the shared budget check applies to them.
+  if (authorLogin && (await isOverUnlinkedIssueVerifyRateCeiling(env, authorLogin))) return undefined;
+  if (await isUnlinkedIssueVerifyBudgetExceeded(env, candidates.length)) return undefined;
   for (const candidate of candidates) {
+    if (authorLogin) await recordUnlinkedIssueVerifyAttempt(env, input.repoFullName, input.pullNumber, authorLogin);
     const verdict = await verifyUnlinkedIssueMatch(env, {
       prTitle: input.prTitle,
       prBody: input.prBody,

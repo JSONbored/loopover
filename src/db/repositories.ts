@@ -2636,6 +2636,21 @@ export async function mostRecentAuditEventForOtherTarget(env: Env, actor: string
   return rows[0]?.createdAt ?? null;
 }
 
+/** Count-returning, cross-repo variant (#4515): how many recent events of this type has this actor generated,
+ *  across EVERY target (repo/PR), within the recency window? Unlike {@link countRecentAuditEventsForActorAndTarget}
+ *  (scoped to one target thread), this counts an actor's ACTIVITY VOLUME irrespective of which PR/repo each
+ *  event landed on -- backs a per-actor rate ceiling on an expensive operation (e.g. a paid AI call) that a
+ *  single-target-scoped counter would never catch for an actor spreading attempts across many repos. */
+export async function countRecentAuditEventsForActor(env: Env, actor: string, eventType: string, sinceIso: string): Promise<number> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(auditEvents)
+    .where(and(eq(auditEvents.actor, actor), eq(auditEvents.eventType, eventType), gte(auditEvents.createdAt, sinceIso)));
+  /* v8 ignore next -- count(*) always returns exactly one row; the empty-array guard only satisfies the destructure type. */
+  return row?.count ?? 0;
+}
+
 /** Count-returning variant of {@link hasRecentAuditEvent}, additionally scoped to one `targetKey` (e.g. a single
  *  `owner/repo#123` PR/issue) rather than the actor's activity across the whole repo. Backs the review-request
  *  nagging cooldown (#2463): counting how many `@gittensory` pings a contributor has sent on ONE thread within

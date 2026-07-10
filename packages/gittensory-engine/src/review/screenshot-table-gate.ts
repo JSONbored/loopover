@@ -224,6 +224,8 @@ const CELL_IMAGE_URL_PATTERN = /!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)|<img\b[^
 function extractCellImageUrl(cell: string): string | null {
   const match = cell.match(CELL_IMAGE_URL_PATTERN);
   if (!match) return null;
+  /* v8 ignore next -- defensive: whichever alternative of CELL_IMAGE_URL_PATTERN matched always captures a
+   * non-empty group (both require at least one non-`)`/non-`"` character), so this fallback is unreachable. */
   return match[1] ?? match[2] ?? null;
 }
 

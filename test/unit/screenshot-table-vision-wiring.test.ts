@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runScreenshotTableVisionForAdvisory } from "../../src/queue/processors";
+import * as repositories from "../../src/db/repositories";
 import { upsertRepositoryAiKey } from "../../src/db/repositories";
 import * as submitterReputation from "../../src/review/submitter-reputation";
 import type { AdvisoryFinding, RepositorySettings } from "../../src/types";
@@ -14,7 +15,7 @@ const pr = { number: 3 };
 const repoFullName = "acme/widgets";
 
 function byokEnv() {
-  return createTestEnv({ TOKEN_ENCRYPTION_SECRET: "screenshot-vision-test-secret-32b" });
+  return createTestEnv({ TOKEN_ENCRYPTION_SECRET: "screenshot-vision-test-fake-encryption-secret" });
 }
 
 function gateEnabledSettings(over: Partial<RepositorySettings> = {}): RepositorySettings {
@@ -175,7 +176,7 @@ describe("runScreenshotTableVisionForAdvisory (#4366)", () => {
       {
         code: "screenshot_table_vision_finding",
         severity: "warning",
-        title: "Possible screenshot-table issue: identical images",
+        title: "Possible screenshot-table issue: identical images (row 1)",
         detail: "The before and after images for this row are byte-identical — this doesn't look like real before/after evidence.",
         action: "Advisory only — verify the screenshot-table images against the stated change before deciding.",
       },
@@ -279,7 +280,7 @@ describe("runScreenshotTableVisionForAdvisory (#4366)", () => {
       {
         code: "screenshot_table_vision_finding",
         severity: "warning",
-        title: "Possible screenshot-table issue: identical images",
+        title: "Possible screenshot-table issue: identical images (row 1)",
         detail: "The before and after images for this row are byte-identical — this doesn't look like real before/after evidence.",
         action: "Advisory only — verify the screenshot-table images against the stated change before deciding.",
       },
@@ -357,7 +358,7 @@ describe("runScreenshotTableVisionForAdvisory (#4366)", () => {
       {
         code: "screenshot_table_vision_finding",
         severity: "warning",
-        title: "Possible screenshot-table issue: identical images",
+        title: "Possible screenshot-table issue: identical images (row 1)",
         detail: "The before and after images for this row are byte-identical — this doesn't look like real before/after evidence.",
         action: "Advisory only — verify the screenshot-table images against the stated change before deciding.",
       },
@@ -399,5 +400,153 @@ describe("runScreenshotTableVisionForAdvisory (#4366)", () => {
     const fetchedUrls = fetchMock.mock.calls.map((c) => String(c[0]));
     expect(fetchedUrls).not.toContain(thirdBefore);
     expect(fetchedUrls).not.toContain(thirdAfter);
+  });
+
+  it("silently skips a pair when only ONE of its two images fetches successfully", async () => {
+    const env = byokEnv();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === BEFORE_URL) return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const adv = findingsHolder();
+    await runScreenshotTableVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr,
+      prBody: tableBody(BEFORE_URL, AFTER_URL),
+      prTitle: "Redesign the nav bar",
+      author: "alice",
+      confirmedContributor: true,
+      settings: gateEnabledSettings(),
+      advisory: adv,
+    });
+    expect(adv.findings).toEqual([]);
+  });
+
+  it("adds no finding when the BYOK provider returns 200 with no usable text (distinct from a failure) -- also exercises a null author", async () => {
+    const env = byokEnv();
+    await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-key", model: null });
+    // An empty string is a genuine 2xx response, unlike stubShotsAndProvider(null)'s 500 -- callAiProvider
+    // returns { text: "", failure: undefined } here (no "http_error"), exercising the "no usable output"
+    // fallback in recordScreenshotTableVisionUsage's detail message rather than the provider-failure one.
+    stubShotsAndProvider("");
+    const adv = findingsHolder();
+    await runScreenshotTableVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr,
+      prBody: tableBody(BEFORE_URL, AFTER_URL),
+      prTitle: "Redesign the nav bar",
+      author: null,
+      confirmedContributor: true,
+      settings: gateEnabledSettings(),
+      advisory: adv,
+    });
+    expect(adv.findings).toEqual([]);
+  });
+
+  it("still resolves BYOK when the declared provider explicitly matches the stored key's provider", async () => {
+    const env = byokEnv();
+    await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-key", model: null });
+    stubShotsAndProvider(findingsResponse([]));
+    const adv = findingsHolder();
+    await runScreenshotTableVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr,
+      prBody: tableBody(BEFORE_URL, AFTER_URL),
+      prTitle: "Redesign the nav bar",
+      author: "alice",
+      confirmedContributor: true,
+      settings: gateEnabledSettings({ aiReviewProvider: "anthropic" }),
+      advisory: adv,
+    });
+    const fetchCalls = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(fetchCalls).toContain("https://api.anthropic.com/v1/messages");
+  });
+
+  it("skips BYOK (falls back to nothing, since self-host vision isn't configured either) when the declared provider doesn't match the stored key", async () => {
+    const env = byokEnv();
+    await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-key", model: null });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === BEFORE_URL) return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+      if (url === AFTER_URL) return new Response(new Uint8Array([4, 5, 6]), { status: 200 });
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const adv = findingsHolder();
+    await runScreenshotTableVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr,
+      prBody: tableBody(BEFORE_URL, AFTER_URL),
+      prTitle: "Redesign the nav bar",
+      author: "alice",
+      confirmedContributor: true,
+      settings: gateEnabledSettings({ aiReviewProvider: "openai" }),
+      advisory: adv,
+    });
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain("https://api.anthropic.com/v1/messages");
+    expect(adv.findings).toEqual([]);
+  });
+
+  it("swallows a thrown error from the BYOK key lookup and never lets it escape (screenshot_table_vision_error)", async () => {
+    const env = byokEnv();
+    await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-key", model: null });
+    vi.spyOn(repositories, "getDecryptedRepositoryAiKey").mockRejectedValueOnce(new Error("D1 unavailable"));
+    stubShotsAndProvider(findingsResponse([]));
+    const adv = findingsHolder();
+    await expect(
+      runScreenshotTableVisionForAdvisory(env, {
+        mode: "live",
+        repoFullName,
+        pr,
+        prBody: tableBody(BEFORE_URL, AFTER_URL),
+        prTitle: "Redesign the nav bar",
+        author: "alice",
+        confirmedContributor: true,
+        settings: gateEnabledSettings(),
+        advisory: adv,
+      }),
+    ).resolves.toBeUndefined();
+    expect(adv.findings).toEqual([]);
+  });
+
+  it("distinguishes two identical-image rows by row number instead of producing indistinguishable findings", async () => {
+    const env = byokEnv();
+    const secondBefore = "https://user-images.githubusercontent.com/second-before.png";
+    const secondAfter = "https://user-images.githubusercontent.com/second-after.png";
+    const body = [
+      "| Before | After |",
+      "| --- | --- |",
+      `| ![before](${BEFORE_URL}) | ![after](${AFTER_URL}) |`,
+      `| ![before](${secondBefore}) | ![after](${secondAfter}) |`,
+    ].join("\n");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === BEFORE_URL || url === AFTER_URL) return new Response(new Uint8Array([1, 1, 1]), { status: 200 });
+      if (url === secondBefore || url === secondAfter) return new Response(new Uint8Array([2, 2, 2]), { status: 200 });
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const adv = findingsHolder();
+    await runScreenshotTableVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr,
+      prBody: body,
+      prTitle: "Redesign the nav bar",
+      author: "alice",
+      confirmedContributor: true,
+      settings: gateEnabledSettings({ aiReviewByok: false }),
+      advisory: adv,
+    });
+    expect(adv.findings).toEqual([
+      expect.objectContaining({ title: "Possible screenshot-table issue: identical images (row 1)" }),
+      expect.objectContaining({ title: "Possible screenshot-table issue: identical images (row 2)" }),
+    ]);
   });
 });

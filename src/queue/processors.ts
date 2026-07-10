@@ -8815,8 +8815,8 @@ export async function runScreenshotTableVisionForAdvisory(
   if (rawPairs.length === 0) return;
   try {
     const fetchedPairs: Array<{ before: AiContentBlock; after: AiContentBlock }> = [];
-    let identicalPairCount = 0;
-    for (const [beforeUrl, afterUrl] of rawPairs.slice(0, 2)) {
+    const findings: AdvisoryFinding[] = [];
+    for (const [rowIndex, [beforeUrl, afterUrl]] of rawPairs.slice(0, 2).entries()) {
       /* v8 ignore next -- defensive: rawPairs only contains rows with >=2 urls, so both slots exist here. */
       if (!beforeUrl || !afterUrl) continue;
       const [beforeBlock, afterBlock] = await Promise.all([
@@ -8827,18 +8827,17 @@ export async function runScreenshotTableVisionForAdvisory(
       /* v8 ignore next -- defensive: fetchShotContentBlock's only success return shape is {type:"image",...}. */
       if (beforeBlock.type !== "image" || afterBlock.type !== "image") continue;
       if (beforeBlock.data === afterBlock.data) {
-        identicalPairCount += 1;
+        findings.push({
+          code: SCREENSHOT_TABLE_VISION_FINDING_CODE,
+          severity: "warning",
+          title: `Possible screenshot-table issue: identical images (row ${rowIndex + 1})`,
+          detail: "The before and after images for this row are byte-identical — this doesn't look like real before/after evidence.",
+          action: "Advisory only — verify the screenshot-table images against the stated change before deciding.",
+        });
         continue;
       }
       fetchedPairs.push({ before: beforeBlock, after: afterBlock });
     }
-    const findings: AdvisoryFinding[] = Array.from({ length: identicalPairCount }, () => ({
-      code: SCREENSHOT_TABLE_VISION_FINDING_CODE,
-      severity: "warning" as const,
-      title: "Possible screenshot-table issue: identical images",
-      detail: "The before and after images for this row are byte-identical — this doesn't look like real before/after evidence.",
-      action: "Advisory only — verify the screenshot-table images against the stated change before deciding.",
-    }));
     if (fetchedPairs.length > 0) {
       const reputation = await getEffectiveSubmitterReputation(env, { repoFullName: args.repoFullName, submitter: args.author ?? undefined });
       const storedKey =

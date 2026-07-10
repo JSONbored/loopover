@@ -5,6 +5,7 @@ import {
   DEFAULT_SCREENSHOT_CONTRACT_MESSAGE,
   DEFAULT_SCREENSHOT_TABLE_GATE,
   evaluateScreenshotTableGate,
+  extractTableRowImageUrls,
   hasCommittedImageFile,
   hasImageBearingMarkdownTable,
   hasImageOutsideTable,
@@ -664,5 +665,52 @@ describe("evaluateScreenshotTableGate", () => {
       const result = evaluateScreenshotTableGate({ config: config({ enabled: true, requireViewports: [] }), prBody: TABLE_BODY, prLabels: [], changedFiles: [] });
       expect(result).toEqual({ violated: false, reason: null });
     });
+  });
+});
+
+describe("extractTableRowImageUrls (#4366)", () => {
+  it("extracts the before/after URL pair from a markdown-image table row", () => {
+    expect(extractTableRowImageUrls(TABLE_BODY)).toEqual([["https://x/before.png", "https://x/after.png"]]);
+  });
+
+  it("extracts the URL from an <img src> tag, mixed with markdown syntax in the same row", () => {
+    const body = ['| Before | After |', '| --- | --- |', '| <img src="https://x/before.png"> | ![after](https://x/after.png) |'].join("\n");
+    expect(extractTableRowImageUrls(body)).toEqual([["https://x/before.png", "https://x/after.png"]]);
+  });
+
+  it("extracts the INNER image URL from a clickable-thumbnail cell ([![alt](img-url)](link-url)), not the outer link", () => {
+    const body = ['| Before | After |', '| --- | --- |', '| [![before](https://x/before.png)](https://x/before.png) | [![after](https://x/after.png)](https://x/after.png) |'].join("\n");
+    expect(extractTableRowImageUrls(body)).toEqual([["https://x/before.png", "https://x/after.png"]]);
+  });
+
+  it("strips a trailing markdown title from an image URL (![alt](url \"title\"))", () => {
+    const body = ['| Before | After |', '| --- | --- |', '| ![before](https://x/before.png "Before") | ![after](https://x/after.png "After") |'].join("\n");
+    expect(extractTableRowImageUrls(body)).toEqual([["https://x/before.png", "https://x/after.png"]]);
+  });
+
+  it("drops a row with only ONE image cell (not a real before/after pair)", () => {
+    const body = ['| Before | After |', '| --- | --- |', '| ![before](https://x/before.png) | no image here |'].join("\n");
+    expect(extractTableRowImageUrls(body)).toEqual([]);
+  });
+
+  it("returns [] for a table with no image markup at all, and for an empty/missing body", () => {
+    const body = ["| Before | After |", "| --- | --- |", "| nothing | here |"].join("\n");
+    expect(extractTableRowImageUrls(body)).toEqual([]);
+    expect(extractTableRowImageUrls("")).toEqual([]);
+    expect(extractTableRowImageUrls(null)).toEqual([]);
+    expect(extractTableRowImageUrls(undefined)).toEqual([]);
+  });
+
+  it("extracts a pair from EACH qualifying row when the table has multiple rows", () => {
+    const body = [
+      "| Before | After |",
+      "| --- | --- |",
+      "| ![before](https://x/1-before.png) | ![after](https://x/1-after.png) |",
+      "| ![before](https://x/2-before.png) | ![after](https://x/2-after.png) |",
+    ].join("\n");
+    expect(extractTableRowImageUrls(body)).toEqual([
+      ["https://x/1-before.png", "https://x/1-after.png"],
+      ["https://x/2-before.png", "https://x/2-after.png"],
+    ]);
   });
 });

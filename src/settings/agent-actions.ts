@@ -150,6 +150,10 @@ export type PlannedAgentAction = {
   // contributor. GitHub silently drops an assignee lacking push/triage access rather than erroring, so the
   // executor falls back to a per-login label when the real assignment doesn't stick.
   assignee?: string;
+  // Legacy approval-queue rows may contain this field from the reverted linked-issue assignment fan-out. New
+  // plans do not set it, actionParams does not persist it, and the executor ignores it because linked issue
+  // assignment is an authorization signal granted by maintainers, not by PR-body closing references.
+  assignLinkedIssues?: number[];
 };
 
 // Gate-blocker codes backed by CONCRETE, non-judgment evidence: a committed secret, a deterministic
@@ -354,8 +358,9 @@ export type AgentActionPlanInput = {
   // satisfies the gate, so `matched` here is already false whenever the bot capture succeeded (see
   // evaluateScreenshotTableGate's `botCaptureSatisfied` input). Same zero-hallucination short-circuit shape as
   // blacklistMatch — fires ahead of ALL merit/CI/AI analysis, for a CONTRIBUTOR only, so its close is tagged
-  // `closeKind: "screenshot_table"`. Absent / not-violated ⇒ no effect. `"close"` is the gate's only
-  // enforcement action (#4110 removed the dead request_changes/comment surface — see ScreenshotTableGateAction).
+  // `closeKind: "screenshot_table"`. Absent / not-violated ⇒ no effect. The caller (processors.ts) only ever
+  // populates this field when the gate's configured `action` is `"close"` — an `"advisory"` violation (#4535)
+  // never reaches the planner at all, by construction (see ScreenshotTableGateAction).
   screenshotTableMatch?: { matched: boolean; reason: string | null } | undefined;
   pr: {
     mergeableState?: string | null | undefined;
@@ -381,6 +386,9 @@ export type AgentActionPlanInput = {
     // is harmless -- those all set `conclusion: "skipped"` or hit an earlier short-circuit `return`, so the
     // `assign` block below is unreachable from them regardless.
     authorLogin?: string | null | undefined;
+    // The PR's linked/closing issue numbers (#priority-linked-issue-gate-ownership), threaded through ONLY for
+    // the `assign` disposition below -- same "harmless when absent" reasoning as authorLogin just above.
+    linkedIssues?: number[] | undefined;
   };
 };
 
@@ -555,6 +563,10 @@ function screenshotTableCloseMessage(reason: string): string {
  * already been reviewed/evaluated (conclusion isn't "skipped") should get an assignee for triage even while an
  * unrelated check is still pending; assign has no bearing on mergeability so it never needs CI to settle first.
  * Gated purely on its own `assign` autonomy class, same as every other independent action here.
+ *
+ * Do NOT mirror this assignment to PR-body linked issues. Those issue numbers are contributor-controlled
+ * closing references, while downstream linked-issue ownership checks intentionally treat issue assignees as a
+ * maintainer-granted authorization signal.
  */
 function maybePlanAssign(actions: PlannedAgentAction[], input: AgentActionPlanInput): void {
   const level = resolveAutonomy(input.autonomy, "assign");

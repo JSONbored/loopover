@@ -22,7 +22,7 @@ import {
   type QueueHealth,
   type RepoOutcomePatterns,
 } from "../signals/engine";
-import { isFailingCheckSummary } from "../signals/local-branch";
+import { isFailingCheckSummary } from "../signals/check-summary";
 import { buildMaintainerNoiseReport, type MaintainerNoiseReport } from "../signals/reward-risk";
 
 const PUBLIC_MENTION_COMMAND_CATALOG = [

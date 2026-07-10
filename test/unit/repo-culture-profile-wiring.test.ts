@@ -232,6 +232,7 @@ describe("culture profile wired into the AI reviewer (flag GITTENSORY_REVIEW_CUL
       generatedAt: "2026-06-20T00:00:00.000Z",
     };
     const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       repoFullName: REPO,
       pr: { number: 3, title: "Add helper", body: "Adds a helper." },
@@ -266,6 +267,7 @@ describe("culture profile wired into the AI reviewer (flag GITTENSORY_REVIEW_CUL
     const extractSpy = vi.spyOn(cultureProfileModule, "extractRepoCultureProfile");
     extractSpy.mockClear(); // discard any call history from an earlier test's spy on this same method
     await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       repoFullName: REPO,
       pr: { number: 4, title: "Add helper", body: "Adds a helper." },
@@ -298,6 +300,7 @@ describe("culture profile wired into the AI reviewer (flag GITTENSORY_REVIEW_CUL
     const extractSpy = vi.spyOn(cultureProfileModule, "extractRepoCultureProfile");
     extractSpy.mockClear(); // discard any call history from an earlier test's spy on this same method
     await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       repoFullName: REPO,
       pr: { number: 5, title: "Add helper", body: "Adds a helper." },

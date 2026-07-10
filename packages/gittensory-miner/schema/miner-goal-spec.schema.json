@@ -46,6 +46,25 @@
       "enum": ["encouraged", "neutral", "discouraged"],
       "default": "neutral",
       "description": "How strongly opening discovery issues is encouraged. Default: neutral."
+    },
+    "feasibilityGate": {
+      "type": "object",
+      "additionalProperties": true,
+      "default": { "enabled": true, "suppressedReasons": [] },
+      "description": "Per-repo tuning for the feasibility gate a miner consults before starting work. Default: { enabled: true, suppressedReasons: [] }.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether the feasibility gate is consulted at all before a miner starts work. Default: true."
+        },
+        "suppressedReasons": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": [],
+          "description": "buildFeasibilityVerdict avoid/raise reason codes this repo wants ignored. Default: []."
+        }
+      }
     }
   }
 }

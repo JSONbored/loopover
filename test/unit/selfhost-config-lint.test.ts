@@ -80,6 +80,14 @@ reviewRecap:
     expect(result.recognizedFields).toEqual(["reviewRecap"]);
   });
 
+  it("recognizes a standalone maintainerRecap: block instead of flagging it as unknown (#1963, #2250)", () => {
+    const result = lintManifestText("maintainerRecap:\n  enabled: true\n  cadence: daily\n  channel: discord\n");
+
+    expect(result.ok).toBe(true);
+    expect(result.warnings).toEqual([]);
+    expect(result.recognizedFields).toEqual(["maintainerRecap"]);
+  });
+
   it("flags legacy blockedPaths with a migration-specific warning, not the generic unknown-field message", () => {
     const result = lintManifestText("wantedPaths: [src/]\nblockedPaths: [dist/]\n");
 

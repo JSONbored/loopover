@@ -7,7 +7,7 @@ Two form factors for running `@jsonbored/gittensory-miner`: **laptop mode** (sin
 | **Best for** | One contributor machine, local experimentation | Many parallel miner attempts on a host or small cluster |
 | **Dependencies** | Node.js `>=22.13.0` only | Docker (or compatible runtime) + Node image or custom image |
 | **State** | SQLite files under `~/.config/gittensory-miner/` (override with `GITTENSORY_MINER_CONFIG_DIR`) | Same SQLite layout on a mounted `/data` (or `GITTENSORY_MINER_CONFIG_DIR`) volume |
-| **Setup** | `npm install -g @jsonbored/gittensory-miner` or workspace build | `docker run` with env + volume (see below) |
+| **Setup** | `npm install -g @jsonbored/gittensory-miner` or workspace build | `docker build` + `docker run` with env + volume (see below) |
 | **Footprint** | One Node process, local disk for ledgers/queues | One container per worker; scale horizontally by adding containers |
 
 ## Laptop mode walkthrough
@@ -44,18 +44,26 @@ Two form factors for running `@jsonbored/gittensory-miner`: **laptop mode** (sin
 
 ## Fleet mode walkthrough
 
-There is no separate published miner fleet image yet. Run the same CLI inside a standard Node container, mount persistent state, and inject secrets at runtime (never bake them into the image):
+Build the fleet image from the **monorepo root** (the Dockerfile needs the full workspace on disk before `npm ci` — see comments in [`Dockerfile`](Dockerfile)):
+
+```sh
+docker build -f packages/gittensory-miner/Dockerfile -t gittensory-miner:latest .
+```
+
+Run a disposable worker with persistent SQLite state on a mounted volume. Inject secrets at runtime (never bake them into the image):
 
 ```sh
 docker run --rm -it \
   -e GITTENSORY_MINER_CONFIG_DIR=/data/miner \
   -e GITHUB_TOKEN \
   -v miner-data:/data/miner \
-  node:24-slim \
-  bash -lc 'npm install -g @jsonbored/gittensory-miner@latest && gittensory-miner doctor && gittensory-miner status'
+  gittensory-miner:latest \
+  doctor
 ```
 
-- **`/data` volume** — holds all SQLite state so containers are disposable.
+The image entrypoint is `gittensory-miner`; pass subcommands after the image name (`status`, `doctor`, `claim`, …).
+
+- **`/data/miner` volume** — holds all SQLite state (`claim-ledger.sqlite3`, `plan-store.sqlite3`, etc.) so containers are disposable. Defaults to `GITTENSORY_MINER_CONFIG_DIR=/data/miner` in the image.
 - **`GITHUB_TOKEN`** — supplied by the operator at run time; the image contains no credentials.
 - **Scale** — launch additional containers with the same volume (or partitioned config dirs) for parallel attempts.
 
@@ -67,3 +75,7 @@ The repo-root [`docker-compose.yml`](../../docker-compose.yml) documents the **s
 - `gittensory-miner status` and `gittensory-miner doctor` make **no network calls**.
 - Discovery/ranking primitives that touch GitHub only run when explicitly invoked and only perform documented GETs unless a future command says otherwise.
 - Operators own secret injection; images and packages ship without embedded tokens.
+
+## Optional hosted discovery plane (opt-in)
+
+The Phase 6 **hosted discovery-index** is **off by default** — unlike Orb fleet export (`ORB_AIR_GAP` is the only opt-out). Operators who want cross-fleet metadata queries or soft-claim coordination must opt in explicitly. See [`docs/discovery-plane-operator-guide.md`](docs/discovery-plane-operator-guide.md) ([#4309](https://github.com/JSONbored/gittensory/issues/4309), placeholder until [#4300](https://github.com/JSONbored/gittensory/issues/4300) / [#4301](https://github.com/JSONbored/gittensory/issues/4301) / [#4302](https://github.com/JSONbored/gittensory/issues/4302) ship).

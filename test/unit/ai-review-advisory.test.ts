@@ -122,6 +122,7 @@ describe("runAiReviewForAdvisory", () => {
   it("no-ops when aiReviewMode is off", async () => {
     const adv = advisory();
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: defectJson() })), {
+      mode: "live",
       settings: { aiReviewMode: "off" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -131,6 +132,23 @@ describe("runAiReviewForAdvisory", () => {
     });
     expect(result).toBeUndefined();
     expect(adv.findings).toEqual([]);
+  });
+
+  it("REGRESSION (#token-bleed-spend-gate): a paused mode never reaches the LLM call, even with aiReviewMode block/advisory and a confirmed contributor", async () => {
+    const run = vi.fn(async () => ({ response: defectJson() }));
+    const adv = advisory();
+    const result = await runAiReviewForAdvisory(aiEnv(run), {
+      mode: "paused",
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    expect(result).toBeUndefined();
+    expect(adv.findings).toEqual([]);
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("survives a focus-manifest load failure during feature resolution (fail-safe → allowlist default, review still runs)", async () => {
@@ -144,6 +162,7 @@ describe("runAiReviewForAdvisory", () => {
       const env = aiEnv(async () => ({ response: defectJson() }));
       (env as unknown as { GITTENSORY_REVIEW_RAG: string }).GITTENSORY_REVIEW_RAG = "true";
       const result = await runAiReviewForAdvisory(env, {
+        mode: "live",
         settings: { aiReviewMode: "block" } as RepositorySettings,
         advisory: advisory(),
         repoFullName: "acme/widgets",
@@ -164,7 +183,7 @@ describe("runAiReviewForAdvisory", () => {
     const env = aiEnv(async () => { throw new Error("claude CLI not found"); });
     (env as unknown as { AI_PROVIDER: string; CLAUDE_AI_MODEL: string }).AI_PROVIDER = "claude-code";
     (env as unknown as { AI_PROVIDER: string; CLAUDE_AI_MODEL: string }).CLAUDE_AI_MODEL = "claude-sonnet-4-6";
-    const result = await runAiReviewForAdvisory(env, { settings: { aiReviewMode: "advisory" } as RepositorySettings, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", confirmedContributor: true });
+    const result = await runAiReviewForAdvisory(env, { mode: "live", settings: { aiReviewMode: "advisory" } as RepositorySettings, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", confirmedContributor: true });
     expect(result).toMatchObject({
       cacheable: false,
       findings: [expect.objectContaining({ code: "ai_review_inconclusive" })],
@@ -176,7 +195,7 @@ describe("runAiReviewForAdvisory", () => {
   it("records explicit self-host reviewer labels when models are omitted or providers are unknown", async () => {
     const env = aiEnv(async () => { throw new Error("codex unavailable"); });
     (env as unknown as { AI_PROVIDER: string }).AI_PROVIDER = " CODEX , unknown-provider ";
-    const result = await runAiReviewForAdvisory(env, { settings: { aiReviewMode: "advisory" } as RepositorySettings, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", confirmedContributor: true });
+    const result = await runAiReviewForAdvisory(env, { mode: "live", settings: { aiReviewMode: "advisory" } as RepositorySettings, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", confirmedContributor: true });
     expect(result).toMatchObject({
       cacheable: false,
       findings: [expect.objectContaining({ code: "ai_review_inconclusive" })],
@@ -193,7 +212,7 @@ describe("runAiReviewForAdvisory", () => {
       OLLAMA_AI_MODEL: "llama3.1",
       AI_REVIEW_PLAN: { reviewers: [{ model: "anthropic", fallback: "ollama" }], combine: "single" },
     });
-    const result = await runAiReviewForAdvisory(env, { settings: { aiReviewMode: "advisory" } as RepositorySettings, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", confirmedContributor: true });
+    const result = await runAiReviewForAdvisory(env, { mode: "live", settings: { aiReviewMode: "advisory" } as RepositorySettings, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", confirmedContributor: true });
     expect(result).toMatchObject({
       cacheable: false,
       findings: [expect.objectContaining({ code: "ai_review_inconclusive" })],
@@ -204,7 +223,7 @@ describe("runAiReviewForAdvisory", () => {
 
   it("no-ops for a non-confirmed contributor under the gittensor pack and when there is no head SHA", async () => {
     const env = aiEnv(async () => ({ response: defectJson() }));
-    const base = { settings: { aiReviewMode: "block", gatePack: "gittensor" } as RepositorySettings, repoFullName: "acme/widgets", pr, author: "alice" };
+    const base = { mode: "live" as const, settings: { aiReviewMode: "block", gatePack: "gittensor" } as RepositorySettings, repoFullName: "acme/widgets", pr, author: "alice" };
     expect(await runAiReviewForAdvisory(env, { ...base, advisory: advisory(), confirmedContributor: false })).toBeUndefined();
     const noSha = advisory();
     delete (noSha as Partial<Advisory>).headSha;
@@ -214,6 +233,7 @@ describe("runAiReviewForAdvisory", () => {
   it("runs a blocking AI review for a non-confirmed contributor under oss-anti-slop", async () => {
     const adv = advisory();
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: defectJson() })), {
+      mode: "live",
       settings: { aiReviewMode: "block", gatePack: "oss-anti-slop" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -232,6 +252,7 @@ describe("runAiReviewForAdvisory", () => {
     // is what lets it through — only the new flag.
     const adv = advisory();
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: notesOnlyJson() })), {
+      mode: "live",
       settings: { aiReviewMode: "advisory", gatePack: "gittensor", aiReviewAllAuthors: true , closeOwnerAuthors: false} as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -246,6 +267,7 @@ describe("runAiReviewForAdvisory", () => {
   it("appends an ai_consensus_defect finding in block mode when the models agree", async () => {
     const adv = advisory();
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: defectJson() })), {
+      mode: "live",
       settings: { aiReviewMode: "block" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -270,6 +292,7 @@ describe("runAiReviewForAdvisory", () => {
       return { response: model === "codex" ? defectJson() : notesOnlyJson() };
     }) as unknown as () => Promise<unknown>;
     const result = await runAiReviewForAdvisory(aiEnv(run), {
+      mode: "live",
       settings: {
         aiReviewMode: "block",
         aiReviewCombine: "single",
@@ -294,6 +317,7 @@ describe("runAiReviewForAdvisory", () => {
       return { response: defectJson() };
     }) as unknown as () => Promise<unknown>;
     const result = await runAiReviewForAdvisory(aiEnv(run), {
+      mode: "live",
       settings: { aiReviewMode: "block" } as RepositorySettings, // no aiReviewCombine/OnMerge/Reviewers set
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -312,6 +336,7 @@ describe("runAiReviewForAdvisory", () => {
     const json = (confidence: number) => JSON.stringify({ assessment: "Likely crash.", blockers: ["Null dereference of a possibly-null value in src/a.ts."], nits: [], suggestions: [], confidence });
     const run = (async (model: string) => ({ response: model === BEST_REVIEW_MODELS[0] ? json(0.95) : json(0.6) })) as unknown as () => Promise<unknown>;
     await runAiReviewForAdvisory(aiEnv(run), {
+      mode: "live",
       settings: { aiReviewMode: "block" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -330,6 +355,7 @@ describe("runAiReviewForAdvisory", () => {
     const env = aiEnv(run);
     const captureSpy = vi.spyOn(sentryModule, "captureReviewFailure");
     const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "block" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -367,6 +393,7 @@ describe("runAiReviewForAdvisory", () => {
     const env = aiEnv((async () => ({ response: incoherent })) as unknown as () => Promise<unknown>);
     const captureSpy = vi.spyOn(sentryModule, "captureReviewFailure");
     await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "block" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -386,6 +413,7 @@ describe("runAiReviewForAdvisory", () => {
     // AND round-tripped on the returned cache payload so a cache hit can replay this blocker (#ai-review-split).
     const run = (async (model: string) => ({ response: model === BEST_REVIEW_MODELS[0] ? defectJson() : notesOnlyJson() })) as unknown as () => Promise<unknown>;
     const result = await runAiReviewForAdvisory(aiEnv(run), {
+      mode: "live",
       settings: { aiReviewMode: "block" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -404,6 +432,7 @@ describe("runAiReviewForAdvisory", () => {
     const flagged = JSON.stringify({ assessment: "Likely crash.", blockers: ["Null deref in src/a.ts."], nits: [], suggestions: [], confidence: 0.45 });
     const run = (async (model: string) => ({ response: model === BEST_REVIEW_MODELS[0] ? flagged : notesOnlyJson() })) as unknown as () => Promise<unknown>;
     await runAiReviewForAdvisory(aiEnv(run), {
+      mode: "live",
       settings: { aiReviewMode: "block" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -425,6 +454,7 @@ describe("runAiReviewForAdvisory", () => {
       return { response: notesOnlyJson() };
     });
     const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       advisory: advisory(),
       repoFullName: "acme/widgets",
@@ -449,6 +479,7 @@ describe("runAiReviewForAdvisory", () => {
     const adv = advisory();
 
     await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "block" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -471,6 +502,7 @@ describe("runAiReviewForAdvisory", () => {
     });
 
     await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       advisory: advisory(),
       repoFullName: "acme/widgets",
@@ -500,6 +532,7 @@ describe("runAiReviewForAdvisory", () => {
     });
 
     await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "block" } as RepositorySettings,
       advisory: advisory(),
       repoFullName: "acme/widgets",
@@ -521,6 +554,7 @@ describe("runAiReviewForAdvisory", () => {
     });
 
     await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       advisory: advisory(),
       repoFullName: "acme/widgets",
@@ -546,6 +580,7 @@ describe("runAiReviewForAdvisory", () => {
   it("returns advisory notes without a finding in advisory mode", async () => {
     const adv = advisory();
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: notesOnlyJson() })), {
+      mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -560,6 +595,7 @@ describe("runAiReviewForAdvisory", () => {
   it("returns undefined (no notes, no finding) when AI is disabled", async () => {
     const adv = advisory();
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: defectJson() }), false), {
+      mode: "live",
       settings: { aiReviewMode: "block" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -575,6 +611,7 @@ describe("runAiReviewForAdvisory", () => {
     const adv = advisory();
     const captureSpy = vi.spyOn(sentryModule, "captureReviewFailure");
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: "" })), {
+      mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -609,6 +646,7 @@ describe("runAiReviewForAdvisory", () => {
   it("uses the non-cacheable block-mode inconclusive note when no reviewer returns public text", async () => {
     const adv = advisory();
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: "" })), {
+      mode: "live",
       settings: { aiReviewMode: "block" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -639,6 +677,7 @@ describe("runAiReviewForAdvisory", () => {
     expect((await claimAiReviewLock(env, "acme/widgets", 3, "sha3", "block")).acquired).toBe(true);
 
     const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "block" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -661,6 +700,7 @@ describe("runAiReviewForAdvisory", () => {
   it("withholds unstructured AI text while holding the PR for manual review", async () => {
     const adv = advisory();
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: "Looks coherent, but please verify the new cache branch before merging." })), {
+      mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -676,6 +716,7 @@ describe("runAiReviewForAdvisory", () => {
 
   it("preserves model nits when the model omits the assessment summary", async () => {
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: nitsWithoutAssessmentJson() })), {
+      mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       advisory: advisory(),
       repoFullName: "acme/widgets",
@@ -702,6 +743,7 @@ describe("runAiReviewForAdvisory", () => {
     const adv = advisory();
 
     const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "block", gatePack: "oss-anti-slop", aiReviewByok: true } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -728,6 +770,7 @@ describe("runAiReviewForAdvisory", () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ content: [{ type: "text", text: notesOnlyJson() }] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "advisory", aiReviewByok: true } as RepositorySettings,
       advisory: advisory(),
       repoFullName: "acme/widgets",
@@ -746,6 +789,7 @@ describe("runAiReviewForAdvisory", () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ content: [{ type: "text", text: notesOnlyJson() }] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "advisory", aiReviewByok: true, aiReviewProvider: "anthropic", aiReviewModel: "claude-from-yml" } as RepositorySettings,
       advisory: advisory(),
       repoFullName: "acme/widgets",
@@ -764,6 +808,7 @@ describe("runAiReviewForAdvisory", () => {
     const fetchMock = vi.fn(async () => new Response("should not be called", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "advisory", aiReviewByok: true, aiReviewProvider: "openai" } as RepositorySettings, // declared openai, stored anthropic → mismatch
       advisory: advisory(),
       repoFullName: "acme/widgets",
@@ -780,6 +825,7 @@ describe("runAiReviewForAdvisory", () => {
     const adv = advisory();
     const env = aiEnv(async () => ({ response: defectJson() }));
     const result = await runAiReviewForAdvisory({ ...env, DB: undefined } as unknown as Env, {
+      mode: "live",
       settings: { aiReviewMode: "block" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",

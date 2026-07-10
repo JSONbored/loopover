@@ -320,6 +320,25 @@ const DEFAULT_LIMITS: BackfillLimits = {
 
 const FRESH_SYNC_MS = 6 * 60 * 60 * 1000;
 const ERROR_BACKOFF_MS = 60 * 60 * 1000;
+
+/** Shared freshness/error-backoff decision (#4497): a repo whose last sync is either a fresh success (within
+ *  FRESH_SYNC_MS) or a recent error (within ERROR_BACKOFF_MS) should be skipped rather than re-synced, unless
+ *  the caller explicitly forces a refresh. Returns null when a sync should proceed (never synced, no completed
+ *  timestamp, or the existing sync is stale enough to redo). Shared by backfillRegisteredRepositories (the
+ *  admin-endpoint/test path) and enqueueRepositoryOpenDataBackfill (the real scheduled-cron path) so both
+ *  respect the SAME cadence -- previously only the former checked this, so the scheduled path re-synced every
+ *  registered repo every 30 minutes forever regardless of freshness or a permanent error state. */
+function syncFreshnessSkipReason(
+  syncState: RepoSyncStateRecord | null,
+  force: boolean | undefined,
+): { freshSuccess: boolean; recentError: boolean } | null {
+  if (force || !syncState?.lastCompletedAt || syncState.status === "never_synced") return null;
+  const ageMs = Date.now() - Date.parse(syncState.lastCompletedAt);
+  const freshSuccess =
+    (syncState.status === "success" || syncState.status === "partial" || syncState.status === "capped") && Number.isFinite(ageMs) && ageMs < FRESH_SYNC_MS;
+  const recentError = syncState.status === "error" && Number.isFinite(ageMs) && ageMs < ERROR_BACKOFF_MS;
+  return freshSuccess || recentError ? { freshSuccess, recentError } : null;
+}
 const SEGMENT_PAGE_BUDGET: Record<BackfillMode, number> = { light: 2, full: 10, resume: 10 };
 const PR_DETAIL_BATCH_SIZE: Record<BackfillMode, number> = { light: 12, full: 40, resume: 40 };
 // Caps how many NOT-yet-hydrated merged PRs get a `/pulls/{n}/files` fetch per `recent_merged_pull_requests`
@@ -422,26 +441,21 @@ export async function backfillRegisteredRepositories(
       };
     }
     const syncState = await getRepoSyncState(env, repo.fullName);
-    if (!options.force && syncState?.lastCompletedAt && syncState.status !== "never_synced") {
-      const ageMs = Date.now() - Date.parse(syncState.lastCompletedAt);
-      const freshSuccess =
-        (syncState.status === "success" || syncState.status === "partial" || syncState.status === "capped") && Number.isFinite(ageMs) && ageMs < FRESH_SYNC_MS;
-      const recentError = syncState.status === "error" && Number.isFinite(ageMs) && ageMs < ERROR_BACKOFF_MS;
-      if (freshSuccess || recentError) {
-        return {
-          repoFullName: repo.fullName,
-          status: "skipped",
-          openIssues: syncState.openIssuesCount,
-          openPullRequests: syncState.openPullRequestsCount,
-          recentMergedPullRequests: syncState.recentMergedPullRequestsCount,
-          warnings: [
-            freshSuccess
-              ? `Recent GitHub sync completed at ${syncState.lastCompletedAt}; use force=true for a manual refresh.`
-              : `Recent GitHub sync error recorded at ${syncState.lastCompletedAt}; backing off unless force=true.`,
-          ],
-          ...(recentError && syncState.errorSummary ? { errorSummary: syncState.errorSummary } : {}),
-        };
-      }
+    const skipReason = syncFreshnessSkipReason(syncState, options.force);
+    if (skipReason && syncState) {
+      return {
+        repoFullName: repo.fullName,
+        status: "skipped",
+        openIssues: syncState.openIssuesCount,
+        openPullRequests: syncState.openPullRequestsCount,
+        recentMergedPullRequests: syncState.recentMergedPullRequestsCount,
+        warnings: [
+          skipReason.freshSuccess
+            ? `Recent GitHub sync completed at ${syncState.lastCompletedAt}; use force=true for a manual refresh.`
+            : `Recent GitHub sync error recorded at ${syncState.lastCompletedAt}; backing off unless force=true.`,
+        ],
+        ...(skipReason.recentError && syncState.errorSummary ? { errorSummary: syncState.errorSummary } : {}),
+      };
     }
     return backfillRepository(env, repo, limits, mode);
   });
@@ -457,11 +471,28 @@ export async function enqueueRepositoryOpenDataBackfill(
   const mode = options.mode ?? "light";
   const settings = await resolveRepositorySettings(env, repo.fullName);
   if (!settings.backfillEnabled) return { ok: true, repoFullName: repo.fullName, status: "skipped", warnings: ["Backfill is disabled for this repository."] };
+  // #4497: checked BEFORE any GitHub/DB work below, mirroring backfillRegisteredRepositories's own freshness
+  // gate -- this is the path the real scheduled cron actually dispatches through (see that function's own
+  // routing comment), which previously had NO freshness/error-backoff check at all and re-synced every
+  // registered repo every 30 minutes forever, backing off neither for a fresh success nor a permanent error.
+  const previous = await getRepoSyncState(env, repo.fullName);
+  const skipReason = syncFreshnessSkipReason(previous, options.force);
+  if (skipReason && previous) {
+    return {
+      ok: true,
+      repoFullName: repo.fullName,
+      status: "skipped",
+      warnings: [
+        skipReason.freshSuccess
+          ? `Recent GitHub sync completed at ${previous.lastCompletedAt}; use force=true for a manual refresh.`
+          : `Recent GitHub sync error recorded at ${previous.lastCompletedAt}; backing off unless force=true.`,
+      ],
+    };
+  }
   const token = await tokenForRepo(env, repo);
   const sourceKind: RepoSyncSegmentRecord["sourceKind"] = repo.installationId && token !== env.GITHUB_PUBLIC_TOKEN ? "installation" : "github";
   const totals = await repoGithubTotalsForBackfill(env, repo, token, sourceKind);
   const startedAt = nowIso();
-  const previous = await getRepoSyncState(env, repo.fullName);
   await upsertRepoSyncState(env, {
     repoFullName: repo.fullName,
     status: "running",
@@ -2457,8 +2488,10 @@ async function fetchPullRequestChecks(
 // NOTE: "action_required" is deliberately NOT here. A fork PR awaiting maintainer "Approve and run" surfaces its
 // required checks with conclusion="action_required" — that is NOT a failure, it is awaiting-approval. Treating it
 // as failing made ciState="failed" → the agent one-shot CLOSED the fork ("CI is failing") even though no check
-// ever ran. Excluded here, an action_required check falls through to anyPending → ciState="pending" → the PR is
-// DEFERRED/held (never closed) until its runs are approved (manually, or auto-approved by fork CI auto-approval). (#fork-action-required)
+// ever ran. Excluded here, a github-actions action_required check falls through to anyPending → ciState="pending"
+// → the PR is DEFERRED/held (never closed) until its runs are approved (manually, or auto-approved by fork CI
+// auto-approval). (#fork-action-required) — a THIRD-PARTY app's own COMPLETED action_required verdict (e.g. a
+// security/check tool) is handled separately below and fails closed as a manual-hold signal, not green CI.
 const CI_FAILING_CONCLUSIONS = new Set(["failure", "timed_out", "cancelled", "startup_failure"]);
 const CI_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 // The bot's OWN check-runs — it posts these (in_progress, then concluded) as PART OF reviewing. They are NOT
@@ -2773,15 +2806,36 @@ async function reduceLiveCiAggregate(
   // 1) Check-runs (GitHub Actions jobs, CodeQL, app checks). Deduped by check-run identity first, so a
   // re-run job's stale duplicate entry can never contribute its own failingDetails/pending signal alongside the
   // current one, without collapsing unrelated checks that merely share a display name.
+  const checkRunSummary = (run: LiveCiCheckRun): string | undefined =>
+    [run.output?.title, run.output?.summary].find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim().slice(0, 200);
   for (const run of dedupeLatestCheckRunsByIdentity(checkRuns)) {
     seenContextNames.add(run.name); // mark BEFORE bot-check skip: a bot-owned required context is "seen"
-    if ((run.app?.slug ?? "").toLowerCase() === "github-actions") sawFirstPartyCheckRun = true;
+    const appSlug = (run.app?.slug ?? "").toLowerCase();
+    if (appSlug === "github-actions") sawFirstPartyCheckRun = true;
     if (isOwnGitHubAppCheckRun(env, run)) continue; // never wait on the bot's own Gate/Context check-runs
     total += 1;
     const conclusion = (run.conclusion ?? "").toLowerCase();
     const status = (run.status ?? "").toLowerCase();
-    if (conclusion ? CI_FAILING_CONCLUSIONS.has(conclusion) : false) {
-      const summary = [run.output?.title, run.output?.summary].find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim().slice(0, 200);
+    // A THIRD-PARTY app's OWN action_required verdict on an already-COMPLETED check-run (for example, a
+    // security/check tool asking for human review) is a settled, terminal adverse result -- but ONLY when that
+    // check is actually a REQUIRED context. A non-required third-party check must never hard-fail/auto-close the
+    // PR on its own say-so: the same app can post multiple check-runs (e.g. a required "X Security Scan" plus a
+    // separate, NEVER-required "X Contributor trust" advisory check), and treating either one's action_required
+    // the same way conflates them (#4414 regressed exactly this -- a non-required advisory check started
+    // auto-closing real contributor PRs). This is NOT the github-actions "awaiting maintainer Approve and run"
+    // case the action_required exclusion above exists for: non-Actions apps use their own conclusion as a policy
+    // signal. Conservative: an unknown/absent app slug is NOT treated as third-party here.
+    const isThirdPartyActionRequired = conclusion === "action_required" && status === "completed" && appSlug !== "" && appSlug !== "github-actions";
+    if (isThirdPartyActionRequired && isRequired(run.name)) {
+      const summary = checkRunSummary(run);
+      failingDetails.push({ name: run.name, ...(summary ? { summary } : {}), ...(run.details_url ? { detailsUrl: run.details_url } : {}) });
+    } else if (isThirdPartyActionRequired) {
+      // Non-required: visible (never silently folded into "passed" either, unlike the pre-#4414 behavior) but
+      // non-blocking -- routed to nonRequiredFailingDetails, which never feeds ciState or a close decision.
+      const summary = checkRunSummary(run);
+      nonRequiredFailingDetails.push({ name: run.name, ...(summary ? { summary } : {}), ...(run.details_url ? { detailsUrl: run.details_url } : {}) });
+    } else if (conclusion ? CI_FAILING_CONCLUSIONS.has(conclusion) : false) {
+      const summary = checkRunSummary(run);
       failingDetails.push({ name: run.name, ...(summary ? { summary } : {}), ...(run.details_url ? { detailsUrl: run.details_url } : {}) });
     } else if (conclusion ? CI_PASSING_CONCLUSIONS.has(conclusion) : status === "completed") {
       // concluded and not failing → passing
@@ -3816,6 +3870,10 @@ export type LinkedIssueFactsResult = {
   authorLogin: string | null;
   title?: string | null;
   body?: string | null;
+  /** GitHub's `closed_at` for this issue, or `null` while open (#4528: label-propagation callers use this
+   *  to trust an issue closed by THIS PR's own merge, without granting authority to one closed earlier
+   *  for an unrelated reason). Same REST payload as every other field here -- no extra call. */
+  closedAt: string | null;
 };
 
 /** Tri-state outcome of fetching one linked issue's facts (#2136). `not_found` is a CONFIRMED 404 seen with a
@@ -3861,6 +3919,7 @@ export async function fetchLinkedIssueFacts(
       user?: { login?: string | null } | null;
       title?: string | null;
       body?: string | null;
+      closed_at?: string | null;
     }>(env, repoFullName, `/issues/${issueNumber}`, token, githubRateLimitOptions(admissionKey));
   } catch (error) {
     if (!(error instanceof GitHubApiError) || error.statusCode !== 404) return { status: "fetch_error" };
@@ -3883,6 +3942,7 @@ export async function fetchLinkedIssueFacts(
       authorLogin: data.user?.login ?? null,
       title: typeof data.title === "string" && data.title.length > 0 ? data.title : null,
       body: typeof data.body === "string" && data.body.length > 0 ? data.body : null,
+      closedAt: typeof data.closed_at === "string" ? data.closed_at : null,
     },
   };
 }
@@ -4378,8 +4438,11 @@ function summarizeSegments(
   };
 }
 
-// #2543: this is the ONLY call site of recordGitHubRateLimitObservation -- one row per outbound GitHub REST/
-// GraphQL response. DELIBERATELY left un-batched (documented decision, not an oversight): the write rate is
+// #2543: this is the primary call site of recordGitHubRateLimitObservation -- one row per outbound GitHub
+// REST/GraphQL response made through this module's bulk-sync path. (getAppInstallation, ../github/app.ts,
+// records its own installation-lookup call directly for #4506 -- it lives outside this module's boundary and
+// this module already imports getAppInstallation FROM app.ts, so importing this function back would cycle.)
+// DELIBERATELY left un-batched (documented decision, not an oversight): the write rate is
 // bounded by GitHub's own REST budget for a single App installation (~5000/hour ≈ 1.4/s sustained, further
 // capped in practice by QUEUE_CONCURRENCY's small worker-pool size), nowhere near a volume where single-row
 // Postgres INSERTs meaningfully pressure the connection pool. shouldWaitForGitHubRateLimit (rate-limit.ts)

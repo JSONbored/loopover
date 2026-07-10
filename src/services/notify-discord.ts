@@ -157,10 +157,15 @@ export async function notifyActionToDiscord(
  * operator-level digest spanning many repos (`report.repos`), so there is no single repo to route by: it posts to
  * the flat global `DISCORD_WEBHOOK_URL`. Best-effort and observable, mirroring `sendReviewRecapToDiscord`: an
  * unset/invalid webhook or a send failure is recorded to the audit ledger (`maintainer_recap_notification.discord`)
- * and returned as `{ sent: false, reason }` but never thrown, so a Discord outage never breaks the recap job. The
- * `RecapReport` is already public-safe (buildMaintainerRecap sanitizes every free-text field), so no re-scrub here.
+ * and returned as `{ sent: false, reason }` but never thrown, so a Discord outage never breaks the recap job.
+ * When {@link runMaintainerRecap} passes a {@link formatMaintainerRecap} body, the embed description uses that
+ * redacted markdown instead of raw {@link RecapReport.summary} lines.
  */
-export async function deliverRecapToDiscord(env: Env, report: RecapReport): Promise<{ sent: boolean; reason?: string }> {
+export async function deliverRecapToDiscord(
+  env: Env,
+  report: RecapReport,
+  formattedBody?: string,
+): Promise<{ sent: boolean; reason?: string }> {
   const targetKey = `maintainer-recap:${report.windowDays}d`;
   const auditMeta = { windowDays: report.windowDays, repoCount: report.repos.length };
   const url = envString(env, "DISCORD_WEBHOOK_URL");
@@ -169,12 +174,13 @@ export async function deliverRecapToDiscord(env: Env, report: RecapReport): Prom
     await recordAuditEvent(env, { eventType: "maintainer_recap_notification.discord", actor: "gittensory", targetKey, outcome: "denied", detail: reason, metadata: auditMeta });
     return { sent: false, reason };
   }
+  const description = (formattedBody ?? report.summary.join("\n")).slice(0, 1800);
   const body = {
     username: "Gittensory",
     embeds: [
       {
         title: `Maintainer recap · ${report.repos.length} repo(s) · ${report.windowDays}d`,
-        description: report.summary.join("\n").slice(0, 1800),
+        description,
         color: 0x0969da,
         fields: [
           { name: "Reviewed", value: `${report.totals.reviewed}`, inline: true },
@@ -200,9 +206,43 @@ export async function deliverRecapToDiscord(env: Env, report: RecapReport): Prom
   }
 }
 
+/**
+ * Deliver a maintainer recap digest (#2246, the Slack channel of #1963) as a Block Kit mrkdwn section. Sibling of
+ * {@link deliverRecapToDiscord} — posts the already-{@link formatMaintainerRecap}-redacted body to `SLACK_WEBHOOK_URL`.
+ * Best-effort: never throws; records `maintainer_recap_notification.slack` audit events.
+ */
+export async function deliverRecapToSlack(
+  env: Env,
+  report: RecapReport,
+  formattedBody: string,
+): Promise<{ sent: boolean; reason?: string }> {
+  const targetKey = `maintainer-recap:${report.windowDays}d`;
+  const auditMeta = { windowDays: report.windowDays, repoCount: report.repos.length };
+  const webhookUrl = envString(env, "SLACK_WEBHOOK_URL");
+  if (!webhookUrl || !isValidSlackWebhook(webhookUrl)) {
+    const reason = webhookUrl ? "invalid_webhook" : "missing_webhook";
+    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.slack", actor: "gittensory", targetKey, outcome: "denied", detail: reason, metadata: auditMeta });
+    return { sent: false, reason };
+  }
+  const body = {
+    text: `Maintainer recap (${report.windowDays}d)`,
+    blocks: [{ type: "section", text: { type: "mrkdwn", text: escapeSlackMrkdwnText(formattedBody).slice(0, 2900) } }],
+  };
+  try {
+    await postWebhook(webhookUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) }, "slack");
+    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.slack", actor: "gittensory", targetKey, outcome: "completed", detail: "sent", metadata: auditMeta });
+    return { sent: true };
+  } catch (error) {
+    const detail = errorMessage(error).slice(0, 160);
+    console.warn(JSON.stringify({ event: "maintainer_recap_slack_failed", message: detail }));
+    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.slack", actor: "gittensory", targetKey, outcome: "error", detail, metadata: auditMeta });
+    return { sent: false, reason: detail };
+  }
+}
+
 /** Slack incoming-webhook URL validation — only `https://hooks.slack.com/services/…`. Exported so other
- *  Slack senders (e.g. the recap digest's {@link deliverRecapToSlack}, review-recap.ts) reuse the SAME
- *  validation instead of re-typing the host/path allowlist. */
+ *  Slack senders (e.g. review-recap.ts's per-repo {@link deliverRecapToSlack}) reuse the SAME validation
+ *  instead of re-typing the host/path allowlist. */
 export function isValidSlackWebhook(url: string): boolean {
   try {
     const parsed = new URL(url);

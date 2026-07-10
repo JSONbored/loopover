@@ -14,7 +14,12 @@ export type RawPlanStep = {
   actionClass?: string | undefined;
   dependsOn?: string[] | undefined;
   maxAttempts?: number | undefined;
+  /** When set on the prepare-phase `coding-agent` step, records which execution mode the attempt runs under (#4313). */
+  codingAgentMode?: CodingAgentExecutionMode | undefined;
 };
+
+/** Re-exported here so plan templates stay standalone — defined in miner/coding-agent-mode.ts. */
+export type CodingAgentExecutionMode = "paused" | "dry_run" | "live";
 
 // The lifecycle-stage transitions this library provides a template for.
 export type PlanTemplateStage = "discover" | "analyze" | "create" | "manage" | "plan" | "prepare";
@@ -24,6 +29,8 @@ export type PlanTemplateContext = {
   // A short human label for the issue/opportunity the plan is for (e.g. an issue title). Optional so a caller can
   // render a generic template; whitespace is collapsed and the value is length-bounded to keep every title valid.
   subject?: string | undefined;
+  /** Execution mode for the prepare-phase coding-agent step (#4313) — visible end-to-end on the plan DAG. */
+  codingAgentMode?: CodingAgentExecutionMode | undefined;
 };
 
 // Title length ceiling of `rawPlanStepSchema.title` (max 300). Titles are hard-capped to this so a long subject can
@@ -79,9 +86,17 @@ export function planPlanTemplate(context: PlanTemplateContext = {}): RawPlanStep
 // run the local tests. Mirrors the PREPARE-phase ordering described in the plan-template issue.
 export function preparePlanTemplate(context: PlanTemplateContext = {}): RawPlanStep[] {
   const subject = normalizeSubject(context.subject);
+  const codingAgentStep: RawPlanStep = {
+    id: "coding-agent",
+    title: titleFor("Invoke coding agent", subject),
+    actionClass: "codegen",
+    dependsOn: ["branch-create"],
+    maxAttempts: 1,
+    ...(context.codingAgentMode === undefined ? {} : { codingAgentMode: context.codingAgentMode }),
+  };
   return [
     { id: "branch-create", title: titleFor("Create working branch", subject), actionClass: "vcs", dependsOn: [], maxAttempts: 3 },
-    { id: "coding-agent", title: titleFor("Invoke coding agent", subject), actionClass: "codegen", dependsOn: ["branch-create"], maxAttempts: 1 },
+    codingAgentStep,
     { id: "local-test", title: titleFor("Run local tests", subject), actionClass: "test", dependsOn: ["coding-agent"], maxAttempts: 2 },
   ];
 }

@@ -26,6 +26,8 @@ import type {
   WeeklyValueReport,
 } from "../types";
 import { computeFleetAnalytics, type FleetAnalytics } from "../orb/analytics";
+import { computeGateEval, type GateEvalReport } from "../review/parity";
+import { computeCycleTimeAggregate, type CycleTimeAggregate } from "../review/stats";
 import { loadUpstreamStatus, type UpstreamStatus } from "../upstream/ruleset";
 import { nowIso } from "../utils/json";
 import { buildRecommendationQualityReport, type RecommendationQualityReport } from "./recommendation-quality-report";
@@ -59,6 +61,11 @@ export type OperatorDashboardPayload = {
   scoringModel: ScoringModelSnapshotRecord | null;
   upstreamDrift: UpstreamStatus;
   fleetMetrics: FleetAnalytics;
+  // Gate-precision eval (#2191): the per-project confusion matrix + precisions from computeGateEval, surfaced
+  // read-only for the maintainer analytics card. Fail-safe empty report when there is no review_audit signal.
+  gateEval: GateEvalReport;
+  // PR review cycle-time percentiles (#2194): gate decision → outcome from review_audit; fail-safe empty aggregate.
+  cycleTime: CycleTimeAggregate;
 };
 
 const USAGE_WINDOW_DAYS = 7;
@@ -82,6 +89,8 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     commandUsefulness,
     recommendationQuality,
     fleetMetrics,
+    gateEval,
+    cycleTime,
   ] = await Promise.all([
     listRepositories(env),
     listInstallations(env),
@@ -99,6 +108,10 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     getCommandUsefulnessSummary(env),
     buildRecommendationQualityReport(env, { windowDays: 90 }),
     computeFleetAnalytics(env, { windowDays: 90 }),
+    // #2191: reuse the existing eval (no new compute); it fails safe to an empty report on any read error.
+    computeGateEval(env, { days: 90, nowMs: Date.now() }),
+    // #2194: cycle-time percentiles from the stats feed; fails safe to an empty aggregate.
+    computeCycleTimeAggregate(env, { days: 90, nowMs: Date.now() }),
   ]);
   const weeklyValueReport = buildWeeklyValueReport({
     generatedAt: nowIso(),
@@ -192,6 +205,8 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     scoringModel: scoring,
     upstreamDrift,
     fleetMetrics,
+    gateEval,
+    cycleTime,
   };
 }
 

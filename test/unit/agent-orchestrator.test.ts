@@ -12,6 +12,7 @@ import {
   type AgentRunBundle,
 } from "../../src/services/agent-orchestrator";
 import { buildAgentActionExplanationCard } from "../../src/services/agent-action-explanation-card";
+import * as aiSummariesModule from "../../src/services/ai-summaries";
 import { CONTRIBUTOR_DECISION_PACK_SIGNAL, type ContributorDecisionPack, type RepoOutcomeSummary } from "../../src/services/decision-pack";
 import { buildPublicAgentCommandComment, parseGittensoryMentionCommand } from "../../src/github/commands";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
@@ -148,6 +149,17 @@ describe("agent orchestrator", () => {
       scoringModelId: "scoring-1",
       freshnessWarnings: expect.arrayContaining(["we-promise/sure: partial signal coverage", "we-promise/sure: stale signal coverage"]),
     });
+  });
+
+  it("REGRESSION (#token-bleed-spend-gate): the fleet-wide env pause skips the private AI summary spend entirely", async () => {
+    const summarizeSpy = vi.spyOn(aiSummariesModule, "summarizeAgentBundleWithAi");
+    const env = createTestEnv({ AGENT_ACTIONS_PAUSED: "true" });
+    await persistDecisionPack(env, decisionPackFixture());
+
+    await planNextWork(env, { login: "oktofeesh1", repoFullName: "we-promise/sure", objective: "Pick one action" });
+
+    expect(summarizeSpy).not.toHaveBeenCalled();
+    summarizeSpy.mockRestore();
   });
 
   it("threads scoped counterfactual reasons into decision context snapshots", () => {

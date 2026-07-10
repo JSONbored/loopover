@@ -70,6 +70,7 @@ jobs:
             # build or types in ways only that full toolchain would catch.
             ui:
               - 'apps/gittensory-ui/**'
+              - 'apps/gittensory-miner-ui/**'
               - 'apps/gittensory-extension/**'
               - 'scripts/build-extension.mjs'
               - 'package.json'

@@ -1370,6 +1370,23 @@ describe("assign — auto-assign PR opener (#3182)", () => {
     expect(classes(plan)).not.toContain("assign");
     expect(classes(plan)).toContain("close");
   });
+
+  describe("assign action linked issue safety", () => {
+    it("does not thread PR-body linkedIssues into assignLinkedIssues", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { assign: "auto" }, pr: { labels: [], authorLogin: "alice", linkedIssues: [42, 43] } }));
+      const assign = plan.find((a) => a.actionClass === "assign");
+      expect(assign).toMatchObject({ actionClass: "assign", assignee: "alice" });
+      expect(assign).not.toHaveProperty("assignLinkedIssues");
+    });
+
+    it("keeps linkedIssues absence and emptiness equivalent for assign planning", () => {
+      for (const pr of [{ labels: [], authorLogin: "alice" }, { labels: [], authorLogin: "alice", linkedIssues: [] }]) {
+        const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { assign: "auto" }, pr }));
+        const assign = plan.find((a) => a.actionClass === "assign");
+        expect(assign).not.toHaveProperty("assignLinkedIssues");
+      }
+    });
+  });
 });
 
 describe("isProtectedAutomationAuthor", () => {

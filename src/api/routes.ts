@@ -183,6 +183,7 @@ import {
   loadControlPanelRoleSummary,
 } from "../services/control-panel-roles";
 import { runFindOpportunities, validateFindOpportunitiesInput, type FindOpportunitiesInput } from "../mcp/find-opportunities";
+import { runIssueRagRetrieval, validateIssueRagInput, type IssueRagInput } from "../mcp/issue-rag";
 import {
   buildMcpCompatibilityMetadata,
   LATEST_RECOMMENDED_MCP_VERSION,
@@ -254,6 +255,7 @@ import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadGatePrecisionReport } from "../services/gate-precision";
 import { computeOpsStats, isOpsEnabled } from "../review/ops-wire";
 import { computeParityReadiness, isParityAuditEnabled } from "../review/parity-wire";
+import { computePredictedGateAgreement } from "../review/predicted-gate-agreement";
 import { isRagEnabled } from "../review/rag-wire";
 import { getPublicStats, isPublicStatsEnabled } from "../review/public-stats";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
@@ -2853,6 +2855,21 @@ export function createApp() {
     return c.json(result);
   });
 
+  app.post(ISSUE_RAG_RETRIEVE_PATH, async (c) => {
+    const identity = await authenticateRequestIdentity(c);
+    /* v8 ignore next -- Protected middleware rejects unauthenticated private routes before route-specific guards. */
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    const body = await c.req.json().catch(() => null);
+    const parsed = validateIssueRagInput((body ?? {}) as IssueRagInput);
+    if (!parsed.ok) {
+      return c.json({ status: "invalid_request", repoFullName: "", reason: parsed.reason, telemetry: { attempted: false, injected: false, retrievedPaths: [] } }, 400);
+    }
+    const forbidden = await requireApiRepoReadAccess(c, identity, parsed.value.repoFullName);
+    if (forbidden) return forbidden;
+    const result = await runIssueRagRetrieval(c.env, parsed.value);
+    return c.json(result);
+  });
+
   app.post("/v1/preflight/pr", async (c) => {
     const body = await c.req.json().catch(() => null);
     const parsed = preflightSchema.safeParse(body);
@@ -3480,6 +3497,18 @@ export function createApp() {
   app.get("/v1/internal/parity", async (c) => {
     if (!isParityAuditEnabled(c.env)) return c.json({ error: "not_found" }, 404);
     return c.json(await computeParityReadiness(c.env));
+  });
+
+  // #predicted-live-gate-agreement (maintainer review-stack x AMS integration audit, 2026-07-09): how often the
+  // MCP predict_gate/explain_gate_disposition verdict agrees with the REAL gate decision a contributor's PR
+  // later receives -- a DIFFERENT question than /v1/internal/parity's reviewbot-vs-gittensory migration parity
+  // (see src/review/predicted-gate-agreement.ts's module header). Same gate/auth contract as /v1/internal/parity:
+  // bearer-gated by the `/v1/internal/*` middleware, 404 when GITTENSORY_REVIEW_PARITY_AUDIT is off so the
+  // endpoint does not exist on a deploy not running this telemetry family. Aggregate counts only — no PR
+  // content / actor logins (see that module's privacy note on why a per-login breakdown never belongs here).
+  app.get("/v1/internal/predicted-agreement", async (c) => {
+    if (!isParityAuditEnabled(c.env)) return c.json({ error: "not_found" }, 404);
+    return c.json(await computePredictedGateAgreement(c.env, { days: 90, nowMs: Date.now() }));
   });
 
   app.post("/v1/internal/jobs/refresh-registry", async (c) => {
@@ -5211,6 +5240,7 @@ function contributorEvidenceFromProfile(profile: {
 const EXTENSION_PULL_CONTEXT_PATH = "/v1/extension/pull-context";
 const EXTENSION_PULL_CONTEXT_SCOPE = "extension:pull_context";
 const OPPORTUNITIES_FIND_PATH = "/v1/opportunities/find";
+const ISSUE_RAG_RETRIEVE_PATH = "/v1/issue-rag/retrieve";
 const LINT_PR_TEXT_PATH = "/v1/lint/pr-text";
 const VALIDATE_FOCUS_MANIFEST_PATH = "/v1/validate/focus-manifest";
 const LINT_SLOP_RISK_PATH = "/v1/lint/slop-risk";
@@ -5280,6 +5310,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoAgentPendingActionsPath(path)) return true; // list-only: requireRepoMaintainer; decision POSTs require server tokens
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === OPPORTUNITIES_FIND_PATH) return true;
+  if (path === ISSUE_RAG_RETRIEVE_PATH) return true;
   if (path === LINT_PR_TEXT_PATH || path === VALIDATE_FOCUS_MANIFEST_PATH || path === LINT_SLOP_RISK_PATH || path === LINT_ISSUE_SLOP_PATH) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
   // Contributor extension scope reaches only `/v1/extension/contributors/<login>/*`; the handler's

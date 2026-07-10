@@ -117,6 +117,19 @@ describe("createOpenAiCompatibleAi (#979)", () => {
     expect(first?.body.model).toBe("llama3.1");
   });
 
+  it("only sends an Authorization header when this OpenAI-compatible provider has its own apiKey", async () => {
+    const authHeaders: Array<string | null> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init?: RequestInit) => {
+      authHeaders.push(new Headers(init?.headers).get("authorization"));
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 });
+    }));
+
+    await createOpenAiCompatibleAi({ baseUrl: "http://advisory.local/v1" }).run("m", { prompt: "x" });
+    await createOpenAiCompatibleAi({ baseUrl: "http://advisory.local/v1", apiKey: "sk-advisory" }).run("m", { prompt: "x" });
+
+    expect(authHeaders).toEqual([null, "Bearer sk-advisory"]);
+  });
+
   it("forwards providerOptions verbatim as the request's `options` field (#4327/#4335 num_ctx capping)", async () => {
     let body: Record<string, unknown> | undefined;
     vi.stubGlobal("fetch", vi.fn(async (_u: string, init: { body: string }) => {
@@ -421,6 +434,42 @@ describe("createChainAi (fallback)", () => {
     expect(logged.pullNumber).toBeUndefined();
     expect(logged.attempt).toBeUndefined();
     errorSpy.mockRestore();
+  });
+});
+
+describe("AI provider request duration/error metrics (#4367)", () => {
+  it("records a duration observation and no error on a successful call", async () => {
+    const provider = { name: "gpu-metrics-ok-provider", ai: { run: async () => ({ response: "ok" }) } };
+    await createChainAi([provider]).run("m", { prompt: "review this" });
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_ai_provider_request_duration_seconds_count{provider="gpu-metrics-ok-provider",request_kind="review"} 1');
+    expect(metrics).not.toContain('gittensory_ai_provider_request_errors_total{provider="gpu-metrics-ok-provider"');
+  });
+
+  it("labels an embedding call's duration by request_kind=embedding", async () => {
+    const provider = { name: "gpu-metrics-embed-provider", ai: { run: async () => ({ response: "ok" }) } };
+    await createChainAi([provider]).run("m", { text: ["chunk one", "chunk two"] });
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_ai_provider_request_duration_seconds_count{provider="gpu-metrics-embed-provider",request_kind="embedding"} 1');
+  });
+
+  it("records duration AND increments the error counter on a real failure", async () => {
+    const provider = { name: "gpu-metrics-fail-provider", ai: { run: async () => { throw new Error("boom"); } } };
+    await expect(createChainAi([provider]).run("m", { prompt: "review this" })).rejects.toThrow(/boom/);
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_ai_provider_request_duration_seconds_count{provider="gpu-metrics-fail-provider",request_kind="review"} 1');
+    expect(metrics).toContain('gittensory_ai_provider_request_errors_total{provider="gpu-metrics-fail-provider",request_kind="review"} 1');
+  });
+
+  it("records duration but NOT the error counter for an expected embedding-routing fallback (matches gittensory_ai_provider_failures_total's exemption)", async () => {
+    const provider = {
+      name: "gpu-metrics-routing-provider",
+      ai: { run: async () => { throw new Error("claude_code_no_embed"); } },
+    };
+    await expect(createChainAi([provider]).run("m", { text: ["chunk"] })).rejects.toThrow();
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_ai_provider_request_duration_seconds_count{provider="gpu-metrics-routing-provider",request_kind="embedding"} 1');
+    expect(metrics).not.toContain('gittensory_ai_provider_request_errors_total{provider="gpu-metrics-routing-provider"');
   });
 });
 

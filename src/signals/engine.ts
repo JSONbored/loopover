@@ -29,7 +29,7 @@ import { sanitizePublicComment } from "../queue-intelligence";
 import { labelMatchesPattern, projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview";
 import { hasLocalTestEvidence, hasValidationNote, isTestPath } from "./test-evidence";
 import { isCodeFile, isTestFile } from "./path-matchers";
-import { isFailingCheckSummary } from "./local-branch";
+import { isFailingCheckSummary } from "./check-summary";
 import { isDuplicateClusterWinnerByClaim } from "./duplicate-winner";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
 import type { UnifiedCollapsible } from "../review/unified-comment";

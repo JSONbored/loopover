@@ -9,6 +9,7 @@ const ALLOWED = [
   /^lib\/[a-z0-9-]+\.(js|d\.ts)$/,
   /^package\.json$/,
   /^README\.md$/,
+  /^expected-engine\.version$/,
 ];
 const REQUIRED = ["bin/gittensory-miner.js", "package.json"];
 const FORBIDDEN_PATH = /(^|\/)(\.dev\.vars|\.env|\.npmrc|.*\.pem|.*private.*key.*|.*secret.*)$/i;

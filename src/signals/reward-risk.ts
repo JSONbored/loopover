@@ -7,8 +7,9 @@
 // This is a WRAPPING shim rather than the usual pure `export *` re-export. reward-risk depends on the
 // maintainer signal stack in `src/signals/engine.ts` (`buildRoleContext`, `buildLaneAdvice`,
 // `buildCollisionReport`, `buildQueueHealth`, `buildRepoFitRecommendation`, `buildContributorIntakeHealth`,
-// `buildPullRequestReviewIntelligence`) plus `isFailingCheckSummary` from `./local-branch` — none of which
-// are extracted yet (and are far too large to port under the size cap). The engine module takes them as an
+// `buildPullRequestReviewIntelligence`) — none of which are extracted yet (and are far too large to port
+// under the size cap). `isFailingCheckSummary` now lives in `@jsonbored/gittensory-engine` (#4256). The
+// engine module takes the remaining builders as an
 // injected `RewardRiskEngineDeps`; this shim binds the real `src` builders and threads them in, so every
 // existing importer keeps calling the four builders with their original signatures. Once those builders gain
 // engine homes, a follow-up can drop the injection and collapse this back to a plain re-export.
@@ -28,8 +29,6 @@ import {
   buildRepoFitRecommendation,
   buildRoleContext,
 } from "./engine";
-import { isFailingCheckSummary } from "./local-branch";
-
 export type {
   ContributorRewardRiskStrategy,
   EligibilityGapEntry,
@@ -54,7 +53,6 @@ const deps: RewardRiskEngineDeps = {
   buildRepoFitRecommendation,
   buildContributorIntakeHealth,
   buildPullRequestReviewIntelligence,
-  isFailingCheckSummary,
 };
 
 export function buildRepoRewardRisk(

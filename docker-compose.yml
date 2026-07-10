@@ -15,6 +15,8 @@
 #   --profile pgbouncer     PgBouncer connection pooler in front of Postgres
 #   --profile qdrant        Qdrant vector database for RAG
 #   --profile ollama        Local Ollama AI backend
+#   --profile gpu           GPU metrics exporter (nvidia-smi -> Prometheus -> Grafana), requires the NVIDIA
+#                           Container Toolkit; combine with --profile ollama on a GPU host
 #   --profile visual-review Headless Chromium (browserless) for before/after PR screenshot capture
 #   --profile rees          Review-enrichment service (REES) for heavier PR analysis, in-network only
 #   --profile litestream    Continuous SQLite backup to S3/B2/R2 via Litestream
@@ -368,6 +370,30 @@ services:
       resources:
         limits:
           memory: "${OLLAMA_MEM_LIMIT:-20g}"
+
+  # ── GPU metrics exporter (--profile gpu, #4367) ─────────────────────────────
+  # Shells to `nvidia-smi` via the NVIDIA Container Toolkit -- DCGM is built for datacenter fleets and is
+  # the wrong fit for a single consumer/workstation-class card like the one this deployment targets. The
+  # device reservation below only takes effect once this profile is actually activated, so a host with no
+  # GPU (and no --profile gpu) never evaluates it.
+  gpu-exporter:
+    image: utkuozdemir/nvidia_gpu_exporter:1.3.2
+    restart: unless-stopped
+    <<: *default-logging
+    profiles: ["gpu"]
+    environment:
+      # The exporter only shells out to nvidia-smi -- it never runs CUDA workloads itself, so the
+      # lightest capability tier is sufficient (matches the upstream project's own recommended config).
+      NVIDIA_DRIVER_CAPABILITIES: utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    expose:
+      - "9835"
 
   # ── Browserless / visual review (--profile visual-review) ──────────────────
   # Headless Chromium for automated before/after PR screenshot capture (src/review/visual/**).

@@ -287,6 +287,25 @@ export type FocusManifestReviewRecapConfig = {
 };
 
 /**
+ * Config-as-code override for the CROSS-repo maintainer recap digest's cron knobs (#1963, #2250), declared
+ * under `maintainerRecap:`. Distinct from `reviewRecap:` above (that is the single-repo digest's own window/
+ * enable knob); this instead overrides the GITTENSORY_MAINTAINER_RECAP / GITTENSORY_RECAP_CADENCE env vars
+ * that gate the cron-scheduled cross-repo digest (buildMaintainerRecap, #2239 / #2248) — read from the
+ * gittensory self-repo's manifest (resolveGittensorySelfRepoFullName), since the digest is an operator-level
+ * setting, not a per-contributor-repo one. Mirrors `reviewRecap:` exactly: no DB-backed counterpart, so the
+ * parsed value (or the default below when unset) IS the effective value. Not present (or present with no
+ * fields set) ⇒ the caller falls back to the env vars, byte-identical to before this override existed.
+ */
+export type FocusManifestMaintainerRecapConfig = {
+  present: boolean;
+  enabled: boolean;
+  cadence: "daily" | "weekly";
+  /** Delivery channel for the digest. Discord-only for now (mirrors deliverRecapToDiscord, #2245) — Slack
+   *  delivery for this cross-repo digest is a follow-up, so any other value falls back to "discord". */
+  channel: "discord";
+};
+
+/**
  * Generic repository-settings override declared in `.gittensory.yml` under `settings:`. A partial of
  * {@link RepositorySettings} — every behaviour a maintainer can toggle in the dashboard can be set here
  * as code. Unset fields are omitted so the resolver layers it OVER the DB-backed settings
@@ -331,6 +350,7 @@ export type FocusManifestSettings = Partial<
     | "autoMaintain"
     | "agentPaused"
     | "agentDryRun"
+    | "agentGlobalFreezeOverride"
     | "commandAuthorization"
     | "contributorBlacklist"
     | "blacklistLabel"
@@ -699,6 +719,13 @@ export const EMPTY_SELF_HOST_AI_MODEL_CONFIG: SelfHostAiModelConfig = {
 /** Per-repo before/after screenshot-capture config under `review.visual` (#3609 / #3610). Generic by design —
  *  every self-hoster wires their OWN repo's preview-deploy setup and route shape with config, not code. */
 export type VisualConfig = {
+  /** `review.visual.production_url`: the repo's "before" production URL — e.g. `https://metagraph.sh` for a
+   *  repo whose live site differs from the operator's own `PUBLIC_SITE_ORIGIN` env var (a single GLOBAL value
+   *  with no per-repo awareness, correct for at most one repo on a multi-repo self-host instance). ALWAYS wins
+   *  over `PUBLIC_SITE_ORIGIN` when set, mirroring `preview.url_template`'s precedence over GitHub-native
+   *  discovery. null (default) ⇒ byte-identical to today (falls back to `PUBLIC_SITE_ORIGIN`). Validated at
+   *  parse time against the same SSRF guard (`isSafeHttpUrl`) the renderer itself unconditionally applies. */
+  productionUrl: string | null;
   preview: VisualPreviewConfig;
   routes: VisualRoutesConfig;
   themes: VisualTheme[];
@@ -767,6 +794,7 @@ export type VisualRoutesConfig = {
 };
 
 export const EMPTY_VISUAL_CONFIG: VisualConfig = {
+  productionUrl: null,
   preview: { urlTemplate: null },
   routes: { paths: [], maxRoutes: null },
   themes: [],
@@ -821,6 +849,7 @@ export type FocusManifest = {
   contentLane: FocusManifestContentLaneConfig;
   repoDocGeneration: FocusManifestRepoDocGenerationConfig;
   reviewRecap: FocusManifestReviewRecapConfig;
+  maintainerRecap: FocusManifestMaintainerRecapConfig;
   warnings: string[];
 };
 
@@ -942,6 +971,16 @@ const EMPTY_REVIEW_RECAP_CONFIG: FocusManifestReviewRecapConfig = {
   cadenceDays: DEFAULT_REVIEW_RECAP_CADENCE_DAYS,
 };
 
+const DEFAULT_MAINTAINER_RECAP_CADENCE: "daily" | "weekly" = "weekly";
+const DEFAULT_MAINTAINER_RECAP_CHANNEL: "discord" = "discord";
+
+const EMPTY_MAINTAINER_RECAP_CONFIG: FocusManifestMaintainerRecapConfig = {
+  present: false,
+  enabled: false,
+  cadence: DEFAULT_MAINTAINER_RECAP_CADENCE,
+  channel: DEFAULT_MAINTAINER_RECAP_CHANNEL,
+};
+
 const EMPTY_MANIFEST: FocusManifest = {
   present: false,
   source: "none",
@@ -959,6 +998,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
   repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
   reviewRecap: { ...EMPTY_REVIEW_RECAP_CONFIG },
+  maintainerRecap: { ...EMPTY_MAINTAINER_RECAP_CONFIG },
   warnings: [],
 };
 
@@ -989,6 +1029,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
     repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
     reviewRecap: { ...EMPTY_REVIEW_RECAP_CONFIG },
+  maintainerRecap: { ...EMPTY_MAINTAINER_RECAP_CONFIG },
   };
 }
 
@@ -1572,6 +1613,32 @@ export function reviewRecapConfigToJson(config: FocusManifestReviewRecapConfig):
   return { enabled: config.enabled, cadenceDays: config.cadenceDays };
 }
 
+/**
+ * Parse the optional `maintainerRecap:` mapping (#1963, #2250). Mirrors {@link parseReviewRecapConfig}: every
+ * field has a concrete default (no DB layer to overlay onto), so the parsed value IS the effective value. An
+ * invalid `cadence`/`channel` falls back to its default via {@link normalizeEnum} (with a warning) rather than
+ * silently firing more often or targeting an unsupported channel.
+ */
+function parseMaintainerRecapConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestMaintainerRecapConfig {
+  if (value === undefined || value === null) return { ...EMPTY_MAINTAINER_RECAP_CONFIG };
+  if (typeof value !== "object" || Array.isArray(value)) {
+    warnings.push('Manifest field "maintainerRecap" must be a mapping; ignoring it.');
+    return { ...EMPTY_MAINTAINER_RECAP_CONFIG };
+  }
+  const record = value as Record<string, JsonValue>;
+  const enabled = normalizeOptionalBoolean(record.enabled, "maintainerRecap.enabled", warnings) ?? false;
+  const cadence = normalizeEnum<"daily" | "weekly">(record.cadence, "maintainerRecap.cadence", ["daily", "weekly"], DEFAULT_MAINTAINER_RECAP_CADENCE, warnings);
+  const channel = normalizeEnum<"discord">(record.channel, "maintainerRecap.channel", ["discord"], DEFAULT_MAINTAINER_RECAP_CHANNEL, warnings);
+  return { present: true, enabled, cadence, channel };
+}
+
+/** Serialize a maintainerRecap config back into the parse-compatible shape so a cached snapshot round-trips
+ *  through {@link parseMaintainerRecapConfig} unchanged. Returns null when nothing is configured. */
+export function maintainerRecapConfigToJson(config: FocusManifestMaintainerRecapConfig): JsonValue {
+  if (!config.present) return null;
+  return { enabled: config.enabled, cadence: config.cadence, channel: config.channel };
+}
+
 function normalizeOptionalEnum<T extends string>(value: JsonValue | undefined, field: string, allowed: readonly T[], warnings: string[]): T | null {
   if (value === undefined || value === null) return null;
   if (typeof value === "string" && (allowed as readonly string[]).includes(value)) return value as T;
@@ -1597,7 +1664,7 @@ const MAX_REVIEW_NAG_COOLDOWN_DAYS = 365;
  * Parse the optional `settings:` mapping — a partial repository-settings override. Only recognized
  * fields are kept; unknown/invalid values are dropped with a warning and never throw.
  */
-function parseSettingsOverride(value: JsonValue | undefined, warnings: string[]): FocusManifestSettings {
+function parseSettingsOverride(value: JsonValue | undefined, warnings: string[], source?: FocusManifestSource): FocusManifestSettings {
   if (value === undefined || value === null) return {};
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "settings" must be a mapping; ignoring it.`);
@@ -1662,6 +1729,29 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   for (const key of ["aiReviewByok", "aiReviewAllAuthors", "closeOwnerAuthors", "autoLabelEnabled", "typeLabelsEnabled", "badgeEnabled", "publicQualityMetrics", "createMissingLabel", "includeMaintainerAuthors", "requireLinkedIssue", "backfillEnabled", "agentPaused", "agentDryRun"] as const) {
     const flag = normalizeOptionalBoolean(r[key], `settings.${key}`, warnings);
     if (flag !== null) out[key] = flag;
+  }
+  // agentGlobalFreezeOverride is deliberately NOT in the generic boolean loop above (#4372/#4391/operator-only-
+  // freeze-fix): it is an OPERATOR-ONLY emergency lever ("re-activate this one repo while the fleet-wide kill-
+  // switch stays on elsewhere"), and every OTHER settings field in that loop is readable from BOTH the public,
+  // maintainer-owned `.gittensory.yml` committed in the repo's own git history (source: "repo_file") AND the
+  // operator's private, container-local self-host config (source: "api_record") -- see loadRepoFocusManifestWithCachePolicy
+  // in focus-manifest-loader.ts for how each source is produced. A repo MAINTAINER must never be able to grant
+  // their own repo an exemption from the operator's fleet-wide freeze via their own committed yml (that is
+  // exactly the "scope leak" #4391 closed by stripping this field from the shared loop entirely). But the
+  // OPERATOR's own private config source is a fundamentally different trust boundary -- it is edited only by
+  // whoever has filesystem access to the container's private config directory, not by any repo's maintainers --
+  // and #4391 over-corrected by also removing the operator's own legitimate, config-as-code path for this lever,
+  // forcing raw undocumented DB writes as the only remaining mechanism (violating this project's config-as-code
+  // convention: every operator-facing control belongs in the global-default + per-repo-override config files,
+  // env vars are for bootstrap only). Restore it, gated STRICTLY to the private source.
+  if (source === "api_record") {
+    const agentGlobalFreezeOverride = normalizeOptionalBoolean(r.agentGlobalFreezeOverride, "settings.agentGlobalFreezeOverride", warnings);
+    if (agentGlobalFreezeOverride !== null) out.agentGlobalFreezeOverride = agentGlobalFreezeOverride;
+  } else if (r.agentGlobalFreezeOverride !== undefined) {
+    // A public/maintainer-owned manifest attempting to set this is silently dropped, not surfaced as a normal
+    // "invalid value" warning -- warnings are public-safe text that can reach a contributor-facing preview, and
+    // this should not teach a non-operator that the field exists or that they almost bypassed the fleet freeze.
+    warnings.push("Ignored settings.agentGlobalFreezeOverride: operator-only, not settable from a repo-owned manifest.");
   }
   // Agent-layer autonomy dial (#773): `settings.autonomy` maps each action class to a level. Only set it
   // when at least one valid class→level pair survives normalization, so a malformed block never blanks the
@@ -1799,6 +1889,9 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
     if (Array.isArray(rawGate.whenPaths)) sparseGate.whenPaths = validated.whenPaths;
     if (isScreenshotTableGateAction(rawGate.action)) sparseGate.action = validated.action;
     if (typeof rawGate.message === "string" && rawGate.message.trim().length > 0) sparseGate.message = validated.message;
+    if (Array.isArray(rawGate.requireViewports)) sparseGate.requireViewports = validated.requireViewports;
+    if (Array.isArray(rawGate.requireThemes)) sparseGate.requireThemes = validated.requireThemes;
+    if (typeof rawGate.skillFileUrl === "string" && rawGate.skillFileUrl.trim().length > 0) sparseGate.skillFileUrl = validated.skillFileUrl;
     out.screenshotTableGate = sparseGate;
   } else if (r.screenshotTableGate !== undefined) {
     warnings.push(`Manifest "settings.screenshotTableGate" must be an object; ignoring it and keeping any existing policy.`);
@@ -2216,6 +2309,7 @@ function overlaySelfHostAiModelConfig(base: SelfHostAiModelConfig, override: Sel
 
 function overlayVisualConfig(base: VisualConfig, override: VisualConfig): VisualConfig {
   return {
+    productionUrl: pickOverlayNullable(override.productionUrl, base.productionUrl),
     preview: { urlTemplate: pickOverlayNullable(override.preview.urlTemplate, base.preview.urlTemplate) },
     routes: {
       paths: pickOverlayStringList(override.routes.paths, base.routes.paths),
@@ -2458,6 +2552,7 @@ function parseSelfHostAiModelConfig(value: JsonValue | undefined, warnings: stri
 
 function visualConfigPresent(config: VisualConfig): boolean {
   return (
+    config.productionUrl !== null ||
     config.preview.urlTemplate !== null ||
     config.routes.paths.length > 0 ||
     config.routes.maxRoutes !== null ||
@@ -2503,6 +2598,20 @@ const VISUAL_URL_TEMPLATE_DUMMY_VARS: Record<string, string> = {
   "{head_sha}": "0000000000000000000000000000000000000000",
 };
 
+/** Parse `review.visual.production_url` — validated at CONFIG-READ time against the exact same SSRF guard
+ *  (`isSafeHttpUrl`) the renderer itself unconditionally applies to every URL it navigates to. Unlike
+ *  `preview.url_template`, this is a plain static origin with no `{number}`/`{head_sha}` placeholders to
+ *  substitute — the "before" shot is always the SAME production page, just at a different path per route. */
+function parseVisualProductionUrl(value: JsonValue | undefined, warnings: string[]): string | null {
+  const url = parsePublicSafeText(value, "review.visual.production_url", warnings);
+  if (url === null) return null;
+  if (!isSafeHttpUrl(url)) {
+    warnings.push(`Manifest "review.visual.production_url" must be a valid HTTPS URL targeting a public host; ignoring it.`);
+    return null;
+  }
+  return url;
+}
+
 /** Parse `review.visual.preview.url_template` — validated at CONFIG-READ time against the exact same SSRF
  *  guard (`isSafeHttpUrl`) the renderer itself unconditionally applies to every URL it navigates to,
  *  regardless of source (`src/review/visual/shot.ts`). This is deliberately redundant with that runtime
@@ -2532,6 +2641,8 @@ function parseVisualConfig(value: JsonValue | undefined, warnings: string[]): Vi
   }
   const record = value as Record<string, JsonValue>;
 
+  const productionUrl = parseVisualProductionUrl(record.production_url, warnings);
+
   const previewRecord = record.preview !== null && typeof record.preview === "object" && !Array.isArray(record.preview) ? (record.preview as Record<string, JsonValue>) : undefined;
   if (record.preview !== undefined && record.preview !== null && previewRecord === undefined) {
     warnings.push(`Manifest "review.visual.preview" must be a mapping; ignoring it.`);
@@ -2551,7 +2662,7 @@ function parseVisualConfig(value: JsonValue | undefined, warnings: string[]): Vi
   const themeStorageKey = parsePublicSafeText(record.theme_storage_key, "review.visual.theme_storage_key", warnings);
   const actionsFallback = normalizeOptionalBoolean(record.actions_fallback, "review.visual.actions_fallback", warnings) === true;
 
-  return { preview: { urlTemplate }, routes: { paths, maxRoutes }, themes, gif, enabled, themeStorageKey, actionsFallback };
+  return { productionUrl, preview: { urlTemplate }, routes: { paths, maxRoutes }, themes, gif, enabled, themeStorageKey, actionsFallback };
 }
 
 function parseAutoReviewTitleKeywords(value: JsonValue | undefined, warnings: string[]): string[] {
@@ -2858,6 +2969,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   }
   if (visualConfigPresent(review.visual)) {
     const visual: Record<string, JsonValue> = {};
+    if (review.visual.productionUrl !== null) visual.production_url = review.visual.productionUrl;
     if (review.visual.preview.urlTemplate !== null) visual.preview = { url_template: review.visual.preview.urlTemplate };
     if (review.visual.routes.paths.length > 0 || review.visual.routes.maxRoutes !== null) {
       const routes: Record<string, JsonValue> = {};
@@ -2889,9 +3001,10 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
   }
   const record = raw as Record<string, JsonValue>;
   const warnings: string[] = [];
+  const resolvedSource = normalizeSource(source, record.source, warnings);
   const manifest: FocusManifest = {
     present: true,
-    source: normalizeSource(source, record.source, warnings),
+    source: resolvedSource,
     wantedPaths: normalizeStringList(record.wantedPaths, "wantedPaths", warnings),
     preferredLabels: normalizeStringList(record.preferredLabels, "preferredLabels", warnings),
     linkedIssuePolicy: normalizeEnum(record.linkedIssuePolicy, "linkedIssuePolicy", ["required", "preferred", "optional"] as const, "optional", warnings),
@@ -2900,12 +3013,13 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     maintainerNotes: normalizeStringList(record.maintainerNotes, "maintainerNotes", warnings),
     publicNotes: normalizeStringList(record.publicNotes, "publicNotes", warnings).filter(isFocusManifestPublicSafe),
     gate: parseGateConfig(record.gate, warnings),
-    settings: parseSettingsOverride(record.settings, warnings),
+    settings: parseSettingsOverride(record.settings, warnings, resolvedSource),
     review: parseReviewConfig(record.review, warnings),
     features: parseFeaturesConfig(record.features, warnings),
     contentLane: parseContentLaneConfig(record.contentLane, warnings),
     repoDocGeneration: parseRepoDocGenerationConfig(record.repoDocGeneration, warnings),
     reviewRecap: parseReviewRecapConfig(record.reviewRecap, warnings),
+    maintainerRecap: parseMaintainerRecapConfig(record.maintainerRecap, warnings),
     warnings,
   };
   if (
@@ -2922,7 +3036,8 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     !manifest.features.present &&
     !manifest.contentLane.present &&
     !manifest.repoDocGeneration.present &&
-    !manifest.reviewRecap.present
+    !manifest.reviewRecap.present &&
+    !manifest.maintainerRecap.present
   ) {
     warnings.push("Manifest contained no recognized focus fields; falling back to deterministic signals.");
     manifest.present = false;

@@ -144,6 +144,17 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(replayed).toMatchObject({ actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "alice" });
   });
 
+  it("REGRESSION: actionParams drops legacy assignLinkedIssues so staged assignment cannot fan out to linked issues", () => {
+    const assign: PlannedAgentAction = { actionClass: "assign", requiresApproval: true, reason: "auto-assign PR opener", assignee: "alice", assignLinkedIssues: [42, 43] };
+
+    const persisted = actionParams(assign);
+    const replayed = pendingActionToPlanned({ actionClass: "assign", params: persisted, reason: assign.reason });
+
+    expect(persisted).toEqual({ assignee: "alice" });
+    expect(replayed).toMatchObject({ actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "alice" });
+    expect(replayed).not.toHaveProperty("assignLinkedIssues");
+  });
+
   it("actionParams round-trips structured closeReasons so approval replay preserves every close cause", () => {
     const closeWithReasons: PlannedAgentAction = {
       actionClass: "close",
@@ -852,6 +863,22 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     // audit_events had no way to tell a silently-refused assignee from a successful one.
     const audit = await env.DB.prepare("select detail from audit_events where event_type = 'agent.action.assign' order by created_at desc limit 1").first<{ detail: string }>();
     expect(audit?.detail).toBe("assignee refused by GitHub — fell back to a by:external-contributor label");
+  });
+
+  it("LIVE assign: ignores legacy assignLinkedIssues and assigns only the PR itself", async () => {
+    const env = createTestEnv({});
+    const assign: PlannedAgentAction = { actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "alice", assignLinkedIssues: [42, 43] };
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ autonomy: { assign: "auto" } }), [assign]);
+    expect(ensurePullRequestAssignee).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "alice");
+    expect(ensurePullRequestAssignee).toHaveBeenCalledTimes(1);
+    expect(outcomes[0]?.outcome).toBe("completed");
+  });
+
+  it("LIVE assign: no linkedIssues means no extra assignee calls beyond the PR itself", async () => {
+    const env = createTestEnv({});
+    const assign: PlannedAgentAction = { actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "alice" };
+    await executeAgentMaintenanceActions(env, ctx({ autonomy: { assign: "auto" } }), [assign]);
+    expect(ensurePullRequestAssignee).toHaveBeenCalledTimes(1);
   });
 
   it("assign with no login is a no-op (defensive — the planner always sets it, but the executor must not call GitHub with an empty login)", async () => {

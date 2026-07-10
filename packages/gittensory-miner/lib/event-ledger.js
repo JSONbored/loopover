@@ -1,8 +1,5 @@
-import { chmodSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
+import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 
 // The miner's local, append-only event ledger (#2290): an immutable audit trail of every significant miner-loop
 // event (discovered_issue, plan_built, plan_step_completed, pr_prepared, … — a small fixed vocabulary for this
@@ -16,26 +13,11 @@ const defaultDbFileName = "event-ledger.sqlite3";
 let defaultEventLedger = null;
 
 export function resolveEventLedgerDbPath(env = process.env) {
-  const explicitPath = typeof env.GITTENSORY_MINER_EVENT_LEDGER_DB === "string"
-    ? env.GITTENSORY_MINER_EVENT_LEDGER_DB.trim()
-    : "";
-  if (explicitPath) return explicitPath;
-
-  const explicitConfigDir = typeof env.GITTENSORY_MINER_CONFIG_DIR === "string"
-    ? env.GITTENSORY_MINER_CONFIG_DIR.trim()
-    : "";
-  if (explicitConfigDir) return join(explicitConfigDir, defaultDbFileName);
-
-  const configHome = typeof env.XDG_CONFIG_HOME === "string" && env.XDG_CONFIG_HOME.trim()
-    ? env.XDG_CONFIG_HOME.trim()
-    : join(homedir(), ".config");
-  return join(configHome, "gittensory-miner", defaultDbFileName);
+  return resolveLocalStoreDbPath(defaultDbFileName, "GITTENSORY_MINER_EVENT_LEDGER_DB", env);
 }
 
 function normalizeDbPath(dbPath) {
-  const path = (dbPath ?? resolveEventLedgerDbPath()).trim();
-  if (!path) throw new Error("invalid_event_ledger_db_path");
-  return path;
+  return normalizeLocalStoreDbPath(dbPath, resolveEventLedgerDbPath(), "invalid_event_ledger_db_path");
 }
 
 function normalizeEventType(type) {
@@ -108,11 +90,7 @@ function rowToEntry(row) {
  */
 export function initEventLedger(dbPath = resolveEventLedgerDbPath()) {
   const resolvedPath = normalizeDbPath(dbPath);
-  mkdirSync(dirname(resolvedPath), { recursive: true, mode: 0o700 });
-  const db = new DatabaseSync(resolvedPath);
-  chmodSync(resolvedPath, 0o600);
-  // Wait (rather than fail) for a concurrent writer's lock so two ledger instances on the same file serialize.
-  db.exec("PRAGMA busy_timeout = 5000");
+  const db = openLocalStoreDb(resolvedPath);
   // `UNIQUE(seq)` makes the monotonic-ordering guarantee an enforced invariant: a duplicate seq can never persist,
   // even if the append path were ever changed.
   db.exec(`

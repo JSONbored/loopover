@@ -100,8 +100,16 @@ export const RAG_DIMENSIONS = 1024;
 
 const CHUNK_CHARS = 16000; // per-file chunk budget; only files larger than this are split
 const CHUNK_OVERLAP = 1500;
-/** Hard per-repo stored-vector cap — the free-tier guard. Source is prioritized so it survives the cap. */
-export const MAX_CHUNKS_PER_REPO = 1500;
+/** Hard per-repo stored-vector cap — bounds a repo-controlled, unboundedly-growable store. Source is
+ *  prioritized so it survives the cap. Raised from 1500 (2026-07-09): all 3 currently-gated repos were
+ *  sitting AT the old cap (confirmed live), and gittensory's own indexable tree alone is within range of
+ *  it before accounting for large files splitting into multiple chunks -- meaning real code was silently
+ *  never indexed. Storage/search cost at this scale is trivial for Qdrant regardless of cap size (the
+ *  bound exists to protect against a pathological future repo, not because 4000 vectors is expensive);
+ *  the real cost of a higher cap is embedding COMPUTE, which is now a one-time cost per file instead of a
+ *  recurring one per cron cycle (#4365's blob-SHA skip-cache). Self-host only: this is not a Cloudflare
+ *  free-tier constraint on this deployment, but the name/comment history predates self-host. */
+export const MAX_CHUNKS_PER_REPO = 4000;
 const EMBED_BATCH = 96; // Workers AI caps embedding input at 100 items/call; kept as a conservative general
 // bound — other embed providers (Ollama/vLLM/etc via the self-host adapter) may not share this exact cap.
 const MAX_CONTEXT_CHARS = 14000; // bound the injected block (mirrors diff/knowledge budgets)
@@ -290,6 +298,26 @@ export async function countRepoChunks(storage: StorageAdapter, project: string, 
   }
 }
 
+/** Per-path {blobSha, count} for every path currently stored for a repo (#4365 embedding-cache). One grouped
+ *  query so a full reindex can decide, per file, "unchanged since last index → skip the fetch/chunk/embed"
+ *  without an N+1 lookup. A path's chunks always share one blob_sha (upsertChunks stamps it uniformly across
+ *  a file's chunks in the same call), so MAX(blob_sha) is just "that file's one value", not a real aggregate
+ *  choice. Fail-safe: an empty map on any storage error degrades the caller to "treat everything as changed"
+ *  (indexRepo's existing behavior today), never a crash or a wrongly-skipped file. */
+export async function getStoredChunkMeta(storage: StorageAdapter, project: string, repo: string): Promise<Map<string, { blobSha: string | null; count: number }>> {
+  const out = new Map<string, { blobSha: string | null; count: number }>();
+  try {
+    const rows = await storage
+      .prepare("SELECT path, MAX(blob_sha) AS blob_sha, COUNT(*) AS cnt FROM repo_chunks WHERE project = ? AND repo = ? GROUP BY path")
+      .bind(project, repo)
+      .all<{ path: string; blob_sha: string | null; cnt: number }>();
+    for (const row of rows.results ?? []) out.set(row.path, { blobSha: row.blob_sha, count: row.cnt });
+    return out;
+  } catch {
+    return out;
+  }
+}
+
 // ── Embedding (fail-safe: null on any failure) ────────────────────────────────────────────────────
 export async function embedTexts(
   inference: InferenceAdapter | undefined,
@@ -325,8 +353,12 @@ export async function embedTexts(
 
 // ── Index write (used by ingestion): embed + vector upsert + chunk-text store ─────────────────────
 /** Upsert chunks: write text to the storage table (source of truth) + vectors+light metadata to the vector
- *  index. Returns the number upserted (0 on any failure — ingestion treats that as "try again later"). */
-export async function upsertChunks(infra: RagInfra, project: string, repo: string, chunks: RagChunk[]): Promise<number> {
+ *  index. Returns the number upserted (0 on any failure — ingestion treats that as "try again later").
+ *  `blobSha` (#4365) is the source file's git blob SHA at index time, stamped onto every chunk row for
+ *  getStoredChunkMeta to compare against on the next full reindex — omit it (e.g. the incremental
+ *  reindexChangedPaths caller, which isn't handed tree SHAs) and the column just stays NULL, which simply
+ *  never matches a future SHA and self-heals on that path's next full-reindex pass. */
+export async function upsertChunks(infra: RagInfra, project: string, repo: string, chunks: RagChunk[], blobSha?: string): Promise<number> {
   const { storage: db, vector: vec, inference } = infra;
   if (!vec || !inference || chunks.length === 0) return 0;
   const namespace = ragNamespace(project, repo);
@@ -343,9 +375,9 @@ export async function upsertChunks(infra: RagInfra, project: string, repo: strin
     );
     const stmts = chunks.map((c) =>
       db.prepare(
-        "INSERT INTO repo_chunks (id, project, repo, path, chunk_index, kind, text) VALUES (?,?,?,?,?,?,?) " +
-          "ON CONFLICT(id) DO UPDATE SET text=excluded.text, kind=excluded.kind, chunk_index=excluded.chunk_index, updated_at=CURRENT_TIMESTAMP",
-      ).bind(c.id, project, repo, c.path, c.chunkIndex, c.kind, c.text),
+        "INSERT INTO repo_chunks (id, project, repo, path, chunk_index, kind, text, blob_sha) VALUES (?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(id) DO UPDATE SET text=excluded.text, kind=excluded.kind, chunk_index=excluded.chunk_index, blob_sha=excluded.blob_sha, updated_at=CURRENT_TIMESTAMP",
+      ).bind(c.id, project, repo, c.path, c.chunkIndex, c.kind, c.text, blobSha ?? null),
     );
     await db.batch(stmts);
     return chunks.length;

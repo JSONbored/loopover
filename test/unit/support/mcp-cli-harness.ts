@@ -298,6 +298,28 @@ export async function startFixtureServer(
       response.end(JSON.stringify({ ranked, totalCandidates: candidates.length, appliedLane: lane, appliedMinRankScore: minRank }));
       return;
     }
+    if (request.url === "/v1/issue-rag/retrieve" && request.method === "POST") {
+      const body = (await readJsonRequest(request)) as { owner?: string; repo?: string; title?: string };
+      response.end(
+        JSON.stringify({
+          status: "ok",
+          repoFullName: `${body.owner}/${body.repo}`,
+          telemetry: {
+            attempted: true,
+            injected: true,
+            candidates: 1,
+            kept: 1,
+            topScore: 0.9,
+            minScore: 0.4,
+            reranked: true,
+            injectedChars: 120,
+            retrievedPathCount: 1,
+            retrievedPaths: ["src/helper.ts"],
+          },
+        }),
+      );
+      return;
+    }
     // #784 maintainer controls (agent approval queue + kill-switch).
     if (request.url === "/v1/repos/owner/repo/agent/pending-actions" && request.method === "GET") {
       response.end(JSON.stringify({ repoFullName: "owner/repo", pendingActions: [{ id: "pa-1", actionClass: "merge", pullNumber: 7, reason: "clean", status: "pending" }] }));

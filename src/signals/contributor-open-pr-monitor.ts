@@ -11,7 +11,8 @@ import {
 import type { CheckSummaryRecord, PullRequestFileRecord, PullRequestRecord, PullRequestReviewRecord } from "../types";
 import { nowIso } from "../utils/json";
 import { buildRoleContext } from "./engine";
-import { isCodeFile, isFailingCheckSummary } from "./local-branch";
+import { isFailingCheckSummary } from "./check-summary";
+import { isCodeFile } from "./local-branch";
 import { isTestPath } from "./test-evidence";
 
 export type OpenPrWorkClassification =

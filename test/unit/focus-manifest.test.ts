@@ -39,6 +39,7 @@ import {
   overlayReviewConfig,
   parseReviewConfigMapping,
   reviewRecapConfigToJson,
+  maintainerRecapConfigToJson,
   settingsOverrideToJson,
   type FocusManifest,
   type FocusManifestContentLaneConfig,
@@ -47,6 +48,7 @@ import {
   type FocusManifestRepoDocGenerationConfig,
   type FocusManifestReviewConfig,
   type FocusManifestReviewRecapConfig,
+  type FocusManifestMaintainerRecapConfig,
   type FocusManifestSettings,
   type SelfHostAiModelConfig,
 } from "../../src/signals/focus-manifest";
@@ -287,6 +289,14 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
   // silently vanishing from the exhaustiveness check.
   const SETTINGS_GATE_ALIASED_FIELDS = ["gateCheckMode", "linkedIssueGateMode", "duplicatePrGateMode", "selfAuthoredLinkedIssueGateMode", "qualityGateMode", "qualityGateMinScore", "aiReviewMode", "aiReviewByok", "aiReviewProvider", "aiReviewModel", "aiReviewAllAuthors"] as const;
 
+  // Settings fields that are DELIBERATELY absent from `.gittensory.yml.example` (unlike the gate-aliased fields
+  // above, these are never documented anywhere in the public template): agentGlobalFreezeOverride is an
+  // operator-only emergency lever, settable only from the operator's own private self-host config (source:
+  // "api_record" in parseSettingsOverride, focus-manifest.ts) -- never from a repo's own committed, maintainer-
+  // owned manifest (#4391's scope-leak fix). Documenting it in the PUBLIC example would misleadingly suggest a
+  // repo maintainer can set it themselves.
+  const SETTINGS_OPERATOR_ONLY_FIELDS = ["agentGlobalFreezeOverride"] as const;
+
   const SETTINGS_FIELD_TOKENS = {
     commentMode: "commentMode:",
     publicAudienceMode: "publicAudienceMode:",
@@ -351,7 +361,7 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
     unlinkedIssueGuardrail: "unlinkedIssueGuardrail:",
     screenshotTableGate: "screenshotTableGate:",
     advisoryAiRouting: "advisoryAiRouting:",
-  } satisfies Record<Exclude<keyof FocusManifestSettings, (typeof SETTINGS_GATE_ALIASED_FIELDS)[number]>, string>;
+  } satisfies Record<Exclude<keyof FocusManifestSettings, (typeof SETTINGS_GATE_ALIASED_FIELDS)[number] | (typeof SETTINGS_OPERATOR_ONLY_FIELDS)[number]>, string>;
 
   it.each(Object.entries(SETTINGS_FIELD_TOKENS))("documents settings.%s", (_field, token) => {
     expect(exampleContent).toContain(token);
@@ -441,6 +451,16 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
   } satisfies Record<Exclude<keyof FocusManifestReviewRecapConfig, "present">, string>;
 
   it.each(Object.entries(REVIEW_RECAP_FIELD_TOKENS))("documents reviewRecap.%s", (_field, token) => {
+    expect(exampleContent).toContain(token);
+  });
+
+  const MAINTAINER_RECAP_FIELD_TOKENS = {
+    enabled: "enabled:",
+    cadence: "cadence:",
+    channel: "channel:",
+  } satisfies Record<Exclude<keyof FocusManifestMaintainerRecapConfig, "present">, string>;
+
+  it.each(Object.entries(MAINTAINER_RECAP_FIELD_TOKENS))("documents maintainerRecap.%s", (_field, token) => {
     expect(exampleContent).toContain(token);
   });
 });
@@ -812,6 +832,7 @@ describe("compileFocusManifestPolicy", () => {
       contentLane: { present: false, entryFileGlob: null, providerFileGlob: null, artifactGlob: null, collectionField: null, maxAppendedEntries: null, duplicateKeyFields: [], validatorId: null },
       repoDocGeneration: { present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 },
       reviewRecap: { present: false, enabled: false, cadenceDays: 7 },
+      maintainerRecap: { present: false, enabled: false, cadence: "weekly", channel: "discord" },
       warnings: [],
     });
     expect(policy.publicSafe.entryGuidance).toContain("Keep PRs focused.");
@@ -1793,6 +1814,74 @@ describe("parseFocusManifest gate config", () => {
     });
   });
 
+  describe("maintainerRecap: (#1963, #2250, cross-repo digest cron config-as-code override)", () => {
+    it("defaults to fully disabled/absent when the key is omitted, and does not make the manifest present on its own", () => {
+      const m = parseFocusManifest({});
+      expect(m.maintainerRecap).toEqual({ present: false, enabled: false, cadence: "weekly", channel: "discord" });
+      expect(m.present).toBe(false);
+    });
+
+    it("treats an explicit null the same as an omitted key", () => {
+      expect(parseFocusManifest({ maintainerRecap: null }).maintainerRecap).toEqual({ present: false, enabled: false, cadence: "weekly", channel: "discord" });
+    });
+
+    it("warns and falls back to the default when the value is a non-mapping type (string or array)", () => {
+      const asString = parseFocusManifest({ maintainerRecap: "nope" as never });
+      expect(asString.maintainerRecap.present).toBe(false);
+      expect(asString.warnings.some((w) => /"maintainerRecap" must be a mapping/.test(w))).toBe(true);
+      const asArray = parseFocusManifest({ maintainerRecap: ["nope"] as never });
+      expect(asArray.maintainerRecap.present).toBe(false);
+      expect(asArray.warnings.some((w) => /"maintainerRecap" must be a mapping/.test(w))).toBe(true);
+    });
+
+    it("parses enabled: true and defaults cadence/channel, making the manifest present", () => {
+      const m = parseFocusManifest({ maintainerRecap: { enabled: true } });
+      expect(m.maintainerRecap).toEqual({ present: true, enabled: true, cadence: "weekly", channel: "discord" });
+      expect(m.present).toBe(true);
+    });
+
+    it("warns and defaults to false when enabled is a non-boolean value", () => {
+      const m = parseFocusManifest({ maintainerRecap: { enabled: "yes" as unknown as boolean } });
+      expect(m.maintainerRecap.enabled).toBe(false);
+      expect(m.warnings.some((w) => /maintainerRecap\.enabled/.test(w))).toBe(true);
+    });
+
+    it("parses a valid cadence and defaults to weekly when omitted", () => {
+      const m = parseFocusManifest({ maintainerRecap: { enabled: true, cadence: "daily" } });
+      expect(m.maintainerRecap.cadence).toBe("daily");
+      const defaulted = parseFocusManifest({ maintainerRecap: { enabled: true } });
+      expect(defaulted.maintainerRecap.cadence).toBe("weekly");
+    });
+
+    it("warns and falls back to weekly when cadence is not daily/weekly", () => {
+      const m = parseFocusManifest({ maintainerRecap: { enabled: true, cadence: "biweekly" as never } });
+      expect(m.maintainerRecap.cadence).toBe("weekly");
+      expect(m.warnings.some((w) => /maintainerRecap\.cadence/.test(w))).toBe(true);
+    });
+
+    it("parses a valid channel and defaults to discord when omitted", () => {
+      const m = parseFocusManifest({ maintainerRecap: { enabled: true, channel: "discord" } });
+      expect(m.maintainerRecap.channel).toBe("discord");
+      const defaulted = parseFocusManifest({ maintainerRecap: { enabled: true } });
+      expect(defaulted.maintainerRecap.channel).toBe("discord");
+    });
+
+    it("warns and falls back to discord when channel is not a supported value (e.g. slack, not yet delivered for this digest)", () => {
+      const m = parseFocusManifest({ maintainerRecap: { enabled: true, channel: "slack" as never } });
+      expect(m.maintainerRecap.channel).toBe("discord");
+      expect(m.warnings.some((w) => /maintainerRecap\.channel/.test(w))).toBe(true);
+    });
+
+    it("round-trips through maintainerRecapConfigToJson → parseFocusManifest unchanged", () => {
+      const m = parseFocusManifest({ maintainerRecap: { enabled: true, cadence: "daily", channel: "discord" } });
+      expect(parseFocusManifest({ maintainerRecap: maintainerRecapConfigToJson(m.maintainerRecap) }).maintainerRecap).toEqual(m.maintainerRecap);
+    });
+
+    it("maintainerRecapConfigToJson returns null for an absent config", () => {
+      expect(maintainerRecapConfigToJson(parseFocusManifest(null).maintainerRecap)).toBeNull();
+    });
+  });
+
   it("parses aiReviewAllAuthors from the settings: block (generic override)", () => {
     const parsed = parseFocusManifest({ settings: { aiReviewAllAuthors: true , closeOwnerAuthors: false} });
     expect(parsed.settings.aiReviewAllAuthors).toBe(true);
@@ -1855,10 +1944,33 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
       includeMaintainerAuthors: true,
       requireLinkedIssue: true,
       backfillEnabled: false,
+      agentGlobalFreezeOverride: true,
     });
-    // Operator-only freeze overrides are deliberately not config-as-code fields; a maintainer-owned
-    // manifest must not be able to bypass the DB-backed global freeze.
-    expect(resolveEffectiveSettings({ agentGlobalFreezeOverride: false } as unknown as RepositorySettings, m).agentGlobalFreezeOverride).toBe(false);
+    // parseFocusManifest with no explicit `source` (and no `record.source` field, as here) defaults to
+    // "api_record" (normalizeSource, focus-manifest.ts) -- the operator-private-config trust level -- so
+    // agentGlobalFreezeOverride parses through and can overlay the DB value. See the dedicated
+    // "agentGlobalFreezeOverride: operator-only" describe block below for the source-gating itself (an
+    // explicit source: "repo_file" manifest, mirroring a real repo-owned `.gittensory.yml`, drops it instead).
+    expect(resolveEffectiveSettings({ agentGlobalFreezeOverride: false } as unknown as RepositorySettings, m).agentGlobalFreezeOverride).toBe(true);
+  });
+
+  describe("agentGlobalFreezeOverride: operator-only, never settable from a repo-owned manifest (#4391)", () => {
+    it("source: api_record (the operator's own private self-host config) — parses it and lets it overlay the DB value", () => {
+      const m = parseFocusManifest({ source: "api_record", settings: { agentGlobalFreezeOverride: true } });
+      expect(m.settings.agentGlobalFreezeOverride).toBe(true);
+      expect(m.warnings).toEqual([]);
+      expect(resolveEffectiveSettings({ agentGlobalFreezeOverride: false } as unknown as RepositorySettings, m).agentGlobalFreezeOverride).toBe(true);
+    });
+
+    it("source: repo_file (a real repo-owned .gittensory.yml) — drops it with an operator-only warning; the DB value survives", () => {
+      const m = parseFocusManifest({ source: "repo_file", settings: { agentGlobalFreezeOverride: true } });
+      expect(m.settings.agentGlobalFreezeOverride).toBeUndefined();
+      expect(m.warnings).toContain("Ignored settings.agentGlobalFreezeOverride: operator-only, not settable from a repo-owned manifest.");
+      // A repo maintainer's own committed manifest must never be able to grant an exemption from the operator's
+      // fleet-wide freeze (the #4391 scope-leak this field's source-gating exists to prevent) -- the DB's `false`
+      // (fleet-wide frozen, no repo-level override) survives untouched.
+      expect(resolveEffectiveSettings({ agentGlobalFreezeOverride: false } as unknown as RepositorySettings, m).agentGlobalFreezeOverride).toBe(false);
+    });
   });
 
   it("drops invalid settings values with warnings and keeps the valid ones", () => {
@@ -2791,7 +2903,7 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
   it("resolveEffectiveSettings falls back to the built-in default when the DB layer has no screenshotTableGate at all (#2006)", () => {
     const db = {} as unknown as RepositorySettings;
     const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { screenshotTableGate: { enabled: true } } }));
-    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: [], whenPaths: [], action: "close" });
+    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [] });
   });
 
   it("resolveEffectiveSettings keeps the DB layer's enabled/action when the manifest override omits them (#2006)", () => {
@@ -2810,6 +2922,53 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     const parsed = parseFocusManifest({ settings: { screenshotTableGate: "oops" } });
     expect(parsed.settings.screenshotTableGate).toBeUndefined();
     expect(parsed.warnings).toContain(`Manifest "settings.screenshotTableGate" must be an object; ignoring it and keeping any existing policy.`);
+  });
+
+  it("wires settings.screenshotTableGate.requireViewports/requireThemes into the manifest parser as a sparse override (#4535)", () => {
+    const parsed = parseFocusManifest({ settings: { screenshotTableGate: { requireViewports: ["Desktop", "Tablet", "Mobile"], requireThemes: ["Light", "Dark"] } } });
+    expect(parsed.settings.screenshotTableGate).toEqual({ requireViewports: ["Desktop", "Tablet", "Mobile"], requireThemes: ["Light", "Dark"] });
+  });
+
+  it("omits requireViewports/requireThemes from the sparse override when the raw manifest doesn't name them (#4535)", () => {
+    const parsed = parseFocusManifest({ settings: { screenshotTableGate: { enabled: true } } });
+    expect(parsed.settings.screenshotTableGate).toEqual({ enabled: true });
+    expect(parsed.settings.screenshotTableGate).not.toHaveProperty("requireViewports");
+    expect(parsed.settings.screenshotTableGate).not.toHaveProperty("requireThemes");
+  });
+
+  it("resolveEffectiveSettings merges requireViewports/requireThemes without clearing the DB layer's other fields (#4535)", () => {
+    const db = { screenshotTableGate: { enabled: true, whenLabels: ["frontend"], whenPaths: [], action: "close", requireViewports: [], requireThemes: [] } } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { screenshotTableGate: { requireViewports: ["Desktop"], requireThemes: ["Light", "Dark"] } } }));
+    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: ["frontend"], whenPaths: [], action: "close", requireViewports: ["Desktop"], requireThemes: ["Light", "Dark"] });
+  });
+
+  it("resolveEffectiveSettings keeps the DB layer's requireViewports/requireThemes when the manifest override omits them (#4535)", () => {
+    const db = { screenshotTableGate: { enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: ["Desktop"], requireThemes: ["Light"] } } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { screenshotTableGate: { enabled: true } } }));
+    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: ["Desktop"], requireThemes: ["Light"] });
+  });
+
+  it("wires settings.screenshotTableGate.skillFileUrl into the manifest parser as a sparse override (#4540 follow-up)", () => {
+    const url = "https://github.com/JSONbored/metagraphed/blob/main/.claude/skills/metagraphed/SKILL.md";
+    const parsed = parseFocusManifest({ settings: { screenshotTableGate: { skillFileUrl: url } } });
+    expect(parsed.settings.screenshotTableGate).toEqual({ skillFileUrl: url });
+  });
+
+  it("omits skillFileUrl from the sparse override when the raw manifest doesn't name it (#4540 follow-up)", () => {
+    const parsed = parseFocusManifest({ settings: { screenshotTableGate: { enabled: true } } });
+    expect(parsed.settings.screenshotTableGate).not.toHaveProperty("skillFileUrl");
+  });
+
+  it("resolveEffectiveSettings merges skillFileUrl without clearing the DB layer's other fields (#4540 follow-up)", () => {
+    const db = { screenshotTableGate: { enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [] } } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { screenshotTableGate: { skillFileUrl: "https://github.com/acme/widget/blob/main/SKILL.md" } } }));
+    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [], skillFileUrl: "https://github.com/acme/widget/blob/main/SKILL.md" });
+  });
+
+  it("resolveEffectiveSettings keeps the DB layer's skillFileUrl when the manifest override omits it (#4540 follow-up)", () => {
+    const db = { screenshotTableGate: { enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [], skillFileUrl: "https://github.com/acme/widget/blob/main/SKILL.md" } } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { screenshotTableGate: { enabled: true } } }));
+    expect(eff.screenshotTableGate).toEqual({ enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [], skillFileUrl: "https://github.com/acme/widget/blob/main/SKILL.md" });
   });
 
   it("wires settings.advisoryAiRouting into the manifest parser as a sparse override (#4364)", () => {
@@ -3829,6 +3988,7 @@ describe("review.visual (#3609 preview.url_template / #3610 routes)", () => {
       },
     });
     expect(m.review.visual).toEqual({
+      productionUrl: null,
       preview: { urlTemplate: "https://pr-{number}.preview.example.com" },
       routes: { paths: ["/pricing", "/docs"], maxRoutes: 3 },
       themes: [],
@@ -3931,7 +4091,68 @@ describe("review.visual (#3609 preview.url_template / #3610 routes)", () => {
   it("resolveReviewVisualConfig: null manifest yields empty defaults; a set manifest passes through", () => {
     expect(resolveReviewVisualConfig(null)).toEqual({ ...EMPTY_VISUAL_CONFIG });
     const manifest = parseFocusManifest({ review: { visual: { routes: { paths: ["/app"] } } } });
-    expect(resolveReviewVisualConfig(manifest)).toEqual({ preview: { urlTemplate: null }, routes: { paths: ["/app"], maxRoutes: null }, themes: [], gif: false, enabled: null, themeStorageKey: null, actionsFallback: false });
+    expect(resolveReviewVisualConfig(manifest)).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: ["/app"], maxRoutes: null }, themes: [], gif: false, enabled: null, themeStorageKey: null, actionsFallback: false });
+  });
+});
+
+describe("review.visual.production_url (#3611 follow-up — per-repo override of the global PUBLIC_SITE_ORIGIN env var)", () => {
+  it("parses a valid production_url, marks present, and round-trips", () => {
+    const m = parseFocusManifest({ review: { visual: { production_url: "https://metagraph.sh" } } });
+    expect(m.review.visual.productionUrl).toBe("https://metagraph.sh");
+    expect(m.review.present).toBe(true);
+    expect(reviewConfigToJson(m.review)).toEqual({ visual: { production_url: "https://metagraph.sh" } });
+  });
+
+  it("absent production_url stays null and does not mark review present on its own", () => {
+    expect(parseFocusManifest({}).review.visual.productionUrl).toBeNull();
+    expect(parseFocusManifest({ review: { visual: {} } }).review.present).toBe(false);
+  });
+
+  it("rejects a non-HTTPS production_url with a warning", () => {
+    const bad = parseFocusManifest({ review: { visual: { production_url: "http://metagraph.sh" } } });
+    expect(bad.review.visual.productionUrl).toBeNull();
+    expect(bad.warnings.some((w) => /review\.visual\.production_url.*valid HTTPS URL/.test(w))).toBe(true);
+  });
+
+  it("rejects a production_url resolving to a private/internal host with a warning", () => {
+    const bad = parseFocusManifest({ review: { visual: { production_url: "https://prod.internal" } } });
+    expect(bad.review.visual.productionUrl).toBeNull();
+    expect(bad.warnings.some((w) => /review\.visual\.production_url.*valid HTTPS URL/.test(w))).toBe(true);
+  });
+
+  it("rejects a malformed production_url with a warning", () => {
+    const bad = parseFocusManifest({ review: { visual: { production_url: "not-a-url-at-all" } } });
+    expect(bad.review.visual.productionUrl).toBeNull();
+    expect(bad.warnings.some((w) => /review\.visual\.production_url.*valid HTTPS URL/.test(w))).toBe(true);
+  });
+
+  it("composes with preview.url_template — both configured independently and both round-trip", () => {
+    const m = parseFocusManifest({
+      review: { visual: { production_url: "https://metagraph.sh", preview: { url_template: "https://pr-{number}.example.com" } } },
+    });
+    expect(m.review.visual.productionUrl).toBe("https://metagraph.sh");
+    expect(m.review.visual.preview.urlTemplate).toBe("https://pr-{number}.example.com");
+    expect(reviewConfigToJson(m.review)).toEqual({
+      visual: { production_url: "https://metagraph.sh", preview: { url_template: "https://pr-{number}.example.com" } },
+    });
+  });
+
+  it("resolveReviewVisualConfig passes a configured production_url through", () => {
+    const manifest = parseFocusManifest({ review: { visual: { production_url: "https://metagraph.sh" } } });
+    expect(resolveReviewVisualConfig(manifest).productionUrl).toBe("https://metagraph.sh");
+  });
+
+  it("overlay: a per-repo production_url wins over a global-default value", () => {
+    const globalDefault = parseReviewConfigMapping({ visual: { production_url: "https://gittensory.aethereal.dev" } }, []);
+    const perRepo = parseReviewConfigMapping({ visual: { production_url: "https://metagraph.sh" } }, []);
+    expect(overlayReviewConfig(globalDefault, perRepo).visual.productionUrl).toBe("https://metagraph.sh");
+  });
+
+  it("overlay: an unset per-repo production_url falls back to the global-default value", () => {
+    const globalDefault = parseReviewConfigMapping({ visual: { production_url: "https://gittensory.aethereal.dev" } }, []);
+    const perRepo = parseReviewConfigMapping({ visual: { routes: { paths: ["/app"] } } }, []);
+    expect(overlayReviewConfig(globalDefault, perRepo).visual.productionUrl).toBe("https://gittensory.aethereal.dev");
+    expect(overlayReviewConfig(globalDefault, perRepo).visual.routes.paths).toEqual(["/app"]);
   });
 });
 
@@ -4016,7 +4237,7 @@ describe("review.visual.gif (#3612 scroll-through GIF capture)", () => {
 
   it("composes with themes — both configured independently and both round-trip", () => {
     const m = parseFocusManifest({ review: { visual: { gif: true, themes: ["dark"] } } });
-    expect(m.review.visual).toEqual({ preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: true, enabled: null, themeStorageKey: null, actionsFallback: false });
+    expect(m.review.visual).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: true, enabled: null, themeStorageKey: null, actionsFallback: false });
     expect(reviewConfigToJson(m.review)).toEqual({ visual: { themes: ["dark"], gif: true } });
   });
 
@@ -4119,7 +4340,7 @@ describe("review.visual.theme_storage_key (#4109 localStorage theme-forcing fall
 
   it("composes with themes — both configured independently and both round-trip", () => {
     const m = parseFocusManifest({ review: { visual: { themes: ["dark"], theme_storage_key: "theme" } } });
-    expect(m.review.visual).toEqual({ preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: false, enabled: null, themeStorageKey: "theme", actionsFallback: false });
+    expect(m.review.visual).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: false, enabled: null, themeStorageKey: "theme", actionsFallback: false });
     expect(reviewConfigToJson(m.review)).toEqual({ visual: { themes: ["dark"], theme_storage_key: "theme" } });
   });
 
@@ -4174,7 +4395,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
 
   it("composes with gif — both configured independently and both round-trip", () => {
     const m = parseFocusManifest({ review: { visual: { actions_fallback: true, gif: true } } });
-    expect(m.review.visual).toEqual({ preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: [], gif: true, enabled: null, themeStorageKey: null, actionsFallback: true });
+    expect(m.review.visual).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: [], gif: true, enabled: null, themeStorageKey: null, actionsFallback: true });
     expect(reviewConfigToJson(m.review)).toEqual({ visual: { gif: true, actions_fallback: true } });
   });
 

@@ -1,15 +1,26 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { checkDockerPresent, checkLaptopStateSqlite } from "./laptop-init.js";
+import { checkClaudeCliPresent, checkCodexCliPresent, checkDockerPresent, checkLaptopStateSqlite } from "./laptop-init.js";
 import { resolveMinerVersion } from "./version.js";
 
 // Slim laptop-mode CLI commands (#2288): `status` (what's installed + where local state lives) and `doctor` (is
 // this laptop set up correctly). Both are read-only and 100% local — no repo-scanning, no coding-agent invocation,
 // no GitHub writes, and no network calls of any kind. Later phases add the real discover/plan/manage loop.
 
-const require = createRequire(import.meta.url);
+// Lazy, not module-scope: mirrors the gittensory-engine repo-map.ts fix -- this file is CLI-only today, but
+// an eager createRequire(import.meta.url)/import.meta.dirname at module scope would crash on import in any
+// bundler context where import.meta is unavailable (e.g. if a future import chain pulls this into a Worker
+// bundle, the way repo-map.ts was). Deferring construction to first real use keeps this import-safe.
+let cachedRequire = null;
+function requireFromHere() {
+  return (cachedRequire ??= createRequire(import.meta.url));
+}
+let cachedModuleDir = null;
+function moduleDir() {
+  return (cachedModuleDir ??= import.meta.dirname);
+}
 
 const PACKAGE_NAME = "@jsonbored/gittensory-miner";
 const ENGINE_PACKAGE = "@jsonbored/gittensory-engine";
@@ -39,15 +50,137 @@ export function resolveMinerStateDir(env = process.env) {
 // be absent depending on build order, so the declared-dependency version is the reliable, always-available source.)
 function readEngineVersion() {
   try {
-    return require("../package.json").dependencies?.[ENGINE_PACKAGE] ?? null;
+    return requireFromHere()("../package.json").dependencies?.[ENGINE_PACKAGE] ?? null;
   } catch {
     return null;
   }
 }
 
+export function readInstalledEnginePackageVersionFromPaths(
+  resolvedEntry,
+  workspacePkg,
+  deps = { existsSync, readFileSync },
+) {
+  try {
+    for (const pkgJson of [join(resolvedEntry, "..", "package.json"), join(resolvedEntry, "..", "..", "package.json")]) {
+      if (deps.existsSync(pkgJson)) {
+        const version = JSON.parse(deps.readFileSync(pkgJson, "utf8")).version;
+        if (version) return version;
+      }
+    }
+  } catch {
+    // fall through to monorepo workspace fallback
+  }
+  if (deps.existsSync(workspacePkg)) {
+    try {
+      return JSON.parse(deps.readFileSync(workspacePkg, "utf8")).version ?? null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** Installed @jsonbored/gittensory-engine semver from node_modules (not the declared dependency range). */
+export function readInstalledEnginePackageVersion() {
+  try {
+    return readInstalledEnginePackageVersionFromPaths(
+      requireFromHere().resolve(ENGINE_PACKAGE),
+      join(moduleDir(), "../../gittensory-engine/package.json"),
+    );
+  } catch {
+    const workspacePkg = join(moduleDir(), "../../gittensory-engine/package.json");
+    if (existsSync(workspacePkg)) {
+      try {
+        return JSON.parse(readFileSync(workspacePkg, "utf8")).version ?? null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+}
+
+/** Expected minimum engine semver: monorepo engine package.json when present, else the shipped pin file. */
+export function readExpectedEnginePackageVersionFromPaths(
+  monorepoEnginePkg,
+  pinFile,
+  deps = { existsSync, readFileSync },
+) {
+  if (deps.existsSync(monorepoEnginePkg)) {
+    try {
+      return JSON.parse(deps.readFileSync(monorepoEnginePkg, "utf8")).version ?? null;
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const pinned = deps.readFileSync(pinFile, "utf8").trim();
+    return pinned || null;
+  } catch {
+    return null;
+  }
+}
+
+export function readExpectedEnginePackageVersion() {
+  return readExpectedEnginePackageVersionFromPaths(
+    join(moduleDir(), "../../gittensory-engine/package.json"),
+    join(moduleDir(), "../expected-engine.version"),
+  );
+}
+
+function parseSemverCore(version) {
+  const match = String(version).trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+/** Returns -1 when installed is behind expected, 0 when equal, 1 when ahead. */
+export function compareInstalledEngineVersion(installed, expected) {
+  const installedCore = parseSemverCore(installed);
+  const expectedCore = parseSemverCore(expected);
+  if (!installedCore || !expectedCore) return -1;
+  for (let index = 0; index < 3; index += 1) {
+    if (installedCore[index] < expectedCore[index]) return -1;
+    if (installedCore[index] > expectedCore[index]) return 1;
+  }
+  return 0;
+}
+
+export function buildEngineVersionSkewCheck(
+  readInstalled = readInstalledEnginePackageVersion,
+  readExpected = readExpectedEnginePackageVersion,
+) {
+  const installed = readInstalled();
+  const expected = readExpected();
+  if (!expected) {
+    return { name: "engine-version-skew", ok: true, detail: "expected engine version unavailable (skipped)" };
+  }
+  if (!installed) {
+    return {
+      name: "engine-version-skew",
+      ok: false,
+      detail: `${ENGINE_PACKAGE} not installed (cannot verify version skew)`,
+    };
+  }
+  const comparison = compareInstalledEngineVersion(installed, expected);
+  return {
+    name: "engine-version-skew",
+    ok: comparison >= 0,
+    detail:
+      comparison < 0
+        ? `installed ${installed} is behind expected ${expected}`
+        : `installed ${installed} (${comparison === 0 ? "matches" : "ahead of"} expected ${expected})`,
+  };
+}
+
+function checkEngineVersionSkew() {
+  return buildEngineVersionSkewCheck();
+}
+
 /** The minimum Node major version from the package's `engines.node` floor (e.g. ">=22.13.0" → 22). */
 function requiredNodeMajor() {
-  const engines = require("../package.json").engines;
+  const engines = requireFromHere()("../package.json").engines;
   const match = typeof engines?.node === "string" ? engines.node.match(/(\d+)/) : null;
   return match ? Number(match[1]) : 0;
 }
@@ -122,9 +255,12 @@ export function runDoctorChecks(env = process.env) {
       ok: engineVersion !== null,
       detail: engineVersion ? `${ENGINE_PACKAGE} ${engineVersion}` : `${ENGINE_PACKAGE} not resolvable`,
     },
+    checkEngineVersionSkew(),
     checkStateDirWritable(resolveMinerStateDir(env)),
     checkLaptopStateSqlite(env),
     checkDockerPresent(),
+    checkClaudeCliPresent({ env }),
+    checkCodexCliPresent({ env }),
   ];
 }
 

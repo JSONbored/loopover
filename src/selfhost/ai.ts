@@ -9,7 +9,7 @@
 import type { AiContentBlock, CombineStrategy, OnMerge } from "../services/ai-review";
 import { isConfiguredSelfHostProvider, resolveConfiguredProviderNames } from "./ai-config";
 export { assertNoLegacySharedAiEnv } from "./ai-config";
-import { incr } from "./metrics";
+import { incr, observe } from "./metrics";
 import { withReviewSpan } from "./tracing";
 import { delimiter } from "node:path";
 
@@ -353,6 +353,13 @@ export function createAnthropicAi(opts: { apiKey: string; model?: string | undef
 // SECURITY: subscription CLIs get a strict allowlisted env, not the worker env. This keeps runtime
 // credentials out of prompt-injectable subprocesses while preserving CLI auth/home/proxy/cert settings. The CLI
 // runs read-only / no extra tools, and non-zero exit / empty output / error-envelope THROWS so the caller degrades.
+//
+// NOTE (#4284): the reusable half of this pattern — a parameterized allowlist builder + secret redaction — now also
+// lives in `@jsonbored/gittensory-engine` (`SUBPROCESS_CLI_ENV_ALLOWLIST`, `buildAllowlistedEnv`, `SECRET_PATTERNS`,
+// `redactSecrets`) so the coming gittensory-miner coding-agent drivers can depend on one source of truth. This copy
+// is deliberately kept parallel for now (the review path's `subscriptionCliEnv` also folds in CLI-specific PATH
+// resolution); keep the two in sync, or shim this onto the engine copy (like `src/rules/predicted-gate.ts` does) in
+// a follow-up if it drifts.
 const SUBSCRIPTION_CLI_ENV_ALLOWLIST = [
   "HOME",
   "HTTPS_PROXY",
@@ -1089,12 +1096,18 @@ async function runProviderWithOtel(
       `circuit_open: provider "${provider.name}" is in cooldown after ${AI_PROVIDER_FAILURE_THRESHOLD} consecutive failures — skipping this attempt`,
     );
   }
+  const requestKindLabel = requestKind(options);
+  const startedAtMs = Date.now();
   try {
     const result = await withReviewSpan(
       "selfhost.ai.provider",
-      { "ai.provider": provider.name, "ai.model": model || "default", "ai.request_kind": requestKind(options) },
+      { "ai.provider": provider.name, "ai.model": model || "default", "ai.request_kind": requestKindLabel },
       () => provider.ai.run(model, options),
     );
+    observe("gittensory_ai_provider_request_duration_seconds", (Date.now() - startedAtMs) / 1000, {
+      provider: provider.name,
+      request_kind: requestKindLabel,
+    });
     aiProviderCircuits.delete(provider.name);
     if (result.usage) {
       return {
@@ -1108,8 +1121,13 @@ async function runProviderWithOtel(
     }
     return result;
   } catch (error) {
+    observe("gittensory_ai_provider_request_duration_seconds", (Date.now() - startedAtMs) / 1000, {
+      provider: provider.name,
+      request_kind: requestKindLabel,
+    });
     if (isExpectedEmbeddingRoutingError(options, error)) throw error;
     incr("gittensory_ai_provider_failures_total", { provider: provider.name });
+    incr("gittensory_ai_provider_request_errors_total", { provider: provider.name, request_kind: requestKindLabel });
     // Re-read the map here rather than reusing the `circuit` captured above: that read happened BEFORE the
     // `await` on the real provider call, so under concurrent same-provider calls it can be stale by the time
     // this catch runs, and computing `failures` from it would clobber a sibling call's write (lost-update race)

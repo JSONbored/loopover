@@ -91,6 +91,12 @@ export interface MergeReadiness {
   ciState: "passed" | "failed" | "unverified";
   failingChecks?: string[];
   failingDetails?: CheckFailureDetail[];
+  /** Checks that reported red (e.g. a third-party app's `action_required` conclusion) but are NOT a
+   *  branch-protection required context -- so they never flip `ciState`/block merge on their own, but must
+   *  still be VISIBLE rather than silently dropped (#4414-class regression: a non-required advisory check must
+   *  neither auto-close the PR nor vanish without a trace). Rendered as its own non-blocking collapsible,
+   *  independent of `ciState`. */
+  nonRequiredFailingDetails?: CheckFailureDetail[];
 }
 
 /** The structured synthesis of the reviewers' notes that drives BOTH the legacy unified comment
@@ -524,6 +530,22 @@ function failingChecksBlock(readiness: MergeReadiness | undefined): string {
   return [...new Set(names)].map((name) => `- ${escapePublicHtmlAngles(name)}`).join("\n");
 }
 
+/** Render non-required-but-red checks (#4414-class advisory holds) as a `name — reason` bullet list, same
+ *  shape/public-safety rules as `failingChecksBlock`. Unlike that one, this is NOT gated on `ciState` -- these
+ *  checks by definition never flip `ciState`, so the section must render purely off the data's own presence. */
+function nonRequiredFailingChecksBlock(readiness: MergeReadiness | undefined): string {
+  const details = readiness?.nonRequiredFailingDetails ?? [];
+  const lines = details
+    .map((detail) => {
+      const name = escapePublicHtmlAngles(detail.name.trim());
+      if (!name) return "";
+      const reason = detail.summary?.trim() ? ` — ${escapePublicHtmlAngles(detail.summary.trim())}` : "";
+      return `- ${name}${reason}`;
+    })
+    .filter((line) => line.length > 0);
+  return lines.join("\n");
+}
+
 function signalTable(input: UnifiedReviewInput, ctx: UnifiedCommentContext): string {
   const blockerCount = (input.blockers ?? []).length;
   const reviewerEvidence =
@@ -650,6 +672,13 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
   // guards on ciState === "failed"); public-safe (names + short reasons only).
   const failingChecks = failingChecksBlock(input.readiness);
   if (failingChecks) blocks.push(`**CI checks failing**\n${failingChecks}`);
+
+  // Non-required-but-red checks (#4414-class advisory holds): visible but never blocking, so this renders
+  // independent of ciState/status -- omitted entirely when nothing was flagged (default) ⇒ byte-identical.
+  const nonRequiredFailingChecks = nonRequiredFailingChecksBlock(input.readiness);
+  if (nonRequiredFailingChecks && verbosity !== "quiet") {
+    blocks.push(details("Flagged checks (non-blocking)", nonRequiredFailingChecks, undefined, collapsiblesOpen));
+  }
 
   blocks.push(signalTable(input, ctx));
 

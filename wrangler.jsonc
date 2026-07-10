@@ -129,6 +129,11 @@
     // identical to today. Config-application (reading a promoted override into the live gate) is a deferred
     // follow-up — see src/review/selftune-wire.ts.
     "GITTENSORY_REVIEW_SELFTUNE": "false",
+    // Maintainer recap digest (#1963, #2248): deliver a cross-repo RecapReport -- gittensory's own gate-
+    // precision + outcome-calibration data folded across every scanned repo -- to Discord on a cron cadence
+    // (GITTENSORY_RECAP_CADENCE=daily|weekly, default weekly; GITTENSORY_RECAP_HOUR / GITTENSORY_RECAP_DAY
+    // pick when). Default OFF — flag-OFF the cron enqueues no recap job, byte-identical to today.
+    "GITTENSORY_MAINTAINER_RECAP": "false",
     // #1941: route the live CI aggregate (the gate's check/status read) through ONE GraphQL statusCheckRollup query
     // instead of the paginated /check-runs + /status + /check-suites REST reads — moving that hot path onto the
     // SEPARATE GraphQL rate-limit bucket. Default OFF: the gate uses the proven REST aggregate, byte-identical. When

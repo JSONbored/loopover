@@ -59,7 +59,7 @@ const QUEUE_PROJECT = "JSONbored";
 
 /** Stub global fetch for the git-tree + raw-contents calls the populator makes. */
 function stubGithub(opts: {
-  tree?: Array<{ path: string; type?: string; size?: number }>;
+  tree?: Array<{ path: string; type?: string; size?: number; sha?: string }>;
   files?: Record<string, string>;
   treeStatus?: number;
 }) {
@@ -299,6 +299,170 @@ describe("indexRepo: full repo index (tree → chunk → embed → upsert)", () 
     expect(parsed.some((p) => p.level === "error" && p.event === "rag_index_repo_error" && p.ev === "rag_index_repo_error")).toBe(true);
     expect(await renderMetrics()).toContain('gittensory_rag_pipeline_errors_total{op="index_repo"}');
     errSpy.mockRestore();
+  });
+});
+
+describe("indexRepo: embedding cache (#4365) — skip unchanged files by git blob SHA", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("skips a file whose blob SHA is unchanged across two full-index runs (no re-fetch, no re-embed)", async () => {
+    const { env, ai } = indexEnv();
+    stubGithub({
+      tree: [{ path: "src/a.ts", size: 30, sha: "sha-a-v1" }],
+      files: { "src/a.ts": "export const a = 1;\n" },
+    });
+    const first = await indexRepo(env, PROJECT, REPO);
+    expect(first).toMatchObject({ files: 1, indexed: 1 });
+    const embedCallsAfterFirst = ai.run.mock.calls.length;
+
+    // Same tree/sha, but the content fetch now 404s: if the skip logic failed to trigger, this run would
+    // either drop the file (fetch fails) or spend a redundant embed call. A correctly-skipped file leaves
+    // both the result and the embed-call count untouched.
+    stubGithub({ tree: [{ path: "src/a.ts", size: 30, sha: "sha-a-v1" }], files: {} });
+    const second = await indexRepo(env, PROJECT, REPO);
+
+    expect(second).toEqual({ indexed: 0, files: 0, capped: false });
+    expect(ai.run.mock.calls.length).toBe(embedCallsAfterFirst);
+    expect(await countChunks(env, PROJECT, "gittensory")).toBe(1);
+  });
+
+  it("re-embeds a file whose blob SHA changed since the last index, replacing its old chunk row", async () => {
+    const { env, ai } = indexEnv();
+    stubGithub({
+      tree: [{ path: "src/a.ts", size: 30, sha: "sha-a-v1" }],
+      files: { "src/a.ts": "export const a = 1;\n" },
+    });
+    await indexRepo(env, PROJECT, REPO);
+    expect(await countChunks(env, PROJECT, "gittensory")).toBe(1);
+
+    stubGithub({
+      tree: [{ path: "src/a.ts", size: 30, sha: "sha-a-v2" }],
+      files: { "src/a.ts": "export const a = 2; // changed\n" },
+    });
+    const second = await indexRepo(env, PROJECT, REPO);
+
+    expect(second).toMatchObject({ files: 1, indexed: 1 });
+    expect(ai.run).toHaveBeenCalledTimes(2); // one embed call per run — the second run's SHA changed, so it re-embedded
+    const row = await env.DB.prepare("SELECT text, blob_sha FROM repo_chunks WHERE project=? AND repo=? AND path=?")
+      .bind(PROJECT, "gittensory", "src/a.ts")
+      .first<{ text: string; blob_sha: string }>();
+    expect(row?.text).toBe("export const a = 2; // changed\n");
+    expect(row?.blob_sha).toBe("sha-a-v2");
+  });
+
+  it("removes stale trailing chunks when a changed file now chunks into FEWER pieces than it had before", async () => {
+    const { env } = indexEnv();
+    const ns = ragNamespace(PROJECT, "gittensory");
+    // Simulate a prior index where src/a.ts had 2 chunks under an old blob SHA.
+    for (const idx of [0, 1]) {
+      await env.DB.prepare("INSERT INTO repo_chunks (id, project, repo, path, chunk_index, kind, text, blob_sha) VALUES (?,?,?,?,?,?,?,?)")
+        .bind(`${ns}|src/a.ts::${idx}`, PROJECT, "gittensory", "src/a.ts", idx, "code", `old chunk ${idx}`, "sha-old")
+        .run();
+    }
+    expect(await countChunks(env, PROJECT, "gittensory")).toBe(2);
+
+    // New tree: same path, a DIFFERENT sha, and small content that chunkFile packs into exactly one chunk.
+    stubGithub({
+      tree: [{ path: "src/a.ts", size: 20, sha: "sha-new" }],
+      files: { "src/a.ts": "export const a = 1;\n" },
+    });
+    const result = await indexRepo(env, PROJECT, REPO);
+
+    expect(result).toMatchObject({ files: 1, indexed: 1 });
+    // Only the new single chunk remains — the old chunk_index:1 row was deleted, not left orphaned.
+    expect(await countChunks(env, PROJECT, "gittensory")).toBe(1);
+    const row = await env.DB.prepare("SELECT id FROM repo_chunks WHERE project=? AND repo=? AND path=?")
+      .bind(PROJECT, "gittensory", "src/a.ts")
+      .first<{ id: string }>();
+    expect(row?.id).toBe(`${ns}|src/a.ts::0`);
+  });
+
+  it("a file with no blob SHA in the tree response always reprocesses (defensive: never skips without proof of a match)", async () => {
+    const { env, ai } = indexEnv();
+    const ns = ragNamespace(PROJECT, "gittensory");
+    await env.DB.prepare("INSERT INTO repo_chunks (id, project, repo, path, chunk_index, kind, text, blob_sha) VALUES (?,?,?,?,?,?,?,?)")
+      .bind(`${ns}|src/a.ts::0`, PROJECT, "gittensory", "src/a.ts", 0, "code", "old", "sha-old")
+      .run();
+    // The tree entry omits `sha` entirely (a defensive/older-API-shape case) — must not be treated as a match.
+    stubGithub({ tree: [{ path: "src/a.ts", size: 20 }], files: { "src/a.ts": "export const a = 1;\n" } });
+
+    const result = await indexRepo(env, PROJECT, REPO);
+
+    expect(result).toMatchObject({ files: 1, indexed: 1 });
+    expect(ai.run).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts pre-existing (skipped, unchanged) chunks toward the cap so a mixed skip+new run never exceeds MAX_CHUNKS_PER_REPO", async () => {
+    const { env } = indexEnv();
+    const ns = ragNamespace(PROJECT, "gittensory");
+    const existingCount = MAX_CHUNKS_PER_REPO - 1;
+    await env.DB.batch(
+      Array.from({ length: existingCount }, (_, i) =>
+        env.DB.prepare("INSERT INTO repo_chunks (id, project, repo, path, chunk_index, kind, text, blob_sha) VALUES (?,?,?,?,?,?,?,?)").bind(
+          `${ns}|src/existing${i}.ts::0`,
+          PROJECT,
+          "gittensory",
+          `src/existing${i}.ts`,
+          0,
+          "code",
+          "old",
+          `sha-existing-${i}`,
+        ),
+      ),
+    );
+    const tree = [
+      // Unchanged (matching sha) → every one of these is skipped, not re-embedded.
+      ...Array.from({ length: existingCount }, (_, i) => ({ path: `src/existing${i}.ts`, size: 10, sha: `sha-existing-${i}` })),
+      // Two brand-new files — alphabetically after "existing", so reached only once the skips are exhausted.
+      { path: "src/new-a.ts", size: 10 },
+      { path: "src/new-b.ts", size: 10 },
+    ];
+    const files: Record<string, string> = { "src/new-a.ts": "export const a = 1;\n", "src/new-b.ts": "export const b = 1;\n" };
+    stubGithub({ tree, files });
+
+    const result = await indexRepo(env, PROJECT, REPO);
+
+    expect(result.capped).toBe(true);
+    expect(result.files).toBe(1); // only one of the two new files fit under the cap
+    expect(await countChunks(env, PROJECT, "gittensory")).toBe(MAX_CHUNKS_PER_REPO); // never exceeds the cap
+  });
+
+  it("refreshes changed files in a full reindex even when the repository is already capped", async () => {
+    const { env, ai } = indexEnv();
+    const ns = ragNamespace(PROJECT, "gittensory");
+    await env.DB.batch(
+      Array.from({ length: MAX_CHUNKS_PER_REPO }, (_, i) => {
+        const path = i === 0 ? "src/changed.ts" : `src/existing${i}.ts`;
+        return env.DB.prepare("INSERT INTO repo_chunks (id, project, repo, path, chunk_index, kind, text, blob_sha) VALUES (?,?,?,?,?,?,?,?)").bind(
+          `${ns}|${path}::0`,
+          PROJECT,
+          "gittensory",
+          path,
+          0,
+          "code",
+          i === 0 ? "old changed file" : "old",
+          i === 0 ? "sha-old" : `sha-existing-${i}`,
+        );
+      }),
+    );
+    stubGithub({
+      tree: [
+        { path: "src/changed.ts", size: 30, sha: "sha-new" },
+        ...Array.from({ length: MAX_CHUNKS_PER_REPO - 1 }, (_, i) => ({ path: `src/existing${i + 1}.ts`, size: 10, sha: `sha-existing-${i + 1}` })),
+        { path: "src/new.ts", size: 10, sha: "sha-new-file" },
+      ],
+      files: { "src/changed.ts": "export const changed = true;\n", "src/new.ts": "export const n = 1;\n" },
+    });
+
+    const result = await indexRepo(env, PROJECT, REPO);
+
+    expect(result).toMatchObject({ indexed: 1, files: 1, capped: true });
+    expect(ai.run).toHaveBeenCalledTimes(1);
+    expect(await countChunks(env, PROJECT, "gittensory")).toBe(MAX_CHUNKS_PER_REPO);
+    const row = await env.DB.prepare("SELECT text, blob_sha FROM repo_chunks WHERE project=? AND repo=? AND path=?")
+      .bind(PROJECT, "gittensory", "src/changed.ts")
+      .first<{ text: string; blob_sha: string }>();
+    expect(row).toEqual({ text: "export const changed = true;\n", blob_sha: "sha-new" });
   });
 });
 
@@ -828,8 +992,10 @@ describe("merged-PR incremental re-index trigger (webhook)", () => {
     // REGRESSION (#rate-limit-admission-attribution): installationId must be threaded through so the queue's
     // admission check attributes this job to the repo's OWN installation bucket, not the shared public-token
     // bucket -- omitting it starves an installed repo's re-index behind unrelated public-token traffic.
+    // paths reflects listPullRequestFiles's deterministic path-ascending order (#linked-issue-satisfaction-cache-fingerprint-stability),
+    // not the seed/insertion order above -- "README.md" sorts before "src/a.ts".
     expect(ragJobs).toEqual([
-      { type: "rag-index-repo", requestedBy: "webhook", repoFullName: "JSONbored/gittensory", paths: ["src/a.ts", "README.md"], installationId: 123 },
+      { type: "rag-index-repo", requestedBy: "webhook", repoFullName: "JSONbored/gittensory", paths: ["README.md", "src/a.ts"], installationId: 123 },
     ]);
   });
 

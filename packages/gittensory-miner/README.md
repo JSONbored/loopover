@@ -36,11 +36,55 @@ The package also includes an append-only event ledger: `initEventLedger` / `appe
 immutable miner-loop events in local SQLite for contributor audit. Insert-only — rows are never updated or
 deleted. (#2322)
 
+The package also records local PR outcomes: `recordPrOutcomeSnapshot` / `readPrOutcomes` write and reduce the
+miner's OWN record of the outcomes of its OWN PRs (merged / closed, with an optional rejection-reason bucket) over
+the append-only event ledger above. This is DISTINCT from the gittensory server's `recordPrOutcome`
+(`src/review/outcomes-wire.ts`), which writes hosted-backend audit rows from the GitHub App's webhook stream — same
+concept name, different codebase layer, no shared code (a laptop-mode miner may have no webhook relay at all). (#4274)
+
+The package also includes an append-only prediction ledger: `initPredictionLedger` / `appendPrediction` /
+`readPredictions` persist each predicted-gate verdict (conclusion / pack / readiness score + blocker/warning
+codes, plus the producing `ENGINE_VERSION`) in local SQLite, so a later self-improve pass can score predictions
+against realized outcomes. Insert-only. (#4263)
+
+`gittensory-miner manage status` now also folds each tracked repo's current discover/plan/prepare run state
+(`run-state.js`) alongside its managed PR rows into a "run portfolio" view — `collectRunPortfolio` /
+`renderRunPortfolioTable` — so a repo actively being discovered or planned shows up even with zero PRs yet.
+Additive only: the existing `rows` JSON key and PR table are unchanged; `runPortfolio` is a new key printed
+after the existing table. A real GUI dashboard surface is out of scope here — `apps/gittensory-miner-ui/` is
+Phase 6 of the same roadmap tracker and hasn't been scaffolded yet. (#4279)
+
+## Local storage
+
+Four independent local SQLite stores back the commands above. Each keeps its own file, its own table, and its own
+env-var override — this is a DRY pass over their shared path-resolution/open boilerplate (`local-store.js`), not a
+merge into one database. (#4272)
+
+| Store | File | Table | Module | Env var override |
+| --- | --- | --- | --- | --- |
+| Run state | `run-state.sqlite3` | `miner_run_state` | `run-state.js` | `GITTENSORY_MINER_RUN_STATE_DB` |
+| Claim ledger | `claim-ledger.sqlite3` | `miner_claims` | `claim-ledger.js` | `GITTENSORY_MINER_CLAIM_LEDGER_DB` |
+| Portfolio queue | `portfolio-queue.sqlite3` | `miner_portfolio_queue` | `portfolio-queue.js` | `GITTENSORY_MINER_PORTFOLIO_QUEUE_DB` |
+| Event ledger | `event-ledger.sqlite3` | `miner_event_ledger` | `event-ledger.js` | `GITTENSORY_MINER_EVENT_LEDGER_DB` |
+
+Every store resolves its file the same way: the store-specific env var above, else `GITTENSORY_MINER_CONFIG_DIR`,
+else `XDG_CONFIG_HOME` (falling back to `~/.config`), joined with `gittensory-miner/<file>`. Every store also opens
+its file with `0700`/`0600` permissions and a shared `PRAGMA busy_timeout` so two instances on the same file
+serialize writes instead of racing.
+
+The "PR portfolio" `manage status` renders is currently a **read-time join**, not a dedicated table:
+`collectManageStatus` reads `portfolio-queue.js` rows (via the `pr:{number}` identifier convention) and joins them
+against `event-ledger.js`'s free-form `manage_pr_update` JSON events at query time, on every read. Decision: keep
+this as a read-time join for now; revisit a dedicated indexed table only if/when PR-portfolio reads become frequent
+enough (e.g. a live-polling dashboard) that the per-read linear event-ledger scan becomes a measured bottleneck.
+
 ## Install
 
 See [`docs/miner-goal-spec.md`](docs/miner-goal-spec.md) for the `.gittensory-miner.yml` field reference and [`.gittensory-miner.yml.example`](../../.gittensory-miner.yml.example) at the repo root.
 
 See [`docs/cross-repo-discovery-phase1.md`](docs/cross-repo-discovery-phase1.md) for the Phase 1 cross-repo discovery scope (re-scoped from [#1060](https://github.com/JSONbored/gittensory/issues/1060), paper trail for [#2299](https://github.com/JSONbored/gittensory/issues/2299)).
+
+See [`docs/discovery-plane-operator-guide.md`](docs/discovery-plane-operator-guide.md) for the optional hosted discovery-index plane (opt-in default OFF; contrasts with Orb's opt-out-only export — [#4309](https://github.com/JSONbored/gittensory/issues/4309)).
 
 See [`DEPLOYMENT.md`](DEPLOYMENT.md) for laptop vs fleet deployment.
 
@@ -75,6 +119,8 @@ gittensory-miner version
 gittensory-miner init [--json]
 gittensory-miner status [--json]
 gittensory-miner doctor [--json]
+gittensory-miner manage status [--json]
+gittensory-miner manage poll <owner/repo> <pr#> [--branch <name>] [--json]
 ```
 
 ## Version check

@@ -123,6 +123,66 @@ describe("resolvePrTypeLabel (#priority-linked-issue-gate)", () => {
     expect(result.source).toBe("propagation_exclusive");
   });
 
+  describe("additive matches compose with the exclusive winner (#priority-linked-issue-gate composition fix)", () => {
+    const bugFeaturePriorityMappings = [
+      { issueLabel: "gittensor:bug", prLabel: "gittensor:bug", removeOtherTypeLabels: true },
+      { issueLabel: "gittensor:feature", prLabel: "gittensor:feature", removeOtherTypeLabels: true },
+      { issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: false },
+    ];
+
+    it("REGRESSION: a linked issue carrying BOTH gittensor:feature (exclusive) and gittensor:priority (additive) gets both labels, not just the first match", () => {
+      // Before this fix, the loop returned on the FIRST wanted mapping (feature, since it's checked before
+      // priority) and never even looked at priority's own mapping -- silently dropping priority whenever the
+      // SAME issue also carried a type label, which is the overwhelmingly common case in practice.
+      const result = resolvePrTypeLabel({
+        title: "fix: y",
+        linkedIssueLabels: ["gittensor:feature", "gittensor:priority"],
+        propagation: propagation({ mappings: bugFeaturePriorityMappings }),
+      });
+      expect(result).toEqual({ applyLabels: ["gittensor:feature", "gittensor:priority"], removeLabels: ["gittensor:bug"], source: "propagation_exclusive" });
+    });
+
+    it("REGRESSION: a linked issue carrying BOTH gittensor:bug (exclusive) and gittensor:priority (additive) gets both labels", () => {
+      const result = resolvePrTypeLabel({
+        title: "feat: add provider fallback", // title alone would say "feature" -- propagation must still win
+        linkedIssueLabels: ["gittensor:bug", "gittensor:priority"],
+        propagation: propagation({ mappings: bugFeaturePriorityMappings }),
+      });
+      expect(result).toEqual({ applyLabels: ["gittensor:bug", "gittensor:priority"], removeLabels: ["gittensor:feature"], source: "propagation_exclusive" });
+    });
+
+    it("priority alone (no bug/feature match): applies additively alongside the title-based label, source is propagation_additive", () => {
+      const result = resolvePrTypeLabel({
+        title: "fix: y",
+        linkedIssueLabels: ["gittensor:priority"],
+        propagation: propagation({ mappings: bugFeaturePriorityMappings }),
+      });
+      expect(result).toEqual({ applyLabels: ["gittensor:bug", "gittensor:priority"], removeLabels: ["gittensor:feature"], source: "propagation_additive" });
+    });
+
+    it("multiple additive matches all compose together alongside a single exclusive winner", () => {
+      const result = resolvePrTypeLabel({
+        title: "fix: y",
+        linkedIssueLabels: ["gittensor:bug", "gittensor:priority", "customer:vip"],
+        propagation: propagation({
+          mappings: [...bugFeaturePriorityMappings, { issueLabel: "customer:vip", prLabel: "triage:vip", removeOtherTypeLabels: false }],
+        }),
+      });
+      expect(result.applyLabels).toEqual(["gittensor:bug", "gittensor:priority", "triage:vip"]);
+      expect(result.source).toBe("propagation_exclusive");
+    });
+
+    it("two exclusive candidates + an additive one: only the FIRST-configured exclusive mapping wins, additive still composes", () => {
+      const result = resolvePrTypeLabel({
+        title: "fix: y",
+        linkedIssueLabels: ["gittensor:bug", "gittensor:feature", "gittensor:priority"],
+        propagation: propagation({ mappings: bugFeaturePriorityMappings }),
+      });
+      // bug is configured before feature, so bug wins the exclusive slot even though both matched.
+      expect(result).toEqual({ applyLabels: ["gittensor:bug", "gittensor:priority"], removeLabels: ["gittensor:feature"], source: "propagation_exclusive" });
+    });
+  });
+
   it("respects a custom typeLabels set for both the title fallback and the removal set", () => {
     const custom = { bug: "kind:bug", feature: "kind:feature", priority: "kind:priority" };
     const result = resolvePrTypeLabel({ title: "feat: add provider fallback", labels: custom });

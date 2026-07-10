@@ -137,6 +137,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       });
     try {
       await runAiReviewForAdvisory(env, {
+        mode: "live",
         settings: { aiReviewMode: "advisory" } as RepositorySettings,
         repoFullName: "acme/widgets",
         pr: {
@@ -208,6 +209,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       });
     try {
       await runAiReviewForAdvisory(env, {
+        mode: "live",
         settings: { aiReviewMode: "advisory" } as RepositorySettings,
         repoFullName: "acme/off",
         pr: { number: 7, title: "t", body: "Fixes #42", linkedIssues: [42] },
@@ -256,6 +258,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       });
     try {
       await runAiReviewForAdvisory(env, {
+        mode: "live",
         settings: { aiReviewMode: "advisory" } as RepositorySettings,
         repoFullName: "acme/widgets",
         pr: { number: 7, title: "t", body: "b" },
@@ -311,6 +314,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       });
     try {
       await runAiReviewForAdvisory(env, {
+        mode: "live",
         settings: { aiReviewMode: "advisory" } as RepositorySettings,
         repoFullName: "acme/widgets",
         pr: {

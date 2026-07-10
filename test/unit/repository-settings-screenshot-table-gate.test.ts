@@ -9,7 +9,7 @@ describe("repository_settings: screenshotTableGate (#2006)", () => {
   it("getRepositorySettings returns the disabled default for a repo with no DB row at all", async () => {
     const env = createTestEnv();
     const settings = await getRepositorySettings(env, "acme/brand-new-repo");
-    expect(settings.screenshotTableGate).toEqual({ enabled: false, whenLabels: [], whenPaths: [], action: "close" });
+    expect(settings.screenshotTableGate).toEqual({ enabled: false, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [] });
   });
 
   it("upsertRepositorySettings persists the disabled default when the caller omits screenshotTableGate entirely", async () => {
@@ -28,6 +28,8 @@ describe("repository_settings: screenshotTableGate (#2006)", () => {
         whenLabels: ["frontend", "visual"],
         whenPaths: ["apps/ui/**"],
         action: "close",
+        requireViewports: [],
+        requireThemes: [],
         message: "Custom contract text",
       },
     });
@@ -37,22 +39,49 @@ describe("repository_settings: screenshotTableGate (#2006)", () => {
       whenLabels: ["frontend", "visual"],
       whenPaths: ["apps/ui/**"],
       action: "close",
+      requireViewports: [],
+      requireThemes: [],
       message: "Custom contract text",
     });
   });
 
+  it("round-trips skillFileUrl alongside a custom message (#4540 follow-up)", async () => {
+    const env = createTestEnv();
+    await upsertRepositorySettings(env, {
+      repoFullName: "acme/skill-link",
+      screenshotTableGate: {
+        enabled: true,
+        whenLabels: [],
+        whenPaths: [],
+        action: "close",
+        requireViewports: [],
+        requireThemes: [],
+        skillFileUrl: "https://github.com/acme/widget/blob/main/SKILL.md",
+      },
+    });
+    const settings = await getRepositorySettings(env, "acme/skill-link");
+    expect(settings.screenshotTableGate?.skillFileUrl).toBe("https://github.com/acme/widget/blob/main/SKILL.md");
+  });
+
+  it("omits `skillFileUrl` entirely when unset (never persists an empty string) (#4540 follow-up)", async () => {
+    const env = createTestEnv();
+    await upsertRepositorySettings(env, { repoFullName: "acme/no-skill-link", screenshotTableGate: { enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [] } });
+    const settings = await getRepositorySettings(env, "acme/no-skill-link");
+    expect(settings.screenshotTableGate?.skillFileUrl).toBeUndefined();
+  });
+
   it("a true read-modify-write caller carries the persisted value forward explicitly (no DB merge)", async () => {
     const env = createTestEnv();
-    await upsertRepositorySettings(env, { repoFullName: "acme/round-trip", screenshotTableGate: { enabled: true, whenLabels: ["visual"], whenPaths: [], action: "close" } });
+    await upsertRepositorySettings(env, { repoFullName: "acme/round-trip", screenshotTableGate: { enabled: true, whenLabels: ["visual"], whenPaths: [], action: "close", requireViewports: [], requireThemes: [] } });
     const settings = await getRepositorySettings(env, "acme/round-trip");
     await upsertRepositorySettings(env, { ...settings, repoFullName: "acme/round-trip" });
     const after = await getRepositorySettings(env, "acme/round-trip");
-    expect(after.screenshotTableGate).toEqual({ enabled: true, whenLabels: ["visual"], whenPaths: [], action: "close" });
+    expect(after.screenshotTableGate).toEqual({ enabled: true, whenLabels: ["visual"], whenPaths: [], action: "close", requireViewports: [], requireThemes: [] });
   });
 
   it("omits `message` entirely when unset (never persists an empty string)", async () => {
     const env = createTestEnv();
-    await upsertRepositorySettings(env, { repoFullName: "acme/no-message", screenshotTableGate: { enabled: true, whenLabels: [], whenPaths: [], action: "close" } });
+    await upsertRepositorySettings(env, { repoFullName: "acme/no-message", screenshotTableGate: { enabled: true, whenLabels: [], whenPaths: [], action: "close", requireViewports: [], requireThemes: [] } });
     const settings = await getRepositorySettings(env, "acme/no-message");
     expect(settings.screenshotTableGate?.message).toBeUndefined();
   });

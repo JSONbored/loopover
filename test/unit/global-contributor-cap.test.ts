@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { resolveGlobalContributorOpenItemCap } from "../../src/settings/global-contributor-cap";
+import {
+  DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP,
+  DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP_MINER,
+  resolveGlobalContributorOpenItemCap,
+  resolveGlobalContributorOpenItemCapForMiner,
+} from "../../src/settings/global-contributor-cap";
 import { listOpenItemsForAuthorAcrossInstall, upsertIssueFromGitHub, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
-describe("resolveGlobalContributorOpenItemCap (#2562)", () => {
-  it("is off by default when the env var is unset", () => {
-    expect(resolveGlobalContributorOpenItemCap({})).toBeNull();
-    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: undefined })).toBeNull();
+describe("resolveGlobalContributorOpenItemCap (#2562, #4511)", () => {
+  it("falls back to the real default when the env var is unset (no longer 'no cap')", () => {
+    expect(resolveGlobalContributorOpenItemCap({})).toBe(DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP);
+    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: undefined })).toBe(DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP);
   });
 
   it("parses a valid positive-integer string", () => {
@@ -20,13 +25,38 @@ describe("resolveGlobalContributorOpenItemCap (#2562)", () => {
     expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "100" })).toBe(100);
   });
 
-  it("drops a fractional/non-positive/non-numeric value to null (no cap), never coerced", () => {
-    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "2.5" })).toBeNull();
-    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "0" })).toBeNull();
-    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "-3" })).toBeNull();
-    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "not-a-number" })).toBeNull();
-    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "" })).toBeNull();
-    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "   " })).toBeNull();
+  it("falls back to the default (not null) on a fractional/non-positive/non-numeric value -- a typo must never silently disable this defense", () => {
+    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "2.5" })).toBe(DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP);
+    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "0" })).toBe(DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP);
+    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "-3" })).toBe(DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP);
+    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "not-a-number" })).toBe(DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP);
+    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "" })).toBe(DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP);
+    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "   " })).toBe(DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP);
+  });
+
+  it("the literal string 'off' (any case) is the explicit escape hatch back to no cap", () => {
+    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "off" })).toBeNull();
+    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "OFF" })).toBeNull();
+    expect(resolveGlobalContributorOpenItemCap({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: " Off " })).toBeNull();
+  });
+});
+
+describe("resolveGlobalContributorOpenItemCapForMiner (#4511)", () => {
+  it("falls back to the higher miner default when unset", () => {
+    expect(resolveGlobalContributorOpenItemCapForMiner({})).toBe(DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP_MINER);
+    expect(DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP_MINER).toBeGreaterThan(DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP);
+  });
+
+  it("parses a valid override independently of the human cap var", () => {
+    expect(resolveGlobalContributorOpenItemCapForMiner({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP_MINER: "75" })).toBe(75);
+  });
+
+  it("falls back to the miner default (not null) on a malformed value", () => {
+    expect(resolveGlobalContributorOpenItemCapForMiner({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP_MINER: "nope" })).toBe(DEFAULT_GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP_MINER);
+  });
+
+  it("'off' exempts confirmed miners from the install-wide cap entirely", () => {
+    expect(resolveGlobalContributorOpenItemCapForMiner({ GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP_MINER: "off" })).toBeNull();
   });
 });
 

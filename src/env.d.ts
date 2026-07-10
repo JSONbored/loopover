@@ -125,11 +125,18 @@ declare global {
      *  admin/bot contributor may have open ACROSS EVERY repo this install gates, combined. Purely an
      *  install-scoped aggregate over this same database (no cross-instance networking) -- catches an actor
      *  spreading low-volume spam/farming PRs across several gated repos in one self-hosted install, which no
-     *  single repo's own contributorOpenPrCap/contributorOpenIssueCap can see. Unset/invalid (the default) = no
-     *  cap, byte-identical to today. Checked IN ADDITION TO (not instead of) the existing per-repo caps, in the
+     *  single repo's own contributorOpenPrCap/contributorOpenIssueCap can see. Unset/invalid falls back to a
+     *  real default (20) rather than "no cap" (#4511) -- set to the literal string "off" for the old
+     *  unconditional-no-cap behavior. Checked IN ADDITION TO (not instead of) the existing per-repo caps, in the
      *  same contributor_cap short-circuit (src/settings/agent-actions.ts). A positive integer string (e.g. "20");
      *  see src/settings/global-contributor-cap.ts for parsing. */
     GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP?: string;
+    /** Same shape as {@link GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP}, but for a CONFIRMED official Gittensor miner
+     *  specifically (#4511) -- a verified miner identity gets this cap instead of the human one, since a
+     *  legitimate fleet spread across many repos in one install is expected to run more concurrent open items
+     *  than a single human contributor. Unset/invalid falls back to a higher real default (50); "off" exempts
+     *  confirmed miners from the install-wide cap entirely while humans stay capped. */
+    GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP_MINER?: string;
     /** Install-wide default for the per-repo contributorCapCancelCi setting (#2462): "true"/"1"/"yes"/"on"
      *  (case-insensitive) enables cancelling in-flight CI runs on a contributor_cap close for every repo that
      *  hasn't explicitly configured its own value. Unset/blank/anything else = off (the existing behavior). A
@@ -338,6 +345,17 @@ declare global {
      *  recording are wired, reading a promoted override into the live gate is a noted follow-up that must not
      *  risk loosening the gate. See src/review/selftune-wire.ts. */
     GITTENSORY_REVIEW_SELFTUNE?: string;
+    /** Maintainer recap digest (#1963, #2248): when truthy, a cross-repo RecapReport -- gittensory's OWN
+     *  gate-precision + outcome-calibration data folded across every scanned repo (buildMaintainerRecap,
+     *  #2239) -- is delivered to Discord on a cron cadence. GITTENSORY_RECAP_CADENCE ("daily" | "weekly",
+     *  default "weekly"; an invalid value falls back to "weekly") picks how often; GITTENSORY_RECAP_HOUR
+     *  (0-23, default 14) and GITTENSORY_RECAP_DAY (0-6, Sunday=0, default 1/Monday, only consulted when
+     *  weekly) pick when, so the tick fires at most once per period. Default OFF -- unset/false means the
+     *  cron enqueues NO recap job, byte-identical to today. See src/review/maintainer-recap-wire.ts. */
+    GITTENSORY_MAINTAINER_RECAP?: string;
+    GITTENSORY_RECAP_CADENCE?: string;
+    GITTENSORY_RECAP_HOUR?: string;
+    GITTENSORY_RECAP_DAY?: string;
     /** #1941: route the live CI aggregate (the gate's check/status read) through ONE GraphQL statusCheckRollup
      *  query instead of the paginated /check-runs + /status + /check-suites REST reads, moving that hot path onto
      *  the separate GraphQL rate-limit bucket. Default OFF (byte-identical, proven REST aggregate); when ON the

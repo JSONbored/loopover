@@ -41,6 +41,7 @@ describe("MinerGoalSpec parser (#2301)", () => {
       blockedLabels: ["duplicate", " duplicate "],
       maxConcurrentClaims: 2.9,
       issueDiscoveryPolicy: "encouraged",
+      feasibilityGate: { enabled: false, suppressedReasons: ["duplicate_cluster_high", "duplicate_cluster_high"] },
     });
 
     expect(parsed).toEqual({
@@ -53,6 +54,7 @@ describe("MinerGoalSpec parser (#2301)", () => {
         blockedLabels: ["duplicate"],
         maxConcurrentClaims: 2,
         issueDiscoveryPolicy: "encouraged",
+        feasibilityGate: { enabled: false, suppressedReasons: ["duplicate_cluster_high"] },
       },
       warnings: ['MinerGoalSpec field "blockedPaths" truncated an over-long entry.'],
     });
@@ -131,6 +133,7 @@ describe("MinerGoalSpec parser (#2301)", () => {
       blockedLabels: [123, " wontfix "],
       maxConcurrentClaims: "3",
       issueDiscoveryPolicy: "always",
+      feasibilityGate: "not a mapping",
     });
 
     expect(parsed).toEqual({
@@ -143,6 +146,7 @@ describe("MinerGoalSpec parser (#2301)", () => {
         blockedLabels: ["wontfix"],
         maxConcurrentClaims: 1,
         issueDiscoveryPolicy: "neutral",
+        feasibilityGate: { enabled: true, suppressedReasons: [] },
       },
       warnings: expect.arrayContaining([
         expect.stringMatching(/minerEnabled/i),
@@ -152,8 +156,47 @@ describe("MinerGoalSpec parser (#2301)", () => {
         expect.stringMatching(/blockedLabels/i),
         expect.stringMatching(/maxConcurrentClaims/i),
         expect.stringMatching(/issueDiscoveryPolicy/i),
+        expect.stringMatching(/feasibilityGate/i),
       ]),
     });
+  });
+
+  it("normalizes nested feasibilityGate sub-fields independently and rejects a non-mapping value", () => {
+    const validSubFields = parseMinerGoalSpec({
+      wantedPaths: ["src/**"],
+      feasibilityGate: { enabled: false, suppressedReasons: ["duplicate_cluster_high"] },
+    });
+    expect(validSubFields.spec.feasibilityGate).toEqual({
+      enabled: false,
+      suppressedReasons: ["duplicate_cluster_high"],
+    });
+    expect(validSubFields.warnings).toEqual([]);
+
+    const malformedSubFields = parseMinerGoalSpec({
+      wantedPaths: ["src/**"],
+      feasibilityGate: { enabled: "nope", suppressedReasons: "not a list" },
+    });
+    expect(malformedSubFields.spec.feasibilityGate).toEqual({ enabled: true, suppressedReasons: [] });
+    expect(malformedSubFields.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/feasibilityGate\.enabled/i),
+        expect.stringMatching(/feasibilityGate\.suppressedReasons/i),
+      ]),
+    );
+
+    const arrayValue = parseMinerGoalSpec({ wantedPaths: ["src/**"], feasibilityGate: ["not", "a", "mapping"] });
+    expect(arrayValue.spec.feasibilityGate).toEqual({ enabled: true, suppressedReasons: [] });
+    expect(arrayValue.warnings.join(" ")).toMatch(/feasibilityGate.*must be a mapping/i);
+  });
+
+  it("a feasibilityGate policy alone (all other fields default) marks the spec present", () => {
+    const parsed = parseMinerGoalSpec({ feasibilityGate: { enabled: false, suppressedReasons: [] } });
+    expect(parsed.present).toBe(true);
+    expect(parsed.spec.feasibilityGate).toEqual({ enabled: false, suppressedReasons: [] });
+
+    const suppressedOnly = parseMinerGoalSpec({ feasibilityGate: { suppressedReasons: ["issue_missing"] } });
+    expect(suppressedOnly.present).toBe(true);
+    expect(suppressedOnly.spec.feasibilityGate).toEqual({ enabled: true, suppressedReasons: ["issue_missing"] });
   });
 
   it("rejects claim counts below one after flooring", () => {
@@ -183,6 +226,7 @@ describe("MinerGoalSpec parser (#2301)", () => {
         blockedLabels: [],
         maxConcurrentClaims: 1,
         issueDiscoveryPolicy: "neutral",
+        feasibilityGate: { enabled: true, suppressedReasons: [] },
       }),
     ).toEqual({
       present: false,
@@ -222,6 +266,19 @@ describe("MinerGoalSpec parser (#2301)", () => {
         minerEnabled: false,
         blockedPaths: ["dist/**"],
         issueDiscoveryPolicy: "discouraged",
+      },
+      warnings: [],
+    });
+
+    expect(
+      parseMinerGoalSpecContent(
+        "feasibilityGate:\n  enabled: false\n  suppressedReasons:\n    - duplicate_cluster_high\n",
+      ),
+    ).toEqual({
+      present: true,
+      spec: {
+        ...DEFAULT_MINER_GOAL_SPEC,
+        feasibilityGate: { enabled: false, suppressedReasons: ["duplicate_cluster_high"] },
       },
       warnings: [],
     });

@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deliverRecapToDiscord, notifyActionToDiscord, notifyActionToSlack, resolveDiscordWebhook } from "../../src/services/notify-discord";
+import { deliverRecapToDiscord, deliverRecapToSlack, notifyActionToDiscord, notifyActionToSlack, resolveDiscordWebhook } from "../../src/services/notify-discord";
 import { createTestEnv } from "../helpers/d1";
 import type { RecapReport } from "../../src/types";
 
 const HOOK = "https://discord.com/api/webhooks/123/abc";
+const SLACK_HOOK = "https://hooks.slack.com/services/T00/B00/xxxyyyzzz";
 const FALLBACK = "https://discord.com/api/webhooks/999/zzz";
 const ORIG_DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 
@@ -302,5 +303,50 @@ describe("deliverRecapToDiscord (#2245 maintainer recap → Discord)", () => {
     const env = withEnv({ DISCORD_WEBHOOK_URL: HOOK });
     expect(await deliverRecapToDiscord(env, SAMPLE_RECAP)).toEqual({ sent: false, reason: "network down" });
     expect(await recapAudit(env)).toEqual([expect.objectContaining({ outcome: "error", detail: "network down" })]);
+  });
+});
+
+const FORMATTED_RECAP = "# Maintainer recap\n\n- Sample summary line.\n";
+
+async function maintainerRecapSlackAudit(env: Env): Promise<Array<{ outcome: string; detail: string }>> {
+  const rows = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? order by created_at").bind("maintainer_recap_notification.slack").all<{ outcome: string; detail: string }>();
+  return rows.results ?? [];
+}
+
+describe("deliverRecapToSlack (#2246 maintainer RecapReport → Slack)", () => {
+  it("posts the formatted recap to SLACK_WEBHOOK_URL and records a completed audit when configured", async () => {
+    let posted: { url: string; body: string } | null = null;
+    vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+      posted = { url: String(url), body: init?.body ? String(init.body) : "" };
+      return new Response(null, { status: 204 });
+    });
+    const env = withEnv({ SLACK_WEBHOOK_URL: SLACK_HOOK });
+    expect(await deliverRecapToSlack(env, SAMPLE_RECAP, FORMATTED_RECAP)).toEqual({ sent: true });
+    expect(posted!.url).toBe(SLACK_HOOK);
+    const parsed = JSON.parse(posted!.body) as { blocks: { text: { text: string } }[] };
+    expect(parsed.blocks[0]?.text.text).toContain("Maintainer recap");
+    expect(await maintainerRecapSlackAudit(env)).toEqual([expect.objectContaining({ outcome: "completed", detail: "sent" })]);
+  });
+
+  it("no-ops when SLACK_WEBHOOK_URL is unset", async () => {
+    const calls = stubFetch();
+    const env = createTestEnv();
+    expect(await deliverRecapToSlack(env, SAMPLE_RECAP, FORMATTED_RECAP)).toEqual({ sent: false, reason: "missing_webhook" });
+    expect(calls).toEqual([]);
+  });
+
+  it("no-ops when SLACK_WEBHOOK_URL fails validation", async () => {
+    const calls = stubFetch();
+    const env = withEnv({ SLACK_WEBHOOK_URL: "http://hooks.slack.com/services/T/B/X" });
+    expect(await deliverRecapToSlack(env, SAMPLE_RECAP, FORMATTED_RECAP)).toEqual({ sent: false, reason: "invalid_webhook" });
+    expect(calls).toEqual([]);
+  });
+
+  it("swallows a send failure — best-effort, never throws", async () => {
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("slack network down");
+    });
+    const env = withEnv({ SLACK_WEBHOOK_URL: SLACK_HOOK });
+    expect(await deliverRecapToSlack(env, SAMPLE_RECAP, FORMATTED_RECAP)).toEqual({ sent: false, reason: "slack network down" });
   });
 });

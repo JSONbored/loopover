@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCohortRecapSection } from "../../src/services/maintainer-recap-cohort";
+import { buildCohortRecapSection, type CohortRecapSource } from "../../src/services/maintainer-recap-cohort";
 
 describe("buildCohortRecapSection (#4521)", () => {
   it("returns null when no cohort data is present", () => {
@@ -47,11 +47,8 @@ describe("buildCohortRecapSection (#4521)", () => {
   });
 
   it("returns null when cohort keys exist but every slice is empty", () => {
-    expect(
-      buildCohortRecapSection({
-        windowDays: 7,
-        cohorts: { miner: undefined, human: undefined },
-      }),
-    ).toBeNull();
+    // Upstream may carry cohort keys without populated slices; cast exercises the runtime guard.
+    const cohorts = { miner: undefined, human: undefined } as unknown as NonNullable<CohortRecapSource["cohorts"]>;
+    expect(buildCohortRecapSection({ windowDays: 7, cohorts })).toBeNull();
   });
 });

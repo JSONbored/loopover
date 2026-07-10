@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
+import { clearReviewSuppressionCacheForTest } from "../../src/review/review-memory-wire";
 import { PR_PANEL_COMMENT_MARKER } from "../../src/github/comments";
 import * as backfillModule from "../../src/github/backfill";
 import * as rateLimitModule from "../../src/github/rate-limit";
@@ -106,6 +107,7 @@ describe("queue processors", () => {
   // stay deterministic regardless of when CI runs.
   beforeEach(() => {
     clearInstallationTokenCacheForTest();
+    clearReviewSuppressionCacheForTest();
     vi.mocked(fetchPullRequestFreshness).mockReset();
     vi.mocked(fetchPullRequestFreshness).mockImplementation(async (_env, args) => ({
       status: "current",

@@ -68,6 +68,14 @@ USER root
 ARG INSTALL_VISUAL_REVIEW=false
 COPY package*.json ./
 RUN if [ "$INSTALL_VISUAL_REVIEW" = "true" ]; then npm install puppeteer-core@22.13.1 --ignore-scripts; fi
+# sharp (#4370): esbuild marks it `external` in the --all bundle (a native per-platform binary can't be
+# bundled into dist/server.mjs, see scripts/build-selfhost.mjs), so it must be installed separately here,
+# same reason as puppeteer-core above -- but unconditional (not behind an opt-in build-arg): it's a core
+# dependency of the vision-image-downscale path, not an optional external-sidecar feature. --ignore-scripts
+# is safe here: sharp's own platform binary ships as an npm `optionalDependencies` entry
+# (@img/sharp-<platform>-<arch>) that npm's normal os/cpu-matched install resolves on its own, not via
+# sharp's postinstall script.
+RUN npm install sharp@0.34.5 --ignore-scripts
 # Data dir (the SQLite file) — owned by the unprivileged node user; mount a volume here to persist.
 RUN mkdir -p /data && chown -R node:node /data /app
 # Expose the optional user-installed CLIs only after all root build steps have completed, so a

@@ -53,6 +53,26 @@ const PAYLOAD: PublicStats = {
     },
     { project: "JSONbored/gittensory", reviewed: 193, merged: 24, closed: 24, accuracyPct: 93.8 },
   ],
+  accuracyTrend: [
+    { weekStart: "2026-05-04", merged: 40, closed: 10, reversed: 2, accuracyPct: 96 },
+    { weekStart: "2026-05-11", merged: 42, closed: 9, reversed: 1, accuracyPct: 98 },
+    { weekStart: "2026-05-18", merged: 38, closed: 12, reversed: 1, accuracyPct: 98 },
+    { weekStart: "2026-05-25", merged: 45, closed: 8, reversed: 0, accuracyPct: 100 },
+    { weekStart: "2026-06-01", merged: 41, closed: 11, reversed: 1, accuracyPct: 98 },
+    { weekStart: "2026-06-08", merged: 1, closed: 0, reversed: 0, accuracyPct: null },
+    { weekStart: "2026-06-15", merged: 44, closed: 9, reversed: 1, accuracyPct: 98 },
+    { weekStart: "2026-06-22", merged: 39, closed: 10, reversed: 1, accuracyPct: 98 },
+  ],
+  reuseRateTrend: [
+    { weekStart: "2026-05-04", hits: 60, misses: 40, reuseRatePct: 60 },
+    { weekStart: "2026-05-11", hits: 65, misses: 35, reuseRatePct: 65 },
+    { weekStart: "2026-05-18", hits: 70, misses: 30, reuseRatePct: 70 },
+    { weekStart: "2026-05-25", hits: 72, misses: 28, reuseRatePct: 72 },
+    { weekStart: "2026-06-01", hits: 75, misses: 25, reuseRatePct: 75 },
+    { weekStart: "2026-06-08", hits: 78, misses: 22, reuseRatePct: 78 },
+    { weekStart: "2026-06-15", hits: 80, misses: 20, reuseRatePct: 80 },
+    { weekStart: "2026-06-22", hits: 83, misses: 17, reuseRatePct: 83 },
+  ],
 };
 
 function renderWithClient(ui: ReactNode) {
@@ -109,7 +129,7 @@ describe("ProofOfPowerStats", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("renders the four headline stats when data is live", async () => {
+  it("renders the five headline stats when data is live", async () => {
     apiFetch.mockResolvedValue({ ok: true, status: 200, durationMs: 1, data: PAYLOAD });
     renderWithClient(<ProofOfPowerStats />);
     expect(await screen.findByText("PRs reviewed")).toBeTruthy();
@@ -120,6 +140,18 @@ describe("ProofOfPowerStats", () => {
     expect(screen.getByText("98.4%")).toBeTruthy();
     expect(screen.getByText("33 human-reversed")).toBeTruthy();
     expect(screen.getByText("1,316 closed, advised, or escalated")).toBeTruthy(); // 2708 − 1392
+    // #4448: the fifth tile, its latest week's reuse rate, and its own sparkline.
+    expect(screen.getByText("AI work reused")).toBeTruthy();
+    expect(screen.getByText("83%")).toBeTruthy(); // reuseRateTrend's last entry
+    expect(screen.getByText("avoided redoing prior AI work")).toBeTruthy();
+  });
+
+  it("renders a sparkline beside accuracy and reuse-rate, each labeled by its own week count", async () => {
+    apiFetch.mockResolvedValue({ ok: true, status: 200, durationMs: 1, data: PAYLOAD });
+    renderWithClient(<ProofOfPowerStats />);
+    await screen.findByText("Decision accuracy");
+    const sparklines = screen.getAllByRole("img", { name: "Trend over the last 8 weeks" });
+    expect(sparklines).toHaveLength(2); // accuracy + reuse-rate, both 8-week payloads
   });
 
   it("settles the count-up on the real reviewed total (not stuck at 0 when rAF never fires)", async () => {

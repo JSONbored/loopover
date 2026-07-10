@@ -371,6 +371,7 @@ export function buildPublicAgentCommandComment(args: {
   const commandName = args.command.name as GittensoryMentionCommandName;
   const sections = commandSections(
     commandName,
+    args.env,
     args.bundle,
     args.officialMiner,
     args.maintainerDigest,
@@ -707,6 +708,7 @@ function feedbackPromptSections(answerId: string | null | undefined): string[] {
 
 function commandSections(
   command: GittensoryMentionCommandName,
+  env: GittensoryFooterEnv,
   bundle: AgentRunBundle | null | undefined,
   officialMiner: GittensorContributorSnapshot | null | undefined,
   maintainerDigest: MaintainerQueueDigest | null | undefined,
@@ -716,7 +718,7 @@ function commandSections(
 ): string[] {
   switch (command) {
     case "help":
-      return helpSections(unknownVerb);
+      return helpSections(env, unknownVerb);
     case "ask":
       return askSections(bundle, question);
     case "miner-context":
@@ -761,7 +763,21 @@ function actionCommandHelpSections(): string[] {
   ];
 }
 
-function helpSections(unknownVerb?: string | undefined): string[] {
+/** The public command-reference doc link for `@gittensory help` (#4670). `new URL(path, origin)` -- same
+ *  idiom as the sibling `maintainerControlPanelUrl` in footer.ts -- so a `PUBLIC_SITE_ORIGIN` with or
+ *  without a trailing slash both resolve correctly instead of risking a double slash from naive
+ *  concatenation. Falls back to the literal path string only if origin resolution itself throws (an
+ *  operator-misconfigured PUBLIC_SITE_ORIGIN should degrade the link, not crash comment rendering). */
+function commandReferenceUrl(env: GittensoryFooterEnv): string {
+  const origin = env.PUBLIC_SITE_ORIGIN ?? GITTENSORY_SITE_URL;
+  try {
+    return new URL("/docs/gittensory-commands", origin).toString();
+  } catch {
+    return `${GITTENSORY_SITE_URL}/docs/gittensory-commands`;
+  }
+}
+
+function helpSections(env: GittensoryFooterEnv, unknownVerb?: string | undefined): string[] {
   return [
     "**Commands**",
     "",
@@ -788,7 +804,7 @@ function helpSections(unknownVerb?: string | undefined): string[] {
     "",
     ...actionCommandHelpSections(),
     "",
-    `- Full command reference (syntax, roles, gate boundary): ${GITTENSORY_SITE_URL}/docs/gittensory-commands`,
+    `- Full command reference (syntax, roles, gate boundary): ${commandReferenceUrl(env)}`,
   ];
 }
 
@@ -1697,4 +1713,5 @@ export const githubCommandsInternals = {
   askSections,
   helpSections,
   actionCommandHelpSections,
+  commandReferenceUrl,
 };

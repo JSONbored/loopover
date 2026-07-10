@@ -133,11 +133,11 @@ describe("GitHub mention commands", () => {
   });
 
   it("helpSections renders did-you-mean only for close unknown verbs (#2170)", () => {
-    const typo = githubCommandsInternals.helpSections("reveiw");
+    const typo = githubCommandsInternals.helpSections({}, "reveiw");
     expect(typo.join("\n")).toContain("Did you mean `@gittensory review`?");
-    const far = githubCommandsInternals.helpSections("zzzz");
+    const far = githubCommandsInternals.helpSections({}, "zzzz");
     expect(far.join("\n")).not.toContain("Did you mean");
-    const bare = githubCommandsInternals.helpSections();
+    const bare = githubCommandsInternals.helpSections({});
     expect(bare.join("\n")).not.toContain("Did you mean");
     expect(bare.join("\n")).toContain("**Commands**");
   });
@@ -152,7 +152,7 @@ describe("GitHub mention commands", () => {
   });
 
   it("helpSections documents every PR action command with authorization notes (#2167)", () => {
-    const body = githubCommandsInternals.helpSections().join("\n");
+    const body = githubCommandsInternals.helpSections({}).join("\n");
     expect(body).toContain("**PR action commands**");
     expect(body).toContain("maintainer or collaborator authorization");
     expect(body).toContain("pause` and `resume` affect only auto-review");
@@ -175,9 +175,21 @@ describe("GitHub mention commands", () => {
   });
 
   it("helpSections links to the public command reference doc (#2171)", () => {
-    const body = githubCommandsInternals.helpSections().join("\n");
+    const body = githubCommandsInternals.helpSections({}).join("\n");
     expect(body).toContain("https://gittensory.aethereal.dev/docs/gittensory-commands");
     expect(body).toContain("Full command reference");
+  });
+
+  it("helpSections' command reference link follows a self-hoster's PUBLIC_SITE_ORIGIN, trailing slash and all (#4670)", () => {
+    const body = githubCommandsInternals.helpSections({ PUBLIC_SITE_ORIGIN: "https://my-instance.example.com/" }).join("\n");
+    expect(body).toContain("https://my-instance.example.com/docs/gittensory-commands");
+    expect(body).not.toContain("gittensory.aethereal.dev");
+  });
+
+  it("commandReferenceUrl falls back to the default site when PUBLIC_SITE_ORIGIN is malformed", () => {
+    expect(githubCommandsInternals.commandReferenceUrl({ PUBLIC_SITE_ORIGIN: "not a url" })).toBe(
+      "https://gittensory.aethereal.dev/docs/gittensory-commands",
+    );
   });
 
   it("isGittensoryActionCommand distinguishes action verbs from Q&A commands", () => {

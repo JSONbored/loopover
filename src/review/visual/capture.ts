@@ -16,6 +16,7 @@
 // default TanStack route convention; those hooks can return if a per-repo visual config is added.
 import { base64Encode, sha256Hex } from "../../utils/crypto";
 import type { AiContentBlock } from "../../types";
+import { downscaleForVision } from "./image-downscale";
 import type { GitHubRateLimitAdmissionKey } from "../../github/client";
 import { dispatchVisualCaptureFallback, fallbackShotR2Key, isFallbackDispatchInFlight, markFallbackDispatched } from "./actions-fallback";
 import {
@@ -116,7 +117,7 @@ export async function fetchShotContentBlock(url: string): Promise<AiContentBlock
     const response = await fetch(url);
     if (!response.ok) return undefined;
     const bytes = new Uint8Array(await response.arrayBuffer());
-    return { type: "image", data: base64Encode(bytes), mimeType: "image/png" };
+    return { type: "image", data: base64Encode(await downscaleForVision(bytes)), mimeType: "image/png" };
   } catch {
     return undefined;
   }

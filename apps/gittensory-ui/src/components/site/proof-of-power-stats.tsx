@@ -5,9 +5,11 @@ import { cn } from "@/lib/utils";
 import { getApiOrigin } from "@/lib/api/origin";
 import { apiFetch } from "@/lib/api/request";
 import { Stat } from "@/components/site/control-primitives";
+import { Sparkline } from "@/components/site/sparkline";
 import {
   formatStatsAgo,
   formatTimeSaved,
+  toTrendPoints,
   type PublicStats,
 } from "@/components/site/proof-of-power-stats-model";
 
@@ -95,6 +97,15 @@ export function ProofOfPowerStats({ className }: { className?: string }) {
   const { totals, weekly, byProject } = data;
   const repoCount = byProject.length;
   const timeSaved = formatTimeSaved(totals.minutesSaved);
+  // #4447/#4448: 8-week sparklines riding beside the two tiles that have a weekly trend to show. The other
+  // tiles (PRs reviewed, filtered %, time saved) have no persisted weekly series, only a lifetime total plus a
+  // single "this week" delta -- nothing for a sparkline to plot yet.
+  const accuracySparkline = toTrendPoints(data.accuracyTrend, (week) => week.accuracyPct);
+  const reuseRateSparkline = toTrendPoints(data.reuseRateTrend, (week) => week.reuseRatePct);
+  const latestReuseRatePct =
+    data.reuseRateTrend.length > 0
+      ? data.reuseRateTrend[data.reuseRateTrend.length - 1]!.reuseRatePct
+      : null;
   return (
     <section
       className={cn("mx-auto w-full max-w-6xl px-4 pb-2 sm:px-6", className)}
@@ -107,7 +118,7 @@ export function ProofOfPowerStats({ className }: { className?: string }) {
           updated {formatStatsAgo(data.updatedAt, now)}
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <Stat
           label="PRs reviewed"
           value={<Num value={totals.reviewed} />}
@@ -135,6 +146,13 @@ export function ProofOfPowerStats({ className }: { className?: string }) {
               ? `${intFmt.format(totals.reversed)} human-reversed`
               : "reversal-grounded"
           }
+          trend={<Sparkline points={accuracySparkline} color="var(--chart-1)" />}
+        />
+        <Stat
+          label="AI work reused"
+          value={latestReuseRatePct == null ? "—" : `${latestReuseRatePct}%`}
+          hint="avoided redoing prior AI work"
+          trend={<Sparkline points={reuseRateSparkline} color="var(--chart-2)" />}
         />
       </div>
     </section>

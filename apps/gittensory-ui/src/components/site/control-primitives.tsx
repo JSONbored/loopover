@@ -165,17 +165,24 @@ export function Stat({
   label,
   value,
   hint,
+  trend,
   className,
 }: {
   label: string;
   value: ReactNode;
   hint?: ReactNode;
+  /** Optional sparkline (or any small trend figure) rendered beside the value -- the "trend" slot from the
+   *  stat-tile contract. Decoupled from any charting library: Stat only lays it out. */
+  trend?: ReactNode;
   className?: string;
 }) {
   return (
     <div className={cn("rounded-token border border-border p-4", className)}>
       <div className="text-token-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 text-token-xl font-medium tracking-tight text-foreground">{value}</div>
+      <div className="mt-1 flex items-end justify-between gap-2">
+        <div className="text-token-xl font-medium tracking-tight text-foreground">{value}</div>
+        {trend}
+      </div>
       {hint && <div className="mt-1 text-token-xs text-muted-foreground">{hint}</div>}
     </div>
   );

@@ -23,7 +23,10 @@ await esbuild.build({
   sourcesContent: true,
   sourceRoot: "/app/dist",
   // External: nothing (bundle all) vs every package (external). node: builtins are always external on node.
-  ...(bundleAll ? {} : { packages: "external" }),
+  // sharp (#4370) is ALWAYS external even in --all mode: it ships a native per-platform binary esbuild
+  // cannot bundle, unlike sharp's own JS glue code -- the Dockerfile installs it separately into the
+  // runtime image (see the runtime-base stage).
+  ...(bundleAll ? { external: ["sharp"] } : { packages: "external" }),
   // Bundling CJS deps into an ESM output needs require/__dirname/__filename shimmed (some deps call them).
   ...(bundleAll
     ? {
@@ -54,6 +57,8 @@ await esbuild.build({
         build.onResolve({ filter: /^\.\/pixel-diff$/ }, () => ({ path: resolve(root, "src/selfhost/stubs/pixel-diff.ts") }));
         // Same pattern for scroll-through GIF assembly (#3612) — pngjs decode + gifenc encode need Node Buffer.
         build.onResolve({ filter: /^\.\/scroll-gif$/ }, () => ({ path: resolve(root, "src/selfhost/stubs/scroll-gif.ts") }));
+        // Same pattern for vision-image downscaling (#4370) — sharp is a native binding, Worker-unsafe.
+        build.onResolve({ filter: /^\.\/image-downscale$/ }, () => ({ path: resolve(root, "src/selfhost/stubs/image-downscale.ts") }));
       },
     },
   ],

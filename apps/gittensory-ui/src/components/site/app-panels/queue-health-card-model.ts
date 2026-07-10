@@ -9,7 +9,9 @@ export type QueueHealthCardModel = {
   summary: string;
 };
 
-export function queueHealthStatus(card: QueueHealthCardModel): "ready" | "warn" | "stale" | "blocked" {
+export function queueHealthStatus(
+  card: QueueHealthCardModel,
+): "ready" | "warn" | "stale" | "blocked" {
   if (card.stale) return "stale";
   if (card.dlq > 0) return "blocked";
   if (card.stuck > 0) return "warn";

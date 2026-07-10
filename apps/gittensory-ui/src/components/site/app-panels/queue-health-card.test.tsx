@@ -51,13 +51,17 @@ describe("QueueHealthCard", () => {
   });
 
   it("renders a warn state when stuck PRs are present", () => {
-    render(<QueueHealthCard card={card({ stuck: 3, summary: "3 stale PR(s) across shaped repos." })} />);
+    render(
+      <QueueHealthCard card={card({ stuck: 3, summary: "3 stale PR(s) across shaped repos." })} />,
+    );
     expect(screen.getByText("stale PRs present")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
   });
 
   it("renders a blocked state when DLQ duplicate-risk clusters are present", () => {
-    render(<QueueHealthCard card={card({ dlq: 2, summary: "2 high-risk duplicate cluster(s)." })} />);
+    render(
+      <QueueHealthCard card={card({ dlq: 2, summary: "2 high-risk duplicate cluster(s)." })} />,
+    );
     expect(screen.getByText("duplicate risk")).toBeTruthy();
     expect(screen.getByText("2 high-risk duplicate cluster(s).")).toBeTruthy();
   });
@@ -65,7 +69,9 @@ describe("QueueHealthCard", () => {
   it("renders a stale snapshot pill and generatedAt timestamp", () => {
     render(<QueueHealthCard card={card({ stale: true })} />);
     expect(screen.getByText("stale snapshot")).toBeTruthy();
-    expect(screen.getByText(new RegExp(formatQueueHealthGeneratedAt("2026-07-10T12:00:00.000Z")))).toBeTruthy();
+    expect(
+      screen.getByText(new RegExp(formatQueueHealthGeneratedAt("2026-07-10T12:00:00.000Z"))),
+    ).toBeTruthy();
   });
 
   it("shows a placeholder when queue-depth history has not accumulated yet", () => {

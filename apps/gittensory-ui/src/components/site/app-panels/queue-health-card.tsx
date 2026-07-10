@@ -32,10 +32,26 @@ export function QueueHealthCard({ card }: { card: QueueHealthCardModel }) {
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Pending" value={String(card.pending)} hint={<span className="text-muted-foreground">open PRs in queue</span>} />
-        <Stat label="In flight" value={String(card.inFlight)} hint={<span className="text-muted-foreground">likely reviewable now</span>} />
-        <Stat label="Stuck" value={String(card.stuck)} hint={<span className="text-muted-foreground">stale open PRs</span>} />
-        <Stat label="DLQ" value={String(card.dlq)} hint={<span className="text-muted-foreground">high-risk duplicate clusters</span>} />
+        <Stat
+          label="Pending"
+          value={String(card.pending)}
+          hint={<span className="text-muted-foreground">open PRs in queue</span>}
+        />
+        <Stat
+          label="In flight"
+          value={String(card.inFlight)}
+          hint={<span className="text-muted-foreground">likely reviewable now</span>}
+        />
+        <Stat
+          label="Stuck"
+          value={String(card.stuck)}
+          hint={<span className="text-muted-foreground">stale open PRs</span>}
+        />
+        <Stat
+          label="DLQ"
+          value={String(card.dlq)}
+          hint={<span className="text-muted-foreground">high-risk duplicate clusters</span>}
+        />
       </div>
 
       {card.queueDepthTrend.length > 0 ? (

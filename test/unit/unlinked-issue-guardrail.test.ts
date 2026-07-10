@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createTestEnv } from "../helpers/d1";
-import { countRecentAuditEventsForActor, recordAuditEvent, upsertIssueFromGitHub, hasRecentAuditEvent } from "../../src/db/repositories";
+import { countRecentAuditEventsForActor, recordAuditEvent, sumAiEstimatedNeuronsSince, upsertIssueFromGitHub, hasRecentAuditEvent } from "../../src/db/repositories";
 import {
   resolveUnlinkedIssueMatchDisposition,
   UNLINKED_ISSUE_MATCH_AUDIT_EVENT_TYPE,
@@ -423,6 +423,44 @@ describe("resolveUnlinkedIssueMatchDisposition", () => {
       await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
 
       expect(await countRecentAuditEventsForActor(env, "contributor-a", UNLINKED_ISSUE_VERIFY_ATTEMPT_AUDIT_EVENT_TYPE, "2000-01-01T00:00:00.000Z")).toBe(1);
+    });
+
+    it("records this candidate's actual spend into the SAME shared ai_usage_events counter the budget check reads (review feedback on #4551)", async () => {
+      const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+      const env = createTestEnv({ AI: { run } as unknown as Ai });
+      await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+
+      const usedBefore = await sumAiEstimatedNeuronsSince(env, "2000-01-01T00:00:00.000Z");
+      expect(usedBefore).toBe(0);
+
+      await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+
+      const usedAfter = await sumAiEstimatedNeuronsSince(env, "2000-01-01T00:00:00.000Z");
+      expect(usedAfter).toBeGreaterThan(0);
+    });
+
+    it("records spend even when the author login is unknown (unlike the rate ceiling, this does not need a known actor)", async () => {
+      const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+      const env = createTestEnv({ AI: { run } as unknown as Ai });
+      await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+
+      await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, prAuthorLogin: null, config: config() });
+
+      expect(await sumAiEstimatedNeuronsSince(env, "2000-01-01T00:00:00.000Z")).toBeGreaterThan(0);
+    });
+
+    it("swallows a usage-recording write failure without affecting the verification result", async () => {
+      const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
+      const env = createTestEnv({ AI: { run } as unknown as Ai });
+      await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+      const realPrepare = env.DB.prepare.bind(env.DB);
+      env.DB.prepare = ((sql: string) => {
+        if (/INSERT INTO.*ai_usage_events/i.test(sql)) throw new Error("d1 down");
+        return realPrepare(sql);
+      }) as typeof env.DB.prepare;
+
+      const result = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+      expect(result?.kind).toBe("hold");
     });
 
     it("fails open (verification still runs) when the rate-ceiling read itself errors", async () => {

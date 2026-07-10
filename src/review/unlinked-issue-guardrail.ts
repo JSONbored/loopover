@@ -18,12 +18,13 @@ import {
   getFreshOfficialMinerDetection,
   mostRecentAuditEventForOtherTarget,
   listOpenIssues,
+  recordAiUsageEvent,
   recordAuditEvent,
   sumAiEstimatedNeuronsSince,
   upsertOfficialMinerDetection,
 } from "../db/repositories";
 import { fetchOfficialGittensorMiner } from "../gittensor/api";
-import { clampNumber, estimateNeurons, utcDayStartIso } from "../services/ai-review";
+import { BEST_REVIEW_MODELS, RELIABLE_FALLBACK_MODELS, clampNumber, estimateNeurons, utcDayStartIso } from "../services/ai-review";
 import { findUnlinkedIssueCandidates, MAX_CANDIDATES, type CandidateOpenIssue } from "../signals/unlinked-issue-candidates";
 import type { UnlinkedIssueGuardrailConfig } from "../types";
 import { DIFF_CHAR_BUDGET, MAX_TOKENS, verifyUnlinkedIssueMatch } from "./unlinked-issue-match";
@@ -62,6 +63,12 @@ const VERIFY_PROMPT_OVERHEAD_CHAR_ESTIMATE = 2_000;
 // verifyUnlinkedIssueMatch tries a primary model and, ONLY on a thrown error, a fallback -- two calls is the
 // real worst case per candidate, not the common case, but this budget check must size for the worst case.
 const VERIFY_MAX_MODEL_ATTEMPTS_PER_CANDIDATE = 2;
+// Review feedback on #4551: the budget check above reads sumAiEstimatedNeuronsSince, but without a writer
+// this feature's own real AI spend never contributed to that counter -- a free rider that respects every
+// OTHER feature's usage but never counts its own, so the true aggregate spend could silently exceed
+// AI_DAILY_NEURON_BUDGET by however much this feature actually used. recordUnlinkedIssueVerifyUsage (below)
+// closes that gap by recording into the SAME shared ai_usage_events table this check reads from.
+const UNLINKED_ISSUE_VERIFY_USAGE_FEATURE = "unlinked_issue_verify";
 
 /** Has this actor already run the AI verifier at or beyond the rate ceiling in the last window, across every
  *  repo/PR? Fail-safe: a read error resolves to "not rate-limited," so the pre-#4515 unconditional-
@@ -92,6 +99,25 @@ async function isUnlinkedIssueVerifyBudgetExceeded(env: Env, candidateCount: num
   const used = await sumAiEstimatedNeuronsSince(env, utcDayStartIso()).catch(() => 0);
   const remainingBudget = Math.max(0, budget - used);
   return estimatedNeurons > remainingBudget;
+}
+
+/** Record ONE candidate's actual AI spend into the shared `ai_usage_events` ledger -- the SAME table
+ *  {@link isUnlinkedIssueVerifyBudgetExceeded} sums from, so this feature's own usage counts against the
+ *  budget it itself enforces on others (see the module-level comment on {@link UNLINKED_ISSUE_VERIFY_USAGE_FEATURE}).
+ *  Records the same worst-case per-candidate estimate the budget check itself uses -- a deliberate over-count
+ *  (verifyUnlinkedIssueMatch's common case is ONE model call, not the two this sizes for), not a precise
+ *  post-hoc token read, mirroring ai-slop.ts's own pre-computed-estimate recording convention. Best-effort: a
+ *  write failure is swallowed (telemetry must never block the gate). */
+async function recordUnlinkedIssueVerifyUsage(env: Env, repoFullName: string, pullNumber: number): Promise<void> {
+  const estimatedNeurons = estimateNeurons(DIFF_CHAR_BUDGET + VERIFY_PROMPT_OVERHEAD_CHAR_ESTIMATE, MAX_TOKENS, VERIFY_MAX_MODEL_ATTEMPTS_PER_CANDIDATE);
+  await recordAiUsageEvent(env, {
+    feature: UNLINKED_ISSUE_VERIFY_USAGE_FEATURE,
+    route: "github_app.unlinked_issue_verify",
+    model: [BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0]].join("+"),
+    status: "ok",
+    estimatedNeurons,
+    detail: `unlinked-issue-match verification for ${repoFullName}#${pullNumber}`,
+  }).catch(() => undefined);
 }
 
 /** Minimal cached miner-identity check, deliberately independent of processors.ts's getCachedOfficialMinerDetection
@@ -202,6 +228,9 @@ export async function resolveUnlinkedIssueMatchDisposition(env: Env, input: Reso
   if (await isUnlinkedIssueVerifyBudgetExceeded(env, candidates.length)) return undefined;
   for (const candidate of candidates) {
     if (authorLogin) await recordUnlinkedIssueVerifyAttempt(env, input.repoFullName, input.pullNumber, authorLogin);
+    // Record spend regardless of authorLogin -- an AI call happens either way; only the PER-ACTOR rate
+    // ceiling above needs a known actor, this shared-budget accounting does not.
+    await recordUnlinkedIssueVerifyUsage(env, input.repoFullName, input.pullNumber);
     const verdict = await verifyUnlinkedIssueMatch(env, {
       prTitle: input.prTitle,
       prBody: input.prBody,

@@ -6,6 +6,7 @@ import type { EnrichRequest, FloatingPromiseFinding } from "../types.js";
 import { codeOnly } from "./secret-log.js";
 import { isTestPath } from "./test-ratio.js";
 import { DEFAULT_MAX_FINDINGS, DEFAULT_MAX_LINE_CHARS } from "./limits.js";
+import { isBasicCommentLine } from "./diff-lines.js";
 
 const MAX_FINDINGS = DEFAULT_MAX_FINDINGS;
 const MAX_LINE_CHARS = DEFAULT_MAX_LINE_CHARS;
@@ -20,11 +21,6 @@ const PROMISE_CHAIN_RE = /\.(?:then|catch)\s*\(/;
 
 function isJsTsPath(path: string): boolean {
   return JS_TS_PATH_RE.test(path) && !isTestPath(path);
-}
-
-function isCommentLine(line: string): boolean {
-  const trimmed = line.trimStart();
-  return /^(?:\/\/|\/\*|\*)/.test(trimmed);
 }
 
 function truncateCall(call: string): string {
@@ -58,7 +54,7 @@ function extractLeadingCallCallee(line: string): string | null {
 
 /** Classify one added line for a floating promise call, or null. Pure. */
 export function detectFloatingPromise(line: string): string | null {
-  if (isCommentLine(line) || HANDLED_PREFIX.test(line)) {
+  if (isBasicCommentLine(line) || HANDLED_PREFIX.test(line)) {
     return null;
   }
 

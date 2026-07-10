@@ -4,6 +4,7 @@
 import type { A11yFinding, EnrichRequest } from "../types.js";
 import { isTestPath } from "./test-ratio.js";
 import { DEFAULT_MAX_FINDINGS, DEFAULT_MAX_LINE_CHARS } from "./limits.js";
+import { isBasicCommentLine } from "./diff-lines.js";
 
 const MAX_FINDINGS = DEFAULT_MAX_FINDINGS;
 const MAX_LINE_CHARS = DEFAULT_MAX_LINE_CHARS;
@@ -24,9 +25,12 @@ const NON_INTERACTIVE_CLICK_TARGET_RE =
 const FORM_CONTROL_RE = /<(?:input|select|textarea)\b/i;
 const LABEL_ASSOC_RE = /\b(?:aria-label|aria-labelledby|id)\s*=|<label\b/i;
 
+// Layers the HTML `<!--` comment form and JSX-adjacent `import`/`from` statements on top of the shared
+// `isBasicCommentLine` base (#4611) — this analyzer scans markup (.jsx/.tsx/.html/.vue) where an import
+// line is boilerplate, not a markup regression candidate, and HTML comments are common.
 function isCommentLine(line: string): boolean {
   const trimmed = line.trimStart();
-  return /^(?:\/\/|\/\*|\*|<!--|import\b|from\b)/.test(trimmed);
+  return isBasicCommentLine(line) || /^(?:<!--|import\b|from\b)/.test(trimmed);
 }
 
 function isMarkupPath(path: string): boolean {

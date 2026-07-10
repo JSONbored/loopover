@@ -228,6 +228,7 @@ import {
   refreshScoringModelSnapshot,
 } from "../scoring/model";
 import {
+  authoritativeContributorRepoStats,
   buildAndPersistContributorDecisionPack,
   loadDecisionPackSharedInputs,
 } from "../services/decision-pack";
@@ -15556,17 +15557,6 @@ function officialGittensorContributorDetection(
       snapshot.totals.openIssues + snapshot.totals.closedIssues,
     ),
   };
-}
-
-function authoritativeContributorRepoStats(
-  gittensorSnapshot: Awaited<
-    ReturnType<typeof fetchGittensorContributorSnapshot>
-  >,
-  cachedRepoStats: Awaited<ReturnType<typeof listContributorRepoStats>>,
-) {
-  const officialRepoStats =
-    contributorRepoStatsFromGittensor(gittensorSnapshot);
-  return officialRepoStats.length > 0 ? officialRepoStats : cachedRepoStats;
 }
 
 /** Split `owner/name` into the project/repo key shape shared by RAG indexing and retrieval. */

@@ -5,6 +5,7 @@ import type { EnrichRequest, UnsafeAnyFinding } from "../types.js";
 import { codeOnly } from "./secret-log.js";
 import { isTestPath } from "./test-ratio.js";
 import { DEFAULT_MAX_FINDINGS, DEFAULT_MAX_LINE_CHARS } from "./limits.js";
+import { isBasicCommentLine } from "./diff-lines.js";
 
 const MAX_FINDINGS = DEFAULT_MAX_FINDINGS;
 const MAX_LINE_CHARS = DEFAULT_MAX_LINE_CHARS;
@@ -15,14 +16,9 @@ function isTsPath(path: string): boolean {
   return TS_PATH_RE.test(path) && !isTestPath(path);
 }
 
-function isCommentLine(line: string): boolean {
-  const trimmed = line.trimStart();
-  return /^(?:\/\/|\/\*|\*)/.test(trimmed);
-}
-
 /** Classify one added line for an unsafe `any` pattern, or null. Pure. */
 export function detectUnsafeAny(line: string): UnsafeAnyFinding["kind"] | null {
-  if (isCommentLine(line) || line.length > MAX_LINE_CHARS) return null;
+  if (isBasicCommentLine(line) || line.length > MAX_LINE_CHARS) return null;
   const code = codeOnly(line);
   if (/\bas any\b/.test(code)) return "cast";
   if (/<any>/.test(code)) return "assertion";

@@ -1,10 +1,14 @@
 import type { ContributorEvidenceRecord, JsonValue, RepositoryRecord, RepoTimeDecayOverrides, ScoringModelSnapshotRecord, ScorePreviewRecord } from "./types.js";
 import { DEFAULT_SCORING_CONSTANTS } from "./model.js";
+import { hasUnsafeWildcardCount } from "../signals/change-guardrail.js";
 
 // Deterministic score-preview builder extracted verbatim from the backend's `src/scoring/preview.ts`
 // (#2282) — this file has no D1/network/env dependency in the original, so it ports unchanged aside from
-// its imports and the two tiny pure helpers (`nowIso`, `hasUnsafeWildcardCount`) inlined below, which the
-// backend sources from `src/utils/json.ts` and `src/signals/change-guardrail.ts` respectively.
+// its imports and one tiny pure helper (`nowIso`) inlined below, which the backend sources from
+// `src/utils/json.ts`. `hasUnsafeWildcardCount` is imported from this package's own
+// `signals/change-guardrail.ts` (#4611) rather than re-derived here — that file is a verbatim port of the
+// backend's `src/signals/change-guardrail.ts`, kept in sync by the engine-parity contract test, so importing
+// it carries the same ReDoS-safety guarantee without a third hand-maintained copy.
 
 // The package's tsconfig sets `types: []` (no ambient DOM/Node globals, keeping the engine's type surface
 // independent of any consumer's lib config), so the Web Crypto global needs a minimal local declaration.
@@ -14,28 +18,6 @@ declare const crypto: { randomUUID(): string };
 
 function nowIso(): string {
   return new Date().toISOString();
-}
-
-// Mirrors `src/signals/change-guardrail.ts`'s `hasUnsafeWildcardCount`/wildcard-group counting exactly —
-// see that file for the full ReDoS-safety rationale. Duplicated here (rather than imported) because this
-// package cannot reach into `src/`; keep the two in sync by hand.
-const MAX_GLOB_WILDCARD_GROUPS = 2;
-
-function countWildcardGroups(glob: string): number {
-  let count = 0;
-  for (let i = 0; i < glob.length; i += 1) {
-    if (glob.charAt(i) !== "*") continue;
-    count += 1;
-    if (glob.charAt(i + 1) === "*") {
-      i += 1; // consume the second star of the "**" pair — one group, not two
-      if (glob.charAt(i + 1) === "/") i += 1; // `**/` also matches zero segments, mirroring globToRegExp
-    }
-  }
-  return count;
-}
-
-function hasUnsafeWildcardCount(glob: string): boolean {
-  return countWildcardGroups(glob) > MAX_GLOB_WILDCARD_GROUPS;
 }
 
 export type ScorePreviewInput = {

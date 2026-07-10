@@ -5,6 +5,7 @@
 import type { EnrichRequest, HardcodedUrlFinding } from "../types.js";
 import { isMagicNumberSourcePath } from "./magic-number.js";
 import { DEFAULT_MAX_FINDINGS, DEFAULT_MAX_LINE_CHARS } from "./limits.js";
+import { isBasicCommentLine } from "./diff-lines.js";
 
 const MAX_FINDINGS = DEFAULT_MAX_FINDINGS;
 const MAX_LINE_CHARS = DEFAULT_MAX_LINE_CHARS;
@@ -44,9 +45,12 @@ function hostFromHttpUrl(url: string): string {
   return match?.[1] ?? url;
 }
 
+// Layers the shell/Python `#` and HTML `<!--` comment forms on top of the shared `isBasicCommentLine` base
+// (#4611) — this analyzer scans non-TS source (Dockerfiles, shell scripts, YAML) where `#` is a real comment
+// marker, unlike the shared base's TS/JS-only `//`/`/* `/`*` forms.
 function isCommentLine(line: string): boolean {
   const trimmed = line.trimStart();
-  return /^(?:\/\/|#|\/\*|\*|<!--)/.test(trimmed);
+  return isBasicCommentLine(line) || /^(?:#|<!--)/.test(trimmed);
 }
 
 function isImportLine(line: string): boolean {

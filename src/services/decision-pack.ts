@@ -1794,7 +1794,11 @@ function snapshotAgeMs(generatedAt: string): number {
   return Number.isFinite(parsed) ? Date.now() - parsed : Number.POSITIVE_INFINITY;
 }
 
-function authoritativeContributorRepoStats(
+/** The gittensor-official snapshot's repo stats when present, falling back to the last cached copy —
+ *  gittensor is the authoritative source when reachable, the cache is only a degrade-gracefully fallback for
+ *  when it isn't. Shared by every site that resolves a contributor's repo stats (#4611) — mcp/server.ts,
+ *  api/routes.ts, and queue/processors.ts all import this rather than redefining it. */
+export function authoritativeContributorRepoStats(
   gittensorSnapshot: Awaited<ReturnType<typeof fetchGittensorContributorSnapshot>>,
   cachedRepoStats: ContributorRepoStatRecord[],
 ) {

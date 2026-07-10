@@ -166,6 +166,7 @@ import { decidePendingAgentAction } from "../services/agent-approval-queue";
 import { explainScoreBreakdown } from "../services/score-breakdown";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import {
+  authoritativeContributorRepoStats,
   buildAndPersistContributorDecisionPack,
   CONTRIBUTOR_DECISION_PACK_SIGNAL,
   loadContributorDecisionPackForServing,
@@ -5202,14 +5203,6 @@ function enrichSyncSegment(segment: RepoSyncSegmentRecord) {
 
 function parseBackfillSegment(value: unknown): Extract<JobMessage, { type: "backfill-repo-segment" }>["segment"] | null {
   return value === "labels" || value === "open_issues" || value === "open_pull_requests" || value === "recent_merged_pull_requests" ? value : null;
-}
-
-function authoritativeContributorRepoStats(
-  gittensorSnapshot: Awaited<ReturnType<typeof fetchGittensorContributorSnapshot>>,
-  cachedRepoStats: Awaited<ReturnType<typeof listContributorRepoStats>>,
-) {
-  const officialRepoStats = contributorRepoStatsFromGittensor(gittensorSnapshot);
-  return officialRepoStats.length > 0 ? officialRepoStats : cachedRepoStats;
 }
 
 async function persistSignal(

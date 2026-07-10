@@ -28,6 +28,7 @@ import type { ComplexityFinding, EnrichRequest } from "../types.js";
 import { codeOnly } from "./secret-log.js";
 import { isTestPath } from "./test-ratio.js";
 import { DEFAULT_MAX_FINDINGS, DEFAULT_MAX_LINE_CHARS } from "./limits.js";
+import { isBasicCommentLine } from "./diff-lines.js";
 
 export const DEFAULT_MAX_COMPLEXITY = 10;
 const MAX_FINDINGS = DEFAULT_MAX_FINDINGS;
@@ -59,11 +60,6 @@ function isJsTsPath(path: string): boolean {
   return JS_TS_PATH_RE.test(path) && !isTestPath(path);
 }
 
-function isCommentLine(line: string): boolean {
-  const trimmed = line.trimStart();
-  return /^(?:\/\/|\/\*|\*)/.test(trimmed);
-}
-
 /** Count decision-point tokens (if/for/while/case/catch/&&/||/??) in one code fragment. Pure. */
 export function countDecisionPoints(code: string): number {
   let total = 0;
@@ -77,7 +73,7 @@ export function countDecisionPoints(code: string): number {
 /** The declared/assigned name when a line opens a named function declaration or an arrow function assigned to a
  *  const/let/var -- the same structural scope size-smell.ts's function detection uses. Pure. */
 export function functionNameFromLine(line: string): string | undefined {
-  if (isCommentLine(line)) return undefined;
+  if (isBasicCommentLine(line)) return undefined;
   const match = FUNCTION_OPEN_RE.exec(codeOnly(line));
   return match?.[1] ?? match?.[2];
 }
@@ -177,7 +173,7 @@ export function scanPatchForComplexity(
     if (line.startsWith("+")) {
       const body = line.slice(1);
       if (body.length <= MAX_LINE_CHARS) {
-        const commented = isCommentLine(body);
+        const commented = isBasicCommentLine(body);
         const code = codeOnly(body);
         pending = advancePendingFunction(pending, body, commented, code, newLine);
         if (pending && pending.depth <= 0) flushFunction();

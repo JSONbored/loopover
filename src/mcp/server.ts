@@ -86,7 +86,7 @@ import {
   preparePrPacketWithAgent,
   startAgentRun,
 } from "../services/agent-orchestrator";
-import { loadContributorDecisionPackForServing, repoDecisionFromPack } from "../services/decision-pack";
+import { authoritativeContributorRepoStats, loadContributorDecisionPackForServing, repoDecisionFromPack } from "../services/decision-pack";
 import { buildPublicPrBodyDraft } from "../services/pr-body-draft";
 import { buildRemediationPlan } from "../services/remediation-plan";
 import { deriveEligibilityPlan } from "../services/eligibility-plan";
@@ -3780,14 +3780,6 @@ function redactSensitiveForMcp(value: unknown): unknown {
       .filter(([key]) => !/hotkey|coldkey|wallet|private_key|privateKey|mnemonic|alphaPerDay|taoPerDay|usdPerDay/i.test(key))
       .map(([key, entry]) => [key, redactSensitiveForMcp(entry)]),
   );
-}
-
-function authoritativeContributorRepoStats(
-  gittensorSnapshot: Awaited<ReturnType<typeof fetchGittensorContributorSnapshot>>,
-  cachedRepoStats: Awaited<ReturnType<typeof listContributorRepoStats>>,
-) {
-  const officialRepoStats = contributorRepoStatsFromGittensor(gittensorSnapshot);
-  return officialRepoStats.length > 0 ? officialRepoStats : cachedRepoStats;
 }
 
 async function authenticateMcpRequest(c: AppContext): Promise<AuthIdentity | null> {

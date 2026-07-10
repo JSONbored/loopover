@@ -302,6 +302,7 @@ import {
   MAX_REVIEW_NAG_COOLDOWN_DAYS,
   isProtectedAutomationAuthor,
   planAgentMaintenanceActions,
+  type AgentActionPlanInput,
   type AgentDispositionLabelSettings,
   type PlannedAgentAction,
 } from "../settings/agent-actions";
@@ -2832,6 +2833,144 @@ async function maybeRunAgentMaintenance(
   }
 }
 
+/**
+ * Assemble the {@link AgentActionPlanInput} for {@link runAgentMaintenancePlanAndExecute}'s
+ * planAgentMaintenanceActions call from its ~30 already-resolved local signals (gate verdict, settings, live
+ * CI/merge/review state, guardrail + hold/match results, author flags, duplicate-cluster state). PURE — every
+ * input is already resolved by the caller; this only shapes them into the planner's input contract, so the
+ * shaping itself is unit-tested directly instead of only through the orchestrator (#4607).
+ */
+function buildAgentMaintenancePlanInput(args: {
+  gate: ReturnType<typeof evaluateGateCheck>;
+  settings: RepositorySettings;
+  changedPaths: string[];
+  hardGuardrailGlobs: string[];
+  authorIsOwner: boolean;
+  authorIsAdmin: boolean;
+  authorIsAutomationBot: boolean;
+  ciAggregate: LiveCiAggregate;
+  requiredContexts: Set<string> | null;
+  blacklistEntry: ReturnType<typeof findBlacklistEntry>;
+  screenshotTableMatch: AgentActionPlanInput["screenshotTableMatch"];
+  contributorCapMatch: AgentActionPlanInput["contributorCapMatch"];
+  linkedIssueHardRule: AgentActionPlanInput["linkedIssueHardRule"];
+  linkedIssueRulesConfig: Awaited<ReturnType<typeof loadLinkedIssueHardRules>>;
+  migrationCollisionHold: AgentActionPlanInput["migrationCollisionHold"];
+  unlinkedIssueMatchHold: AgentActionPlanInput["unlinkedIssueMatchHold"];
+  aiReviewLowConfidenceHold: AgentActionPlanInput["aiReviewLowConfidenceHold"];
+  unlinkedIssueMatchClose: AgentActionPlanInput["unlinkedIssueMatchClose"];
+  liveMergeState: string | undefined;
+  liveReviewDecision: string | undefined;
+  pr: PullRequestRecord;
+  openDuplicateSiblings: ReturnType<typeof linkedIssueDuplicatePullRequestRecordsForGate>;
+  duplicateWinnerEnabled: boolean;
+}): AgentActionPlanInput {
+  const {
+    gate,
+    settings,
+    changedPaths,
+    hardGuardrailGlobs,
+    authorIsOwner,
+    authorIsAdmin,
+    authorIsAutomationBot,
+    ciAggregate,
+    requiredContexts,
+    blacklistEntry,
+    screenshotTableMatch,
+    contributorCapMatch,
+    linkedIssueHardRule,
+    linkedIssueRulesConfig,
+    migrationCollisionHold,
+    unlinkedIssueMatchHold,
+    aiReviewLowConfidenceHold,
+    unlinkedIssueMatchClose,
+    liveMergeState,
+    liveReviewDecision,
+    pr,
+    openDuplicateSiblings,
+    duplicateWinnerEnabled,
+  } = args;
+  return {
+    conclusion: gate.conclusion,
+    blockerTitles: gate.blockers.map((blocker) => blocker.title),
+    // Public-safe finding identifiers retained for telemetry/action reasons. They no longer refute a blocker on
+    // green CI; once the gate says failure, the close/hold decision follows that verdict.
+    gateBlockerCodes: gate.blockers.map((blocker) => blocker.code),
+    autonomy: settings.autonomy,
+    autoMaintain: settings.autoMaintain,
+    slopGateMinScore: settings.slopGateMinScore,
+    changedPaths,
+    hardGuardrailGlobs,
+    manualReviewLabel: settings.manualReviewLabel,
+    readyToMergeLabel: settings.readyToMergeLabel,
+    changesRequestedLabel: settings.changesRequestedLabel,
+    migrationCollisionLabel: settings.migrationCollisionLabel,
+    pendingClosureLabel: settings.pendingClosureLabel,
+    authorIsOwner,
+    authorIsAdmin,
+    authorIsAutomationBot,
+    closeOwnerAuthors: settings.closeOwnerAuthors,
+    ciState: ciAggregate.ciState,
+    ciHasPending: ciAggregate.hasPending,
+    failingCheckNames: ciAggregate.failingDetails.map((detail) => detail.name),
+    ciRequiredContextsVerified: hasVerifiedRequiredContexts(requiredContexts),
+    ...(blacklistEntry !== null
+      ? { blacklistMatch: { matched: true, reason: blacklistEntry.reason } }
+      : {}),
+    // Always threaded (the DB layer populates it, default "slop"); the planner applies its own fallback.
+    blacklistLabel: settings.blacklistLabel,
+    ...(screenshotTableMatch !== undefined ? { screenshotTableMatch } : {}),
+    ...(contributorCapMatch !== undefined ? { contributorCapMatch } : {}),
+    // Always threaded (the DB layer populates it, default "over-contributor-limit"); the planner applies its
+    // own fallback.
+    contributorCapLabel: settings.contributorCapLabel,
+    ...(linkedIssueHardRule !== undefined ? { linkedIssueHardRule } : {}),
+    // Flag-then-close double-check: thread the loaded verify config so the planner FLAGS first then closes on
+    // re-verification (default ON). Only passed when a rule is on (the planner reads it only for a violation).
+    linkedIssueVerify: {
+      verifyBeforeClose: linkedIssueRulesConfig.verifyBeforeClose,
+      closeDelaySeconds: linkedIssueRulesConfig.closeDelaySeconds,
+    },
+    ...(migrationCollisionHold !== undefined ? { migrationCollisionHold } : {}),
+    ...(unlinkedIssueMatchHold !== undefined ? { unlinkedIssueMatchHold } : {}),
+    ...(aiReviewLowConfidenceHold !== undefined ? { aiReviewLowConfidenceHold } : {}),
+    ...(unlinkedIssueMatchClose !== undefined ? { unlinkedIssueMatchClose } : {}),
+    pr: {
+      mergeableState: liveMergeState ?? pr.mergeableState,
+      reviewDecision: liveReviewDecision ?? pr.reviewDecision,
+      slopRisk: pr.slopRisk,
+      labels: pr.labels,
+      // Duplicate-winner adjudication (#dup-winner): the gate's open-only duplicate siblings drive the close
+      // reason ("duplicate of another open PR" via agent-actions when count > 0). When the flag is ON and this
+      // PR is the cluster winner, force the count to 0 so the winner's close reason OMITS the duplicate cause
+      // (it can still close on its own merits — CI/conflict/blockers). Flag-OFF short-circuits ⇒ the real
+      // count is used (byte-identical). Sparse legacy rows fail closed so duplicate evidence remains visible.
+      linkedDuplicateCount: dupWinnerLinkedDuplicateCount(
+        openDuplicateSiblings,
+        pr.number,
+        pr.linkedIssueClaimedAt,
+        duplicateWinnerEnabled,
+        pr.createdAt,
+      ),
+      // #dup-winner-credit: name the cluster's actual winner in a loser's close comment instead of a generic
+      // "duplicate of another open PR". `null` (flag off, this PR IS the winner, or an ambiguous election)
+      // falls back to the pre-existing generic wording in agent-actions.ts, byte-identical to before this existed.
+      linkedDuplicateWinnerNumber: dupWinnerLinkedDuplicateWinnerNumber(
+        openDuplicateSiblings,
+        pr.number,
+        pr.linkedIssueClaimedAt,
+        duplicateWinnerEnabled,
+        pr.createdAt,
+      ),
+      headSha: pr.headSha,
+      mergeBlockedSha: pr.mergeBlockedSha,
+      approvedHeadSha: pr.approvedHeadSha,
+      authorLogin: pr.authorLogin,
+      linkedIssues: pr.linkedIssues,
+    },
+  };
+}
+
 /** The plan-and-execute critical section of {@link maybeRunAgentMaintenance}, extracted so the caller's
  *  per-PR lock (#2129) wraps it in a try/finally without reindenting this whole block. */
 async function runAgentMaintenancePlanAndExecute(
@@ -3230,85 +3369,33 @@ async function runAgentMaintenancePlanAndExecute(
   // gate failed SOLELY on a sub-aiReviewCloseConfidence-floor ai_consensus_defect/ai_review_split finding under
   // the (default) hold_for_review disposition. See resolveAiReviewLowConfidenceHold's own doc comment.
   const aiReviewLowConfidenceHold = resolveAiReviewLowConfidenceHold(gate, settings);
-  const planned = planAgentMaintenanceActions({
-    conclusion: gate.conclusion,
-    blockerTitles: gate.blockers.map((blocker) => blocker.title),
-    // Public-safe finding identifiers retained for telemetry/action reasons. They no longer refute a blocker on
-    // green CI; once the gate says failure, the close/hold decision follows that verdict.
-    gateBlockerCodes: gate.blockers.map((blocker) => blocker.code),
-    autonomy: settings.autonomy,
-    autoMaintain: settings.autoMaintain,
-    slopGateMinScore: settings.slopGateMinScore,
-    changedPaths,
-    hardGuardrailGlobs,
-    manualReviewLabel: settings.manualReviewLabel,
-    readyToMergeLabel: settings.readyToMergeLabel,
-    changesRequestedLabel: settings.changesRequestedLabel,
-    migrationCollisionLabel: settings.migrationCollisionLabel,
-    pendingClosureLabel: settings.pendingClosureLabel,
-    authorIsOwner,
-    authorIsAdmin,
-    authorIsAutomationBot,
-    closeOwnerAuthors: settings.closeOwnerAuthors,
-    ciState: ciAggregate.ciState,
-    ciHasPending: ciAggregate.hasPending,
-    failingCheckNames: ciAggregate.failingDetails.map((detail) => detail.name),
-    ciRequiredContextsVerified: hasVerifiedRequiredContexts(requiredContexts),
-    ...(blacklistEntry !== null
-      ? { blacklistMatch: { matched: true, reason: blacklistEntry.reason } }
-      : {}),
-    // Always threaded (the DB layer populates it, default "slop"); the planner applies its own fallback.
-    blacklistLabel: settings.blacklistLabel,
-    ...(screenshotTableMatch !== undefined ? { screenshotTableMatch } : {}),
-    ...(contributorCapMatch !== undefined ? { contributorCapMatch } : {}),
-    // Always threaded (the DB layer populates it, default "over-contributor-limit"); the planner applies its
-    // own fallback.
-    contributorCapLabel: settings.contributorCapLabel,
-    ...(linkedIssueHardRule !== undefined ? { linkedIssueHardRule } : {}),
-    // Flag-then-close double-check: thread the loaded verify config so the planner FLAGS first then closes on
-    // re-verification (default ON). Only passed when a rule is on (the planner reads it only for a violation).
-    linkedIssueVerify: {
-      verifyBeforeClose: linkedIssueRulesConfig.verifyBeforeClose,
-      closeDelaySeconds: linkedIssueRulesConfig.closeDelaySeconds,
-    },
-    ...(migrationCollisionHold !== undefined ? { migrationCollisionHold } : {}),
-    ...(unlinkedIssueMatchHold !== undefined ? { unlinkedIssueMatchHold } : {}),
-    ...(aiReviewLowConfidenceHold !== undefined ? { aiReviewLowConfidenceHold } : {}),
-    ...(unlinkedIssueMatchClose !== undefined ? { unlinkedIssueMatchClose } : {}),
-    pr: {
-      mergeableState: liveMergeState ?? pr.mergeableState,
-      reviewDecision: liveReviewDecision ?? pr.reviewDecision,
-      slopRisk: pr.slopRisk,
-      labels: pr.labels,
-      // Duplicate-winner adjudication (#dup-winner): the gate's open-only duplicate siblings drive the close
-      // reason ("duplicate of another open PR" via agent-actions when count > 0). When the flag is ON and this
-      // PR is the cluster winner, force the count to 0 so the winner's close reason OMITS the duplicate cause
-      // (it can still close on its own merits — CI/conflict/blockers). Flag-OFF short-circuits ⇒ the real
-      // count is used (byte-identical). Sparse legacy rows fail closed so duplicate evidence remains visible.
-      linkedDuplicateCount: dupWinnerLinkedDuplicateCount(
-        openDuplicateSiblings,
-        pr.number,
-        pr.linkedIssueClaimedAt,
-        duplicateWinnerEnabled,
-        pr.createdAt,
-      ),
-      // #dup-winner-credit: name the cluster's actual winner in a loser's close comment instead of a generic
-      // "duplicate of another open PR". `null` (flag off, this PR IS the winner, or an ambiguous election)
-      // falls back to the pre-existing generic wording in agent-actions.ts, byte-identical to before this existed.
-      linkedDuplicateWinnerNumber: dupWinnerLinkedDuplicateWinnerNumber(
-        openDuplicateSiblings,
-        pr.number,
-        pr.linkedIssueClaimedAt,
-        duplicateWinnerEnabled,
-        pr.createdAt,
-      ),
-      headSha: pr.headSha,
-      mergeBlockedSha: pr.mergeBlockedSha,
-      approvedHeadSha: pr.approvedHeadSha,
-      authorLogin: pr.authorLogin,
-      linkedIssues: pr.linkedIssues,
-    },
-  });
+  const planned = planAgentMaintenanceActions(
+    buildAgentMaintenancePlanInput({
+      gate,
+      settings,
+      changedPaths,
+      hardGuardrailGlobs,
+      authorIsOwner,
+      authorIsAdmin,
+      authorIsAutomationBot,
+      ciAggregate,
+      requiredContexts,
+      blacklistEntry,
+      screenshotTableMatch,
+      contributorCapMatch,
+      linkedIssueHardRule,
+      linkedIssueRulesConfig,
+      migrationCollisionHold,
+      unlinkedIssueMatchHold,
+      aiReviewLowConfidenceHold,
+      unlinkedIssueMatchClose,
+      liveMergeState,
+      liveReviewDecision,
+      pr,
+      openDuplicateSiblings,
+      duplicateWinnerEnabled,
+    }),
+  );
   // Accuracy circuit-breakers (#self-improve / GAP-4): two INDEPENDENT, fail-open precision breakers, chained.
   //   • MERGE breaker (holdonly:<scope>): when set, convert a would-MERGE into a human HOLD before executing.
   //   • CLOSE breaker (closehold:<scope>): when set, convert a HEURISTIC would-CLOSE into a human HOLD (the

@@ -51,6 +51,8 @@ export interface AgentHealth {
   dlqTargets?: FailedTarget[];
   reversals: number;
   reversalRate: number;
+  /** Merged + closed auto-actions in the 7d anomaly window — the reversalRate denominator. */
+  recentAutoActions: number;
   failedTargets?: FailedTarget[];
   reversedTargets?: ReversedTarget[];
   configIssues: string[];
@@ -229,6 +231,7 @@ export async function computeAgentHealth(env: Env, config: OpsAgentConfig, deps:
     dlqTargets,
     reversals,
     reversalRate: recentAutoActions ? Number((reversals / recentAutoActions).toFixed(3)) : 0,
+    recentAutoActions,
     failedTargets,
     reversedTargets,
     configIssues: deps.validateAgentConfig(config),

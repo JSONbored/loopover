@@ -251,6 +251,7 @@ describe("computeAgentHealth (native D1, default gate deps)", () => {
     expect(h.manualRate).toBe(0.2);
     expect(h.reversals).toBe(1);
     expect(h.reversalRate).toBe(0.5); // 1 reversal / 2 recent auto-actions
+    expect(h.recentAutoActions).toBe(2);
     expect(h.configIssues).toEqual([]);
     expect(h.frozen).toBe(false);
     expect(h.holdOnly).toBe(false);
@@ -547,6 +548,7 @@ describe("computeAgentHealth empty-ledger fallbacks", () => {
     expect(h.dlqTargets).toEqual([]);
     expect(h.reversals).toBe(0);
     expect(h.reversalRate).toBe(0); // recentAutoActions 0 → ternary false branch
+    expect(h.recentAutoActions).toBe(0);
   });
 
   it("computes manualRate with a present terminalCount but no manual rows (byStatus.manual ?? 0 fallback)", async () => {

@@ -33,6 +33,13 @@ describe("operator dashboard payload", () => {
       distribution: [],
       sampleSize: 0,
     });
+    expect(payload.agentHealth).toMatchObject({
+      reversals: 0,
+      reversalRate: 0,
+      manualRate: 0,
+      recentAutoActions: 0,
+      reversedTargets: [],
+    });
     // Empty fleet → instanceCount 0, null precision card ("—"), no-outlier delta.
     expect(payload.fleetMetrics.instanceCount).toBe(0);
     expect(payload.metrics).toEqual(

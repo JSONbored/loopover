@@ -26,6 +26,21 @@ export type PublicStats = {
     closed: number;
     accuracyPct: number | null;
   }>;
+  /** Trailing weekly history of totals.accuracyPct's SAME formula (#4447). */
+  accuracyTrend: Array<{
+    weekStart: string;
+    merged: number;
+    closed: number;
+    reversed: number;
+    accuracyPct: number | null;
+  }>;
+  /** Trailing weekly "how often we avoid redoing AI work" trend (#4448). */
+  reuseRateTrend: Array<{
+    weekStart: string;
+    hits: number;
+    misses: number;
+    reuseRatePct: number | null;
+  }>;
 };
 
 /** Relative "updated Ns ago" label from the payload's updatedAt (mirrors MetaStrip's freshness logic). */
@@ -54,4 +69,31 @@ export function formatTimeSaved(minutes: number): { value: number; unit: string 
     return { value: v, unit: v === 1 ? "hr" : "hrs" };
   }
   return { value: Math.round(minutes), unit: "min" };
+}
+
+const WEEK_LABEL_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  timeZone: "UTC",
+});
+
+/** "Jun 15" from a `weekStart` (YYYY-MM-DD, always a UTC Monday). Falls back to the raw string on a malformed
+ *  date rather than throwing or rendering "Invalid Date". */
+export function formatWeekLabel(weekStart: string): string {
+  const ms = Date.parse(`${weekStart}T00:00:00.000Z`);
+  return Number.isFinite(ms) ? WEEK_LABEL_FORMATTER.format(ms) : weekStart;
+}
+
+/** A single trend chart's plot-ready point: a chart-agnostic {label, value} pair for a fixed X/Y encoding
+ *  (recharts, or any other renderer). `value` is null for a week below its own MIN_SAMPLE floor -- the caller
+ *  decides how to render a gap (recharts breaks a Line's segment at a null point by default, which is exactly
+ *  the "insufficient data" signal a reader should see rather than a fabricated 0%). */
+export type TrendPoint = { label: string; value: number | null };
+
+/** Shared shape both accuracyTrend and reuseRateTrend already satisfy -- a week label plus a nullable percent. */
+export function toTrendPoints<T extends { weekStart: string }>(
+  weeks: ReadonlyArray<T>,
+  pct: (week: T) => number | null,
+): TrendPoint[] {
+  return weeks.map((week) => ({ label: formatWeekLabel(week.weekStart), value: pct(week) }));
 }

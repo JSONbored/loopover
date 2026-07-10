@@ -186,6 +186,28 @@ export async function fetchOfficialGittensorMiner(login: string): Promise<Offici
   }
 }
 
+/**
+ * #4520: the full set of confirmed Gittensor miner GitHub logins (lowercased), fetched in ONE call. For a
+ * caller that needs to classify MANY distinct submitters at once (e.g. a maintainer-dashboard miner-vs-human
+ * cohort split over a window of PRs) -- looping fetchOfficialGittensorMiner per submitter would mean up to N
+ * cold-cache network calls instead of one. Fail-safe: any fetch/parse error degrades to an EMPTY set (nobody
+ * classified as a miner), matching this codebase's "unconfirmed defaults to not-a-miner" convention -- a
+ * cohort-split read can never fail (or misclassify a human as a miner) just because this call errored.
+ */
+export async function fetchOfficialGittensorMinerLogins(): Promise<ReadonlySet<string>> {
+  try {
+    const miners = await fetchJson<GittensorMinerSummaryResponse[]>(`${GITTENSOR_API_BASE}/miners`);
+    const logins = new Set<string>();
+    for (const miner of miners) {
+      const login = miner.githubUsername?.toLowerCase();
+      if (login) logins.add(login);
+    }
+    return logins;
+  } catch {
+    return new Set();
+  }
+}
+
 export function contributorRepoStatsFromGittensor(snapshot: GittensorContributorSnapshot | null): ContributorRepoStatRecord[] {
   if (!snapshot) return [];
   return snapshot.repositories.map((repo) => ({

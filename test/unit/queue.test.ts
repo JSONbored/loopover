@@ -26960,6 +26960,9 @@ describe("queue processors", () => {
         if (url === "https://api.gittensor.io/miners") return Response.json([]);
         if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
         if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+        // #4359: commitE2eTestToPrBranch re-fetches the live PR to verify the head branch/commit hasn't
+        // moved since this pass cached it, before ever writing -- must match seedCheckboxPr's own head.
+        if (url.endsWith("/pulls/6011") && method === "GET") return Response.json({ head: { ref: "feature/checkout-retry", sha: "checkbox-4589-commit-sha", repo: { full_name: repoFullName } } });
         if (url.includes("/git/commits/checkbox-4589-commit-sha") && method === "GET") return Response.json({ tree: { sha: "base-tree" } });
         if (url.includes("/git/trees") && method === "POST") {
           gitWrites.push("tree");

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner } from "../../src/gittensor/api";
+import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, fetchOfficialGittensorMinerLogins } from "../../src/gittensor/api";
 
 describe("Gittensor API contributor snapshots", () => {
   afterEach(() => {
@@ -274,5 +274,45 @@ describe("Gittensor API contributor snapshots", () => {
     expect(contributorRepoStatsFromGittensor(snapshot)).toEqual(
       expect.arrayContaining([expect.objectContaining({ login: "jsonbored", repoFullName: "owner/issues", issues: 2, lastActivityAt: "2026-05-25T00:00:00.000Z" })]),
     );
+  });
+});
+
+// #4520: the batch (fetch-once, classify-many) counterpart to fetchOfficialGittensorMiner above -- for a
+// caller (a maintainer-dashboard miner-vs-human cohort split) that needs to classify many distinct
+// submitters at once without one network call per login.
+describe("fetchOfficialGittensorMinerLogins (#4520)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns the lowercased login set from the full miner list in one call", async () => {
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      return Response.json([
+        { githubUsername: "Miner-Alice", githubId: "1" },
+        { githubUsername: "miner-bob", githubId: "2" },
+      ]);
+    });
+    const logins = await fetchOfficialGittensorMinerLogins();
+    expect(logins).toEqual(new Set(["miner-alice", "miner-bob"]));
+    expect(calls).toBe(1);
+  });
+
+  it("skips a miner entry with no githubUsername rather than adding an undefined/empty login", async () => {
+    vi.stubGlobal("fetch", async () => Response.json([{ githubId: "1" }, { githubUsername: "miner-carol", githubId: "2" }]));
+    expect(await fetchOfficialGittensorMinerLogins()).toEqual(new Set(["miner-carol"]));
+  });
+
+  it("returns an empty set (never throws) when the Gittensor API call fails", async () => {
+    vi.stubGlobal("fetch", async () => new Response("service unavailable", { status: 503 }));
+    expect(await fetchOfficialGittensorMinerLogins()).toEqual(new Set());
+  });
+
+  it("returns an empty set (never throws) on a network-level rejection", async () => {
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("network down");
+    });
+    expect(await fetchOfficialGittensorMinerLogins()).toEqual(new Set());
   });
 });

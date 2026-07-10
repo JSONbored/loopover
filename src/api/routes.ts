@@ -2497,14 +2497,21 @@ export function createApp() {
   // #554 gate false-positive telemetry: is the gate PRECISE? Read-only measurement of blocked-then-merged
   // (and overridden) per gate type — the evidence a maintainer needs before promoting a gate to block. NEVER
   // adjusts a gate. Maintainer-authenticated, repo-scoped; no public route. Optional ?windowDays bounds the
-  // block ledger window.
+  // block ledger window. Optional ?includeCohorts=true (#4520) adds an additive miner-vs-human split — an
+  // extra Gittensor API call, so it's opt-in rather than always computed.
   app.get("/v1/repos/:owner/:repo/gate-precision", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     const gate = await requireRepoMaintainer(c, fullName);
     if (gate instanceof Response) return gate;
     const windowDaysRaw = Number(c.req.query("windowDays"));
     const windowDays = windowDaysRaw > 0 ? windowDaysRaw : undefined;
-    return c.json(await loadGatePrecisionReport(c.env, fullName, windowDays !== undefined ? { windowDays } : {}));
+    const includeCohorts = c.req.query("includeCohorts") === "true";
+    return c.json(
+      await loadGatePrecisionReport(c.env, fullName, {
+        ...(windowDays !== undefined ? { windowDays } : {}),
+        ...(includeCohorts ? { includeCohorts } : {}),
+      }),
+    );
   });
 
   // #2228 maintainer queue-noise triage: read-only report for MCP stdio proxy + maintainer tooling.

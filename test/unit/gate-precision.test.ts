@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildGatePrecisionReport, buildGatePrecisionSignals, loadGatePrecisionReport } from "../../src/services/gate-precision";
 import type { GatePrecisionPerType } from "../../src/services/gate-precision";
 import {
@@ -16,8 +16,9 @@ function block(pullNumber: number, blockerCodes: string[], overridden = false): 
 }
 
 // A resolved PR: `merged` → has a merge timestamp (a false positive when it was also blocked); otherwise
-// closed-unmerged (the block held). `open` PRs have no terminal outcome yet.
-function pr(number: number, outcome: "merged" | "closed" | "open"): PullRequestRecord {
+// closed-unmerged (the block held). `open` PRs have no terminal outcome yet. `authorLogin` is optional
+// (#4520 cohort-split tests only) — omitted matches every pre-existing call site exactly.
+function pr(number: number, outcome: "merged" | "closed" | "open", authorLogin?: string): PullRequestRecord {
   return {
     repoFullName: "owner/repo",
     number,
@@ -26,6 +27,7 @@ function pr(number: number, outcome: "merged" | "closed" | "open"): PullRequestR
     mergedAt: outcome === "merged" ? "2026-06-01T00:00:00.000Z" : null,
     labels: [],
     linkedIssues: [],
+    ...(authorLogin !== undefined ? { authorLogin } : {}),
   };
 }
 
@@ -95,6 +97,58 @@ describe("buildGatePrecisionReport", () => {
     const report = buildGatePrecisionReport([own, other], [pr(1, "merged"), otherPr, nullRepoPr], { repoFullName: "owner/repo" });
     // Only owner/repo's single block counts; other/repo's block + merged PR (and the null-repo PR) are filtered out.
     expect(report.overall).toMatchObject({ blocked: 1, blockedThenMerged: 1 });
+  });
+});
+
+// #4520: additive miner-vs-human split, only computed when options.minerLogins is supplied. Reuses the SAME
+// blocked/blockedThenMerged/overridden fold every existing test above already exercises for the blended
+// report — these tests only pin the NEW split behavior, not the fold itself.
+describe("buildGatePrecisionReport cohort split (#4520)", () => {
+  it("is absent from the report when minerLogins is not supplied (byte-identical to before the split existed)", () => {
+    const report = buildGatePrecisionReport([block(1, ["x"])], [pr(1, "merged", "some-miner")]);
+    expect(report.cohorts).toBeUndefined();
+  });
+
+  it("splits blocked/blockedThenMerged/overridden between miner and human authors, each independently below/above MIN_SAMPLE", () => {
+    const minerLogins = new Set(["miner-alice"]);
+    // Miner: 2 blocks, 1 merged (below MIN_SAMPLE=5 -> null rate). Human: 6 blocks, 3 merged (>= 5 -> real rate).
+    const blocks = [
+      block(1, ["x"]), block(2, ["x"]),
+      block(10, ["x"]), block(11, ["x"]), block(12, ["x"], true), block(13, ["x"]), block(14, ["x"]), block(15, ["x"]),
+    ];
+    const prs = [
+      pr(1, "merged", "miner-alice"), pr(2, "closed", "miner-alice"),
+      pr(10, "merged", "human-bob"), pr(11, "merged", "human-bob"), pr(12, "merged", "human-bob"),
+      pr(13, "closed", "human-bob"), pr(14, "closed", "human-bob"), pr(15, "closed", "human-bob"),
+    ];
+    const report = buildGatePrecisionReport(blocks, prs, { minerLogins });
+    expect(report.cohorts?.miner.overall).toMatchObject({ blocked: 2, blockedThenMerged: 1, falsePositiveRate: null });
+    expect(report.cohorts?.human.overall).toMatchObject({ blocked: 6, blockedThenMerged: 3, falsePositiveRate: 0.5 });
+    expect(report.cohorts?.human.perGateType[0]).toMatchObject({ overridden: 1 });
+    // The blended totals are UNCHANGED by the split -- miner + human always reconciles to overall.
+    expect(report.overall).toMatchObject({ blocked: 8, blockedThenMerged: 4 });
+  });
+
+  it("classifies an unresolvable author (no PR record, or no authorLogin) as human -- never over-classifies as miner", () => {
+    const minerLogins = new Set(["miner-alice"]);
+    // pr 1: authorLogin present but blank; pr 2: no matching PR record at all (block cites pullNumber 3).
+    const blocks = [block(1, ["x"]), block(3, ["x"])];
+    const prs = [pr(1, "merged", "")];
+    const report = buildGatePrecisionReport(blocks, prs, { minerLogins });
+    expect(report.cohorts?.miner.overall.blocked).toBe(0);
+    expect(report.cohorts?.human.overall.blocked).toBe(2);
+  });
+
+  it("is case-insensitive when matching a PR author against minerLogins", () => {
+    const minerLogins = new Set(["miner-alice"]);
+    const report = buildGatePrecisionReport([block(1, ["x"])], [pr(1, "merged", "Miner-Alice")], { minerLogins });
+    expect(report.cohorts?.miner.overall.blocked).toBe(1);
+    expect(report.cohorts?.human.overall.blocked).toBe(0);
+  });
+
+  it("carries no actor login in the cohort split either (privacy — only aggregate counts)", () => {
+    const report = buildGatePrecisionReport([block(1, ["x"])], [pr(1, "merged", "miner-alice")], { minerLogins: new Set(["miner-alice"]) });
+    expect(JSON.stringify(report.cohorts)).not.toMatch(/miner-alice|login|actor/i);
   });
 });
 
@@ -198,5 +252,45 @@ describe("loadGatePrecisionReport (env loader)", () => {
     expect(windowed).toHaveLength(1);
     // No repoFullName → unscoped listing (exercises the absent-repo branch + the empty-conditions path).
     expect(await listGateOutcomes(env, {})).toHaveLength(1);
+  });
+
+  // #4520: includeCohorts fetches the full miner login set ONCE (not omitted) and threads it through.
+  it("includeCohorts fetches the miner login set once and produces a miner-vs-human split", async () => {
+    const env = createTestEnv();
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 1, blockerCodes: ["slop_risk"] });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 1, title: "merged", state: "closed", user: { login: "miner-alice" }, merged_at: "2026-06-01T00:00:00.000Z" });
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 2, blockerCodes: ["slop_risk"] });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 2, title: "closed", state: "closed", user: { login: "human-bob" } });
+    let minersCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") {
+        minersCalls += 1;
+        return Response.json([{ uid: 1, githubUsername: "miner-alice", githubId: "1" }]);
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const withoutCohorts = await loadGatePrecisionReport(env, "owner/repo");
+    expect(withoutCohorts.cohorts).toBeUndefined();
+    expect(minersCalls).toBe(0); // opt-in only -- the default path never spends the extra Gittensor API call
+
+    const withCohorts = await loadGatePrecisionReport(env, "owner/repo", { includeCohorts: true });
+    expect(minersCalls).toBe(1);
+    expect(withCohorts.cohorts?.miner.overall).toMatchObject({ blocked: 1, blockedThenMerged: 1 });
+    expect(withCohorts.cohorts?.human.overall).toMatchObject({ blocked: 1, blockedThenMerged: 0 });
+    vi.unstubAllGlobals();
+  });
+
+  it("includeCohorts degrades to an EMPTY miner set (every author reads as human) when the Gittensor API call fails", async () => {
+    const env = createTestEnv();
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 1, blockerCodes: ["x"] });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 1, title: "merged", state: "closed", user: { login: "miner-alice" }, merged_at: "2026-06-01T00:00:00.000Z" });
+    vi.stubGlobal("fetch", async () => new Response("service unavailable", { status: 503 }));
+
+    const report = await loadGatePrecisionReport(env, "owner/repo", { includeCohorts: true });
+    expect(report.cohorts?.miner.overall.blocked).toBe(0);
+    expect(report.cohorts?.human.overall.blocked).toBe(1);
+    vi.unstubAllGlobals();
   });
 });

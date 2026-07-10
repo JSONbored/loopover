@@ -826,6 +826,13 @@ describe("api routes", () => {
     // No windowDays → full window (covers the param-absent path).
     const gatePrecisionNoWindow = await app.request("/v1/repos/entrius/allways-ui/gate-precision", { headers: apiHeaders(env) }, env);
     await expect(gatePrecisionNoWindow.json()).resolves.toMatchObject({ windowDays: null });
+    // #4520: ?includeCohorts=true reuses this test's own already-stubbed /miners endpoint (above) -- an
+    // opt-in extra Gittensor API call, so the default requests above must never trigger it.
+    const gatePrecisionCohorts = await app.request("/v1/repos/entrius/allways-ui/gate-precision?includeCohorts=true", { headers: apiHeaders(env) }, env);
+    expect(gatePrecisionCohorts.status).toBe(200);
+    await expect(gatePrecisionCohorts.json()).resolves.toMatchObject({
+      cohorts: { miner: { overall: expect.any(Object) }, human: { overall: expect.any(Object) } },
+    });
 
     const maintainerNoiseUnauthenticated = await app.request("/v1/repos/entrius/allways-ui/maintainer-noise", {}, env);
     expect(maintainerNoiseUnauthenticated.status).toBe(401);

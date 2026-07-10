@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   claimMaintainerRecapPeriod,
   claimRegateFanoutSlot,
+  claimBacklogConvergenceFanoutSlot,
   countRecentDeadLetters,
   countRecentDeadLettersByType,
   countRecentAuditEventsForActorAndTarget,
@@ -21,6 +22,7 @@ import {
   listRepoSyncStates,
   markPullRequestRegated,
   markPullRequestsRegated,
+  markPullRequestsBacklogConvergenceRegated,
   markPullRequestSurfacePublished,
   recordAuditEvent,
   recordWebhookEvent,
@@ -350,6 +352,25 @@ describe("database row parser hardening", () => {
     expect(rows.find((p) => p.number === 6)?.lastRegatedAt ?? null).toBeNull(); // #6 not in the batch → untouched
   });
 
+  it("markPullRequestsBacklogConvergenceRegated batch-stamps every candidate at dispatch and no-ops on an empty list (#4502)", async () => {
+    const env = createTestEnv();
+    for (const number of [5, 6, 7]) {
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number, title: `PR${number}`, state: "open", user: { login: "alice" }, labels: [] });
+    }
+    const stampedAt = async (number: number) =>
+      (await env.DB.prepare("select last_backlog_convergence_regated_at as v from pull_requests where repo_full_name = ? and number = ?").bind("owner/repo", number).first<{ v: string | null }>())?.v ?? null;
+
+    await markPullRequestsBacklogConvergenceRegated(env, "owner/repo", []); // empty → no-op (early return)
+    expect(await stampedAt(5)).toBeNull();
+    expect(await stampedAt(6)).toBeNull();
+    expect(await stampedAt(7)).toBeNull();
+
+    await markPullRequestsBacklogConvergenceRegated(env, "owner/repo", [5, 7]); // batch stamps only 5 and 7
+    expect(typeof (await stampedAt(5))).toBe("string");
+    expect(typeof (await stampedAt(7))).toBe("string");
+    expect(await stampedAt(6)).toBeNull(); // #6 not in the batch → untouched
+  });
+
   it("claimRegateFanoutSlot collapses a burst to one winner per window (#audit-fanout-dedup)", async () => {
     const env = createTestEnv();
     const W = 90 * 1000;
@@ -392,6 +413,12 @@ describe("database row parser hardening", () => {
     const env = createTestEnv();
     const broken = { ...env, DB: null } as unknown as typeof env;
     expect(await claimRegateFanoutSlot(broken, "2026-06-25T01:00:00.000Z", 90 * 1000)).toBe(true);
+  });
+
+  it("claimBacklogConvergenceFanoutSlot fails open (returns true) on a DB error so the fleet never stalls (#4502)", async () => {
+    const env = createTestEnv();
+    const broken = { ...env, DB: null } as unknown as typeof env;
+    expect(await claimBacklogConvergenceFanoutSlot(broken, "2026-06-25T01:00:00.000Z", 90 * 1000)).toBe(true);
   });
 
   it("claimMaintainerRecapPeriod: first claim for a period wins, a retry for the SAME period loses, a DIFFERENT period wins again (#2249)", async () => {

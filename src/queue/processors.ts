@@ -54,11 +54,14 @@ import {
   getCachedLinkedIssueSatisfaction,
   putCachedLinkedIssueSatisfaction,
   markPullRequestsRegated,
+  markPullRequestsBacklogConvergenceRegated,
   markPullRequestReviewsInvalidated,
   markPullRequestSurfacePublished,
   markPullRequestVisualCaptureSatisfied,
   getLatestRegatedAt,
+  getLatestBacklogConvergenceRegatedAt,
   claimRegateFanoutSlot,
+  claimBacklogConvergenceFanoutSlot,
   recordAgentCommandFeedback,
   recordAuditEvent,
   countRecentAuditEventsForActorAndTarget,
@@ -265,6 +268,7 @@ import {
   ISSUE_WAKE_MAX_PRS,
   MERGE_WAKE_MAX_PRS,
   SWEEP_FANOUT_DEDUP_MS,
+  BACKLOG_CONVERGENCE_SWEEP_FRESHNESS_MS,
   SWEEP_MAX_PRS,
   isRegateSweepDraining,
   selectRegateCandidates,
@@ -2076,15 +2080,26 @@ async function sweepRepoRegate(
 
 // #selfhost-backlog-convergence: the cron (index.ts) enqueues one fan-out trigger periodically; this enqueues a
 // per-repo sweep job for every repo eligible for convergence (the SAME repo selection as the re-gate sweep, so
-// a repo that opted the agent in — or is explicitly convergence-allowlisted — gets both). Deliberately has no
-// fan-out dedup CAS (contrast fanOutAgentRegateSweepJobs): unlike that sweep, this one stamps nothing
-// optimistically, so a second overlapping trigger just re-reads current state and re-enqueues, which coalesces
-// harmlessly into the same pending agent-regate-pr rows (queue-common.ts's job_key coalescing) rather than
-// duplicating work.
+// a repo that opted the agent in — or is explicitly convergence-allowlisted — gets both). #4502: now mirrors
+// fanOutAgentRegateSweepJobs's three-layer anti-duplication shape exactly — an atomic fan-out-slot claim
+// (claimBacklogConvergenceFanoutSlot) collapses a BURST of this trigger, and the per-repo resolution below skips
+// any repo whose prior fan-out is still draining (getLatestBacklogConvergenceRegatedAt / isRegateSweepDraining) —
+// closing the gap where a crashed/restarted worker's stuck "processing" trigger row went unnoticed by the next
+// 30-min tick and re-enqueued duplicate per-repo (and per-PR) jobs underneath the still-in-flight one.
 async function fanOutBacklogConvergenceSweepJobs(
   env: Env,
   requestedBy: "schedule" | "api" | "test",
 ): Promise<void> {
+  const now = nowIso();
+  if (!(await claimBacklogConvergenceFanoutSlot(env, now, SWEEP_FANOUT_DEDUP_MS))) {
+    await recordAuditEvent(env, {
+      eventType: "agent.sweep.backlog_convergence.fanout",
+      outcome: "denied",
+      detail: "backlog-convergence fan-out deduped: another fan-out already claimed this window",
+      metadata: { requestedBy, deduped: true },
+    });
+    return;
+  }
   const repositoriesByKey = new Map((await listRepositories(env)).map((repo) => [repo.fullName.toLowerCase(), repo]));
   const byKey = new Map<string, { fullName: string; installationId?: number }>();
   for (const repo of repositoriesByKey.values())
@@ -2096,12 +2111,39 @@ async function fanOutBacklogConvergenceSweepJobs(
       ...(typeof repo?.installationId === "number" ? { installationId: repo.installationId } : {}),
     });
   }
+  // #4502 (ports #3899): resolve every repo's settings + drain-state CONCURRENTLY (bounded), not one at a time —
+  // mirrors fanOutAgentRegateSweepJobs's own port of this fix, the same "many small per-repo D1/KV reads" shape.
+  const outcomes = await mapWithConcurrencyLimit(
+    [...byKey.values()],
+    SWEEP_FANOUT_RESOLUTION_CONCURRENCY,
+    async (repo): Promise<SweepFanoutResolutionOutcome> => {
+      const repoFullName = repo.fullName;
+      try {
+        const settings = await resolveRepositorySettings(env, repoFullName);
+        if (!(isConvergenceRepoAllowed(env, repoFullName) || isAgentConfigured(settings.autonomy))) return { kind: "ineligible" };
+        if (isRegateSweepDraining(await getLatestBacklogConvergenceRegatedAt(env, repoFullName), now, BACKLOG_CONVERGENCE_SWEEP_FRESHNESS_MS))
+          return { kind: "draining" };
+        return { kind: "configured", repo };
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "backlog_convergence_fanout_repo_check_failed",
+            repository: repoFullName,
+            error: errorMessage(error),
+          }),
+        );
+        return { kind: "errored" };
+      }
+    },
+  );
   const configured: Array<{ fullName: string; installationId?: number }> = [];
-  for (const repo of byKey.values()) {
-    const settings = await resolveRepositorySettings(env, repo.fullName);
-    if (isConvergenceRepoAllowed(env, repo.fullName) || isAgentConfigured(settings.autonomy)) {
-      configured.push(repo);
-    }
+  let skippedDraining = 0;
+  let skippedErrored = 0;
+  for (const outcome of outcomes) {
+    if (outcome.kind === "configured") configured.push(outcome.repo);
+    else if (outcome.kind === "draining") skippedDraining += 1;
+    else if (outcome.kind === "errored") skippedErrored += 1;
   }
   await Promise.all(
     configured.map((repo, index) => {
@@ -2112,15 +2154,25 @@ async function fanOutBacklogConvergenceSweepJobs(
         ...(typeof repo.installationId === "number" ? { installationId: repo.installationId } : {}),
       };
       const delaySeconds = Math.min(index * 10, 600);
-      return delaySeconds > 0
-        ? env.JOBS.send(message, { delaySeconds })
-        : env.JOBS.send(message);
+      const send = delaySeconds > 0 ? env.JOBS.send(message, { delaySeconds }) : env.JOBS.send(message);
+      // #audit-sweep-fanout-isolation (mirrors fanOutAgentRegateSweepJobs): one repo's dispatch failure must not
+      // reject this Promise.all and abort every OTHER repo's already-in-flight send.
+      return send.catch((error) => {
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "backlog_convergence_fanout_dispatch_failed",
+            repository: repo.fullName,
+            error: errorMessage(error),
+          }),
+        );
+      });
     }),
   );
   await recordAuditEvent(env, {
     eventType: "agent.sweep.backlog_convergence.fanout",
     outcome: "queued",
-    metadata: { repoCount: configured.length, requestedBy },
+    metadata: { repoCount: configured.length, skippedDraining, skippedErrored, requestedBy },
   });
 }
 
@@ -2215,6 +2267,24 @@ async function sweepRepoBacklogConvergence(
   const openPullRequests = await listOpenPullRequests(env, repoFullName);
   const candidates = selectBacklogConvergenceCandidates({ pulls: openPullRequests });
   if (candidates.length === 0) return;
+  // Stamp the backlog-convergence draining marker for EVERY candidate NOW, at dispatch — not in the downstream
+  // per-PR job (#4502, mirrors #audit-sweep-dispatch-stamp). This makes getLatestBacklogConvergenceRegatedAt
+  // reflect this sweep immediately, so fanOutBacklogConvergenceSweepJobs's in-flight guard skips re-arming this
+  // repo on the next cron tick BEFORE the staggered per-PR re-reviews finish. A plain D1 write → dry-run stays inert.
+  await markPullRequestsBacklogConvergenceRegated(
+    env,
+    repoFullName,
+    candidates.map((pr) => pr.number),
+  ).catch((error) => {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "backlog_convergence_mark_regated_failed",
+        repository: repoFullName,
+        error: errorMessage(error),
+      }),
+    );
+  });
   await Promise.all(
     candidates.map((pr, index) => {
       const job: JobMessage = {

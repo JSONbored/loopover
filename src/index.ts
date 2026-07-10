@@ -28,6 +28,12 @@ const app = createApp();
 // per-repo drain guard (getLatestRegatedAt / isRegateSweepDraining) already protects individual repos once that
 // single fan-out runs, so this only needs to stop a SECOND trigger from queuing up behind the first.
 const REGATE_SWEEP_TRIGGER_TYPES = ["agent-regate-sweep"] as const;
+// Same shape as REGATE_SWEEP_TRIGGER_TYPES, scoped to backlog-convergence-sweep's own top-level trigger (#4502):
+// its per-repo draining guard (getLatestBacklogConvergenceRegatedAt / isRegateSweepDraining) already protects
+// individual repos once a fan-out runs, so this only needs to stop a SECOND trigger queuing up behind the first
+// — the gap that let a crashed/restarted worker's stuck "processing" trigger row (reclaimed only after
+// queueProcessingTimeoutMs(), which defaults to this sweep's own 30-min cadence) go unnoticed by the next tick.
+const BACKLOG_CONVERGENCE_SWEEP_TRIGGER_TYPES = ["backlog-convergence-sweep"] as const;
 
 export { RateLimiter };
 
@@ -175,7 +181,17 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     // jobs above: it is a backstop for a rare stranding, not the primary convergence path, so it does not need the
     // sweep's ~2-min cadence. Self-host only (mirrors "agent-regate-sweep") — the trigger job itself is maintenance-
     // classified (MAINTENANCE_JOB_TYPES) so it defers under live-work pressure like every other periodic sweep here.
-    if (selfHostedReviews) jobs.push({ type: "backlog-convergence-sweep", requestedBy: "schedule" });
+    if (selfHostedReviews) {
+      const backlogConvergenceTriggerBacklog = queueSnapshotBacklog(queueSnapshot, BACKLOG_CONVERGENCE_SWEEP_TRIGGER_TYPES);
+      if (backlogConvergenceTriggerBacklog > 0) {
+        // A fan-out trigger is already pending/processing (#4502) — skip re-arming so a crashed/restarted worker's
+        // stuck row (reclaimed only after queueProcessingTimeoutMs(), which coincides with this sweep's own 30-min
+        // cadence) cannot go unnoticed by the next tick and duplicate per-repo/per-PR work underneath it.
+        console.log(JSON.stringify({ event: "backlog_convergence_sweep_trigger_backlog_deferred", backlog: backlogConvergenceTriggerBacklog }));
+      } else {
+        jobs.push({ type: "backlog-convergence-sweep", requestedBy: "schedule" });
+      }
+    }
   }
   // Self-heal (flag GITTENSORY_PR_RECONCILIATION). Every 10 minutes — see isReconciliationWindow above.
   // Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never created, so the cron tick does

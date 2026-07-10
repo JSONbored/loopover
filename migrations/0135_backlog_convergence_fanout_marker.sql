@@ -1,0 +1,14 @@
+-- Fan-out dedup marker for backlog-convergence-sweep (#4502), mirroring last_regate_fanout_at (0063) with a
+-- DISTINCT column so the two sweeps' dedup windows never interfere with each other.
+--
+-- BEFORE: fanOutBacklogConvergenceSweepJobs has no atomic dedup -- a burst of fan-out trigger jobs (a
+-- deploy-restart cron catch-up, or triggers queued behind a backlogged consumer and drained together) each
+-- re-enumerate eligible repos and re-enqueue duplicate per-repo sweeps before the (0134) dispatch-stamp
+-- in-flight guard can engage.
+--
+-- AFTER: claimBacklogConvergenceFanoutSlot performs an atomic conditional UPDATE on this singleton column,
+-- mirroring claimRegateFanoutSlot (0063) -- D1 serializes writes, so only ONE concurrent fan-out's UPDATE
+-- matches the "unset or older than the dedup window" predicate and proceeds.
+--
+-- Reuses the global_agent_controls singleton (0059); nullable / no default -> backward-compatible.
+ALTER TABLE global_agent_controls ADD COLUMN last_backlog_convergence_fanout_at TEXT;

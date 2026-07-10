@@ -470,6 +470,11 @@ export const pullRequests = sqliteTable(
     // review WRITE that would bump updated_at is suppressed (dry-run / paused). gittensory-computed (sweep-written),
     // omitted from the GitHub-sync SET clause so a later sync cannot clobber it. (Mirrors approved_head_sha.)
     lastRegatedAt: text("last_regated_at"),
+    // Draining guard for backlog-convergence-sweep (#4502), mirroring lastRegatedAt but scoped to THIS sweep --
+    // stamped at dispatch by sweepRepoBacklogConvergence, read by fanOutBacklogConvergenceSweepJobs to skip a
+    // repo whose prior fan-out is still draining. Kept separate from lastRegatedAt so the two differently-cadenced
+    // sweeps' in-flight signals never conflate. gittensory-computed, omitted from the GitHub-sync SET clause.
+    lastBacklogConvergenceRegatedAt: text("last_backlog_convergence_regated_at"),
     // Public-surface marker: the head SHA at which the public surface (comment/label/check-run) was LAST published.
     // Used for reporting and stale-surface diagnostics, not as a hard sweep skip; GitHub comments/checks can still
     // be stale or partial while this marker matches headSha. gittensory-computed (publish-written), omitted from

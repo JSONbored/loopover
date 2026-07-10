@@ -31104,6 +31104,185 @@ describe("backlog-convergence sweep (#selfhost-backlog-convergence)", () => {
     expect(meta).toMatchObject({ repoFullName: "owner/agent-repo", openCount: 4, examined: 3 });
     expect(meta.candidatePulls.sort((a: number, b: number) => a - b)).toEqual([7, 8, 10]);
   });
+
+  it("REGRESSION (#4502, #audit-sweep-dispatch-stamp): ONE sweep stamps ALL candidates AT DISPATCH, so the next fan-out skips the repo as draining — no overlapping sweeps", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    await upsertInstallation(env, { action: "created", installation: { id: 9510, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9510);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" } });
+    for (const number of [7, 8, 9]) {
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number, title: `PR${number}`, state: "open", user: { login: "c" }, head: { sha: `a${number}` }, labels: [], body: "" });
+    }
+
+    // Run ONE per-repo sweep — do NOT drain the per-PR jobs (simulate the staggered re-reviews not having run yet).
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
+
+    // The marker is stamped for EVERY candidate immediately at dispatch — NOT waiting on the per-PR jobs.
+    const stamped = await env.DB.prepare("select count(*) as n from pull_requests where repo_full_name = ? and last_backlog_convergence_regated_at is not null").bind("owner/agent-repo").first<{ n: number }>();
+    expect(stamped?.n).toBe(3);
+
+    // So the very next cron fan-out sees the fresh stamp and SKIPS this repo as draining — the overlap that would
+    // duplicate per-PR jobs is gone.
+    sent.length = 0;
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "schedule" });
+    expect(sent.some((m) => m.type === "backlog-convergence-sweep" && m.repoFullName === "owner/agent-repo")).toBe(false);
+    const fanout = await env.DB.prepare("select metadata_json from audit_events where event_type = ? order by created_at desc limit 1").bind("agent.sweep.backlog_convergence.fanout").first<{ metadata_json: string }>();
+    expect(JSON.parse(fanout?.metadata_json ?? "{}").skippedDraining).toBeGreaterThanOrEqual(1);
+  });
+
+  it("INVARIANT (#4502, in-flight guard): the fan-out SKIPS a repo whose prior sweep is still draining, enqueues an idle one", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    await upsertInstallation(env, { action: "created", installation: { id: 9511, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    for (const name of ["draining", "idle"]) {
+      await upsertRepositoryFromGitHub(env, { name, full_name: `owner/${name}`, private: false, owner: { login: "owner" } }, 9511);
+      await upsertRepositorySettings(env, { repoFullName: `owner/${name}`, autonomy: { merge: "auto" } });
+      await upsertPullRequestFromGitHub(env, `owner/${name}`, { number: 1, title: "PR1", state: "open", user: { login: "c" }, head: { sha: "h1" }, labels: [], body: "" });
+    }
+    // owner/draining was just backlog-convergence-regated (a sweep is mid-drain); owner/idle has never been swept.
+    await repositoriesModule.markPullRequestsBacklogConvergenceRegated(env, "owner/draining", [1]);
+
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "schedule" }); // no repoFullName → fan-out path
+
+    const sweepRepos = sent.filter((m): m is Extract<import("../../src/types").JobMessage, { type: "backlog-convergence-sweep" }> => m.type === "backlog-convergence-sweep").map((m) => m.repoFullName);
+    expect(sweepRepos).toEqual(["owner/idle"]); // the draining repo is skipped, the idle one enqueued
+    const fanout = await env.DB.prepare("select metadata_json from audit_events where event_type = ?").bind("agent.sweep.backlog_convergence.fanout").first<{ metadata_json: string }>();
+    expect(JSON.parse(fanout?.metadata_json ?? "{}")).toMatchObject({ repoCount: 1, skippedDraining: 1 });
+  });
+
+  it("INVARIANT (#4502, #audit-fanout-dedup): a BURST of fan-outs collapses to ONE — the second claims nothing and audits denied", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    await upsertInstallation(env, { action: "created", installation: { id: 9512, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9512);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" } });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "PR7", state: "open", user: { login: "c" }, head: { sha: "a7" }, labels: [], body: "" });
+
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "schedule" }); // first fan-out claims the window
+    expect(sent.some((m) => m.type === "backlog-convergence-sweep" && m.repoFullName === "owner/agent-repo")).toBe(true);
+
+    sent.length = 0;
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "schedule" }); // burst sibling in the same window → deduped
+    expect(sent.filter((m) => m.type === "backlog-convergence-sweep")).toEqual([]); // enqueues no redundant sweep
+    const denied = await env.DB.prepare("select count(*) as n from audit_events where event_type='agent.sweep.backlog_convergence.fanout' and outcome='denied'").first<{ n: number }>();
+    expect(denied?.n).toBe(1);
+  });
+
+  it("REGRESSION (#4502, #audit-sweep-fanout-isolation): one repo's settings-check failure does not abort the fan-out for every other repo", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_REPOS: "",
+      JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue,
+    });
+    await upsertRepositoryFromGitHub(env, { name: "agent-a", full_name: "owner/agent-a", private: false, owner: { login: "owner" } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-b", full_name: "owner/agent-b", private: false, owner: { login: "owner" } });
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-a", autonomy: { label: "auto" } });
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-b", autonomy: { label: "auto" } });
+    const realResolve = repositorySettingsModule.resolveRepositorySettings;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const resolveSpy = vi.spyOn(repositorySettingsModule, "resolveRepositorySettings").mockImplementation(async (e, repoFullName) => {
+      if (repoFullName === "owner/agent-a") throw new Error("D1 read error");
+      return realResolve(e, repoFullName);
+    });
+
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "schedule" });
+
+    expect(sent).toEqual([expect.objectContaining({ type: "backlog-convergence-sweep", repoFullName: "owner/agent-b" })]); // agent-a's failure did not block agent-b
+    expect(errors.mock.calls.some((call) => String(call[0]).includes("backlog_convergence_fanout_repo_check_failed") && String(call[0]).includes("owner/agent-a"))).toBe(true);
+    const fanout = await env.DB.prepare("select outcome, metadata_json from audit_events where event_type = ?").bind("agent.sweep.backlog_convergence.fanout").first<{ outcome: string; metadata_json: string }>();
+    expect(fanout?.outcome).toBe("queued"); // the fan-out still completes and records its own outcome
+    expect(JSON.parse(fanout?.metadata_json ?? "{}")).toMatchObject({ repoCount: 1, skippedErrored: 1 });
+    errors.mockRestore();
+    resolveSpy.mockRestore();
+  });
+
+  it("REGRESSION (#4502, #audit-sweep-fanout-isolation): one repo's dispatch failure does not abort dispatch for every other repo, and the fan-out audit event still records", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_REPOS: "",
+      JOBS: {
+        async send(m: import("../../src/types").JobMessage) {
+          if (m.type === "backlog-convergence-sweep" && m.repoFullName === "owner/agent-a") throw new Error("queue send error");
+          sent.push(m);
+        },
+      } as unknown as Queue,
+    });
+    await upsertRepositoryFromGitHub(env, { name: "agent-a", full_name: "owner/agent-a", private: false, owner: { login: "owner" } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-b", full_name: "owner/agent-b", private: false, owner: { login: "owner" } });
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-a", autonomy: { label: "auto" } });
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-b", autonomy: { label: "auto" } });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "schedule" });
+
+    expect(sent).toEqual([expect.objectContaining({ type: "backlog-convergence-sweep", repoFullName: "owner/agent-b" })]); // agent-a's failed send did not block agent-b's
+    expect(errors.mock.calls.some((call) => String(call[0]).includes("backlog_convergence_fanout_dispatch_failed") && String(call[0]).includes("owner/agent-a"))).toBe(true);
+    const fanout = await env.DB.prepare("select outcome, metadata_json from audit_events where event_type = ?").bind("agent.sweep.backlog_convergence.fanout").first<{ outcome: string; metadata_json: string }>();
+    expect(fanout?.outcome).toBe("queued"); // reached — the dispatch failure did not throw the fan-out itself
+    expect(JSON.parse(fanout?.metadata_json ?? "{}")).toMatchObject({ repoCount: 2 }); // both PASSED their settings/draining checks regardless of dispatch outcome
+    errors.mockRestore();
+  });
+
+  it("agent re-gate sweep swallows a failing last_backlog_convergence_regated_at stamp and still completes (#4502, #audit-sweep-converge)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    await upsertInstallation(env, { action: "created", installation: { id: 9513, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9513);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" } });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Stale surface", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "" });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const stamp = vi.spyOn(repositoriesModule, "markPullRequestsBacklogConvergenceRegated").mockRejectedValueOnce(new Error("D1 write error"));
+
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
+
+    const audit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.sweep.backlog_convergence").first<{ outcome: string }>();
+    expect(audit?.outcome).toBe("completed"); // the sweep still completes; the dispatch-time stamp failure is swallowed
+    expect(sent.some((m) => m.type === "agent-regate-pr" && m.prNumber === 7)).toBe(true); // the per-PR fan-out still happens
+    expect(errors.mock.calls.some((call) => String(call[0]).includes("backlog_convergence_mark_regated_failed"))).toBe(true);
+    stamp.mockRestore();
+    errors.mockRestore();
+  });
+
+  it("REGRESSION (#4502, #3899-style port): resolves multiple repos' settings/drain-state CONCURRENTLY, bounded by SWEEP_FANOUT_RESOLUTION_CONCURRENCY, and drops no repo", async () => {
+    vi.useRealTimers();
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_REPOS: "",
+      JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue,
+    });
+    const repoNames = ["r1", "r2", "r3", "r4", "r5", "r6"];
+    for (const name of repoNames) {
+      await upsertRepositoryFromGitHub(env, { name, full_name: `owner/${name}`, private: false, owner: { login: "owner" } });
+      await upsertRepositorySettings(env, { repoFullName: `owner/${name}`, autonomy: { merge: "auto" } });
+    }
+    const { mapWithConcurrencyLimit: realMapWithConcurrencyLimit } =
+      await vi.importActual<typeof focusManifestLoaderModule>("../../src/signals/focus-manifest-loader");
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const mapSpy = vi.spyOn(focusManifestLoaderModule, "mapWithConcurrencyLimit").mockImplementation(
+      async (items, limit, mapper) => {
+        expect(limit).toBe(SWEEP_FANOUT_RESOLUTION_CONCURRENCY);
+        return realMapWithConcurrencyLimit(items, limit, async (item) => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          try {
+            await new Promise((resolve) => setTimeout(resolve, 5)); // hold the window open long enough for others to overlap
+            return await mapper(item);
+          } finally {
+            inFlight -= 1;
+          }
+        });
+      },
+    );
+
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "schedule" });
+
+    expect(mapSpy).toHaveBeenCalled();
+    expect(maxInFlight).toBeGreaterThan(1); // proves real overlap — not the old strictly-sequential loop
+    expect(maxInFlight).toBeLessThanOrEqual(SWEEP_FANOUT_RESOLUTION_CONCURRENCY); // proves BOUNDED, not unlimited fan-out
+    expect(sent.filter((m) => m.type === "backlog-convergence-sweep").length).toBe(repoNames.length); // every repo still dispatched, none silently dropped
+  });
 });
 
 // #selfhost-auto-action-convergence: end-to-end regression coverage for the GENERAL heuristic plan+execute path

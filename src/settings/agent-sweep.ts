@@ -49,6 +49,12 @@ export const SWEEP_FRESHNESS_MS = 2 * 60 * 1000;
 // behind a per-PR backlog and drained together).
 export const SWEEP_FANOUT_DEDUP_MS = 90 * 1000;
 
+// Draining window for backlog-convergence-sweep (#4502), the isRegateSweepDraining windowMs for THIS sweep
+// specifically -- distinct from SWEEP_FRESHNESS_MS because this sweep runs every ~30 min (not ~2 min), so its
+// own per-PR dispatch batch can legitimately still be draining minutes after fan-out. Sized to roughly match its
+// own cron cadence, mirroring how SWEEP_FRESHNESS_MS is sized to the ~2-min regate-sweep cadence.
+export const BACKLOG_CONVERGENCE_SWEEP_FRESHNESS_MS = 30 * 60 * 1000;
+
 // Candidate ordering mode (#3815, RepositorySettings["regateSweepOrderMode"]). "staleness" (default) is
 // selectRegateCandidates' original ordering; "oldest-first" is opt-in per repo. See the function doc comment
 // for the convergence-guarantee rationale each preserves.

@@ -340,6 +340,34 @@ describe("worker entrypoint", () => {
     ]);
   });
 
+  it("INVARIANT (#4502): defers a new backlog-convergence-sweep trigger while a prior one is still pending or processing", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+        snapshot: async () => ({
+          totals: { pending: 0, processing: 1, dead: 0, due: 0 },
+          byType: [{ type: "backlog-convergence-sweep", status: "processing", count: 1, due: 0 }],
+        }),
+      } as unknown as Queue,
+    });
+    const waitUntil: Promise<unknown>[] = [];
+
+    await worker.scheduled(controllerFor("2026-05-25T05:30:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+
+    // No SECOND "backlog-convergence-sweep" trigger is enqueued behind the one already in flight; the other :30
+    // jobs (including agent-regate-sweep, whose OWN backlog is unaffected) still fire normally.
+    expect(sent).toEqual([
+      { type: "agent-regate-sweep", requestedBy: "schedule" },
+      { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
+      { type: "repair-data-fidelity", requestedBy: "schedule" },
+      { type: "refresh-installation-health", requestedBy: "schedule" },
+    ]);
+  });
+
   it("does not require queue introspection for regular review sweep scheduling", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const sent: Array<import("../../src/types").JobMessage> = [];

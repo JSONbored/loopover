@@ -2575,6 +2575,9 @@ export function createApp() {
       aiReviewProvider: updated.aiReviewProvider ?? null,
       aiReviewModel: updated.aiReviewModel ?? null,
       aiReviewAllAuthors: updated.aiReviewAllAuthors,
+      // parseAiReviewLowConfidenceDisposition's return type is non-nullable and already falls back to the
+      // literal "hold_for_review" itself, so this side of the `??` can never actually run.
+      /* v8 ignore next */
       aiReviewLowConfidenceDisposition: updated.aiReviewLowConfidenceDisposition ?? "hold_for_review",
       closeOwnerAuthors: updated.closeOwnerAuthors,
     });

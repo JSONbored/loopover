@@ -60,6 +60,36 @@ describe("predicted-gate engine branch coverage (#2283)", () => {
     expect(gateAdvisoryInternals.isConfiguredGateBlocker(finding("ai_consensus_defect"), advisory)).toBe(false);
     expect(gateAdvisoryInternals.isConfiguredGateBlocker(finding("ai_consensus_defect"), block)).toBe(true);
     expect(gateAdvisoryInternals.isConfiguredGateBlocker(finding("ai_review_split"), advisory)).toBe(false);
+    // #4603: aiReviewLowConfidenceDisposition branches — the default ("hold_for_review", exercised by the
+    // bare `block` policy above with no confidence set) and "one_shot" both ignore confidence entirely and
+    // still block; only "advisory_only" demotes a SUB-floor finding to a non-blocker, and only below the
+    // configured floor -- at/above it, "advisory_only" still blocks like every other disposition.
+    expect(
+      gateAdvisoryInternals.isConfiguredGateBlocker(
+        { ...finding("ai_consensus_defect"), confidence: 0.2 },
+        { ...block, aiReviewLowConfidenceDisposition: "one_shot" },
+      ),
+    ).toBe(true);
+    expect(
+      gateAdvisoryInternals.isConfiguredGateBlocker(
+        { ...finding("ai_consensus_defect"), confidence: 0.2 },
+        { ...block, aiReviewLowConfidenceDisposition: "advisory_only", aiReviewCloseConfidence: 0.93 },
+      ),
+    ).toBe(false);
+    expect(
+      gateAdvisoryInternals.isConfiguredGateBlocker(
+        { ...finding("ai_review_split"), confidence: 0.99 },
+        { ...block, aiReviewLowConfidenceDisposition: "advisory_only", aiReviewCloseConfidence: 0.93 },
+      ),
+    ).toBe(true);
+    // A finding with no confidence reported at all defaults to fully-confident (?? 1), so it still blocks
+    // even under advisory_only regardless of the configured floor.
+    expect(
+      gateAdvisoryInternals.isConfiguredGateBlocker(finding("ai_consensus_defect"), {
+        ...block,
+        aiReviewLowConfidenceDisposition: "advisory_only",
+      }),
+    ).toBe(true);
     expect(gateAdvisoryInternals.isConfiguredGateBlocker(finding("manifest_linked_issue_required"), advisory)).toBe(false);
     expect(gateAdvisoryInternals.isConfiguredGateBlocker(finding("manifest_linked_issue_required"), block)).toBe(true);
     expect(gateAdvisoryInternals.isConfiguredGateBlocker(finding("manifest_missing_tests"), advisory)).toBe(false);

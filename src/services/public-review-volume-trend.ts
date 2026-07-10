@@ -15,7 +15,7 @@
 // are already durable, so a live weekly re-bucketing of the SAME rows can recompute any historical week
 // correctly on every request -- no cron-miss gap risk, no second copy of the number to keep in sync, and the
 // SAME formula as the live figure by construction.
-import { PUBLISHED_PR_KEYS, publicStatsProjects, safeAll } from "../review/public-stats";
+import { publicStatsProjects, safeAll } from "../review/public-stats";
 import { isoWeekStart } from "./public-quality-metrics";
 import { loadOrbDayRows } from "./public-accuracy-trend";
 
@@ -74,27 +74,53 @@ export function buildPublicReviewVolumeTrend(dayRows: DayRow[], nowMs: number, w
 
 /** Day-bucketed own-ledger reviewed/merged COHORTS: for each PR first published on a given day, `reviewed`
  *  credits that day and `merged` credits it too IF the PR is (as of now) merged -- regardless of which day the
- *  merge itself happened on. Matches getPublicStats's own weeklyRows subquery (same MIN(created_at)/
- *  MAX(merged_at) shape, same GROUP BY ev.repo, ev.number), just grouped by day and scoped by a HAVING clause
- *  instead of a single sinceIso threshold. */
+ *  merge itself happened on. Matches getPublicStats's own weeklyRows subquery (the same "first published,
+ *  current disposition" concept), just grouped by day instead of filtered by a single sinceIso threshold.
+ *
+ *  Two-step, index-bound query (#4723) -- NOT a naive single-pass scan of the whole publish-event history:
+ *  1. `recent_keys`: which PRs had *any* publish event in the trailing window. Index-accelerated via the
+ *     existing `audit_events_type_created_idx (event_type, created_at)` -- an equality-then-range scan, cost
+ *     proportional to recent activity, not total history.
+ *  2. `true_first_seen`: for JUST those candidates, the TRUE first-publish date across ALL of a PR's publish
+ *     events (not just the recent one) -- via the new `audit_events_target_key_created_idx (target_key,
+ *     created_at)` (migrations/0142), an index lookup per candidate rather than a full-table scan.
+ *  Splitting it this way (instead of filtering step 1's raw rows by sinceIso BEFORE taking MIN) matters for
+ *  correctness, not just speed: a PR whose true first-publish is OLDER than the window but which also got a
+ *  legitimate re-publish (e.g. a fresh push triggering re-review) INSIDE the window must still resolve to its
+ *  true (out-of-window) first-publish date and be excluded -- not get misattributed to the re-publish's week.
+ *  Step 2 always looks at a candidate's FULL history precisely to get this right; only step 1 is time-bounded. */
 async function loadOwnLedgerDayRows(env: Env, projects: string[], sinceIso: string): Promise<Map<string, { reviewed: number; merged: number }>> {
   const map = new Map<string, { reviewed: number; merged: number }>();
   if (projects.length === 0) return map;
   const inList = projects.map(() => "?").join(", ");
   const rows = await safeAll<{ day: string; reviewed: number; merged: number }>(
     env,
-    `SELECT date(first_seen) AS day,
+    `WITH recent_keys AS (
+       SELECT DISTINCT target_key
+         FROM audit_events
+        WHERE event_type = 'github_app.pr_public_surface_published'
+          AND instr(target_key, '#') > 0
+          AND created_at >= ?
+          AND LOWER(substr(target_key, 1, instr(target_key, '#') - 1)) IN (${inList})
+     ),
+     true_first_seen AS (
+       SELECT
+         substr(ae.target_key, 1, instr(ae.target_key, '#') - 1) AS repo,
+         CAST(substr(ae.target_key, instr(ae.target_key, '#') + 1) AS INTEGER) AS number,
+         MIN(ae.created_at) AS first_seen
+         FROM audit_events ae
+         JOIN recent_keys rk ON rk.target_key = ae.target_key
+        WHERE ae.event_type = 'github_app.pr_public_surface_published'
+        GROUP BY ae.target_key
+     )
+     SELECT date(t.first_seen) AS day,
             COUNT(*) AS reviewed,
-            SUM(CASE WHEN merged_at IS NOT NULL THEN 1 ELSE 0 END) AS merged
-       FROM (
-         SELECT ev.repo, ev.number, MIN(ev.created_at) AS first_seen, MAX(pr.merged_at) AS merged_at
-           FROM (${PUBLISHED_PR_KEYS}) ev
-           LEFT JOIN pull_requests pr ON pr.repo_full_name = ev.repo AND pr.number = ev.number
-          WHERE LOWER(ev.repo) IN (${inList})
-          GROUP BY ev.repo, ev.number
-       )
-      GROUP BY day
-     HAVING date(first_seen) >= date(?)`,
+            SUM(CASE WHEN pr.merged_at IS NOT NULL THEN 1 ELSE 0 END) AS merged
+       FROM true_first_seen t
+       LEFT JOIN pull_requests pr ON pr.repo_full_name = t.repo AND pr.number = t.number
+      WHERE date(t.first_seen) >= date(?)
+      GROUP BY day`,
+    sinceIso,
     ...projects,
     sinceIso,
   );

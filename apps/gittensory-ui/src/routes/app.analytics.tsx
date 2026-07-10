@@ -18,6 +18,10 @@ import type { CycleTimeAggregate } from "@/components/site/app-panels/cycle-time
 import { ReversalHealthCard } from "@/components/site/app-panels/reversal-health-card";
 import type { ReversalHealth } from "@/components/site/app-panels/reversal-health-card-model";
 import { AnalyticsCardShell } from "@/components/site/app-panels/analytics-card-shell";
+import {
+  AcceptanceRateCard,
+  type FindingAcceptance,
+} from "@/components/site/app-panels/acceptance-rate-card";
 import { useApiResource } from "@/lib/api/use-api-resource";
 import { exportOperatorDashboardCsv } from "@/lib/csv-export";
 
@@ -111,6 +115,7 @@ type OperatorDashboard = {
   gateEval?: GateEvalReport;
   cycleTime?: CycleTimeAggregate;
   agentHealth?: ReversalHealth;
+  acceptance?: FindingAcceptance;
 };
 
 function ProductAnalytics() {
@@ -213,6 +218,7 @@ function ProductAnalytics() {
           )}
 
           {data.agentHealth ? <ReversalHealthCard health={data.agentHealth} /> : null}
+          <AcceptanceRateCard acceptance={data.acceptance} />
 
           {data.usageSummary ? (
             <ProductUsageBreakdownPanel

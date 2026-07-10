@@ -1272,6 +1272,7 @@ export const auditEvents = sqliteTable(
     typeCreated: index("audit_events_type_created_idx").on(table.eventType, table.createdAt),
     actorCreated: index("audit_events_actor_created_idx").on(table.actor, table.createdAt),
     routeCreated: index("audit_events_route_created_idx").on(table.route, table.createdAt),
+    targetKeyCreated: index("audit_events_target_key_created_idx").on(table.targetKey, table.createdAt),
   }),
 );
 

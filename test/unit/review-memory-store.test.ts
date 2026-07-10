@@ -338,4 +338,16 @@ describe("getCachedReviewSuppressions: cache hit/miss telemetry (#4448)", () => 
 
     expect(second).toHaveLength(1); // the failed audit write never surfaces to the caller
   });
+
+  it("swallows a failing cache-MISS audit-event write without throwing, still returning the freshly-read suppression list", async () => {
+    clearReviewSuppressionCacheForTest();
+    const env = createTestEnv();
+    await recordReviewSuppression(env, { repoFullName: "owner/telemetry-repo-5", category: "ai_review_split", patternHash: "hash-miss-swallow" });
+
+    const writeSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
+    const first = await getCachedReviewSuppressions(env, "owner/telemetry-repo-5", 9_000_000); // cold cache -- a miss
+    writeSpy.mockRestore();
+
+    expect(first).toHaveLength(1); // the failed audit write never surfaces to the caller, D1 read still happens
+  });
 });

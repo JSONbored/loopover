@@ -456,6 +456,18 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
       expect(second).toBe("export const v = 1;"); // the failed audit write never surfaces to the caller
       fetchSpy.mockRestore();
     });
+
+    it("swallows a failing cache-MISS audit-event write without throwing, still returning the freshly-fetched content", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("export const v = 1;", { status: 200 }));
+
+      const writeSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
+      const first = await (await makeGithubFileFetcher(env, "acme/telemetry", null)).getFileContent("miss-swallow.ts", "sha7"); // cold cache -- a miss
+      writeSpy.mockRestore();
+
+      expect(first).toBe("export const v = 1;"); // the failed audit write never surfaces to the caller, fetch still happens
+      fetchSpy.mockRestore();
+    });
   });
 
   it("REGRESSION (#4499, grounding-refetch incident): repeated cooldown-driven calls on an unchanged head SHA only fetch once total, not once per call", async () => {

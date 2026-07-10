@@ -73,7 +73,6 @@ import {
   getGateBlockOutcome,
   hasActiveReviewForHeadSha,
   isDbFrozenForRepo,
-  listReviewSuppressions,
   markGateOutcomeOverridden,
   markPullRequestLinkedIssueHardRuleViolated,
   startActiveReviewTracking,
@@ -356,6 +355,7 @@ import {
   detectGittensorContributor,
   hasClearNoIssueRationale,
   PR_PANEL_RETRIGGER_MARKER,
+  PR_PANEL_GENERATE_TESTS_MARKER,
   type ContributorProfile,
 } from "../signals/engine";
 import { isDuplicateClusterWinnerByClaim, resolveDuplicateClusterWinnerNumber } from "../signals/duplicate-winner";
@@ -503,7 +503,7 @@ import {
   buildRepoCultureProfileContext,
   isRepoCultureProfileEnabled,
 } from "../review/repo-culture-profile-wire";
-import { applyReviewMemorySuppression, shouldApplyReviewMemory } from "../review/review-memory-wire";
+import { applyReviewMemorySuppression, getCachedReviewSuppressions, invalidateReviewSuppressionCache, shouldApplyReviewMemory } from "../review/review-memory-wire";
 import {
   buildReviewEnrichment,
   isEnrichmentEnabled,
@@ -600,6 +600,15 @@ const SWEEP_OPEN_PULL_REQUEST_SYNC_MAX_AGE_MS = 10 * 60 * 1000;
 const PR_PANEL_RETRIGGER_COMMAND_AUTHORIZATION: RepositoryCommandAuthorizationPolicy = {
   default: ["maintainer", "collaborator"],
   commands: { "review-now": ["maintainer", "collaborator"] },
+};
+// #4589: the generate-tests checkbox is hardcoded to maintainer-only regardless of what a repo's own
+// .gittensory.yml commandAuthorization might configure for the text-command version of generate-tests (which
+// CAN be widened to collaborator/confirmed_miner) -- a one-click checkbox is meaningfully lower-friction than
+// typing a command, so it gets a hard floor that can't be misconfigured away. Mirrors
+// PR_PANEL_RETRIGGER_COMMAND_AUTHORIZATION's exact same override pattern, one tier narrower (no collaborator).
+const PR_PANEL_GENERATE_TESTS_COMMAND_AUTHORIZATION: RepositoryCommandAuthorizationPolicy = {
+  default: ["maintainer"],
+  commands: { "generate-tests": ["maintainer"] },
 };
 const PR_PUBLIC_SURFACE_ACTIONS = new Set([
   "opened",
@@ -1939,17 +1948,22 @@ async function sweepRepoRegate(
   }
   // With an active backlog (regateBacklog > 0), a priority repair PR earns an EXCEPTION to the "yield to
   // backlog" rule above, not a license for the whole sweep to also drag along a full SWEEP_MAX_PRS batch of
-  // ordinary stale PRs -- selectRegateCandidates sorts priority PRs first, so capping max to exactly
-  // priorityPullNumbers.length restricts the candidate set to repairs only. No backlog pressure ⇒ a normal,
-  // full-size sweep as before.
+  // ordinary stale PRs. Repair priority only affects selectRegateCandidates eligibility, not final ordering, so
+  // the backlog path must narrow the input pool to priority repairs before applying the normal stale ordering cap.
+  // No backlog pressure ⇒ a normal, full-size sweep as before.
+  const priorityPullNumberSet = new Set(priorityPullNumbers);
   const repairCandidateLimit =
     priorityPullNumbers.length > 0
       ? regateBacklog > 0
         ? priorityPullNumbers.length
         : Math.max(SWEEP_MAX_PRS, priorityPullNumbers.length)
       : null;
+  const candidatePullRequests =
+    regateBacklog > 0 && priorityPullNumbers.length > 0
+      ? openPullRequests.filter((pr) => priorityPullNumberSet.has(pr.number))
+      : openPullRequests;
   const candidates = selectRegateCandidates({
-    pulls: openPullRequests,
+    pulls: candidatePullRequests,
     now: nowIso(),
     priorityPullNumbers,
     priorityBypassesFreshness: priorityPullNumbers.length > 0,
@@ -2020,7 +2034,6 @@ async function sweepRepoRegate(
   // isScheduledRegateSweepJob (queue-common.ts) misclassifies it as background maintenance and it inherits the
   // exact starvation this priority mechanism exists to avoid. Ordinary stale candidates keep the sweep prefix
   // unchanged.
-  const priorityPullNumberSet = new Set(priorityPullNumbers);
   for (const [index, pr] of candidates.entries()) {
     const others = openPullRequests.filter(
       (other) => other.number !== pr.number,
@@ -5840,6 +5853,22 @@ async function processGitHubWebhook(
     if (
       eventName === "issue_comment" &&
       (await maybeProcessPrPanelRetrigger(env, deliveryId, payload))
+    ) {
+      await recordWebhookEvent(env, {
+        deliveryId,
+        eventName,
+        action: payload.action,
+        installationId: payload.installation?.id,
+        repositoryFullName: payload.repository?.full_name,
+        payloadHash: "processed",
+        status: "processed",
+      });
+      return;
+    }
+
+    if (
+      eventName === "issue_comment" &&
+      (await maybeProcessPrPanelGenerateTests(env, deliveryId, payload))
     ) {
       await recordWebhookEvent(env, {
         deliveryId,
@@ -11048,7 +11077,10 @@ async function maybePublishPrPublicSurface(
       let renderedGate = commentGate;
       if (reviewMemoryEnabledForReview && commentGate.warnings.length > 0) {
         try {
-          const suppressionSignals = await listReviewSuppressions(env, repoFullName);
+          // #4508: cached (short in-isolate TTL, invalidated on write) — the 3 independent
+          // maybePublishPrPublicSurface call sites (auto re-review, webhook-triggered review, manual panel
+          // retrigger) no longer each force a fresh D1 read for the same repo within a short window.
+          const suppressionSignals = await getCachedReviewSuppressions(env, repoFullName, Date.now());
           const { findings: suppressedWarnings, suppressedCount, demotedCount } = applyReviewMemorySuppression(
             commentGate.warnings,
             suppressionSignals,
@@ -11077,6 +11109,15 @@ async function maybePublishPrPublicSurface(
           );
         }
       }
+      // #4589: the SAME finding #4583's inline CTA already reads off advisory.findings, resolved here (right
+      // before rendering, so it reflects the fully-populated array) rather than re-deriving it a third time.
+      // e2eTestGenAvailable is block-scoped to the manifestPolicyGateMode branch above (where #4583 already
+      // computes it once for that block's own use) and out of scope here, so it's re-resolved via the async
+      // convenience wrapper -- loadRepoFocusManifest is cached, so this is a cache hit, not a fresh read,
+      // mirroring the "reload the CACHED manifest, it's cheap" idiom this same function already documents
+      // a few hundred lines up for the identical reason.
+      const missingTestsFinding = advisory.findings.find((finding) => finding.code === "manifest_missing_tests");
+      const e2eTestGenAvailable = missingTestsFinding ? await convergedFeatureActive(env, repoFullName, "e2eTests") : false;
       deterministicBody = buildUnifiedCommentBody({
         gate: renderedGate,
         ...(aiReview !== undefined ? { aiReview } : {}),
@@ -11108,6 +11149,10 @@ async function maybePublishPrPublicSurface(
           queueHealth,
           ...(reviewConfig !== undefined ? { review: reviewConfig } : {}),
           duplicateWinnerEnabled,
+          // #4589: reuse the SAME finding + feature-gate the #4583 inline CTA already computed above (this
+          // function's own e2eTestGenAvailable const), rather than a second detection pass.
+          ...(missingTestsFinding !== undefined ? { missingTestsFinding } : {}),
+          e2eTestGenAvailable,
         }),
         footerMarkdown: gittensoryFooter({
           earnUrl: repo?.isRegistered
@@ -11118,6 +11163,11 @@ async function maybePublishPrPublicSurface(
             : {}),
         }),
         reRunLabel: `${PR_PANEL_RETRIGGER_MARKER} Re-run Gittensory review`,
+        // #4589: only rendered when there's an actual gap AND the checkbox would work for this repo -- same
+        // condition testCoverageBody gates its own (informational) collapsible on, so the two always agree.
+        ...(missingTestsFinding && e2eTestGenAvailable
+          ? { generateTestsLabel: `${PR_PANEL_GENERATE_TESTS_MARKER} Generate an AI Playwright test for this PR` }
+          : {}),
         ...(beforeAfter.length > 0 ? { beforeAfter } : {}),
         ...(changedFilesSummaryEnabledForReview
           ? {
@@ -11649,7 +11699,7 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
   const reviewManifest = await loadRepoFocusManifest(env, req.repoFullName).catch(() => null);
   const reviewMemoryEnabled = shouldApplyReviewMemory(env, resolveReviewMemoryManifestToggle(reviewManifest));
   let recordedSuppressionCount = 0;
-  if (reviewMemoryEnabled && selection.findings.length > 0) { const { fingerprint } = await import("../review/review-memory-match"); const { recordReviewSuppression } = await import("../db/repositories"); const suppressionWrites = selection.findings.map((finding) => ({ category: finding.code, pathGlob: "", patternHash: fingerprint({ category: finding.code, message: `${finding.title} ${finding.detail}` }) })); await Promise.all(suppressionWrites.map((write) => recordReviewSuppression(env, { repoFullName: req.repoFullName, category: write.category, pathGlob: write.pathGlob, patternHash: write.patternHash, createdBy: req.actor }))); recordedSuppressionCount = suppressionWrites.length; await recordAuditEvent(env, { eventType: "github_app.review_memory_recorded", actor: req.actor, targetKey, outcome: "completed", detail: `Recorded ${recordedSuppressionCount} review-memory suppression signal(s).`, metadata: { deliveryId, repoFullName: req.repoFullName, recordedSuppressionCount, scope: findingRef.scope, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } }); await recordGithubProductUsage(env, "review_memory_recorded", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: { recordedSuppressionCount, scope: findingRef.scope, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } }); }
+  if (reviewMemoryEnabled && selection.findings.length > 0) { const { fingerprint } = await import("../review/review-memory-match"); const { recordReviewSuppression } = await import("../db/repositories"); const suppressionWrites = selection.findings.map((finding) => ({ category: finding.code, pathGlob: "", patternHash: fingerprint({ category: finding.code, message: `${finding.title} ${finding.detail}` }) })); await Promise.all(suppressionWrites.map((write) => recordReviewSuppression(env, { repoFullName: req.repoFullName, category: write.category, pathGlob: write.pathGlob, patternHash: write.patternHash, createdBy: req.actor }))); recordedSuppressionCount = suppressionWrites.length; invalidateReviewSuppressionCache(req.repoFullName); /* #4508: this repo's cached suppression list is stale as of this write -- the very next render must see it, not wait out the TTL. */ await recordAuditEvent(env, { eventType: "github_app.review_memory_recorded", actor: req.actor, targetKey, outcome: "completed", detail: `Recorded ${recordedSuppressionCount} review-memory suppression signal(s).`, metadata: { deliveryId, repoFullName: req.repoFullName, recordedSuppressionCount, scope: findingRef.scope, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } }); await recordGithubProductUsage(env, "review_memory_recorded", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: { recordedSuppressionCount, scope: findingRef.scope, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } }); }
   const resolvedLabel = findingRef.scope === "whole_pr" ? "all current advisory findings" : `\`${findingRef.findingCode}\``;
   const confirmation = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **Review finding resolved by @${req.actor}**`, `> Marked ${resolvedLabel} as resolved for this PR. The Gate check-run is unchanged.`, ...(recordedSuppressionCount > 0 ? ["", `Recorded ${recordedSuppressionCount} review-memory suppression signal(s) for future reviews.`] : []), "", "---", gittensoryFooter()].join("\n"));
   await createOrUpdateAgentCommandComment(env, req.installationId, req.repoFullName, req.pr.number, confirmation, mode);
@@ -11973,12 +12023,12 @@ async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, pa
 }
 
 /**
- * The shared generation-and-delivery core behind BOTH `@gittensory generate-tests` (#4195, the explicit
- * command) and the `manifest_missing_tests` auto-trigger (#4196) — one code path, so the two triggers can
- * never silently drift apart. Everything the caller must have already resolved BEFORE this runs: the feature
- * is enabled (#4192's `resolveConvergedFeature` gate), the repo is not paused/dry-run (`mode === "live"`), and
- * (for the auto-trigger specifically) the per-head-SHA double-generation guard has already passed — this
- * function itself has no opinion on any of that, it only generates, delivers, and audits.
+ * The shared generation-and-delivery core behind `@gittensory generate-tests` (#4195, the explicit command),
+ * the `manifest_missing_tests` auto-trigger (#4196), and the panel checkbox (#4589) — one code path, so the
+ * three triggers can never silently drift apart. Everything the caller must have already resolved BEFORE this
+ * runs: the feature is enabled (#4192's `resolveConvergedFeature` gate), the repo is not paused/dry-run
+ * (`mode === "live"`), and (for the auto-trigger specifically) the per-head-SHA double-generation guard has
+ * already passed — this function itself has no opinion on any of that, it only generates, delivers, and audits.
  */
 async function runE2eTestGenerationAndDeliver(
   env: Env,
@@ -11993,7 +12043,10 @@ async function runE2eTestGenerationAndDeliver(
     mode: ReturnType<typeof resolveAgentActionMode>;
     deliveryId: string;
     targetKey: string;
-    trigger: "command" | "auto";
+    // #4589: "checkbox" behaves like "command" below (a real, re-authorized maintainer invoker exists, so
+    // delivery mode is NOT forced comment-only) -- it's kept as its own literal purely so audit/metadata can
+    // distinguish "typed the command" from "clicked the checkbox" without changing any behavior.
+    trigger: "command" | "auto" | "checkbox";
   },
 ): Promise<void> {
   const changedPaths = args.files.map((file) => file.path);
@@ -12566,6 +12619,128 @@ async function maybeProcessPrPanelRetrigger(
   return true;
 }
 
+/**
+ * The generate-tests checkbox (#4589) — the interactive counterpart to #4583's text-only inline CTA, and a
+ * sibling of `maybeProcessPrPanelRetrigger` above: SAME `issue_comment.edited` detection shell (marker
+ * presence, bot's-own-comment confirmation, bot-sender guard, `payload.sender` as the real actor — a GitHub
+ * task-list checkbox can be toggled by anyone who can comment on the PR, so the checkbox itself proves
+ * nothing; only this server-side re-authorization does), but dispatches through the SAME shared
+ * `runE2eTestGenerationAndDeliver` core `@gittensory generate-tests` (#4195) and the `manifest_missing_tests`
+ * auto-trigger (#4196) already use, rather than a full panel re-render.
+ *
+ * Hardcoded to `commandAuthorization: PR_PANEL_GENERATE_TESTS_COMMAND_AUTHORIZATION` (maintainer-only, one
+ * tier narrower than the retrigger's own maintainer+collaborator floor) regardless of what a repo's own
+ * `.gittensory.yml` might configure for the text-command version of `generate-tests` — a one-click checkbox
+ * must never be wider than the deliberately narrow default the text command itself already has. An
+ * unauthorized click is a SILENT no-op (no comment fetch, no patch, no revert, no explanation) — audit-logged
+ * only, exactly mirroring `maybeProcessPrPanelRetrigger`'s own denial behavior above.
+ */
+async function maybeProcessPrPanelGenerateTests(
+  env: Env,
+  deliveryId: string,
+  payload: GitHubWebhookPayload,
+): Promise<boolean> {
+  const comment = payload.comment;
+  if (
+    payload.action !== "edited" ||
+    !comment ||
+    !isCheckedPrPanelGenerateTests(comment.body)
+  )
+    return false;
+  if (!isGittensoryPanelBotComment(env, comment.user)) return false;
+
+  const repoFullName = payload.repository?.full_name ?? null;
+  const issue = payload.issue;
+  const installationId = getInstallationId(payload);
+  const actor = payload.sender?.login ?? null;
+  const targetKey =
+    repoFullName && issue ? `${repoFullName}#${issue.number}` : repoFullName;
+  if (payload.sender?.type === "Bot" || /\[bot\]$/i.test(actor ?? "")) {
+    await recordGenerateTestsSkip(env, deliveryId, repoFullName, targetKey, actor, "bot_author");
+    return true;
+  }
+  if (!repoFullName || !issue?.pull_request || !installationId) {
+    await recordGenerateTestsSkip(env, deliveryId, repoFullName, targetKey, actor, "missing_repo_pr_or_installation");
+    return true;
+  }
+  const [pr, settings] = await Promise.all([
+    getPullRequest(env, repoFullName, issue.number),
+    resolveRepositorySettings(env, repoFullName),
+  ]);
+  if (!pr) {
+    await recordGenerateTestsSkip(env, deliveryId, repoFullName, targetKey, actor, "cached_pr_missing");
+    return true;
+  }
+
+  const { authorization } = await authorizePrActionActor({
+    env,
+    deliveryId,
+    installationId,
+    repoFullName,
+    issue,
+    actor,
+    commandName: "generate-tests" as GittensoryMentionCommandName,
+    settings: { ...settings, commandAuthorization: PR_PANEL_GENERATE_TESTS_COMMAND_AUTHORIZATION },
+    pr,
+    needsMinerDetection: false,
+  });
+  if (!authorization.authorized) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.e2e_tests_generation_denied",
+      actor,
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "denied",
+      detail: authorization.reason,
+      metadata: {
+        deliveryId,
+        repoFullName,
+        commentId: comment.id,
+        allowedRoles: commandAuthorizationAllowedRoles(PR_PANEL_GENERATE_TESTS_COMMAND_AUTHORIZATION, "generate-tests"),
+      },
+    });
+    await recordGithubProductUsage(env, "e2e_tests_generation_denied", {
+      actor,
+      repoFullName,
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "denied",
+      metadata: { reason: authorization.reason, actorKind: authorization.actorKind },
+    });
+    return true;
+  }
+
+  // Defense in depth: re-check the feature is STILL enabled -- the repo's own .gittensory.yml could have
+  // changed between when this comment was posted (checkbox rendered) and when it was actually clicked.
+  const manifest = await loadRepoFocusManifest(env, repoFullName).catch(() => null);
+  if (!resolveConvergedFeature(env, manifest, "e2eTests", repoFullName)) {
+    await recordGenerateTestsSkip(env, deliveryId, repoFullName, `${repoFullName}#${pr.number}`, actor, "feature_disabled");
+    return true;
+  }
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
+  if (mode !== "live") {
+    const skipReason = mode === "dry_run" ? "dry_run" : "agent_paused";
+    await recordGenerateTestsSkip(env, deliveryId, repoFullName, `${repoFullName}#${pr.number}`, actor, skipReason);
+    return true;
+  }
+  const files = await listPullRequestFiles(env, repoFullName, pr.number);
+  await runE2eTestGenerationAndDeliver(env, {
+    repoFullName,
+    installationId,
+    pr,
+    settings,
+    manifest,
+    files,
+    // Non-null: authorization.authorized is only ever true when actor resolved to a real login in the first
+    // place (evaluateCommandAuthorization can't match a maintainer/collaborator/confirmed_miner role off a
+    // null commenterLogin) -- guaranteed by the `authorization.authorized` check above, not re-derivable here.
+    actor: actor!,
+    mode,
+    deliveryId,
+    targetKey: `${repoFullName}#${pr.number}`,
+    trigger: "checkbox",
+  });
+  return true;
+}
+
 async function resolveRealRepoPermissionAssociation(
   env: Env,
   installationId: number,
@@ -12724,6 +12899,18 @@ function isCheckedPrPanelRetrigger(body: string | null | undefined): boolean {
   )
     return false;
   return checkedMarkerRegex(PR_PANEL_RETRIGGER_MARKER).test(body);
+}
+
+// #4589: sibling of isCheckedPrPanelRetrigger above, same marker-presence + checkedMarkerRegex mechanism, own
+// dedicated marker so the two checkboxes (re-run vs generate-tests) can independently appear/toggle in the
+// same comment without either detector matching the other's line.
+function isCheckedPrPanelGenerateTests(body: string | null | undefined): boolean {
+  if (
+    !body?.includes(PR_PANEL_COMMENT_MARKER) ||
+    !body.includes(PR_PANEL_GENERATE_TESTS_MARKER)
+  )
+    return false;
+  return checkedMarkerRegex(PR_PANEL_GENERATE_TESTS_MARKER).test(body);
 }
 
 function checkedMarkerRegex(marker: string): RegExp {

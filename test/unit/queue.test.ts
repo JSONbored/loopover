@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
+import { clearReviewSuppressionCacheForTest } from "../../src/review/review-memory-wire";
 import { PR_PANEL_COMMENT_MARKER } from "../../src/github/comments";
 import * as backfillModule from "../../src/github/backfill";
 import * as rateLimitModule from "../../src/github/rate-limit";
@@ -106,6 +107,7 @@ describe("queue processors", () => {
   // stay deterministic regardless of when CI runs.
   beforeEach(() => {
     clearInstallationTokenCacheForTest();
+    clearReviewSuppressionCacheForTest();
     vi.mocked(fetchPullRequestFreshness).mockReset();
     vi.mocked(fetchPullRequestFreshness).mockImplementation(async (_env, args) => ({
       status: "current",
@@ -7481,15 +7483,22 @@ describe("queue processors", () => {
     await upsertInstallation(env, { action: "created", installation: { id: 9403, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9403);
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
-    // PR 1: missing its current Gate check -- the one priority repair.
+    // PR 1: missing its current Gate check -- the one priority repair. Make it newer-by-regate than the
+    // ordinary stale PRs below, reproducing the backlog bug where a max=1 staleness slice could drop the repair.
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 1, title: "Repair 1", state: "open", user: { login: "c" }, head: { sha: "repair-1" }, labels: [], body: "" });
     await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", 1, "repair-1");
+    await env.DB.prepare("update pull_requests set last_regated_at = ? where repo_full_name = ? and number = ?")
+      .bind("2026-05-28T01:59:00.000Z", "owner/agent-repo", 1)
+      .run();
     // PRs 2-5: ordinary, already-current, stale-by-time PRs -- a normal (no-backlog) sweep would pick these up
     // too, but while the backlog is draining they must sit out so the sweep only carries the priority repair.
     for (const number of [2, 3, 4, 5]) {
       const headSha = `stale-${number}`;
       await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number, title: `Stale ${number}`, state: "open", user: { login: "c" }, head: { sha: headSha }, labels: [], body: "" });
       await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", number, headSha);
+      await env.DB.prepare("update pull_requests set last_regated_at = ? where repo_full_name = ? and number = ?")
+        .bind(`2026-05-28T01:0${number}:00.000Z`, "owner/agent-repo", number)
+        .run();
       await upsertCheckSummary(env, {
         id: `gate-current-${number}`,
         repoFullName: "owner/agent-repo",
@@ -25999,6 +26008,7 @@ describe("queue processors", () => {
           const method = init?.method ?? "GET";
           if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
           if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+          if (url.endsWith("/pulls/4207") && method === "GET") return Response.json({ head: { ref: "feature/checkout-retry", sha: "commit-ok-head-sha", repo: { full_name: repoFullName } } });
           if (url.endsWith("/git/commits/commit-ok-head-sha") && method === "GET") return Response.json({ tree: { sha: "base-tree-sha" } });
           if (url.endsWith("/git/trees") && method === "POST") return Response.json({ sha: "new-tree-sha" });
           if (url.endsWith("/git/commits") && method === "POST") return Response.json({ sha: "committed-sha-123" });
@@ -26066,7 +26076,7 @@ describe("queue processors", () => {
           const method = init?.method ?? "GET";
           if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
           if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
-          if (url.endsWith("/git/commits/declined-head-sha") && method === "GET") return new Response("forbidden", { status: 403 });
+          if (url.endsWith("/pulls/4209") && method === "GET") return new Response("forbidden", { status: 403 });
           if (url.includes("/issues/4209/comments") && method === "GET") return Response.json([]);
           if (url.includes("/issues/4209/comments") && method === "POST") { postedBody = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? ""); return Response.json({ id: 42090 }); }
           return new Response("not found", { status: 404 });
@@ -26132,7 +26142,7 @@ describe("queue processors", () => {
           if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
           // Neither a 403/404 (no write access) nor a 422/409 (branch moved) -- a genuinely unexpected 500,
           // which commitE2eTestToPrBranch maps to status: "error" rather than "declined".
-          if (url.endsWith("/git/commits/error-mapped-head-sha") && method === "GET") return new Response("server exploded", { status: 500 });
+          if (url.endsWith("/pulls/4213") && method === "GET") return new Response("server exploded", { status: 500 });
           if (url.includes("/issues/4213/comments") && method === "GET") return Response.json([]);
           if (url.includes("/issues/4213/comments") && method === "POST") { postedBody = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? ""); return Response.json({ id: 42130 }); }
           return new Response("not found", { status: 404 });
@@ -26170,6 +26180,7 @@ describe("queue processors", () => {
           const method = init?.method ?? "GET";
           if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
           if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+          if (url.endsWith("/pulls/4214") && method === "GET") return Response.json({ head: { ref: "feature/checkout-retry", sha: "no-author-head-sha", repo: { full_name: repoFullName } } });
           if (url.endsWith("/git/commits/no-author-head-sha") && method === "GET") return Response.json({ tree: { sha: "base-tree-sha" } });
           if (url.endsWith("/git/trees") && method === "POST") return Response.json({ sha: "new-tree-sha" });
           if (url.endsWith("/git/commits") && method === "POST") return Response.json({ sha: "no-author-commit-sha" });
@@ -26616,6 +26627,506 @@ describe("queue processors", () => {
 
       expect(posted.count).toBe(1);
       expect(posted.body).toContain("AI-generated Playwright test for @the PR author");
+    });
+  });
+
+  // #4589: the interactive counterpart to #4583's text-only CTA. Same issue_comment.edited detection shell as
+  // the pre-existing "PR-panel retrigger" checkbox (marker presence, bot's-own-comment confirmation, bot-sender
+  // guard, payload.sender as the real actor re-authorized server-side), but dispatches through the SAME shared
+  // runE2eTestGenerationAndDeliver core the command (#4195) and auto-trigger (#4196) above already use.
+  describe("PR-panel generate-tests checkbox (#4589)", () => {
+    const CHECKBOX_TEST_SOURCE = "import { test, expect } from '@playwright/test';\n\ntest('checkbox-generated coverage', async ({ page }) => {\n  await page.goto('/');\n  await expect(page).toHaveTitle(/./);\n});";
+
+    async function seedCheckboxPr(
+      env: Env,
+      repoFullName: string,
+      prNumber: number,
+      headSha: string,
+      opts: { e2eTests?: boolean } = {},
+    ) {
+      const slash = repoFullName.indexOf("/");
+      const owner = repoFullName.slice(0, slash);
+      const name = repoFullName.slice(slash + 1);
+      await upsertRepositoryFromGitHub(env, { name, full_name: repoFullName, private: false, owner: { login: owner } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName,
+        commentMode: "off",
+        publicSurface: "off",
+        autoLabelEnabled: false,
+        checkRunMode: "off",
+        gateCheckMode: "off",
+        requireLinkedIssue: false,
+        linkedIssueGateMode: "off",
+        manifestPolicyGateMode: "advisory",
+        aiReviewMode: "off",
+        typeLabelsEnabled: false,
+      });
+      await upsertPullRequestFromGitHub(env, repoFullName, {
+        number: prNumber,
+        title: "Add retry to checkout",
+        state: "open",
+        user: { login: "contributor" },
+        author_association: "CONTRIBUTOR",
+        head: { sha: headSha, ref: "feature/checkout-retry" },
+        labels: [],
+        body: "No validation evidence mentioned here.",
+      });
+      await upsertPullRequestFile(env, {
+        repoFullName,
+        pullNumber: prNumber,
+        path: "src/checkout.ts",
+        status: "modified",
+        additions: 3,
+        deletions: 0,
+        changes: 3,
+        payload: { patch: "+function retryPayment() {\n+  return true;\n+}" },
+      });
+      await upsertRepoFocusManifest(env, repoFullName, {
+        testExpectations: ["Run npm run test:ci."],
+        features: { e2eTests: opts.e2eTests ?? true },
+      });
+    }
+
+    const CHECKED_GENERATE_TESTS_PANEL = [
+      "<!-- gittensory-pr-panel:v1 -->",
+      "",
+      "- [x] <!-- gittensory-generate-tests:v1 --> Generate an AI Playwright test for this PR",
+    ].join("\n");
+
+    function checkboxWebhook(
+      repoFullName: string,
+      prNumber: number,
+      commentId: number,
+      sender: { login: string; type?: "User" | "Bot" },
+      opts: { body?: string; commentUser?: { login: string; type: "User" | "Bot" }; omitInstallation?: boolean; omitPullRequest?: boolean } = {},
+    ) {
+      const slash = repoFullName.indexOf("/");
+      return {
+        type: "github-webhook" as const,
+        deliveryId: `checkbox-${prNumber}-${commentId}`,
+        eventName: "issue_comment" as const,
+        payload: {
+          action: "edited",
+          ...(opts.omitInstallation ? {} : { installation: { id: 123, account: { login: repoFullName.slice(0, slash), id: 1, type: "User" } } }),
+          repository: { name: repoFullName.slice(slash + 1), full_name: repoFullName, private: false, owner: { login: repoFullName.slice(0, slash) } },
+          issue: { number: prNumber, title: "Add retry to checkout", state: "open", user: { login: "contributor" }, ...(opts.omitPullRequest ? {} : { pull_request: {} }) },
+          comment: { id: commentId, body: opts.body ?? CHECKED_GENERATE_TESTS_PANEL, user: opts.commentUser ?? { login: "gittensory[bot]", type: "Bot" } },
+          sender: { login: sender.login, type: sender.type ?? "User" },
+        },
+      } as unknown as Parameters<typeof processJob>[1];
+    }
+
+    function stubCheckboxFetch(prNumber: number, actorLogin: string, permission: string, posted: { count: number; body: string }) {
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url === "https://api.gittensor.io/miners") return Response.json([]);
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes(`/collaborators/${actorLogin}/permission`)) return Response.json({ permission });
+        if (url.includes(`/issues/${prNumber}/comments`) && method === "GET") return Response.json([]);
+        if (url.includes(`/issues/${prNumber}/comments`) && method === "POST") {
+          posted.count += 1;
+          posted.body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+          return Response.json({ id: prNumber * 10 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+    }
+
+    it("dispatches generation when a maintainer checks the box", async () => {
+      const repoFullName = "JSONbored/checkbox-4589-ok";
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => ({ response: "```typescript\n" + CHECKBOX_TEST_SOURCE + "\n```" }) } as unknown as Ai,
+        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+      });
+      await seedCheckboxPr(env, repoFullName, 6001, "checkbox-4589-ok-sha");
+      const posted = { count: 0, body: "" };
+      stubCheckboxFetch(6001, "maintainer", "admin", posted);
+
+      await processJob(env, checkboxWebhook(repoFullName, 6001, 900, { login: "maintainer" }));
+
+      expect(posted.count).toBe(1);
+      expect(posted.body).toContain("test('checkbox-generated coverage'");
+      const audited = await env.DB.prepare("select outcome, actor, metadata_json from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation")
+        .first<{ outcome: string; actor: string; metadata_json: string }>();
+      expect(audited?.outcome).toBe("completed");
+      expect(audited?.actor).toBe("maintainer");
+      expect(JSON.parse(audited?.metadata_json ?? "{}")).toMatchObject({ trigger: "checkbox" });
+    });
+
+    it("is a silent no-op when a non-maintainer checks the box — no comment posted, only a denial audit event", async () => {
+      const repoFullName = "JSONbored/checkbox-4589-denied";
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: vi.fn() } as unknown as Ai,
+        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+      });
+      await seedCheckboxPr(env, repoFullName, 6002, "checkbox-4589-denied-sha");
+      const posted = { count: 0, body: "" };
+      stubCheckboxFetch(6002, "drive-by-user", "read", posted);
+
+      await processJob(env, checkboxWebhook(repoFullName, 6002, 901, { login: "drive-by-user" }));
+
+      expect(posted.count).toBe(0);
+      const denied = await env.DB.prepare("select actor, outcome, detail from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation_denied")
+        .first<{ actor: string; outcome: string; detail: string }>();
+      expect(denied).toMatchObject({ actor: "drive-by-user", outcome: "denied" });
+    });
+
+    it("skips a bot-initiated edit (the bot's own comment re-render) without dispatching generation", async () => {
+      const repoFullName = "JSONbored/checkbox-4589-bot";
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+      });
+      await seedCheckboxPr(env, repoFullName, 6003, "checkbox-4589-bot-sha");
+      const posted = { count: 0, body: "" };
+      stubCheckboxFetch(6003, "gittensory[bot]", "admin", posted);
+
+      await processJob(env, checkboxWebhook(repoFullName, 6003, 902, { login: "gittensory[bot]", type: "Bot" }));
+
+      expect(posted.count).toBe(0);
+      const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation_skipped")
+        .first<{ detail: string }>();
+      expect(skipped?.detail).toBe("bot_author");
+    });
+
+    it("ignores the marker when it appears in a comment that isn't the bot's own", async () => {
+      const repoFullName = "JSONbored/checkbox-4589-not-bot-comment";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      await seedCheckboxPr(env, repoFullName, 6009, "checkbox-4589-not-bot-comment-sha");
+      const posted = { count: 0, body: "" };
+      stubCheckboxFetch(6009, "maintainer", "admin", posted);
+
+      await processJob(
+        env,
+        checkboxWebhook(repoFullName, 6009, 908, { login: "maintainer" }, { commentUser: { login: "someone-else", type: "User" } }),
+      );
+
+      expect(posted.count).toBe(0);
+      const events = await env.DB.prepare("select count(*) as n from audit_events where event_type like 'github_app.e2e_tests_generation%'").first<{ n: number }>();
+      expect(events?.n).toBe(0);
+    });
+
+    it("skips when features.e2eTests is disabled for the repo, even though the checkbox was checked", async () => {
+      const repoFullName = "JSONbored/checkbox-4589-disabled";
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: vi.fn() } as unknown as Ai,
+        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+      });
+      await seedCheckboxPr(env, repoFullName, 6004, "checkbox-4589-disabled-sha", { e2eTests: false });
+      const posted = { count: 0, body: "" };
+      stubCheckboxFetch(6004, "maintainer", "admin", posted);
+
+      await processJob(env, checkboxWebhook(repoFullName, 6004, 903, { login: "maintainer" }));
+
+      expect(posted.count).toBe(0);
+      const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation_skipped")
+        .first<{ detail: string }>();
+      expect(skipped?.detail).toBe("feature_disabled");
+    });
+
+    it("ignores an edit where the generate-tests marker isn't checked (e.g. only the re-run box was checked)", async () => {
+      const repoFullName = "JSONbored/checkbox-4589-other-marker";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedCheckboxPr(env, repoFullName, 6005, "checkbox-4589-other-marker-sha");
+      const posted = { count: 0, body: "" };
+      stubCheckboxFetch(6005, "maintainer", "admin", posted);
+      const otherPanel = [
+        "<!-- gittensory-pr-panel:v1 -->",
+        "",
+        "- [x] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review",
+        "- [ ] <!-- gittensory-generate-tests:v1 --> Generate an AI Playwright test for this PR",
+      ].join("\n");
+
+      await processJob(env, checkboxWebhook(repoFullName, 6005, 904, { login: "maintainer" }, { body: otherPanel }));
+
+      expect(posted.count).toBe(0);
+      const events = await env.DB.prepare("select count(*) as n from audit_events where event_type like 'github_app.e2e_tests_generation%'").first<{ n: number }>();
+      expect(events?.n).toBe(0);
+    });
+
+    it("skips a malformed payload (no installation / not a PR comment) without throwing", async () => {
+      const repoFullName = "JSONbored/checkbox-4589-malformed";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedCheckboxPr(env, repoFullName, 6006, "checkbox-4589-malformed-sha");
+      const posted = { count: 0, body: "" };
+      stubCheckboxFetch(6006, "maintainer", "admin", posted);
+
+      await processJob(env, checkboxWebhook(repoFullName, 6006, 905, { login: "maintainer" }, { omitPullRequest: true }));
+
+      expect(posted.count).toBe(0);
+      const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation_skipped")
+        .first<{ detail: string }>();
+      expect(skipped?.detail).toBe("missing_repo_pr_or_installation");
+    });
+
+    it("skips when the cached PR record is missing", async () => {
+      const repoFullName = "JSONbored/checkbox-4589-no-pr";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      // Repo registered but NO PR ever upserted -- getPullRequest resolves null.
+      await upsertRepositoryFromGitHub(env, { name: "checkbox-4589-no-pr", full_name: repoFullName, private: false, owner: { login: "JSONbored" } }, 123);
+      const posted = { count: 0, body: "" };
+      stubCheckboxFetch(6007, "maintainer", "admin", posted);
+
+      await processJob(env, checkboxWebhook(repoFullName, 6007, 906, { login: "maintainer" }));
+
+      expect(posted.count).toBe(0);
+      const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation_skipped")
+        .first<{ detail: string }>();
+      expect(skipped?.detail).toBe("cached_pr_missing");
+    });
+
+    it("respects agentPaused — records a skip and never spends an LLM call, even though an authorized maintainer checked the box", async () => {
+      const repoFullName = "JSONbored/checkbox-4589-paused";
+      const run = vi.fn();
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      await seedCheckboxPr(env, repoFullName, 6008, "checkbox-4589-paused-sha");
+      await upsertRepositorySettings(env, { repoFullName, commentMode: "off", publicSurface: "off", autoLabelEnabled: false, checkRunMode: "off", gateCheckMode: "off", requireLinkedIssue: false, linkedIssueGateMode: "off", manifestPolicyGateMode: "advisory", aiReviewMode: "off", agentPaused: true });
+      const posted = { count: 0, body: "" };
+      stubCheckboxFetch(6008, "maintainer", "admin", posted);
+
+      await processJob(env, checkboxWebhook(repoFullName, 6008, 907, { login: "maintainer" }));
+
+      expect(run).not.toHaveBeenCalled();
+      expect(posted.count).toBe(0);
+      const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation_skipped")
+        .first<{ detail: string }>();
+      expect(skipped?.detail).toBe("agent_paused");
+    });
+
+    it("respects agentDryRun — records a skip with detail dry_run (not agent_paused)", async () => {
+      const repoFullName = "JSONbored/checkbox-4589-dryrun";
+      const run = vi.fn();
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      await seedCheckboxPr(env, repoFullName, 6010, "checkbox-4589-dryrun-sha");
+      await upsertRepositorySettings(env, { repoFullName, commentMode: "off", publicSurface: "off", autoLabelEnabled: false, checkRunMode: "off", gateCheckMode: "off", requireLinkedIssue: false, linkedIssueGateMode: "off", manifestPolicyGateMode: "advisory", aiReviewMode: "off", agentDryRun: true });
+      const posted = { count: 0, body: "" };
+      stubCheckboxFetch(6010, "maintainer", "admin", posted);
+
+      await processJob(env, checkboxWebhook(repoFullName, 6010, 909, { login: "maintainer" }));
+
+      expect(run).not.toHaveBeenCalled();
+      expect(posted.count).toBe(0);
+      const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation_skipped")
+        .first<{ detail: string }>();
+      expect(skipped?.detail).toBe("dry_run");
+    });
+
+    it("respects the repo's configured commit delivery mode via the checkbox (NOT forced comment-only, unlike the auto-trigger)", async () => {
+      const repoFullName = "JSONbored/checkbox-4589-commit";
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => ({ response: "```typescript\n" + CHECKBOX_TEST_SOURCE + "\n```" }) } as unknown as Ai,
+        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+      });
+      await seedCheckboxPr(env, repoFullName, 6011, "checkbox-4589-commit-sha");
+      await upsertRepoFocusManifest(env, repoFullName, {
+        testExpectations: ["Run npm run test:ci."],
+        features: { e2eTests: true },
+        review: { e2e_test_delivery: "commit" },
+      });
+      const posted = { count: 0, body: "" };
+      const gitWrites: string[] = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url === "https://api.gittensor.io/miners") return Response.json([]);
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+        if (url.includes("/git/commits/checkbox-4589-commit-sha") && method === "GET") return Response.json({ tree: { sha: "base-tree" } });
+        if (url.includes("/git/trees") && method === "POST") {
+          gitWrites.push("tree");
+          return Response.json({ sha: "new-tree" });
+        }
+        if (url.includes("/git/commits") && method === "POST") {
+          gitWrites.push("commit");
+          return Response.json({ sha: "new-commit" });
+        }
+        if (url.includes("/git/refs/") && method === "PATCH") {
+          gitWrites.push("ref");
+          return Response.json({});
+        }
+        if (url.includes("/issues/6011/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/6011/comments") && method === "POST") {
+          posted.count += 1;
+          posted.body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+          return Response.json({ id: 60110 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      await processJob(env, checkboxWebhook(repoFullName, 6011, 910, { login: "maintainer" }));
+
+      expect(gitWrites).toEqual(["tree", "commit", "ref"]);
+      expect(posted.count).toBe(1);
+      expect(posted.body).toContain("pushed as a commit");
+    });
+
+    it("renders the checkbox (and the Test coverage collapsible) in the main review comment for a detected contributor missing tests", async () => {
+      const repoFullName = "JSONbored/checkbox-4589-full-panel";
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        // The checkbox/collapsible only render via the CONVERGED comment builder (buildUnifiedCommentBody);
+        // the legacy buildPublicPrIntelligenceComment path has neither and must be opted out of here too.
+        GITTENSORY_REVIEW_UNIFIED_COMMENT: "true",
+      });
+      const slash = repoFullName.indexOf("/");
+      await upsertRepositoryFromGitHub(env, { name: repoFullName.slice(slash + 1), full_name: repoFullName, private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName,
+        commentMode: "detected_contributors_only",
+        publicAudienceMode: "gittensor_only",
+        publicSurface: "comment_and_label",
+        autoLabelEnabled: false,
+        checkRunMode: "off",
+        // gateCheckMode MUST be "enabled" (not "off") -- maybePublishPrPublicSurface only takes the UNIFIED
+        // renderer branch when BOTH unifiedCommentAllowed AND gateEvaluation are truthy; gateEvaluation is
+        // never computed at all when the gate is off, silently falling back to the legacy panel (which has
+        // neither the Test coverage collapsible nor the generate-tests checkbox). Mirrors the settings shape
+        // of the pre-existing "renders the unified PR-review comment..." test above.
+        gateCheckMode: "enabled",
+        requireLinkedIssue: false,
+        linkedIssueGateMode: "off",
+        manifestPolicyGateMode: "advisory",
+        aiReviewMode: "off",
+        typeLabelsEnabled: false,
+      });
+      await upsertRepoFocusManifest(env, repoFullName, { testExpectations: ["Run npm run test:ci."], features: { e2eTests: true, unifiedComment: true } });
+      // gateEvaluation needs a resolved CI aggregate (mocking the module function directly is far simpler than
+      // stubbing every raw status/check-suite endpoint the live CI aggregator would otherwise call) -- but
+      // NOT "passed": resolveManifestPassedValidationCount treats a fully-green live CI rollup as validation
+      // evidence in its own right (`liveCi.ciState === "passed" ? 1 : 0`), which would satisfy
+      // manifest_missing_tests's own passedValidationCount check and suppress the very finding this test needs
+      // to fire. "pending" still lets the gate resolve a verdict without smuggling in validation evidence.
+      const liveCiSpy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
+        ciState: "pending",
+        hasPending: true,
+        hasVisiblePending: true,
+        hasMissingRequiredContext: false,
+        failingDetails: [],
+        nonRequiredFailingDetails: [],
+        ciCompletenessWarning: null,
+      });
+      const posted = { count: 0, body: "" };
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url === "https://api.gittensor.io/miners")
+          return Response.json([
+            { uid: 9, githubUsername: "contributor", githubId: "321", totalPrs: 5, totalMergedPrs: 4, totalOpenPrs: 1, totalClosedPrs: 0, totalOpenIssues: 0, totalClosedIssues: 0, totalSolvedIssues: 0, totalValidSolvedIssues: 0, isEligible: true, credibility: 1, eligibleRepoCount: 1 },
+          ]);
+        if (url === "https://api.gittensor.io/miners/321") return Response.json({ repositories: [{ repositoryFullName: repoFullName, totalPrs: "5", totalMergedPrs: "4", totalOpenPrs: "1", totalClosedPrs: "0", totalOpenIssues: "0", totalClosedIssues: "0", isEligible: true, credibility: "1.000000" }] });
+        if (url === "https://api.gittensor.io/miners/321/prs") return Response.json([]);
+        if (url === "https://mirror.gittensor.io/api/v1/miners/321/issues") return Response.json({ issues: [] });
+        if (url.endsWith("/users/contributor")) return Response.json({ login: "contributor", public_repos: 2, followers: 1 });
+        if (url.includes("/users/contributor/repos")) return Response.json([]);
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/pulls/6012/files")) return Response.json([{ filename: "src/checkout.ts", additions: 3, deletions: 0, status: "modified" }]);
+        if (/\/pulls\/6012(?:\?|$)/.test(url)) return Response.json({ number: 6012, mergeable_state: "clean" });
+        // Gate check-run — must succeed so gateEvaluation is produced and the unified-renderer branch runs.
+        if (url.includes("/check-runs") && method === "GET") return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 950 }, { status: 201 });
+        if (url.includes("/check-runs/950") && method === "PATCH") return Response.json({ id: 950 });
+        // Stateful comment store (mirrors the retrigger tests' own GET-finds-the-prior-POST pattern): the
+        // FIRST GET finds nothing (posts a fresh comment), every SUBSequent GET/PATCH finds and updates the
+        // SAME row -- a stub that always returns [] on GET would make the code re-POST on every update
+        // attempt instead of PATCHing, inflating posted.count for reasons unrelated to this test.
+        if (url.includes(`/issues/6012/comments`) && method === "GET") {
+          return Response.json(posted.count > 0 ? [{ id: 60120, body: posted.body, user: { login: "gittensory[bot]", type: "Bot" } }] : []);
+        }
+        if (url.includes(`/issues/6012/comments`) && method === "POST") {
+          posted.count += 1;
+          posted.body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+          return Response.json({ id: 60120 }, { status: 201 });
+        }
+        if (url.includes(`/issues/comments/60120`) && method === "PATCH") {
+          posted.body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+          return Response.json({ id: 60120 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "checkbox-4589-full-panel",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: {
+            id: 123,
+            account: { login: "JSONbored", id: 1, type: "User" },
+            repository_selection: "selected",
+            permissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
+            events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+          },
+          repository: { name: repoFullName.slice(slash + 1), full_name: repoFullName, private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 6012, title: "Add retry to checkout", state: "open", user: { login: "contributor" }, head: { sha: "checkbox-4589-full-panel-sha" }, labels: [], body: "No validation evidence mentioned here." },
+        },
+      } as unknown as Parameters<typeof processJob>[1]);
+
+      expect(liveCiSpy).toHaveBeenCalled();
+      expect(posted.count).toBeGreaterThan(0);
+      expect(posted.body).toContain("<details><summary><b>Test coverage</b></summary>");
+      expect(posted.body).toContain("No changed test files or passing validation evidence were detected for this PR.");
+      expect(posted.body).toContain("- [ ] <!-- gittensory-generate-tests:v1 --> Generate an AI Playwright test for this PR");
+    });
+
+    it("handles a sparse payload with no repository, sender, or issue without throwing", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await expect(
+        processJob(env, {
+          type: "github-webhook",
+          deliveryId: "checkbox-4589-sparse",
+          eventName: "issue_comment",
+          payload: {
+            action: "edited",
+            comment: { id: 999, body: CHECKED_GENERATE_TESTS_PANEL, user: { login: "gittensory[bot]", type: "Bot" } },
+            sender: undefined,
+          },
+        } as unknown as Parameters<typeof processJob>[1]),
+      ).resolves.not.toThrow();
+      const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation_skipped")
+        .first<{ detail: string }>();
+      expect(skipped?.detail).toBe("missing_repo_pr_or_installation");
+    });
+
+    it("treats a non-Bot sender whose login merely ends in '[bot]' as a bot author (spoofing guard)", async () => {
+      const repoFullName = "JSONbored/checkbox-4589-bot-suffix";
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedCheckboxPr(env, repoFullName, 6013, "checkbox-4589-bot-suffix-sha");
+      const posted = { count: 0, body: "" };
+      stubCheckboxFetch(6013, "impersonator[bot]", "admin", posted);
+
+      await processJob(env, checkboxWebhook(repoFullName, 6013, 911, { login: "impersonator[bot]", type: "User" }));
+
+      expect(posted.count).toBe(0);
+      const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation_skipped")
+        .first<{ detail: string }>();
+      expect(skipped?.detail).toBe("bot_author");
     });
   });
 

@@ -13,9 +13,12 @@ function RootLayout() {
             <p className="text-sm uppercase tracking-[0.2em] text-emerald-300/80">Gittensory Miner</p>
             <h1 className="text-lg font-semibold">Local dashboard shell</h1>
           </div>
-          <nav className="text-sm text-white/70">
+          <nav className="flex gap-4 text-sm text-white/70">
             <Link to="/" className="hover:text-white">
               Overview
+            </Link>
+            <Link to="/run-history" className="hover:text-white">
+              Run history
             </Link>
           </nav>
         </div>

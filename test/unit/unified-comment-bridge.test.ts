@@ -499,6 +499,38 @@ describe("buildUnifiedCommentBody", () => {
     expect(body).toContain("<details><summary><b>Signal definitions</b></summary>"); // extraCollapsibles
   });
 
+  // #4589: generateTestsLabel is a SEPARATE explicit field on BuildUnifiedCommentBodyArgs (not implicitly
+  // forwarded) — a prior version of this bridge silently dropped it because only reRunLabel was allowlisted
+  // here, so the checkbox never appeared in a real webhook-posted comment despite the renderer itself
+  // supporting it and every pure-function unit test passing. This pins the bridge-layer wiring specifically.
+  it("threads the optional generate-tests checkbox label into the renderer, independent of the re-run label", () => {
+    const bothLabels = buildUnifiedCommentBody({
+      gate: gate(),
+      panelRows,
+      readinessTotal: 80,
+      changedFiles: 2,
+      reRunLabel: "Re-run Gittensory review",
+      generateTestsLabel: "Generate an AI Playwright test for this PR",
+      footerMarkdown: footer,
+    });
+    expect(bothLabels).toContain("- [ ] Re-run Gittensory review");
+    expect(bothLabels).toContain("- [ ] Generate an AI Playwright test for this PR");
+
+    const onlyGenerateTests = buildUnifiedCommentBody({
+      gate: gate(),
+      panelRows,
+      readinessTotal: 80,
+      changedFiles: 2,
+      generateTestsLabel: "Generate an AI Playwright test for this PR",
+      footerMarkdown: footer,
+    });
+    expect(onlyGenerateTests).not.toContain("Re-run Gittensory review");
+    expect(onlyGenerateTests).toContain("- [ ] Generate an AI Playwright test for this PR");
+
+    const neitherLabel = buildUnifiedCommentBody({ gate: gate(), panelRows, readinessTotal: 80, changedFiles: 2, footerMarkdown: footer });
+    expect(neitherLabel).not.toContain("- [ ]");
+  });
+
   it("maps a non-merge/non-failure gate conclusion (manual / comment verdicts) through the bridge", () => {
     const manual = buildUnifiedCommentBody({ gate: gate({ conclusion: "action_required" }), panelRows, readinessTotal: 60, changedFiles: 2, footerMarkdown: footer });
     expect(manual).toContain("> [!WARNING]"); // action_required → manual → held

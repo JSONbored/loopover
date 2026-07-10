@@ -42,7 +42,7 @@ describe("planAgentMaintenanceActions (#778)", () => {
   });
 
   it("plans nothing when every class is at a non-acting level", () => {
-    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { review_state_label: "suggest", request_changes: "propose", close: "observe" }, blockerTitles: ["x"] }));
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { review_state_label: "observe", request_changes: "observe", close: "observe" }, blockerTitles: ["x"] }));
     expect(plan).toEqual([]);
   });
 

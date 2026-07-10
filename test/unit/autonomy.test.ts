@@ -53,8 +53,6 @@ describe("autonomy level predicates", () => {
   it("isActingAutonomyLevel is true only for auto / auto_with_approval", () => {
     expect(isActingAutonomyLevel("auto")).toBe(true);
     expect(isActingAutonomyLevel("auto_with_approval")).toBe(true);
-    expect(isActingAutonomyLevel("propose")).toBe(false);
-    expect(isActingAutonomyLevel("suggest")).toBe(false);
     expect(isActingAutonomyLevel("observe")).toBe(false);
   });
 
@@ -67,13 +65,13 @@ describe("autonomy level predicates", () => {
   it("the level ladder is ordered observe → … → auto with observe at the floor", () => {
     expect(AUTONOMY_LEVELS[0]).toBe("observe");
     expect(AUTONOMY_LEVELS[AUTONOMY_LEVELS.length - 1]).toBe("auto");
-    expect(AUTONOMY_LEVELS).toEqual(["observe", "suggest", "propose", "auto_with_approval", "auto"]);
+    expect(AUTONOMY_LEVELS).toEqual(["observe", "auto_with_approval", "auto"]);
   });
 });
 
 describe("normalizeAutonomyPolicy", () => {
   it("keeps only known action classes mapped to known levels", () => {
-    expect(normalizeAutonomyPolicy({ merge: "auto", review: "suggest" })).toEqual({ merge: "auto", review: "suggest" });
+    expect(normalizeAutonomyPolicy({ merge: "auto", review: "auto_with_approval" })).toEqual({ merge: "auto", review: "auto_with_approval" });
   });
 
   it("drops unknown action classes and unknown levels (deny-by-omission)", () => {
@@ -90,7 +88,7 @@ describe("normalizeAutonomyPolicy", () => {
   });
 
   it("round-trips a valid policy through normalization", () => {
-    const policy: AutonomyPolicy = { review: "propose", request_changes: "auto_with_approval", merge: "observe" };
+    const policy: AutonomyPolicy = { review: "auto", request_changes: "auto_with_approval", merge: "observe" };
     expect(normalizeAutonomyPolicy(policy)).toEqual(policy);
   });
 });
@@ -123,11 +121,11 @@ describe("isAgentConfigured (#777 opt-in detection)", () => {
   it("is true when any action class has an acting level", () => {
     expect(isAgentConfigured({ merge: "auto" })).toBe(true);
     expect(isAgentConfigured({ label: "auto_with_approval" })).toBe(true);
-    expect(isAgentConfigured({ review: "suggest", close: "auto" })).toBe(true);
+    expect(isAgentConfigured({ review: "observe", close: "auto" })).toBe(true);
   });
 
   it("is false for the deny-by-default floor (all observe / non-acting / empty / null)", () => {
-    expect(isAgentConfigured({ merge: "observe", review: "suggest", approve: "propose" })).toBe(false);
+    expect(isAgentConfigured({ merge: "observe", review: "observe", approve: "observe" })).toBe(false);
     expect(isAgentConfigured({})).toBe(false);
     expect(isAgentConfigured(null)).toBe(false);
     expect(isAgentConfigured(undefined)).toBe(false);

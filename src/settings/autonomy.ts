@@ -2,7 +2,9 @@ import type { AgentActionClass, AutoMaintainPolicy, AutoMergeMethod, AutonomyLev
 
 // The graduated autonomy dial (#773), ordered least → most autonomous. Every later agent-layer phase reads
 // this BEFORE acting. `observe` is the deny-by-default floor — gittensory watches but never takes an action.
-export const AUTONOMY_LEVELS = ["observe", "suggest", "propose", "auto_with_approval", "auto"] as const;
+// (#4620: `suggest`/`propose` removed -- both were 100% behaviorally identical to `observe`, see
+// AutonomyLevel's own doc comment.)
+export const AUTONOMY_LEVELS = ["observe", "auto_with_approval", "auto"] as const;
 
 // The write-action classes the maintainer auto-maintain layer (#778) can take on a PR. `review_state_label`
 // (#label-scoping) is a separate class from `label`: it gates the planner's own disposition-communication

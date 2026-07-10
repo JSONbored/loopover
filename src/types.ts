@@ -623,10 +623,9 @@ export type ReviewCheckMode = "required" | "visible" | "disabled";
 
 /** Auto-project/milestone matching (#3183): detects when a PR is likely part of an open GitHub Milestone even
  *  with no closing-keyword issue link, and posts a bot-comment suggestion. `"off"` (default) runs no matching
- *  at all; `"suggest"` matches and posts a single advisory comment, never mutating the PR; `"auto"` is accepted
- *  by config today but behaves identically to `"suggest"` until #3185 wires real milestone attachment -- no
- *  attach/auto-apply code exists yet, so treating it as inert-but-silent would be a worse failure mode than
- *  degrading to the safe, visible suggest behavior. */
+ *  at all; `"suggest"` matches and posts a single advisory comment, never mutating the PR; `"auto"` (#3185,
+ *  shipped) actually calls `attachToMilestone`/`attachToProject` for a high-confidence match instead of only
+ *  commenting -- see `maybeSuggestMilestoneMatchForPr` in `integrations/project-tracker-adapter.ts`. */
 export type ProjectMilestoneMatchMode = "off" | "suggest" | "auto";
 
 /** Which backend {@link ProjectMilestoneMatchMode} matches against (#3186). `"github"` (default) uses the
@@ -1285,9 +1284,12 @@ export type ContributorBlacklistEntry = {
 };
 
 /** Agent-layer graduated autonomy (#773), least → most autonomous. `observe` is the deny-by-default floor:
- *  gittensory watches but never acts. `suggest`/`propose` surface guidance/concrete proposals without
- *  executing; `auto_with_approval` executes behind a human approval gate (#779); `auto` executes directly. */
-export type AutonomyLevel = "observe" | "suggest" | "propose" | "auto_with_approval" | "auto";
+ *  gittensory watches but never acts. `auto_with_approval` executes behind a human approval gate (#779);
+ *  `auto` executes directly. (#4620: `suggest`/`propose` were removed here -- the doc comment promised
+ *  distinct "surface guidance/concrete proposals without executing" behavior, but every read site
+ *  (`isActingAutonomyLevel`/`autonomyRequiresApproval`) only ever distinguished acting from non-acting, so
+ *  both were 100% behaviorally identical to `observe` from day one. No stored config used either value.) */
+export type AutonomyLevel = "observe" | "auto_with_approval" | "auto";
 
 /** The write-action classes the maintainer auto-maintain layer (#778) can take on a PR. `label` gates the
  *  anti-abuse enforcement labels tied 1:1 to a `close` in the same disposition (blacklist/contributor-cap/

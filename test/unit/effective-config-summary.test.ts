@@ -50,7 +50,7 @@ describe("summarizeEffectiveConfig", () => {
 
   it("never leaks a secret/reward/trust/wallet field (public-safe, #2168 house rule)", () => {
     const out = summarizeEffectiveConfig(
-      base({ autonomy: { review: "auto", request_changes: "propose", approve: "auto_with_approval", merge: "auto", close: "suggest" } }),
+      base({ autonomy: { review: "auto", request_changes: "observe", approve: "auto_with_approval", merge: "auto", close: "observe" } }),
       "live",
     ).toLowerCase();
     for (const banned of ["reward", "payout", "emission", "wallet", "hotkey", "coldkey", "privatekey", "trustscore", "rawtrust", "coldkeys", "secret"]) {

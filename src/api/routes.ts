@@ -761,7 +761,7 @@ const maintainerSettingsSchema = z
     }),
     // Agent-layer config (#773/#774). The DB layer normalizes both (autonomy: deny-by-default; autoMaintain:
     // defaults filled), so a loose record/object here is safe — invalid entries are dropped on persist.
-    autonomy: z.record(z.string().trim().min(1).max(32), z.enum(["observe", "suggest", "propose", "auto_with_approval", "auto"])),
+    autonomy: z.record(z.string().trim().min(1).max(32), z.enum(["observe", "auto_with_approval", "auto"])),
     autoMaintain: z.object({ requireApprovals: z.number().int().min(0).max(10).optional(), mergeMethod: z.enum(["merge", "squash", "rebase"]).optional() }),
   })
   .partial();

@@ -146,7 +146,7 @@ describe("agent write-permission readiness (#775)", () => {
     expect(agentRequiresPrWrite({ request_changes: "auto_with_approval" })).toBe(true);
     expect(agentRequiresPrWrite({ close: "auto" })).toBe(true);
     // non-acting levels never demand write
-    expect(agentRequiresPrWrite({ merge: "propose", review: "suggest" })).toBe(false);
+    expect(agentRequiresPrWrite({ merge: "observe", review: "observe" })).toBe(false);
     expect(agentRequiresPrWrite({ merge: "observe" })).toBe(false);
     expect(agentRequiresPrWrite({})).toBe(false);
     expect(agentRequiresPrWrite(null)).toBe(false);

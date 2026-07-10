@@ -124,7 +124,8 @@ export type ContributorBlacklistEntry = {
   addedAt?: string | undefined;
 };
 
-export type AutonomyLevel = "observe" | "suggest" | "propose" | "auto_with_approval" | "auto";
+// (#4620: "suggest"/"propose" removed -- both were 100% behaviorally identical to "observe".)
+export type AutonomyLevel = "observe" | "auto_with_approval" | "auto";
 
 export type AgentActionClass = "review" | "request_changes" | "approve" | "merge" | "close" | "label" | "review_state_label" | "update_branch" | "assign";
 

@@ -47,17 +47,11 @@ type MaintainerSettings = {
   agentDryRun: boolean;
 };
 
-type AutonomyLevel = "observe" | "suggest" | "propose" | "auto_with_approval" | "auto";
+type AutonomyLevel = "observe" | "auto_with_approval" | "auto";
 type AgentActionClass = "review" | "request_changes" | "approve" | "merge" | "close" | "label";
 type AutoMergeMethod = "merge" | "squash" | "rebase";
 
-const AUTONOMY_LEVELS: AutonomyLevel[] = [
-  "observe",
-  "suggest",
-  "propose",
-  "auto_with_approval",
-  "auto",
-];
+const AUTONOMY_LEVELS: AutonomyLevel[] = ["observe", "auto_with_approval", "auto"];
 const AGENT_ACTION_CLASSES: AgentActionClass[] = [
   "review",
   "request_changes",
@@ -492,8 +486,6 @@ export function MaintainerSettings({ reviewability }: { reviewability: Array<{ p
             <h3 className={LABEL_CLASS}>Auto-maintain (agent layer)</h3>
             <p className="mt-1 text-token-2xs text-muted-foreground">
               Per-action autonomy: <code className="font-mono">observe</code> (watch only) →{" "}
-              <code className="font-mono">suggest</code> →{" "}
-              <code className="font-mono">propose</code> →{" "}
               <code className="font-mono">auto_with_approval</code> →{" "}
               <code className="font-mono">auto</code>. Deny-by-default — anything left at{" "}
               <code className="font-mono">observe</code> never acts.

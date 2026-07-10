@@ -20,7 +20,15 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import Parser from "web-tree-sitter";
 
-const require = createRequire(import.meta.url);
+// Lazy, not module-scope: this file is reachable from the Cloudflare Workers bundle (barrel-exported via
+// `@jsonbored/gittensory-engine`) even though nothing there ever calls `buildRepoMap`. `import.meta.url` is
+// undefined in that bundle's startup-validation context, so an eager `createRequire(import.meta.url)` at
+// module scope would crash the Worker's deploy before any request is served. Deferring construction to
+// first real use keeps this module import-safe everywhere while still working for its actual CLI callers.
+let cachedRequire: NodeJS.Require | null = null;
+function requireFromHere(): NodeJS.Require {
+  return (cachedRequire ??= createRequire(import.meta.url));
+}
 
 export type RepoMapSymbolKind = "function" | "class" | "method" | "interface" | "type";
 
@@ -90,7 +98,7 @@ let parserInitialized: Promise<void> | null = null;
 async function defaultLoadRepoMapLanguage(languageName: string): Promise<Parser.Language> {
   parserInitialized ??= Parser.init();
   await parserInitialized;
-  const wasmPath = require.resolve(`tree-sitter-wasms/out/tree-sitter-${languageName}.wasm`);
+  const wasmPath = requireFromHere().resolve(`tree-sitter-wasms/out/tree-sitter-${languageName}.wasm`);
   return Parser.Language.load(readFileSync(wasmPath));
 }
 

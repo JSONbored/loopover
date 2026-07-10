@@ -7546,7 +7546,7 @@ export async function runAiReviewForAdvisory(
           patch: typeof file.payload?.patch === "string" ? file.payload.patch : undefined,
         })),
       );
-      impactMapEntries = await computeImpactMap(changedSymbols, {
+      impactMapEntries = await computeImpactMap(env, changedSymbols, {
         infra: createReviewAdapters(env),
         project: impactMapProject,
         repo: impactMapRepo,

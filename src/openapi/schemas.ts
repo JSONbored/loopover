@@ -131,6 +131,19 @@ export const PublicStatsSchema = z
         accuracyPct: z.number().nullable(),
       }),
     ),
+    /** Trailing weekly "how often we avoid redoing AI work" trend (#4448) -- a competence signal, not a cost
+     *  claim. Counts cache hits/misses across every instrumented AI-touching capability (grounding,
+     *  review-memory, impact-map, repo-culture-profile, ai_review, ai_slop, linked_issue_satisfaction,
+     *  miner_detection). null reuseRatePct on a week means too few total attempts to publish a meaningful
+     *  percentage, not zero reuse. */
+    reuseRateTrend: z.array(
+      z.object({
+        weekStart: z.string(),
+        hits: z.number(),
+        misses: z.number(),
+        reuseRatePct: z.number().nullable(),
+      }),
+    ),
   })
   .openapi("PublicStats");
 

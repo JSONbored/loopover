@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { createTestEnv } from "../helpers/d1";
 import { PUBLIC_ACCURACY_TREND_WEEKS } from "../../src/services/public-accuracy-trend";
+import { PUBLIC_REUSE_RATE_TREND_WEEKS } from "../../src/services/public-reuse-rate-trend";
 
 /** Seed the LIVE ledger: a published-review surface per reviewed PR (audit_events) + each PR's terminal
  *  disposition (pull_requests state/merged_at), plus one live reversal (an engine close on a now-reopened PR). */
@@ -62,6 +63,7 @@ describe("GET /v1/public/stats (#1059)", () => {
       weekly: { reviewed: number; merged: number };
       byProject: Array<{ project: string; reviewed: number }>;
       accuracyTrend: Array<{ weekStart: string; merged: number; closed: number; reversed: number; accuracyPct: number | null }>;
+      reuseRateTrend: Array<{ weekStart: string; hits: number; misses: number; reuseRatePct: number | null }>;
     };
     expect(body.totals.handled).toBe(5); // distinct reviewed PRs
     expect(body.totals.merged).toBe(3);
@@ -81,5 +83,8 @@ describe("GET /v1/public/stats (#1059)", () => {
     // #4447: the weekly accuracy trend rides along on the SAME response, one entry per trailing week.
     expect(body.accuracyTrend).toHaveLength(PUBLIC_ACCURACY_TREND_WEEKS);
     for (const week of body.accuracyTrend) expect(typeof week.weekStart).toBe("string");
+    // #4448: the weekly AI-work reuse-rate trend rides along on the SAME response too.
+    expect(body.reuseRateTrend).toHaveLength(PUBLIC_REUSE_RATE_TREND_WEEKS);
+    for (const week of body.reuseRateTrend) expect(typeof week.weekStart).toBe("string");
   });
 });

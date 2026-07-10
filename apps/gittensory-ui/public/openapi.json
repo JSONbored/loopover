@@ -495,6 +495,33 @@
                 "accuracyPct"
               ]
             }
+          },
+          "reuseRateTrend": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "weekStart": {
+                  "type": "string"
+                },
+                "hits": {
+                  "type": "number"
+                },
+                "misses": {
+                  "type": "number"
+                },
+                "reuseRatePct": {
+                  "type": "number",
+                  "nullable": true
+                }
+              },
+              "required": [
+                "weekStart",
+                "hits",
+                "misses",
+                "reuseRatePct"
+              ]
+            }
           }
         },
         "required": [
@@ -503,7 +530,8 @@
           "totals",
           "weekly",
           "byProject",
-          "accuracyTrend"
+          "accuracyTrend",
+          "reuseRateTrend"
         ]
       },
       "PublicQualityMetrics": {

@@ -1,9 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { computeImpactMap, MAX_AFFECTED_MODULES_PER_ENTRY, MAX_IMPACT_MAP_INPUT_FILES } from "../../src/review/impact-map";
+import * as repositoriesModule from "../../src/db/repositories";
+import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import type { FileChangedSymbols } from "../../src/review/impact-symbols";
 import type { InferenceAdapter, RagInfra, StorageAdapter, VectorAdapter } from "../../src/review/rag";
+import { createTestEnv } from "../helpers/d1";
 
 const ai1024: InferenceAdapter = { run: async () => ({ data: [Array(1024).fill(0.1)] }) };
+
+/** A fresh env per call -- computeImpactMap's cache hit/miss telemetry (#4448) needs a real D1-backed env for
+ *  recordAuditEvent; the pre-existing tests below only assert on the return value, so a throwaway env per call
+ *  (rather than one shared across the whole file) keeps them fully isolated from each other and from the
+ *  dedicated telemetry tests further down. */
+function testEnv(): Env {
+  return createTestEnv();
+}
 
 /** A bare storage stub: COUNT(*) returns `n` (warm vs cold index); the chunk-text SELECT always answers empty.
  *  Fine for cold-index / no-adapter / no-match cases, where no chunk text is ever read. */
@@ -78,7 +89,7 @@ describe("computeImpactMap", () => {
       inference: ai1024,
     };
     const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }];
-    const result = await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
+    const result = await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" });
     expect(result).toEqual([
       { changedModule: "src/review/impact-map.ts", affectedModules: ["src/review/caller.ts"], callers: ["computeImpactMap"] },
     ]);
@@ -92,7 +103,7 @@ describe("computeImpactMap", () => {
     }));
     const infra: RagInfra = { storage: storageStubWithText(5), vector: vectorStub(matches), inference: ai1024 };
     const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }];
-    const result = await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
+    const result = await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" });
     expect(result).toHaveLength(1);
     expect(result[0]?.affectedModules).toHaveLength(MAX_AFFECTED_MODULES_PER_ENTRY);
     // Deterministic ordering: the highest-scoring match leads (RAG's own retrieval order).
@@ -116,7 +127,7 @@ describe("computeImpactMap", () => {
       path: `src/review/module${i}.ts`,
       symbols: [`fn${i}`],
     }));
-    const result = await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
+    const result = await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" });
     expect(queryCount).toBe(MAX_IMPACT_MAP_INPUT_FILES);
     expect(result).toHaveLength(MAX_IMPACT_MAP_INPUT_FILES);
     // Deterministic: the FIRST N input files are kept, not a sample.
@@ -142,7 +153,7 @@ describe("computeImpactMap", () => {
       symbols: [`fn${i}`],
     }));
     symbols.splice(1, 0, { path: "README.md", symbols: [] }, { path: "docs/guide.md", symbols: [] });
-    const result = await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
+    const result = await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" });
     expect(queryCount).toBe(MAX_IMPACT_MAP_INPUT_FILES);
     expect(result).toHaveLength(MAX_IMPACT_MAP_INPUT_FILES);
   });
@@ -156,7 +167,7 @@ describe("computeImpactMap", () => {
       inference: ai1024,
     };
     const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }];
-    const result = await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
+    const result = await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" });
     expect(result).toEqual([]);
   });
 
@@ -167,7 +178,7 @@ describe("computeImpactMap", () => {
       inference: ai1024,
     };
     const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: [] }];
-    const result = await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
+    const result = await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" });
     expect(result).toEqual([]);
   });
 
@@ -186,13 +197,13 @@ describe("computeImpactMap", () => {
     } as unknown as VectorAdapter;
     const infra: RagInfra = { storage: storageStub(5), vector, inference: ai1024 };
     const symbols: FileChangedSymbols[] = [{ path: "a.ts", symbols: ["a"] }];
-    expect(await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" })).toEqual([]);
+    expect(await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" })).toEqual([]);
     expect(queried).toBe(false);
   });
 
   it("returns an empty impact map for an empty symbol list", async () => {
     const infra: RagInfra = { storage: storageStub(5), vector: vectorStub([]), inference: ai1024 };
-    expect(await computeImpactMap([], { infra, project: "acme", repo: "widgets" })).toEqual([]);
+    expect(await computeImpactMap(testEnv(), [], { infra, project: "acme", repo: "widgets" })).toEqual([]);
   });
 
   it("returns an empty impact map when the RAG index is cold (empty-index, fail-safe)", async () => {
@@ -202,13 +213,13 @@ describe("computeImpactMap", () => {
       inference: ai1024,
     };
     const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }];
-    expect(await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" })).toEqual([]);
+    expect(await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" })).toEqual([]);
   });
 
   it("returns an empty impact map when no vector/inference adapter is configured (RAG unavailable)", async () => {
     const infra: RagInfra = { storage: storageStub(5) };
     const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }];
-    expect(await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" })).toEqual([]);
+    expect(await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" })).toEqual([]);
   });
 
   it("degrades a single file's entry to no-affected-modules when the vector query throws (fail-safe, never blocks the rest)", async () => {
@@ -221,7 +232,7 @@ describe("computeImpactMap", () => {
     } as unknown as VectorAdapter;
     const infra: RagInfra = { storage: storageStub(5), vector: throwingVector, inference: ai1024 };
     const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }];
-    expect(await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" })).toEqual([]);
+    expect(await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" })).toEqual([]);
   });
 
   it("computes independent entries for multiple changed files in input order", async () => {
@@ -241,7 +252,7 @@ describe("computeImpactMap", () => {
       { path: "src/review/impact-symbols.ts", symbols: ["extractChangedSymbols"] },
       { path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] },
     ];
-    const result = await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
+    const result = await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" });
     expect(result).toEqual([
       { changedModule: "src/review/impact-symbols.ts", affectedModules: ["src/review/x.ts"], callers: ["extractChangedSymbols"] },
       { changedModule: "src/review/impact-map.ts", affectedModules: ["src/review/y.ts"], callers: ["computeImpactMap"] },
@@ -269,8 +280,8 @@ describe("computeImpactMap", () => {
     const infra: RagInfra = { storage, vector: countingVector, inference: countingInference };
     const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }];
 
-    const first = await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
-    const second = await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
+    const first = await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" });
+    const second = await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" });
 
     expect(first).toEqual(second);
     expect(embedCalls).toBe(1);
@@ -302,7 +313,7 @@ describe("computeImpactMap", () => {
     // non-cacheable cooldown -- previously each one re-embedded and re-queried the vector index from scratch.
     for (let i = 0; i < 5; i += 1) {
       // eslint-disable-next-line no-await-in-loop -- sequential passes, mirroring separate review invocations
-      await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
+      await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" });
     }
 
     expect(embedCalls).toBe(1);
@@ -331,7 +342,7 @@ describe("computeImpactMap", () => {
     // The chunk-text lookup (repo_chunks) ALSO throws via this stub, which retrieveContextWithMetrics itself
     // already degrades fail-safe -- the cache-read throw specifically is what this test targets, so the
     // resulting entry is empty (no chunk text survives), but the computation must complete, not throw.
-    await expect(computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" })).resolves.toEqual([]);
+    await expect(computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" })).resolves.toEqual([]);
   });
 
   it("a genuinely different query (different changed symbols) still triggers a fresh embed+query, never masked by another file's cached entry", async () => {
@@ -347,10 +358,10 @@ describe("computeImpactMap", () => {
     const { storage } = cachingStorageStub(5);
     const infra: RagInfra = { storage, vector: countingVector, inference: ai1024 };
 
-    await computeImpactMap([{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }], { infra, project: "acme", repo: "widgets" });
+    await computeImpactMap(testEnv(), [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }], { infra, project: "acme", repo: "widgets" });
     // A different changed file with different symbols -- a genuinely different query, even though it shares
     // the same project/repo as the first call.
-    await computeImpactMap([{ path: "src/review/rag.ts", symbols: ["retrieveContextWithMetrics"] }], { infra, project: "acme", repo: "widgets" });
+    await computeImpactMap(testEnv(), [{ path: "src/review/rag.ts", symbols: ["retrieveContextWithMetrics"] }], { infra, project: "acme", repo: "widgets" });
 
     expect(queryCalls).toBe(2);
   });
@@ -370,9 +381,92 @@ describe("computeImpactMap", () => {
     const infra: RagInfra = { storage, vector: countingVector, inference: ai1024 };
     const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }];
 
-    await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
-    await computeImpactMap(symbols, { infra, project: "acme", repo: "widgets" });
+    await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" });
+    await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "widgets" });
 
     expect(queryCalls).toBe(2);
+  });
+
+  describe("cache hit/miss telemetry (#4448)", () => {
+    afterEach(() => resetMetrics());
+
+    async function auditEvent(env: Env, eventType: string, targetKey: string) {
+      return env.DB.prepare("SELECT outcome, target_key FROM audit_events WHERE event_type = ? AND target_key = ?")
+        .bind(eventType, targetKey)
+        .first<{ outcome: string; target_key: string }>();
+    }
+
+    it("INVARIANT: a cache HIT fires exactly the hit counter/audit-event pair, and NOT the miss pair", async () => {
+      const { storage } = cachingStorageStub(5);
+      const infra: RagInfra = { storage, vector: vectorStub([{ id: "src/review/caller.ts::0", score: 0.9, metadata: { path: "src/review/caller.ts" } }]), inference: ai1024 };
+      const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }];
+
+      await computeImpactMap(testEnv(), symbols, { infra, project: "acme", repo: "telemetry-widgets" }); // first call: a miss (cold cache)
+      const env = testEnv();
+      resetMetrics();
+
+      await computeImpactMap(env, symbols, { infra, project: "acme", repo: "telemetry-widgets" }); // same query -- a hit
+
+      const rendered = await renderMetrics();
+      expect(rendered).toContain("gittensory_impact_map_cache_hit_total 1");
+      expect(rendered).not.toContain("gittensory_impact_map_cache_miss_total");
+      const hitEvent = await auditEvent(env, "github_app.impact_map_cache_hit", "acme/telemetry-widgets");
+      expect(hitEvent?.outcome).toBe("completed");
+      expect(await auditEvent(env, "github_app.impact_map_cache_miss", "acme/telemetry-widgets")).toBeUndefined();
+    });
+
+    it("INVARIANT: a cache MISS fires exactly the miss counter/audit-event pair, and NOT the hit pair", async () => {
+      const { storage } = cachingStorageStub(5);
+      const infra: RagInfra = { storage, vector: vectorStub([{ id: "src/review/caller.ts::0", score: 0.9, metadata: { path: "src/review/caller.ts" } }]), inference: ai1024 };
+      const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }];
+      const env = testEnv();
+
+      await computeImpactMap(env, symbols, { infra, project: "acme", repo: "telemetry-widgets-2" });
+
+      const rendered = await renderMetrics();
+      expect(rendered).toContain("gittensory_impact_map_cache_miss_total 1");
+      expect(rendered).not.toContain("gittensory_impact_map_cache_hit_total");
+      const missEvent = await auditEvent(env, "github_app.impact_map_cache_miss", "acme/telemetry-widgets-2");
+      expect(missEvent?.outcome).toBe("completed");
+      expect(await auditEvent(env, "github_app.impact_map_cache_hit", "acme/telemetry-widgets-2")).toBeUndefined();
+    });
+
+    it("swallows a failing cache-hit audit-event write without throwing, still returning the cached-derived entries", async () => {
+      const { storage } = cachingStorageStub(5);
+      const infra: RagInfra = { storage, vector: vectorStub([{ id: "src/review/caller.ts::0", score: 0.9, metadata: { path: "src/review/caller.ts" } }]), inference: ai1024 };
+      const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }];
+      const env = testEnv();
+      await computeImpactMap(env, symbols, { infra, project: "acme", repo: "telemetry-widgets-3" }); // populates the cache
+
+      const writeSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
+      const second = await computeImpactMap(env, symbols, { infra, project: "acme", repo: "telemetry-widgets-3" }); // a cache hit
+      writeSpy.mockRestore();
+
+      expect(second).toHaveLength(1); // the failed audit write never surfaces to the caller
+    });
+
+    it("swallows a failing cache-MISS audit-event write without throwing, still returning the freshly-queried entries", async () => {
+      const { storage } = cachingStorageStub(5);
+      const infra: RagInfra = { storage, vector: vectorStub([{ id: "src/review/caller.ts::0", score: 0.9, metadata: { path: "src/review/caller.ts" } }]), inference: ai1024 };
+      const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }];
+      const env = testEnv();
+
+      const writeSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
+      const first = await computeImpactMap(env, symbols, { infra, project: "acme", repo: "telemetry-widgets-4" }); // cold cache -- a miss
+      writeSpy.mockRestore();
+
+      expect(first).toHaveLength(1); // the failed audit write never surfaces to the caller, query still happens
+    });
+
+    it("REGRESSION: an empty project (a repoFullName with no owner segment, e.g. splitRepoForRag's fallback) targets the bare repo name, not a leading slash", async () => {
+      const { storage } = cachingStorageStub(5);
+      const infra: RagInfra = { storage, vector: vectorStub([{ id: "src/review/caller.ts::0", score: 0.9, metadata: { path: "src/review/caller.ts" } }]), inference: ai1024 };
+      const symbols: FileChangedSymbols[] = [{ path: "src/review/impact-map.ts", symbols: ["computeImpactMap"] }];
+      const env = testEnv();
+
+      await computeImpactMap(env, symbols, { infra, project: "", repo: "no-owner-repo" });
+
+      expect(await auditEvent(env, "github_app.impact_map_cache_miss", "no-owner-repo")).toMatchObject({ outcome: "completed" });
+    });
   });
 });

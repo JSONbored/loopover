@@ -9,6 +9,8 @@
 // FAIL-SAFE (mirrors rag.ts's own guarantee): a missing/cold RAG index, no changed symbols, or any retrieval
 // error degrades to an EMPTY impact map — this computation can never break or block a review.
 
+import { recordAuditEvent } from "../db/repositories";
+import { incr } from "../selfhost/metrics";
 import { sha256Hex } from "../utils/crypto";
 import { nowIso } from "../utils/json";
 import type { FileChangedSymbols } from "./impact-symbols";
@@ -129,10 +131,12 @@ async function putCachedImpactMapQuery(
  * retrieval error yields an EMPTY impact map, never a throw.
  */
 export async function computeImpactMap(
+  env: Env,
   symbols: FileChangedSymbols[],
   ragContext: { infra: RagInfra; project: string; repo: string },
 ): Promise<ImpactMapEntry[]> {
   const out: ImpactMapEntry[] = [];
+  const targetKey = ragContext.project ? `${ragContext.project}/${ragContext.repo}` : ragContext.repo;
   // Symbol-less files never query (nothing to look up) and so never count against the cap below -- filter
   // them out first so the cap applies to the actual query budget, not a raw slice of the input.
   const queryableFiles = symbols.filter((file) => file.symbols.length > 0).slice(0, MAX_IMPACT_MAP_INPUT_FILES);
@@ -148,8 +152,26 @@ export async function computeImpactMap(
       const cached = await getCachedImpactMapQuery(ragContext.infra.storage, ragContext.project, ragContext.repo, fingerprint);
       let result: RagRetrievalResult;
       if (cached !== null) {
+        // #4448: mirrors repo-culture-profile's #4509 cache hit/miss instrumentation exactly -- one of the six
+        // AI-touching capabilities that had no reuse-rate signal at all before this.
+        incr("gittensory_impact_map_cache_hit_total");
+        await recordAuditEvent(env, {
+          eventType: "github_app.impact_map_cache_hit",
+          targetKey,
+          outcome: "completed",
+          detail: "reused a cached impact-map query result instead of re-querying the vector index",
+          metadata: { repoFullName: targetKey },
+        }).catch(() => undefined);
         result = cached;
       } else {
+        incr("gittensory_impact_map_cache_miss_total");
+        await recordAuditEvent(env, {
+          eventType: "github_app.impact_map_cache_miss",
+          targetKey,
+          outcome: "completed",
+          detail: "no reusable cached impact-map query result; querying the vector index fresh",
+          metadata: { repoFullName: targetKey },
+        }).catch(() => undefined);
         result = await retrieveContextWithMetrics(ragContext.infra, {
           project: ragContext.project,
           repo: ragContext.repo,

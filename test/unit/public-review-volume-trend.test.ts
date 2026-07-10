@@ -126,6 +126,35 @@ describe("loadPublicReviewVolumeTrend — end-to-end over the real live tables",
     expect(currentWeek?.merged).toBe(1);
   });
 
+  it("REGRESSION (#4723): a PR re-published inside the window still resolves to its TRUE (out-of-window) first-publish date, not the recent re-publish", async () => {
+    // The whole point of the two-step recent_keys -> true_first_seen query (#4723): step 1 finds this PR as a
+    // CANDIDATE purely because it has a recent publish event, but step 2 must still discover its true,
+    // much-older first-publish date across its FULL history -- and once found, that date is outside the
+    // trend's own window, so the PR must be excluded entirely, not misattributed to the recent event's week.
+    // A naive single-pass query that filtered raw events by `created_at >= sinceIso` BEFORE taking MIN() would
+    // get this wrong: it would see only the recent event and wrongly count the PR in the current week.
+    const env = createTestEnv({ GITTENSORY_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
+    const thisMonday = isoWeekStart(NOW);
+    const thisWeekIso = `${thisMonday}T09:00:00.000Z`;
+    // 20 weeks ago: well outside the 8-week trend window, but still a real, storable timestamp.
+    const longAgoIso = new Date(Date.parse(thisWeekIso) - 20 * 7 * 86_400_000).toISOString();
+
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 1);
+    // Still open today (a long-lived PR that keeps getting re-reviewed) -- not merged, not closed.
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 9, title: "PR 9", state: "open", user: { login: "a" }, head: { sha: "s9" }, labels: [] });
+    // Its TRUE first publish, 20 weeks ago -- outside the trend window on its own.
+    await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", targetKey: "JSONbored/gittensory#9", outcome: "completed", createdAt: longAgoIso });
+    // A legitimate re-publish THIS week (e.g. a fresh push triggered another review pass).
+    await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", targetKey: "JSONbored/gittensory#9", outcome: "completed", createdAt: thisWeekIso });
+
+    const trend = await loadPublicReviewVolumeTrend(env, NOW);
+    const currentWeek = trend[trend.length - 1];
+
+    // PR #9 must NOT be counted anywhere in the trend -- its true first-publish is outside the window.
+    expect(currentWeek?.reviewed).toBe(0);
+    expect(trend.every((week) => week.reviewed === 0)).toBe(true);
+  });
+
   it("still reports the Orb-fleet side when GITTENSORY_PUBLIC_STATS_REPOS is empty (no own-ledger allowlist)", async () => {
     const env = createTestEnv({ GITTENSORY_PUBLIC_STATS_REPOS: "" });
     const thisMonday = isoWeekStart(NOW);

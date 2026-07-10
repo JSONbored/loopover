@@ -28,6 +28,10 @@ const SECRET_PATTERNS: Array<{ name: string; re: RegExp }> = [
   { name: "sendgrid_key", re: /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/ },
   // Hugging Face user access token: `hf_` + 34 base62 chars.
   { name: "huggingface_token", re: /\bhf_[A-Za-z0-9]{34}\b/ },
+  // Voyage AI API key: `pa-` (platform) or `al-` (MongoDB Atlas) + base62 body.
+  { name: "voyage_api_key", re: /\b(?:pa|al)-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])/ },
+  // Firecrawl API key: `fc-` + base62 body (alnum only; reject hyphen-continued identifiers).
+  { name: "firecrawl_api_key", re: /\bfc-[A-Za-z0-9]{16,}(?![A-Za-z0-9_-])/ },
   { name: "jwt", re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/ },
   { name: "seed_or_mnemonic", re: /\b(?:seed phrase|mnemonic)\b/i },
   { name: "bittensor_key", re: /\b(?:hot|cold)key\b\s*[:=]/i },
@@ -63,6 +67,10 @@ function hasLongSequentialRun(value: string): boolean {
   return false;
 }
 
+// Lowercase hyphenated mock names are fixtures; mixed-case/digit-bearing values containing "mock" remain
+// plausible credentials and must still be reported by the generic assignment scanner.
+const LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN = /^(?:[a-z]+-)*mock(?:-[a-z]+)*$/;
+
 // All-lowercase-letters value check, shared by the self-naming-suffix exclusion below.
 const ALL_LOWERCASE_SEGMENTS_PATTERN = /^[a-z]+(?:[-_][a-z]+)*$/;
 
@@ -77,12 +85,14 @@ const ALL_LOWERCASE_SEGMENTS_PATTERN = /^[a-z]+(?:[-_][a-z]+)*$/;
 const SELF_NAMING_FIXTURE_SUFFIX_PATTERN = /[-_](?:token|secret|key|password|passwd)$/i;
 
 /** True for an obvious non-secret filler value: a known placeholder phrase, a string built from at most 2
- *  distinct characters (e.g. "xxxxxxxxxxxxxxxx", "----------------"), a long monotonic character-code run
- *  (e.g. "abcdefghijklmnop123"), or a lowercase identifier whose own last segment self-names as a secret kind
- *  (e.g. "default-session-token", "unsafe_install_or_secret") — real high-entropy secrets never look like any of these. */
+ *  distinct characters (e.g. "xxxxxxxxxxxxxxxx", "----------------"), a lowercase-hyphenated mock/fixture name
+ *  (e.g. "mock-response-value"), a long monotonic character-code run (e.g. "abcdefghijklmnop123"), or a
+ *  lowercase identifier whose own last segment self-names as a secret kind (e.g. "default-session-token",
+ *  "unsafe_install_or_secret") — real high-entropy secrets never look like any of these. */
 function isPlaceholderSecretValue(value: string): boolean {
   if (PLACEHOLDER_VALUE_PATTERN.test(value)) return true;
   if (new Set(value.toLowerCase()).size <= 2) return true;
+  if (LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN.test(value)) return true;
   if (ALL_LOWERCASE_SEGMENTS_PATTERN.test(value) && SELF_NAMING_FIXTURE_SUFFIX_PATTERN.test(value)) return true;
   return hasLongSequentialRun(value);
 }
@@ -129,8 +139,9 @@ export const EXECUTABLE_CATEGORIES = new Set(["skills", "agents", "commands", "h
 // false-positive on legitimate Bittensor content. #2553: google_api_key/jwt are as format-precise as the
 // original five (near-zero false-positive risk), and generic_secret_assignment already excludes
 // placeholder/type-declaration/schema-shaped matches (see isPlaceholderSecretValue) before the kind is ever
-// produced, so all three are safe unconditional hard blockers — keeping this gate in parity with the PR-diff
-// gate it mirrors (safety.ts's HARD_SECRET_KINDS / secrets-scan.ts).
+// produced, so all three are safe unconditional hard blockers. voyage_api_key/firecrawl_api_key (#4604) are
+// equally format-precise — keeping this gate in parity with the PR-diff gate it mirrors (safety.ts's
+// HARD_SECRET_KINDS / secrets-scan.ts).
 const HARD_SECRET_KINDS = new Set([
   "github_token",
   "github_pat",
@@ -143,6 +154,8 @@ const HARD_SECRET_KINDS = new Set([
   "stripe_secret_key",
   "sendgrid_key",
   "huggingface_token",
+  "voyage_api_key",
+  "firecrawl_api_key",
   "jwt",
   "generic_secret_assignment",
 ]);

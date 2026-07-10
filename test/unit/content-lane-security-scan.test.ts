@@ -57,6 +57,28 @@ describe("scanForSecrets", () => {
     expect(scanForSecrets(`sg = "SG.${"a".repeat(22)}.${"b".repeat(42)}-"`).kinds).toContain("sendgrid_key");
   });
 
+  // #4604: content-lane was missing these two kinds entirely (present in secrets-scan.ts since #3980),
+  // so a real Voyage/Firecrawl key embedded in a content submission produced no finding at all.
+  it("flags Voyage AI API keys (#4604)", () => {
+    expect(scanForSecrets("pa-" + "aK9xQ2mZw7Ln4Rv8Pt3B").kinds).toContain("voyage_api_key");
+    expect(scanForSecrets("al-" + "mN4pL8sT2vW6xY0A1qZ5").kinds).toContain("voyage_api_key");
+  });
+
+  it("does not flag Voyage AI-shaped values below the length floor or with identifier continuation (#4604)", () => {
+    expect(scanForSecrets("pa-" + "a".repeat(19)).kinds).not.toContain("voyage_api_key");
+    expect(scanForSecrets("pa-" + "a".repeat(20) + "-suffix").kinds).not.toContain("voyage_api_key");
+    expect(scanForSecrets("al-" + "b".repeat(20) + "_suffix").kinds).not.toContain("voyage_api_key");
+  });
+
+  it("flags a Firecrawl API key (#4604)", () => {
+    expect(scanForSecrets("fc-" + "aK9xQ2mZw7Ln4Rv8").kinds).toContain("firecrawl_api_key");
+  });
+
+  it("does not flag Firecrawl-shaped values below the length floor or with identifier continuation (#4604)", () => {
+    expect(scanForSecrets("fc-" + "c".repeat(15)).kinds).not.toContain("firecrawl_api_key");
+    expect(scanForSecrets("fc-" + "c".repeat(16) + "-suffix").kinds).not.toContain("firecrawl_api_key");
+  });
+
   it("flags a generic secret/password/token assignment with a high-entropy value", () => {
     expect(scanForSecrets(`secret = "${GENERIC_VALUE}"`).kinds).toContain("generic_secret_assignment");
     expect(scanForSecrets(`api_key: '${GENERIC_VALUE}'`).kinds).toContain("generic_secret_assignment");
@@ -78,6 +100,23 @@ describe("scanForSecrets", () => {
 
   it("does NOT flag a schema field declaration with no literal value", () => {
     expect(scanForSecrets("password: z.string()").kinds).not.toContain("generic_secret_assignment");
+  });
+
+  // #4604: content-lane was missing the LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN carve-out that
+  // secrets-scan.ts already had (since #3866) — a lowercase-hyphenated "mock" fixture value would
+  // auto-close a legitimate content-lane submission with no human queue to catch the false positive.
+  it.each([
+    ["mock-response-value", 'token: "mock-response-value"'],
+    ["prefixed mock fixture", 'secret: "some-mock-secret-value"'],
+  ])("does NOT flag a lowercase-hyphenated mock fixture value: %s (#4604)", (_name, snippet) => {
+    expect(scanForSecrets(snippet).kinds).not.toContain("generic_secret_assignment");
+  });
+
+  it.each([
+    ["mock prefix with mixed-case suffix", 'password = "mock-aK9xQ2mZw7Ln4Rv8Pt3Bh6"'],
+    ["embedded mock with mixed-case suffix", 'secret = "prod-mock-aK9xQ2mZw7Ln4Rv8Pt3Bh6"'],
+  ])("still flags mock-tokenized generic credentials unless they are lowercase fixtures: %s (#4604)", (_name, snippet) => {
+    expect(scanForSecrets(snippet).kinds).toContain("generic_secret_assignment");
   });
 
   // #4579-followup: confirmed live false positives (awesome-claude#4758 "embedded_secret:
@@ -183,6 +222,15 @@ describe("scanSubmissionContent", () => {
     }
   });
 
+  it("hard-closes on a Voyage or Firecrawl API key (#4604)", () => {
+    for (const line of ["config: pa-" + "aK9xQ2mZw7Ln4Rv8Pt3B", "key: fc-" + "aK9xQ2mZw7Ln4Rv8"]) {
+      const finding = scanSubmissionContent({ content: `intro line\n${line}`, category: "skills" });
+      expect(finding?.verdict, line).toBe("close");
+      expect(finding?.reasonCode, line).toBe("embedded_secret");
+      expect(finding?.summary, line).toContain("line 2");
+    }
+  });
+
   it("hard-closes on a MULTILINE generic secret assignment whose value wraps to the next line (auto-close parity)", () => {
     // generic_secret_assignment is the one HARD kind whose keyword-to-value span can wrap. scanForSecrets over the
     // whole blob catches it; scanSubmissionContent must too, or a wrapped secret bypasses the auto-close gate the
@@ -228,8 +276,11 @@ describe("secret-scan parity with the PR-diff gate (secrets-scan.ts)", () => {
     ["stripe_secret_key", "sk_live_" + "a".repeat(24)],
     ["sendgrid_key", "SG." + "a".repeat(22) + "." + "b".repeat(43)],
     ["huggingface_token", "hf_" + "a".repeat(34)],
+    ["voyage_api_key", "pa-" + "aK9xQ2mZw7Ln4Rv8Pt3B"],
+    ["firecrawl_api_key", "fc-" + "aK9xQ2mZw7Ln4Rv8"],
     ["jwt", jwt],
     ["generic_secret_assignment", `secret = "${GENERIC_VALUE}"`],
+    ["lowercase-hyphenated mock fixture (not flagged on either side)", 'token: "mock-response-value"'],
     ["benign prose", "just normal documentation prose"],
   ])("detects the same kinds as the PR-diff gate for %s", (_name, input) => {
     expect([...scanForSecrets(input).kinds].sort()).toEqual([...prDiffScanForSecrets(input).kinds].sort());

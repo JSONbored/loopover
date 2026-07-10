@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { BoundaryBadge, Stat, StatusPill } from "@/components/site/control-primitives";
+import { RefreshMeta } from "@/components/site/refresh-meta";
 import { StateBoundary } from "@/components/site/state-views";
 import { TrendChart } from "@/components/site/trend-chart";
 import {
@@ -163,6 +164,7 @@ function ProductAnalytics() {
                 </StatusPill>
               ) : null}
               <BoundaryBadge boundary="private-api" />
+              <RefreshMeta loadedAt={dashboard.loadedAt} onRefresh={dashboard.reload} />
             </div>
           </header>
 

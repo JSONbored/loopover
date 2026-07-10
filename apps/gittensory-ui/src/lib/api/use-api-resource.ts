@@ -4,9 +4,9 @@ import { getApiOrigin } from "./origin";
 import { apiFetch } from "./request";
 
 type ResourceState<T> =
-  | { status: "loading"; data: null; error: null }
-  | { status: "ready"; data: T; error: null }
-  | { status: "error"; data: null; error: string };
+  | { status: "loading"; data: null; error: null; loadedAt: null }
+  | { status: "ready"; data: T; error: null; loadedAt: number }
+  | { status: "error"; data: null; error: string; loadedAt: null };
 
 type UseApiResourceOptions = {
   enabled?: boolean;
@@ -23,14 +23,15 @@ export function useApiResource<T>(
     status: "loading",
     data: null,
     error: null,
+    loadedAt: null,
   });
 
   const load = useCallback(async () => {
     if (!enabled) {
-      setState({ status: "error", data: null, error: "disabled" });
+      setState({ status: "error", data: null, error: "disabled", loadedAt: null });
       return;
     }
-    setState({ status: "loading", data: null, error: null });
+    setState({ status: "loading", data: null, error: null, loadedAt: null });
     const headers: Record<string, string> = { Accept: "application/json" };
     if (token) headers.Authorization = `Bearer ${token}`;
     const result = await apiFetch<T>(`${getApiOrigin().replace(/\/$/, "")}${path}`, {
@@ -39,15 +40,15 @@ export function useApiResource<T>(
       credentials: "include",
     });
     if (result.ok) {
-      setState({ status: "ready", data: result.data, error: null });
+      setState({ status: "ready", data: result.data, error: null, loadedAt: Date.now() });
     } else {
-      setState({ status: "error", data: null, error: result.message });
+      setState({ status: "error", data: null, error: result.message, loadedAt: null });
     }
   }, [enabled, label, path, token]);
 
   useEffect(() => {
     if (!enabled) {
-      setState({ status: "error", data: null, error: "disabled" });
+      setState({ status: "error", data: null, error: "disabled", loadedAt: null });
       return;
     }
     void load();

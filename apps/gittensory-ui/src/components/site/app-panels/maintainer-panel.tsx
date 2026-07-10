@@ -23,6 +23,7 @@ import { MaintainerSettings } from "@/components/site/app-panels/maintainer-sett
 import { SlopDuplicateTrendCard } from "@/components/site/app-panels/slop-duplicate-trend-card";
 import type { MaintainerSlopDuplicateTrend } from "@/components/site/app-panels/slop-duplicate-trend-card-model";
 import { StatCard } from "@/components/site/primitives";
+import { RefreshMeta } from "@/components/site/refresh-meta";
 import { EmptyState, LoadingState, StateBoundary } from "@/components/site/state-views";
 import { apiFetch } from "@/lib/api/request";
 import { getApiOrigin } from "@/lib/api/origin";
@@ -214,6 +215,11 @@ function MaintainerDashboardView() {
         </div>
       ) : data ? (
         <div className="space-y-6">
+          {/* Dashboard-level refresh metadata (#2219) — lives here rather than the route's PageHeader
+              because the maintainer resource is gated behind the session/role check above. */}
+          <div className="flex items-center justify-end">
+            <RefreshMeta loadedAt={dashboard.loadedAt} onRefresh={dashboard.reload} />
+          </div>
           <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {data.metrics.map((metric) => (
               <StatCard

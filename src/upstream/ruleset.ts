@@ -11,7 +11,7 @@ import {
   upsertUpstreamDriftReport,
 } from "../db/repositories";
 import { resolveGittensorySelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
-import { timeoutFetch } from "../github/client";
+import { githubHeaders, timeoutFetch } from "../github/client";
 import { resolveUpstreamCommitSha } from "./commit";
 import { isGlobalAgentPause } from "../settings/agent-execution";
 import { normalizeRegistryPayload } from "../registry/normalize";
@@ -439,7 +439,7 @@ async function fetchTrackedSource(
   try {
     const response = await timeoutFetch(apiUrl, {
       headers: {
-        ...githubHeaders(env.GITHUB_PUBLIC_TOKEN, "application/vnd.github+json"),
+        ...githubHeaders({ token: env.GITHUB_PUBLIC_TOKEN, accept: "application/vnd.github+json" }),
         ...(previous?.etag ? { "if-none-match": previous.etag } : {}),
       },
     });
@@ -467,7 +467,7 @@ async function fetchTrackedSource(
   }
 
   try {
-    const response = await fetch(rawUrl(config, source.path), { headers: githubHeaders(env.GITHUB_PUBLIC_TOKEN, "text/plain") });
+    const response = await fetch(rawUrl(config, source.path), { headers: githubHeaders({ token: env.GITHUB_PUBLIC_TOKEN, accept: "text/plain" }) });
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
     return sourceSnapshotFromContent({
       config,
@@ -1040,7 +1040,7 @@ async function findGitHubIssueForFingerprint(repo: string, token: string, finger
   try {
     for (let page = 1; ; page += 1) {
       const url = `https://api.github.com/repos/${owner}/${name}/issues?state=open&labels=signals&per_page=100&page=${page}`;
-      const response = await timeoutFetch(url, { headers: githubHeaders(token, "application/vnd.github+json") });
+      const response = await timeoutFetch(url, { headers: githubHeaders({ token, accept: "application/vnd.github+json" }) });
       if (!response.ok) return null;
       const issues = (await response.json()) as Array<{
         number?: number;
@@ -1072,7 +1072,7 @@ async function createGitHubDriftIssue(repo: string, token: string, report: Upstr
   if (!owner || !name) return null;
   const response = await timeoutFetch(`https://api.github.com/repos/${owner}/${name}/issues`, {
     method: "POST",
-    headers: githubHeaders(token, "application/vnd.github+json"),
+    headers: githubHeaders({ token, accept: "application/vnd.github+json" }),
     body: jsonString(githubDriftIssuePayload(report, assignees)),
   });
   if (!response.ok) return null;
@@ -1085,7 +1085,7 @@ async function updateGitHubDriftIssue(repo: string, token: string, issueNumber: 
   if (!owner || !name || !Number.isInteger(issueNumber) || issueNumber <= 0) return null;
   const response = await timeoutFetch(`https://api.github.com/repos/${owner}/${name}/issues/${issueNumber}`, {
     method: "PATCH",
-    headers: githubHeaders(token, "application/vnd.github+json"),
+    headers: githubHeaders({ token, accept: "application/vnd.github+json" }),
     body: jsonString(githubDriftIssuePayload(report, assignees)),
   });
   if (!response.ok) return null;
@@ -1100,7 +1100,7 @@ async function validateRecordedGitHubIssue(repo: string, token: string, report: 
   if (!owner || !name || !parsedUrl || parsedUrl.number !== report.issueNumber) return null;
   if (parsedUrl.owner.toLowerCase() !== owner.toLowerCase() || parsedUrl.name.toLowerCase() !== name.toLowerCase()) return null;
   try {
-    const response = await timeoutFetch(`https://api.github.com/repos/${owner}/${name}/issues/${report.issueNumber}`, { headers: githubHeaders(token, "application/vnd.github+json") });
+    const response = await timeoutFetch(`https://api.github.com/repos/${owner}/${name}/issues/${report.issueNumber}`, { headers: githubHeaders({ token, accept: "application/vnd.github+json" }) });
     if (!response.ok) return null;
     const issue = (await response.json()) as {
       number?: number;
@@ -1272,15 +1272,6 @@ function upstreamModulesForArea(area: UpstreamDriftArea): string[] {
     case "source":
       return ["src/upstream/ruleset.ts", "test/contract/upstream-contract.test.ts"];
   }
-}
-
-function githubHeaders(token: string | undefined, accept: string): Record<string, string> {
-  return {
-    accept,
-    "user-agent": "gittensory/0.1",
-    "x-github-api-version": "2022-11-28",
-    ...(token ? { authorization: `Bearer ${token}` } : {}),
-  };
 }
 
 function rawUrl(config: { repo: string; ref: string }, path: string): string {

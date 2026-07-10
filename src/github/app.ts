@@ -7,6 +7,7 @@ import { recordGitHubRateLimitObservation, updateInstallationPermissions } from 
 import { recordClockSkewFromResponse } from "../selfhost/clock-skew";
 import {
   clearGitHubResponseCacheForTest,
+  githubHeaders,
   githubRateLimitAdmissionKeyForInstallation,
   makeInstallationOctokit,
   timeoutFetch,
@@ -215,7 +216,7 @@ async function requestInstallationTokenWithJwt(
     `https://api.github.com/app/installations/${installationId}/access_tokens`,
     {
       method: "POST",
-      headers: githubHeaders(`Bearer ${jwt}`),
+      headers: githubHeaders({ token: jwt, json: true }),
     },
   );
   recordClockSkewFromResponse(response);
@@ -381,7 +382,7 @@ export async function getAppInstallation(
   // cache must stay keyed off the Authorization header (the no-admission-key fallback) to preserve per-App-identity
   // isolation (#1940). recordGitHubRateLimitObservation below records the SAME admissionKey directly instead.
   const response = await timeoutFetch(`https://api.github.com${path}`, {
-    headers: githubHeaders(`Bearer ${jwt}`),
+    headers: githubHeaders({ token: jwt, json: true }),
   });
   // #4506: refreshInstallationHealthRecords's per-installation loop (backfill.ts) makes one of these calls per
   // installation, but this call lives outside backfill.ts's module boundary -- and backfill.ts already imports
@@ -441,7 +442,7 @@ export async function getRepositoryCollaboratorPermission(
   const response = await timeoutFetch(
     `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/collaborators/${encodeURIComponent(login)}/permission`,
     {
-      headers: githubHeaders(`Bearer ${token}`),
+      headers: githubHeaders({ token, json: true }),
       githubRateLimitAdmission: true,
       githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(installationId),
     },
@@ -475,7 +476,7 @@ export async function getGithubUserCreatedAt(
     const response = await timeoutFetch(
       `https://api.github.com/users/${encodeURIComponent(login)}`,
       {
-        headers: githubHeaders(`Bearer ${token}`),
+        headers: githubHeaders({ token, json: true }),
         githubRateLimitAdmission: true,
         githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(installationId),
       },
@@ -615,7 +616,7 @@ export async function cancelInFlightWorkflowRunsForHeadSha(
   try {
     const token = await createInstallationToken(env, installationId);
     const fetchOptions: ActionsRunFetchOptions = {
-      headers: githubHeaders(`Bearer ${token}`),
+      headers: githubHeaders({ token, json: true }),
       githubRateLimitAdmission: true,
       githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(installationId),
     };
@@ -1169,14 +1170,4 @@ export function getInstallationId(
   payload: GitHubWebhookPayload,
 ): number | null {
   return payload.installation?.id ?? null;
-}
-
-function githubHeaders(authorization: string): HeadersInit {
-  return {
-    accept: "application/vnd.github+json",
-    authorization,
-    "content-type": "application/json",
-    "user-agent": "gittensory/0.1",
-    "x-github-api-version": "2022-11-28",
-  };
 }

@@ -29,6 +29,32 @@ const DEFAULT_METADATA_TTL_SECONDS = 10 * 60;
 const DEFAULT_COMMIT_TTL_SECONDS = 15 * 60;
 export const GITHUB_RESPONSE_CACHE_REPLAY_HEADER = "x-gittensory-cache";
 
+/** The single shared GitHub REST header-builder for every raw-`fetch`/`timeoutFetch` call in `src/` (Octokit
+ *  calls set their own headers internally and don't need this). Consolidates four independent, drifted
+ *  `githubHeaders` copies that had each grown a different signature (#4610). `token` is optional — a public,
+ *  unauthenticated read omits it rather than sending an empty `authorization`. */
+export interface GitHubHeadersOptions {
+  /** Bearer token. Omitted (or empty) → no `authorization` header. */
+  token?: string | undefined;
+  /** `accept` header value. Defaults to the standard REST JSON media type. */
+  accept?: string | undefined;
+  /** Include `content-type: application/json`, for a request with a JSON body. Defaults to false. */
+  json?: boolean | undefined;
+  /** Include the pinned `x-github-api-version` header. Defaults to true. */
+  apiVersion?: boolean | undefined;
+}
+
+export function githubHeaders(options: GitHubHeadersOptions = {}): Record<string, string> {
+  const { token, accept = "application/vnd.github+json", json = false, apiVersion = true } = options;
+  return {
+    accept,
+    "user-agent": "gittensory/0.1",
+    ...(apiVersion ? { "x-github-api-version": "2022-11-28" } : {}),
+    ...(json ? { "content-type": "application/json" } : {}),
+    ...(token ? { authorization: `Bearer ${token}` } : {}),
+  };
+}
+
 /** A shared cache for safe GitHub GET responses (e.g. Redis on the self-host). Stores only status/body/
  *  content-type plus pagination/validator headers — never rate-limit or encoding headers. Set on the self-host;
  *  the Worker leaves it null. */

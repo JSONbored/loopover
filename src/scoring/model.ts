@@ -2,7 +2,7 @@ import {
   getLatestScoringModelSnapshot,
   persistScoringModelSnapshot,
 } from "../db/repositories";
-import { timeoutFetch } from "../github/client";
+import { githubHeaders, timeoutFetch } from "../github/client";
 import { getLatestRegistrySnapshot } from "../registry/sync";
 import { resolveUpstreamCommitSha } from "../upstream/commit";
 import { syncUnmodeledScoringConstantDrift } from "../upstream/unmodeled-scoring-drift";
@@ -162,7 +162,7 @@ function activeModelWarnings(constants: Record<string, number>): string[] {
 
 async function fetchText(url: string, token?: string): Promise<{ ok: true; value: string } | { ok: false; error: string }> {
   try {
-    const response = await timeoutFetch(url, { headers: githubHeaders(token, "text/plain") });
+    const response = await timeoutFetch(url, { headers: githubHeaders({ token, accept: "text/plain", apiVersion: false }) });
     if (!response.ok) return { ok: false, error: `${response.status} ${response.statusText}` };
     return { ok: true, value: await response.text() };
   } catch (error) {
@@ -172,18 +172,10 @@ async function fetchText(url: string, token?: string): Promise<{ ok: true; value
 
 async function fetchJson(url: string, token?: string): Promise<{ ok: true; value: Record<string, JsonValue> } | { ok: false; error: string }> {
   try {
-    const response = await timeoutFetch(url, { headers: githubHeaders(token, "application/json") });
+    const response = await timeoutFetch(url, { headers: githubHeaders({ token, accept: "application/json", apiVersion: false }) });
     if (!response.ok) return { ok: false, error: `${response.status} ${response.statusText}` };
     return { ok: true, value: (await response.json()) as Record<string, JsonValue> };
   } catch (error) {
     return { ok: false, error: errorMessage(error) };
   }
-}
-
-function githubHeaders(token: string | undefined, accept: string): Record<string, string> {
-  return {
-    accept,
-    "user-agent": "gittensory/0.1",
-    ...(token ? { authorization: `Bearer ${token}` } : {}),
-  };
 }

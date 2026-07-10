@@ -17,7 +17,7 @@ import {
 import type { IssueRecord, RepositoryRecord, RepositorySettings } from "../types";
 import { isGlobalAgentPause } from "../settings/agent-execution";
 import { isMaintainerAssociation } from "../github/commands";
-import { timeoutFetch } from "../github/client";
+import { githubHeaders, timeoutFetch } from "../github/client";
 import { sha256Hex } from "../utils/crypto";
 import { jsonString, nowIso, repoParts } from "../utils/json";
 import {
@@ -559,7 +559,7 @@ async function createGitHubContributorIssue(env: Env, repoFullName: string, draf
   if (!owner || !name) return null;
   const response = await timeoutFetch(`https://api.github.com/repos/${owner}/${name}/issues`, {
     method: "POST",
-    headers: githubHeaders(token),
+    headers: githubHeaders({ token }),
     body: jsonString({
       title: draft.title,
       body: draft.body,
@@ -569,13 +569,4 @@ async function createGitHubContributorIssue(env: Env, repoFullName: string, draf
   if (!response.ok) return null;
   const payload = (await response.json()) as { number?: number; html_url?: string };
   return payload.number && payload.html_url ? { number: payload.number, url: payload.html_url } : null;
-}
-
-function githubHeaders(token: string): Record<string, string> {
-  return {
-    accept: "application/vnd.github+json",
-    "user-agent": "gittensory/0.1",
-    "x-github-api-version": "2022-11-28",
-    authorization: `Bearer ${token}`,
-  };
 }

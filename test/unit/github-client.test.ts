@@ -3,6 +3,7 @@ import {
   clearGitHubResponseCacheForTest,
   forcedSelfhostMode,
   githubAdmissionKeyScope,
+  githubHeaders,
   githubRateLimitAdmissionKeyForInstallation,
   githubRateLimitAdmissionKeyForPublicToken,
   githubRateLimitAdmissionKeyForToken,
@@ -182,6 +183,39 @@ describe("githubAdmissionKeyScope — classify an admission key the SAME way as 
     expect(githubAdmissionKeyScope(null)).toBe("unknown");
     expect(githubAdmissionKeyScope(undefined)).toBe("unknown");
     expect(githubAdmissionKeyScope("pat:shared")).toBe("other");
+  });
+});
+
+describe("githubHeaders — the single shared GitHub REST header-builder (#4610, consolidating 4 drifted copies)", () => {
+  it("with no options, defaults to the standard accept + pinned api-version and omits content-type/authorization", () => {
+    expect(githubHeaders()).toEqual({
+      accept: "application/vnd.github+json",
+      "user-agent": "gittensory/0.1",
+      "x-github-api-version": "2022-11-28",
+    });
+  });
+
+  it("adds a Bearer authorization header only when a non-empty token is given", () => {
+    expect(githubHeaders({ token: "abc123" }).authorization).toBe("Bearer abc123");
+    expect(githubHeaders({}).authorization).toBeUndefined(); // omitted token → no header
+    expect(githubHeaders({ token: "" }).authorization).toBeUndefined(); // empty token → treated as absent
+  });
+
+  it("uses a caller-given accept header instead of the default (app.ts/model.ts/ruleset.ts all vary this)", () => {
+    expect(githubHeaders({ accept: "text/plain" }).accept).toBe("text/plain");
+    expect(githubHeaders({ accept: "application/json" }).accept).toBe("application/json");
+  });
+
+  it("includes content-type: application/json only when json is explicitly requested (app.ts's JSON POSTs)", () => {
+    expect(githubHeaders({ json: true })["content-type"]).toBe("application/json");
+    expect(githubHeaders({ json: false })["content-type"]).toBeUndefined();
+    expect(githubHeaders({})["content-type"]).toBeUndefined(); // defaults to false
+  });
+
+  it("includes x-github-api-version unless apiVersion is explicitly disabled (model.ts's fetchText/fetchJson omit it)", () => {
+    expect(githubHeaders({})["x-github-api-version"]).toBe("2022-11-28"); // defaults to true
+    expect(githubHeaders({ apiVersion: true })["x-github-api-version"]).toBe("2022-11-28");
+    expect(githubHeaders({ apiVersion: false })["x-github-api-version"]).toBeUndefined();
   });
 });
 

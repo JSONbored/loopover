@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   buildRepoMap,
-  extractRepoMapSymbols,
   renderRepoMap,
   resolveRepoMapLanguage,
   type LoadRepoMapLanguageFn,
@@ -48,9 +47,19 @@ describe("buildRepoMap + extractRepoMapSymbols (#4280)", () => {
     expect(entry!.symbols).toEqual([
       // The `export` keyword lives on the enclosing export_statement node, not the declaration node itself, so
       // it is not part of the extracted signature.
-      { kind: "function", name: "add", signature: "function add(a: number, b: number): number {", line: 1 },
+      {
+        kind: "function",
+        name: "add",
+        signature: "function add(a: number, b: number): number {",
+        line: 1,
+      },
       { kind: "class", name: "Widget", signature: "class Widget {", line: 5 },
-      { kind: "method", name: "render", signature: "render(): string {", line: 6 },
+      {
+        kind: "method",
+        name: "render",
+        signature: "render(): string {",
+        line: 6,
+      },
     ]);
   });
 
@@ -64,7 +73,9 @@ describe("buildRepoMap + extractRepoMapSymbols (#4280)", () => {
       "export type Pair = [Point, Point];",
     ].join("\n");
 
-    const [entry] = await buildRepoMap([{ path: "src/geometry.ts", sourceText }]);
+    const [entry] = await buildRepoMap([
+      { path: "src/geometry.ts", sourceText },
+    ]);
     expect(entry!.symbols.map((s) => s.kind)).toEqual(["interface", "type"]);
     expect(entry!.symbols.map((s) => s.name)).toEqual(["Point", "Pair"]);
   });
@@ -75,36 +86,57 @@ describe("buildRepoMap + extractRepoMapSymbols (#4280)", () => {
       "  return null;",
       "}",
     ].join("\n");
-    const [entry] = await buildRepoMap([{ path: "src/Button.tsx", sourceText }]);
+    const [entry] = await buildRepoMap([
+      { path: "src/Button.tsx", sourceText },
+    ]);
     expect(entry!.language).toBe("tsx");
     expect(entry!.symbols.map((s) => s.name)).toEqual(["Button"]);
   });
 
   it("parses plain .js with the javascript grammar", async () => {
-    const [entry] = await buildRepoMap([{ path: "src/legacy.js", sourceText: "function helper() {}\n" }]);
+    const [entry] = await buildRepoMap([
+      { path: "src/legacy.js", sourceText: "function helper() {}\n" },
+    ]);
     expect(entry!.language).toBe("javascript");
-    expect(entry!.symbols).toEqual([{ kind: "function", name: "helper", signature: "function helper() {}", line: 1 }]);
+    expect(entry!.symbols).toEqual([
+      {
+        kind: "function",
+        name: "helper",
+        signature: "function helper() {}",
+        line: 1,
+      },
+    ]);
   });
 
   it("truncates an overlong one-line signature and marks it with an ellipsis", async () => {
     const longBody = "x".repeat(200);
     const sourceText = `function longOne() { const ${longBody} = 1; }`;
-    const [entry] = await buildRepoMap([{ path: "src/long.ts", sourceText }], { maxSignatureChars: 30 });
+    const [entry] = await buildRepoMap([{ path: "src/long.ts", sourceText }], {
+      maxSignatureChars: 30,
+    });
     expect(entry!.symbols[0]!.signature.endsWith("…")).toBe(true);
     expect(entry!.symbols[0]!.signature.length).toBe(31); // 30 chars + the ellipsis marker
   });
 
   it("reports an anonymous name for an unnamed class/function expression (e.g. export default class/function)", async () => {
     const [classEntry] = await buildRepoMap([
-      { path: "src/anon-class.ts", sourceText: "export default class { method() {} }" },
+      {
+        path: "src/anon-class.ts",
+        sourceText: "export default class { method() {} }",
+      },
     ]);
     const classSymbol = classEntry!.symbols.find((s) => s.kind === "class");
     expect(classSymbol?.name).toBe("<anonymous>");
 
     const [functionEntry] = await buildRepoMap([
-      { path: "src/anon-function.ts", sourceText: "export default function() { return 1; }" },
+      {
+        path: "src/anon-function.ts",
+        sourceText: "export default function() { return 1; }",
+      },
     ]);
-    const functionSymbol = functionEntry!.symbols.find((s) => s.kind === "function");
+    const functionSymbol = functionEntry!.symbols.find(
+      (s) => s.kind === "function",
+    );
     expect(functionSymbol?.name).toBe("<anonymous>");
   });
 
@@ -114,30 +146,152 @@ describe("buildRepoMap + extractRepoMapSymbols (#4280)", () => {
       loadCalls += 1;
       throw new Error("should not be called");
     };
-    const [entry] = await buildRepoMap([{ path: "README.md", sourceText: "# hello" }], {
-      loadLanguage: countingLoader,
+    const [entry] = await buildRepoMap(
+      [{ path: "README.md", sourceText: "# hello" }],
+      {
+        loadLanguage: countingLoader,
+      },
+    );
+    expect(entry).toEqual({
+      path: "README.md",
+      language: null,
+      symbols: [],
+      skipped: "unsupported_language",
     });
-    expect(entry).toEqual({ path: "README.md", language: null, symbols: [], skipped: "unsupported_language" });
     expect(loadCalls).toBe(0);
+  });
+
+  it("skips supported files that exceed the per-file source byte budget before loading a grammar", async () => {
+    let loadCalls = 0;
+    const countingLoader: LoadRepoMapLanguageFn = async () => {
+      loadCalls += 1;
+      throw new Error("should not load grammar for oversized input");
+    };
+    const [entry] = await buildRepoMap(
+      [{ path: "src/huge.ts", sourceText: "function huge() {}" }],
+      { loadLanguage: countingLoader, maxSourceBytes: 5 },
+    );
+    expect(entry).toEqual({
+      path: "src/huge.ts",
+      language: "typescript",
+      symbols: [],
+      skipped: "resource_limit",
+    });
+    expect(loadCalls).toBe(0);
+  });
+
+  it("skips files after the aggregate source byte budget is consumed", async () => {
+    const entries = await buildRepoMap(
+      [
+        { path: "src/first.ts", sourceText: "function first() {}" },
+        { path: "src/second.ts", sourceText: "function second() {}" },
+      ],
+      { maxTotalSourceBytes: 20 },
+    );
+    expect(entries[0]!.skipped).toBeUndefined();
+    expect(entries[1]).toEqual({
+      path: "src/second.ts",
+      language: "typescript",
+      symbols: [],
+      skipped: "resource_limit",
+    });
+  });
+
+  it("keeps one entry per input file but resource-limits files beyond the file-count budget", async () => {
+    const entries = await buildRepoMap(
+      [
+        { path: "src/first.ts", sourceText: "function first() {}" },
+        { path: "src/second.ts", sourceText: "function second() {}" },
+      ],
+      { maxFiles: 1 },
+    );
+    expect(entries[0]!.symbols.map((symbol) => symbol.name)).toEqual(["first"]);
+    expect(entries[1]).toEqual({
+      path: "src/second.ts",
+      language: "typescript",
+      symbols: [],
+      skipped: "resource_limit",
+    });
+  });
+
+  it("reports resource_limit when symbol extraction exceeds the AST-node budget", async () => {
+    const [entry] = await buildRepoMap(
+      [{ path: "src/simple.ts", sourceText: "function simple() {}" }],
+      {
+        maxAstNodes: 1,
+      },
+    );
+    expect(entry).toEqual({
+      path: "src/simple.ts",
+      language: "typescript",
+      symbols: [],
+      skipped: "resource_limit",
+    });
+  });
+
+  it("reports resource_limit when symbol extraction exceeds the symbol budget", async () => {
+    const [entry] = await buildRepoMap(
+      [
+        {
+          path: "src/two.ts",
+          sourceText: "function one() {}\nfunction two() {}",
+        },
+      ],
+      {
+        maxSymbols: 1,
+      },
+    );
+    expect(entry).toEqual({
+      path: "src/two.ts",
+      language: "typescript",
+      symbols: [],
+      skipped: "resource_limit",
+    });
+  });
+
+  it("bounds a very long declaration name while preserving the rest of the symbol", async () => {
+    const longName = `fn${"x".repeat(250)}`;
+    const [entry] = await buildRepoMap([
+      { path: "src/long-name.ts", sourceText: `function ${longName}() {}` },
+    ]);
+    expect(entry!.symbols[0]!.name.endsWith("…")).toBe(true);
+    expect(entry!.symbols[0]!.name.length).toBe(201);
   });
 
   it("reports grammar_unavailable (not a thrown error) when the injected loader rejects", async () => {
     const failingLoader: LoadRepoMapLanguageFn = async () => {
       throw new Error("wasm load failed");
     };
-    const [entry] = await buildRepoMap([{ path: "src/foo.ts", sourceText: "function f() {}" }], {
-      loadLanguage: failingLoader,
+    const [entry] = await buildRepoMap(
+      [{ path: "src/foo.ts", sourceText: "function f() {}" }],
+      {
+        loadLanguage: failingLoader,
+      },
+    );
+    expect(entry).toEqual({
+      path: "src/foo.ts",
+      language: "typescript",
+      symbols: [],
+      skipped: "grammar_unavailable",
     });
-    expect(entry).toEqual({ path: "src/foo.ts", language: "typescript", symbols: [], skipped: "grammar_unavailable" });
   });
 
   it("reports grammar_unavailable when parsing itself throws, even though the grammar loaded fine", async () => {
     const throwingParseLanguage = {} as never; // setLanguage(this) will throw inside Parser -- not a real Language
-    const brokenLoader: LoadRepoMapLanguageFn = async () => throwingParseLanguage;
-    const [entry] = await buildRepoMap([{ path: "src/foo.ts", sourceText: "function f() {}" }], {
-      loadLanguage: brokenLoader,
+    const brokenLoader: LoadRepoMapLanguageFn = async () =>
+      throwingParseLanguage;
+    const [entry] = await buildRepoMap(
+      [{ path: "src/foo.ts", sourceText: "function f() {}" }],
+      {
+        loadLanguage: brokenLoader,
+      },
+    );
+    expect(entry).toEqual({
+      path: "src/foo.ts",
+      language: "typescript",
+      symbols: [],
+      skipped: "grammar_unavailable",
     });
-    expect(entry).toEqual({ path: "src/foo.ts", language: "typescript", symbols: [], skipped: "grammar_unavailable" });
   });
 
   it("parses multiple files of the same language correctly using the real (non-injected) default loader", async () => {
@@ -146,8 +300,17 @@ describe("buildRepoMap + extractRepoMapSymbols (#4280)", () => {
       { path: "b.ts", sourceText: "function b() {}" },
       { path: "c.ts", sourceText: "function c() {}" },
     ]);
-    expect(entries.every((entry) => entry.language === "typescript" && entry.skipped === undefined)).toBe(true);
-    expect(entries.map((entry) => entry.symbols[0]!.name)).toEqual(["a", "b", "c"]);
+    expect(
+      entries.every(
+        (entry) =>
+          entry.language === "typescript" && entry.skipped === undefined,
+      ),
+    ).toBe(true);
+    expect(entries.map((entry) => entry.symbols[0]!.name)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
   });
 
   it("an injected loader is invoked once per distinct language across multiple files, not once per file", async () => {
@@ -175,14 +338,32 @@ describe("renderRepoMap (#4280)", () => {
   const normalEntry: RepoMapFileEntry = {
     path: "src/widget.ts",
     language: "typescript",
-    symbols: [{ kind: "function", name: "add", signature: "export function add() {", line: 1 }],
+    symbols: [
+      {
+        kind: "function",
+        name: "add",
+        signature: "export function add() {",
+        line: 1,
+      },
+    ],
   };
-  const skippedEntry: RepoMapFileEntry = { path: "README.md", language: null, symbols: [], skipped: "unsupported_language" };
-  const emptyEntry: RepoMapFileEntry = { path: "src/empty.ts", language: "typescript", symbols: [] };
+  const skippedEntry: RepoMapFileEntry = {
+    path: "README.md",
+    language: null,
+    symbols: [],
+    skipped: "unsupported_language",
+  };
+  const emptyEntry: RepoMapFileEntry = {
+    path: "src/empty.ts",
+    language: "typescript",
+    symbols: [],
+  };
 
   it("renders one line per symbol plus a header line per file", () => {
     const output = renderRepoMap([normalEntry]);
-    expect(output).toBe("src/widget.ts:\n  function add (line 1): export function add() {");
+    expect(output).toBe(
+      "src/widget.ts:\n  function add (line 1): export function add() {",
+    );
   });
 
   it("renders every symbol of a multi-symbol file, not just the first", () => {
@@ -195,11 +376,15 @@ describe("renderRepoMap (#4280)", () => {
       ],
     };
     const output = renderRepoMap([multiSymbolEntry]);
-    expect(output).toBe("src/multi.ts:\n  function a (line 1): function a() {\n  function b (line 3): function b() {");
+    expect(output).toBe(
+      "src/multi.ts:\n  function a (line 1): function a() {\n  function b (line 3): function b() {",
+    );
   });
 
   it("notes a skipped file with its skip reason", () => {
-    expect(renderRepoMap([skippedEntry])).toBe("README.md: (skipped: unsupported_language)");
+    expect(renderRepoMap([skippedEntry])).toBe(
+      "README.md: (skipped: unsupported_language)",
+    );
   });
 
   it("notes a file with no symbols", () => {
@@ -211,14 +396,28 @@ describe("renderRepoMap (#4280)", () => {
   });
 
   it("truncates once the char budget is exceeded and appends a truncation marker", () => {
-    const manyEntries: RepoMapFileEntry[] = Array.from({ length: 50 }, (_, i) => ({
-      path: `src/file${i}.ts`,
-      language: "typescript",
-      symbols: [{ kind: "function", name: `fn${i}`, signature: `export function fn${i}() {`, line: 1 }],
-    }));
+    const manyEntries: RepoMapFileEntry[] = Array.from(
+      { length: 50 },
+      (_, i) => ({
+        path: `src/file${i}.ts`,
+        language: "typescript",
+        symbols: [
+          {
+            kind: "function",
+            name: `fn${i}`,
+            signature: `export function fn${i}() {`,
+            line: 1,
+          },
+        ],
+      }),
+    );
     const output = renderRepoMap(manyEntries, 200);
-    expect(output.length).toBeLessThanOrEqual(200 + "\n… (repo map truncated to fit the output budget)".length);
-    expect(output.endsWith("… (repo map truncated to fit the output budget)")).toBe(true);
+    expect(output.length).toBeLessThanOrEqual(
+      200 + "\n… (repo map truncated to fit the output budget)".length,
+    );
+    expect(
+      output.endsWith("… (repo map truncated to fit the output budget)"),
+    ).toBe(true);
   });
 
   it("does not truncate when everything fits comfortably under the budget", () => {
@@ -250,16 +449,24 @@ describe("renderRepoMap (#4280)", () => {
         { kind: "function", name: "b", signature: "function b() {", line: 3 },
       ],
     };
-    const headerAndFirstSymbol = "src/multi.ts:\n  function a (line 1): function a() {";
-    const output = renderRepoMap([multiSymbolEntry], headerAndFirstSymbol.length);
-    expect(output).toBe(`${headerAndFirstSymbol}\n… (repo map truncated to fit the output budget)`);
+    const headerAndFirstSymbol =
+      "src/multi.ts:\n  function a (line 1): function a() {";
+    const output = renderRepoMap(
+      [multiSymbolEntry],
+      headerAndFirstSymbol.length,
+    );
+    expect(output).toBe(
+      `${headerAndFirstSymbol}\n… (repo map truncated to fit the output budget)`,
+    );
   });
 });
 
 describe("extractRepoMapSymbols default maxSignatureChars (#4280)", () => {
   it("uses a 120-char default when not passed explicitly by buildRepoMap's caller", async () => {
     const shortSource = "function shortFn(a) {}";
-    const [entry] = await buildRepoMap([{ path: "src/short.js", sourceText: shortSource }]);
+    const [entry] = await buildRepoMap([
+      { path: "src/short.js", sourceText: shortSource },
+    ]);
     expect(entry!.symbols[0]!.signature).toBe(shortSource);
   });
 });

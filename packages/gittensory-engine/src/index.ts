@@ -255,6 +255,7 @@ export {
   renderRepoMap,
   resolveRepoMapLanguage,
   type BuildRepoMapOptions,
+  type ExtractRepoMapSymbolsOptions,
   type LoadRepoMapLanguageFn,
   type RepoMapFileEntry,
   type RepoMapSkipReason,

@@ -16,6 +16,7 @@
 // at all yet) or reported as "<anonymous>" (a bare class/function expression). Good enough for a compact outline
 // today; resolving binding names is a reasonable follow-up, not attempted here.
 
+import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import Parser from "web-tree-sitter";
@@ -30,7 +31,8 @@ function requireFromHere(): NodeJS.Require {
   return (cachedRequire ??= createRequire(import.meta.url));
 }
 
-export type RepoMapSymbolKind = "function" | "class" | "method" | "interface" | "type";
+export type RepoMapSymbolKind =
+  "function" | "class" | "method" | "interface" | "type";
 
 export type RepoMapSymbol = {
   kind: RepoMapSymbolKind;
@@ -39,7 +41,8 @@ export type RepoMapSymbol = {
   line: number;
 };
 
-export type RepoMapSkipReason = "unsupported_language" | "grammar_unavailable";
+export type RepoMapSkipReason =
+  "unsupported_language" | "grammar_unavailable" | "resource_limit";
 
 export type RepoMapFileEntry = {
   path: string;
@@ -65,18 +68,19 @@ const LANGUAGE_BY_EXTENSION: Readonly<Record<string, string>> = Object.freeze({
   ".tsx": "tsx",
 });
 
-const SYMBOL_NODE_KIND: Readonly<Record<string, RepoMapSymbolKind>> = Object.freeze({
-  function_declaration: "function",
-  // `function_expression`/`class` (bare, unnamed) cover `export default function() {}` / `export default class {}`
-  // and other expression positions -- these have no `name` field, so `nameOf` reports them as "<anonymous>"
-  // rather than skipping them outright.
-  function_expression: "function",
-  class_declaration: "class",
-  class: "class",
-  method_definition: "method",
-  interface_declaration: "interface",
-  type_alias_declaration: "type",
-});
+const SYMBOL_NODE_KIND: Readonly<Record<string, RepoMapSymbolKind>> =
+  Object.freeze({
+    function_declaration: "function",
+    // `function_expression`/`class` (bare, unnamed) cover `export default function() {}` / `export default class {}`
+    // and other expression positions -- these have no `name` field, so `nameOf` reports them as "<anonymous>"
+    // rather than skipping them outright.
+    function_expression: "function",
+    class_declaration: "class",
+    class: "class",
+    method_definition: "method",
+    interface_declaration: "interface",
+    type_alias_declaration: "type",
+  });
 
 function extensionOf(path: string): string {
   const dot = path.lastIndexOf(".");
@@ -91,51 +95,131 @@ export function resolveRepoMapLanguage(path: string): string | null {
 /** Test/injection seam for loading a compiled grammar -- real WASM-file IO lives only in the default
  *  implementation, so a test can inject a failing loader to exercise `grammar_unavailable` without needing an
  *  actually-broken WASM file. */
-export type LoadRepoMapLanguageFn = (languageName: string) => Promise<Parser.Language>;
+export type LoadRepoMapLanguageFn = (
+  languageName: string,
+) => Promise<Parser.Language>;
 
 let parserInitialized: Promise<void> | null = null;
 
-async function defaultLoadRepoMapLanguage(languageName: string): Promise<Parser.Language> {
+async function defaultLoadRepoMapLanguage(
+  languageName: string,
+): Promise<Parser.Language> {
   parserInitialized ??= Parser.init();
   await parserInitialized;
-  const wasmPath = requireFromHere().resolve(`tree-sitter-wasms/out/tree-sitter-${languageName}.wasm`);
+  const wasmPath = requireFromHere().resolve(
+    `tree-sitter-wasms/out/tree-sitter-${languageName}.wasm`,
+  );
   return Parser.Language.load(readFileSync(wasmPath));
+}
+
+const DEFAULT_MAX_FILES = 200;
+const DEFAULT_MAX_SOURCE_BYTES = 1_000_000;
+const DEFAULT_MAX_TOTAL_SOURCE_BYTES = 5_000_000;
+const DEFAULT_MAX_AST_NODES = 50_000;
+const DEFAULT_MAX_SYMBOLS = 5_000;
+const MAX_NAME_CHARS = 200;
+
+function boundedNodeText(
+  sourceText: string,
+  node: Parser.SyntaxNode,
+  maxChars: number,
+): string {
+  return sourceText.slice(
+    node.startIndex,
+    Math.min(node.endIndex, node.startIndex + maxChars),
+  );
 }
 
 /** First line of a symbol node's own text, trimmed and bounded to `maxChars` (with an ellipsis marker when cut),
  *  so one huge one-line minified function can't blow out the rendered output on its own. */
-function signatureOf(node: Parser.SyntaxNode, maxChars: number): string {
-  const firstLine = node.text.split("\n", 1)[0]!.trim();
-  return firstLine.length > maxChars ? `${firstLine.slice(0, maxChars)}…` : firstLine;
+function signatureOf(
+  sourceText: string,
+  node: Parser.SyntaxNode,
+  maxChars: number,
+): string {
+  const end = Math.min(node.endIndex, node.startIndex + maxChars + 1);
+  const newline = sourceText.indexOf("\n", node.startIndex);
+  const sliceEnd = newline === -1 || newline > end ? end : newline;
+  const firstLine = sourceText.slice(node.startIndex, sliceEnd).trim();
+  return node.endIndex - node.startIndex > maxChars &&
+    firstLine.length >= maxChars
+    ? `${firstLine.slice(0, maxChars)}…`
+    : firstLine;
 }
 
-function nameOf(node: Parser.SyntaxNode): string {
-  return node.childForFieldName("name")?.text ?? "<anonymous>";
+function nameOf(sourceText: string, node: Parser.SyntaxNode): string {
+  const nameNode = node.childForFieldName("name");
+  if (!nameNode) return "<anonymous>";
+  const name = boundedNodeText(sourceText, nameNode, MAX_NAME_CHARS + 1);
+  return name.length > MAX_NAME_CHARS
+    ? `${name.slice(0, MAX_NAME_CHARS)}…`
+    : name;
 }
+
+export type ExtractRepoMapSymbolsOptions = {
+  maxSignatureChars?: number | undefined;
+  maxAstNodes?: number | undefined;
+  maxSymbols?: number | undefined;
+};
 
 /** Walk a parsed tree collecting one `RepoMapSymbol` per matched node kind (function/class/method/interface/
- *  type declarations). Pure given an already-parsed tree. */
-export function extractRepoMapSymbols(tree: Parser.Tree, maxSignatureChars = 120): RepoMapSymbol[] {
+ *  type declarations). Pure given an already-parsed tree. Returns `null` when extraction exceeds its work budget. */
+export function extractRepoMapSymbols(
+  tree: Parser.Tree,
+  maxSignatureChars?: number,
+): RepoMapSymbol[] | null;
+export function extractRepoMapSymbols(
+  tree: Parser.Tree,
+  sourceText: string,
+  options?: ExtractRepoMapSymbolsOptions,
+): RepoMapSymbol[] | null;
+export function extractRepoMapSymbols(
+  tree: Parser.Tree,
+  sourceTextOrMaxSignatureChars: string | number = tree.rootNode.text,
+  options: ExtractRepoMapSymbolsOptions = {},
+): RepoMapSymbol[] | null {
+  const sourceText =
+    typeof sourceTextOrMaxSignatureChars === "string"
+      ? sourceTextOrMaxSignatureChars
+      : tree.rootNode.text;
+  const maxSignatureChars =
+    typeof sourceTextOrMaxSignatureChars === "number"
+      ? sourceTextOrMaxSignatureChars
+      : (options.maxSignatureChars ?? 120);
+  const maxAstNodes = options.maxAstNodes ?? DEFAULT_MAX_AST_NODES;
+  const maxSymbols = options.maxSymbols ?? DEFAULT_MAX_SYMBOLS;
   const symbols: RepoMapSymbol[] = [];
-  function walk(node: Parser.SyntaxNode): void {
+  const stack: Parser.SyntaxNode[] = [tree.rootNode];
+  let visited = 0;
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    visited += 1;
+    if (visited > maxAstNodes) return null;
     const kind = SYMBOL_NODE_KIND[node.type];
     if (kind) {
+      if (symbols.length >= maxSymbols) return null;
       symbols.push({
         kind,
-        name: nameOf(node),
-        signature: signatureOf(node, maxSignatureChars),
+        name: nameOf(sourceText, node),
+        signature: signatureOf(sourceText, node, maxSignatureChars),
         line: node.startPosition.row + 1,
       });
     }
-    for (const child of node.namedChildren) walk(child);
+    for (let index = node.namedChildCount - 1; index >= 0; index -= 1) {
+      stack.push(node.namedChild(index) as Parser.SyntaxNode);
+    }
   }
-  walk(tree.rootNode);
   return symbols;
 }
 
 export type BuildRepoMapOptions = {
   loadLanguage?: LoadRepoMapLanguageFn | undefined;
   maxSignatureChars?: number | undefined;
+  maxFiles?: number | undefined;
+  maxSourceBytes?: number | undefined;
+  maxTotalSourceBytes?: number | undefined;
+  maxAstNodes?: number | undefined;
+  maxSymbols?: number | undefined;
 };
 
 /** Build one `RepoMapFileEntry` per source file: unsupported extensions and grammar/parse failures are caught
@@ -147,9 +231,17 @@ export async function buildRepoMap(
 ): Promise<RepoMapFileEntry[]> {
   const loadLanguage = options.loadLanguage ?? defaultLoadRepoMapLanguage;
   const maxSignatureChars = options.maxSignatureChars ?? 120;
+  const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
+  const maxSourceBytes = options.maxSourceBytes ?? DEFAULT_MAX_SOURCE_BYTES;
+  const maxTotalSourceBytes =
+    options.maxTotalSourceBytes ?? DEFAULT_MAX_TOTAL_SOURCE_BYTES;
+  const maxAstNodes = options.maxAstNodes ?? DEFAULT_MAX_AST_NODES;
+  const maxSymbols = options.maxSymbols ?? DEFAULT_MAX_SYMBOLS;
   const languageCache = new Map<string, Parser.Language | null>();
 
-  async function resolveLanguage(name: string): Promise<Parser.Language | null> {
+  async function resolveLanguage(
+    name: string,
+  ): Promise<Parser.Language | null> {
     const cached = languageCache.get(name);
     if (cached !== undefined) return cached;
     try {
@@ -163,28 +255,73 @@ export async function buildRepoMap(
   }
 
   const entries: RepoMapFileEntry[] = [];
-  for (const file of files) {
+  let totalSourceBytes = 0;
+  for (const [index, file] of files.entries()) {
+    if (index >= maxFiles) {
+      entries.push({
+        path: file.path,
+        language: resolveRepoMapLanguage(file.path),
+        symbols: [],
+        skipped: "resource_limit",
+      });
+      continue;
+    }
     const languageName = resolveRepoMapLanguage(file.path);
+    const sourceBytes = Buffer.byteLength(file.sourceText, "utf8");
+    totalSourceBytes += sourceBytes;
+    if (
+      sourceBytes > maxSourceBytes ||
+      totalSourceBytes > maxTotalSourceBytes
+    ) {
+      entries.push({
+        path: file.path,
+        language: languageName,
+        symbols: [],
+        skipped: "resource_limit",
+      });
+      continue;
+    }
     if (!languageName) {
-      entries.push({ path: file.path, language: null, symbols: [], skipped: "unsupported_language" });
+      entries.push({
+        path: file.path,
+        language: null,
+        symbols: [],
+        skipped: "unsupported_language",
+      });
       continue;
     }
     const language = await resolveLanguage(languageName);
     if (!language) {
-      entries.push({ path: file.path, language: languageName, symbols: [], skipped: "grammar_unavailable" });
+      entries.push({
+        path: file.path,
+        language: languageName,
+        symbols: [],
+        skipped: "grammar_unavailable",
+      });
       continue;
     }
     try {
       const parser = new Parser();
       parser.setLanguage(language);
       const tree = parser.parse(file.sourceText);
+      const symbols = extractRepoMapSymbols(tree, file.sourceText, {
+        maxSignatureChars,
+        maxAstNodes,
+        maxSymbols,
+      });
       entries.push({
         path: file.path,
         language: languageName,
-        symbols: extractRepoMapSymbols(tree, maxSignatureChars),
+        symbols: symbols ?? [],
+        ...(symbols === null ? { skipped: "resource_limit" as const } : {}),
       });
     } catch {
-      entries.push({ path: file.path, language: languageName, symbols: [], skipped: "grammar_unavailable" });
+      entries.push({
+        path: file.path,
+        language: languageName,
+        symbols: [],
+        skipped: "grammar_unavailable",
+      });
     }
   }
   return entries;
@@ -193,7 +330,10 @@ export async function buildRepoMap(
 /** Render entries into a bounded plain-text outline: one line per symbol (`kind name (line N): signature`),
  *  skipped/empty files noted with a one-line placeholder. Stops once `maxOutputChars` would be exceeded and
  *  appends a truncation marker, so a caller/prompt-builder can tell the map is partial rather than complete. */
-export function renderRepoMap(entries: readonly RepoMapFileEntry[], maxOutputChars = 20_000): string {
+export function renderRepoMap(
+  entries: readonly RepoMapFileEntry[],
+  maxOutputChars = 20_000,
+): string {
   const lines: string[] = [];
   let length = 0;
   let truncated = false;
@@ -217,7 +357,12 @@ export function renderRepoMap(entries: readonly RepoMapFileEntry[], maxOutputCha
     } else {
       if (!pushLine(`${entry.path}:`)) break outer;
       for (const symbol of entry.symbols) {
-        if (!pushLine(`  ${symbol.kind} ${symbol.name} (line ${symbol.line}): ${symbol.signature}`)) break outer;
+        if (
+          !pushLine(
+            `  ${symbol.kind} ${symbol.name} (line ${symbol.line}): ${symbol.signature}`,
+          )
+        )
+          break outer;
       }
     }
   }

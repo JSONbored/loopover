@@ -301,7 +301,11 @@ describe("MCP tool calls return schema-valid structured content", () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" } });
     await env.DB.prepare("UPDATE repositories SET is_registered = 1 WHERE full_name = ?").bind("octo/demo").run();
-    const { client } = await connectTestClient(env);
+    // Onboarding-pack previews require a maintainer/owner/operator session or a trusted static identity --
+    // the shared static "mcp" identity (connectTestClient's default) is unconditionally rejected here, unlike
+    // most other read tools, since GITTENSORY_MCP_TOKEN is an end-user-obtainable CLI credential (see
+    // requireRepoOnboardingPackAccess, src/mcp/server.ts).
+    const { client } = await connectTestClient(env, { kind: "static", actor: "api" });
     const result = await client.callTool({ name: "gittensory_get_repo_onboarding_pack", arguments: { owner: "octo", repo: "demo" } });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;

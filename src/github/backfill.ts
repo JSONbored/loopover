@@ -2793,6 +2793,19 @@ async function reduceLiveCiAggregate(
   const { checkRuns, statuses, requiredContexts, checkRunsIncomplete, statusIncomplete, fetchSuites } = inputs;
   const enforceRequiredOnly = requiredContexts != null && requiredContexts.size > 0;
   const isRequired = (name: string): boolean => !enforceRequiredOnly || requiredContexts!.has(name);
+  // Deliberately the OPPOSITE unknown-case default from isRequired() above, and used ONLY for a third-party
+  // app's own action_required verdict (see isThirdPartyActionRequired below). isRequired()'s "assume required
+  // unless proven otherwise" is the right fail-safe for a genuine CI failure (an unconfirmed-required broken
+  // build should still block). But that same default silently reopened #4414 for any repo with NO
+  // branch-protection required-contexts configured at all (enforceRequiredOnly false, e.g. one that never set
+  // up required status checks): isRequired() returns true for every name in that mode, so a third-party
+  // advisory-only check-run (Superagent's "Contributor trust", never meant to gate anything on its own) got
+  // folded into failingDetails and auto-closed real contributor PRs again, on repos exactly like #4812's
+  // metagraphed (confirmed empty required_status_checks.contexts) -- despite #4414 believing it had already
+  // fixed this. A third-party app's action_required is a POLICY OPINION, not "your code is broken"; the
+  // failure mode of wrongly closing a real contributor's clean PR is worse than under-enforcing a check no
+  // maintainer ever formally required, so this one path needs POSITIVE evidence, not a fail-safe assumption.
+  const isConfirmedRequired = (name: string): boolean => enforceRequiredOnly && requiredContexts!.has(name);
   const failingDetails: LiveCiAggregate["failingDetails"] = [];
   const nonRequiredFailingDetails: LiveCiAggregate["nonRequiredFailingDetails"] = [];
   let total = 0;
@@ -2824,14 +2837,18 @@ async function reduceLiveCiAggregate(
     // the same way conflates them (#4414 regressed exactly this -- a non-required advisory check started
     // auto-closing real contributor PRs). This is NOT the github-actions "awaiting maintainer Approve and run"
     // case the action_required exclusion above exists for: non-Actions apps use their own conclusion as a policy
-    // signal. Conservative: an unknown/absent app slug is NOT treated as third-party here.
+    // signal. Conservative: an unknown/absent app slug is NOT treated as third-party here. Gated on
+    // isConfirmedRequired (not isRequired, see its own doc comment above): a repo with NO branch-protection
+    // required-contexts configured at all must NOT fall back to treating this as required just because we
+    // don't know better -- that fail-safe belongs to genuine CI failures, not a third-party opinion check.
     const isThirdPartyActionRequired = conclusion === "action_required" && status === "completed" && appSlug !== "" && appSlug !== "github-actions";
-    if (isThirdPartyActionRequired && isRequired(run.name)) {
+    if (isThirdPartyActionRequired && isConfirmedRequired(run.name)) {
       const summary = checkRunSummary(run);
       failingDetails.push({ name: run.name, ...(summary ? { summary } : {}), ...(run.details_url ? { detailsUrl: run.details_url } : {}) });
     } else if (isThirdPartyActionRequired) {
-      // Non-required: visible (never silently folded into "passed" either, unlike the pre-#4414 behavior) but
-      // non-blocking -- routed to nonRequiredFailingDetails, which never feeds ciState or a close decision.
+      // Non-required (or required-contexts unconfirmed, e.g. no branch protection configured): visible (never
+      // silently folded into "passed" either, unlike the pre-#4414 behavior) but non-blocking -- routed to
+      // nonRequiredFailingDetails, which never feeds ciState or a close decision.
       const summary = checkRunSummary(run);
       nonRequiredFailingDetails.push({ name: run.name, ...(summary ? { summary } : {}), ...(run.details_url ? { detailsUrl: run.details_url } : {}) });
     } else if (conclusion ? CI_FAILING_CONCLUSIONS.has(conclusion) : false) {

@@ -4602,6 +4602,71 @@ describe("GitHub backfill", () => {
       ]);
     });
 
+    it("REGRESSION (#4812): a third-party action_required check-run on a repo with NO branch-protection required contexts configured at all is still non-blocking, not folded into failingDetails by the 'assume required when unknown' fallback", async () => {
+      // Reproduces PR #4812 (JSONbored/metagraphed) exactly: the repo's real branch protection returns
+      // required_status_checks.contexts: [] (confirmed via the live GitHub API) -- fetchRequiredStatusContexts
+      // maps that to an EMPTY Set, not null, so enforceRequiredOnly is false. Before this fix, isRequired()'s
+      // "!enforceRequiredOnly || ..." made every name "required" in that mode, silently reopening #4414 for
+      // any repo that simply never configured GitHub-native required status checks -- Contributor trust
+      // (Superagent's advisory, never-should-block signal) got folded into failingDetails and auto-closed a
+      // real contributor's PR with every actual CI check (tests, coverage, ui) green.
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [
+              { name: "test", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+              { name: "ui", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+              {
+                name: "Contributor trust",
+                status: "completed",
+                conclusion: "action_required",
+                app: { slug: "superagent-security" },
+                output: { title: "Contributor flagged for review" },
+              },
+            ],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [{ context: "codecov/patch", state: "success" }] });
+        if (url.includes("/check-suites?")) return Response.json({ check_suites: [{ status: "completed", app: { slug: "github-actions" } }] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/metagraphed", "sha4812", "public-token", new Set());
+
+      expect(aggregate.ciState).toBe("passed");
+      expect(aggregate.failingDetails).toEqual([]);
+      expect(aggregate.nonRequiredFailingDetails).toEqual([{ name: "Contributor trust", summary: "Contributor flagged for review" }]);
+    });
+
+    it("REGRESSION (#4812): the same holds when required-status-context fetch outright failed (null), not just when it confirmed an empty list", async () => {
+      // A distinct origin from the empty-Set case above (a 403/fetch error rather than a confirmed-empty
+      // response), but must resolve the same way: no POSITIVE confirmation that Contributor trust is required
+      // means it stays advisory, never a close reason.
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [
+              { name: "test", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+              { name: "Contributor trust", status: "completed", conclusion: "action_required", app: { slug: "superagent-security" } },
+            ],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites?")) return Response.json({ check_suites: [{ status: "completed", app: { slug: "github-actions" } }] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/metagraphed", "sha4812b", "public-token", null);
+
+      expect(aggregate.ciState).toBe("passed");
+      expect(aggregate.failingDetails).toEqual([]);
+      expect(aggregate.nonRequiredFailingDetails).toEqual([{ name: "Contributor trust" }]);
+    });
+
     it("a non-required third-party action_required check-run with no output/details_url still lands in nonRequiredFailingDetails, bare (name-only)", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

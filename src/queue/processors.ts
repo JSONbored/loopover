@@ -7002,11 +7002,20 @@ export async function shouldStartAiReviewForAdvisory(
     author: string | null;
     confirmedContributor: boolean;
     skipAiReview?: boolean | undefined;
+    // #4507: the caller's own already-computed shouldSkipAiForReputation result, from the SAME gate condition
+    // this function uses below (isReputationEnabled && isConvergenceRepoAllowed) -- threaded in so this call makes
+    // no second REPUTATION_WINDOW_ROW_CAP-bounded review_targets scan when the caller already ran one this pass.
+    // Absent (every existing/direct caller) ⇒ computed here exactly as before.
+    preComputedReputationSkip?: boolean | undefined;
   },
 ): Promise<boolean> {
   if (!shouldRequirePublicAiReviewForAdvisory(env, args)) return false;
   if (args.settings.aiReviewAllAuthors) return true;
-  return !(isReputationEnabled(env) && isConvergenceRepoAllowed(env, args.repoFullName) && (await shouldSkipAiForReputation(env, { project: args.repoFullName, submitter: args.author })));
+  if (!(isReputationEnabled(env) && isConvergenceRepoAllowed(env, args.repoFullName))) return true;
+  const reputationSkip =
+    args.preComputedReputationSkip ??
+    (await shouldSkipAiForReputation(env, { project: args.repoFullName, submitter: args.author }));
+  return !reputationSkip;
 }
 
 export function maybeAddRequiredAutoReviewSkipHold(
@@ -7266,6 +7275,15 @@ export async function runAiReviewForAdvisory(
     // default, and every existing caller) ⇒ this function claims + releases its own lock exactly as before —
     // byte-identical to today.
     preAcquiredAiReviewLock?: TransientLockClaim | undefined;
+    // #4507: the caller's own already-computed shouldSkipAiForReputation result, threaded in exactly like
+    // preAcquiredAiReviewLock above, so this function's OWN reputationActive gate (below) reuses it instead of
+    // re-deriving a second REPUTATION_WINDOW_ROW_CAP-bounded review_targets scan -- but ONLY when it's actually
+    // present. Absent (the caller's own plain-allowlist gate condition didn't apply, or a direct/test caller
+    // that doesn't thread it) ⇒ this function computes its own, independently authoritative check exactly as
+    // before -- correctly handling a per-repo manifest override that disagrees with the allowlist (the
+    // divergent-config case where only one of the two call sites' gates evaluates true in practice, so the
+    // other's threaded value is never populated to begin with).
+    preComputedReputationSkip?: boolean | undefined;
   },
 ): Promise<
   | {
@@ -7348,10 +7366,11 @@ export async function runAiReviewForAdvisory(
   if (
     reputationActive &&
     !args.settings.aiReviewAllAuthors &&
-    (await shouldSkipAiForReputation(env, {
-      project: args.repoFullName,
-      submitter: args.author,
-    }))
+    (args.preComputedReputationSkip ??
+      (await shouldSkipAiForReputation(env, {
+        project: args.repoFullName,
+        submitter: args.author,
+      })))
   )
     return undefined;
   // Per-(repo, PR, head SHA, mode) advisory lock (#confirmed-bug, mirrors #2129/#2368's claimPrActuationLock):
@@ -9658,6 +9677,16 @@ async function maybePublishPrPublicSurface(
       skipAiReview: webhook.skipAiReview,
       autoReviewSkipReason,
     });
+    // #4507: computed ONCE here (the same isReputationEnabled/isConvergenceRepoAllowed gate
+    // shouldStartAiReviewForAdvisory uses internally) and threaded into both shouldStartAiReviewForAdvisory below
+    // and runAiReviewForAdvisory further down, instead of each independently re-deriving it -- a second
+    // REPUTATION_WINDOW_ROW_CAP-bounded review_targets scan for the identical (repo, submitter) within the same
+    // pass. undefined when this pass's gate condition doesn't apply; both downstream call sites then fall back to
+    // their own fresh (and, for runAiReviewForAdvisory, manifest-override-aware) check.
+    const preComputedReputationSkip =
+      isReputationEnabled(env) && isConvergenceRepoAllowed(env, repoFullName)
+        ? await shouldSkipAiForReputation(env, { project: repoFullName, submitter: author })
+        : undefined;
     const aiReviewWillRun =
       !authorBlacklisted &&
       !isFrozenForManualReview &&
@@ -9669,6 +9698,7 @@ async function maybePublishPrPublicSurface(
         author,
         confirmedContributor,
         skipAiReview: webhook.skipAiReview,
+        preComputedReputationSkip,
       }));
     aiReviewExpected = aiReviewWillRun;
     if (isFrozenForManualReview) {
@@ -10097,6 +10127,7 @@ async function maybePublishPrPublicSurface(
               // losing) against itself, and does not release it before the cache write below runs.
               preAcquiredAiReviewLock: aiReviewLock,
               deliveryId: webhook.deliveryId,
+              preComputedReputationSkip,
             });
             // `persistable === false` (only the lock-contention placeholder — see runAiReviewForAdvisory's return
             // type doc comment) is excluded from EVERY write, not just the durable one: it describes a transient

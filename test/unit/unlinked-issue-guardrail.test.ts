@@ -382,14 +382,15 @@ describe("resolveUnlinkedIssueMatchDisposition", () => {
       }
     }
 
-    it("skips AI verification entirely once the per-actor rate ceiling is already met, even on a brand new PR", async () => {
+    it("holds for manual review once the per-actor rate ceiling is already met, even on a brand new PR", async () => {
       const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
       const env = createTestEnv({ AI: { run } as unknown as Ai });
       await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
       await seedVerifyAttempts(env, "contributor-a", 15);
 
       const result = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
-      expect(result).toBeUndefined();
+      expect(result?.kind).toBe("hold");
+      expect(result?.reason).toContain("rate ceiling");
       expect(run).not.toHaveBeenCalled();
     });
 
@@ -449,6 +450,19 @@ describe("resolveUnlinkedIssueMatchDisposition", () => {
       expect(await sumAiEstimatedNeuronsSince(env, "2000-01-01T00:00:00.000Z")).toBeGreaterThan(0);
     });
 
+
+    it("does not record shared-budget spend when the verifier cannot make an AI call", async () => {
+      const env = createTestEnv({});
+      await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+
+      const usedBefore = await sumAiEstimatedNeuronsSince(env, "2000-01-01T00:00:00.000Z");
+      const result = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+      const usedAfter = await sumAiEstimatedNeuronsSince(env, "2000-01-01T00:00:00.000Z");
+
+      expect(result).toBeUndefined();
+      expect(usedAfter).toBe(usedBefore);
+    });
+
     it("swallows a usage-recording write failure without affecting the verification result", async () => {
       const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
       const env = createTestEnv({ AI: { run } as unknown as Ai });
@@ -478,13 +492,14 @@ describe("resolveUnlinkedIssueMatchDisposition", () => {
       expect(run).toHaveBeenCalled();
     });
 
-    it("skips AI verification entirely when the shared daily neuron budget is exhausted", async () => {
+    it("holds for manual review when the shared daily neuron budget is exhausted", async () => {
       const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
       const env = createTestEnv({ AI: { run } as unknown as Ai, AI_DAILY_NEURON_BUDGET: "1" });
       await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
 
       const result = await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
-      expect(result).toBeUndefined();
+      expect(result?.kind).toBe("hold");
+      expect(result?.reason).toContain("budget is exhausted");
       expect(run).not.toHaveBeenCalled();
     });
 

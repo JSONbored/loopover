@@ -70,6 +70,21 @@ const VERIFY_MAX_MODEL_ATTEMPTS_PER_CANDIDATE = 2;
 // closes that gap by recording into the SAME shared ai_usage_events table this check reads from.
 const UNLINKED_ISSUE_VERIFY_USAGE_FEATURE = "unlinked_issue_verify";
 
+function unlinkedIssueVerifyCapacityHold(reason: "rate" | "budget"): UnlinkedIssueMatchDisposition {
+  const detail = reason === "rate" ? "the per-contributor verifier rate ceiling has been reached" : "the shared verifier budget is exhausted";
+  return {
+    kind: "hold",
+    reason: `unlinked-issue-match verification was deferred because ${detail}; holding for manual review instead of treating capacity exhaustion as a clean pass`,
+    comment:
+      "This PR does not link an issue and matched the unlinked-issue prefilter, but the final verifier is temporarily capacity-limited. A maintainer should manually confirm whether it directly solves an open issue before this PR proceeds.",
+  };
+}
+
+function hasUnlinkedIssueVerifyAiBinding(env: Env): boolean {
+  const ai = env.AI as unknown as { run?: unknown } | undefined;
+  return typeof ai?.run === "function";
+}
+
 /** Has this actor already run the AI verifier at or beyond the rate ceiling in the last window, across every
  *  repo/PR? Fail-safe: a read error resolves to "not rate-limited," so the pre-#4515 unconditional-
  *  verification behavior takes over rather than a DB hiccup silently disabling this guardrail. */
@@ -224,19 +239,20 @@ export async function resolveUnlinkedIssueMatchDisposition(env: Env, input: Reso
   const authorLogin = input.prAuthorLogin?.trim() || null;
   // #4515: cost-control gates ahead of the AI loop below. An unidentifiable author can't be rate-limited
   // individually (nothing to key the ceiling on), so only the shared budget check applies to them.
-  if (authorLogin && (await isOverUnlinkedIssueVerifyRateCeiling(env, authorLogin))) return undefined;
-  if (await isUnlinkedIssueVerifyBudgetExceeded(env, candidates.length)) return undefined;
+  if (authorLogin && (await isOverUnlinkedIssueVerifyRateCeiling(env, authorLogin))) return unlinkedIssueVerifyCapacityHold("rate");
+  if (await isUnlinkedIssueVerifyBudgetExceeded(env, candidates.length)) return unlinkedIssueVerifyCapacityHold("budget");
   for (const candidate of candidates) {
     if (authorLogin) await recordUnlinkedIssueVerifyAttempt(env, input.repoFullName, input.pullNumber, authorLogin);
-    // Record spend regardless of authorLogin -- an AI call happens either way; only the PER-ACTOR rate
-    // ceiling above needs a known actor, this shared-budget accounting does not.
-    await recordUnlinkedIssueVerifyUsage(env, input.repoFullName, input.pullNumber);
+    const hadAiBinding = hasUnlinkedIssueVerifyAiBinding(env);
     const verdict = await verifyUnlinkedIssueMatch(env, {
       prTitle: input.prTitle,
       prBody: input.prBody,
       diff: input.diff,
       candidate: candidate.issue,
     });
+    // Record spend only after an actual verifier invocation was possible. Missing/no-op AI bindings should
+    // fail closed to NO_MATCH without burning the shared budget ledger as if an ok call occurred.
+    if (hadAiBinding) await recordUnlinkedIssueVerifyUsage(env, input.repoFullName, input.pullNumber);
     if (!verdict.matched || verdict.confidence < input.config.minConfidence) continue;
     const evidenceSuffix = verdict.evidence ? ` (${verdict.evidence})` : "";
     if (!authorLogin) {

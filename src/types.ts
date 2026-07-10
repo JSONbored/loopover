@@ -2044,27 +2044,8 @@ export type ContributorScoringProfileRecord = {
   generatedAt: string;
 };
 
-export type IssueQualityReportRecord = {
-  id: string;
-  repoFullName: string;
-  issueNumber: number;
-  payload: Record<string, JsonValue>;
-  generatedAt: string;
-};
-
 export type BurdenForecastRecord = {
   repoFullName: string;
-  payload: Record<string, JsonValue>;
-  generatedAt: string;
-};
-
-export type RegistryDriftEventRecord = {
-  id: string;
-  repoFullName: string;
-  driftType: string;
-  detail: string;
-  previousSnapshotId?: string | null | undefined;
-  currentSnapshotId?: string | null | undefined;
   payload: Record<string, JsonValue>;
   generatedAt: string;
 };

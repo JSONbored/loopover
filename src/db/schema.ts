@@ -1014,20 +1014,6 @@ export const officialMinerDetections = sqliteTable("official_miner_detections", 
   updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });
 
-export const issueQualityReports = sqliteTable(
-  "issue_quality_reports",
-  {
-    id: text("id").primaryKey(),
-    repoFullName: text("repo_full_name").notNull(),
-    issueNumber: integer("issue_number").notNull(),
-    payloadJson: text("payload_json").notNull().default("{}"),
-    generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
-  },
-  (table) => ({
-    repoIssue: uniqueIndex("issue_quality_reports_repo_issue_unique").on(table.repoFullName, table.issueNumber),
-  }),
-);
-
 export const burdenForecasts = sqliteTable("burden_forecasts", {
   repoFullName: text("repo_full_name").primaryKey(),
   payloadJson: text("payload_json").notNull().default("{}"),
@@ -1036,17 +1022,6 @@ export const burdenForecasts = sqliteTable("burden_forecasts", {
 
 export const repoQueueTrendSnapshots = sqliteTable("repo_queue_trend_snapshots", {
   repoFullName: text("repo_full_name").primaryKey(),
-  payloadJson: text("payload_json").notNull().default("{}"),
-  generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
-});
-
-export const registryDriftEvents = sqliteTable("registry_drift_events", {
-  id: text("id").primaryKey(),
-  repoFullName: text("repo_full_name").notNull(),
-  driftType: text("drift_type").notNull(),
-  detail: text("detail").notNull(),
-  previousSnapshotId: text("previous_snapshot_id"),
-  currentSnapshotId: text("current_snapshot_id"),
   payloadJson: text("payload_json").notNull().default("{}"),
   generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
 });

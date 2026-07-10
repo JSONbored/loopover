@@ -10,7 +10,6 @@ import {
   listRepoPullRequestFilePaths,
   listSignalSnapshots,
   persistBountyLifecycleEvent,
-  persistRegistryDriftEvents,
   persistRepoGithubTotalsSnapshot,
   persistSignalSnapshot,
   startActiveReviewTracking,
@@ -18,7 +17,6 @@ import {
   updateUpstreamDriftReportIssue,
   upsertContributorRepoStat,
   upsertContributorScoringProfile,
-  upsertIssueQualityReport,
   upsertPullRequestFile,
   upsertUpstreamDriftReport,
 } from "../../src/db/repositories";
@@ -27,7 +25,7 @@ import type { PullRequestFileRecord, PullRequestRecord, RepositoryRecord } from 
 import { createTestEnv } from "../helpers/d1";
 
 describe("database persistence helpers", () => {
-  it("round-trips drift, quality, lifecycle, and scoring persistence helpers", async () => {
+  it("round-trips drift, lifecycle, and scoring persistence helpers", async () => {
     const env = createTestEnv();
     await upsertUpstreamDriftReport(env, {
       id: "drift-1",
@@ -66,25 +64,6 @@ describe("database persistence helpers", () => {
       payload: { scoreability: "ready" },
     });
 
-    await upsertIssueQualityReport(env, {
-      id: "quality-1",
-      repoFullName: "JSONbored/gittensory",
-      issueNumber: 7,
-      payload: { score: 92 },
-      generatedAt: "2026-05-30T00:03:00.000Z",
-    });
-    await persistRegistryDriftEvents(env, [
-      {
-        id: "registry-event-1",
-        repoFullName: "JSONbored/gittensory",
-        driftType: "changed",
-        detail: "Emission changed",
-        previousSnapshotId: "old",
-        currentSnapshotId: "new",
-        payload: { emissionShare: 0.01 },
-        generatedAt: "2026-05-30T00:04:00.000Z",
-      },
-    ]);
     await persistBountyLifecycleEvent(env, {
       id: "bounty-event-1",
       bountyId: "bounty-1",
@@ -95,12 +74,6 @@ describe("database persistence helpers", () => {
       generatedAt: "2026-05-30T00:05:00.000Z",
     });
 
-    await expect(
-      env.DB.prepare("select payload_json from issue_quality_reports where repo_full_name = ? and issue_number = ?")
-        .bind("JSONbored/gittensory", 7)
-        .first<{ payload_json: string }>(),
-    ).resolves.toMatchObject({ payload_json: JSON.stringify({ score: 92 }) });
-    await expect(env.DB.prepare("select count(*) as count from registry_drift_events").first<{ count: number }>()).resolves.toMatchObject({ count: 1 });
     await expect(env.DB.prepare("select count(*) as count from bounty_lifecycle_events").first<{ count: number }>()).resolves.toMatchObject({ count: 1 });
   });
 

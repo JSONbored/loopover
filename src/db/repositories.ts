@@ -26,7 +26,6 @@ import {
   githubAgentCommandFeedback,
   installationHealth,
   installations,
-  issueQualityReports,
   issues,
   githubRateLimitObservations,
   notificationDeliveries,
@@ -43,7 +42,6 @@ import {
   repositories,
   repoGithubTotalsSnapshots,
   repoQueueTrendSnapshots,
-  registryDriftEvents,
   repoLabels,
   repoSnapshots,
   repoSyncSegments,
@@ -113,7 +111,6 @@ import type {
   InstallationHealthRecord,
   InstallationRecord,
   IssueRecord,
-  IssueQualityReportRecord,
   JsonValue,
   McpCompatibilityAdoptionSummary,
   NotificationChannel,
@@ -144,7 +141,6 @@ import type {
   PullRequestReviewRecord,
   RecentMergedPullRequestRecord,
   RegistryRepoConfig,
-  RegistryDriftEventRecord,
   RepoLabelRecord,
   RepoGithubTotalsSnapshotRecord,
   RepoQueueTrendSnapshotRecord,
@@ -3573,23 +3569,6 @@ export async function getContributorScoringProfile(env: Env, login: string): Pro
     : null;
 }
 
-export async function upsertIssueQualityReport(env: Env, report: IssueQualityReportRecord): Promise<void> {
-  const db = getDb(env.DB);
-  await db
-    .insert(issueQualityReports)
-    .values({
-      id: report.id,
-      repoFullName: report.repoFullName,
-      issueNumber: report.issueNumber,
-      payloadJson: jsonString(report.payload),
-      generatedAt: report.generatedAt,
-    })
-    .onConflictDoUpdate({
-      target: [issueQualityReports.repoFullName, issueQualityReports.issueNumber],
-      set: { payloadJson: jsonString(report.payload), generatedAt: report.generatedAt },
-    });
-}
-
 export async function upsertBurdenForecast(env: Env, forecast: BurdenForecastRecord): Promise<void> {
   const db = getDb(env.DB);
   await db
@@ -3611,22 +3590,6 @@ export async function getBurdenForecast(env: Env, repoFullName: string): Promise
     payload: parseJson<Record<string, JsonValue>>(first.payloadJson, {}),
     generatedAt: first.generatedAt,
   };
-}
-
-export async function persistRegistryDriftEvents(env: Env, events: RegistryDriftEventRecord[]): Promise<void> {
-  const db = getDb(env.DB);
-  for (const event of events) {
-    await db.insert(registryDriftEvents).values({
-      id: event.id,
-      repoFullName: event.repoFullName,
-      driftType: event.driftType,
-      detail: event.detail,
-      previousSnapshotId: event.previousSnapshotId,
-      currentSnapshotId: event.currentSnapshotId,
-      payloadJson: jsonString(event.payload),
-      generatedAt: event.generatedAt,
-    });
-  }
 }
 
 export async function persistBountyLifecycleEvent(env: Env, event: BountyLifecycleEventRecord): Promise<void> {

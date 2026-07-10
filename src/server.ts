@@ -6,7 +6,7 @@
 // Serves the Hono app via @hono/node-server, drives the queue with the same processJob, ticks the same
 // scheduled handler on a timer, exposes /health /ready /metrics, and shuts down gracefully. The Cloudflare
 // Worker (src/index.ts) is untouched — this is a parallel entry the self-host esbuild build bundles.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
@@ -42,6 +42,7 @@ import {
 import { createOrbRelayRegistrationState, isOrbBrokerMode, registerOrbRelayTargetWithRetry } from "./orb/broker-client";
 import { exportOrbBatch } from "./selfhost/orb-collector";
 import { createD1Adapter, nodeSqliteDriver } from "./selfhost/d1-adapter";
+import { loadFileSecrets } from "./selfhost/load-file-secrets";
 import {
   backupAcknowledgedGaugeValue,
   buildHealthBody,
@@ -106,28 +107,6 @@ import { probeReesSecretAtStartup } from "./review/enrichment-wire";
 import { sampleRecentDeadLetters } from "./selfhost/dlq-recent";
 import type { JobMessage } from "./types";
 
-/** Resolve `<NAME>_FILE` env vars (Docker secrets / multi-line keys) into `<NAME>` at startup. */
-function loadFileSecrets(): void {
-  for (const key of Object.keys(process.env)) {
-    if (!key.endsWith("_FILE") || !process.env[key]) continue;
-    const target = key.slice(0, -"_FILE".length);
-    if (process.env[target]) continue; // an explicit value wins
-    try {
-      process.env[target] = readFileSync(
-        process.env[key] as string,
-        "utf8",
-      ).trim();
-    } catch {
-      console.error(
-        JSON.stringify({
-          level: "error",
-          event: "selfhost_secret_file_unreadable",
-          var: key,
-        }),
-      );
-    }
-  }
-}
 
 interface Backend {
   db: D1Database;

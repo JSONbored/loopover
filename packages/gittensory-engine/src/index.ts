@@ -218,6 +218,17 @@ export {
   type SelfReviewVerdict,
 } from "./miner/self-review-adapter.js";
 export {
+  decideNextAction,
+  decideNextActionWithReason,
+  deriveSelfReviewOutcome,
+  type AbandonReason,
+  type HandoffPacket,
+  type IterateLoopAction,
+  type IterateLoopDecision,
+  type IterationState,
+  type SelfReviewOutcome,
+} from "./miner/iterate-policy.js";
+export {
   codingAgentModeExecutes,
   isGlobalMinerCodingAgentPause,
   resolveCodingAgentExecutionMode,

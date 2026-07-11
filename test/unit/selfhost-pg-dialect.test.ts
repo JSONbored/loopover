@@ -31,6 +31,19 @@ describe("pg-dialect (#977 SQLite → Postgres)", () => {
     expect(translateFunctions("json_extract(meta, '$.mode')")).toBe("((meta)::jsonb ->> 'mode')");
   });
 
+  it("REGRESSION (#4997): a JSON-boolean json_extract comparison survives translation as text-to-text, not text-to-integer", () => {
+    // findHottestInconclusiveReviewTargetForRepo (repositories.ts) compares a stored JSON boolean. SQLite's
+    // json_extract surfaces a JSON boolean as the SQL integer 1/0, but Postgres's `->>` ALWAYS returns text --
+    // comparing that text against a bare integer literal (the original `= 1`) throws a Postgres type-mismatch
+    // error on every call. CAST to TEXT first so the comparison is valid on both backends.
+    const translated = translateFunctions("CAST(json_extract(metadata_json, '$.inconclusive') AS TEXT) IN ('1', 'true')");
+    expect(translated).toBe("CAST(((metadata_json)::jsonb ->> 'inconclusive') AS TEXT) IN ('1', 'true')");
+    // No bare-integer comparison against a json_extract/->> expression should remain anywhere in the codebase --
+    // this is the ONE call site, and it's fixed. (Documents the invariant the fix restores; not itself testing
+    // translateFunctions with anything new.)
+    expect(translated).not.toMatch(/->>\s*'[a-z]+'\s*\)?\s*=\s*\d/);
+  });
+
   it("translates INSERT OR IGNORE / REPLACE to ON CONFLICT", () => {
     expect(translateInsertOr("INSERT OR IGNORE INTO t (a) VALUES (?)")).toBe("INSERT INTO t (a) VALUES (?) ON CONFLICT DO NOTHING");
     const replace = translateInsertOr("INSERT OR REPLACE INTO system_flags (key, value, updated_at) VALUES (?, '1', CURRENT_TIMESTAMP)");

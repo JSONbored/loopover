@@ -2830,7 +2830,13 @@ export async function findHottestInconclusiveReviewTargetForRepo(
         eq(aiUsageEvents.feature, "ai_review_pr"),
         gte(aiUsageEvents.createdAt, sinceIso),
         sql`json_extract(${aiUsageEvents.metadataJson}, '$.repoFullName') = ${repoFullName}`,
-        sql`json_extract(${aiUsageEvents.metadataJson}, '$.inconclusive') = 1`,
+        // #4997: `inconclusive` is stored as a JSON boolean. SQLite's json_extract surfaces a JSON boolean as the
+        // SQL integer 1/0, but the self-host Postgres translation of json_extract (pg-dialect.ts) rewrites this to
+        // `->>'inconclusive'`, which ALWAYS returns text -- comparing that text to a bare integer literal throws a
+        // Postgres type-mismatch error on every call. CAST to TEXT first so both backends compare text to text:
+        // SQLite's CAST(1 AS TEXT) = '1' (identical to the old `= 1` semantics), Postgres's `->>'inconclusive'`
+        // already yields 'true'/'false'.
+        sql`CAST(json_extract(${aiUsageEvents.metadataJson}, '$.inconclusive') AS TEXT) IN ('1', 'true')`,
       ),
     )
     .groupBy(pullNumberExpr)

@@ -8,6 +8,7 @@ import {
   countRecentAuditEventsForActorAndTarget,
   countRecentAuditEventsForActorInRepo,
   countRecentAuditEventsForActorInRepoWithTargetSuffix,
+  findHottestInconclusiveReviewTargetForRepo,
   findHottestReviewTargetForRepo,
   hasAuditEventForDelivery,
   hasAuditEventForHeadSha,
@@ -24,6 +25,7 @@ import {
   markPullRequestsRegated,
   markPullRequestsBacklogConvergenceRegated,
   markPullRequestSurfacePublished,
+  recordAiUsageEvent,
   recordAuditEvent,
   recordWebhookEvent,
   upsertOfficialMinerDetection,
@@ -746,6 +748,39 @@ describe("database row parser hardening", () => {
       targetKey: "owner/foo_bar#1",
       count: 3,
     });
+  });
+
+  it("findHottestInconclusiveReviewTargetForRepo counts only inconclusive:true calls, scoped to ONE repo (#4997 regression: the JSON-boolean comparison must exclude inconclusive:false, not just miss on total volume)", async () => {
+    const env = createTestEnv();
+    const record = (repoFullName: string, pullNumber: number, inconclusive: boolean) =>
+      recordAiUsageEvent(env, {
+        feature: "ai_review_pr",
+        model: "self-host:claude-code",
+        status: "ok",
+        estimatedNeurons: 100,
+        metadata: { repoFullName, pullNumber, inconclusive },
+      });
+    // owner/repo#1: 3 inconclusive calls -- the hottest inconclusive target for this repo.
+    await record("owner/repo", 1, true);
+    await record("owner/repo", 1, true);
+    await record("owner/repo", 1, true);
+    // owner/repo#1 ALSO has 2 successful (non-inconclusive) calls on the SAME PR -- must not inflate the count.
+    await record("owner/repo", 1, false);
+    await record("owner/repo", 1, false);
+    // owner/repo#2: only 1 inconclusive call -- must not win over #1.
+    await record("owner/repo", 2, true);
+    // A different repo's inconclusive calls must not leak into this repo's count.
+    await record("owner/other", 1, true);
+    await record("owner/other", 1, true);
+
+    const hottest = await findHottestInconclusiveReviewTargetForRepo(env, "owner/repo", "2020-01-01T00:00:00.000Z");
+    expect(hottest).toEqual({ targetKey: "owner/repo#1", count: 3 });
+
+    // A cutoff after all the recorded events must find nothing.
+    expect(await findHottestInconclusiveReviewTargetForRepo(env, "owner/repo", "2099-01-01T00:00:00.000Z")).toBeNull();
+    // A repo with only non-inconclusive calls must find nothing.
+    await record("owner/all-ok", 1, false);
+    expect(await findHottestInconclusiveReviewTargetForRepo(env, "owner/all-ok", "2020-01-01T00:00:00.000Z")).toBeNull();
   });
 
   it("hasAuditEventForDelivery finds a matching deliveryId inside metadata_json, scoped to actor+eventType+targetKey (#2560)", async () => {

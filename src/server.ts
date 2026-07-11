@@ -334,10 +334,21 @@ async function main(): Promise<void> {
   /* v8 ignore stop */
   const startedAt = Date.now();
 
-  // The queue consumer captures `env`, assigned below (the first job only runs once an HTTP/cron event
-  // arrives, by which point env is set).
+  // The queue consumer captures `env`, assigned further below once the backend/migrations/AI providers are
+  // ready. That used to rest on "the first job only runs once an HTTP/cron event arrives, by which point env
+  // is set" -- false: both queue backends self-heal any foreground job left over-deferred across a restart by
+  // releasing it and kicking the pump ONCE at boot, inside queue construction/init() itself (see
+  // releaseStaleForegroundDeferrals in pg-queue.ts/sqlite-queue.ts), which can invoke consume() well before
+  // `env` below is assigned -- surfacing as a misleading generic job_error ("Cannot read properties of
+  // undefined") right after a container restart whenever a foreground job happened to be sitting deferred at
+  // that moment. Gate on envReady so a boot-time release waits for `env` instead of dereferencing it early.
   let env: Env;
+  let markEnvReady!: () => void;
+  const envReady = new Promise<void>((resolve) => {
+    markEnvReady = resolve;
+  });
   const consume = async (message: JobMessage): Promise<void> => {
+    await envReady;
     try {
       await processJob(env, message);
     } catch (error) {
@@ -637,6 +648,7 @@ async function main(): Promise<void> {
       return binding ? { REVIEW_AUDIT: binding } : {};
     })(),
   } as unknown as Env;
+  markEnvReady();
 
   // GitHub App auth: a successful JWT mint proves GITHUB_APP_PRIVATE_KEY is set and parses as a valid signing
   // key. Without this, an invalid/expired key leaves the review pipeline completely dead while /ready still

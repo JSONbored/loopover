@@ -3613,6 +3613,179 @@ describe("queue processors", () => {
     }
   });
 
+  // #2051/#4147: with the unified comment on AND `.gittensory.yml` opting into `review.auto_merge_summary`,
+  // the rendered comment gains the deterministic, no-AI "Auto-merge readiness" collapsible — computed from the
+  // SAME live CI state, gate conclusion, mergeable_state, and linked-issue facts this pass already resolves
+  // for the readiness chip and gate verdict, no extra fetch. Mirrors the effort_score test above but asserts
+  // the auto-merge-readiness table's presence + condition marks instead.
+  it("renders the Auto-merge readiness collapsible when review.auto_merge_summary is on in .gittensory.yml", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_UNIFIED_COMMENT: "1" });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "detected_contributors_only",
+      publicAudienceMode: "gittensor_only",
+      publicSignalLevel: "standard",
+      publicSurface: "comment_and_label",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      checkRunDetailLevel: "minimal",
+      gateCheckMode: "enabled", reviewCheckMode: "required",
+      backfillEnabled: true,
+      autonomy: { update_branch: "auto" },
+    });
+    let postedBody = "";
+    const calls = { comments: 0, gateChecks: 0 };
+    let gateFinalized = false;
+    let failedPostGateMint = false;
+    const liveCiSpy = vi
+      .spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl")
+      .mockRejectedValueOnce(new Error("transient CI read failed"))
+      .mockResolvedValue({
+        ciState: "passed",
+        hasPending: false,
+        hasVisiblePending: false,
+        hasMissingRequiredContext: false,
+        failingDetails: [],
+        nonRequiredFailingDetails: [],
+        ciCompletenessWarning: null,
+      });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") {
+        return Response.json([
+          {
+            uid: 7,
+            githubUsername: "oktofeesh1",
+            githubId: "123",
+            totalPrs: 4,
+            totalMergedPrs: 3,
+            totalOpenPrs: 1,
+            totalClosedPrs: 0,
+            totalOpenIssues: 0,
+            totalClosedIssues: 0,
+            totalSolvedIssues: 0,
+            totalValidSolvedIssues: 0,
+            isEligible: true,
+            credibility: 1,
+            eligibleRepoCount: 1,
+            hotkey: "must-not-leak",
+          },
+        ]);
+      }
+      if (url === "https://api.gittensor.io/miners/123") {
+        return Response.json({
+          repositories: [
+            {
+              repositoryFullName: "JSONbored/gittensory",
+              totalPrs: "4",
+              totalMergedPrs: "3",
+              totalOpenPrs: "1",
+              totalClosedPrs: "0",
+              totalOpenIssues: "0",
+              totalClosedIssues: "0",
+              isEligible: true,
+              credibility: "1.000000",
+            },
+          ],
+        });
+      }
+      if (url === "https://api.gittensor.io/miners/123/prs") return Response.json([]);
+      if (url === "https://mirror.gittensor.io/api/v1/miners/123/issues") return Response.json({ issues: [] });
+      if (url.endsWith("/users/oktofeesh1")) return Response.json({ login: "oktofeesh1", public_repos: 2, followers: 1 });
+      if (url.includes("/users/oktofeesh1/repos")) return Response.json([{ language: "TypeScript" }]);
+      // .gittensory.yml opts into the deterministic auto-merge summary — no AI involved.
+      if (url === "https://raw.githubusercontent.com/JSONbored/gittensory/HEAD/.gittensory.yml") {
+        return new Response("review:\n  auto_merge_summary: true\n");
+      }
+      if (url.includes("/access_tokens")) {
+        if (gateFinalized && !failedPostGateMint) {
+          failedPostGateMint = true;
+          return new Response("mint failed", { status: 500 });
+        }
+        return Response.json({ token: "installation-token", expires_at: "2026-05-28T00:04:00.000Z" });
+      }
+      if (url.includes("/pulls/3/files"))
+        return Response.json([{ filename: "src/cache.ts", additions: 10, deletions: 1, status: "modified" }]);
+      // mergeable_state: "clean" -> mergeableClean: true in the rendered table.
+      if (/\/pulls\/3(?:\?|$)/.test(url)) return Response.json({ number: 3, mergeable_state: "clean" });
+      // Gate check-run — must succeed so `gateEvaluation` concludes "success" -> gatePassing: true.
+      if (url.includes("/check-runs") && method === "GET") return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") {
+        calls.gateChecks += 1;
+        const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string };
+        if (body.status !== "in_progress" || body.conclusion) {
+          gateFinalized = true;
+          clearInstallationTokenCacheForTest();
+        }
+        return Response.json({ id: 901 }, { status: 201 });
+      }
+      if (url.includes("/check-runs/901") && method === "PATCH") {
+        calls.gateChecks += 1;
+        gateFinalized = true;
+        clearInstallationTokenCacheForTest();
+        return Response.json({ id: 901 });
+      }
+      if (url.includes("/issues/3/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/3/comments") && method === "POST") {
+        calls.comments += 1;
+        postedBody = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+        return Response.json({ id: 1, html_url: "https://github.com/comment/1" }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "pr-unified-comment-auto-merge-summary",
+        eventName: "pull_request",
+        payload: {
+          action: "synchronize",
+          installation: {
+            id: 123,
+            account: { login: "JSONbored", id: 1, type: "User" },
+            repository_selection: "selected",
+            permissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
+            events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+          },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: {
+            number: 3,
+            title: "Fix webhook duplicate delivery again",
+            state: "open",
+            user: { login: "oktofeesh1" },
+            head: { sha: "unified789" },
+            labels: [{ name: "bug" }],
+            // A linked issue (#1) is present -> linkedIssueValid: true in the rendered table.
+            body: "Fixes #1\n\nValidation: npm test",
+          },
+        },
+      });
+
+      expect(calls.comments).toBe(2);
+      expect(postedBody).toContain("<!-- gittensory-pr-panel:v1 -->");
+      expect(postedBody).toContain("Auto-merge readiness");
+      expect(postedBody).toContain("_Read-only snapshot of the current auto-merge conditions");
+      // All four conditions pass with this fixture: CI green, gate passing, branch mergeable clean, valid
+      // linked issue.
+      expect(postedBody).toContain("| CI checks green | ✅ |");
+      expect(postedBody).toContain("| Gate passing | ✅ |");
+      expect(postedBody).toContain("| Branch mergeable (clean) | ✅ |");
+      expect(postedBody).toContain("| Valid linked issue | ✅ |");
+    } finally {
+      liveCiSpy.mockRestore();
+    }
+  });
+
   // #2044: `.gittensory.yml` `review.tone` is folded into the AI reviewer's system prompt by
   // composeManifestReviewInstructions (src/signals/focus-manifest.ts), consumed by
   // src/queue/processors.ts's aiReviewCacheReadDecideAndRun. That composition is unit-tested in isolation

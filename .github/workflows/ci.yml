@@ -271,9 +271,29 @@ jobs:
         env:
           NODE_OPTIONS: ""
         run: node scripts/validate-observability-configs.mjs
+      # .tsbuildinfo mutates every run (tsc's own incremental state), unlike node_modules above which is
+      # immutable per lockfile -- so this needs the run_id-suffixed-key + restore-keys-prefix pattern (always
+      # creates a new cache entry to save into, restore falls back to the most recent matching prefix) rather
+      # than the hit-or-miss pattern node_modules uses. Measured ~13.5s cold vs ~3.6s warm locally; tsc
+      # verifies each file's content hash before trusting cached state, so a fresh checkout's reset mtimes
+      # can't cause a false cache hit that would mask a real type error.
+      - name: Restore TypeScript incremental build cache
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .tsbuildinfo
+          key: tsbuildinfo-${{ hashFiles('tsconfig.json', 'package-lock.json') }}-${{ github.run_id }}
+          restore-keys: |
+            tsbuildinfo-${{ hashFiles('tsconfig.json', 'package-lock.json') }}-
       - name: Typecheck
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run typecheck
+      - name: Save TypeScript incremental build cache
+        if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.backend == 'true') }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .tsbuildinfo
+          key: tsbuildinfo-${{ hashFiles('tsconfig.json', 'package-lock.json') }}-${{ github.run_id }}
       # Moved ahead of "Test with coverage" (#ci-engine-build-order): src/mcp/find-opportunities.ts (root
       # backend, since #2281/#3985) imports packages/gittensory-miner/lib/opportunity-fanout.js -- committed,
       # pre-built JS -- which itself imports @jsonbored/gittensory-engine. That package's dist/ is gitignored

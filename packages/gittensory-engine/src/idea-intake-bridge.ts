@@ -134,7 +134,7 @@ function sentenceCase(text: string): string {
 }
 
 function titleFromStep(step: string, fallbackIndex: number): string {
-  const firstLine = step.split(/\r?\n/, 1)[0].trim();
+  const firstLine = step.split(/\r?\n/, 1)[0]!.trim();
   /* v8 ignore next -- numbered/bullet parsing trims each step; defensive fallback when the first line is blank. */
   const candidate = firstLine.length > 0 ? firstLine : `Task ${fallbackIndex}`;
   if (candidate.length > 120) {

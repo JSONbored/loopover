@@ -48,8 +48,23 @@ test("parseMinerGoalSpec: valid raw config normalizes every field and keeps non-
     issueDiscoveryPolicy: "encouraged",
     feasibilityGate: { enabled: false, suppressedReasons: ["duplicate_cluster_high"] },
     selfPlagiarism: { similarityThreshold: 0.85 },
+    killSwitch: { paused: false },
   });
   assert.deepEqual(parsed.warnings, []);
+});
+
+test("parseMinerGoalSpec: killSwitch sub-field normalizes independently and rejects a non-mapping value", () => {
+  const valid = parseMinerGoalSpec({ wantedPaths: ["src/**"], killSwitch: { paused: true } });
+  assert.deepEqual(valid.spec.killSwitch, { paused: true });
+  assert.deepEqual(valid.warnings, []);
+
+  const malformed = parseMinerGoalSpec({ wantedPaths: ["src/**"], killSwitch: { paused: "nope" } });
+  assert.deepEqual(malformed.spec.killSwitch, { paused: false });
+  assert.match(malformed.warnings.join(" "), /killSwitch\.paused/i);
+
+  const arrayValue = parseMinerGoalSpec({ wantedPaths: ["src/**"], killSwitch: ["not", "a", "mapping"] });
+  assert.deepEqual(arrayValue.spec.killSwitch, { paused: false });
+  assert.match(arrayValue.warnings.join(" "), /killSwitch.*must be a mapping/i);
 });
 
 test("parseMinerGoalSpec: feasibilityGate sub-fields normalize independently and reject a non-mapping value", () => {
@@ -157,6 +172,7 @@ test("parseMinerGoalSpec: malformed fields fall back independently with targeted
     issueDiscoveryPolicy: "neutral",
     feasibilityGate: { enabled: true, suppressedReasons: [] },
     selfPlagiarism: { similarityThreshold: 0.85 },
+    killSwitch: { paused: false },
   });
   const warningText = parsed.warnings.join(" ");
   assert.match(warningText, /minerEnabled/i);

@@ -56,6 +56,7 @@ describe("MinerGoalSpec parser (#2301)", () => {
         issueDiscoveryPolicy: "encouraged",
         feasibilityGate: { enabled: false, suppressedReasons: ["duplicate_cluster_high"] },
         selfPlagiarism: { similarityThreshold: 0.85 },
+        killSwitch: { paused: false },
       },
       warnings: ['MinerGoalSpec field "blockedPaths" truncated an over-long entry.'],
     });
@@ -149,6 +150,7 @@ describe("MinerGoalSpec parser (#2301)", () => {
         issueDiscoveryPolicy: "neutral",
         feasibilityGate: { enabled: true, suppressedReasons: [] },
         selfPlagiarism: { similarityThreshold: 0.85 },
+        killSwitch: { paused: false },
       },
       warnings: expect.arrayContaining([
         expect.stringMatching(/minerEnabled/i),
@@ -220,6 +222,25 @@ describe("MinerGoalSpec parser (#2301)", () => {
     expect(arrayValue.warnings.join(" ")).toMatch(/selfPlagiarism.*must be a mapping/i);
   });
 
+  it("a killSwitch policy alone (all other fields default) marks the spec present", () => {
+    const parsed = parseMinerGoalSpec({ killSwitch: { paused: true } });
+    expect(parsed.present).toBe(true);
+    expect(parsed.spec.killSwitch).toEqual({ paused: true });
+  });
+
+  it("normalizes nested killSwitch sub-fields and rejects a non-mapping value", () => {
+    const malformed = parseMinerGoalSpec({
+      wantedPaths: ["src/**"],
+      killSwitch: { paused: "nope" },
+    });
+    expect(malformed.spec.killSwitch).toEqual({ paused: false });
+    expect(malformed.warnings.join(" ")).toMatch(/killSwitch\.paused/i);
+
+    const arrayValue = parseMinerGoalSpec({ wantedPaths: ["src/**"], killSwitch: ["not", "a", "mapping"] });
+    expect(arrayValue.spec.killSwitch).toEqual({ paused: false });
+    expect(arrayValue.warnings.join(" ")).toMatch(/killSwitch.*must be a mapping/i);
+  });
+
   it("rejects claim counts below one after flooring", () => {
     const parsed = parseMinerGoalSpec({
       wantedPaths: ["src/**"],
@@ -249,6 +270,7 @@ describe("MinerGoalSpec parser (#2301)", () => {
         issueDiscoveryPolicy: "neutral",
         feasibilityGate: { enabled: true, suppressedReasons: [] },
         selfPlagiarism: { similarityThreshold: 0.85 },
+        killSwitch: { paused: false },
       }),
     ).toEqual({
       present: false,

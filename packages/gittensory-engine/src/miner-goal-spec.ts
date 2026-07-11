@@ -34,6 +34,16 @@ export type SelfPlagiarismPolicy = {
   similarityThreshold: number;
 };
 
+/** Per-repo kill-switch tuning consulted by the Governor chokepoint's kill-switch primitive (#2341). */
+export type MinerKillSwitchPolicy = {
+  /**
+   * Per-repo runtime halt: stops all miner WRITE actions for this repo without deregistering it from
+   * targeting/discovery. Distinct from `minerEnabled` (a discovery-time opt-out) — pausing preserves in-flight
+   * queue state so un-pausing resumes exactly where the queue left off. Default: false (not paused).
+   */
+  paused: boolean;
+};
+
 /** Per-repo miner configuration parsed from `.gittensory-miner.yml`. See {@link DEFAULT_MINER_GOAL_SPEC}. */
 export type MinerGoalSpec = {
   /**
@@ -82,6 +92,11 @@ export type MinerGoalSpec = {
    * Self-plagiarism throttle consulted before open_pr (#2345). Default: { similarityThreshold: 0.85 }.
    */
   selfPlagiarism: SelfPlagiarismPolicy;
+  /**
+   * Per-repo kill-switch consulted by the Governor chokepoint before every write action (#2341).
+   * Default: { paused: false }.
+   */
+  killSwitch: MinerKillSwitchPolicy;
 };
 
 /** The tolerant parser result for `.gittensory-miner.yml`: the normalized spec plus parse warnings and whether the
@@ -112,6 +127,7 @@ export const DEFAULT_MINER_GOAL_SPEC: Readonly<MinerGoalSpec> = Object.freeze({
   issueDiscoveryPolicy: "neutral",
   feasibilityGate: Object.freeze({ enabled: true, suppressedReasons: Object.freeze([]) }),
   selfPlagiarism: Object.freeze({ similarityThreshold: DEFAULT_SELF_PLAGIARISM_SIMILARITY_THRESHOLD }),
+  killSwitch: Object.freeze({ paused: false }),
 });
 
 const MAX_MINER_GOAL_SPEC_BYTES = 32_768;
@@ -130,6 +146,7 @@ function cloneDefaultMinerGoalSpec(): MinerGoalSpec {
       suppressedReasons: [...DEFAULT_MINER_GOAL_SPEC.feasibilityGate.suppressedReasons],
     },
     selfPlagiarism: { ...DEFAULT_MINER_GOAL_SPEC.selfPlagiarism },
+    killSwitch: { ...DEFAULT_MINER_GOAL_SPEC.killSwitch },
   };
 }
 
@@ -232,6 +249,23 @@ function normalizeSelfPlagiarismPolicy(
   return resolved;
 }
 
+function normalizeKillSwitchPolicy(
+  value: unknown,
+  field: string,
+  fallback: MinerKillSwitchPolicy,
+  warnings: string[],
+): MinerKillSwitchPolicy {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    warnings.push(`MinerGoalSpec field "${field}" must be a mapping; falling back to defaults.`);
+    return fallback;
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    paused: normalizeBoolean(record.paused, `${field}.paused`, fallback.paused, warnings),
+  };
+}
+
 function normalizePositiveInteger(value: unknown, field: string, fallback: number, warnings: string[]): number {
   if (value === undefined || value === null) return fallback;
   if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -267,7 +301,8 @@ function hasConfiguredGoalFields(spec: MinerGoalSpec): boolean {
     spec.issueDiscoveryPolicy !== DEFAULT_MINER_GOAL_SPEC.issueDiscoveryPolicy ||
     spec.feasibilityGate.enabled !== DEFAULT_MINER_GOAL_SPEC.feasibilityGate.enabled ||
     spec.feasibilityGate.suppressedReasons.length > 0 ||
-    spec.selfPlagiarism.similarityThreshold !== DEFAULT_MINER_GOAL_SPEC.selfPlagiarism.similarityThreshold
+    spec.selfPlagiarism.similarityThreshold !== DEFAULT_MINER_GOAL_SPEC.selfPlagiarism.similarityThreshold ||
+    spec.killSwitch.paused !== DEFAULT_MINER_GOAL_SPEC.killSwitch.paused
   );
 }
 
@@ -320,6 +355,7 @@ export function parseMinerGoalSpec(raw: unknown): ParsedMinerGoalSpec {
       DEFAULT_MINER_GOAL_SPEC.selfPlagiarism,
       warnings,
     ),
+    killSwitch: normalizeKillSwitchPolicy(record.killSwitch, "killSwitch", DEFAULT_MINER_GOAL_SPEC.killSwitch, warnings),
   };
   if (!hasConfiguredGoalFields(spec)) {
     warnings.push("MinerGoalSpec contained no recognized non-default goal fields; falling back to safe defaults.");

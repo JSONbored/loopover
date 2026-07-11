@@ -62,3 +62,9 @@ Per-repo tuning for the feasibility gate (`buildFeasibilityVerdict`) a miner con
 Per-repo tuning for the Governor self-plagiarism throttle consulted before `open_pr` (#2345). Compares a prospective PR's diff fingerprint against the miner's own recent submission history.
 
 - `similarityThreshold` (number in `[0, 1]`, default: `0.85`) — Jaccard similarity at/above which two fingerprints read as near-duplicates across repos.
+
+### `killSwitch` (object, default: `{ paused: false }`)
+
+Per-repo kill-switch consulted by the Governor chokepoint before every write action (#2341). Distinct from `minerEnabled`: `minerEnabled` is a discovery-time opt-out (a miner never even considers the repo), while `killSwitch.paused` is a runtime halt of an already-in-flight queue — un-pausing resumes exactly where the queue left off. A separate, operator-controlled GLOBAL kill-switch (env var `GITTENSORY_MINER_KILL_SWITCH`) halts every repo at once and always wins over this per-repo flag.
+
+- `paused` (boolean, default: `false`) — halts all miner WRITE actions for this repo without deregistering it from targeting/discovery.

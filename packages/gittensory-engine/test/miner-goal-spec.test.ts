@@ -21,6 +21,7 @@ test("DEFAULT_MINER_GOAL_SPEC carries the documented safe defaults", () => {
     issueDiscoveryPolicy: "neutral",
     feasibilityGate: { enabled: true, suppressedReasons: [] },
     selfPlagiarism: Object.freeze({ similarityThreshold: 0.85 }),
+    killSwitch: Object.freeze({ paused: false }),
   });
 });
 
@@ -33,6 +34,7 @@ test("DEFAULT_MINER_GOAL_SPEC is deep-frozen so the shared singleton can't be mu
   assert.ok(Object.isFrozen(DEFAULT_MINER_GOAL_SPEC.feasibilityGate));
   assert.ok(Object.isFrozen(DEFAULT_MINER_GOAL_SPEC.feasibilityGate.suppressedReasons));
   assert.ok(Object.isFrozen(DEFAULT_MINER_GOAL_SPEC.selfPlagiarism));
+  assert.ok(Object.isFrozen(DEFAULT_MINER_GOAL_SPEC.killSwitch));
 });
 
 test("DEFAULT_MINER_GOAL_SPEC exposes exactly the specified field surface", () => {
@@ -41,6 +43,7 @@ test("DEFAULT_MINER_GOAL_SPEC exposes exactly the specified field surface", () =
     "blockedPaths",
     "feasibilityGate",
     "issueDiscoveryPolicy",
+    "killSwitch",
     "maxConcurrentClaims",
     "minerEnabled",
     "preferredLabels",

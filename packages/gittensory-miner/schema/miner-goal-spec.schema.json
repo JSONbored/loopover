@@ -80,6 +80,19 @@
           "description": "Jaccard similarity threshold for near-duplicate diff fingerprints. Default: 0.85."
         }
       }
+    },
+    "killSwitch": {
+      "type": "object",
+      "additionalProperties": true,
+      "default": { "paused": false },
+      "description": "Per-repo kill-switch consulted by the Governor chokepoint before every write action (#2341). Default: { paused: false }.",
+      "properties": {
+        "paused": {
+          "type": "boolean",
+          "default": false,
+          "description": "Halts all miner WRITE actions for this repo without deregistering it from targeting/discovery. Default: false."
+        }
+      }
     }
   }
 }

@@ -149,6 +149,7 @@ export * from "./governor/self-plagiarism.js";
 export * from "./governor/reputation-throttle.js";
 export * from "./governor/write-rate-limit.js";
 export * from "./governor/run-halt.js";
+export * from "./governor/kill-switch.js";
 export {
   GOVERNOR_LEDGER_EVENT_TYPES,
   normalizeGovernorLedgerEvent,
@@ -338,6 +339,7 @@ export {
   type FeasibilityGatePolicy,
   type MinerGoalSpec,
   type MinerIssueDiscoveryPolicy,
+  type MinerKillSwitchPolicy,
   type ParsedMinerGoalSpec,
 } from "./miner-goal-spec.js";
 export {

@@ -65,3 +65,11 @@ feasibilityGate:
 # Float in [0, 1]. Default: 0.85.
 selfPlagiarism:
   similarityThreshold: 0.85
+
+# Per-repo kill-switch (#2341) consulted by the Governor chokepoint before every write action. Distinct from
+# minerEnabled: pausing halts an already-in-flight queue without deregistering the repo from discovery, and
+# un-pausing resumes exactly where the queue left off. A separate GLOBAL kill-switch (env var
+# GITTENSORY_MINER_KILL_SWITCH) halts every repo at once and always wins over this per-repo flag.
+# `paused` (boolean, default: false).
+killSwitch:
+  paused: false

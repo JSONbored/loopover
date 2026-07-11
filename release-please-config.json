@@ -15,6 +15,12 @@
   "include-component-in-tag": true,
   "separate-pull-requests": true,
   "pull-request-title-pattern": "chore(release): cut${component} v${version}",
+  "plugins": [
+    {
+      "type": "node-workspace",
+      "merge": false
+    }
+  ],
   "changelog-sections": [
     { "type": "feat", "section": "Features" },
     { "type": "fix", "section": "Fixes" },

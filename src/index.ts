@@ -5,6 +5,7 @@ import { processDlqBatch } from "./queue/dlq";
 import { processJob } from "./queue/processors";
 import { isOrbBrokerEnabled } from "./orb/broker";
 import { isOrbBrokerMode } from "./orb/broker-client";
+import { gittensorEnabledRepoFullNames } from "./review/gittensor-wire";
 import { isOpsEnabled } from "./review/ops-wire";
 import { isRecapEnabled, resolveMaintainerRecapManifestOverride, shouldFireMaintainerRecap } from "./review/maintainer-recap-wire";
 import { isSweepWatchdogEnabled } from "./review/sweep-watchdog";
@@ -202,7 +203,19 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   // ZERO new work and the enqueued set is byte-identical to today.
   if (selfHostedReviews && isReconciliationWindow && isPrReconciliationEnabled(env)) jobs.push({ type: "reconcile-open-prs", requestedBy: "schedule" });
   if (isHourly) {
-    jobs.push({ type: "refresh-registry", requestedBy: "schedule" });
+    // Isolation (#experimental-gittensor-plugin): on self-host, refresh-registry both FETCHES from and
+    // PERSISTS the whole upstream gittensor-subnet registry (entrius/gittensor has no server-side filtering,
+    // and persistRegistrySnapshot's own self-host scoping — see registry/sync.ts — narrows what gets WRITTEN
+    // locally but can't narrow what gets fetched). Skip enqueuing the job entirely when this instance has no
+    // repo opted into the experimental `gittensor` plugin, so a plain self-host box makes ZERO outbound
+    // contact with the subnet registry. Cloud is unaffected — always enqueues, exactly like before this
+    // narrowing existed.
+    const gittensorOptedIn = selfHostedReviews ? await gittensorEnabledRepoFullNames(env) : null;
+    if (!selfHostedReviews || (gittensorOptedIn && gittensorOptedIn.size > 0)) {
+      jobs.push({ type: "refresh-registry", requestedBy: "schedule" });
+    } else {
+      console.log(JSON.stringify({ event: "refresh_registry_skipped_no_gittensor_opt_in" }));
+    }
     // Brokered self-host installed-repo sync (#5028): the central Orb relay deliberately does not forward
     // installation/installation_repositories events to brokered containers, so a brokered self-host has no
     // other way to learn its own repo list beyond the first forwarded PR/issue event per repo. Self-host +

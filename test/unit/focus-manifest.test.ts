@@ -6,6 +6,7 @@ import {
   compileFocusManifestPolicy,
   contentLaneConfigToJson,
   deriveContributionLanes,
+  experimentalConfigToJson,
   featuresConfigToJson,
   gateConfigToJson,
   isFocusManifestPublicSafe,
@@ -833,6 +834,7 @@ describe("compileFocusManifestPolicy", () => {
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null, grounding: null, e2eTests: null, screenshots: null, improvementSignal: null },
+      experimental: { present: false, gittensor: null },
       contentLane: { present: false, entryFileGlob: null, providerFileGlob: null, artifactGlob: null, collectionField: null, maxAppendedEntries: null, duplicateKeyFields: [], validatorId: null },
       repoDocGeneration: { present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 },
       reviewRecap: { present: false, enabled: false, cadenceDays: 7 },
@@ -1576,6 +1578,26 @@ describe("parseFocusManifest gate config", () => {
     // An empty features block leaves the manifest absent (no recognized fields).
     expect(parseFocusManifest({ features: {} }).features.present).toBe(false);
     expect(featuresConfigToJson(parseFocusManifest({ features: {} }).features)).toBeNull();
+  });
+
+  it("parses the experimental: block (opt-in ecosystem/network plugins), round-trips it, and makes the manifest present", () => {
+    const m = parseFocusManifest({ experimental: { gittensor: true } });
+    expect(m.present).toBe(true);
+    expect(m.experimental.present).toBe(true);
+    expect(m.experimental.gittensor).toBe(true);
+    // Round-trips through experimentalConfigToJson → parseFocusManifest unchanged.
+    expect(parseFocusManifest({ experimental: experimentalConfigToJson(m.experimental) }).experimental).toEqual(m.experimental);
+    const off = parseFocusManifest({ experimental: { gittensor: false } });
+    expect(off.experimental.gittensor).toBe(false);
+    expect(experimentalConfigToJson(off.experimental)).toEqual({ gittensor: false });
+    // A non-boolean value warns and is dropped (stays null); a non-mapping warns.
+    expect(parseFocusManifest({ experimental: { gittensor: "yes" } }).warnings.some((w) => /experimental\.gittensor/.test(w))).toBe(true);
+    expect(parseFocusManifest({ experimental: ["nope"] }).warnings.some((w) => /"experimental" must be a mapping/.test(w))).toBe(true);
+    // Unset stays null (⇒ the manifestOnly resolver treats it as no opt-in).
+    expect(parseFocusManifest({}).experimental.gittensor).toBeNull();
+    // An empty experimental block leaves the manifest absent (no recognized fields).
+    expect(parseFocusManifest({ experimental: {} }).experimental.present).toBe(false);
+    expect(experimentalConfigToJson(parseFocusManifest({ experimental: {} }).experimental)).toBeNull();
   });
 
   it("parses the contentLane: block (#2435 per-repo registry-lane config), round-trips it, and makes the manifest present", () => {

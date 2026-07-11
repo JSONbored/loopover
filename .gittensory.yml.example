@@ -1123,6 +1123,18 @@ settings:
 #   screenshots: false
 #   improvementSignal: false
 
+# Optional ecosystem/network PLUGINS -- distinct from `features:` above, which only toggles gittensory's own
+# converged review capabilities. Each key here couples this instance to an external system and is OFF unless
+# BOTH a deployment-wide GITTENSORY_EXPERIMENTAL_* env kill-switch AND an explicit per-repo `true` are set (no
+# GITTENSORY_REVIEW_REPOS allowlist fallback -- unlike `features:`, there is no default-on path). `gittensor`
+# is the first plugin: gittensory's original subnet mining-registry/scoring integration (per-repo emission
+# share, maintainer cut, label multipliers pulled from the gittensor subnet's registry), now opt-in rather
+# than a core dependency -- a self-host instance that never sets this has zero footprint from it: no fetch
+# from the gittensor subnet registry, no local tracking/backfill of other repos on that subnet. Future
+# plugins land in this same block as gittensory broadens beyond gittensor.
+# experimental:
+#   gittensor: true
+
 # Registry-review lane (#2435): lets a self-hosted maintainer point gittensory at their OWN structured
 # registry (e.g. a subnet/plugin/package catalog) without a gittensory code change -- reviewing additions
 # to a data file the same way it reviews code. Uncomment and set at least entryFileGlob + collectionField

@@ -243,6 +243,21 @@ export type ConvergedFeatureKey = (typeof CONVERGED_FEATURE_KEYS)[number];
  *  `GITTENSORY_REVIEW_REPOS` allowlist default, so an operator who sets nothing keeps today's behavior. */
 export type FocusManifestFeaturesConfig = { present: boolean } & Record<ConvergedFeatureKey, boolean | null>;
 
+/** Optional ecosystem/network integrations under the `experimental:` block — plugins that couple gittensory to
+ *  an external system rather than core review behavior. Starts with `gittensor` (the subnet mining-registry/
+ *  scoring integration gittensory originally shipped with); future plugins land in this same array as the
+ *  product broadens beyond gittensor. Deliberately a SEPARATE block from `features:` (converged review
+ *  capabilities) — an operator (especially self-host) should be able to see at a glance which toggles are "how
+ *  gittensory reviews PRs" vs "which external network/ecosystem this instance opts into." */
+export const EXPERIMENTAL_PLUGIN_KEYS = ["gittensor"] as const;
+export type ExperimentalPluginKey = (typeof EXPERIMENTAL_PLUGIN_KEYS)[number];
+
+/** Per-repo activation for `experimental:` plugins. Unlike `features:`, there is no `GITTENSORY_REVIEW_REPOS`
+ *  allowlist fallback for ANY key here — every plugin is the "manifestOnly" precedence shape
+ *  (`resolveManifestOnlyFeature`): OFF unless the operator's global env kill-switch AND an explicit per-repo
+ *  `true` are BOTH set. So an instance that never opts in has zero footprint from any experimental plugin. */
+export type FocusManifestExperimentalConfig = { present: boolean } & Record<ExperimentalPluginKey, boolean | null>;
+
 /**
  * Per-repo registry-review lane configuration (`contentLane:` block, #2435) — lets a self-hosted maintainer
  * configure their OWN registry (structural file-scope patterns + entry-count cap + dedup fields) without a
@@ -882,6 +897,7 @@ export type FocusManifest = {
   settings: FocusManifestSettings;
   review: FocusManifestReviewConfig;
   features: FocusManifestFeaturesConfig;
+  experimental: FocusManifestExperimentalConfig;
   contentLane: FocusManifestContentLaneConfig;
   repoDocGeneration: FocusManifestRepoDocGenerationConfig;
   reviewRecap: FocusManifestReviewRecapConfig;
@@ -981,6 +997,11 @@ const EMPTY_FEATURES_CONFIG: FocusManifestFeaturesConfig = {
   improvementSignal: null,
 };
 
+const EMPTY_EXPERIMENTAL_CONFIG: FocusManifestExperimentalConfig = {
+  present: false,
+  gittensor: null,
+};
+
 const EMPTY_CONTENT_LANE_CONFIG: FocusManifestContentLaneConfig = {
   present: false,
   entryFileGlob: null,
@@ -1034,6 +1055,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   settings: {},
   review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
   features: { ...EMPTY_FEATURES_CONFIG },
+  experimental: { ...EMPTY_EXPERIMENTAL_CONFIG },
   contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
   repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
   reviewRecap: { ...EMPTY_REVIEW_RECAP_CONFIG },
@@ -1065,6 +1087,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     settings: {},
     review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
     features: { ...EMPTY_FEATURES_CONFIG },
+    experimental: { ...EMPTY_EXPERIMENTAL_CONFIG },
     contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
     repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
     reviewRecap: { ...EMPTY_REVIEW_RECAP_CONFIG },
@@ -1488,6 +1511,39 @@ export function featuresConfigToJson(features: FocusManifestFeaturesConfig): Jso
   const out: Record<string, JsonValue> = {};
   for (const key of CONVERGED_FEATURE_KEYS) {
     if (features[key] !== null) out[key] = features[key];
+  }
+  return out;
+}
+
+/**
+ * Parse the optional `experimental:` mapping — per-repo activation for optional ecosystem/network plugins
+ * (starting with `gittensor`, the subnet mining/scoring integration). Mirrors parseFeaturesConfig's shape and
+ * validation; kept as a SEPARATE top-level block from `features:` so plugin integrations that couple gittensory
+ * to an external network stay visibly distinct from the converged REVIEW capabilities `features:` toggles, and
+ * so future plugins land in the same place without touching `features:`'s semantics.
+ */
+function parseExperimentalConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestExperimentalConfig {
+  const experimental: FocusManifestExperimentalConfig = { ...EMPTY_EXPERIMENTAL_CONFIG };
+  if (value === undefined || value === null) return experimental;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    warnings.push('Manifest "experimental" must be a mapping; ignoring it.');
+    return experimental;
+  }
+  const record = value as Record<string, JsonValue>;
+  for (const key of EXPERIMENTAL_PLUGIN_KEYS) {
+    experimental[key] = normalizeOptionalBoolean(record[key], `experimental.${key}`, warnings);
+  }
+  experimental.present = EXPERIMENTAL_PLUGIN_KEYS.some((key) => experimental[key] !== null);
+  return experimental;
+}
+
+/** Serialize an experimental config back into the parse-compatible `experimental:` shape so a cached snapshot
+ *  round-trips through {@link parseExperimentalConfig} unchanged. Returns null when nothing is configured. */
+export function experimentalConfigToJson(experimental: FocusManifestExperimentalConfig): JsonValue {
+  if (!experimental.present) return null;
+  const out: Record<string, JsonValue> = {};
+  for (const key of EXPERIMENTAL_PLUGIN_KEYS) {
+    if (experimental[key] !== null) out[key] = experimental[key];
   }
   return out;
 }
@@ -3025,6 +3081,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     settings: parseSettingsOverride(record.settings, warnings, resolvedSource),
     review: parseReviewConfig(record.review, warnings),
     features: parseFeaturesConfig(record.features, warnings),
+    experimental: parseExperimentalConfig(record.experimental, warnings),
     contentLane: parseContentLaneConfig(record.contentLane, warnings),
     repoDocGeneration: parseRepoDocGenerationConfig(record.repoDocGeneration, warnings),
     reviewRecap: parseReviewRecapConfig(record.reviewRecap, warnings),
@@ -3043,6 +3100,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     Object.keys(manifest.settings).length === 0 &&
     !manifest.review.present &&
     !manifest.features.present &&
+    !manifest.experimental.present &&
     !manifest.contentLane.present &&
     !manifest.repoDocGeneration.present &&
     !manifest.reviewRecap.present &&

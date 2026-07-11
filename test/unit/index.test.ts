@@ -572,17 +572,42 @@ describe("worker entrypoint", () => {
     await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
     await Promise.all(waitUntil);
 
+    // refresh-registry is absent: a fresh self-host instance (this test's default createTestEnv) has no repo
+    // opted into the experimental gittensor plugin, so the job is never enqueued (#experimental-gittensor-plugin)
+    // — see "re-includes refresh-registry once a repo opts into the experimental gittensor plugin" below.
     expect(sent).toEqual([
       { type: "agent-regate-sweep", requestedBy: "schedule" },
       { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
       { type: "backlog-convergence-sweep", requestedBy: "schedule" },
-      { type: "refresh-registry", requestedBy: "schedule" },
       { type: "refresh-scoring-model", requestedBy: "schedule" },
       { type: "refresh-upstream-drift", requestedBy: "schedule" },
       { type: "rollup-product-usage", requestedBy: "schedule", days: 7 },
     ]);
+  });
+
+  it("re-includes refresh-registry once a repo opts into the experimental gittensor plugin", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      GITTENSORY_EXPERIMENTAL_GITTENSOR: "true",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    await (env.DB as unknown as { prepare: (s: string) => { bind: (...v: unknown[]) => { run: () => Promise<unknown> } } })
+      .prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 0)")
+      .bind("JSONbored/gittensory", "JSONbored", "gittensory")
+      .run();
+    await (await import("../../src/signals/focus-manifest-loader")).upsertRepoFocusManifest(env, "JSONbored/gittensory", { experimental: { gittensor: true } });
+    const waitUntil: Promise<unknown>[] = [];
+
+    await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+
+    expect(sent.some((message) => message.type === "refresh-registry")).toBe(true);
   });
 
   it("enqueues full-sync scheduled work every six hours", async () => {
@@ -599,13 +624,13 @@ describe("worker entrypoint", () => {
     await worker.scheduled(controllerFor("2026-05-25T06:00:00.000Z"), env, executionContext(waitUntil));
     await Promise.all(waitUntil);
 
+    // refresh-registry is absent here too — see the comment on "enqueues hourly refreshes..." above.
     expect(sent).toEqual([
       { type: "agent-regate-sweep", requestedBy: "schedule" },
       { type: "backfill-registered-repos", requestedBy: "schedule", mode: "full" },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
       { type: "backlog-convergence-sweep", requestedBy: "schedule" },
-      { type: "refresh-registry", requestedBy: "schedule" },
       { type: "refresh-scoring-model", requestedBy: "schedule" },
       { type: "refresh-upstream-drift", requestedBy: "schedule" },
       { type: "rollup-product-usage", requestedBy: "schedule", days: 7 },
@@ -643,13 +668,13 @@ describe("worker entrypoint", () => {
     await Promise.all(waitUntil);
 
     // The enqueued SET is unchanged — jitter only spreads run_after timing, never which jobs are sent.
+    // refresh-registry is absent here too — see the comment on "enqueues hourly refreshes..." above.
     expect(sent.map((s) => s.message.type)).toEqual([
       "agent-regate-sweep",
       "backfill-registered-repos",
       "repair-data-fidelity",
       "refresh-installation-health",
       "backlog-convergence-sweep",
-      "refresh-registry",
       "refresh-scoring-model",
       "refresh-upstream-drift",
       "rollup-product-usage",

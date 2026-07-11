@@ -1,7 +1,7 @@
 import { listSignalSnapshots, persistSignalSnapshot } from "../db/repositories";
 import type { JsonValue } from "../types";
 import { nowIso } from "../utils/json";
-import { contentLaneConfigToJson, featuresConfigToJson, gateConfigToJson, MAX_FOCUS_MANIFEST_BYTES, parseFocusManifest, parseFocusManifestContent, repoDocGenerationConfigToJson, reviewConfigToJson, reviewRecapConfigToJson, maintainerRecapConfigToJson, settingsOverrideToJson, type FocusManifest, type FocusManifestSource, type RepoReviewContext } from "./focus-manifest";
+import { contentLaneConfigToJson, experimentalConfigToJson, featuresConfigToJson, gateConfigToJson, MAX_FOCUS_MANIFEST_BYTES, parseFocusManifest, parseFocusManifestContent, repoDocGenerationConfigToJson, reviewConfigToJson, reviewRecapConfigToJson, maintainerRecapConfigToJson, settingsOverrideToJson, type FocusManifest, type FocusManifestSource, type RepoReviewContext } from "./focus-manifest";
 import { GITTENSORY_REPO_FOCUS_MANIFEST_YAML, resolveGittensorySelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
 import type { LocalManifestLoadResult } from "../selfhost/private-config";
 
@@ -299,6 +299,7 @@ function manifestToJson(manifest: FocusManifest): Record<string, JsonValue> {
     settings: settingsOverrideToJson(manifest.settings),
     review: reviewConfigToJson(manifest.review),
     features: featuresConfigToJson(manifest.features),
+    experimental: experimentalConfigToJson(manifest.experimental),
     contentLane: contentLaneConfigToJson(manifest.contentLane),
     repoDocGeneration: repoDocGenerationConfigToJson(manifest.repoDocGeneration),
     reviewRecap: reviewRecapConfigToJson(manifest.reviewRecap),

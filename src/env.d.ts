@@ -381,6 +381,14 @@ declare global {
      *  recording are wired, reading a promoted override into the live gate is a noted follow-up that must not
      *  risk loosening the gate. See src/review/selftune-wire.ts. */
     GITTENSORY_REVIEW_SELFTUNE?: string;
+    /** Experimental `gittensor` plugin (the `experimental:` manifest block, first key): the operator-level
+     *  kill-switch for gittensory's original subnet mining-registry/scoring integration, now opt-in rather than
+     *  a core dependency. ANDed with the per-repo `.gittensory.yml experimental.gittensor` opt-in -- neither
+     *  alone is sufficient, and unlike `features:` there is no GITTENSORY_REVIEW_REPOS allowlist fallback.
+     *  Default OFF -- flag-OFF (or every repo unset), refresh-registry is never enqueued (see src/index.ts) and
+     *  a self-host box makes zero outbound contact with the gittensor subnet registry. See
+     *  src/review/gittensor-wire.ts. */
+    GITTENSORY_EXPERIMENTAL_GITTENSOR?: string;
     /** Maintainer recap digest (#1963, #2248): when truthy, a cross-repo RecapReport -- gittensory's OWN
      *  gate-precision + outcome-calibration data folded across every scanned repo (buildMaintainerRecap,
      *  #2239) -- is delivered to Discord on a cron cadence. GITTENSORY_RECAP_CADENCE ("daily" | "weekly",

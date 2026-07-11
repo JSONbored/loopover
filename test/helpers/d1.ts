@@ -131,6 +131,10 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
     // Default-ON in production (settings/automation-bot-skip.ts); most tests don't involve a bot actor at
     // all, so this default doesn't change their behavior. Tests exercising this feature override it directly.
     GITTENSORY_SKIP_AUTOMATION_BOT_PRS: "true",
+    // Default OFF, matching wrangler.jsonc — a new required `vars` entry needs an explicit base value here
+    // (Partial<Env> alone leaves it optional under exactOptionalPropertyTypes, which Env's required field
+    // rejects). Tests exercising the experimental gittensor plugin override it directly.
+    GITTENSORY_EXPERIMENTAL_GITTENSOR: "false",
     ...overrides,
   };
 }

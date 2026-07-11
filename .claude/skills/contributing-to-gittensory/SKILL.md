@@ -221,12 +221,13 @@ npm audit --audit-level=moderate          # the dependency-review job's local eq
 
 `npm run test:ci` runs, and must pass, **all of**: `actionlint`, `db:migrations:check`,
 `db:schema-drift:check`, `selfhost:env-reference:check`, `selfhost:validate-observability`,
-`cf-typegen:check`, `typecheck`, `test:coverage`, `test:workers`, `build:mcp`, `test:mcp-pack`,
+`cf-typegen:check`, `typecheck`, `test:coverage`, `test:engine-parity`, `test:driver-parity`, the
+`@jsonbored/gittensory-engine` workspace's own test run, `test:workers`, `build:mcp`, `test:mcp-pack`,
 `build:miner`, `test:miner-pack`, `rees:test`, `ui:openapi:check`, `ui:openapi:settings-parity`,
-`ui:version-audit`, `docs:drift-check`, `command-reference:check`, `ui:lint`, `ui:typecheck`,
-`ui:test`, `ui:build`. If any step fails, fix it and re-run — do not push a red tree. (Full
-per-check table in `reference.md`; check `package.json`'s own `test:ci` script if this list and
-that script ever disagree — the script is the source of truth.)
+`ui:version-audit`, `docs:drift-check`, `manifest:drift-check`, `engine-parity:drift-check`,
+`command-reference:check`, `ui:lint`, `ui:typecheck`, `ui:test`, `ui:build`. If any step fails, fix it
+and re-run — do not push a red tree. (Full per-check table in `reference.md`; check `package.json`'s
+own `test:ci` script if this list and that script ever disagree — the script is the source of truth.)
 
 If `ui:lint` fails on formatting, run `npm --workspace @jsonbored/gittensory-ui run format`. If
 `ui:openapi:check` fails, you forgot Phase 4's `ui:openapi`.
@@ -258,6 +259,52 @@ merge instead of a one-shot close.
 ---
 
 ## Phase 7 — Commit and write the PR
+
+**Capturing and hosting visual evidence (any visible UI/frontend change).** The `## UI Evidence` table
+below needs real, clickable thumbnail URLs — here's how to get them when you can't drag-and-drop into
+GitHub's web editor (which needs a human browser session an AI coding tool can't drive end-to-end):
+
+1. **Local dev server:** `npm --prefix apps/gittensory-ui run dev` (Vite forces port **8080** regardless
+   of what you request — use that port in any launch config, or `preview_screenshot`-style tooling just
+   hangs waiting for the server). For an auth-gated page, use the sanctioned local-preview escape hatch
+   instead of real GitHub OAuth: `useSession().signInPreview()` (`apps/gittensory-ui/src/lib/api/session.ts`),
+   gated on `import.meta.env.DEV` — it sets a synthetic session client-side with no network write. Click
+   the "Continue with local preview" button in the sign-in wall rather than calling the hook indirectly
+   (the real `fetchBrowserSession()` call can race in afterward and silently overwrite it back to `null`);
+   overriding `window.fetch` for `/v1/auth/session` to return the same authenticated shape closes that
+   race either way.
+2. **Fixed viewport, never a full-page/`fullPage: true` capture.** gittensory-ui is a **dark-mode-only
+   build** (`apps/gittensory-ui/src/components/site/theme-toggle.tsx` — the toggle was removed; there is
+   no light theme left to force), so there's no theme dimension to multiply out. Capture at whichever
+   viewport(s) your change actually affects — mobile (375×812) and desktop (1280×800) cover most cases;
+   add a caption per state either way (`"Loaded state"`, `"Mobile layout"`, etc., matching the existing
+   caption convention below).
+3. **Host the images on a dedicated branch in your own fork** — never commit them to your feature
+   branch, and never rely on drag-and-drop:
+   ```sh
+   git worktree add ../gittensory-screenshots main
+   cd ../gittensory-screenshots
+   git checkout --orphan screenshots       # first time; `git checkout screenshots` if you already have one
+   git rm -rf . 2>/dev/null
+   cp /path/to/your/*.jpg .                # JPG/PNG only -- SVG is never accepted as review evidence
+   git add *.jpg && git commit -m "screenshots for PR"
+   git push origin screenshots
+   cd -    # your feature branch's working directory was never touched
+   ```
+   Reference each file as `https://raw.githubusercontent.com/<your-fork-owner>/gittensory/screenshots/<file>.jpg`,
+   then embed it with the existing `<a href="URL"><img src="URL" alt="Loaded state" width="240"></a>`
+   thumbnail convention.
+4. **Animated evidence — for effects no static screenshot can show** (a hover-triggered element, a
+   scroll-linked effect, a CSS transition, a drag interaction): record the interaction (an OS screen
+   recording or a Playwright video), convert it to a GIF —
+   ```sh
+   ffmpeg -i recording.mov -vf "fps=12,scale=480:-1:flags=lanczos" -loop 0 hover-before.gif
+   ```
+   (keep it small: a few seconds, ~12fps, ≤480px wide) — and host it the same way as step 3 above; `.gif`
+   is an accepted screenshot-evidence extension the same as `.jpg`/`.png`. This is *additional* evidence
+   for the interaction itself when the change also has an at-rest visual difference worth a static
+   screenshot too — it doesn't replace step 2 for a change that has both kinds of difference, only for a
+   change where the "before"/"after" genuinely cannot be told apart without the motion.
 
 **Commit subject** — Conventional Commit, lowercase scope, specific, no trailing period, ≥15 chars
 and ≥2 real words, **no AI/Claude attribution**:
@@ -294,6 +341,8 @@ the Validation evidence + a linked, currently-open issue is exactly what makes `
 - [ ] MCP: `predict_gate` = pass, `check_slop_risk` = low, `lint_pr_text` = strong; no advisory findings left.
 - [ ] Conventional Commit subject (no AI attribution); `.github/pull_request_template.md` filled honestly —
       the Scope + Validation + Safety boxes, and the UI Evidence table for any visual change.
+- [ ] If the change is only visible in motion (hover/scroll/transition): a before/after GIF alongside the
+      static screenshots, per Phase 7's "Animated evidence" step.
 - [ ] No changelog edit; no `site/`/`CNAME`/`lovable` changes.
 
 If every box is checked, the PR has the best possible chance of a one-shot approve-and-merge. If any

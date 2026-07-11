@@ -136,8 +136,12 @@ Every PR should include:
 - The exact validation commands run from the repo root.
 - JPG/JPEG or PNG screenshot evidence for visible UI, frontend, docs, or extension changes,
   attached in the PR description as organized, captioned, clickable thumbnails. SVG screenshots
-  are not accepted as review evidence, and recordings are supplemental rather than a replacement
-  for screenshots. Do not commit review-only screenshots or recordings to the repository.
+  are not accepted as review evidence. Recordings/GIFs are supplemental to (never a replacement
+  for) static screenshots for anything a still image CAN show — but for an effect a static image
+  genuinely cannot show (a hover-triggered element, a scroll-linked effect, a transition), a
+  before/after GIF is the required primary evidence for that specific interaction, alongside the
+  usual static screenshots for whatever else the change affects. Do not commit review-only
+  screenshots or recordings to the repository.
 - API/OpenAPI/MCP contract notes for schema or behavior changes.
 - Migration, deploy, secret, or Cloudflare configuration notes when relevant.
 - Security/privacy notes for auth, cookies, CORS, GitHub App output, user identity, or contributor
@@ -228,8 +232,11 @@ Frontend:
 - API Try It may still support manual bearer-token testing.
 - Visible UI changes need a `Screenshots` or `UI Evidence` section in the PR description. Use
   GitHub-hosted JPG/JPEG or PNG screenshots only; SVG screenshots are not accepted as review
-  evidence. Recordings can be included as supplemental context, but screenshots are still expected
-  for visual review.
+  evidence. Recordings/GIFs are supplemental for anything a static screenshot can already show, but
+  are the required primary evidence for an effect only visible in motion (hover, scroll-linked,
+  transition/animation) — a still image can't show it, so don't force one. See the
+  `.claude/skills/contributing-to-gittensory` skill (Phase 7) for exactly how to capture and host
+  either kind of evidence.
 - Arrange screenshots in a small table or grid with a short state/title such as "Loaded state",
   "Empty state", "Error state", "Mobile layout", or "PR sidebar". Each screenshot should be a small
   thumbnail that links to the full-size upload. Use HTML thumbnails like

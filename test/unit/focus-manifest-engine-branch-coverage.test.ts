@@ -33,79 +33,6 @@ describe("focus-manifest engine branch coverage (#2280)", () => {
     expect(withUnknown.warnings.some((w) => w.includes('unknown analyzer "notARealAnalyzer"'))).toBe(true);
   });
 
-  it("validates review.labeling_rules entries and reserved gittensor: labels", () => {
-    const parsed = parseFocusManifest({
-      review: {
-        labeling_rules: "not-a-list",
-      },
-    });
-    expect(parsed.review.labelingRules).toEqual([]);
-    expect(parsed.warnings.some((w) => w.includes("labeling_rules") && w.includes("list"))).toBe(true);
-
-    const capped = parseFocusManifest({
-      review: {
-        labeling_rules: Array.from({ length: 51 }, (_, index) => ({
-          label: `area:${index}`,
-          when_paths: ["src/**"],
-        })),
-      },
-    });
-    expect(capped.review.labelingRules).toHaveLength(50);
-    expect(capped.warnings.some((w) => w.includes("capped at 50"))).toBe(true);
-
-    const withMissingLabel = parseFocusManifest({
-      review: {
-        labeling_rules: [{ when_paths: ["src/**"] }],
-      },
-    });
-    expect(withMissingLabel.review.labelingRules).toEqual([]);
-    expect(withMissingLabel.warnings.some((w) => w.includes(".label\" is required"))).toBe(true);
-
-    const withRules = parseFocusManifest({
-      review: {
-        labeling_rules: [
-          "not-a-mapping",
-          { label: "gittensor:priority", when_paths: ["src/**"] },
-          { label: "area:ui", when_paths: ["src/**"] },
-          { label: "area:docs", title_contains: "docs" },
-          { label: "area:empty" },
-        ],
-      },
-    });
-    expect(withRules.review.labelingRules).toEqual([
-      { label: "area:ui", whenPaths: ["src/**"], titleContains: null, descriptionContains: null },
-      { label: "area:docs", whenPaths: [], titleContains: "docs", descriptionContains: null },
-    ]);
-    expect(withRules.warnings.some((w) => w.includes("labeling_rules[0]") && w.includes("mapping"))).toBe(true);
-    expect(withRules.warnings.some((w) => w.includes('reserved "gittensor:"'))).toBe(true);
-    expect(withRules.warnings.some((w) => w.includes("needs at least one of when_paths"))).toBe(true);
-  });
-
-  it("serializes labeling_rules optional fields through reviewConfigToJson", () => {
-    const manifest = parseFocusManifest({
-      review: {
-        labeling_rules: [
-          {
-            label: "area:ui",
-            when_paths: ["src/**"],
-            title_contains: "feat",
-            description_contains: "screenshot",
-          },
-        ],
-      },
-    });
-    expect(reviewConfigToJson(manifest.review)).toEqual({
-      labeling_rules: [
-        {
-          label: "area:ui",
-          when_paths: ["src/**"],
-          title_contains: "feat",
-          description_contains: "screenshot",
-        },
-      ],
-    });
-  });
-
   it("rejects manifest content whose UTF-8 byte length exceeds MAX_FOCUS_MANIFEST_BYTES", () => {
     const oversized = `wantedPaths:\n  - ${"x".repeat(MAX_FOCUS_MANIFEST_BYTES)}`;
     const parsed = parseFocusManifestContent(oversized);
@@ -177,7 +104,6 @@ describe("focus-manifest engine branch coverage (#2280)", () => {
         fixHandoff: true,
         auto_merge_summary: false,
         enrichment: { dependency: true },
-        labeling_rules: [{ label: "area:ui", title_contains: "ui" }],
         linkedIssueSatisfaction: "advisory",
         visual: { routes: { max_routes: 3 } },
       },
@@ -186,20 +112,9 @@ describe("focus-manifest engine branch coverage (#2280)", () => {
       fixHandoff: true,
       auto_merge_summary: false,
       enrichment: { dependency: true },
-      labeling_rules: [{ label: "area:ui", title_contains: "ui" }],
       linkedIssueSatisfaction: "advisory",
       visual: { routes: { max_routes: 3 } },
     });
-  });
-
-  it("warns when a labeling rule entry omits label entirely", () => {
-    const parsed = parseFocusManifest({
-      review: {
-        labeling_rules: [{ when_paths: ["src/**"] }, { label: null, when_paths: ["docs/**"] }],
-      },
-    });
-    expect(parsed.review.labelingRules).toEqual([]);
-    expect(parsed.warnings.filter((w) => w.includes(".label")).length).toBeGreaterThanOrEqual(2);
   });
 
   it("covers remaining serializer and parser branch edges", () => {
@@ -212,23 +127,6 @@ describe("focus-manifest engine branch coverage (#2280)", () => {
     expect(invalidEnrichmentFlag.review.enrichmentAnalyzers).toEqual({});
     expect(invalidEnrichmentFlag.warnings.some((w) => w.includes("review.enrichment.dependency"))).toBe(true);
 
-    const missingLabelKey = parseFocusManifest({
-      review: { labeling_rules: [{ when_paths: ["src/**"] }] },
-    });
-    expect(missingLabelKey.warnings.some((w) => w.includes('.label" is required'))).toBe(true);
-
-    const explicitNullLabel = parseFocusManifest({
-      review: { labeling_rules: [{ label: null, when_paths: ["src/**"] }] },
-    });
-    expect(explicitNullLabel.warnings.some((w) => w.includes('.label" is required'))).toBe(true);
-
-    const notPublicSafeLabel = parseFocusManifest({
-      review: { labeling_rules: [{ label: "reward farming", when_paths: ["src/**"] }] },
-    });
-    expect(notPublicSafeLabel.review.labelingRules).toEqual([]);
-    expect(notPublicSafeLabel.warnings.some((w) => w.includes("review.labeling_rules[0].label"))).toBe(true);
-    expect(notPublicSafeLabel.warnings.some((w) => w.includes('.label" is required'))).toBe(false);
-
     const emptyTemplate = parseFocusManifest({
       review: { visual: { preview: { url_template: "" } } },
     });
@@ -238,12 +136,5 @@ describe("focus-manifest engine branch coverage (#2280)", () => {
       review: { instructions: "Prefer small diffs." },
     });
     expect(reviewConfigToJson(withInstructions.review)).toEqual({ instructions: "Prefer small diffs." });
-
-    const pathsOnlyRule = parseFocusManifest({
-      review: { labeling_rules: [{ label: "area:ui", when_paths: ["src/**"] }] },
-    });
-    expect(reviewConfigToJson(pathsOnlyRule.review)).toEqual({
-      labeling_rules: [{ label: "area:ui", when_paths: ["src/**"] }],
-    });
   });
 });

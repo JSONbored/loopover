@@ -45,7 +45,7 @@ From highest to lowest priority:
 3. **Private shared base** (`${GITTENSORY_REPO_CONFIG_DIR}/_shared/.gittensory.yml`, #1959) — the
    lowest-priority private layer, deep-merged under both **1** and **2**. An operator running many
    repos writes a house review policy (e.g. a default `review.tone`, `path_filters`, or
-   `labeling_rules`) here **once** instead of copy-pasting it into every repo's per-repo file or
+   `exclude_paths`) here **once** instead of copy-pasting it into every repo's per-repo file or
    the global default. `.yaml`/`.json` are accepted, same as every other candidate. Absent (the
    default, common case) ⇒ byte-identical behavior to the pre-#1959 2-layer chain.
 4. When **none** of the three private layers above exists, the loader falls back to the **public
@@ -144,7 +144,7 @@ settings:
 
 An operator running **many** repos through the same self-host instance can express one house
 review policy — e.g. a default `review.tone`, a baseline `path_filters`/`wantedPaths` set, or
-common `labeling_rules` — **once**, instead of copy-pasting it into every repo's per-repo file or
+common `exclude_paths` — **once**, instead of copy-pasting it into every repo's per-repo file or
 even the global default. That policy lives at:
 
 ```

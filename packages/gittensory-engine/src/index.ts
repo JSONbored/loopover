@@ -490,7 +490,6 @@ export {
   type FocusManifestMaintainerRecapConfig,
   type FocusManifestSettings,
   type FocusManifestSource,
-  type LabelingRule,
   type LinkedIssueSatisfactionMode,
   type MaxFindingsConfig,
   type PreMergeCheck,

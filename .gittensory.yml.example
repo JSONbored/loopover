@@ -544,20 +544,6 @@ review:
   # (CI green, gate passing, mergeable-clean, valid linked issue). SURFACE ONLY — never changes the decision.
   # auto_merge_summary: false
 
-  # Deterministic label suggestions (#2045). Each rule SUGGESTS a non-scoring label when a PR matches ALL of the
-  # `when` criteria it sets (at least one is required): when_paths (any changed path matches a glob), title_contains,
-  # description_contains (both case-insensitive). Suggestions are advisory; they are auto-applied only when the repo's
-  # autoLabelEnabled is on. Reserved `gittensor:` labels (scoring/type) are refused. Empty/unset ⇒ no suggestions.
-  labeling_rules:
-    - label: area:docs
-      when_paths:
-        - "docs/**"
-        - "**/*.md"
-    - label: needs:migration
-      when_paths:
-        - "migrations/**"
-      description_contains: schema
-
 settings:
   # Who receives the public PR comment.
   # off | detected_contributors_only | all_prs. Default: detected_contributors_only.
@@ -1008,13 +994,6 @@ settings:
 #   enrichment:
 #     deep-nesting: true
 #     error-swallow: false
-#   # Deterministic {label, when} rules that SUGGEST a non-scoring label when a PR's changed paths/
-#   # title/description match ALL of the rule's `when` criteria. Auto-applied only when the repo's
-#   # autoLabelEnabled is set. Reserved gittensor:* labels are refused at parse. Empty ⇒ no suggestion.
-#   # (This block is also active, uncommented, near the top of the live `review:` section above.)
-#   labeling_rules:
-#     - label: area:docs
-#       when_paths: ["docs/**", "**/*.md"]
 #   # Per-repo self-host reviewer model/effort overrides (claude-code / codex). Self-host only; a hosted
 #   # (Workers-AI) repo ignores this entirely. All-null/default ⇒ the operator's global env vars apply.
 #   ai_model:

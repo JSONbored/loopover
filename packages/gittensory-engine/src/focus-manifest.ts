@@ -621,11 +621,6 @@ export type FocusManifestReviewConfig = {
   /** `review.auto_review`: deterministic eligibility filters that skip the AI review (never a gate failure).
    *  Empty/default ⇒ every PR is reviewed (byte-identical). (#1954 / #2038–#2041) */
   autoReview: AutoReviewConfig;
-  /** `review.labeling_rules`: deterministic `{label, when}` rules that SUGGEST a non-scoring label when a PR's
-   *  changed paths / title / description match. Surfaced as advisory suggestions, and auto-applied only when the
-   *  repo's `autoLabelEnabled` is set. Reserved `gittensor:` labels are refused at parse. Empty (default) ⇒ no
-   *  suggestion (byte-identical). (#2045, part of #1959) */
-  labelingRules: LabelingRule[];
   /** `review.ai_model`: per-repo self-host reviewer model/effort overrides (claude-code / codex). Self-host only
    *  — a hosted (Workers-AI) repo ignores this entirely. All-null (default, absent) ⇒ the operator's global
    *  CLAUDE_AI_MODEL/CLAUDE_AI_EFFORT/CODEX_AI_MODEL/CODEX_AI_EFFORT env vars apply unchanged (byte-identical).
@@ -659,15 +654,6 @@ export type CommentVerbosity = (typeof COMMENT_VERBOSITY_LEVELS)[number];
 /** `review.e2e_test_delivery` modes (#4197). `comment` = today's behavior (same as unset). */
 export const E2E_TEST_DELIVERY_MODES = ["comment", "commit"] as const;
 export type E2eTestDeliveryMode = (typeof E2E_TEST_DELIVERY_MODES)[number];
-
-/** One `review.labeling_rules[]` entry: a non-reserved `label` plus the deterministic `when` criteria that must ALL
- *  match for it to fire. A rule always has at least one criterion (enforced at parse). */
-export type LabelingRule = {
-  label: string;
-  whenPaths: string[];
-  titleContains: string | null;
-  descriptionContains: string | null;
-};
 
 /** `review.auto_review.cadence` (#one-shot-review-cadence). `one_shot` = the AI-generated content (main review,
  *  slop advisory, linked-issue satisfaction) is produced once per PR and never automatically regenerated
@@ -1043,7 +1029,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   publicNotes: [],
   gate: { ...EMPTY_GATE_CONFIG },
   settings: {},
-  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
+  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
   features: { ...EMPTY_FEATURES_CONFIG },
   contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
   repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -1074,7 +1060,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     warnings,
     gate: { ...EMPTY_GATE_CONFIG },
     settings: {},
-    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
+    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
     features: { ...EMPTY_FEATURES_CONFIG },
     contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
     repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -2179,7 +2165,7 @@ function parsePublicSafeText(value: JsonValue | undefined, field: string, warnin
  * throws; invalid/unsafe values are dropped with warnings.
  */
 function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewConfig {
-  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null };
+  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null };
   if (value === undefined || value === null) return empty;
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "review" must be a mapping; ignoring it.`);
@@ -2247,7 +2233,6 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
   const pathFilters = parseReviewPathFilters(r.path_filters, warnings);
   const preMergeChecks = parseReviewPreMergeChecks(r.pre_merge_checks, warnings);
   const autoReview = parseAutoReviewConfig(r.auto_review, warnings);
-  const labelingRules = parseReviewLabelingRules(r.labeling_rules, warnings);
   const aiModel = parseSelfHostAiModelConfig(r.ai_model, warnings);
   const visual = parseVisualConfig(r.visual, warnings);
   const linkedIssueSatisfaction = normalizeOptionalEnum(r.linkedIssueSatisfaction, "review.linkedIssueSatisfaction", LINKED_ISSUE_SATISFACTION_MODES, warnings);
@@ -2281,7 +2266,6 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
       pathFilters.length > 0 ||
       preMergeChecks.length > 0 ||
       autoReviewPresent(autoReview) ||
-      labelingRules.length > 0 ||
       selfHostAiModelPresent(aiModel) ||
       visualConfigPresent(visual) ||
       linkedIssueSatisfaction !== null ||
@@ -2320,7 +2304,6 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
     excludePaths,
     pathFilters,
     preMergeChecks,
-    labelingRules,
     sharedConfigSource: null,
   };
 }
@@ -2421,7 +2404,6 @@ function computeReviewConfigPresent(review: Omit<FocusManifestReviewConfig, "pre
     review.pathFilters.length > 0 ||
     review.preMergeChecks.length > 0 ||
     autoReviewPresent(review.autoReview) ||
-    review.labelingRules.length > 0 ||
     selfHostAiModelPresent(review.aiModel) ||
     visualConfigPresent(review.visual) ||
     review.linkedIssueSatisfaction !== null ||
@@ -2467,7 +2449,6 @@ export function overlayReviewConfig(
     pathFilters: pickOverlayStringList(override.pathFilters, base.pathFilters),
     preMergeChecks: override.preMergeChecks.length > 0 ? [...override.preMergeChecks] : [...base.preMergeChecks],
     autoReview: overlayAutoReviewConfig(base.autoReview, override.autoReview),
-    labelingRules: override.labelingRules.length > 0 ? [...override.labelingRules] : [...base.labelingRules],
     aiModel: overlaySelfHostAiModelConfig(base.aiModel, override.aiModel),
     visual: overlayVisualConfig(base.visual, override.visual),
     linkedIssueSatisfaction: pickOverlayNullable(override.linkedIssueSatisfaction, base.linkedIssueSatisfaction),
@@ -2501,48 +2482,6 @@ function parseMaxFindingsConfig(value: JsonValue | undefined, warnings: string[]
   };
 }
 
-/** The reserved label namespace Gittensor uses for scoring/type/priority (`gittensor:bug`, `gittensor:feature`,
- *  `gittensor:priority`, …). A maintainer's `labeling_rules` must not drive these — they're managed by the scorer
- *  and the type-labeler, never by ad-hoc manifest rules — so any `gittensor:`-prefixed label is refused at parse. */
-const RESERVED_LABEL_PREFIX = "gittensor:";
-
-function parseReviewLabelingRules(value: JsonValue | undefined, warnings: string[]): LabelingRule[] {
-  if (value === undefined || value === null) return [];
-  if (!Array.isArray(value)) {
-    warnings.push(`Manifest "review.labeling_rules" must be a list of rules; ignoring it.`);
-    return [];
-  }
-  const out: LabelingRule[] = [];
-  for (const [index, entry] of value.entries()) {
-    if (out.length >= MAX_PATH_INSTRUCTIONS) {
-      warnings.push(`Manifest "review.labeling_rules" is capped at ${MAX_PATH_INSTRUCTIONS} entries; dropping the rest.`);
-      break;
-    }
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
-      warnings.push(`Manifest "review.labeling_rules[${index}]" must be a mapping; ignoring it.`);
-      continue;
-    }
-    const e = entry as Record<string, JsonValue>;
-    const label = e.label === undefined || e.label === null ? null : parsePublicSafeText(e.label, `review.labeling_rules[${index}].label`, warnings);
-    if (label === null) {
-      if (e.label === undefined || e.label === null) warnings.push(`Manifest "review.labeling_rules[${index}].label" is required; ignoring the entry.`);
-      continue; // non-string / empty / not-public-safe already warned by parsePublicSafeText
-    }
-    if (label.toLowerCase().startsWith(RESERVED_LABEL_PREFIX)) {
-      warnings.push(`Manifest "review.labeling_rules[${index}].label" ("${label}") uses the reserved "${RESERVED_LABEL_PREFIX}" namespace; ignoring the entry.`);
-      continue;
-    }
-    const titleContains = e.title_contains === undefined || e.title_contains === null ? null : parsePublicSafeText(e.title_contains, `review.labeling_rules[${index}].title_contains`, warnings);
-    const descriptionContains = e.description_contains === undefined || e.description_contains === null ? null : parsePublicSafeText(e.description_contains, `review.labeling_rules[${index}].description_contains`, warnings);
-    const whenPaths = parseManifestGlobList(e.when_paths, `review.labeling_rules[${index}].when_paths`, warnings);
-    if (whenPaths.length === 0 && titleContains === null && descriptionContains === null) {
-      warnings.push(`Manifest "review.labeling_rules[${index}]" needs at least one of when_paths / title_contains / description_contains; ignoring it.`);
-      continue;
-    }
-    out.push({ label, whenPaths, titleContains, descriptionContains });
-  }
-  return out;
-}
 
 function autoReviewPresent(config: AutoReviewConfig): boolean {
   return (
@@ -3020,15 +2959,6 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   }
   if (Object.keys(review.fields).length > 0) out.fields = { ...review.fields } as Record<string, JsonValue>;
   if (Object.keys(review.enrichmentAnalyzers).length > 0) out.enrichment = { ...review.enrichmentAnalyzers } as Record<string, JsonValue>;
-  if (review.labelingRules.length > 0) {
-    out.labeling_rules = review.labelingRules.map((rule) => {
-      const entry: Record<string, JsonValue> = { label: rule.label };
-      if (rule.whenPaths.length > 0) entry.when_paths = [...rule.whenPaths];
-      if (rule.titleContains !== null) entry.title_contains = rule.titleContains;
-      if (rule.descriptionContains !== null) entry.description_contains = rule.descriptionContains;
-      return entry;
-    });
-  }
   if (selfHostAiModelPresent(review.aiModel)) {
     const aiModel: Record<string, JsonValue> = {};
     if (review.aiModel.claudeModel !== null) aiModel.claude_model = review.aiModel.claudeModel;

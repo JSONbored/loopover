@@ -31,20 +31,16 @@ async function linearGraphQl<T>(apiKey: string, query: string, variables: Record
 }
 
 type LinearProjectNode = { id: string; name: string };
-type LinearProjectMilestoneNode = { id: string; name: string };
 type ListProjectsResponse = {
   projects: { nodes: LinearProjectNode[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
 };
-type ListProjectMilestonesResponse = {
-  projectMilestones: { nodes: LinearProjectMilestoneNode[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
-};
 
 /**
- * GraphQL implementation of {@link ProjectTrackerAdapter} for Linear (#3186). Lists open workspace projects and
- * project-milestones for fuzzy fallback matching when Linear's own GitHub integration has not already linked
- * the PR via {@link findLinearNativeLink}. A confirmed native link still wins over any fuzzy guess.
- * `ProjectMilestone` has no open/completed status filter like projects do — `includeArchived: false` is the
- * workspace-level equivalent of "open". `attachToProject`/`attachToMilestone` stay inert: writing to Linear
+ * GraphQL implementation of {@link ProjectTrackerAdapter} for Linear (#3186). Lists open workspace projects for
+ * fuzzy fallback matching when Linear's own GitHub integration has not already linked the PR via
+ * {@link findLinearNativeLink}. A confirmed native link still wins over any fuzzy guess. Workspace-level Linear
+ * project-milestones are deliberately not listed for fuzzy matching because their names may be internal to
+ * unrelated private workspace work. `attachToProject`/`attachToMilestone` stay inert: writing to Linear
  * requires resolving or creating a Linear Issue for this PR first, deferred beyond #3186's suggest-only scope.
  */
 export class LinearAdapter implements ProjectTrackerAdapter {
@@ -71,27 +67,10 @@ export class LinearAdapter implements ProjectTrackerAdapter {
     return projects.map((project) => ({ id: project.id, title: project.name }));
   }
 
-  async listOpenMilestones(ctx: ProjectTrackerContext): Promise<ProjectTrackerRef[]> {
-    const apiKey = await getDecryptedRepositoryLinearKey(ctx.env, ctx.repoFullName);
-    if (!apiKey) return [];
-    const milestones: LinearProjectMilestoneNode[] = [];
-    let after: string | null = null;
-    for (let page = 1; page <= LINEAR_LIST_PAGE_LIMIT; page += 1) {
-      const data: ListProjectMilestonesResponse = await linearGraphQl(
-        apiKey,
-        `query($after: String) {
-          projectMilestones(first: 100, after: $after, includeArchived: false) {
-            nodes { id name }
-            pageInfo { hasNextPage endCursor }
-          }
-        }`,
-        { after },
-      );
-      milestones.push(...data.projectMilestones.nodes);
-      if (!data.projectMilestones.pageInfo.hasNextPage) break;
-      after = data.projectMilestones.pageInfo.endCursor;
-    }
-    return milestones.map((milestone) => ({ id: milestone.id, title: milestone.name }));
+  async listOpenMilestones(): Promise<ProjectTrackerRef[]> {
+    // Linear project-milestones are workspace-scoped, so fuzzy matching them against public PR text creates
+    // an existence oracle for internal milestone names. Use only confirmed native links for Linear milestones.
+    return [];
   }
 
   // Inert -- see the class doc comment above.

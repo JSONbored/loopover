@@ -346,7 +346,8 @@ type ProjectMilestoneMatchBackendInput = "github" | "linear" | null | undefined;
  * Resolves this PR's milestone/project matches against whichever backend the repo configured (#3186). The
  * Linear path tries {@link findLinearNativeLink} FIRST (a confirmed link via Linear's own GitHub integration
  * beats any guess) and only falls back to {@link matchOpenTrackerItems} fuzzy-matching against Linear's open
- * projects AND project-milestones when no native link is found for either. The GitHub path (default, #3183/#3184)
+ * projects when no native link is found. Linear workspace project-milestones are not fuzzy-matched because
+ * public yes/no suggestions would reveal internal milestone existence. The GitHub path (default, #3183/#3184)
  * has no native-link concept -- it always fuzzy-matches both open Milestones and open Projects v2.
  */
 async function resolveTrackerMatches(ctx: ProjectTrackerContext, backend: ProjectMilestoneMatchBackendInput, prTitle: string, prBody: string | null | undefined, prUrl: string): Promise<ProjectTrackerMatches> {
@@ -354,14 +355,11 @@ async function resolveTrackerMatches(ctx: ProjectTrackerContext, backend: Projec
     const nativeLink = await findLinearNativeLink(ctx, prUrl);
     if (nativeLink.project || nativeLink.milestone) return nativeLink;
     const linearAdapter = new LinearAdapter();
-    // Fail-open independently for projects and project-milestones (#3186) — same best-effort pattern as the
-    // GitHub path below. A transient projects GraphQL error must never suppress a valid milestone fuzzy match.
-    const [projects, milestones] = await Promise.all([
-      linearAdapter.listOpenProjects(ctx).catch(() => []),
-      linearAdapter.listOpenMilestones(ctx).catch(() => []),
-    ]);
+    // Fail-open for Linear projects (#3186), matching the GitHub best-effort pattern below. Do not fuzzy-match
+    // Linear workspace milestones: a public redacted suggestion still reveals that a guessed internal milestone exists.
+    const projects = await linearAdapter.listOpenProjects(ctx).catch(() => []);
     return {
-      milestone: matchOpenTrackerItems(prTitle, prBody, milestones),
+      milestone: null,
       project: matchOpenTrackerItems(prTitle, prBody, projects),
     };
   }

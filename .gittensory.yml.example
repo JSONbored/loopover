@@ -1075,7 +1075,10 @@ settings:
 #     text: "Reviewed by the Acme maintainer bot."  # Custom lead line. String or null. Default: null.
 #   note: "Run the test suite before requesting review."  # Short intro line shown above the panel. String or null.
 #   # Per-row show/hide toggles for the panel. Keys: linkedIssue | relatedWork | reviewLoad |
-#   # validationEvidence | openPrQueue | contributorContext | gateResult. Default: all shown (true).
+#   # validationEvidence | openPrQueue | contributorContext | gateResult | improvementSignal. Default: all
+#   # shown (true). improvementSignal (#4744) only ever renders content when the `improvementSignal` converged
+#   # feature (see `features:` below) is ALSO active for this repo -- this toggle just hides that row/section
+#   # like any other; it never turns the feature itself on.
 #   fields:
 #     relatedWork: false
 #     openPrQueue: false

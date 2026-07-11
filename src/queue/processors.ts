@@ -419,6 +419,7 @@ import {
   buildSlopAssessment,
   type SlopBand,
 } from "../signals/slop";
+import { buildStructuralImprovementAssessment } from "../signals/improvement";
 import { runGittensoryLinkedIssueSatisfaction } from "../services/linked-issue-satisfaction-run";
 import { decidePublicSurface } from "../signals/settings-preview";
 import {
@@ -468,6 +469,7 @@ import {
   runGittensoryAiReview,
   utcDayStartIso,
   type AiReviewActualUsage,
+  type ImprovementMagnitude,
   type InlineFinding,
 } from "../services/ai-review";
 import {
@@ -7395,6 +7397,16 @@ export async function runAiReviewForAdvisory(
     // quality-culture reference block (typical merged-PR size + common labels) to the reviewer prompt. Absent/
     // false ⇒ byte-identical (no section, no extra D1 read).
     reviewCultureProfile?: boolean | undefined;
+    // `.gittensory.yml` `features.improvementSignal` (#4744, first real caller of #4738's activation wiring),
+    // resolved by the caller via `convergedFeatureActive`/`resolveConvergedFeature` -- NOT resolved internally
+    // here (unlike reputation/rag/grounding above), mirroring reviewProfile/reviewImpactMap/reviewCultureProfile
+    // above, which are ALL caller-resolved rather than looked up internally (see `ModelReview.valueAssessment`'s
+    // own doc comment in services/ai-review.ts for why `improvementSignal` -- a read-only advisory signal, not a
+    // security control -- follows that majority pattern rather than `safety`'s internal-resolution exception).
+    // Threaded straight into runGittensoryAiReview's own `improvementSignal` gate (#4743) for the LLM tier's
+    // value-assessment prompt addition. Absent/false ⇒ the prompt is byte-identical (no valueAssessment
+    // requested) -- the only reachable value until this PR started resolving the feature.
+    improvementSignal?: boolean | undefined;
     // The inbound webhook delivery id that triggered this review (#codex-timeout-fields) — forwarded to a
     // self-host provider's failure log purely for operator correlation; never read by any review logic. Absent
     // (e.g. a sweep/repair fan-out with no single originating delivery, or a unit test) ⇒ the log line omits it.
@@ -7437,6 +7449,13 @@ export async function runAiReviewForAdvisory(
       // within the bounded cooldown could replay "another pass is running" long after that pass finished.
       // Defaults to true (persistable) for every other outcome, cacheable or not.
       persistable?: boolean | undefined;
+      // The LLM tier's composed improvement/value judgment (#4743/#4744) -- present ONLY on a FRESH review
+      // (cache miss) with `improvementSignal` requested and at least one reviewer emitting a usable, public-safe
+      // judgment. Absent on a cache hit: exactly like `inlineFindings`/`impactMap` above, `ai_review_cache`
+      // never persists this field (getCachedAiReview/putCachedAiReview, db/repositories.ts, have no column for
+      // it), so a re-served cached review has no LLM-tier judgment to show on that particular render. The
+      // deterministic tier is unaffected -- it is computed fresh every pass, never cached.
+      valueAssessment?: { magnitude: ImprovementMagnitude; rationale: string } | undefined;
     }
   | undefined
 > {
@@ -7726,6 +7745,9 @@ export async function runAiReviewForAdvisory(
       ),
       repoInstructions: args.reviewInstructions ?? null,
       changedFiles: files,
+      // improvementSignal (#4744): ask the model for the ordinal value/improvement judgment (#4743) only when
+      // the caller resolved the feature on for this repo. Absent/false ⇒ byte-identical prompt.
+      improvementSignal: args.improvementSignal === true,
     });
     if (result.status !== "ok") return undefined;
     const findings: AdvisoryFinding[] = [];
@@ -7818,6 +7840,7 @@ export async function runAiReviewForAdvisory(
         findings,
         metadata: metadataFor(result.advisoryNotes, []),
         cacheable: false,
+        valueAssessment: result.valueAssessment ?? undefined,
       };
     }
     if (hasPublicReviewAssessment(result.advisoryNotes)) {
@@ -7828,6 +7851,7 @@ export async function runAiReviewForAdvisory(
         impactMap: impactMapEntries,
         findings,
         metadata: metadataFor(result.advisoryNotes, result.inlineFindings),
+        valueAssessment: result.valueAssessment ?? undefined,
       };
     }
     if (result.inconclusive) {
@@ -9038,6 +9062,18 @@ async function maybePublishPrPublicSurface(
     repoFullName,
     "unifiedComment",
   );
+  // improvementSignal (#4744): the first real caller of #4738's activation wiring (epic #4737's config-as-code
+  // foundation) -- nothing resolved this feature before this PR (see signals/improvement.ts's own header
+  // comment). Resolved once, independent of unifiedCommentAllowed above: it gates BOTH the deterministic
+  // tier's own computation further below (which has no AI dependency at all -- a paused repo, a non-reviewable
+  // author, or aiReviewMode: "off" still gets it) and, threaded into runAiReviewForAdvisory, the LLM tier's
+  // prompt addition (#4743). loadRepoFocusManifest is cached, so this second manifest resolution costs no
+  // extra fetch in the common case where something else already resolved it this pass.
+  const improvementSignalAllowed = await convergedFeatureActive(
+    env,
+    repoFullName,
+    "improvementSignal",
+  );
   // `settings` is the EFFECTIVE config (`.gittensory.yml` > DB > defaults), resolved by the caller via
   // resolveRepositorySettings — so gate on/off and every blocker mode already reflect the repo's config
   // file. The gate verdict is the same for every author; confirmedContributor feeds only on-chain scoring.
@@ -9414,6 +9450,8 @@ async function maybePublishPrPublicSurface(
   // inlineFindings is present ONLY on a FRESH review (cache miss) with inline comments enabled; the AI cache
   // round-trips notes + reviewerCount + the gate findings (so a cache hit replays consensus/split/inconclusive
   // blockers — see below), but NOT inlineFindings, so a cache hit never re-posts inline comments (#inline-comments).
+  // valueAssessment (#4743/#4744) follows the exact same cache-miss-only shape as inlineFindings/impactMap --
+  // see runAiReviewForAdvisory's own return-type doc comment.
   let aiReview:
     | {
         notes: string;
@@ -9424,6 +9462,7 @@ async function maybePublishPrPublicSurface(
         metadata?: Record<string, unknown> | undefined;
         cacheable?: boolean | undefined;
         persistable?: boolean | undefined;
+        valueAssessment?: { magnitude: ImprovementMagnitude; rationale: string } | undefined;
       }
     | undefined;
   let inlineCommentsEnabledForReview = false;
@@ -10523,6 +10562,10 @@ async function maybePublishPrPublicSurface(
               reviewSelfHostAiModel,
               reviewImpactMap,
               reviewCultureProfile,
+              // improvementSignal (#4744): resolved once above (independent of unifiedCommentAllowed), reused
+              // here so the LLM tier's value-assessment prompt addition (#4743) only fires when this repo has
+              // actually opted in.
+              improvementSignal: improvementSignalAllowed,
               // #regate-dup-prep: this call's own advisory lock is already claimed (by aiReviewCacheReadDecideAndRun's
               // caller, above) — pass it through so runAiReviewForAdvisory trusts it instead of re-claiming (and
               // losing) against itself, and does not release it before the cache write below runs.
@@ -11196,6 +11239,25 @@ async function maybePublishPrPublicSurface(
     // winner's hard-duplicate block is suppressed (they recompute the winner from their own open-only sibling
     // list). Flag-OFF (default) ⇒ false ⇒ the panels are byte-identical to today.
     const duplicateWinnerEnabled = env.GITTENSORY_DUPLICATE_WINNER === "true";
+    // improvementSignal deterministic tier (#4742/#4744): pure/sync, no AI dependency, so it is computed
+    // independent of aiReview's own eligibility gates above (a paused repo, non-reviewable author, or
+    // aiReviewMode: "off" still gets this tier -- the two tiers are deliberately independent, epic #4737).
+    // Only computed when the feature resolves on for this repo, matching "nothing at all when the feature is
+    // off" (#4744) and avoiding the extra file resolve on the default (until an operator opts in) path where
+    // it's off. changedFiles reuses the SAME memoized getReviewFiles() resolver every other gate/panel input
+    // already calls, so this costs no extra fetch when something else already resolved it this pass.
+    // complexityDeltas/duplicationDeltas/patchCoverageDeltaPercent have no caller yet (see improvement.ts's own
+    // header comment) -- only the changedFiles-based axes (test-evidence) can fire today; that is expected,
+    // not a bug in this PR, and the assessment degrades cleanly ("insufficient-signal"/"none") when they don't.
+    const structuralImprovementAssessment = improvementSignalAllowed
+      ? buildStructuralImprovementAssessment({
+          changedFiles: (await getReviewFiles()).map((file) => ({
+            path: file.path,
+            additions: file.additions,
+            deletions: file.deletions,
+          })),
+        })
+      : undefined;
     const commentArgs = {
       repo,
       pr,
@@ -11208,6 +11270,7 @@ async function maybePublishPrPublicSurface(
       gate: gateEvaluation,
       review: reviewConfig,
       aiReview,
+      improvementSignal: structuralImprovementAssessment,
       duplicateWinnerEnabled,
       env,
     };
@@ -11339,6 +11402,8 @@ async function maybePublishPrPublicSurface(
         settings,
         gate: commentGate,
         duplicateWinnerEnabled,
+        improvementSignal: structuralImprovementAssessment,
+        valueAssessment: aiReview?.valueAssessment,
       });
       // Visual before/after capture (visual-capture port). Fires ONLY when (1) the "screenshots" converged
       // feature resolves active for this repo (resolveConvergedFeature — the global flag AND (a per-repo

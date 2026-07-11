@@ -57,7 +57,7 @@ gate:
 #   note: "Run the test suite before requesting review."   # short intro line shown above the panel
 #   fields:                                             # show/hide rows (default: all shown). Stable keys:
 #     relatedWork: false                                # linkedIssue | relatedWork | reviewLoad (Change scope) |
-#     openPrQueue: false                                # validationEvidence (Validation posture) | openPrQueue (Contributor workload) | contributorContext | gateResult
+#     openPrQueue: false                                # validationEvidence (Validation posture) | openPrQueue (Contributor workload) | contributorContext | gateResult | improvementSignal
 
 # AI-review eligibility filters (#3999): a draft PR previously re-triggered a full AI review on every
 # push, letting a contributor iterate for free while tokens kept burning — skip_drafts stops that.

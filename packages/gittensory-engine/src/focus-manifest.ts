@@ -434,8 +434,11 @@ export type FocusManifestSettings = Partial<
   advisoryAiRouting?: Partial<AdvisoryAiRoutingConfig> | undefined;
 };
 
-/** Field keys for the public review-panel rows a maintainer can show/hide via `review.fields`. */
-export const REVIEW_FIELD_KEYS = ["linkedIssue", "relatedWork", "reviewLoad", "validationEvidence", "openPrQueue", "contributorContext", "gateResult"] as const;
+/** Field keys for the public review-panel rows a maintainer can show/hide via `review.fields`. `improvementSignal`
+ *  (#4744) is the newest: the optional row combining the deterministic structural-improvement tier (#4742) and,
+ *  where also active, the LLM tier's composed value judgment (#4743) -- default-shown, like every sibling here,
+ *  when the `improvementSignal` converged feature itself is active for the repo. */
+export const REVIEW_FIELD_KEYS = ["linkedIssue", "relatedWork", "reviewLoad", "validationEvidence", "openPrQueue", "contributorContext", "gateResult", "improvementSignal"] as const;
 export type ReviewFieldKey = (typeof REVIEW_FIELD_KEYS)[number];
 
 // `review.profile` (#review-profile): how nitpicky the AI maintainer review is. `chill` = surface only blocking

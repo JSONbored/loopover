@@ -2854,6 +2854,182 @@ describe("queue processors", () => {
     }
   });
 
+  // #4744 (improvement-signal panel row, epic #4737): same unified-comment scaffold as the test above, but with
+  // the `improvementSignal` converged feature ALSO resolved on (env kill-switch + allowlist) — this is the only
+  // way, anywhere in the existing suite, that `maybePublishPrPublicSurface`'s `improvementSignalAllowed` ternary
+  // takes its TRUE arm: every other existing test leaves the feature off (the default), which already covers the
+  // FALSE arm thousands of times over. Proves the deterministic tier threads end to end into a real posted
+  // comment, not just in the isolated `buildPublicPrPanelSignalRows`/`buildStructuralImprovementAssessment` unit
+  // tests (signals-coverage.test.ts).
+  it("#4744: threads the improvement-signal row into the unified comment when the converged feature resolves on", async () => {
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      GITTENSORY_REVIEW_UNIFIED_COMMENT: "1",
+      GITTENSORY_REVIEW_IMPROVEMENT_SIGNAL: "true",
+      GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory",
+    });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "detected_contributors_only",
+      publicAudienceMode: "gittensor_only",
+      publicSignalLevel: "standard",
+      publicSurface: "comment_and_label",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      checkRunDetailLevel: "minimal",
+      gateCheckMode: "enabled", reviewCheckMode: "required",
+      backfillEnabled: true,
+      autonomy: { update_branch: "auto" },
+    });
+    let postedBody = "";
+    const calls = { comments: 0, gateChecks: 0 };
+    let gateFinalized = false;
+    let failedPostGateMint = false;
+    const liveCiSpy = vi
+      .spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl")
+      .mockRejectedValueOnce(new Error("transient CI read failed"))
+      .mockResolvedValue({
+        ciState: "passed",
+        hasPending: false,
+        hasVisiblePending: false,
+        hasMissingRequiredContext: false,
+        failingDetails: [],
+        nonRequiredFailingDetails: [],
+        ciCompletenessWarning: null,
+      });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") {
+        return Response.json([
+          {
+            uid: 7,
+            githubUsername: "oktofeesh1",
+            githubId: "123",
+            totalPrs: 4,
+            totalMergedPrs: 3,
+            totalOpenPrs: 1,
+            totalClosedPrs: 0,
+            totalOpenIssues: 0,
+            totalClosedIssues: 0,
+            totalSolvedIssues: 0,
+            totalValidSolvedIssues: 0,
+            isEligible: true,
+            credibility: 1,
+            eligibleRepoCount: 1,
+            hotkey: "must-not-leak",
+          },
+        ]);
+      }
+      if (url === "https://api.gittensor.io/miners/123") {
+        return Response.json({
+          repositories: [
+            {
+              repositoryFullName: "JSONbored/gittensory",
+              totalPrs: "4",
+              totalMergedPrs: "3",
+              totalOpenPrs: "1",
+              totalClosedPrs: "0",
+              totalOpenIssues: "0",
+              totalClosedIssues: "0",
+              isEligible: true,
+              credibility: "1.000000",
+            },
+          ],
+        });
+      }
+      if (url === "https://api.gittensor.io/miners/123/prs") return Response.json([]);
+      if (url === "https://mirror.gittensor.io/api/v1/miners/123/issues") return Response.json({ issues: [] });
+      if (url.endsWith("/users/oktofeesh1")) return Response.json({ login: "oktofeesh1", public_repos: 2, followers: 1 });
+      if (url.includes("/users/oktofeesh1/repos")) return Response.json([{ language: "TypeScript" }]);
+      if (url.includes("/access_tokens")) {
+        if (gateFinalized && !failedPostGateMint) {
+          failedPostGateMint = true;
+          return new Response("mint failed", { status: 500 });
+        }
+        return Response.json({ token: "installation-token", expires_at: "2026-05-28T00:04:00.000Z" });
+      }
+      // PR files — also what the improvement-signal deterministic tier reads via getReviewFiles() for its
+      // test-evidence axis (#4742); one plain code file with no accompanying test evidence resolves to band "none".
+      if (url.includes("/pulls/4/files")) return Response.json([{ filename: "src/cache.ts", additions: 5, deletions: 1, status: "modified" }]);
+      if (/\/pulls\/4(?:\?|$)/.test(url)) return Response.json({ number: 4, mergeable_state: "clean" });
+      if (url.includes("/check-runs") && method === "GET") return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") {
+        calls.gateChecks += 1;
+        const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string };
+        if (body.status !== "in_progress" || body.conclusion) {
+          gateFinalized = true;
+          clearInstallationTokenCacheForTest();
+        }
+        return Response.json({ id: 901 }, { status: 201 });
+      }
+      if (url.includes("/check-runs/901") && method === "PATCH") {
+        calls.gateChecks += 1;
+        gateFinalized = true;
+        clearInstallationTokenCacheForTest();
+        return Response.json({ id: 901 });
+      }
+      if (url.includes("/issues/4/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/4/comments") && method === "POST") {
+        calls.comments += 1;
+        postedBody = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+        return Response.json({ id: 1, html_url: "https://github.com/comment/1" }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "pr-improvement-signal-unified",
+        eventName: "pull_request",
+        payload: {
+          action: "synchronize",
+          installation: {
+            id: 123,
+            account: { login: "JSONbored", id: 1, type: "User" },
+            repository_selection: "selected",
+            permissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
+            events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+          },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: {
+            number: 4,
+            title: "Cache invalidation cleanup",
+            state: "open",
+            user: { login: "oktofeesh1" },
+            head: { sha: "improvement123" },
+            labels: [{ name: "bug" }],
+            body: "Fixes #1",
+          },
+        },
+      });
+
+      expect(calls.comments).toBeGreaterThan(0);
+      expect(postedBody).toContain("<!-- gittensory-pr-panel:v1 -->");
+      // The improvement-signal row (#4744) — proves improvementSignalAllowed resolved TRUE and
+      // buildStructuralImprovementAssessment's result threaded all the way into the posted comment, not just
+      // computed and discarded. No test evidence was provided for the one changed code file, so this resolves to
+      // band "none" (measured, found nothing) rather than "insufficient-signal" (nothing to measure at all). The
+      // unified renderer's table only surfaces the first 3 of each row's 4 cells (Label/Result/Evidence, not
+      // Action) — same as the adjacent "Gate result" row, which also never shows its own 4th cell here — so this
+      // asserts against the 3 columns this renderer actually prints, not the row's full cells array.
+      expect(postedBody).toContain("| Improvement | ⚠️ ℹ️ None detected | No structural-improvement signals were detected for this PR. |");
+      // Public-safe regardless: no internal trust/economics fields leak through this new row either.
+      expect(postedBody).not.toMatch(/wallet|hotkey|coldkey|reward|trust score/i);
+    } finally {
+      liveCiSpy.mockRestore();
+    }
+  });
+
   it("INVARIANT (#4498): the disposition planner reuses the public surface's own live mergeable_state/CI read instead of re-fetching a third time", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_UNIFIED_COMMENT: "1" });
     await persistRegistrySnapshot(

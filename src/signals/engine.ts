@@ -37,6 +37,8 @@ import { splitAiReviewNits } from "../review/ai-notes";
 import { GITTENSORY_GATE_CHECK_NAME, shouldPublishReviewCheck } from "../review/check-names";
 import { isAgentConfigured } from "../settings/autonomy";
 import { diffFilePriority } from "../review/review-diff";
+import type { ImprovementBand, StructuralImprovementAssessment } from "./improvement";
+import type { ImprovementMagnitude } from "../services/ai-review";
 
 export type ParticipationLane = "direct_pr" | "issue_discovery" | "split" | "inactive" | "unknown";
 export type SignalFinding = AdvisoryFinding;
@@ -4288,12 +4290,21 @@ export function buildPublicPrIntelligenceComment(args: {
   settings: RepositorySettings;
   gate?: PublicPrPanelGateEvaluation | undefined;
   review?: FocusManifestReviewConfig | undefined;
-  /** Optional AI maintainer-review notes (already public-safe). Rendered as an advisory section. */
-  aiReview?: { notes: string } | undefined;
+  /** Optional AI maintainer-review notes (already public-safe). Rendered as an advisory section. `valueAssessment`
+   *  (#4743/#4744) is the same tier's composed improvement/value judgment, already run through
+   *  `composeImprovementSignal`'s own `toPublicSafe` pass upstream (services/ai-review.ts) -- re-checked against
+   *  `containsPrivatePublicTerm` again here (defense in depth) before it can reach the improvement row below. */
+  aiReview?: { notes: string; valueAssessment?: { magnitude: ImprovementMagnitude; rationale: string } | undefined } | undefined;
   /** Duplicate-winner adjudication (#dup-winner). When true AND this PR is the earliest observed linked-issue
    *  claimant among `linkedDuplicatePrs`, the hard-duplicate panel block is suppressed so the winner's panel
    *  does not show a blocking duplicate. Default/false ⇒ byte-identical to today. */
   duplicateWinnerEnabled?: boolean | undefined;
+  /** Deterministic structural-improvement tier (#4742/#4744), pre-computed by the caller via
+   *  `buildStructuralImprovementAssessment` and passed through exactly like `gate`/`aiReview` above are
+   *  pre-computed results, not raw inputs. Absent ⇒ the improvement row renders nothing, matching
+   *  `resolveConvergedFeature(env, manifest, "improvementSignal", repoFullName)` resolving false for the repo,
+   *  or a caller that hasn't wired this yet. */
+  improvementSignal?: StructuralImprovementAssessment | undefined;
   /** Resolved by the caller from `env.PUBLIC_SITE_ORIGIN` so a self-hoster's own domain reaches the
    *  always-on footer's attribution link instead of `GITTENSORY_SITE_URL` (#4613). */
   env: GittensoryFooterEnv;
@@ -4415,6 +4426,11 @@ export function buildPublicPrIntelligenceComment(args: {
     { key: "contributorContext", cells: ["Contributor context", contributorContext.result, contributorContext.evidence, contributorContext.action] },
     { key: "gateResult", cells: ["Gate result", gateStatus(gateEnabled, gateConclusion), gateEnabled ? gateAction(gateConclusion) : "Advisory only.", gateEnabled ? gateNextAction(gateConclusion) : "No action."] },
   ];
+  // Improvement row (#4744): combines the deterministic tier (#4742) + LLM tier (#4743). `improvementRow` is
+  // null (row omitted entirely) when the caller passes no `improvementSignal` -- see buildImprovementSignalRow's
+  // own doc comment for why that's what keeps this byte-identical to today for every existing caller.
+  const improvementRow = buildImprovementSignalRow(args.improvementSignal, args.aiReview?.valueAssessment);
+  if (improvementRow) allRows.push(improvementRow);
   const reviewFields = args.review?.fields;
   const rows: Array<[string, string, string, string]> = allRows.filter((row) => reviewFields?.[row.key] !== false).map((row) => row.cells);
   const overlapDetails = relatedWorkDetails(args.pr, scopedOverlapClusters);
@@ -4558,6 +4574,18 @@ export function buildPublicPrPanelSignalRows(args: {
    *  claimant among `linkedDuplicatePrs`, the hard-duplicate block is suppressed. Default/false ⇒ byte-identical
    *  to today. Matches `buildPublicPrIntelligenceComment` so both panels agree. */
   duplicateWinnerEnabled?: boolean | undefined;
+  /** Deterministic structural-improvement tier (#4742/#4744), pre-computed by the caller via
+   *  `buildStructuralImprovementAssessment` and passed through exactly like `gate` above is a pre-computed
+   *  result, not a raw input -- keeps this render layer pure/sync. Absent (every existing caller today) ⇒ the
+   *  row is omitted entirely and `rows` stays byte-identical to today, matching
+   *  `resolveConvergedFeature(env, manifest, "improvementSignal", repoFullName)` resolving false for the repo,
+   *  or a caller that hasn't wired this yet. */
+  improvementSignal?: StructuralImprovementAssessment | undefined;
+  /** The LLM tier's composed improvement/value judgment (#4743), already run through `composeImprovementSignal`'s
+   *  own `toPublicSafe` pass upstream. Re-checked against `containsPrivatePublicTerm` here anyway (defense in
+   *  depth, #4744) before it can reach the row. Absent ⇒ the row (when `improvementSignal` above is present)
+   *  shows the deterministic tier only. */
+  valueAssessment?: { magnitude: ImprovementMagnitude; rationale: string } | undefined;
 }): { rows: PublicPrPanelSignalRow[]; readinessTotal: number } {
   const relatedWork = buildDuplicateWinnerRelatedWorkView({
     pr: args.pr,
@@ -4600,7 +4628,83 @@ export function buildPublicPrPanelSignalRows(args: {
     { key: "contributorContext", cells: ["Contributor context", contributorContext.result, contributorContext.evidence, contributorContext.action] },
     { key: "gateResult", cells: ["Gate result", gateStatus(gateEnabled, gateConclusion), gateEnabled ? gateAction(gateConclusion) : "Advisory only.", gateEnabled ? gateNextAction(gateConclusion) : "No action."] },
   ];
-  return { rows, readinessTotal: readiness.total };
+  const improvementRow = buildImprovementSignalRow(args.improvementSignal, args.valueAssessment);
+  return { rows: improvementRow ? [...rows, improvementRow] : rows, readinessTotal: readiness.total };
+}
+
+// ── Improvement-signal row (#4744) ───────────────────────────────────────────────────────────────────
+//
+// Combines the deterministic tier (#4742, `buildStructuralImprovementAssessment`) and, when also active, the
+// LLM tier's composed judgment (#4743, `composeImprovementSignal`) into the optional 8th panel row. Shared by
+// `allRows` (legacy) and `buildPublicPrPanelSignalRows` (unified-comment bridge) so the two never diverge, the
+// same way the other seven rows are already hand-mirrored between the two functions. Advisory only -- this
+// row is never a gate input (epic #4737 design constraint 2), and it never renders anything when the caller
+// omits `improvementSignal` (the `improvementSignal` converged feature resolving false for the repo, or the
+// deterministic tier having nothing to report today isn't possible -- `buildStructuralImprovementAssessment`
+// always returns a band, even "insufficient-signal").
+
+/** Static template labels (#4744), one per {@link ImprovementBand} -- never runtime-interpolated free text, so
+ *  this bypasses the public-comment sanitizer safely, mirroring how `"**Readiness score: ${total}/100**"`
+ *  (buildPublicPrIntelligenceComment) is a hardcoded template rather than sanitizer-filtered AI prose. Advisory
+ *  icons only (✅/ℹ️, never ⚠️/❌): every band here is informational, never a reason to flag the PR. */
+const IMPROVEMENT_BAND_LABELS: Record<ImprovementBand, string> = {
+  "insufficient-signal": "ℹ️ Insufficient signal",
+  none: "ℹ️ None detected",
+  minor: "✅ Minor",
+  moderate: "✅ Moderate",
+  significant: "✅ Significant",
+};
+
+/** The Evidence cell: a short, safe-by-construction summary of the deterministic findings (already filtered
+ *  through `containsPrivatePublicTerm` by the caller), plus the LLM tier's magnitude + rationale when present
+ *  (also already filtered). Caps at 2 inline finding sentences -- mirrors the "Nits"-style convention of not
+ *  dumping every finding inline; with more than 2, the remainder is summarized by count rather than omitted
+ *  (see the module comment above for why a full collapsible isn't wired up in this PR: at most one
+ *  deterministic finding can fire today, since REES's complexity/duplication analyzers and a parsed Codecov
+ *  number have no caller yet -- see `signals/improvement.ts`'s own header comment). */
+function improvementEvidenceText(
+  band: ImprovementBand,
+  safeFindings: SignalFinding[],
+  safeValueAssessment: { magnitude: ImprovementMagnitude; rationale: string } | undefined,
+): string {
+  const findingSentences = safeFindings.map((finding) => finding.publicText ?? finding.detail);
+  const deterministicPart =
+    band === "insufficient-signal"
+      ? "Nothing measurable for the structural-improvement analyzers on this PR (e.g. no code files changed)."
+      : findingSentences.length > 0
+        ? findingSentences.slice(0, 2).join(" ") + (findingSentences.length > 2 ? ` (+${findingSentences.length - 2} more.)` : "")
+        : "No structural-improvement signals were detected for this PR.";
+  const valuePart = safeValueAssessment ? ` LLM value judgment: ${safeValueAssessment.magnitude} — ${safeValueAssessment.rationale}` : "";
+  return `${deterministicPart}${valuePart}`;
+}
+
+/** Builds the optional "Improvement" row, or `null` when the caller has no improvement data to show. `null`
+ *  here (rather than a placeholder row) is what keeps `allRows`/`buildPublicPrPanelSignalRows`'s `rows`
+ *  byte-identical to today for every existing caller that doesn't pass `improvementSignal` -- see the
+ *  `KEYS`/`toHaveLength(7)` assertions in signals-coverage.test.ts, which assume a fixed 7-row table. Defense
+ *  in depth (#4744 requirement, epic #4737): both the deterministic findings and the LLM rationale are
+ *  re-checked against `containsPrivatePublicTerm` here even though `improvement.ts`'s findings are safe by
+ *  construction (integers interpolated into a fixed template) and the LLM rationale already passed
+ *  `composeImprovementSignal`'s own `toPublicSafe` check upstream (services/ai-review.ts) -- this row must
+ *  never leak forbidden vocabulary regardless of what feeds it, not merely trust that upstream composition. */
+function buildImprovementSignalRow(
+  assessment: StructuralImprovementAssessment | undefined,
+  valueAssessment: { magnitude: ImprovementMagnitude; rationale: string } | undefined,
+): PublicPrPanelSignalRow | null {
+  if (!assessment) return null;
+  const safeFindings = assessment.findings.filter(
+    (finding) => !containsPrivatePublicTerm([finding.title, finding.detail, finding.publicText].filter(Boolean).join(" ")),
+  );
+  const safeValueAssessment = valueAssessment && !containsPrivatePublicTerm(valueAssessment.rationale) ? valueAssessment : undefined;
+  return {
+    key: "improvementSignal",
+    cells: [
+      "Improvement",
+      IMPROVEMENT_BAND_LABELS[assessment.band],
+      improvementEvidenceText(assessment.band, safeFindings, safeValueAssessment),
+      "Advisory only — never blocks merge.",
+    ],
+  };
 }
 
 function isOfficialContributorDetection(detection: ContributorDetection): boolean {
@@ -5140,7 +5244,10 @@ function isPrivateBountyLifecycleFinding(code: string): boolean {
 }
 
 function containsPrivatePublicTerm(value: string): boolean {
-  return /\b(reward|payout|farming|wallet|hotkey|trust score|raw trust|estimated score|scoreability|likely_duplicate|reviewability\s*\d)\b/i.test(value);
+  // "coldkey" added alongside its existing "hotkey" sibling (#4744) -- the improvement-signal row below is the
+  // first caller that re-checks an already-composed LLM sentence against this backstop, and the wallet-key pair
+  // is otherwise incomplete (a bare "coldkey" mention previously slipped through untouched).
+  return /\b(reward|payout|farming|wallet|hotkey|coldkey|trust score|raw trust|estimated score|scoreability|likely_duplicate|reviewability\s*\d)\b/i.test(value);
 }
 
 function sanitizePanelText(value: string): string {

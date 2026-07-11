@@ -40,6 +40,7 @@ import {
   buildRepoRewardRisk,
 } from "../../src/signals/reward-risk";
 import { PREFLIGHT_LIMITS } from "../../src/signals/preflight-limits";
+import type { FocusManifestReviewConfig } from "../../src/signals/focus-manifest";
 import type { GittensorContributorSnapshot } from "../../src/gittensor/api";
 import type {
   ContributorRepoStatRecord,
@@ -879,6 +880,166 @@ describe("signal coverage edge cases", () => {
     const noAutonomyGateRow = noAutonomyPanel.rows.find((r) => r.key === "gateResult")!;
     expect(noAutonomyGateRow.cells[2]).toBe("Advisory only.");
     expect(noAutonomyGateRow.cells[3]).toBe("No action.");
+  });
+
+  describe("#4744: improvement-signal panel row (deterministic tier #4742 + LLM tier #4743)", () => {
+    const improvementRepo = repo("owner/improvement");
+    const improvementPr = pr(improvementRepo.fullName, 120, "Simplify retry logic", { authorLogin: "miner", linkedIssues: [7], body: "Fixes #7" });
+    const improvementProfile = buildContributorProfile("miner", { login: "miner", topLanguages: ["TypeScript"], source: "github" }, [], []);
+    const improvementDetection = { detected: true, source: "official_gittensor_api" as const, reason: "Confirmed.", priorPullRequests: 1, priorMergedPullRequests: 0, priorIssues: 0 };
+    const improvementCollisions = buildCollisionReport(improvementRepo.fullName, [], []);
+    const improvementQueueHealth = buildQueueHealth(improvementRepo, [], [], improvementCollisions);
+    const improvementPreflight = buildPreflightResult(
+      { repoFullName: improvementRepo.fullName, title: improvementPr.title, body: improvementPr.body ?? undefined, linkedIssues: improvementPr.linkedIssues, changedFiles: ["src/retry.ts"] },
+      improvementRepo,
+      [],
+      [],
+    );
+    const improvementSettings = repoSettings(improvementRepo.fullName);
+    const improvementBaseArgs = {
+      repo: improvementRepo,
+      pr: improvementPr,
+      profile: improvementProfile,
+      detection: improvementDetection,
+      queueHealth: improvementQueueHealth,
+      collisions: improvementCollisions,
+      preflight: improvementPreflight,
+      settings: improvementSettings,
+    };
+    const minorAssessment = {
+      improvementScore: 10,
+      band: "minor" as const,
+      findings: [
+        {
+          code: "added_test_evidence",
+          title: "Change carries test evidence",
+          severity: "info" as const,
+          detail: "Code changes are accompanied by test evidence.",
+          action: "No action needed — this is a positive signal.",
+          publicText: "Code changes are accompanied by test evidence.",
+        },
+      ],
+    };
+
+    it("omits the row entirely when the caller passes no improvementSignal (feature off, or not wired yet)", () => {
+      const comment = buildPublicPrIntelligenceComment({ ...improvementBaseArgs, env: {} });
+      expect(comment).not.toContain("| Improvement |");
+      const panel = buildPublicPrPanelSignalRows(improvementBaseArgs);
+      expect(panel.rows.find((r) => r.key === "improvementSignal")).toBeUndefined();
+      expect(panel.rows).toHaveLength(7);
+    });
+
+    it("renders the deterministic band as a static template label when only the deterministic tier is available", () => {
+      const comment = buildPublicPrIntelligenceComment({ ...improvementBaseArgs, improvementSignal: minorAssessment, env: {} });
+      expect(comment).toContain("| Improvement | ✅ Minor |");
+      expect(comment).toContain("Code changes are accompanied by test evidence.");
+      expect(comment).not.toContain("Value judgment");
+      expect(comment).not.toContain("LLM value judgment");
+
+      const panel = buildPublicPrPanelSignalRows({ ...improvementBaseArgs, improvementSignal: minorAssessment });
+      expect(panel.rows).toHaveLength(8);
+      const row = panel.rows.find((r) => r.key === "improvementSignal")!;
+      expect(row.cells).toEqual([
+        "Improvement",
+        "✅ Minor",
+        "Code changes are accompanied by test evidence.",
+        "Advisory only — never blocks merge.",
+      ]);
+    });
+
+    it("renders the LLM tier's magnitude + rationale alongside the deterministic band when both tiers are available", () => {
+      const noneAssessment = { improvementScore: 0, band: "none" as const, findings: [] };
+      const valueAssessment = { magnitude: "significant" as const, rationale: "This removes a whole class of retry bugs." };
+      const comment = buildPublicPrIntelligenceComment({
+        ...improvementBaseArgs,
+        improvementSignal: noneAssessment,
+        aiReview: { notes: "Looks fine.", valueAssessment },
+        env: {},
+      });
+      // The Result cell reflects the DETERMINISTIC band ("none"), never the LLM magnitude -- the two tiers are
+      // deliberately never blended into one number/label (epic #4737 design constraint 1).
+      expect(comment).toContain("| Improvement | ℹ️ None detected |");
+      expect(comment).toContain("LLM value judgment: significant — This removes a whole class of retry bugs.");
+
+      const panel = buildPublicPrPanelSignalRows({ ...improvementBaseArgs, improvementSignal: noneAssessment, valueAssessment });
+      const row = panel.rows.find((r) => r.key === "improvementSignal")!;
+      expect(row.cells[1]).toBe("ℹ️ None detected");
+      expect(row.cells[2]).toBe("No structural-improvement signals were detected for this PR. LLM value judgment: significant — This removes a whole class of retry bugs.");
+    });
+
+    it("renders the insufficient-signal band and caps inline findings at 2 with a '+N more' summary beyond that", () => {
+      const insufficientAssessment = { improvementScore: 0, band: "insufficient-signal" as const, findings: [] };
+      const insufficientPanel = buildPublicPrPanelSignalRows({ ...improvementBaseArgs, improvementSignal: insufficientAssessment });
+      const insufficientRow = insufficientPanel.rows.find((r) => r.key === "improvementSignal")!;
+      expect(insufficientRow.cells[1]).toBe("ℹ️ Insufficient signal");
+      expect(insufficientRow.cells[2]).toContain("Nothing measurable");
+
+      const manyFindingsAssessment = {
+        improvementScore: 100,
+        band: "significant" as const,
+        findings: [
+          { code: "reduced_complexity", title: "Complexity went down", severity: "info" as const, detail: "2 function(s) have lower cyclomatic complexity after this pull request." },
+          { code: "resolved_duplication", title: "Duplication went down", severity: "info" as const, detail: "1 previously-duplicated code block(s) were consolidated or removed by this pull request." },
+          { code: "increased_patch_coverage", title: "Patch coverage went up", severity: "info" as const, detail: "Patch coverage increased by 5 percentage point(s) compared to the base branch." },
+          { code: "added_test_evidence", title: "Change carries test evidence", severity: "info" as const, detail: "Code changes are accompanied by test evidence." },
+        ],
+      };
+      const manyFindingsPanel = buildPublicPrPanelSignalRows({ ...improvementBaseArgs, improvementSignal: manyFindingsAssessment });
+      const manyFindingsRow = manyFindingsPanel.rows.find((r) => r.key === "improvementSignal")!;
+      // Only the first two finding sentences render inline (none of the four fixtures above set `publicText`, so
+      // this also exercises the `finding.publicText ?? finding.detail` fallback); the remaining two are
+      // summarized by count rather than dumped inline (mirrors the "Nits"-style non-inline-dump convention).
+      expect(manyFindingsRow.cells[2]).toBe(
+        "2 function(s) have lower cyclomatic complexity after this pull request. 1 previously-duplicated code block(s) were consolidated or removed by this pull request. (+2 more.)",
+      );
+    });
+
+    it("hides the row via review.fields.improvementSignal: false, exactly like its seven siblings", () => {
+      const comment = buildPublicPrIntelligenceComment({
+        ...improvementBaseArgs,
+        improvementSignal: minorAssessment,
+        review: { present: true, fields: { improvementSignal: false } } as unknown as FocusManifestReviewConfig,
+        env: {},
+      });
+      expect(comment).not.toContain("| Improvement |");
+    });
+
+    it("REGRESSION (#4744): never leaks forbidden vocabulary regardless of what findings/rationale feed the row (mirrors the repo's existing public-safety invariant tests)", () => {
+      const unsafeAssessment = {
+        improvementScore: 40,
+        band: "moderate" as const,
+        findings: [
+          {
+            code: "reduced_complexity",
+            title: "Reward wallet payout",
+            severity: "info" as const,
+            detail: "wallet hotkey coldkey trust score reward payout scoreability reviewability farming",
+            publicText: "wallet hotkey coldkey trust score reward payout scoreability reviewability farming",
+          },
+        ],
+      };
+      const unsafeValueAssessment = {
+        magnitude: "significant" as const,
+        rationale: "This raises the wallet hotkey coldkey trust score reward payout scoreability reviewability farming.",
+      };
+      const forbidden = /wallet|hotkey|coldkey|trust score|reward|payout|scoreability|reviewability|farming/i;
+
+      const comment = buildPublicPrIntelligenceComment({
+        ...improvementBaseArgs,
+        improvementSignal: unsafeAssessment,
+        aiReview: { notes: "Looks fine.", valueAssessment: unsafeValueAssessment },
+        env: {},
+      });
+      expect(comment).toContain("| Improvement | ✅ Moderate |"); // the static band label itself still renders
+      expect(comment).not.toMatch(forbidden);
+
+      const panel = buildPublicPrPanelSignalRows({ ...improvementBaseArgs, improvementSignal: unsafeAssessment, valueAssessment: unsafeValueAssessment });
+      const row = panel.rows.find((r) => r.key === "improvementSignal")!;
+      expect(JSON.stringify(row)).not.toMatch(forbidden);
+      // With the one (unsafe) finding filtered out and the (unsafe) valueAssessment dropped, the deterministic
+      // "no signals" fallback text is what's left -- never an empty cell.
+      expect(row.cells[2]).toBe("No structural-improvement signals were detected for this PR.");
+    });
   });
 
   it("#dup-winner: panel hard-duplicate block is suppressed for the winner, kept for the loser, byte-identical when flag OFF", () => {

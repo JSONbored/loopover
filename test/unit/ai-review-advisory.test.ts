@@ -62,6 +62,17 @@ function notesOnlyJson() {
 function nitsWithoutAssessmentJson() {
   return JSON.stringify({ assessment: "", blockers: [], nits: ["Add a test."], suggestions: ["Add a test."] });
 }
+// #4744: a model response that ALSO includes the #4743 valueAssessment field, for exercising
+// runAiReviewForAdvisory's improvementSignal pass-through end to end.
+function notesWithValueAssessmentJson() {
+  return JSON.stringify({
+    assessment: "Looks fine.",
+    blockers: [],
+    nits: ["Add a test."],
+    suggestions: ["Add a test."],
+    valueAssessment: { magnitude: "moderate", rationale: "This meaningfully simplifies the retry logic." },
+  });
+}
 
 function aiEnv(run: () => Promise<unknown>, flags = true) {
   return createTestEnv({
@@ -590,6 +601,40 @@ describe("runAiReviewForAdvisory", () => {
     });
     expect(adv.findings).toEqual([]);
     expect(result?.notes).toContain("Add a test.");
+  });
+
+  it("#4744: threads improvementSignal into the model call and surfaces the composed valueAssessment when requested", async () => {
+    const adv = advisory();
+    const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: notesWithValueAssessmentJson() })), {
+      mode: "live",
+      settings: { aiReviewMode: "advisory" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      improvementSignal: true,
+    });
+    expect(result?.valueAssessment).toEqual({
+      magnitude: "moderate",
+      rationale: "This meaningfully simplifies the retry logic.",
+    });
+  });
+
+  it("#4744: omits valueAssessment when the caller does not resolve improvementSignal on, even if the model returned one", async () => {
+    const adv = advisory();
+    const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: notesWithValueAssessmentJson() })), {
+      mode: "live",
+      settings: { aiReviewMode: "advisory" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      // improvementSignal omitted (the default, and every caller until this PR) -- the prompt never asked for
+      // the field, so runGittensoryAiReview never composes it regardless of what the raw model JSON contains.
+    });
+    expect(result?.valueAssessment).toBeUndefined();
   });
 
   it("returns undefined (no notes, no finding) when AI is disabled", async () => {

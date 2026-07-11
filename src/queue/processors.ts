@@ -3393,17 +3393,21 @@ async function prReadyForReview(
       // stopped the wasteful re-review, so its OWN existence is the operator-visible signal (via the structured
       // log → Sentry forwarder, forwardStructuredLogToSentry) that a PR's CI has been permanently stuck long
       // enough to need a human — the same "surface an anomaly at error level" convention selfhost_ai_provider_
-      // failed / selfhost_ai_providers_exhausted already use in src/selfhost/ai.ts.
-      console.error(
-        JSON.stringify({
-          level: "error",
-          event: "ci_stuck_review_repeat_suppressed",
-          repo: repoFullName,
-          pullNumber: pr.number,
-          headSha: pr.headSha,
-          deliveryId,
-        }),
-      );
+      // failed / selfhost_ai_providers_exhausted already use in src/selfhost/ai.ts. Rate-limited to once per
+      // (repo, pr, headSha) per day (#4998) — the defer above still runs on every evaluation; only the log is
+      // coalesced, so one permanently-stuck PR doesn't flood Sentry with hundreds of copies of the same signal.
+      if (!(await ciStuckRepeatLogCoalesced(env, repoFullName, pr.number, pr.headSha))) {
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "ci_stuck_review_repeat_suppressed",
+            repo: repoFullName,
+            pullNumber: pr.number,
+            headSha: pr.headSha,
+            deliveryId,
+          }),
+        );
+      }
       return false;
     }
     await recordAuditEvent(env, {
@@ -3431,6 +3435,13 @@ async function prReadyForReview(
 const CI_STUCK_FINALIZE_GUARD_EVENT_TYPE = "github_app.review_finalized_ci_stuck_guard";
 const CI_STUCK_FINALIZE_MAX_PER_SHA = 1;
 const CI_STUCK_FINALIZE_GUARD_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+
+// #4998: the ci_stuck_review_repeat_suppressed log below announces ONE thing (this PR has been stuck long enough
+// that a human should look) -- but the guard it reports on re-fires on EVERY later evaluation of a PR still
+// stuck on the same head SHA (a webhook re-trigger, a sweep pass), which flooded Sentry (650 events over 4 days
+// for a single PR). Rate-limits the LOG only, once per (repo, pr, headSha) per day -- the underlying suppression
+// (the guard immediately above the log call) is untouched and still runs every time.
+const CI_STUCK_REPEAT_LOG_WINDOW_SECONDS = 24 * 60 * 60;
 
 // A required check pending longer than this is treated as STUCK (orphaned / never-completing — e.g. a fork check
 // that will never report). Past it, prReadyForReview stops deferring and finalizes the gate so the PR surfaces
@@ -3466,6 +3477,23 @@ async function putTransientKey(
   } catch {
     // best-effort coalescing only
   }
+}
+
+/** True when the ci_stuck_review_repeat_suppressed log for this exact (repo, pr, headSha) already fired within
+ *  the window -- caller should skip logging (but still perform the actual defer). A missing/unavailable
+ *  transient cache degrades to "never coalesced" (every call logs, matching the pre-#4998 behavior) rather than
+ *  risk silently dropping the one operator-visible signal that a PR is stuck. */
+async function ciStuckRepeatLogCoalesced(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  headSha: string,
+): Promise<boolean> {
+  const key = `ci-stuck-repeat-log:${repoFullName.toLowerCase()}#${prNumber}:${headSha}`;
+  // getTransientKey/putTransientKey are already internally fail-safe (never throw), so no outer try/catch here.
+  if (await getTransientKey(env, key)) return true;
+  await putTransientKey(env, key, "1", CI_STUCK_REPEAT_LOG_WINDOW_SECONDS);
+  return false;
 }
 
 

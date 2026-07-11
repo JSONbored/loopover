@@ -1831,6 +1831,76 @@ describe("queue processors", () => {
     }
   });
 
+  it("REGRESSION (#4998): ci_stuck_review_repeat_suppressed rate-limits its log to once per (repo, pr, headSha) per day -- the defer still runs on every evaluation", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto", update_branch: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", reviewCheckMode: "required", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Permanently stuck CI", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main" }, labels: [], body: "Closes #1" });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    await env.SELFHOST_TRANSIENT_CACHE?.set(
+      "ci-pending-first-seen:owner/agent-repo#7:a7",
+      String(Date.now() - 31 * 60 * 1000),
+      7 * 24 * 3600,
+    );
+    const requiredContextsSpy = vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockResolvedValue(new Set(["trusted-required-ci"]));
+    const liveCiSpy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
+      ciState: "passed",
+      hasPending: true,
+      hasVisiblePending: false,
+      hasMissingRequiredContext: false,
+      failingDetails: [],
+      nonRequiredFailingDetails: [],
+      ciCompletenessWarning: null,
+    });
+    let liveHeadSha = "a7";
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (/\/pulls\/7(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 7, title: "Permanently stuck CI", state: "open", user: { login: "contributor" }, head: { sha: liveHeadSha }, mergeable_state: "clean", labels: [], body: "Closes #1" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/check-runs") && (method === "POST" || method === "PATCH")) return Response.json({ id: 901 }, { status: method === "POST" ? 201 : 200 });
+      return Response.json({});
+    });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      // 1st evaluation: finalizes for real (pays for one review). 2nd: guarded — defers AND logs (the ONE
+      // Sentry-visible signal). 3rd: guarded again — defers again, but the log is now within the 24h coalesce
+      // window, so it must NOT re-fire.
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "stuck-ci-eval-1", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "stuck-ci-eval-2", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "stuck-ci-eval-3", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+      const deferred = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.review_deferred_ci_pending", "owner/agent-repo#7")
+        .first<{ n: number }>();
+      expect(deferred?.n).toBe(2); // both the 2nd AND 3rd evaluations deferred -- suppression itself is unchanged
+      const repeatSuppressedLogs = errors.mock.calls.filter(([line]) => typeof line === "string" && line.includes("ci_stuck_review_repeat_suppressed"));
+      expect(repeatSuppressedLogs).toHaveLength(1); // only the 2nd evaluation's log survives -- the 3rd is coalesced
+
+      // A DIFFERENT head SHA (a new commit) is a fresh key -- its first guarded evaluation must log again, not
+      // inherit the previous SHA's coalesce window.
+      liveHeadSha = "b7";
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Permanently stuck CI", state: "open", user: { login: "contributor" }, head: { sha: "b7" }, base: { ref: "main" }, labels: [], body: "Closes #1" });
+      await env.SELFHOST_TRANSIENT_CACHE?.set(
+        "ci-pending-first-seen:owner/agent-repo#7:b7",
+        String(Date.now() - 31 * 60 * 1000),
+        7 * 24 * 3600,
+      );
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "stuck-ci-eval-4", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "stuck-ci-eval-5", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+      const repeatSuppressedLogsAfterNewSha = errors.mock.calls.filter(([line]) => typeof line === "string" && line.includes("ci_stuck_review_repeat_suppressed"));
+      expect(repeatSuppressedLogsAfterNewSha).toHaveLength(2); // the new SHA's own guarded evaluation logged once
+    } finally {
+      errors.mockRestore();
+      liveCiSpy.mockRestore();
+      requiredContextsSpy.mockRestore();
+    }
+  });
+
   it("REGRESSION (#orb-ci-stuck-repeat, fail-open): a failed guard-audit write does not stop the first stuck-CI finalize from running its review", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });

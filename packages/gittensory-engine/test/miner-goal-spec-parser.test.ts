@@ -86,6 +86,13 @@ test("parseMinerGoalSpec: execution.liveModeOptIn requires the exact literal, no
   const arrayValue = parseMinerGoalSpec({ wantedPaths: ["src/**"], execution: ["not", "a", "mapping"] });
   assert.deepEqual(arrayValue.spec.execution, { liveModeOptIn: null });
   assert.match(arrayValue.warnings.join(" "), /execution.*must be a mapping/i);
+
+  // The mapping is PRESENT but the liveModeOptIn key itself is absent -- distinct from `execution` being
+  // omitted entirely (covered by the DEFAULT_MINER_GOAL_SPEC-equality tests elsewhere); falls back with no
+  // warning, same as any other absent optional sub-field.
+  const keyAbsent = parseMinerGoalSpec({ wantedPaths: ["src/**"], execution: {} });
+  assert.deepEqual(keyAbsent.spec.execution, { liveModeOptIn: null });
+  assert.deepEqual(keyAbsent.warnings, []);
 });
 
 test("parseMinerGoalSpec: feasibilityGate sub-fields normalize independently and reject a non-mapping value", () => {

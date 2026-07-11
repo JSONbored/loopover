@@ -54,7 +54,7 @@ export type MinerExecutionPolicy = {
    * unless its own operator separately opts in globally (`GITTENSORY_MINER_LIVE_MODE=live`) — this field alone
    * cannot force a stranger's miner instance live. Default: null (dry-run).
    */
-  liveModeOptIn: string | null;
+  liveModeOptIn: typeof MINER_LIVE_MODE_OPT_IN | null;
 };
 
 /** Per-repo miner configuration parsed from `.gittensory-miner.yml`. See {@link DEFAULT_MINER_GOAL_SPEC}. */

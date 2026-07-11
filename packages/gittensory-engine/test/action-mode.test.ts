@@ -98,3 +98,11 @@ test("buildMinerDryRunGovernorLedgerEvent: records the would-be action without e
     payload: { wouldBeAction: { action: "open_pr", title: "example" } },
   });
 });
+
+test("buildMinerDryRunGovernorLedgerEvent: an omitted repoFullName normalizes to null", () => {
+  const event = buildMinerDryRunGovernorLedgerEvent({
+    actionClass: "open_pr",
+    wouldBeAction: { action: "open_pr" },
+  });
+  assert.equal(event.repoFullName, null);
+});

@@ -81,7 +81,7 @@ export function fingerprintSimilarity(left: string, right: string): number {
     if (setRight.has(token)) intersection += 1;
   }
   const union = setLeft.size + setRight.size - intersection;
-  return union > 0 ? intersection / union : 0;
+  return intersection / union;
 }
 
 function submissionTimeMs(value: string | null | undefined): number | null {
@@ -180,12 +180,13 @@ export function selfPlagiarismCheck(
     ) ??
     nearDuplicates[0]!;
 
+  const matchedPrint = normalizeFingerprint(matched.fingerprint)!;
   return buildVerdict(
     false,
     "throttled",
     "near_duplicate_self_plagiarism",
     matched,
-    bestSimilarity > 0 ? bestSimilarity : fingerprintSimilarity(candidatePrint, normalizeFingerprint(matched.fingerprint) ?? ""),
+    bestSimilarity > 0 ? bestSimilarity : fingerprintSimilarity(candidatePrint, matchedPrint),
   );
 }
 

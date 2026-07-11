@@ -66,14 +66,9 @@ describe("opportunity branch internals", () => {
         goalSpecsByRepo: {
           "other/repo": DEFAULT_MINER_GOAL_SPEC,
           "ACME/Widgets": {
-            minerEnabled: true,
-            wantedPaths: [],
-            blockedPaths: [],
+            ...DEFAULT_MINER_GOAL_SPEC,
             preferredLabels: ["feature"],
-            blockedLabels: [],
-            maxConcurrentClaims: 1,
             issueDiscoveryPolicy: "encouraged",
-            feasibilityGate: { enabled: true, suppressedReasons: [] },
           },
         },
       }).preferredLabels,

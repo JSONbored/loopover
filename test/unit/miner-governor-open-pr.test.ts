@@ -55,4 +55,35 @@ describe("evaluateOpenPrSelfPlagiarism (#2345)", () => {
       matchedPullRequestNumber: 10,
     });
   });
+
+  it("accepts a bare numeric selfPlagiarismConfig threshold", () => {
+    const root = mkdtempSync(join(tmpdir(), "gittensory-miner-governor-open-pr-num-"));
+    roots.push(root);
+    const ledger = initGovernorLedger(join(root, "governor-ledger.sqlite3"));
+    ledgers.push(ledger);
+
+    const shared = "numeric threshold config fingerprint";
+    const { verdict } = evaluateOpenPrSelfPlagiarism(
+      {
+        candidate: {
+          repoFullName: "acme/repo-b",
+          fingerprint: shared,
+          submittedAt: "2026-07-10T12:00:00.000Z",
+          pullRequestNumber: 20,
+        },
+        recentOwnSubmissions: [
+          {
+            repoFullName: "acme/repo-a",
+            fingerprint: shared,
+            submittedAt: "2026-07-10T11:00:00.000Z",
+            pullRequestNumber: 10,
+          },
+        ],
+        selfPlagiarismConfig: 0.85,
+      },
+      { append: (event) => ledger.appendGovernorEvent(event) },
+    );
+
+    expect(verdict.eventType).toBe("throttled");
+  });
 });

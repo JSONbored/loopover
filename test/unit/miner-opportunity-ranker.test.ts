@@ -8,6 +8,7 @@ import {
   rankCandidateIssues,
   rankCandidateIssuesWithSummary,
 } from "../../packages/gittensory-miner/lib/opportunity-ranker.js";
+import { DEFAULT_MINER_GOAL_SPEC } from "../../packages/gittensory-engine/src/miner-goal-spec";
 
 const NOW = Date.parse("2026-07-03T12:00:00.000Z");
 
@@ -135,14 +136,9 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
       nowMs: NOW,
       goalSpecsByRepo: {
         "other/repo": {
-          minerEnabled: true,
-          wantedPaths: [],
-          blockedPaths: [],
+          ...DEFAULT_MINER_GOAL_SPEC,
           preferredLabels: ["feature"],
-          blockedLabels: [],
           maxConcurrentClaims: 2,
-          issueDiscoveryPolicy: "neutral",
-          feasibilityGate: { enabled: true, suppressedReasons: [] },
         },
       },
     });
@@ -154,14 +150,9 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
       nowMs: NOW,
       goalSpecsByRepo: {
         "acme/widgets": {
-          minerEnabled: true,
-          wantedPaths: [],
-          blockedPaths: [],
+          ...DEFAULT_MINER_GOAL_SPEC,
           preferredLabels: ["help wanted"],
-          blockedLabels: [],
           maxConcurrentClaims: 2,
-          issueDiscoveryPolicy: "neutral",
-          feasibilityGate: { enabled: true, suppressedReasons: [] },
         },
       },
     });
@@ -212,14 +203,9 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
         nowMs: NOW,
         goalSpecsByRepo: {
           "acme/widgets": {
-            minerEnabled: true,
-            wantedPaths: [],
-            blockedPaths: [],
+            ...DEFAULT_MINER_GOAL_SPEC,
             preferredLabels: ["documentation"],
-            blockedLabels: [],
             maxConcurrentClaims: 2,
-            issueDiscoveryPolicy: "neutral",
-            feasibilityGate: { enabled: true, suppressedReasons: [] },
           },
         },
       },

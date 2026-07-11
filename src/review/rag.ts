@@ -323,36 +323,80 @@ export async function getStoredChunkMeta(storage: StorageAdapter, project: strin
 }
 
 // ── Embedding (fail-safe: null on any failure) ────────────────────────────────────────────────────
+/** Embed one text in isolation — the fallback when a batch call throws or comes back structurally invalid, so
+ *  the caller can isolate exactly which item(s) are the problem instead of losing every chunk in the batch.
+ *  WARN, not error: a per-item failure here is expected diagnostic detail, already summarized once per
+ *  degraded batch by the caller at error level (mirrors the per-attempt-warn / exhausted-error escalation
+ *  pattern used elsewhere in the AI-review pipeline, #5046). Never logs the text itself — only its length —
+ *  since a RAG chunk is source code from the (possibly private) indexed repo, unlike a model's own commentary. */
+async function embedSingleText(inference: InferenceAdapter, text: string, expectedDimensions: number): Promise<number[] | null> {
+  try {
+    const res = (await inference.run(EMBED_MODEL, { text: [text] })) as { data?: number[][] } | null;
+    const vec = res?.data?.[0];
+    if (Array.isArray(vec) && vec.length === expectedDimensions) return Array.from(vec);
+    console.warn(JSON.stringify({ level: "warn", event: "rag_embed_item_invalid", chars: text.length }));
+    return null;
+  } catch (error) {
+    console.warn(JSON.stringify({ level: "warn", event: "rag_embed_item_error", chars: text.length, message: String(error).slice(0, 200) }));
+    return null;
+  }
+}
+
+/** Embed every text, batched for throughput. A `null` at an index means that ONE text could not be embedded
+ *  (oversized/malformed for the provider, or a genuine per-item failure) — everything else in its batch still
+ *  embeds. The whole call returns `null` only when there is no inference adapter, no input, or an invalid
+ *  batch size configured (#abc-verify's original whole-batch-fails-fast behavior stays for those). */
 export async function embedTexts(
   inference: InferenceAdapter | undefined,
   texts: string[],
   expectedDimensions = RAG_DIMENSIONS,
   batchSize = EMBED_BATCH,
-): Promise<number[][] | null> {
+): Promise<(number[] | null)[] | null> {
   if (!inference || texts.length === 0) return null;
   const effectiveBatchSize = Math.floor(batchSize);
   if (!Number.isFinite(effectiveBatchSize) || effectiveBatchSize < 1) return null;
-  try {
-    const out: number[][] = [];
-    for (let i = 0; i < texts.length; i += effectiveBatchSize) {
-      const batch = texts.slice(i, i + effectiveBatchSize);
+  const out: (number[] | null)[] = [];
+  for (let i = 0; i < texts.length; i += effectiveBatchSize) {
+    const batch = texts.slice(i, i + effectiveBatchSize);
+    let data: number[][] | undefined;
+    let batchError: unknown;
+    try {
       const res = (await inference.run(EMBED_MODEL, { text: batch })) as { data?: number[][] } | null;
-      const data = res?.data;
-      // Validate COUNT and DIMENSION: a self-host embedding endpoint can return a structurally-valid response
-      // with a missing/empty/wrong-width vector — without the dim check a bad vector
-      // slips through and later fails Vectorize.upsert, dropping the whole batch. Fail the batch early. (#abc-verify)
-      if (!Array.isArray(data) || data.length !== batch.length || data.some((v) => !Array.isArray(v) || v.length !== expectedDimensions)) return null;
-      out.push(...data.map((v) => Array.from(v)));
+      data = res?.data;
+    } catch (error) {
+      batchError = error;
     }
-    return out;
-  } catch (error) {
-    // ERROR level (#3894): an embedding-provider failure previously logged at console.log with no `level`,
-    // invisible to the central Sentry forwarder -- mirrors the already-fixed retrieveContextWithMetrics
-    // catch below. Shares its `review_context_fetch_failed`/contextType:"rag" umbrella so both are
-    // searchable together, plus the specific `ev` tag for log continuity.
-    console.error(JSON.stringify({ level: "error", event: "review_context_fetch_failed", contextType: "rag", ev: "rag_embed_error", message: String(error).slice(0, 200) }));
-    return null;
+    // Validate COUNT and DIMENSION: a self-host embedding endpoint can return a structurally-valid response
+    // with a missing/empty/wrong-width vector — without the dim check a bad vector slips through and later
+    // fails Vectorize.upsert. (#abc-verify)
+    if (Array.isArray(data) && data.length === batch.length && data.every((v) => Array.isArray(v) && v.length === expectedDimensions)) {
+      out.push(...data.map((v) => Array.from(v)));
+      continue;
+    }
+    // A single oversized/malformed text (e.g. a dense/minified chunk exceeding the embed model's context
+    // window — the observed cause of production ai_embed_http_400s) previously failed the WHOLE batch, so up
+    // to EMBED_BATCH unrelated chunks lost their RAG context over one bad item. Retry one item at a time so
+    // only the genuinely-unembeddable item(s) are lost; one ERROR-level summary (not one per item) keeps this
+    // Sentry-visible without amplifying a single degraded batch into up to EMBED_BATCH issues (#5046 pattern).
+    const items: (number[] | null)[] = [];
+    for (const text of batch) items.push(await embedSingleText(inference, text, expectedDimensions));
+    const failedCount = items.filter((v) => v === null).length;
+    if (failedCount > 0) {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "review_context_fetch_failed",
+          contextType: "rag",
+          ev: "rag_embed_batch_degraded",
+          batchSize: batch.length,
+          failedCount,
+          ...(batchError ? { message: String(batchError).slice(0, 200) } : {}),
+        }),
+      );
+    }
+    out.push(...items);
   }
+  return out;
 }
 
 // ── Index write (used by ingestion): embed + vector upsert + chunk-text store ─────────────────────
@@ -368,23 +412,30 @@ export async function upsertChunks(infra: RagInfra, project: string, repo: strin
   const namespace = ragNamespace(project, repo);
   const vectors = await embedTexts(inference, chunks.map((c) => c.text), infra.embeddingDimensions ?? RAG_DIMENSIONS, infra.embedBatch ?? EMBED_BATCH);
   if (!vectors) return 0;
+  // A `null` entry means that ONE chunk's text couldn't be embedded (see embedTexts) -- everything else in the
+  // batch still embedded, so only the chunk(s) actually missing a vector are skipped here; a single oversized
+  // chunk no longer drops every other chunk in the same upsertChunks call.
+  const embedded = chunks
+    .map((c, i) => ({ chunk: c, vector: vectors[i] }))
+    .filter((entry): entry is { chunk: RagChunk; vector: number[] } => Array.isArray(entry.vector));
+  if (embedded.length === 0) return 0;
   try {
     await vec.upsert(
-      chunks.map((c, i) => ({
+      embedded.map(({ chunk: c, vector }) => ({
         id: c.id,
-        values: vectors[i] as number[],
+        values: vector,
         namespace,
         metadata: { path: c.path, chunkIndex: c.chunkIndex, kind: c.kind },
       })),
     );
-    const stmts = chunks.map((c) =>
+    const stmts = embedded.map(({ chunk: c }) =>
       db.prepare(
         "INSERT INTO repo_chunks (id, project, repo, path, chunk_index, kind, text, blob_sha) VALUES (?,?,?,?,?,?,?,?) " +
           "ON CONFLICT(id) DO UPDATE SET text=excluded.text, kind=excluded.kind, chunk_index=excluded.chunk_index, blob_sha=excluded.blob_sha, updated_at=CURRENT_TIMESTAMP",
       ).bind(c.id, project, repo, c.path, c.chunkIndex, c.kind, c.text, blobSha ?? null),
     );
     await db.batch(stmts);
-    return chunks.length;
+    return embedded.length;
   } catch (error) {
     // ERROR level (#3894): see embedTexts's catch above -- same invisible-to-Sentry fix, same umbrella.
     console.error(JSON.stringify({ level: "error", event: "review_context_fetch_failed", contextType: "rag", ev: "rag_upsert_error", message: String(error).slice(0, 200) }));

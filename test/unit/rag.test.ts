@@ -283,12 +283,12 @@ describe("rag: fail-safe (never throws; degrades to no context)", () => {
   });
 
   it("embedTexts rejects a wrong-DIMENSION embedding (a non-1024-d model / malformed vector) (#abc-verify)", async () => {
-    expect(await embedTexts(aiThatReturns([[0.1, 0.2]]), ["hi"])).toBeNull(); // 2-d, not 1024
+    expect(await embedTexts(aiThatReturns([[0.1, 0.2]]), ["hi"])).toEqual([null]); // 2-d, not 1024, persists through the per-item retry
     expect((await embedTexts(ai1024, ["hi"]))?.[0]?.length).toBe(1024);
   });
 
   it("embedTexts accepts a configured 768-dimension embedder without weakening the default guard", async () => {
-    expect(await embedTexts(ai768, ["hi"])).toBeNull();
+    expect(await embedTexts(ai768, ["hi"])).toEqual([null]); // 1024-d expected by default, 768-d persists as invalid through the per-item retry
     expect((await embedTexts(ai768, ["hi"], 768))?.[0]?.length).toBe(768);
   });
 
@@ -744,13 +744,14 @@ describe("rag: storage/inference catch paths return their fail-safe defaults", (
     expect(await countRepoChunks(storage, "p", "o/r")).toBe(0);
   });
 
-  it("embedTexts returns null when inference throws", async () => {
+  it("embedTexts degrades to [null] when inference throws for every call (batch AND its per-item retry), still surfacing an ERROR-level Sentry-visible summary", async () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const inference: InferenceAdapter = { run: async () => { throw new Error("ai down"); } };
-    expect(await embedTexts(inference, ["hi"])).toBeNull();
-    // #3894: previously a no-level console.log, invisible to Sentry.
+    expect(await embedTexts(inference, ["hi"])).toEqual([null]);
+    // #3894: previously a no-level console.log, invisible to Sentry. Now logged once as a batch-degraded
+    // summary (#observability-unparseable-continuation), not the old whole-batch rag_embed_error.
     const parsed = errSpy.mock.calls.map((c) => JSON.parse(c[0] as string));
-    expect(parsed.some((p) => p.level === "error" && p.event === "review_context_fetch_failed" && p.contextType === "rag" && p.ev === "rag_embed_error")).toBe(true);
+    expect(parsed.some((p) => p.level === "error" && p.event === "review_context_fetch_failed" && p.contextType === "rag" && p.ev === "rag_embed_batch_degraded" && p.message?.includes("ai down"))).toBe(true);
     errSpy.mockRestore();
   });
 
@@ -843,20 +844,23 @@ describe("rag: formatRetrievedContext budget omission", () => {
 
 // ── embedTexts: the remaining validation branches in the OR-guard (#abc-verify) ───────────────────────
 describe("rag: embedTexts validation branches", () => {
-  it("returns null when `data` is missing entirely (not an array)", async () => {
-    // res.data === undefined → !Array.isArray(data) is the FIRST OR clause
-    expect(await embedTexts(aiThatReturns(undefined), ["hi"])).toBeNull();
+  it("returns [null] when `data` is missing entirely (not an array), even after the per-item retry", async () => {
+    // res.data === undefined on every call (batch AND the per-item retry) → !Array.isArray(data) is the FIRST
+    // OR clause, persistently -- this text is genuinely unembeddable with this (broken) adapter.
+    expect(await embedTexts(aiThatReturns(undefined), ["hi"])).toEqual([null]);
   });
 
-  it("returns null on a COUNT mismatch (fewer vectors than inputs)", async () => {
-    // data.length(1) !== batch.length(2) → the SECOND OR clause; both vectors are correctly 1024-d
-    const ai = aiThatReturns([Array(1024).fill(0.1)]);
-    expect(await embedTexts(ai, ["one", "two"])).toBeNull();
+  it("degrades to per-item nulls on a persistent COUNT mismatch (a provider that always returns zero vectors)", async () => {
+    // data.length(0) !== batch.length -- true for the batch call AND every per-item retry, so both inputs end
+    // up null rather than the whole call failing outright (#observability-unparseable-continuation).
+    const ai = aiThatReturns([]);
+    expect(await embedTexts(ai, ["one", "two"])).toEqual([null, null]);
   });
 
-  it("returns null when an inner element is not an array (the `!Array.isArray(v)` leg)", async () => {
-    // a structurally-valid response whose single 'vector' is a number, not an array
-    expect(await embedTexts(aiThatReturns([42]), ["hi"])).toBeNull();
+  it("returns [null] when an inner element is not an array (the `!Array.isArray(v)` leg), even after the per-item retry", async () => {
+    // a structurally-valid response whose single 'vector' is a number, not an array -- true for the batch call
+    // and the per-item retry (same fixed-response mock), so this text stays unembeddable.
+    expect(await embedTexts(aiThatReturns([42]), ["hi"])).toEqual([null]);
   });
 
   it("embeds ACROSS multiple batches (>EMBED_BATCH=96 inputs → the for-loop iterates more than once)", async () => {
@@ -900,18 +904,73 @@ describe("rag: embedTexts validation branches", () => {
     expect(calls).toEqual([50, 50, 50]); // three batches of 50, not the default 96/54 split
   });
 
-  it("fails the WHOLE embed when a LATER batch is malformed (early-return mid-loop)", async () => {
+  it("REGRESSION (#observability-unparseable-continuation, was 'fails the WHOLE embed when a LATER batch is malformed'): a malformed LATER batch degrades to per-item nulls for ONLY that batch — the earlier good batch's real vectors are kept, not discarded", async () => {
     let call = 0;
     const inference: InferenceAdapter = {
       run: async (_model, options) => {
         const batch = (options as { text: string[] }).text;
         call += 1;
-        // first batch good (1024-d), second batch wrong width (2-d) → returns null from inside the loop
+        // first batch (call 1) good (1024-d); every later call (the second batch AND its per-item retries)
+        // wrong width (2-d) -- proves a bad SECOND batch no longer erases the first batch's real vectors.
         return { data: batch.map(() => (call === 1 ? Array(1024).fill(0.1) : [0.1, 0.2])) };
       },
     };
     const texts = Array.from({ length: 150 }, (_, i) => `t${i}`);
-    expect(await embedTexts(inference, texts)).toBeNull();
+    const out = await embedTexts(inference, texts);
+    expect(out).not.toBeNull();
+    expect(out?.length).toBe(150);
+    expect(out?.slice(0, 96).every((v) => Array.isArray(v) && v.length === 1024)).toBe(true);
+    expect(out?.slice(96).every((v) => v === null)).toBe(true);
+  });
+
+  it("REGRESSION (#observability-unparseable-continuation, the ai_embed_http_400 production bug): a single throwing item in a batch does not fail its whole-batch siblings — only that one item is skipped", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const inference: InferenceAdapter = {
+      run: async (_model, options) => {
+        const batch = (options as { text: string[] }).text;
+        // Simulate one oversized chunk exceeding the embed model's context window: any batch CONTAINING it
+        // throws (as Ollama's /embeddings endpoint does for one bad item in a batched request) -- including
+        // the initial 3-item batch -- but a single-item retry for the good texts succeeds, so only the
+        // oversized one keeps failing.
+        if (batch.includes("oversized")) throw new Error("ai_embed_http_400: the input length exceeds the context length");
+        return { data: batch.map(() => Array(1024).fill(0.1)) };
+      },
+    };
+    const out = await embedTexts(inference, ["fine-1", "oversized", "fine-2"]);
+    expect(out).not.toBeNull();
+    expect(out?.length).toBe(3);
+    expect(out?.[0]).toEqual(Array(1024).fill(0.1));
+    expect(out?.[1]).toBeNull();
+    expect(out?.[2]).toEqual(Array(1024).fill(0.1));
+    const degraded = errorSpy.mock.calls.map((c) => c[0]).find((l) => typeof l === "string" && l.includes("rag_embed_batch_degraded"));
+    expect(degraded).toBeDefined();
+    expect(JSON.parse(degraded as string)).toMatchObject({ level: "error", ev: "rag_embed_batch_degraded", batchSize: 3, failedCount: 1 });
+    expect(warnSpy.mock.calls.some((c) => typeof c[0] === "string" && c[0].includes("rag_embed_item_error"))).toBe(true);
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it("logs nothing when a batch-level glitch self-heals — every item succeeds once retried individually (failedCount === 0)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let batchCalls = 0;
+    const inference: InferenceAdapter = {
+      run: async (_model, options) => {
+        const batch = (options as { text: string[] }).text;
+        // Simulate a provider that rejects a >1-item request (e.g. a self-host concurrency limit) but is
+        // perfectly happy embedding the SAME texts one at a time.
+        if (batch.length > 1) {
+          batchCalls += 1;
+          throw new Error("too many concurrent inputs");
+        }
+        return { data: [Array(1024).fill(0.1)] };
+      },
+    };
+    const out = await embedTexts(inference, ["one", "two"]);
+    expect(batchCalls).toBe(1);
+    expect(out).toEqual([Array(1024).fill(0.1), Array(1024).fill(0.1)]);
+    expect(errorSpy.mock.calls.some((c) => typeof c[0] === "string" && c[0].includes("rag_embed_batch_degraded"))).toBe(false);
+    errorSpy.mockRestore();
   });
 });
 

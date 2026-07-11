@@ -1,11 +1,8 @@
 import {
-  countOpenIssues,
-  countOpenPullRequests,
   listOpenItemsForAuthorAcrossInstall,
   type OpenItemAcrossInstallRow,
   getAgentCommandAnswer,
   getInstallation,
-  getLatestRepoGithubTotalsSnapshot,
   getFreshOfficialMinerDetection,
   getPullRequest,
   getPullRequestDetailSyncState,
@@ -27,8 +24,6 @@ import {
   listIssues,
   listIssueSignalSample,
   listLatestSignalSnapshotsByTarget,
-  listSignalSnapshots,
-  listRepoGithubTotalsSnapshotHistory,
   listOtherOpenPullRequests,
   listOtherOpenPullRequestsForAuthor,
   listOpenIssues,
@@ -37,7 +32,6 @@ import {
   listPullRequestFiles,
   listRecentMergedPullRequests,
   updatePullRequestSlopAssessment,
-  listRepoLabels,
   listRepoPullRequestFilePaths,
   listRepoSyncStates,
   listRepoSyncSegments,
@@ -87,8 +81,6 @@ import {
   recordAiUsageEvent,
   persistSignalSnapshot,
   recordWebhookEvent,
-  replaceCollisionEdges,
-  upsertRepoQueueTrendSnapshot,
   upsertAgentCommandAnswer,
   upsertCheckSummary,
   upsertOfficialMinerDetection,
@@ -329,14 +321,6 @@ import { loadIssueQualityReportMap } from "../services/issue-quality";
 import { generateWeeklyValueReport } from "../services/weekly-value-report";
 import { generateAndSendReviewRecap } from "../services/review-recap";
 import {
-  REPO_OUTCOME_PATTERNS_SIGNAL,
-  computeRepoOutcomePatterns,
-} from "../services/repo-outcome-patterns";
-import {
-  buildQueueTrendReport,
-  QUEUE_TREND_HISTORY_DAYS,
-} from "../services/queue-trends";
-import {
   fileUpstreamDriftIssues,
   refreshUpstreamDrift,
 } from "../upstream/ruleset";
@@ -346,21 +330,14 @@ import {
 } from "../signals/data-quality";
 import {
   buildBurdenForecast,
-  buildCollisionEdges,
   buildCollisionReport,
   isPullRequestInDuplicateCluster,
-  buildConfigQuality,
   buildContributorFit,
   buildContributorOutcomeHistory,
   buildContributorProfile,
   buildContributorScoringProfile,
   buildContributorStrategy,
   buildDuplicateWinnerRelatedWorkView,
-  buildContributorIntakeHealth,
-  buildIssueQualityReport,
-  buildLabelAudit,
-  buildMaintainerCutReadiness,
-  buildMaintainerLaneReport,
   buildPreflightResult,
   buildPublicPrIntelligenceComment,
   buildPublicPrPanelSignalRows,
@@ -393,6 +370,14 @@ import {
 // unchanged -- those tests are deeply interspersed with unrelated ones in that file family, not in a cleanly
 // extractable describe block, so relocating them is deliberately deferred rather than forced into this PR.
 export { claimPrActuationLock, releasePrActuationLock } from "./transient-locks";
+// #4013 step 2: same shim shape for generateSignalSnapshots -- imported here for processJob's own internal
+// call below, and re-exported so src/api/routes.ts and test/unit/queue-trends.test.ts's existing
+// `import { generateSignalSnapshots } from "../../src/queue/processors"` keeps working unchanged.
+// loadOpenQueueCounts moved there too (it has no other callers besides generateSignalSnapshots and this
+// file's own buildBurdenForecasts) rather than staying here and importing back, which would have made the
+// two files circularly dependent.
+import { generateSignalSnapshots, loadOpenQueueCounts } from "./signal-snapshot";
+export { generateSignalSnapshots } from "./signal-snapshot";
 import { isVisualPath } from "../review/visual/paths";
 import { buildCapture, fetchShotContentBlock, hasSuccessfulBotCapture, resolveVisualRoutes, type CaptureRoute } from "../review/visual/capture";
 import {
@@ -5352,203 +5337,6 @@ async function buildBurdenForecasts(
       generatedAt: forecast.generatedAt,
     });
   }
-}
-
-export async function generateSignalSnapshots(
-  env: Env,
-  repoFullName?: string,
-): Promise<void> {
-  const repositories = (await listRepositories(env)).filter(
-    (repo) =>
-      repo.isRegistered && (!repoFullName || repo.fullName === repoFullName),
-  );
-  for (const repo of repositories) {
-    const trendSince = new Date(
-      Date.now() - QUEUE_TREND_HISTORY_DAYS * 24 * 60 * 60 * 1000,
-    ).toISOString();
-    const [
-      issues,
-      pullRequests,
-      recentMergedPullRequests,
-      labels,
-      queueCounts,
-      bounties,
-      totalsHistory,
-      queueHealthHistory,
-    ] = await Promise.all([
-      listIssueSignalSample(env, repo.fullName),
-      listOpenPullRequests(env, repo.fullName),
-      listRecentMergedPullRequests(env, repo.fullName),
-      listRepoLabels(env, repo.fullName),
-      loadOpenQueueCounts(env, repo.fullName),
-      listBountiesByRepo(env, repo.fullName),
-      listRepoGithubTotalsSnapshotHistory(env, repo.fullName, {
-        sinceIso: trendSince,
-        limit: 120,
-      }),
-      listSignalSnapshots(env, "queue-health", repo.fullName),
-    ]);
-    const collisions = buildCollisionReport(
-      repo.fullName,
-      issues,
-      pullRequests,
-      recentMergedPullRequests,
-    );
-    const queueHealth = buildQueueHealth(
-      repo,
-      issues,
-      pullRequests,
-      collisions,
-      queueCounts,
-    );
-    const configQuality = buildConfigQuality(
-      repo,
-      issues,
-      pullRequests,
-      repo.fullName,
-    );
-    const labelAudit = buildLabelAudit(
-      repo,
-      labels,
-      issues,
-      pullRequests,
-      repo.fullName,
-    );
-    const maintainerLane = buildMaintainerLaneReport(
-      repo,
-      issues,
-      pullRequests,
-      repo.fullName,
-      collisions,
-      queueCounts,
-    );
-    const maintainerCutReadiness = buildMaintainerCutReadiness(
-      repo,
-      issues,
-      pullRequests,
-      repo.fullName,
-      queueCounts,
-      collisions,
-    );
-    const contributorIntakeHealth = buildContributorIntakeHealth(
-      repo,
-      issues,
-      pullRequests,
-      repo.fullName,
-      collisions,
-      queueCounts,
-    );
-    const issueQuality = buildIssueQualityReport(
-      repo,
-      issues,
-      pullRequests,
-      repo.fullName,
-      bounties,
-      collisions,
-      recentMergedPullRequests,
-    );
-    await replaceCollisionEdges(
-      env,
-      repo.fullName,
-      buildCollisionEdges(collisions),
-    );
-    const generatedAt = new Date().toISOString();
-    await persistSignalSnapshot(env, {
-      id: crypto.randomUUID(),
-      signalType: "queue-health",
-      targetKey: repo.fullName,
-      repoFullName: repo.fullName,
-      payload: queueHealth as unknown as Record<string, never>,
-      generatedAt,
-    });
-    await upsertRepoQueueTrendSnapshot(env, {
-      repoFullName: repo.fullName,
-      payload: buildQueueTrendReport({
-        repoFullName: repo.fullName,
-        totalsSnapshots: totalsHistory,
-        queueHealthSnapshots: queueHealthHistory,
-        currentQueueHealth: queueHealth,
-        generatedAt,
-      }) as unknown as Record<string, never>,
-      generatedAt,
-    });
-    await persistSignalSnapshot(env, {
-      id: crypto.randomUUID(),
-      signalType: "config-quality",
-      targetKey: repo.fullName,
-      repoFullName: repo.fullName,
-      payload: configQuality as unknown as Record<string, never>,
-      generatedAt,
-    });
-    await persistSignalSnapshot(env, {
-      id: crypto.randomUUID(),
-      signalType: "label-audit",
-      targetKey: repo.fullName,
-      repoFullName: repo.fullName,
-      payload: labelAudit as unknown as Record<string, never>,
-      generatedAt,
-    });
-    await persistSignalSnapshot(env, {
-      id: crypto.randomUUID(),
-      signalType: "maintainer-lane",
-      targetKey: repo.fullName,
-      repoFullName: repo.fullName,
-      payload: maintainerLane as unknown as Record<string, never>,
-      generatedAt,
-    });
-    await persistSignalSnapshot(env, {
-      id: crypto.randomUUID(),
-      signalType: "maintainer-cut-readiness",
-      targetKey: repo.fullName,
-      repoFullName: repo.fullName,
-      payload: maintainerCutReadiness as unknown as Record<string, never>,
-      generatedAt,
-    });
-    await persistSignalSnapshot(env, {
-      id: crypto.randomUUID(),
-      signalType: "contributor-intake-health",
-      targetKey: repo.fullName,
-      repoFullName: repo.fullName,
-      payload: contributorIntakeHealth as unknown as Record<string, never>,
-      generatedAt,
-    });
-    await persistSignalSnapshot(env, {
-      id: crypto.randomUUID(),
-      signalType: "issue-quality",
-      targetKey: repo.fullName,
-      repoFullName: repo.fullName,
-      payload: issueQuality as unknown as Record<string, never>,
-      generatedAt,
-    });
-    const repoOutcomePatterns = await computeRepoOutcomePatterns(
-      env,
-      repo.fullName,
-      repo,
-    );
-    await persistSignalSnapshot(env, {
-      id: crypto.randomUUID(),
-      signalType: REPO_OUTCOME_PATTERNS_SIGNAL,
-      targetKey: repo.fullName,
-      repoFullName: repo.fullName,
-      payload: repoOutcomePatterns as unknown as Record<string, never>,
-      generatedAt,
-    });
-  }
-}
-
-async function loadOpenQueueCounts(
-  env: Env,
-  repoFullName: string,
-): Promise<{ openIssues: number; openPullRequests: number }> {
-  const [totals, openIssues, openPullRequests] = await Promise.all([
-    getLatestRepoGithubTotalsSnapshot(env, repoFullName),
-    countOpenIssues(env, repoFullName),
-    countOpenPullRequests(env, repoFullName),
-  ]);
-  return {
-    openIssues: totals?.openIssuesTotal ?? openIssues,
-    openPullRequests: totals?.openPullRequestsTotal ?? openPullRequests,
-  };
 }
 
 /**

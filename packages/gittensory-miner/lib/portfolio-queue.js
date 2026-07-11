@@ -105,6 +105,11 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
   const markDoneStatement = db.prepare(
     "UPDATE miner_portfolio_queue SET status = 'done' WHERE repo_full_name = ? AND identifier = ? AND status <> 'done'",
   );
+  const markFailedStatement = db.prepare(`
+    UPDATE miner_portfolio_queue SET status = 'queued'
+    WHERE repo_full_name = ? AND identifier = ? AND status = 'in_progress'
+    RETURNING *
+  `);
   const listAllStatement = db.prepare(`SELECT * FROM miner_portfolio_queue ${ORDER}`);
   const listRepoStatement = db.prepare(
     `SELECT * FROM miner_portfolio_queue WHERE repo_full_name = ? ${ORDER}`,
@@ -144,6 +149,13 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
       const result = markDoneStatement.run(normalizedRepo, normalizedIdentifier);
       if (result.changes === 0) return null;
       const row = getStatement.get(normalizedRepo, normalizedIdentifier);
+      return row ? rowToEntry(row) : null;
+    },
+    /** Release an in-flight item back to `queued` when a run halts (#2347). */
+    markFailed(repoFullName, identifier) {
+      const normalizedRepo = normalizeRepoFullName(repoFullName);
+      const normalizedIdentifier = normalizeIdentifier(identifier);
+      const row = markFailedStatement.get(normalizedRepo, normalizedIdentifier);
       return row ? rowToEntry(row) : null;
     },
     /**
@@ -196,6 +208,10 @@ export function listQueue(repoFullName) {
 
 export function markDone(repoFullName, identifier) {
   return getDefaultPortfolioQueueStore().markDone(repoFullName, identifier);
+}
+
+export function markFailed(repoFullName, identifier) {
+  return getDefaultPortfolioQueueStore().markFailed(repoFullName, identifier);
 }
 
 export function closeDefaultPortfolioQueueStore() {

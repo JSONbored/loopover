@@ -1265,6 +1265,51 @@ describe("queue processors", () => {
       const suppressed = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.command_redelivery_suppressed'").first<{ n: number }>();
       expect(suppressed?.n).toBe(1);
     });
+
+    it("#4595: a full @gittensory chat dispatch reaches generateChatQaAnswer end-to-end (proves the wiring, not the AI happy path already covered by ai-chat-qa.test.ts/github-commands.test.ts)", async () => {
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI_ADVISORY: { run: async () => ({ response: "The PR is blocked because CI is failing." }) } as unknown as Ai,
+      });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 307, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
+      const seen = { comments: [] as string[] };
+      // advisoryAiRouting is config-as-code only (never DB-writable via upsertRepositorySettings) — enable
+      // chatQa the real way, through the repo's published `.gittensory.yml` raw-fetch, same as production.
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("raw.githubusercontent.com") && url.includes(".gittensory.yml")) {
+          return new Response("settings:\n  advisoryAiRouting:\n    chatQa: true\n", { status: 200 });
+        }
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
+        if (url.includes("/issues/307/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/307/comments") && method === "POST") {
+          seen.comments.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? ""));
+          return Response.json({ id: seen.comments.length }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      await processJob(env, { type: "github-webhook", deliveryId: "chat-full-dispatch", eventName: "issue_comment", payload: mentionPayload(307, "@gittensory chat why is this blocked?") });
+      expect(seen.comments).toHaveLength(1);
+      expect(seen.comments[0]).toContain("Grounded chat Q&A");
+      // A brand-new synthetic PR has no pre-existing decision-pack snapshot, so the bundle is naturally
+      // "needs_snapshot_refresh" here -- that's fine: this test's job is proving processors.ts actually reaches
+      // and calls generateChatQaAnswer for a real "chat" webhook (chatQa enabled, not the "disabled" text), not
+      // exercising the AI happy path (already covered directly in ai-chat-qa.test.ts and github-commands.test.ts).
+      expect(seen.comments[0]).toContain("The cached contribution-context snapshot is still refreshing");
+      expect(seen.comments[0]).not.toContain("not enabled on this instance");
+    });
+
+    it("#4595: chat declines gracefully end-to-end (never posts model text) when chatQa is off, the default", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 308, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
+      const seen = { comments: [] as string[] };
+      stubCommandRateLimitFetch(308, seen);
+      await processJob(env, { type: "github-webhook", deliveryId: "chat-default-off", eventName: "issue_comment", payload: mentionPayload(308, "@gittensory chat why is this blocked?") });
+      expect(seen.comments).toHaveLength(1);
+      expect(seen.comments[0]).toContain("not enabled on this instance");
+    });
   });
 
   it("denies a maintainer Q&A command from an org member without real repo permission (#788)", async () => {
@@ -5830,6 +5875,135 @@ describe("queue processors", () => {
         `select outcome, detail from audit_events where event_type = 'github_app.type_label_decision' and target_key = 'JSONbored/gittensory#223'`,
       ).all();
       expect(events.results).toEqual([{ outcome: "denied", detail: "lock_contended" }]);
+    });
+
+    describe("review-family events never touch the type label (#4818 follow-up)", () => {
+      const REVIEW_FAMILY_WEBHOOKS: Array<{ eventName: string; action: string; extra?: Record<string, unknown> }> = [
+        { eventName: "pull_request_review", action: "submitted", extra: { review: { state: "approved", user: { login: "maintainer" }, submitted_at: "2026-07-11T02:26:36.000Z" } } },
+        { eventName: "pull_request_review_comment", action: "created", extra: { comment: { id: 1, user: { login: "maintainer" } } } },
+        { eventName: "pull_request_review_thread", action: "resolved", extra: { thread: { comments: [] } } },
+      ];
+
+      for (const webhook of REVIEW_FAMILY_WEBHOOKS) {
+        it(`skips the type-label recompute entirely (never even fetches the linked issue) on a ${webhook.eventName}:${webhook.action} webhook`, async () => {
+          const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+          await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+          await upsertRepositorySettings(env, {
+            repoFullName: "JSONbored/gittensory",
+            commentMode: "off",
+            publicSurface: "label_only",
+            autoLabelEnabled: true,
+            createMissingLabel: false,
+            checkRunMode: "off",
+            gateCheckMode: "enabled", reviewCheckMode: "required",
+            linkedIssueGateMode: "off",
+            aiReviewMode: "off",
+            linkedIssueLabelPropagation: {
+              enabled: true,
+              mode: "exclusive_type_label",
+              mappings: [{ issueLabel: "gittensor:feature", prLabel: "gittensor:feature", removeOtherTypeLabels: true }],
+            },
+          });
+          const seen = { posted: [] as string[], removed: [] as string[], issueFetches: 0 };
+          stubPropagationFetch(4818, 2192, seen, () => Response.json({ number: 2192, state: "closed", closed_at: "2026-07-11T02:26:25Z", user: { login: "JSONbored" }, labels: ["gittensor:feature"] }));
+
+          await processJob(env, {
+            type: "github-webhook",
+            deliveryId: `review-family-skip-${webhook.eventName}`,
+            eventName: webhook.eventName,
+            payload: {
+              action: webhook.action,
+              installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+              repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+              pull_request: {
+                number: 4818,
+                title: "feat(ui): confidence-calibration curve card on the analytics dashboard",
+                state: "open",
+                // The exact #4818 shape: this event's own embedded snapshot predates the merge (null merged_at)
+                // even though the linked issue is already closed -- if this reached the label block at all, it
+                // would hit the ambiguous branch. It must never get that far.
+                merged_at: null,
+                user: { login: "andriypolanski" },
+                author_association: "NONE",
+                head: { sha: "sha4818" },
+                labels: [],
+                body: "Closes #2192",
+              },
+              ...(webhook.extra ?? {}),
+            },
+          });
+
+          expect(seen.issueFetches).toBe(0);
+          expect(seen.posted).toEqual([]);
+          expect(seen.removed).toEqual([]);
+          const events = await env.DB.prepare(
+            `select outcome, detail from audit_events where event_type = 'github_app.type_label_decision' and target_key = 'JSONbored/gittensory#4818'`,
+          ).all();
+          expect(events.results).toEqual([{ outcome: "denied", detail: "irrelevant_review_family_event" }]);
+        });
+      }
+
+      it("REGRESSION (#4818 shape): a pull_request_review webhook leaves an already-correctly-propagated label untouched, where a same-shaped pull_request webhook would have hit the ambiguous branch", async () => {
+        const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+        await upsertRepositoryFromGitHub(env, { name: "widget", full_name: "acme/widget", private: false, owner: { login: "acme" } }, 123);
+        await upsertRepositorySettings(env, {
+          repoFullName: "acme/widget",
+          commentMode: "off",
+          publicSurface: "label_only",
+          autoLabelEnabled: true,
+          createMissingLabel: false,
+          checkRunMode: "off",
+          gateCheckMode: "enabled", reviewCheckMode: "required",
+          linkedIssueGateMode: "off",
+          aiReviewMode: "off",
+          linkedIssueLabelPropagation: {
+            enabled: true,
+            mode: "exclusive_type_label",
+            mappings: [{ issueLabel: "gittensor:feature", prLabel: "gittensor:feature", removeOtherTypeLabels: true }],
+          },
+        });
+        const seen = { posted: [] as string[], removed: [] as string[], issueFetches: 0 };
+        stubPropagationFetch(9001, 501, seen, () => Response.json({ number: 501, state: "open", user: { login: "contributor" }, labels: ["gittensor:feature"] }));
+
+        // Pass 1: PR opened while the issue is still open -- propagates gittensor:feature correctly.
+        await processJob(env, {
+          type: "github-webhook",
+          deliveryId: "pass-1-opened",
+          eventName: "pull_request",
+          payload: {
+            action: "opened",
+            installation: { id: 123, account: { login: "acme", id: 1, type: "User" } },
+            repository: { name: "widget", full_name: "acme/widget", private: false, owner: { login: "acme" } },
+            pull_request: { number: 9001, title: "fix: some bug", state: "open", user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha9001a" }, labels: [], body: "Closes #501" },
+          },
+        });
+        expect(seen.posted).toEqual(["gittensor:feature"]);
+        // Pass 1's own mutual-exclusivity cleanup (feature applied -> bug/priority removed from the type-label
+        // set) -- captured here so pass 2's assertions below can prove it added NOTHING further, not just that
+        // the array happens to be empty.
+        const removedAfterPass1 = [...seen.removed].sort();
+        expect(removedAfterPass1).toEqual(["gittensor:bug", "gittensor:priority"]);
+
+        // Pass 2: a review submitted with a stale, pre-merge embedded snapshot (merged_at: null) arriving after
+        // the issue has since closed -- the exact #4818 race. Must be skipped entirely, not reach the ambiguous
+        // branch (which a same-shaped pull_request webhook would).
+        await processJob(env, {
+          type: "github-webhook",
+          deliveryId: "pass-2-stale-review",
+          eventName: "pull_request_review",
+          payload: {
+            action: "submitted",
+            installation: { id: 123, account: { login: "acme", id: 1, type: "User" } },
+            repository: { name: "widget", full_name: "acme/widget", private: false, owner: { login: "acme" } },
+            pull_request: { number: 9001, title: "fix: some bug", state: "open", merged_at: null, user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha9001a" }, labels: [], body: "Closes #501" },
+            review: { state: "approved", user: { login: "maintainer" }, submitted_at: "2026-07-11T02:26:36.000Z" },
+          },
+        });
+
+        // Still exactly the one post + the one cleanup from pass 1 -- pass 2 added nothing further.
+        expect(seen.posted).toEqual(["gittensor:feature"]);
+        expect(seen.removed).toEqual(removedAfterPass1);
+      });
     });
 
     it("never fetches a linked issue and keeps normal behavior when propagation is left at its default (disabled) (#priority-linked-issue-gate)", async () => {

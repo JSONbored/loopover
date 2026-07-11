@@ -31,6 +31,7 @@ export type PortfolioQueueManager = {
   enqueue(item: EnqueueItem): QueueEntry;
   listQueue(repoFullName?: string | null): QueueEntry[];
   markDone(repoFullName: string, identifier: string): QueueEntry | null;
+  markFailed(repoFullName: string, identifier: string): QueueEntry | null;
   claimNextBatch(): QueueEntry[];
   close(): void;
 };

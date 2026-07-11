@@ -20,6 +20,7 @@ export type PortfolioQueueStore = {
   dequeueNext(): QueueEntry | null;
   listQueue(repoFullName?: string | null): QueueEntry[];
   markDone(repoFullName: string, identifier: string): QueueEntry | null;
+  markFailed(repoFullName: string, identifier: string): QueueEntry | null;
   batchClaim(
     selectFn: (entries: QueueEntry[]) => Array<{ repoFullName: string; identifier: string }>,
   ): QueueEntry[];
@@ -39,5 +40,7 @@ export function dequeueNext(): QueueEntry | null;
 export function listQueue(repoFullName?: string | null): QueueEntry[];
 
 export function markDone(repoFullName: string, identifier: string): QueueEntry | null;
+
+export function markFailed(repoFullName: string, identifier: string): QueueEntry | null;
 
 export function closeDefaultPortfolioQueueStore(): void;

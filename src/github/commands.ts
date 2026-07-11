@@ -6,6 +6,7 @@ import {
 } from "./command-suggest";
 import { gittensoryFooter, GITTENSORY_SITE_URL, type GittensoryFooterEnv } from "./footer";
 import type { AgentRunBundle } from "../services/agent-orchestrator";
+import type { ChatQaResult } from "../services/ai-chat-qa";
 import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } from "../gittensor/api";
 import type { AgentActionRecord, RepositoryCommandAuthorizationPolicy } from "../types";
 import type { CheckSummaryRecord, GitHubIssuePayload, IssueRecord, PullRequestRecord, RecentMergedPullRequestRecord, RepositoryRecord } from "../types";
@@ -28,6 +29,7 @@ import { buildMaintainerNoiseReport, type MaintainerNoiseReport } from "../signa
 const PUBLIC_MENTION_COMMAND_CATALOG = [
   { id: "help", title: "Gittensory command help", description: "Show public-safe @gittensory command help." },
   { id: "ask", title: "Gittensory contribution context Q&A", description: "Answer contribution-quality questions from connected cached sources with citations." },
+  { id: "chat", title: "Gittensory grounded chat Q&A", description: "Answer a question in natural prose from cached decision-pack facts via local Ollama (maintainer/collaborator; read-only)." },
   { id: "preflight", title: "Gittensory preflight", description: "Summarize public PR hygiene and validation readiness." },
   { id: "blockers", title: "Gittensory readiness blockers", description: "Explain public-safe readiness blockers." },
   { id: "duplicate-check", title: "Gittensory duplicate & WIP check", description: "Summarize duplicate and in-progress overlap caution." },
@@ -54,7 +56,9 @@ export const GITTENSORY_MENTION_COMMAND_CATALOG = [...PUBLIC_MENTION_COMMAND_CAT
 
 export type GittensoryMentionCommandName = (typeof GITTENSORY_MENTION_COMMAND_CATALOG)[number]["id"];
 export type MaintainerQueueDigestCommandName = (typeof MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG)[number]["id"];
-type SnapshotCommandName = Exclude<GittensoryMentionCommandName, "help" | "miner-context" | MaintainerQueueDigestCommandName>;
+// `chat` (#4595) is excluded like help/miner-context: it renders a bespoke LLM-answer card (buildChatPublicAnswerCard),
+// not the deterministic snapshot-section path, so it needs no REFRESH_/EMPTY_SECTION_TITLES entry.
+type SnapshotCommandName = Exclude<GittensoryMentionCommandName, "help" | "miner-context" | "chat" | MaintainerQueueDigestCommandName>;
 
 // Action commands are NOT Q&A: they perform a side effect (handled before the mention-command path) rather
 // than producing a public answer card. They are intentionally kept OUT of the Q&A catalog/unions so the
@@ -135,6 +139,8 @@ type PublicAnswerCard = {
   nextActions: string[];
   sourceNotes: string[];
   safeDetails?: string[] | undefined;
+  /** Fixed, non-LLM footer stamped verbatim on the card (only `@gittensory chat` sets it, #4595 req 9). */
+  disclaimer?: string | undefined;
 };
 
 export type AgentCommandFeedbackContext = {
@@ -268,7 +274,7 @@ export function parseGittensoryMentionCommand(body: string | null | undefined): 
     const name = requested as GittensoryMentionCommandName;
     // match[2] is always defined for the same reason as the action-command path above.
     /* v8 ignore next */
-    const question = name === "ask" ? (match[2] ?? "").trim() : undefined;
+    const question = name === "ask" || name === "chat" ? (match[2] ?? "").trim() : undefined;
     return {
       name,
       raw: match[0].trim(),
@@ -320,6 +326,7 @@ export function isGittensoryActionCommand(name: GittensoryMentionCommandName | G
 // limit to the AI-cost-bearing surface than the cheap one.
 const AI_COST_BEARING_COMMANDS = new Set<GittensoryMentionCommandName>([
   "ask",
+  "chat",
   "blockers",
   "preflight",
   "reviewability",
@@ -352,6 +359,12 @@ export function isAuthorizedCommandActor(args: {
   return { authorized: decision.authorized, reason: decision.reason, actorKind: decision.actorKind };
 }
 
+/** Fixed, non-LLM disclaimer stamped on every `@gittensory chat` answer card (#4595 req 9). Deliberately NOT run
+ *  through neutralizePublicMarkdownText so the `@gittensory review` code span renders; it carries no forbidden
+ *  terms, so the whole-body sanitizePublicComment pass leaves it byte-for-byte intact. */
+export const CHAT_QA_DISCLAIMER =
+  "Read-only informational reply — cannot change review outcomes, gate state, or trigger a re-review. To retrigger a review, comment `@gittensory review`.";
+
 export function buildPublicAgentCommandComment(args: {
   command: GittensoryMentionCommand;
   repo: RepositoryRecord | null;
@@ -362,6 +375,9 @@ export function buildPublicAgentCommandComment(args: {
   officialMiner?: GittensorContributorSnapshot | null | undefined;
   bundle?: AgentRunBundle | null | undefined;
   maintainerDigest?: MaintainerQueueDigest | null | undefined;
+  /** Grounded `@gittensory chat` answer (#4595). Only read when `command.name === "chat"`; the dispatcher
+   *  resolves it via generateChatQaAnswer before composing the card. */
+  chatAnswer?: ChatQaResult | null | undefined;
   /** Resolved by the caller from `env.PUBLIC_SITE_ORIGIN` -- see `gittensoryFooter` (#4613). */
   env: GittensoryFooterEnv;
 }): string {
@@ -384,7 +400,8 @@ export function buildPublicAgentCommandComment(args: {
     bundle: args.bundle,
     officialMiner: args.officialMiner,
     actorKind: args.actorKind,
-    question: commandName === "ask" ? args.command.question : undefined,
+    question: commandName === "ask" || commandName === "chat" ? args.command.question : undefined,
+    chatAnswer: args.chatAnswer,
   });
   const body = [
     AGENT_COMMAND_COMMENT_MARKER,
@@ -422,9 +439,13 @@ function buildPublicAnswerCard(args: {
   officialMiner: GittensorContributorSnapshot | null | undefined;
   actorKind: "maintainer" | "author";
   question?: string | undefined;
+  chatAnswer?: ChatQaResult | null | undefined;
 }): PublicAnswerCard {
   if (args.command === "ask") {
     return buildAskPublicAnswerCard(args);
+  }
+  if (args.command === "chat") {
+    return buildChatPublicAnswerCard(args);
   }
   const [titleLine, ...contentLines] = args.sections;
   const safeContent = contentLines.map(stripBulletPrefix).filter((line) => line.length > 0);
@@ -503,11 +524,91 @@ function buildAskPublicAnswerCard(args: {
   };
 }
 
+function buildChatPublicAnswerCard(args: {
+  bundle: AgentRunBundle | null | undefined;
+  officialMiner: GittensorContributorSnapshot | null | undefined;
+  actorKind: "maintainer" | "author";
+  question?: string | undefined;
+  chatAnswer?: ChatQaResult | null | undefined;
+}): PublicAnswerCard {
+  // (#4595 req 8) The question is free-form contributor text and the answer is MODEL output -- the first surface
+  // that echoes model output into a trusted bot comment. Run BOTH through sanitizePublicComment (redact private
+  // terms) then neutralizePublicMarkdownText (escape markdown/HTML, zero-width @mentions + URLs) before they land
+  // in the card, exactly like ask does for its question (#2457).
+  const questionLine = `Question: ${neutralizePublicMarkdownText(
+    sanitizePublicComment(args.question?.trim() || "No question was provided."),
+  )}`;
+  const answer = chatAnswerContent(args.chatAnswer);
+  return {
+    title: "Grounded chat Q&A",
+    summary: commandSummary("chat"),
+    findings: [questionLine, ...answer.findings],
+    evidence: commandEvidence("chat", args.bundle, args.officialMiner, args.actorKind),
+    nextActions: answer.nextActions,
+    sourceNotes: commandSourceNotes("chat", args.bundle, args.officialMiner),
+    disclaimer: CHAT_QA_DISCLAIMER,
+  };
+}
+
+// Maps a ChatQaResult into the card's answer findings + next actions. `ok` neutralizes the MODEL prose (#4595
+// req 8); every other status renders a fixed, safe, deterministic line (never the model) — so a
+// disabled/unavailable/declined/over-budget/unsafe/error path always posts a grounded, non-leaking reply.
+function chatAnswerContent(chatAnswer: ChatQaResult | null | undefined): { findings: string[]; nextActions: string[] } {
+  if (!chatAnswer) {
+    return {
+      findings: ["Chat Q&A could not produce a grounded answer for this request."],
+      nextActions: ["Run `@gittensory preflight` or `@gittensory blockers` for the deterministic readiness facts."],
+    };
+  }
+  switch (chatAnswer.status) {
+    case "ok":
+      return {
+        findings: chatAnswerProseLines(chatAnswer.text),
+        nextActions: ["Ask one concrete question per invocation; chat only rewrites the same cached decision-pack facts and cannot change review outcomes."],
+      };
+    case "disabled":
+    case "unavailable":
+      return {
+        findings: ["Chat Q&A is not enabled on this instance. It runs only on local advisory inference (Ollama) and never falls back to the frontier model."],
+        nextActions: ["A maintainer can enable it via `settings.advisoryAiRouting.chatQa` with `env.AI_ADVISORY` configured; use `@gittensory ask` in the meantime."],
+      };
+    case "declined":
+      // `reason`/`suggestion` are fixed, trusted strings authored in ai-chat-qa.ts (no user/model interpolation),
+      // so they keep their `@gittensory ...` code spans -- redact-only, not markdown-escaped.
+      return {
+        findings: [sanitizePublicComment(chatAnswer.reason)],
+        nextActions: [sanitizePublicComment(chatAnswer.suggestion)],
+      };
+    case "quota_exceeded":
+      return {
+        findings: ["The shared daily AI budget is exhausted, so chat Q&A declined this request rather than spending over budget."],
+        nextActions: ["Try again after the daily budget resets, or run `@gittensory preflight` for the deterministic readiness facts."],
+      };
+    case "unsafe":
+    case "error":
+      return {
+        findings: ["Chat Q&A could not produce a grounded answer for this request."],
+        nextActions: ["Run `@gittensory preflight` or `@gittensory blockers` for the deterministic readiness facts."],
+      };
+  }
+}
+
+function chatAnswerProseLines(text: string): string[] {
+  const lines = text
+    .split(/\r?\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .slice(0, 6)
+    .map((line) => neutralizePublicMarkdownText(sanitizePublicComment(line)));
+  return lines.length > 0 ? lines : ["The grounded answer was empty after sanitization. Run `@gittensory preflight` for the deterministic readiness facts."];
+}
+
 function renderPublicAnswerCard(card: PublicAnswerCard): string[] {
   const lines = [
     `**${sanitizePublicComment(card.title)}**`,
     "",
     `- ${sanitizePublicComment(card.summary)}`,
+    ...(card.disclaimer ? ["", `> ${sanitizePublicComment(card.disclaimer)}`] : []),
     "",
     "**Findings**",
     "",
@@ -540,6 +641,8 @@ function commandSummary(command: GittensoryMentionCommandName): string {
       return "Available public commands and their safest use on a PR thread.";
     case "ask":
       return "Contribution-context Q&A from connected cached sources, scoped to contribution quality and repository policy.";
+    case "chat":
+      return "Grounded natural-prose answer sourced from the same cached decision-pack facts, via local advisory inference (read-only).";
     case "miner-context":
       return "Public miner context from official Gittensor data when available.";
     case "preflight":
@@ -588,6 +691,10 @@ function commandEvidence(
     evidence.push("Answer scope is limited to contribution quality and repository policy.");
     evidence.push("Sources are cited with freshness and public-boundary redaction.");
   }
+  if (command === "chat") {
+    evidence.push("Answer is a natural-prose rewrite of the same cached decision-pack facts, adding no new claims.");
+    evidence.push("Generated by local advisory inference; it never reaches the frontier model or any write/action path.");
+  }
   if (command === "miner-context") {
     evidence.push(officialMiner ? "Official Gittensor miner context was available." : "Official Gittensor miner context was unavailable.");
   }
@@ -612,6 +719,8 @@ function commandNextActions(command: GittensoryMentionCommandName, bundle: Agent
       return ["Comment one listed command on the PR thread when more context is needed."];
     case "ask":
       return ["Ask one concrete contribution-quality question per command for clearer cited guidance."];
+    case "chat":
+      return ["Ask one concrete question; chat rewrites the same cached decision-pack facts and cannot change review outcomes or trigger a re-review."];
     case "miner-context":
       return ["Use MCP or the authenticated control panel for private contributor planning."];
     case "preflight":
@@ -659,6 +768,8 @@ function commandSourceNotes(
       ? "static command catalog"
       : command === "ask"
         ? askCommandSourceSummary(bundle)
+      : command === "chat"
+        ? "cached decision-pack facts rewritten by local advisory inference"
       : command === "miner-context"
         ? officialMiner
           ? "official Gittensor miner API"
@@ -721,6 +832,10 @@ function commandSections(
       return helpSections(env, unknownVerb);
     case "ask":
       return askSections(bundle, question);
+    case "chat":
+      // chat renders a bespoke LLM-answer card (buildChatPublicAnswerCard) that ignores these sections; the case
+      // only keeps the exhaustive switch total, mirroring how ask's sections are discarded by buildPublicAnswerCard.
+      return ["**Grounded chat Q&A**"];
     case "miner-context":
       return minerContextSections(officialMiner);
     case "preflight":
@@ -784,6 +899,7 @@ function helpSections(env: GittensoryFooterEnv, unknownVerb?: string | undefined
     ...buildDidYouMeanSections(unknownVerb, suggestCommand),
     "- `@gittensory help` shows this command list.",
     "- `@gittensory ask <question>` answers contribution-quality Q&A with source citations and freshness.",
+    "- `@gittensory chat <question>` answers in natural prose from cached decision-pack facts via local inference (maintainer/collaborator; read-only).",
     "- `@gittensory preflight` summarizes public PR hygiene.",
     "- `@gittensory blockers` explains public readiness blockers.",
     "- `@gittensory duplicate-check` summarizes duplicate/WIP caution.",
@@ -1714,4 +1830,5 @@ export const githubCommandsInternals = {
   helpSections,
   actionCommandHelpSections,
   commandReferenceUrl,
+  commandNextActions,
 };

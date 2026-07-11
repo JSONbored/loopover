@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   QUEUE_STATUSES,
   closeDefaultPortfolioQueueStore,
+  dequeueNext,
+  enqueue,
   initPortfolioQueueStore,
+  markFailed,
   resolvePortfolioQueueDbPath,
 } from "../../packages/gittensory-miner/lib/portfolio-queue.js";
 
@@ -108,6 +111,24 @@ describe("gittensory-miner portfolio/queue store (#2292)", () => {
     expect(store.markDone("o/a", "work")).toBeNull();
   });
 
+  it("markFailed releases an in-progress item back to queued for a halted run (#2347)", () => {
+    const store = tempStore();
+    store.enqueue({ repoFullName: "o/a", identifier: "work", priority: 1 });
+    expect(store.dequeueNext()?.status).toBe("in_progress");
+    expect(store.markFailed("o/a", "work")?.status).toBe("queued");
+    expect(store.markFailed("o/a", "work")).toBeNull();
+    expect(store.dequeueNext()?.identifier).toBe("work");
+  });
+
+  it("markFailed is a no-op for queued or done items", () => {
+    const store = tempStore();
+    store.enqueue({ repoFullName: "o/a", identifier: "queued", priority: 1 });
+    expect(store.markFailed("o/a", "queued")).toBeNull();
+    store.markDone("o/a", "queued");
+    expect(store.markFailed("o/a", "queued")).toBeNull();
+    expect(store.markFailed("o/a", "missing")).toBeNull();
+  });
+
   it("isolates listQueue by repo and lists everything when unfiltered", () => {
     const store = tempStore();
     store.enqueue({ repoFullName: "o/a", identifier: "1", priority: 1 });
@@ -153,6 +174,16 @@ describe("gittensory-miner portfolio/queue store (#2292)", () => {
     expect(store.dequeueNext()?.identifier).toBe("B");
   });
 
+  it("module-level markFailed delegates to the default portfolio-queue store (#2347)", () => {
+    const root = mkdtempSync(join(tmpdir(), "gittensory-miner-portfolio-default-"));
+    roots.push(root);
+    vi.stubEnv("GITTENSORY_MINER_PORTFOLIO_QUEUE_DB", join(root, "portfolio-queue.sqlite3"));
+    enqueue({ repoFullName: "o/a", identifier: "work", priority: 1 });
+    expect(dequeueNext()?.status).toBe("in_progress");
+    expect(markFailed("o/a", "work")?.status).toBe("queued");
+    expect(markFailed("o/a", "work")).toBeNull();
+  });
+
   it("rejects malformed inputs across the shared validation contract (enqueue, listQueue, markDone)", () => {
     const store = tempStore();
     expect(() => store.enqueue({ repoFullName: "no-slash", identifier: "1" })).toThrow("invalid_repo_full_name");
@@ -165,5 +196,7 @@ describe("gittensory-miner portfolio/queue store (#2292)", () => {
     expect(() => store.listQueue("no-slash")).toThrow("invalid_repo_full_name");
     expect(() => store.markDone("no-slash", "1")).toThrow("invalid_repo_full_name");
     expect(() => store.markDone("o/a", "  ")).toThrow("invalid_identifier");
+    expect(() => store.markFailed("no-slash", "1")).toThrow("invalid_repo_full_name");
+    expect(() => store.markFailed("o/a", "  ")).toThrow("invalid_identifier");
   });
 });

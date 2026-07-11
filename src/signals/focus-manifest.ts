@@ -598,6 +598,7 @@ export function resolveEffectiveSettings(
       e2eTestGen: advisoryAiRoutingOverride.e2eTestGen ?? base.e2eTestGen,
       planner: advisoryAiRoutingOverride.planner ?? base.planner,
       summaries: advisoryAiRoutingOverride.summaries ?? base.summaries,
+      chatQa: advisoryAiRoutingOverride.chatQa ?? base.chatQa,
     };
   }
   applyGateConfigOverrides(effective, manifest.gate);

@@ -3048,7 +3048,25 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
   it("resolveEffectiveSettings falls back to the all-off built-in default when the DB layer has no advisoryAiRouting at all (#4364)", () => {
     const db = {} as unknown as RepositorySettings;
     const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { advisoryAiRouting: { planner: true } } }));
-    expect(eff.advisoryAiRouting).toEqual({ slop: false, e2eTestGen: false, planner: true, summaries: false });
+    expect(eff.advisoryAiRouting).toEqual({ slop: false, e2eTestGen: false, planner: true, summaries: false, chatQa: false });
+  });
+
+  it("wires settings.advisoryAiRouting.chatQa into the manifest parser as a sparse override (#4595)", () => {
+    const parsed = parseFocusManifest({ settings: { advisoryAiRouting: { chatQa: true } } });
+    expect(parsed.settings.advisoryAiRouting).toEqual({ chatQa: true });
+    expect(parsed.warnings).toEqual([]);
+  });
+
+  it("resolveEffectiveSettings merges an explicit chatQa override over the DB layer's value (#4595)", () => {
+    const db = { advisoryAiRouting: { slop: false, e2eTestGen: false, planner: false, summaries: false, chatQa: false } } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { advisoryAiRouting: { chatQa: true } } }));
+    expect(eff.advisoryAiRouting).toEqual({ slop: false, e2eTestGen: false, planner: false, summaries: false, chatQa: true });
+  });
+
+  it("resolveEffectiveSettings keeps the DB layer's chatQa when the manifest override omits it (#4595)", () => {
+    const db = { advisoryAiRouting: { slop: false, e2eTestGen: false, planner: false, summaries: false, chatQa: true } } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { advisoryAiRouting: { slop: true } } }));
+    expect(eff.advisoryAiRouting).toEqual({ slop: true, e2eTestGen: false, planner: false, summaries: false, chatQa: true });
   });
 
   it("drops a malformed advisoryAiRouting.slop field instead of replacing existing policy with defaults (#4364)", () => {

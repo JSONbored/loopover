@@ -899,6 +899,7 @@ settings:
   #   e2eTestGen: false    # Auto-generated E2E test scaffolding. Default: false.
   #   planner: false       # The @gittensory plan / issue-planner completion. Default: false.
   #   summaries: false     # AI summaries/rewrite text. Default: false.
+  #   chatQa: false        # @gittensory chat <question> grounded LLM Q&A. Ollama-ONLY (never the frontier env.AI); needs env.AI_ADVISORY set. Co-requisite: commandRateLimitPolicy: hold (defaults off). Default: false.
 
 # Maintainer AI review tuning (`.gittensory.yml` top-level `review:` block). These knobs shape the advisory AI
 # review prompt and file selection only — gate/slop/secret-scan are unaffected.

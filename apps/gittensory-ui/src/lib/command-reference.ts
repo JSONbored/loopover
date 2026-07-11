@@ -13,6 +13,12 @@ export const PUBLIC_COMMAND_ENTRIES = [
       "Answer contribution-quality questions from connected cached sources with citations.",
   },
   {
+    id: "chat",
+    title: "Gittensory grounded chat Q&A",
+    description:
+      "Answer a question in natural prose from cached decision-pack facts via local Ollama (maintainer/collaborator; read-only).",
+  },
+  {
     id: "preflight",
     title: "Gittensory preflight",
     description: "Summarize public PR hygiene and validation readiness.",
@@ -55,7 +61,7 @@ export const PUBLIC_COMMAND_ENTRIES = [
 ] as const;
 
 export const PUBLIC_COMMAND_LIST =
-  "@gittensory help\n@gittensory ask\n@gittensory preflight\n@gittensory blockers\n@gittensory duplicate-check\n@gittensory miner-context\n@gittensory next-action\n@gittensory reviewability\n@gittensory repo-fit\n@gittensory packet";
+  "@gittensory help\n@gittensory ask\n@gittensory chat\n@gittensory preflight\n@gittensory blockers\n@gittensory duplicate-check\n@gittensory miner-context\n@gittensory next-action\n@gittensory reviewability\n@gittensory repo-fit\n@gittensory packet";
 
 export const MAINTAINER_COMMAND_ENTRIES = [
   {

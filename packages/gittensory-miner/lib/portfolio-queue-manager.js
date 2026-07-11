@@ -88,6 +88,9 @@ export function initPortfolioQueueManager(options = {}) {
     markDone(repoFullName, identifier) {
       return store.markDone(repoFullName, identifier);
     },
+    markFailed(repoFullName, identifier) {
+      return store.markFailed(repoFullName, identifier);
+    },
     claimNextBatch() {
       return store.batchClaim((entries) => selectEligibleBatch(entries, caps));
     },

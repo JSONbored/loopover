@@ -157,6 +157,22 @@ describe("repo command authorization policy", () => {
     expect(clamped.policy.commands.review).toEqual(["confirmed_miner"]);
   });
 
+  it("#4595: chat defaults to maintainer/collaborator-only, deliberately excluding confirmed_miner (unlike ask's default)", () => {
+    expect(commandAuthorizationAllowedRoles(undefined, "chat")).toEqual(["maintainer", "collaborator"]);
+    expect(evaluateCommandAuthorization({ commandName: "chat", commenterAssociation: "OWNER" })).toMatchObject({ authorized: true, reason: "maintainer_invocation", actorKind: "maintainer" });
+    expect(evaluateCommandAuthorization({ commandName: "chat", commenterAssociation: "COLLABORATOR" })).toMatchObject({ authorized: true, reason: "collaborator_invocation", actorKind: "maintainer" });
+    // A confirmed-miner PR author is denied on chat (unlike "review"): confirmed_miner is not in chat's default
+    // allowed-roles list, so the pr_author-widening guard denies it the same as any other non-maintainer author.
+    expect(
+      evaluateCommandAuthorization({ commandName: "chat", commenterLogin: "miner", pullRequestAuthorLogin: "miner", minerStatus: "confirmed" }),
+    ).toMatchObject({ authorized: false, reason: "maintainer_command_requires_maintainer", actorKind: "author" });
+    // A spoofable pr_author role added via override is clamped off with a warning, same as every other
+    // maintainer-only default command.
+    const clamped = normalizeCommandAuthorizationPolicy({ commands: { chat: ["collaborator", "pr_author"] } });
+    expect(clamped.warnings).toContain("Ignored author command authorization roles for maintainer-only command: chat.");
+    expect(clamped.policy.commands.chat).toEqual(["collaborator"]);
+  });
+
   it("falls back to default roles for inherited object property command names", () => {
     for (const commandName of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
       expect(commandAuthorizationAllowedRoles(undefined, commandName)).toEqual(["maintainer", "collaborator", "confirmed_miner"]);

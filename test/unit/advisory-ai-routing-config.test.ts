@@ -10,22 +10,23 @@ describe("normalizeAdvisoryAiRoutingConfig", () => {
 
   it("normalizes a fully-valid config", () => {
     const warnings: string[] = [];
-    expect(normalizeAdvisoryAiRoutingConfig({ slop: true, e2eTestGen: true, planner: true, summaries: true }, warnings)).toEqual({
+    expect(normalizeAdvisoryAiRoutingConfig({ slop: true, e2eTestGen: true, planner: true, summaries: true, chatQa: true }, warnings)).toEqual({
       slop: true,
       e2eTestGen: true,
       planner: true,
       summaries: true,
+      chatQa: true,
     });
     expect(warnings).toEqual([]);
   });
 
-  it.each(["slop", "e2eTestGen", "planner", "summaries"] as const)("defaults %s to false when omitted", (field) => {
+  it.each(["slop", "e2eTestGen", "planner", "summaries", "chatQa"] as const)("defaults %s to false when omitted", (field) => {
     const warnings: string[] = [];
     expect(normalizeAdvisoryAiRoutingConfig({}, warnings)[field]).toBe(false);
     expect(warnings).toEqual([]);
   });
 
-  it.each(["slop", "e2eTestGen", "planner", "summaries"] as const)("falls back to false and warns on a non-boolean %s", (field) => {
+  it.each(["slop", "e2eTestGen", "planner", "summaries", "chatQa"] as const)("falls back to false and warns on a non-boolean %s", (field) => {
     const warnings: string[] = [];
     const cfg = normalizeAdvisoryAiRoutingConfig({ [field]: "yes" }, warnings);
     expect(cfg[field]).toBe(false);
@@ -35,7 +36,7 @@ describe("normalizeAdvisoryAiRoutingConfig", () => {
   it("normalizes one valid field alongside one invalid field independently", () => {
     const warnings: string[] = [];
     const cfg = normalizeAdvisoryAiRoutingConfig({ slop: true, planner: "nope" }, warnings);
-    expect(cfg).toEqual({ slop: true, e2eTestGen: false, planner: false, summaries: false });
+    expect(cfg).toEqual({ slop: true, e2eTestGen: false, planner: false, summaries: false, chatQa: false });
     expect(warnings).toEqual([`settings.advisoryAiRouting.planner must be a boolean; using the default "false".`]);
   });
 

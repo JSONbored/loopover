@@ -9167,13 +9167,18 @@
               },
               "summaries": {
                 "type": "boolean"
+              },
+              "chatQa": {
+                "type": "boolean",
+                "description": "Opt the `@gittensory chat <question>` grounded Q&A surface (#4595) into local Ollama inference. Ollama-only: unlike the four capabilities above it NEVER falls back to the frontier env.AI when off; it declines unless this is true AND env.AI_ADVISORY is configured. Co-requisite: set `commandRateLimitPolicy` to `hold` (it defaults to `off` fleet-wide) so the tighter `commandRateLimitAiMaxPerWindow` ceiling actually throttles this cost-bearing command."
               }
             },
             "required": [
               "slop",
               "e2eTestGen",
               "planner",
-              "summaries"
+              "summaries",
+              "chatQa"
             ]
           },
           "gittensorLabel": {

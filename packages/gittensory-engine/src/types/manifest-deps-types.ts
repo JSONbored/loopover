@@ -112,6 +112,9 @@ export type AdvisoryAiRoutingConfig = {
   e2eTestGen: boolean;
   planner: boolean;
   summaries: boolean;
+  /** Grounded `@gittensory chat <question>` LLM Q&A (#4595). Ollama-only: unlike the four fields above it NEVER
+   *  falls back to the frontier env.AI when off -- it simply declines. Default false. */
+  chatQa: boolean;
 };
 
 export type ContributorBlacklistEntry = {

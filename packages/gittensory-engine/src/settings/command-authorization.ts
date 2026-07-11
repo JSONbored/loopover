@@ -14,6 +14,12 @@ export const DEFAULT_COMMAND_AUTHORIZATION_POLICY: RepositoryCommandAuthorizatio
     "noise-report": ["maintainer", "collaborator"],
     "gate-override": ["maintainer", "collaborator"],
     plan: ["maintainer", "collaborator"],
+    // #4595: deliberately narrower than "ask"'s default (which allows confirmed_miner) -- chat is Ollama-only
+    // grounded LLM generation, a materially larger surface than ask's deterministic-only answer, so v1 starts
+    // maintainer/collaborator-only. Explicit registration here (rather than falling through to `default`) also
+    // activates the pr_author-widening guard below, so a self-hoster can't accidentally yml themselves into
+    // "anyone commenting on their own PR" without it.
+    chat: ["maintainer", "collaborator"],
     // #1960 PR control-surface verbs. "review" is deliberately widenable to confirmed_miner (same self-rerun
     // precedent already applied to review-now, #824) — a confirmed miner may re-trigger review on their own PR.
     // The rest (pause/resume/resolve/configuration/explain) are conservative maintainer/collaborator-only

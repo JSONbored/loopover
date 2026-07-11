@@ -5,6 +5,7 @@ export const DEFAULT_ADVISORY_AI_ROUTING: AdvisoryAiRoutingConfig = {
   e2eTestGen: false,
   planner: false,
   summaries: false,
+  chatQa: false,
 };
 
 function normalizeField(value: unknown, field: keyof AdvisoryAiRoutingConfig, warnings: string[]): boolean {
@@ -31,5 +32,6 @@ export function normalizeAdvisoryAiRoutingConfig(input: unknown, warnings: strin
     e2eTestGen: normalizeField(record.e2eTestGen, "e2eTestGen", warnings),
     planner: normalizeField(record.planner, "planner", warnings),
     summaries: normalizeField(record.summaries, "summaries", warnings),
+    chatQa: normalizeField(record.chatQa, "chatQa", warnings),
   };
 }

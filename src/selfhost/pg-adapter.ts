@@ -120,3 +120,58 @@ export async function tuneGithubRateLimitObservationsAutovacuum(db: D1Database):
     );
   });
 }
+
+// #selfhost-github-id-overflow: every migrations/*.sql column below stores a raw GitHub-native numeric ID
+// (installation id, account/user id, check-run id, or comment id) as bare `INTEGER` -- correct on SQLite/D1,
+// where INTEGER is only a type-affinity hint and already stores any 64-bit value without truncation, but a
+// real, enforced 4-byte column on Postgres. GitHub's own ids are a single global counter shared across all of
+// GitHub (not scoped per-repo the way issue/PR *numbers* are), and comment ids in particular are already well
+// past 2^31 (~2.1B) as of 2026 -- confirmed live via a `value "…" is out of range for type integer` failure on
+// github_agent_command_answers.request_comment_id/response_comment_id. installation/account/user ids are
+// nowhere near that threshold yet, but are widened here too rather than waiting for their own future incident
+// -- bigint costs nothing extra at this table size. Same idempotent-ALTER, no-migration-ledger shape as
+// GITHUB_RATE_LIMIT_OBSERVATIONS_AUTOVACUUM_SQL above: re-applying to an already-bigint column is a no-op, so
+// this runs unconditionally on every Postgres boot. The original migrations are left untouched (already
+// applied/ledger-tracked everywhere, and correct as written for SQLite/D1) -- this is a purely additive,
+// Postgres-only follow-up, not a rewrite of history. New migrations introducing a GitHub-native id column
+// going forward should declare it BIGINT directly instead of adding another line here.
+export const GITHUB_ID_BIGINT_WIDENING_SQL = [
+  "ALTER TABLE installations ALTER COLUMN id TYPE bigint",
+  "ALTER TABLE installations ALTER COLUMN account_id TYPE bigint",
+  "ALTER TABLE repositories ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE advisories ALTER COLUMN check_run_id TYPE bigint",
+  "ALTER TABLE webhook_events ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE installation_health ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE auth_sessions ALTER COLUMN github_user_id TYPE bigint",
+  "ALTER TABLE github_agent_command_answers ALTER COLUMN request_comment_id TYPE bigint",
+  "ALTER TABLE github_agent_command_answers ALTER COLUMN response_comment_id TYPE bigint",
+  "ALTER TABLE agent_pending_actions ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE review_targets ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE orb_webhook_events ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE orb_github_installations ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE orb_pr_outcomes ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE orb_enrollments ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE orb_enrollments ALTER COLUMN maintainer_github_id TYPE bigint",
+  "ALTER TABLE orb_relay_failures ALTER COLUMN installation_id TYPE bigint",
+  "ALTER TABLE orb_relay_pending ALTER COLUMN installation_id TYPE bigint",
+].join(";\n");
+
+/** Apply the bigint widening above via the same D1Database.exec() surface runSelfHostMigrations already uses,
+ *  mirroring tuneGithubRateLimitObservationsAutovacuum's shape exactly. Must run AFTER migrations (every table
+ *  above has to exist by then, so a mid-batch "relation does not exist" is not a realistic failure mode here);
+ *  best-effort by design -- a failure here must not stop the self-host from booting. Postgres's simple-query
+ *  protocol runs this whole multi-statement string as one implicit transaction, so either all 19 ALTERs commit
+ *  together or (on any single failure) none do -- fine given every ALTER is independently idempotent and this
+ *  reruns unconditionally on every boot: a failed attempt just retries whole next boot instead of leaving a
+ *  partially-widened, inconsistent state. */
+export async function widenGithubIdColumnsToBigint(db: D1Database): Promise<void> {
+  await db.exec(GITHUB_ID_BIGINT_WIDENING_SQL).catch((error: unknown) => {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "selfhost_github_id_bigint_widen_failed",
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  });
+}

@@ -58,7 +58,7 @@ import { clockSkewSecondsSample } from "./selfhost/clock-skew";
 import { d1DatabaseSizeBytesSample, d1SignalSnapshotsRowsPerKeySample, d1TableRowCountSamples, isD1SizeProbeEnabled, runD1SizeProbe } from "./selfhost/d1-size-probe";
 import { gauge, gaugeVector, incr, observe, renderMetrics, setSelfHostedMetricsMode } from "./selfhost/metrics";
 import { runSelfHostMigrations } from "./selfhost/migrate";
-import { createPgAdapter, tuneGithubRateLimitObservationsAutovacuum } from "./selfhost/pg-adapter";
+import { createPgAdapter, tuneGithubRateLimitObservationsAutovacuum, widenGithubIdColumnsToBigint } from "./selfhost/pg-adapter";
 import { createPgQueue } from "./selfhost/pg-queue";
 import { createPgVectorize, initPgVectorize } from "./selfhost/pg-vectorize";
 import { resolvePostgresPoolMax } from "./selfhost/queue-common";
@@ -426,6 +426,9 @@ async function main(): Promise<void> {
   // #2543: Postgres-only, applied AFTER migrations (the table must already exist). No-op on SQLite, which has
   // no autovacuum concept at all -- gated on the same usePostgres check the backend was built from.
   if (usePostgres) await tuneGithubRateLimitObservationsAutovacuum(backend.db);
+  // #selfhost-github-id-overflow: Postgres-only, same reasoning -- SQLite's INTEGER already stores a raw
+  // GitHub id at full width, so this would be a meaningless no-op there even if run.
+  if (usePostgres) await widenGithubIdColumnsToBigint(backend.db);
 
   const ai = createSelfHostAi(process.env);
   if (ai)

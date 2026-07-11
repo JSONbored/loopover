@@ -33,7 +33,7 @@ describe("workflow runner labels", () => {
     // validate-code so the dominant ~9-10min step no longer serializes with the much-faster checks.
     const validateTestsJob = workflow.slice(workflow.indexOf("\n  validate-tests:\n"), workflow.indexOf("\n  validate-tests-merge:\n"));
     expect(validateTestsJob).toContain("runs-on: ubuntu-latest");
-    // validate-tests-merge re-checks the global coverage threshold against all 4 shards merged -- see its
+    // validate-tests-merge re-checks the global coverage threshold against all shards merged -- see its
     // own header comment in ci.yml.
     const validateTestsMergeJob = workflow.slice(workflow.indexOf("\n  validate-tests-merge:\n"), workflow.indexOf("\n  security:\n"));
     expect(validateTestsMergeJob).toContain("runs-on: ubuntu-latest");

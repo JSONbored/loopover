@@ -381,7 +381,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     env:
       VITE_GITTENSORY_API_ORIGIN: https://gittensory-api.aethereal.dev
     steps:
@@ -435,13 +435,13 @@ jobs:
         run: npm run build --workspace @jsonbored/gittensory-engine
       - name: Prepare test reports dir
         run: mkdir -p reports/junit
-      - name: Test with coverage (shard ${{ matrix.shard }}/4)
+      - name: Test with coverage (shard ${{ matrix.shard }}/6)
         id: coverage
         env:
           # Disables vitest.config.ts's own global 90% threshold check for THIS per-shard invocation -- a
           # single shard only exercises part of the tree, so it would always false-fail. The global-threshold
           # "catastrophe net" this disables is NOT dropped from CI, though: validate-tests-merge (below) merges
-          # all 4 shards' coverage via vitest's own --mergeReports and re-checks the threshold against that
+          # all shards' coverage via vitest's own --mergeReports and re-checks the threshold against that
           # merged (whole-suite) total, without COVERAGE_NO_THRESHOLDS set.
           COVERAGE_NO_THRESHOLDS: "true"
           # Same self-contained-test-file narrowing as the pre-sharding job had -- see the `mcpCliHarness`/
@@ -464,11 +464,11 @@ jobs:
               --exclude "test/unit/miner-calibration-types.test.ts"
             )
           fi
-          npm run test:coverage -- --maxWorkers=4 --shard=${{ matrix.shard }}/4 --reporter=default --reporter=blob --reporter=junit --outputFile.blob=blob-report/report-${{ matrix.shard }}.blob --outputFile.junit=reports/junit/vitest.xml "${EXCLUDE_ARGS[@]}"
+          npm run test:coverage -- --maxWorkers=4 --shard=${{ matrix.shard }}/6 --reporter=default --reporter=blob --reporter=junit --outputFile.blob=blob-report/report-${{ matrix.shard }}.blob --outputFile.junit=reports/junit/vitest.xml "${EXCLUDE_ARGS[@]}"
       - name: Test failure guidance
         if: ${{ failure() && steps.coverage.conclusion == 'failure' }}
         run: |
-          echo "::error title=Tests::The backend test coverage suite failed (shard ${{ matrix.shard }}/4)."
+          echo "::error title=Tests::The backend test coverage suite failed (shard ${{ matrix.shard }}/6)."
           echo "Coverage itself is gated by Codecov on changed lines (codecov/patch), computed from all shards' merged lcov."
           echo "Reproduce locally with: 'npm run test:coverage' (unsharded, runs the whole suite)."
       - name: Verify coverage report exists
@@ -478,7 +478,7 @@ jobs:
             echo "::error title=Coverage::coverage/lcov.info is missing or empty"
             exit 1
           fi
-      # Consumed by validate-tests-merge to re-check the global coverage threshold against all 4 shards
+      # Consumed by validate-tests-merge to re-check the global coverage threshold against all shards
       # combined -- see this job's own header comment.
       - name: Upload coverage blob report
         if: ${{ success() }}
@@ -547,7 +547,7 @@ jobs:
           override_pr: ${{ github.event.pull_request.number }}
           fail_ci_if_error: false
 
-  # Re-checks vitest.config.ts's global 90% coverage threshold against all 4 shards MERGED -- each shard
+  # Re-checks vitest.config.ts's global 90% coverage threshold against all shards MERGED -- each shard
   # above deliberately disables that check for itself (COVERAGE_NO_THRESHOLDS=true), since a single shard's
   # partial view would always false-fail it. This is the "loose catastrophe net" (e.g. a deleted test file)
   # vitest.config.ts's own comment describes; Codecov's patch gate (changed-lines only) doesn't cover a

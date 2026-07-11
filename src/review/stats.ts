@@ -195,6 +195,28 @@ export const EMPTY_CYCLE_TIME: CycleTimeAggregate = {
   sampleSize: 0,
 };
 
+/** Finding acceptance rate (#1967): of PRs whose gate raised a BLOCKING finding (a `gate_decision` of `hold`
+ *  or `close` — the gate did NOT clear the PR to merge), how often the contributor acted on it and the PR
+ *  shipped anyway. The realized `pr_outcome` (merged vs closed) is the answer key, so acceptance is measurable
+ *  with zero manual labeling — the maintainer-ROI "our review feedback gets acted on X% of the time" signal. */
+export interface FindingAcceptanceAggregate {
+  /** PRs whose gate raised a blocking finding (hold|close) that reached a realized outcome in the window. */
+  flagged: number;
+  /** Of `flagged`, those later merged — the contributor acted on the finding and the PR shipped. */
+  addressed: number;
+  /** Of `flagged`, those closed without merging — the finding stood; the PR did not ship. */
+  unaddressed: number;
+  /** addressed / flagged (3 dp); null when `flagged` is 0. */
+  acceptanceRate: number | null;
+}
+
+export const EMPTY_FINDING_ACCEPTANCE: FindingAcceptanceAggregate = {
+  flagged: 0,
+  addressed: 0,
+  unaddressed: 0,
+  acceptanceRate: null,
+};
+
 export interface StatsPayload {
   generatedAt: string;
   window: { fromIso: string; days: number; bucket: string };
@@ -216,6 +238,9 @@ export interface StatsPayload {
   gateParity: GateParityReport & { cutoverReady: Array<{ project: string; ready: boolean }> };
   /** PR review cycle-time percentiles (gate decision → outcome) from review_audit (#2194). */
   cycleTime: CycleTimeAggregate;
+  /** Finding acceptance rate (#1967): of PRs the gate flagged with a blocking finding (hold|close), the
+   *  fraction later merged — i.e. the contributor acted on the finding and the PR shipped. */
+  findingAcceptance: FindingAcceptanceAggregate;
 }
 
 /** ms between the gate decision and the resolution; null if implausible (NaN or negative). */
@@ -296,6 +321,61 @@ export async function computeCycleTimeAggregate(
   }
 }
 
+/** Pure fold: flagged-PR outcome samples → the acceptance aggregate (#1967). Each sample is a PR whose gate
+ *  raised a blocking finding (hold|close); `merged` is its realized pr_outcome (true = merged, false = closed). */
+export function aggregateFindingAcceptance(
+  samples: ReadonlyArray<{ merged: boolean }>,
+): FindingAcceptanceAggregate {
+  const flagged = samples.length;
+  if (flagged === 0) return EMPTY_FINDING_ACCEPTANCE;
+  const addressed = samples.filter((sample) => sample.merged).length;
+  return {
+    flagged,
+    addressed,
+    unaddressed: flagged - addressed,
+    acceptanceRate: Number((addressed / flagged).toFixed(3)),
+  };
+}
+
+// A PR is "flagged" if it EVER received a hold/close gate decision in the window (DISTINCT target_id), so a
+// PR that was held, fixed, then merge-cleared still counts as flagged-then-addressed. Joined to the LATEST
+// pr_outcome per target (rn = 1) so a reopened+reclosed PR keeps its final realized state.
+const FINDING_ACCEPTANCE_SQL = `WITH flagged AS (
+  SELECT DISTINCT target_id
+  FROM review_audit
+  WHERE event_type = 'gate_decision' AND decision IN ('hold', 'close') AND created_at >= ?
+),
+po AS (
+  SELECT target_id, decision AS truth,
+  ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY created_at DESC) AS rn
+  FROM review_audit
+  WHERE event_type = 'pr_outcome' AND decision IS NOT NULL AND created_at >= ?
+)
+SELECT po.truth AS truth
+FROM flagged
+JOIN po ON flagged.target_id = po.target_id
+WHERE po.rn = 1`;
+
+/** Load flagged-PR (blocking gate finding) → realized-outcome samples for the window and fold them into the
+ *  acceptance rate. Fail-safe → empty aggregate (mirrors computeCycleTimeAggregate). (#1967) */
+export async function computeFindingAcceptance(
+  env: Env,
+  opts: { days: number; nowMs: number },
+): Promise<FindingAcceptanceAggregate> {
+  const days = Number.isFinite(opts.days) && opts.days > 0 ? Math.min(opts.days, 730) : 90;
+  const fromIso = new Date(opts.nowMs - days * 86_400_000).toISOString().slice(0, 10);
+  try {
+    const rows = await storage(env)
+      .prepare(FINDING_ACCEPTANCE_SQL)
+      .bind(fromIso, fromIso)
+      .all<{ truth: string }>();
+    const samples = (rows.results ?? []).map((row) => ({ merged: row.truth === "merged" }));
+    return aggregateFindingAcceptance(samples);
+  } catch {
+    return EMPTY_FINDING_ACCEPTANCE;
+  }
+}
+
 /** Fold per-PR persisted minutes into the maintainer aggregate (avg band + total minutes). */
 export function aggregateReviewEffort(perPrMinutes: number[]): ReviewEffortAggregate {
   if (perPrMinutes.length === 0) {
@@ -324,7 +404,7 @@ export async function computeStats(
   const bucketExpr = BUCKET_SQL[bucket] ?? BUCKET_SQL.day;
   const fromIso = new Date(opts.nowMs - days * 86_400_000).toISOString().slice(0, 10); // YYYY-MM-DD
 
-  const [decisionRows, reversalRows, effortRows, cycleTime] = await Promise.all([
+  const [decisionRows, reversalRows, effortRows, cycleTime, findingAcceptance] = await Promise.all([
     storage(env).prepare(
       `SELECT ${bucketExpr} AS bucket, project, COALESCE(verdict, status) AS verdict, COUNT(*) AS n
        FROM review_targets
@@ -359,6 +439,7 @@ export async function computeStats(
     ).bind(fromIso).all<{ minutes: number }>()
       .catch(() => ({ results: [] as Array<{ minutes: number }> })),
     computeCycleTimeAggregate(env, { days, nowMs: opts.nowMs }),
+    computeFindingAcceptance(env, { days, nowMs: opts.nowMs }),
   ]);
 
   // Non-content gate decisions (incl. SHADOW would-actions) — recorded as `gate_decision` audit rows with
@@ -396,6 +477,7 @@ export async function computeStats(
     recommendations,
     gateParity: { ...parity, cutoverReady: parity.rows.map((r) => ({ project: r.project, ready: isParityCutoverReady(r) })) },
     cycleTime,
+    findingAcceptance,
   };
 }
 

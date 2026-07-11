@@ -2,11 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestEnv } from "../helpers/d1";
 import {
   aggregateCycleTimePercentiles,
+  aggregateFindingAcceptance,
   aggregateReviewEffort,
   buildCycleTimeDistribution,
+  computeFindingAcceptance,
   computeStats,
   cycleTimeMs,
   EMPTY_CYCLE_TIME,
+  EMPTY_FINDING_ACCEPTANCE,
   handleParity,
   handleStats,
   isParityCutoverReady,
@@ -37,6 +40,8 @@ function stubEnv(extra: Record<string, unknown> = {}): Env {
     { decided_at: "2026-06-01T10:00:00Z", outcome_at: "2026-06-01T10:05:00Z" },
     { decided_at: "2026-06-01T11:00:00Z", outcome_at: "2026-06-01T11:30:00Z" },
   ];
+  // flagged-PR (hold|close) realized outcomes → 2 merged (addressed) + 1 closed (unaddressed).
+  const acceptanceRows = [{ truth: "merged" }, { truth: "merged" }, { truth: "closed" }];
   let lastSql = "";
   return {
     ...extra,
@@ -47,16 +52,18 @@ function stubEnv(extra: Record<string, unknown> = {}): Env {
           bind: () => ({
             all: async () => ({
               // review-effort read → effortMinutes; cycle-time pairs → cyclePairs; gate action counts → gateActions;
-              // other review_audit → reversals; everything else → decision rows.
+              // finding-acceptance read → acceptanceRows; other review_audit → reversals; everything else → decisions.
               results: lastSql.includes("reviewEffortMinutes")
                 ? effortMinutes
                 : lastSql.includes("decided_at") && lastSql.includes("outcome_at")
                   ? cyclePairs
                   : lastSql.includes("decision AS action")
                     ? gateActions
-                    : lastSql.includes("review_audit")
-                      ? reversals
-                      : decisions,
+                    : lastSql.includes("flagged")
+                      ? acceptanceRows
+                      : lastSql.includes("review_audit")
+                        ? reversals
+                        : decisions,
             }),
           }),
         };
@@ -86,6 +93,7 @@ describe("computeStats — D1 aggregate for the dashboard", () => {
     expect(out.cycleTime.sampleSize).toBe(2);
     expect(out.cycleTime.p50Ms).toBe(300_000);
     expect(out.cycleTime.distribution.length).toBeGreaterThan(0);
+    expect(out.findingAcceptance).toEqual({ flagged: 3, addressed: 2, unaddressed: 1, acceptanceRate: 0.667 });
   });
 
   it("clamps an absurd window and falls back to a safe bucket", async () => {
@@ -423,6 +431,7 @@ describe("computeStats — NaN window + null D1 results (the ?? [] fallbacks)", 
     expect(out.verdicts).toEqual([]);
     expect(out.reviewEffort).toEqual({ avgBand: null, totalEstimatedMinutes: 0 });
     expect(out.cycleTime).toEqual(EMPTY_CYCLE_TIME);
+    expect(out.findingAcceptance).toEqual(EMPTY_FINDING_ACCEPTANCE);
   });
 });
 
@@ -558,6 +567,102 @@ describe("cycle-time aggregation (#2194)", () => {
     const { computeCycleTimeAggregate } = await import("../../src/review/stats");
     expect(await computeCycleTimeAggregate(env, { days: 30, nowMs: NOW })).toEqual(EMPTY_CYCLE_TIME);
     expect(await computeCycleTimeAggregate(envWithBadRows, { days: 30, nowMs: NOW })).toEqual(EMPTY_CYCLE_TIME);
+  });
+});
+
+describe("finding acceptance rate (#1967)", () => {
+  it("aggregateFindingAcceptance folds flagged-PR outcomes into the acceptance rate", () => {
+    const agg = aggregateFindingAcceptance([{ merged: true }, { merged: true }, { merged: false }]);
+    expect(agg).toEqual({ flagged: 3, addressed: 2, unaddressed: 1, acceptanceRate: 0.667 });
+  });
+
+  it("aggregateFindingAcceptance reports 1 / 0 acceptance at the extremes (both filter branches)", () => {
+    expect(aggregateFindingAcceptance([{ merged: true }, { merged: true }])).toEqual({
+      flagged: 2,
+      addressed: 2,
+      unaddressed: 0,
+      acceptanceRate: 1,
+    });
+    expect(aggregateFindingAcceptance([{ merged: false }, { merged: false }])).toEqual({
+      flagged: 2,
+      addressed: 0,
+      unaddressed: 2,
+      acceptanceRate: 0,
+    });
+  });
+
+  it("aggregateFindingAcceptance returns EMPTY_FINDING_ACCEPTANCE for no samples", () => {
+    expect(aggregateFindingAcceptance([])).toEqual(EMPTY_FINDING_ACCEPTANCE);
+  });
+
+  it("computeFindingAcceptance joins EVER-flagged (hold|close) PRs to their latest outcome from real D1", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO review_audit (id, project, target_id, event_type, decision, source, created_at) VALUES
+        ('gd1', 'owner/repo', 'owner/repo#1', 'gate_decision', 'close', 'test', '2026-06-10T10:00:00Z'),
+        ('po1', 'owner/repo', 'owner/repo#1', 'pr_outcome', 'merged', 'test', '2026-06-10T12:00:00Z'),
+        ('gd2', 'owner/repo', 'owner/repo#2', 'gate_decision', 'hold', 'test', '2026-06-11T10:00:00Z'),
+        ('po2', 'owner/repo', 'owner/repo#2', 'pr_outcome', 'closed', 'test', '2026-06-11T12:00:00Z'),
+        ('gd3a', 'owner/repo', 'owner/repo#3', 'gate_decision', 'hold', 'test', '2026-06-12T09:00:00Z'),
+        ('gd3b', 'owner/repo', 'owner/repo#3', 'gate_decision', 'hold', 'test', '2026-06-12T10:00:00Z'),
+        ('po3a', 'owner/repo', 'owner/repo#3', 'pr_outcome', 'closed', 'test', '2026-06-12T11:00:00Z'),
+        ('po3b', 'owner/repo', 'owner/repo#3', 'pr_outcome', 'merged', 'test', '2026-06-12T12:00:00Z'),
+        ('gd4', 'owner/repo', 'owner/repo#4', 'gate_decision', 'merge', 'test', '2026-06-13T10:00:00Z'),
+        ('po4', 'owner/repo', 'owner/repo#4', 'pr_outcome', 'merged', 'test', '2026-06-13T12:00:00Z'),
+        ('gd5', 'owner/repo', 'owner/repo#5', 'gate_decision', 'close', 'test', '2026-06-13T10:00:00Z')`,
+    ).run();
+    const agg = await computeFindingAcceptance(env, { days: 90, nowMs: NOW });
+    // #1 close→merged (addressed) and #3 hold→(closed then MERGED, rn=1 latest) (addressed); #2 hold→closed
+    // (unaddressed); #4 merge→merged is a CLEAN merge (not flagged); #5 close has no outcome yet (not counted).
+    expect(agg).toEqual({ flagged: 3, addressed: 2, unaddressed: 1, acceptanceRate: 0.667 });
+  });
+
+  it("computeFindingAcceptance fails safe to EMPTY_FINDING_ACCEPTANCE when the query rejects", async () => {
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            all: async () => {
+              throw new Error("d1 down");
+            },
+          }),
+        }),
+      },
+    } as unknown as Env;
+    expect(await computeFindingAcceptance(env, { days: 30, nowMs: NOW })).toEqual(EMPTY_FINDING_ACCEPTANCE);
+  });
+
+  it("computeFindingAcceptance tolerates missing D1 results (the ?? [] fallback)", async () => {
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            all: async () => ({ results: undefined }),
+          }),
+        }),
+      },
+    } as unknown as Env;
+    expect(await computeFindingAcceptance(env, { days: 30, nowMs: NOW })).toEqual(EMPTY_FINDING_ACCEPTANCE);
+  });
+
+  it("computeFindingAcceptance defaults a non-finite / non-positive window to 90 days and clamps to 730", async () => {
+    let boundFrom: string | undefined;
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: (fromIso: string) => {
+            boundFrom = fromIso;
+            return { all: async () => ({ results: [] as Array<{ truth: string }> }) };
+          },
+        }),
+      },
+    } as unknown as Env;
+    await computeFindingAcceptance(env, { days: Number.NaN, nowMs: NOW });
+    expect(boundFrom).toBe(new Date(NOW - 90 * 86_400_000).toISOString().slice(0, 10));
+    await computeFindingAcceptance(env, { days: 0, nowMs: NOW });
+    expect(boundFrom).toBe(new Date(NOW - 90 * 86_400_000).toISOString().slice(0, 10));
+    await computeFindingAcceptance(env, { days: 99_999, nowMs: NOW });
+    expect(boundFrom).toBe(new Date(NOW - 730 * 86_400_000).toISOString().slice(0, 10));
   });
 });
 

@@ -13,6 +13,12 @@ output/
 .env.*
 !.env.example
 !.env.selfhost.example
+# Docker Compose secret files (#4937-secrets-hardening): the actual secret VALUES an operator drops into
+# secrets/<name>.txt for the native `secrets:` mount (docker-compose.yml), read via the existing generic
+# <NAME>_FILE convention (src/selfhost/load-file-secrets.ts). Same exposure class as .env above -- never
+# committed. README.md stays tracked (it's the setup doc, not a secret) via the negation below.
+secrets/*
+!secrets/README.md
 docker-compose.override.yml
 !docker-compose.override.yml.example
 *.local

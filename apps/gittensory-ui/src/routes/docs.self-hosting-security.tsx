@@ -52,6 +52,23 @@ function SelfHostingSecurity() {
           },
         ]}
       />
+      <p>
+        <code>docker-compose.yml</code> ships native Docker Compose <code>secrets:</code> mounts for
+        the highest-value secrets (the GitHub App private key, webhook secret, API/MCP/internal-job
+        tokens, the setup token, the two token-encryption master keys, the Orb enrollment secret,
+        and the PagerDuty routing key) — file-mounted at <code>/run/secrets/&lt;name&gt;</code>,
+        never exposed via <code>docker inspect</code> or <code>docker compose config</code> the way
+        a plain <code>environment:</code>/<code>env_file</code> value is. This is purely additive:
+        an inline <code>.env</code> value always takes priority if you set both, so you can migrate
+        one secret at a time, or not at all. See <code>secrets/README.md</code> for the full file
+        list.
+      </p>
+      <CodeBlock
+        filename="shell"
+        code={`./scripts/selfhost-init-secrets.sh   # creates empty placeholder files (idempotent)
+printf '%s' 'your-real-secret-value' > secrets/github_webhook_secret.txt
+docker compose up -d --no-deps gittensory`}
+      />
 
       <h2>Private policy</h2>
       <p>

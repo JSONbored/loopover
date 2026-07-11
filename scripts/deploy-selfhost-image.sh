@@ -108,6 +108,9 @@ YAML
 mapfile -t compose_args < <(compose_file_args)
 compose_args+=(-f "$override_file")
 
+echo "selfhost image deploy: ensuring secret placeholder files exist"
+"$SCRIPT_DIR/selfhost-init-secrets.sh"
+
 echo "selfhost image deploy: pulling $IMAGE"
 docker compose "${compose_args[@]}" pull --policy always "$SERVICE"
 

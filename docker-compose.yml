@@ -116,6 +116,20 @@ services:
       REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
       # Enables the GitHub GET-response cache when >0 (0 disables); not a per-entry TTL, see .env.example.
       GITHUB_CACHE_TTL_SECONDS: "${GITHUB_CACHE_TTL_SECONDS:-20}"
+      # Native secret-file mounts (see the top-level `secrets:` block + secrets/README.md). Each points at
+      # the file Compose mounts below; src/selfhost/load-file-secrets.ts only reads it when the plain
+      # <NAME> variable above is unset, so an inline .env value always takes priority over these — purely
+      # additive, zero effect on an operator who has never touched secrets/.
+      GITHUB_APP_PRIVATE_KEY_FILE: "${GITHUB_APP_PRIVATE_KEY_FILE:-/run/secrets/github_app_private_key}"
+      GITHUB_WEBHOOK_SECRET_FILE: "${GITHUB_WEBHOOK_SECRET_FILE:-/run/secrets/github_webhook_secret}"
+      GITTENSORY_API_TOKEN_FILE: "${GITTENSORY_API_TOKEN_FILE:-/run/secrets/gittensory_api_token}"
+      GITTENSORY_MCP_TOKEN_FILE: "${GITTENSORY_MCP_TOKEN_FILE:-/run/secrets/gittensory_mcp_token}"
+      INTERNAL_JOB_TOKEN_FILE: "${INTERNAL_JOB_TOKEN_FILE:-/run/secrets/internal_job_token}"
+      SELFHOST_SETUP_TOKEN_FILE: "${SELFHOST_SETUP_TOKEN_FILE:-/run/secrets/selfhost_setup_token}"
+      TOKEN_ENCRYPTION_SECRET_FILE: "${TOKEN_ENCRYPTION_SECRET_FILE:-/run/secrets/token_encryption_secret}"
+      DRAFT_TOKEN_ENCRYPTION_SECRET_FILE: "${DRAFT_TOKEN_ENCRYPTION_SECRET_FILE:-/run/secrets/draft_token_encryption_secret}"
+      ORB_ENROLLMENT_SECRET_FILE: "${ORB_ENROLLMENT_SECRET_FILE:-/run/secrets/orb_enrollment_secret}"
+      PAGERDUTY_ROUTING_KEY_FILE: "${PAGERDUTY_ROUTING_KEY_FILE:-/run/secrets/pagerduty_routing_key}"
       # Uncomment for Qdrant RAG vector store (--profile qdrant):
       # QDRANT_URL: http://qdrant:6333
       # Uncomment for Ollama AI (--profile ollama):
@@ -132,6 +146,19 @@ services:
       # is deep-merged over (gitignored — never commit real policy; see config/examples/ for generic templates).
       # Absent ⇒ Docker mounts an empty dir ⇒ defaults apply.
       - ./gittensory-config:/config:ro
+    # Mounted read-only at /run/secrets/<name> (Compose's default target). See the top-level `secrets:`
+    # block above and secrets/README.md.
+    secrets:
+      - github_app_private_key
+      - github_webhook_secret
+      - gittensory_api_token
+      - gittensory_mcp_token
+      - internal_job_token
+      - selfhost_setup_token
+      - token_encryption_secret
+      - draft_token_encryption_secret
+      - orb_enrollment_secret
+      - pagerduty_routing_key
     depends_on:
       redis:
         condition: service_healthy
@@ -937,6 +964,36 @@ services:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9101/metrics | grep -q '^gittensory_backup_latest_timestamp_seconds'"]
       interval: 30s
       retries: 5
+
+# Native Docker Compose secrets (#4937-secrets-hardening): file-mounted (at /run/secrets/<name>), never
+# exposed via `docker inspect`/`docker compose config` the way a plain `environment:`/`env_file` value is.
+# Read by the app's existing generic <NAME>_FILE loader (src/selfhost/load-file-secrets.ts) via the
+# `environment:` defaults set below on the gittensory service. Every file here is created empty (a no-op --
+# an inline .env value always wins, see secrets/README.md) by `scripts/selfhost-init-secrets.sh`, which
+# every deploy runs before `docker compose build/up` so a missing file source can never break a deploy for
+# an operator who has not opted into this convention. Scoped to the always-on gittensory service's own
+# highest-value secrets for now -- the same convention extends to any other service the same way.
+secrets:
+  github_app_private_key:
+    file: ./secrets/github_app_private_key.pem
+  github_webhook_secret:
+    file: ./secrets/github_webhook_secret.txt
+  gittensory_api_token:
+    file: ./secrets/gittensory_api_token.txt
+  gittensory_mcp_token:
+    file: ./secrets/gittensory_mcp_token.txt
+  internal_job_token:
+    file: ./secrets/internal_job_token.txt
+  selfhost_setup_token:
+    file: ./secrets/selfhost_setup_token.txt
+  token_encryption_secret:
+    file: ./secrets/token_encryption_secret.txt
+  draft_token_encryption_secret:
+    file: ./secrets/draft_token_encryption_secret.txt
+  orb_enrollment_secret:
+    file: ./secrets/orb_enrollment_secret.txt
+  pagerduty_routing_key:
+    file: ./secrets/pagerduty_routing_key.txt
 
 volumes:
   gittensory-data:

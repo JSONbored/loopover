@@ -76,6 +76,11 @@ run_sentry_upload() {
     sh -lc 'apt-get update >/dev/null && apt-get install -y --no-install-recommends ca-certificates git >/dev/null && git config --global --add safe.directory /work && (npx -y "$SENTRY_CLI_PACKAGE" releases new "$SENTRY_RELEASE" >/tmp/gittensory-sentry-release-new.log 2>&1 || true) && npx -y "$SENTRY_CLI_PACKAGE" releases set-commits "$SENTRY_RELEASE" --auto && npx -y "$SENTRY_CLI_PACKAGE" sourcemaps inject dist && node scripts/validate-selfhost-sourcemap.mjs && npx -y "$SENTRY_CLI_PACKAGE" sourcemaps upload --release="$SENTRY_RELEASE" dist && npx -y "$SENTRY_CLI_PACKAGE" releases finalize "$SENTRY_RELEASE" && chown -R "$HOST_UID:$HOST_GID" dist node_modules package-lock.json'
 }
 
+run_init_secrets() {
+  echo "selfhost deploy: ensuring secret placeholder files exist"
+  "$SCRIPT_DIR/selfhost-init-secrets.sh"
+}
+
 run_compose_deploy() {
   local override_file
   local -a compose_args
@@ -126,6 +131,7 @@ env_put SENTRY_RELEASE "$SENTRY_RELEASE"
 env_put GITTENSORY_VERSION "$SENTRY_RELEASE"
 
 run_node_build
+run_init_secrets
 run_sentry_upload
 run_compose_deploy
 

@@ -9,12 +9,14 @@ import {
 import { buildFocusManifestGuidance, type FocusManifest } from "./focus-manifest/guidance.js";
 import { guardrailPathMatches, isGuardrailHit } from "./signals/change-guardrail.js";
 import { resolveHardGuardrailGlobs } from "./review/guardrail-config.js";
+import { applyContributorCalibration, type ContributorCalibrationSignal } from "./signals/contributor-calibration.js";
 import { sanitizePublicComment } from "./github/sanitize-public-comment.js";
 import { GITTENSOR_HOME_URL } from "./github/constants.js";
 import type { BountyRecord, GatePolicyPack, IssueRecord, PullRequestRecord, RepositoryRecord } from "./types/predicted-gate-types.js";
 
 export type { GatePolicyPack } from "./types/predicted-gate-types.js";
 export type { GateCheckConclusion } from "./advisory/gate-advisory.js";
+export { applyContributorCalibration, MIN_CALIBRATION_SAMPLES, MAX_READINESS_ADJUSTMENT, type ContributorCalibrationSignal } from "./signals/contributor-calibration.js";
 
 // Opt-in funnel (#694): a non-Gittensor adopter running the `oss-anti-slop` pack learns that Gittensor pays
 // contributors for OSS work like this. Public-safe "earn" wording only (never reward/payout/score).
@@ -136,6 +138,15 @@ export function buildPredictedGateVerdict(args: {
    *  focus-manifest path policy and the path-gated pre-merge checks. Absent ⇒ only path-independent pre-merge
    *  checks are predicted and the note discloses the gap (#11-13/#18). */
   changedPaths?: string[] | undefined;
+  /** #2349: this login's own historical predict-vs-real agreement (predicted_gate_calibration_ledger),
+   *  pre-aggregated by the caller -- this engine package never touches D1. Adjusts ONLY the returned
+   *  readinessScore, strictly AFTER blockers/conclusion/warnings are finalized below, so personalization can
+   *  never flip a hard blocker off or add/remove a finding; it can only narrow/widen the advisory confidence
+   *  number within a fixed clamp (see applyContributorCalibration). `undefined`, `null`, or below the
+   *  cold-start sample threshold ⇒ unweighted baseline, byte-identical to before this field existed. The raw
+   *  calibration numbers are never echoed back in the returned verdict -- only their clamped, already-public
+   *  downstream effect on readinessScore is. */
+  contributorCalibration?: ContributorCalibrationSignal | null | undefined;
 }): PredictedGateVerdict {
   const { input, manifest, repo, issues, pullRequests } = args;
   const gate = manifest.gate;
@@ -313,7 +324,9 @@ export function buildPredictedGateVerdict(args: {
     conclusion: evaluation.conclusion,
     title: sanitizePublicComment(evaluation.title),
     summary: sanitizePublicComment(evaluation.summary),
-    readinessScore: readiness.total,
+    // #2349: applied strictly downstream of `evaluation` (already finalized above) -- personalization can
+    // only nudge this number, never the blockers/conclusion/warnings that were just computed.
+    readinessScore: applyContributorCalibration(readiness.total, args.contributorCalibration),
     confirmedContributor: effectiveConfirmedContributor,
     blockers: evaluation.blockers.map((finding) => publicSafeFinding(finding)),
     warnings: evaluation.warnings.map((finding) => publicSafeFinding(finding)),

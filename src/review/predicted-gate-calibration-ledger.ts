@@ -24,14 +24,19 @@
 // recordContributorGateDecision's own per-commit REPLACE semantics, deliberately: once this ledger records a
 // prediction-vs-outcome pairing, that pairing must never change underneath a future calibration reader.
 //
-// THIS PR ONLY WRITES THE LEDGER. Nothing reads predicted_gate_calibration_ledger yet -- mirrors
-// contributor_gate_history's (migrations/0126) own "write-only, nothing reads yet" precedent; the eventual
-// #2349 consumer is explicit future work, deliberately deferred so a personalization-adjustment reader gets
-// its own focused review.
+// READ SIDE (#2349): computeContributorCalibration aggregates ONE login's full history into a plain
+// {sampleSize, agreementRate} signal for buildPredictedGateVerdict's personalization input
+// (packages/gittensory-engine/src/signals/contributor-calibration.ts). It is intentionally NOT gated by
+// isSelfHostedReviewRuntime/isParityAuditEnabled the way the writer above is: the write-side flag controls
+// whether this telemetry class is collected at all, but the read is a plain "use whatever rows already
+// exist" query -- gating it too would make historical calibration data silently stop being read the moment
+// the flag is toggled off, which is a surprising extra restriction nothing here asks for. When the flag was
+// never on, the table is simply empty and the read naturally degrades to cold-start.
 
 import { isParityAuditEnabled } from "./parity-wire";
 import { isSelfHostedReviewRuntime } from "../selfhost/review-runtime";
 import { errorMessage, nowIso } from "../utils/json";
+import type { ContributorCalibrationSignal } from "../../packages/gittensory-engine/src/signals/contributor-calibration";
 
 /** The minimal env shape the recorder needs -- mirrors parity-wire.ts's ParityRecorderEnv / contributor-
  *  calibration.ts's ContributorCalibrationEnv exactly (same gate-accuracy telemetry family, same flag). */
@@ -122,5 +127,35 @@ export async function recordPredictedGateCalibration(
       .run();
   } catch (error) {
     console.warn(JSON.stringify({ event: "predicted_gate_calibration_write_error", project, message: errorMessage(error).slice(0, 200) }));
+  }
+}
+
+/**
+ * Aggregate one login's full predicted_gate_calibration_ledger history into the plain signal
+ * {@link ContributorCalibrationSignal} that buildPredictedGateVerdict's `contributorCalibration` argument
+ * expects (#2349). A missing/blank login or a read failure both resolve to `null` -- the caller threads that
+ * straight into buildPredictedGateVerdict, whose cold-start handling treats `null` exactly like "never seen
+ * this actor": no penalty, no bonus. Best-effort and fail-safe: a read error is swallowed and logged, never
+ * thrown -- a calibration lookup must never break gate prediction.
+ */
+export async function computeContributorCalibration(env: PredictedGateCalibrationEnv, login: string | null | undefined): Promise<ContributorCalibrationSignal | null> {
+  const trimmed = login?.trim();
+  if (!trimmed) return null;
+  try {
+    const row = await env.DB.prepare(
+      `SELECT COUNT(*) AS sampleSize, COALESCE(AVG(agreed), 0) AS agreementRate
+         FROM predicted_gate_calibration_ledger
+        WHERE login = ?`,
+    )
+      .bind(trimmed)
+      .first<{ sampleSize: number; agreementRate: number }>();
+    // COUNT(*)/AVG(...) with no GROUP BY always returns exactly one row, even over zero matches (COUNT: 0,
+    // AVG: NULL -> COALESCE: 0) -- .first()'s nullable return type is a TypeScript-level formality here, not
+    // a reachable runtime case for this query shape.
+    /* v8 ignore next */
+    return row ? { sampleSize: row.sampleSize, agreementRate: row.agreementRate } : { sampleSize: 0, agreementRate: 0 };
+  } catch (error) {
+    console.warn(JSON.stringify({ event: "contributor_calibration_read_error", message: errorMessage(error).slice(0, 200) }));
+    return null;
   }
 }

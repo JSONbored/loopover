@@ -274,4 +274,56 @@ testExpectations:
       expect(await rawAll(env, "SELECT * FROM predicted_gate_calls")).toHaveLength(0);
     });
   });
+
+  describe("personalized calibration wiring (#2349)", () => {
+    async function seedLedgerRow(env: Env, opts: { login: string; agreed: boolean; pullNumber: number }) {
+      const now = new Date().toISOString();
+      await env.DB.prepare(
+        `INSERT INTO predicted_gate_calibration_ledger (id, login, project, target_id, predicted_action, real_decision, agreed, predicted_at, decided_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(crypto.randomUUID(), opts.login, "acme/widgets", `acme/widgets#${opts.pullNumber}`, "merge", opts.agreed ? "merge" : "hold", opts.agreed ? 1 : 0, now, now, now)
+        .run();
+    }
+
+    it("a login with a weak predict-vs-real track record gets a LOWER readinessScore than an identical fresh login", async () => {
+      const env = createTestEnv();
+      await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets" });
+      await upsertRepoFocusManifest(env, "acme/widgets", { gate: { pack: "oss-anti-slop", duplicates: "block", linkedIssue: "advisory" } }, "repo_file");
+      // 6 rows, mostly disagreements -- well above MIN_CALIBRATION_SAMPLES (5), well below neutral (50%).
+      for (let i = 0; i < 6; i++) await seedLedgerRow(env, { login: "shaky-miner", pullNumber: i, agreed: i === 0 });
+      const client = await connect(env);
+
+      const fresh = await client.callTool({
+        name: "gittensory_predict_gate",
+        arguments: { login: "fresh-miner", owner: "acme", repo: "widgets", title: "Add retry to upload client" },
+      });
+      const weak = await client.callTool({
+        name: "gittensory_predict_gate",
+        arguments: { login: "shaky-miner", owner: "acme", repo: "widgets", title: "Add retry to upload client" },
+      });
+
+      const freshData = fresh.structuredContent as { readinessScore: number };
+      const weakData = weak.structuredContent as { readinessScore: number };
+      expect(typeof freshData.readinessScore).toBe("number");
+      expect(weakData.readinessScore).toBeLessThan(freshData.readinessScore);
+    });
+
+    it("never echoes the raw calibration numbers (sampleSize, agreementRate) back to the caller", async () => {
+      const env = createTestEnv();
+      await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets" });
+      await upsertRepoFocusManifest(env, "acme/widgets", { gate: { pack: "oss-anti-slop", duplicates: "block", linkedIssue: "advisory" } }, "repo_file");
+      for (let i = 0; i < 6; i++) await seedLedgerRow(env, { login: "shaky-miner", pullNumber: i, agreed: false });
+      const client = await connect(env);
+
+      const result = await client.callTool({
+        name: "gittensory_predict_gate",
+        arguments: { login: "shaky-miner", owner: "acme", repo: "widgets", title: "Add retry to upload client" },
+      });
+
+      const serialized = JSON.stringify(result.structuredContent);
+      expect(serialized).not.toContain("agreementRate");
+      expect(serialized).not.toContain("sampleSize");
+    });
+  });
 });

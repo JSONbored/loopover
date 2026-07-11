@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { recordPredictedGateCalibration } from "../../src/review/predicted-gate-calibration-ledger";
+import { computeContributorCalibration, recordPredictedGateCalibration } from "../../src/review/predicted-gate-calibration-ledger";
 import { createTestEnv } from "../helpers/d1";
 
 async function rawAll(env: Env, sql: string, ...binds: unknown[]): Promise<Record<string, unknown>[]> {
@@ -13,6 +13,20 @@ async function rawAll(env: Env, sql: string, ...binds: unknown[]): Promise<Recor
 async function seedPredicted(env: Env, opts: { login: string; project: string; action: string; createdAt: string }) {
   await env.DB.prepare(`INSERT INTO predicted_gate_calls (id, login, project, predicted_action, conclusion, reason_code, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
     .bind(crypto.randomUUID(), opts.login, opts.project, opts.action, opts.action === "merge" ? "success" : "failure", null, opts.createdAt)
+    .run();
+}
+
+/** Inserts directly into predicted_gate_calibration_ledger, bypassing recordPredictedGateCalibration's
+ *  correlation-window pairing logic -- gives computeContributorCalibration's tests full control over how many
+ *  agreed/disagreed rows a login has, regardless of timing. */
+async function seedLedgerRow(env: Env, opts: { login: string; project?: string; pullNumber: number; agreed: boolean }) {
+  const project = opts.project ?? repoFullName;
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO predicted_gate_calibration_ledger (id, login, project, target_id, predicted_action, real_decision, agreed, predicted_at, decided_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(crypto.randomUUID(), opts.login, project, `${project}#${opts.pullNumber}`, "merge", opts.agreed ? "merge" : "hold", opts.agreed ? 1 : 0, now, now, now)
     .run();
 }
 
@@ -167,6 +181,79 @@ describe("recordPredictedGateCalibration — login-keyed predict-vs-live calibra
     await expect(recordPredictedGateCalibration(env, { login: "octocat", project: repoFullName, pullNumber: 7, headSha: "sha1", decision: "merge" })).resolves.toBeUndefined();
 
     expect(warn.mock.calls.map((c) => String(c[0])).some((line) => line.includes("predicted_gate_calibration_write_error"))).toBe(true);
+    warn.mockRestore();
+  });
+});
+
+describe("computeContributorCalibration — per-login calibration read (#2349)", () => {
+  it("cold start: a login with no ledger rows gets sampleSize 0 / agreementRate 0, not null", async () => {
+    const env = createTestEnv();
+    expect(await computeContributorCalibration(env, "octocat")).toEqual({ sampleSize: 0, agreementRate: 0 });
+  });
+
+  it("aggregates a mix of agreed/disagreed rows into an accurate sampleSize and agreementRate", async () => {
+    const env = createTestEnv();
+    await seedLedgerRow(env, { login: "octocat", pullNumber: 1, agreed: true });
+    await seedLedgerRow(env, { login: "octocat", pullNumber: 2, agreed: true });
+    await seedLedgerRow(env, { login: "octocat", pullNumber: 3, agreed: true });
+    await seedLedgerRow(env, { login: "octocat", pullNumber: 4, agreed: false });
+    await seedLedgerRow(env, { login: "octocat", pullNumber: 5, agreed: false });
+
+    const result = await computeContributorCalibration(env, "octocat");
+    expect(result).toEqual({ sampleSize: 5, agreementRate: 0.6 });
+  });
+
+  it("a perfect track record aggregates to agreementRate 1", async () => {
+    const env = createTestEnv();
+    await seedLedgerRow(env, { login: "octocat", pullNumber: 1, agreed: true });
+    await seedLedgerRow(env, { login: "octocat", pullNumber: 2, agreed: true });
+    expect(await computeContributorCalibration(env, "octocat")).toEqual({ sampleSize: 2, agreementRate: 1 });
+  });
+
+  it("scopes strictly per-login — a different login's history never leaks in", async () => {
+    const env = createTestEnv();
+    await seedLedgerRow(env, { login: "octocat", pullNumber: 1, agreed: false });
+    await seedLedgerRow(env, { login: "octocat", pullNumber: 2, agreed: false });
+    await seedLedgerRow(env, { login: "someone-else", pullNumber: 1, agreed: true });
+
+    expect(await computeContributorCalibration(env, "octocat")).toEqual({ sampleSize: 2, agreementRate: 0 });
+    expect(await computeContributorCalibration(env, "someone-else")).toEqual({ sampleSize: 1, agreementRate: 1 });
+  });
+
+  it("aggregates across ALL of a login's history regardless of which repo each pairing came from", async () => {
+    const env = createTestEnv();
+    await seedLedgerRow(env, { login: "octocat", project: "owner/repo-a", pullNumber: 1, agreed: true });
+    await seedLedgerRow(env, { login: "octocat", project: "owner/repo-b", pullNumber: 1, agreed: false });
+    expect(await computeContributorCalibration(env, "octocat")).toEqual({ sampleSize: 2, agreementRate: 0.5 });
+  });
+
+  it("returns null for a missing, null, or blank login — nothing meaningful to look up", async () => {
+    const env = createTestEnv();
+    await seedLedgerRow(env, { login: "octocat", pullNumber: 1, agreed: true });
+    expect(await computeContributorCalibration(env, undefined)).toBeNull();
+    expect(await computeContributorCalibration(env, null)).toBeNull();
+    expect(await computeContributorCalibration(env, "   ")).toBeNull();
+  });
+
+  it("reads regardless of the self-hosted/parity-audit flag — unlike the writer, the read is not flag-gated", async () => {
+    const env = createTestEnv();
+    delete env.SELFHOST_TRANSIENT_CACHE; // simulates the cloud worker, where the WRITER would have been skipped
+    await seedLedgerRow(env, { login: "octocat", pullNumber: 1, agreed: true });
+    expect(await computeContributorCalibration(env, "octocat")).toEqual({ sampleSize: 1, agreementRate: 1 });
+  });
+
+  it("fails safe: a read error resolves to null (logs, never throws)", async () => {
+    const env = createTestEnv();
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = ((sql: string) => {
+      if (/SELECT[\s\S]*FROM[\s\S]*predicted_gate_calibration_ledger/i.test(sql)) throw new Error("d1 down");
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(computeContributorCalibration(env, "octocat")).resolves.toBeNull();
+
+    expect(warn.mock.calls.map((c) => String(c[0])).some((line) => line.includes("contributor_calibration_read_error"))).toBe(true);
     warn.mockRestore();
   });
 });

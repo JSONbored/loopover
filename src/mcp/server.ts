@@ -164,6 +164,7 @@ import { simulateOpenPrPressure, type OpenPrPressureInput } from "../services/op
 import { buildFindingTaxonomyDocument, FINDING_TAXONOMY_URI } from "../review/finding-taxonomy";
 import { buildEnrichmentAnalyzersTaxonomyDocument, ENRICHMENT_ANALYZERS_URI } from "../review/enrichment-analyzers-taxonomy";
 import { recordPredictedGateCall } from "../review/predicted-gate-calls";
+import { computeContributorCalibration } from "../review/predicted-gate-calibration-ledger";
 
 type AppContext = Context<{ Bindings: Env }>;
 type ToolPayload = {
@@ -3032,6 +3033,9 @@ export class GittensoryMcp {
     // all, so skip the lookup there (keeps the prediction account-free for non-Gittensor adopters).
     const pack = manifest.gate.pack ?? "gittensor";
     const confirmedContributor = pack === "oss-anti-slop" ? undefined : (await fetchGittensorContributorSnapshot(input.login)) !== null;
+    // #2349: this login's own predict-vs-real track record, personalizing ONLY the returned readinessScore
+    // (see buildPredictedGateVerdict's contributorCalibration doc comment for the safety boundary).
+    const contributorCalibration = await computeContributorCalibration(this.env, input.login);
     const verdict = buildPredictedGateVerdict({
       input: {
         repoFullName,
@@ -3049,6 +3053,7 @@ export class GittensoryMcp {
       issueQuality: issueQuality?.report,
       confirmedContributor,
       ...(input.changedPaths === undefined ? {} : { changedPaths: input.changedPaths }),
+      contributorCalibration,
     });
     // #predicted-live-gate-agreement: record this call so a later real gate decision for the same
     // (repo, login) can be paired against it (src/review/predicted-gate-agreement.ts). Shared by BOTH

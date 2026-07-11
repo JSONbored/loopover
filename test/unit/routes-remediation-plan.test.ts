@@ -207,3 +207,56 @@ describe("local branch routes byte-cap ingestion bound", () => {
     });
   }
 });
+
+describe("branch-analysis route — personalized calibration wiring (#2349)", () => {
+  async function seedLedgerRow(env: Env, opts: { login: string; agreed: boolean; pullNumber: number }) {
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO predicted_gate_calibration_ledger (id, login, project, target_id, predicted_action, real_decision, agreed, predicted_at, decided_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(crypto.randomUUID(), opts.login, "miner/demo", `miner/demo#${opts.pullNumber}`, "merge", opts.agreed ? "merge" : "hold", opts.agreed ? 1 : 0, now, now, now)
+      .run();
+  }
+
+  it("a login with a weak predict-vs-real track record gets a LOWER predictedGate.readinessScore than a fresh login", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    await seedRepo(env, "miner", "demo", 301);
+    for (let i = 0; i < 6; i++) await seedLedgerRow(env, { login: "shaky-miner", pullNumber: i, agreed: i === 0 });
+
+    const freshResponse = await app.request(
+      BRANCH_ANALYSIS_PATH,
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify(branchPayload("fresh-miner", "miner/demo")) },
+      env,
+    );
+    const weakResponse = await app.request(
+      BRANCH_ANALYSIS_PATH,
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify(branchPayload("shaky-miner", "miner/demo")) },
+      env,
+    );
+    expect(freshResponse.status).toBe(200);
+    expect(weakResponse.status).toBe(200);
+    const fresh = (await freshResponse.json()) as { predictedGate: { readinessScore: number } };
+    const weak = (await weakResponse.json()) as { predictedGate: { readinessScore: number } };
+    expect(typeof fresh.predictedGate.readinessScore).toBe("number");
+    expect(weak.predictedGate.readinessScore).toBeLessThan(fresh.predictedGate.readinessScore);
+  });
+
+  it("never echoes the raw calibration numbers (sampleSize, agreementRate) back in the response", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    await seedRepo(env, "miner", "demo", 301);
+    for (let i = 0; i < 6; i++) await seedLedgerRow(env, { login: "shaky-miner", pullNumber: i, agreed: false });
+
+    const response = await app.request(
+      BRANCH_ANALYSIS_PATH,
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify(branchPayload("shaky-miner", "miner/demo")) },
+      env,
+    );
+    expect(response.status).toBe(200);
+    const serialized = JSON.stringify(await response.json());
+    expect(serialized).not.toContain("agreementRate");
+    expect(serialized).not.toContain("sampleSize");
+  });
+});

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildPredictedGateVerdict, type PredictedGateInput } from "../../src/rules/predicted-gate";
+import {
+  buildPredictedGateVerdict,
+  applyContributorCalibration,
+  MIN_CALIBRATION_SAMPLES,
+  MAX_READINESS_ADJUSTMENT,
+  type PredictedGateInput,
+  type ContributorCalibrationSignal,
+} from "../../src/rules/predicted-gate";
 import { parseFocusManifest } from "../../src/signals/focus-manifest";
 import type { IssueRecord, PullRequestRecord, RepositoryRecord } from "../../src/types";
 
@@ -29,6 +36,7 @@ function verdict(args: {
   input?: Partial<PredictedGateInput>;
   issues?: IssueRecord[];
   pullRequests?: PullRequestRecord[];
+  contributorCalibration?: ContributorCalibrationSignal | null | undefined;
 }) {
   return buildPredictedGateVerdict({
     input: { ...BASE_INPUT, ...args.input },
@@ -37,6 +45,7 @@ function verdict(args: {
     issues: args.issues ?? [openIssue(7, "Uploads should retry on 5xx")],
     pullRequests: args.pullRequests ?? [],
     ...(args.changedPaths ? { changedPaths: args.changedPaths } : {}),
+    ...(args.contributorCalibration !== undefined ? { contributorCalibration: args.contributorCalibration } : {}),
   });
 }
 
@@ -541,5 +550,139 @@ describe("pack-aware prediction (#693)", () => {
     expect(result.pack).toBe("oss-anti-slop");
     expect(result.conclusion).toBe("failure");
     expect(result.blockers.some((b) => b.code === "missing_linked_issue")).toBe(true);
+  });
+});
+
+describe("applyContributorCalibration (#2349)", () => {
+  it("cold start: undefined calibration returns the baseline unchanged", () => {
+    expect(applyContributorCalibration(70, undefined)).toBe(70);
+  });
+
+  it("cold start: null calibration returns the baseline unchanged", () => {
+    expect(applyContributorCalibration(70, null)).toBe(70);
+  });
+
+  it("cold start: sampleSize below MIN_CALIBRATION_SAMPLES returns the baseline unchanged, even with an extreme agreementRate", () => {
+    const belowThreshold: ContributorCalibrationSignal = { sampleSize: MIN_CALIBRATION_SAMPLES - 1, agreementRate: 1 };
+    expect(applyContributorCalibration(70, belowThreshold)).toBe(70);
+  });
+
+  it("at exactly MIN_CALIBRATION_SAMPLES, the adjustment kicks in", () => {
+    const atThreshold: ContributorCalibrationSignal = { sampleSize: MIN_CALIBRATION_SAMPLES, agreementRate: 1 };
+    expect(applyContributorCalibration(70, atThreshold)).toBe(70 + MAX_READINESS_ADJUSTMENT);
+  });
+
+  it("a strong track record (high agreement) nudges the score UP", () => {
+    const strong: ContributorCalibrationSignal = { sampleSize: 20, agreementRate: 0.9 };
+    // (0.9 - 0.5) * 2 * 10 = 8
+    expect(applyContributorCalibration(50, strong)).toBe(58);
+  });
+
+  it("a weak track record (low agreement) nudges the score DOWN", () => {
+    const weak: ContributorCalibrationSignal = { sampleSize: 20, agreementRate: 0.1 };
+    // (0.1 - 0.5) * 2 * 10 = -8
+    expect(applyContributorCalibration(50, weak)).toBe(42);
+  });
+
+  it("a coin-flip (50%) agreement rate is neutral: zero adjustment", () => {
+    const neutral: ContributorCalibrationSignal = { sampleSize: 50, agreementRate: 0.5 };
+    expect(applyContributorCalibration(50, neutral)).toBe(50);
+  });
+
+  it("CLAMP BOUNDARY: a perfect (100%) track record never exceeds +MAX_READINESS_ADJUSTMENT", () => {
+    const perfect: ContributorCalibrationSignal = { sampleSize: 500, agreementRate: 1 };
+    expect(applyContributorCalibration(50, perfect)).toBe(50 + MAX_READINESS_ADJUSTMENT);
+  });
+
+  it("CLAMP BOUNDARY: an always-wrong (0%) track record never exceeds -MAX_READINESS_ADJUSTMENT", () => {
+    const alwaysWrong: ContributorCalibrationSignal = { sampleSize: 500, agreementRate: 0 };
+    expect(applyContributorCalibration(50, alwaysWrong)).toBe(50 - MAX_READINESS_ADJUSTMENT);
+  });
+
+  it("CLAMP BOUNDARY: a malformed agreementRate above 1 is clamped to 1 before scaling — never a larger-than-max adjustment", () => {
+    const malformed: ContributorCalibrationSignal = { sampleSize: 500, agreementRate: 1.7 };
+    expect(applyContributorCalibration(50, malformed)).toBe(50 + MAX_READINESS_ADJUSTMENT);
+  });
+
+  it("CLAMP BOUNDARY: a malformed negative agreementRate is clamped to 0 before scaling — never a larger-than-max penalty", () => {
+    const malformed: ContributorCalibrationSignal = { sampleSize: 500, agreementRate: -0.4 };
+    expect(applyContributorCalibration(50, malformed)).toBe(50 - MAX_READINESS_ADJUSTMENT);
+  });
+
+  it("CLAMP BOUNDARY: the outer [0, 100] score clamp still applies when a positive adjustment would overflow 100", () => {
+    const perfect: ContributorCalibrationSignal = { sampleSize: 500, agreementRate: 1 };
+    expect(applyContributorCalibration(95, perfect)).toBe(100);
+  });
+
+  it("CLAMP BOUNDARY: the outer [0, 100] score clamp still applies when a negative adjustment would underflow 0", () => {
+    const alwaysWrong: ContributorCalibrationSignal = { sampleSize: 500, agreementRate: 0 };
+    expect(applyContributorCalibration(5, alwaysWrong)).toBe(0);
+  });
+
+  it("a null baseline (no readiness score to begin with) stays null — personalization never manufactures a score", () => {
+    const perfect: ContributorCalibrationSignal = { sampleSize: 500, agreementRate: 1 };
+    expect(applyContributorCalibration(null, perfect)).toBeNull();
+  });
+});
+
+describe("buildPredictedGateVerdict — personalized calibration wiring (#2349)", () => {
+  const CLEAN_GATE = { duplicates: "block", linkedIssue: "advisory" } as const;
+  const STRONG: ContributorCalibrationSignal = { sampleSize: 30, agreementRate: 0.95 };
+  const WEAK: ContributorCalibrationSignal = { sampleSize: 30, agreementRate: 0.05 };
+
+  function baselineScore(): number {
+    const result = verdict({ gate: CLEAN_GATE });
+    expect(typeof result.readinessScore).toBe("number");
+    return result.readinessScore as number;
+  }
+
+  it("omitting contributorCalibration is byte-identical to today (no field, no change)", () => {
+    const withoutField = verdict({ gate: CLEAN_GATE });
+    const explicitUndefined = verdict({ gate: CLEAN_GATE, contributorCalibration: undefined });
+    expect(explicitUndefined.readinessScore).toBe(withoutField.readinessScore);
+  });
+
+  it("a strong track record raises readinessScore, clamped to the baseline's own [0, 100] range", () => {
+    const base = baselineScore();
+    const result = verdict({ gate: CLEAN_GATE, contributorCalibration: STRONG });
+    // agreementRate 0.95 -> (0.95 - 0.5) * 2 * MAX_READINESS_ADJUSTMENT = 9 points, not the full max.
+    expect(result.readinessScore).toBe(Math.min(100, base + 9));
+  });
+
+  it("a weak track record lowers readinessScore, clamped to the baseline's own [0, 100] range", () => {
+    const base = baselineScore();
+    const result = verdict({ gate: CLEAN_GATE, contributorCalibration: WEAK });
+    // agreementRate 0.05 -> (0.05 - 0.5) * 2 * MAX_READINESS_ADJUSTMENT = -9 points, not the full max.
+    expect(result.readinessScore).toBe(Math.max(0, base - 9));
+  });
+
+  it("personalization changes readinessScore ONLY — conclusion, blockers, and warnings are byte-identical", () => {
+    const base = verdict({ gate: CLEAN_GATE });
+    const personalized = verdict({ gate: CLEAN_GATE, contributorCalibration: STRONG });
+    expect(personalized.conclusion).toBe(base.conclusion);
+    expect(personalized.blockers).toEqual(base.blockers);
+    expect(personalized.warnings).toEqual(base.warnings);
+    expect(personalized.readinessScore).not.toBe(base.readinessScore);
+  });
+
+  it("SAFETY: an extreme positive track record cannot bypass a real hard blocker (missing linked issue)", () => {
+    const result = verdict({
+      gate: { linkedIssue: "block" },
+      input: { body: "no issue here", linkedIssues: [] },
+      issues: [],
+      // The strongest possible personalization signal — still must not move conclusion off "failure" or
+      // remove the blocker, because applyContributorCalibration only ever touches readinessScore.
+      contributorCalibration: { sampleSize: 10_000, agreementRate: 1 },
+    });
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.some((b) => b.code === "missing_linked_issue")).toBe(true);
+  });
+
+  it("SAFETY: the raw calibration numbers (sampleSize, agreementRate) are never echoed back in the verdict", () => {
+    const result = verdict({ gate: CLEAN_GATE, contributorCalibration: STRONG });
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("agreementRate");
+    expect(serialized).not.toContain("sampleSize");
+    expect(serialized).not.toContain("0.95");
   });
 });

@@ -251,6 +251,7 @@ import { buildPullRequestReviewability, type PullRequestReviewability } from "..
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { buildSlopAssessment, buildIssueSlopAssessment, SLOP_RUBRIC_MARKDOWN, ISSUE_SLOP_RUBRIC_MARKDOWN } from "../signals/slop";
 import { buildPredictedGateVerdict } from "../rules/predicted-gate";
+import { computeContributorCalibration } from "../review/predicted-gate-calibration-ledger";
 import { buildFocusManifestValidation } from "../services/focus-manifest-validation";
 import { buildMaintainerActivationPreview, recommendedAdvisoryActivationSettings } from "../services/maintainer-activation";
 import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
@@ -3056,6 +3057,9 @@ export function createApp() {
     // Pre-submission gate prediction: the SAME advisory + evaluateGateCheck the maintainer PR pipeline
     // runs, over a synthetic PR from this local branch, using ONLY the repo's PUBLIC .gittensory.yml gate
     // policy (never the maintainer's private DB settings). Self-scoped (requireContributorAccess above).
+    // #2349: this login's own predict-vs-real track record, personalizing ONLY the returned readinessScore
+    // (see buildPredictedGateVerdict's contributorCalibration doc comment for the safety boundary).
+    const contributorCalibration = await computeContributorCalibration(c.env, parsed.data.login);
     const predictedGate = buildPredictedGateVerdict({
       input: {
         repoFullName: parsed.data.repoFullName,
@@ -3075,6 +3079,7 @@ export function createApp() {
       // #11-13/#18: thread the local branch's changed PATHS (already in the request) so the predictor also
       // evaluates the focus-manifest path policy + path-gated pre-merge checks, matching the live gate.
       ...(parsed.data.changedFiles ? { changedPaths: parsed.data.changedFiles.map((file) => file.path) } : {}),
+      contributorCalibration,
     });
     const response = { ...analysis, predictedGate, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
     await persistSignal(c.env, "local-branch-analysis", `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`, parsed.data.repoFullName, response as unknown as Record<string, JsonValue>, analysis.generatedAt);

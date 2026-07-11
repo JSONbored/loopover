@@ -498,10 +498,14 @@ export {
   buildPredictedGateVerdict,
   predictedGateNote,
   publicSafeFinding,
+  applyContributorCalibration,
+  MIN_CALIBRATION_SAMPLES,
+  MAX_READINESS_ADJUSTMENT,
   type GateCheckConclusion,
   type GatePolicyPack,
   type PredictedGateInput,
   type PredictedGateVerdict,
+  type ContributorCalibrationSignal,
 } from "./predicted-gate.js";
 // Focus-manifest parse/compile core (#2280): shared by the maintainer review stack and the miner's
 // `.gittensory-miner.yml` goal-spec parser (see miner-goal-spec.ts for the parallel surface).

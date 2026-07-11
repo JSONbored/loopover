@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1279,7 +1279,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(seen[seen.indexOf("--effort") + 1]).toBe("medium");
   });
 
-  it("Claude Code keeps systemAppend out of argv and supplies it through stdin once (#1471)", async () => {
+  it("Claude Code passes systemAppend through --append-system-prompt-file, never argv or stdin (#observability-plan-mode-injection-lookalike, was #1471/#3951)", async () => {
     const systemAppend = "REPOSITORY REVIEW INSTRUCTIONS: Follow async-error conventions.";
     let seen: string[] = [];
     let capturedInput = "";
@@ -1295,18 +1295,36 @@ describe("subscription CLI helpers + fail-safe", () => {
       ],
       systemAppend,
     });
-    expect(seen).not.toContain("--append-system-prompt");
+    // Never the literal value in argv (`ps aux` visibility, #3951) and never smuggled into stdin behind an
+    // "ADDITIONAL SYSTEM INSTRUCTIONS:" label (the pattern claude-code's own safety training flagged as a
+    // prompt injection in production, #observability-plan-mode-injection-lookalike) -- only a short file path.
     expect(seen).not.toContain(systemAppend);
+    expect(capturedInput).not.toContain("ADDITIONAL SYSTEM INSTRUCTIONS:");
+    expect(capturedInput).not.toContain(systemAppend);
     expect(capturedInput).toContain("Base system.");
     expect(capturedInput).toContain("Review this diff.");
-    expect(countOccurrences(capturedInput, systemAppend)).toBe(1);
+    const flagIndex = seen.indexOf("--append-system-prompt-file");
+    expect(flagIndex).toBeGreaterThan(-1);
+    const filePath = seen[flagIndex + 1] as string;
+    expect(readFileSync(filePath, "utf8")).toBe(systemAppend);
 
     await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, cap).run("", {
       prompt: "Review this diff.",
       systemAppend: "   ",
     });
-    expect(seen).not.toContain("--append-system-prompt");
+    expect(seen).not.toContain("--append-system-prompt-file");
     expect(capturedInput).toBe("Review this diff.");
+  });
+
+  it("Claude Code runs with --permission-mode bypassPermissions, not plan (#observability-plan-mode-injection-lookalike): disallowedTools already forbids every mutating tool, and 'plan' activates the interactive Plan-Mode workflow instead of just restricting permissions", async () => {
+    let seen: string[] = [];
+    const cap: StubSpawn = async (_c, a) => {
+      seen = a;
+      return { stdout: JSON.stringify({ type: "result", result: "ok" }), code: 0 };
+    };
+    await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, cap).run("", { prompt: "x" });
+    expect(seen[seen.indexOf("--permission-mode") + 1]).toBe("bypassPermissions");
+    expect(seen).not.toContain("plan");
   });
 
   it("chat-only CLIs reject embeds so the chain routes embeddings to an embed-capable provider (Claude review + ollama embed)", async () => {

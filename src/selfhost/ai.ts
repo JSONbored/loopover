@@ -505,6 +505,21 @@ async function isolatedCliCwd(): Promise<string> {
   return mkdtemp(join(tmpdir(), "gittensory-ai-"));
 }
 
+/** Write `systemAppend` into `cwd` (the SAME per-call isolated temp dir already used for the subprocess's
+ *  cwd, so it shares that directory's lifecycle) and return its path, for `--append-system-prompt-file`.
+ *  Keeps repo review instructions out of argv/`ps aux` (#3951's concern) WITHOUT falling back to smuggling
+ *  them into the stdin prompt body, which claude-code's own safety training can flag as a prompt-injection
+ *  pattern (a labeled "ADDITIONAL SYSTEM INSTRUCTIONS:" block inside otherwise-untrusted content) instead of
+ *  genuine first-party configuration -- confirmed live via ai_review_provider_unparseable_exhausted events
+ *  where the model refused with exactly that reasoning (#observability-plan-mode-injection-lookalike). */
+async function writeClaudeSystemPromptFile(cwd: string, systemAppend: string): Promise<string> {
+  const { writeFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const path = join(cwd, "system-append.txt");
+  await writeFile(path, systemAppend, "utf8");
+  return path;
+}
+
 /** Pull the assistant's final text out of a CLI's JSON output (Claude Code `{result}` or Codex JSONL). */
 export function extractCliText(stdout: string): string {
   const trimmed = stdout.trim();
@@ -864,14 +879,25 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
           OTEL_METRIC_EXPORT_INTERVAL: parentEnv.OTEL_METRIC_EXPORT_INTERVAL,
         });
         const systemAppend = normalizedSystemAppend(options);
-        const prompt = prependCliSystemAppend(toCliPrompt(options, systemAppend), systemAppend);
+        const prompt = toCliPrompt(options, systemAppend);
         const spawn = spawnImpl ?? (await defaultSpawn());
-        const args = ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "plan", "--effort", effort, "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"];
+        const cwd = await isolatedCliCwd();
+        // bypassPermissions (not "plan"): --disallowedTools already forbids every mutating/networked tool, so
+        // nothing left needs an interactive approval prompt -- and this call has no TTY to answer one anyway.
+        // "plan" activates Claude Code's full interactive Plan-Mode WORKFLOW (explore, draft a plan, wait for
+        // ExitPlanMode approval), not just a permission restriction, which confused the model into treating a
+        // one-shot review request as an interactive planning session instead of returning a JSON verdict
+        // (#observability-plan-mode-injection-lookalike, live in ai_review_provider_unparseable_exhausted).
+        const args = ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "bypassPermissions", "--effort", effort, "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"];
+        // A dedicated system-prompt-file channel (not textual stdin-prepending) marks repo instructions
+        // unambiguously SYSTEM rather than author-controlled content -- see writeClaudeSystemPromptFile's doc
+        // comment for why the textual-prepend approach this replaces was itself the bug.
+        if (systemAppend) args.push("--append-system-prompt-file", await writeClaudeSystemPromptFile(cwd, systemAppend));
         attempted = true;
         const { stdout, code, stderr, timedOut, stalledNoOutput } = await spawn(
           "claude",
           args,
-          { env, input: prompt, timeoutMs, firstOutputTimeoutMs, cwd: await isolatedCliCwd() },
+          { env, input: prompt, timeoutMs, firstOutputTimeoutMs, cwd },
         );
         stdoutForMetrics = stdout;
         if (timedOut && stalledNoOutput) {

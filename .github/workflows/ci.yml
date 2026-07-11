@@ -361,6 +361,14 @@ jobs:
       - name: UI/MCP version audit
         if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.mcp == 'true' }}
         run: npm run ui:version-audit
+      # gittensory-ui and gittensory-miner-ui both import compiled output from this shared package
+      # (packages/gittensory-ui-kit/dist), which is gitignored like every other workspace package's
+      # dist -- so it does not exist on a fresh checkout until something builds it. Same class of gap
+      # as "Build engine package" above; runs before UI lint/typecheck/tests/build all in this same
+      # job, so building it here once covers all four.
+      - name: Build UI-kit package
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}
+        run: npm run ui:kit:build
       - name: UI lint
         if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}
         run: npm run ui:lint

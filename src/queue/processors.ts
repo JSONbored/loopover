@@ -150,6 +150,7 @@ import {
 import {
   buildMaintainerQueueDigest,
   buildPublicAgentCommandComment,
+  INTENT_ROUTABLE_COMMANDS,
   type GittensoryMentionCommandName,
   isAiCostBearingCommand,
   isAuthorizedCommandActor,
@@ -12317,10 +12318,10 @@ const INTENT_ROUTING_RATE_LIMIT_EVENT_TYPE = "github_app.intent_routing_invocati
  * Dedicated rate limit for the intent-classification router (#4596): every unrecognized-verb mention with
  * non-trivial trailing text that reaches the classifier consumes ONE tick here, using the SAME AI-cost-bearing
  * ceiling (`commandRateLimitAiMaxPerWindow`) and "off"/"hold" policy switch as every other AI-cost-bearing
- * command -- kept as its OWN counter (not folded into any single command's bucket via
+ * command, with hold policy required before the cost-bearing classifier can run -- kept as its OWN counter (not folded into any single command's bucket via
  * `maybeThrottleGittensoryCommand`) because an unrecognized-verb mention isn't attributable to any one command
  * until AFTER classification runs, and a "no match" classification must still count for budget-ledger
- * consistency (req 5) even though it never becomes a real command dispatch. Fails OPEN on any throttle: this
+ * consistency (req 5) even though it never becomes a real command dispatch. Fails OPEN when policy is off or any throttle trips: this
  * only ever skips the classifier call itself, never blocks the existing did-you-mean fallback it would
  * otherwise replace -- a contributor still gets a reply either way.
  */
@@ -12336,7 +12337,7 @@ async function maybeThrottleIntentRouting(
 ): Promise<boolean> {
   /* v8 ignore next -- resolveRepositorySettings always resolves a concrete "off"/"hold"; the undefined side is defensive against the field's optional TS type. */
   const policy = args.settings.commandRateLimitPolicy ?? "off";
-  if (policy === "off") return false;
+  if (policy === "off") return true;
 
   const targetKey = `${args.repoFullName}#${args.issueNumber}#intent-routing`;
   const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
@@ -12490,15 +12491,50 @@ async function maybeProcessGittensoryMentionCommand(
       ),
     ]);
 
+  const pullRequestAuthor =
+    cachedPullRequest?.authorLogin ?? issue.user?.login ?? null;
+
   // Intent-classification router (#4596): an unrecognized-verb mention with real trailing text (e.g. "why is
-  // this stuck?") gets ONE chance to be re-routed to an existing Q&A command BEFORE authorization/rate-limit/
-  // dispatch run, so the rest of this handler proceeds completely normally for whatever it resolves to -- the
-  // matched command's OWN authorization, rate limit, and rendering all apply unchanged, exactly as if the
-  // contributor had typed the exact verb. A no-match (or anything not enabled/available) leaves `command`
-  // untouched and the existing did-you-mean fallback renders exactly as it always has.
+  // this stuck?") gets ONE chance to be re-routed to an existing Q&A command. Because the classifier is a
+  // cost-bearing local-AI call, it is only attempted after the actor is authorized for at least one command the
+  // router is allowed to pick and after the dedicated hold-policy throttle admits the request. A no-match (or
+  // anything not enabled/available/authorized/throttled) leaves `command` untouched and the existing did-you-mean
+  // fallback renders exactly as it always has.
+  const needsIntentMinerDetection =
+    command.name === "help" &&
+    command.unrecognizedText &&
+    settings.advisoryAiRouting?.intentRouting === true &&
+    INTENT_ROUTABLE_COMMANDS.some((commandName) =>
+      commandAuthorizationNeedsMinerDetection({
+        policy: settings.commandAuthorization,
+        commandName,
+        commenterLogin: commenter,
+        commenterAssociation,
+        pullRequestAuthorLogin: pullRequestAuthor,
+      }),
+    );
+  let official =
+    pullRequestAuthor && needsIntentMinerDetection
+      ? await getCachedOfficialMinerDetection(env, pullRequestAuthor, {
+          targetKey: `${repoFullName}#${issue.number}`,
+          deliveryId,
+        })
+      : undefined;
   let interpretedFrom: { question: string; matchedCommand: GittensoryMentionCommandName } | undefined;
   if (command.name === "help" && command.unrecognizedText && settings.advisoryAiRouting?.intentRouting === true) {
-    const throttled = await maybeThrottleIntentRouting(env, { deliveryId, repoFullName, issueNumber: issue.number, commenter, settings });
+    const authorizedForIntentRouting = INTENT_ROUTABLE_COMMANDS.some((commandName) =>
+      isAuthorizedCommandActor({
+        commandName,
+        commenterLogin: commenter,
+        commenterAssociation,
+        pullRequestAuthorLogin: pullRequestAuthor,
+        officialAuthorDetection: official,
+        commandAuthorizationPolicy: settings.commandAuthorization,
+      }).authorized,
+    );
+    const throttled = authorizedForIntentRouting
+      ? await maybeThrottleIntentRouting(env, { deliveryId, repoFullName, issueNumber: issue.number, commenter, settings })
+      : true;
     if (!throttled) {
       const classification = await classifyGittensoryIntent(env, {
         text: command.unrecognizedText,
@@ -12533,8 +12569,6 @@ async function maybeProcessGittensoryMentionCommand(
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
-  const pullRequestAuthor =
-    cachedPullRequest?.authorLogin ?? issue.user?.login ?? null;
   const needsMinerDetection = commandAuthorizationNeedsMinerDetection({
     policy: settings.commandAuthorization,
     commandName: command.name,
@@ -12542,14 +12576,12 @@ async function maybeProcessGittensoryMentionCommand(
     commenterAssociation,
     pullRequestAuthorLogin: pullRequestAuthor,
   });
-  const official =
-    pullRequestAuthor &&
-    (needsMinerDetection || command.name === "miner-context")
-      ? await getCachedOfficialMinerDetection(env, pullRequestAuthor, {
-          targetKey: `${repoFullName}#${issue.number}`,
-          deliveryId,
-        })
-      : undefined;
+  if (pullRequestAuthor && !official && (needsMinerDetection || command.name === "miner-context")) {
+    official = await getCachedOfficialMinerDetection(env, pullRequestAuthor, {
+      targetKey: `${repoFullName}#${issue.number}`,
+      deliveryId,
+    });
+  }
   const authorization = isAuthorizedCommandActor({
     commandName: command.name,
     commenterLogin: commenter,

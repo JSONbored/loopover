@@ -1144,13 +1144,13 @@ describe("queue processors", () => {
       });
     }
 
-    function mentionPayload(issueNumber: number, body: string) {
+    function mentionPayload(issueNumber: number, body: string, options: { commenter?: string } = {}) {
       return {
         action: "created" as const,
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: { number: issueNumber, title: "Rate limit target", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
-        comment: { id: 1, body, user: { login: "maintainer", type: "User" }, author_association: "OWNER" },
+        comment: { id: issueNumber, body, user: { login: options.commenter ?? "maintainer", type: "User" }, author_association: "OWNER" },
       };
     }
 
@@ -1605,6 +1605,7 @@ describe("queue processors", () => {
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI_ADVISORY: { run: async () => ({ response: '{"command": "blockers"}' }) } as unknown as Ai,
       });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 5, commandRateLimitWindowHours: 24 });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 309, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[] };
       // advisoryAiRouting is config-as-code only -- enable intentRouting the real way, through the repo's
@@ -1637,6 +1638,7 @@ describe("queue processors", () => {
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI_ADVISORY: { run: async () => ({ response: '{"command": "ask"}' }) } as unknown as Ai,
       });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 5, commandRateLimitWindowHours: 24 });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 315, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[] };
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1679,11 +1681,47 @@ describe("queue processors", () => {
       expect(seen.comments[0]).not.toContain("Gittensory readiness blockers");
     });
 
+    it("#4596: SECURITY: unauthorized commenters cannot spend intent-routing AI before command authorization", async () => {
+      const advisoryRun = vi.fn(async () => ({ response: '{"command": "blockers"}' }));
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI_ADVISORY: { run: advisoryRun } as unknown as Ai,
+      });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 5, commandRateLimitWindowHours: 24 });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 316, title: "Unauthorized intent routing", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
+      const seen = { comments: [] as string[] };
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("raw.githubusercontent.com") && url.includes(".gittensory.yml")) {
+          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n", { status: 200 });
+        }
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "none" });
+        if (url.includes("/issues/316/comments") && method === "POST") {
+          seen.comments.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? ""));
+          return Response.json({ id: seen.comments.length }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "intent-routing-unauthorized-no-ai",
+        eventName: "issue_comment",
+        payload: mentionPayload(316, "@gittensory why is this stuck?", { commenter: "driveby" }),
+      });
+      expect(advisoryRun).not.toHaveBeenCalled();
+      expect(seen.comments).toHaveLength(0);
+      const invocations = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.intent_routing_invocation'").first<{ n: number }>();
+      expect(invocations?.n).toBe(0);
+    });
+
     it("#4596: falls through to the existing did-you-mean hint end-to-end when intentRouting is on but the classifier finds no confident match", async () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI_ADVISORY: { run: async () => ({ response: '{"command": null}' }) } as unknown as Ai,
       });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 5, commandRateLimitWindowHours: 24 });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 311, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[] };
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1802,6 +1840,103 @@ describe("queue processors", () => {
       const invocations = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.intent_routing_invocation'").first<{ n: number }>();
       expect(invocations?.n).toBe(1); // only ONE invocation recorded despite two processing passes
     });
+
+    it("#5107: REGRESSION: leaves the classifier unmetered-spend-blocked when commandRateLimitPolicy is left at its off default", async () => {
+      const advisoryRun = vi.fn(async () => ({ response: '{"command": "blockers"}' }));
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI_ADVISORY: { run: advisoryRun } as unknown as Ai });
+      // Deliberately NO upsertRepositorySettings commandRateLimitPolicy override -- stays at its "off" default.
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 317, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
+      const seen = { comments: [] as string[] };
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("raw.githubusercontent.com") && url.includes(".gittensory.yml")) {
+          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n", { status: 200 });
+        }
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
+        if (url.includes("/issues/317/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/317/comments") && method === "POST") {
+          seen.comments.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? ""));
+          return Response.json({ id: seen.comments.length }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      await processJob(env, { type: "github-webhook", deliveryId: "intent-routing-policy-off", eventName: "issue_comment", payload: mentionPayload(317, "@gittensory why is this stuck?") });
+      expect(advisoryRun).not.toHaveBeenCalled(); // an unconfigured rate limit must not allow unmetered AI spend
+      expect(seen.comments).toHaveLength(1); // fails open to the plain did-you-mean fallback
+      expect(seen.comments[0]).not.toContain("Interpreted");
+      const invocations = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.intent_routing_invocation'").first<{ n: number }>();
+      expect(invocations?.n).toBe(0); // short-circuited at the policy gate, before the counter is even touched
+    });
+
+    it("#5107: a confirmed Gittensor miner is authorized for intent-routing on their OWN PR (not a maintainer/collaborator)", async () => {
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI_ADVISORY: { run: async () => ({ response: '{"command": "blockers"}' }) } as unknown as Ai,
+      });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 5, commandRateLimitWindowHours: 24 });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 319, title: "Rate limit target", state: "open", user: { login: "own-pr-miner" }, author_association: "NONE", labels: [], body: "" });
+      await upsertOfficialMinerDetection(env, "own-pr-miner", { status: "confirmed", snapshot: queueMinerSnapshot("own-pr-miner") }, 60_000);
+      const seen = { comments: [] as string[] };
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("raw.githubusercontent.com") && url.includes(".gittensory.yml")) {
+          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n", { status: 200 });
+        }
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        // No repo permission at all -- the ONLY route to authorization is the confirmed_miner role on their own PR.
+        if (url.includes("/collaborators/") && url.includes("/permission")) return new Response("not found", { status: 404 });
+        if (url.includes("/issues/319/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/319/comments") && method === "POST") {
+          seen.comments.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? ""));
+          return Response.json({ id: seen.comments.length }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "intent-routing-confirmed-miner-own-pr",
+        eventName: "issue_comment",
+        payload: mentionPayload(319, "@gittensory why is this stuck?", { commenter: "own-pr-miner" }),
+      });
+      expect(seen.comments).toHaveLength(1);
+      expect(seen.comments[0]).toContain('Interpreted "why is this stuck?" as `@gittensory blockers`');
+    });
+  });
+
+  it("#5107: resolves pullRequestAuthor to null, without breaking command dispatch, when neither the cached PR row nor the webhook issue carry a user login", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    // Deliberately no upsertPullRequestFromGitHub call -- the cached PR lookup stays null/uncached.
+    const seen = { comments: [] as string[] };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
+      if (url.includes("/issues/318/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/318/comments") && method === "POST") {
+        seen.comments.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? ""));
+        return Response.json({ id: seen.comments.length }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pull-request-author-null-fallback",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        // Deliberately no `user` field on the issue -- combined with no cached PR row, this exercises the
+        // pullRequestAuthor `cachedPullRequest?.authorLogin ?? issue.user?.login ?? null` fallback's null arm.
+        issue: { number: 318, title: "No author anywhere", state: "open", pull_request: {}, author_association: "NONE" },
+        comment: { id: 318, body: "@gittensory help", user: { login: "maintainer", type: "User" }, author_association: "OWNER" },
+      },
+    });
+    expect(seen.comments).toHaveLength(1); // command dispatch still completes normally
   });
 
   it("denies a maintainer Q&A command from an org member without real repo permission (#788)", async () => {

@@ -4032,7 +4032,7 @@ describe("queue processors", () => {
       repoFullName: string,
       prNumber: number,
       headSha: string,
-      opts: { e2eTests?: boolean; hasTestFile?: boolean; validationNote?: boolean; manifestPolicyGateMode?: "advisory" | "block"; e2eTestDelivery?: "comment" | "commit" } = {},
+      opts: { e2eTests?: boolean; hasTestFile?: boolean; validationNote?: boolean; manifestPolicyGateMode?: "advisory" | "block"; e2eTestDelivery?: "comment" | "commit"; autoTrigger?: boolean } = {},
     ) {
       const slash = repoFullName.indexOf("/");
       const owner = repoFullName.slice(0, slash);
@@ -4078,10 +4078,14 @@ describe("queue processors", () => {
       // testExpectations is a TOP-LEVEL manifest field (unlike review.e2e_test_delivery's nested snake_case) --
       // both it and features.e2eTests must land in the SAME upsertRepoFocusManifest call, since a second
       // separate call replaces rather than merges with the first.
+      // autoTrigger defaults to true here (NOT the production default) since this whole describe block exists
+      // to exercise the auto-trigger's own behavior -- the one test that cares about the real production
+      // default (OFF) passes `autoTrigger: false` explicitly, mirroring how the `e2eTests: false` case above
+      // already tests ITS OWN negative default the same way.
       await upsertRepoFocusManifest(env, repoFullName, {
         testExpectations: ["Run npm run test:ci."],
         features: { e2eTests: opts.e2eTests ?? true },
-        ...(opts.e2eTestDelivery ? { review: { e2e_test_delivery: opts.e2eTestDelivery } } : {}),
+        review: { e2e_test_auto_trigger: opts.autoTrigger ?? true, ...(opts.e2eTestDelivery ? { e2e_test_delivery: opts.e2eTestDelivery } : {}) },
       });
     }
 
@@ -4206,6 +4210,25 @@ describe("queue processors", () => {
       expect(run).not.toHaveBeenCalled();
       expect(posted.count).toBe(0);
       const audited = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.e2e_tests_generation").first<{ n: number }>();
+      expect(audited?.n).toBe(0);
+    });
+
+    it("does not auto-trigger when features.e2eTests is enabled but review.e2e_test_auto_trigger is not set (safe default, #4196 separation)", async () => {
+      const repoFullName = "JSONbored/auto-e2e-4196-no-opt-in";
+      const run = vi.fn();
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      // e2eTests stays enabled (the master feature, which unlocks the command/checkbox) but autoTrigger is
+      // explicitly withheld -- the exact "enabled for maintainer-initiated use, but never fires unprompted"
+      // shape the feature must default to.
+      await seedAutoTriggerPr(env, repoFullName, 5012, "auto-4196-no-opt-in-sha", { autoTrigger: false });
+      const posted = { count: 0, body: "" };
+      stubAutoTriggerFetch(5012, posted);
+
+      await processJob(env, autoTriggerWebhook(repoFullName, 5012, "auto-4196-no-opt-in-sha"));
+
+      expect(run).not.toHaveBeenCalled();
+      expect(posted.count).toBe(0);
+      const audited = await env.DB.prepare("select count(*) as n from audit_events where event_type like 'github_app.e2e_tests_generation%'").first<{ n: number }>();
       expect(audited?.n).toBe(0);
     });
 
@@ -4385,7 +4408,7 @@ describe("queue processors", () => {
       // branch is reachable only from the auto-trigger, which has no comment-invoker to fall back on).
       await upsertPullRequestFromGitHub(env, repoFullName, { number: 5010, title: "Add retry to checkout", state: "open", author_association: "CONTRIBUTOR", head: { sha: "auto-4196-no-author-sha", ref: "feature/checkout-retry" }, labels: [], body: "No validation evidence mentioned here." });
       await upsertPullRequestFile(env, { repoFullName, pullNumber: 5010, path: "src/checkout.ts", status: "modified", additions: 3, deletions: 0, changes: 3, payload: { patch: "+function retryPayment() {\n+  return true;\n+}" } });
-      await upsertRepoFocusManifest(env, repoFullName, { testExpectations: ["Run npm run test:ci."], features: { e2eTests: true } });
+      await upsertRepoFocusManifest(env, repoFullName, { testExpectations: ["Run npm run test:ci."], features: { e2eTests: true }, review: { e2e_test_auto_trigger: true } });
       const posted = { count: 0, body: "" };
       stubAutoTriggerFetch(5010, posted);
 
@@ -4557,6 +4580,85 @@ describe("queue processors", () => {
         .bind("github_app.e2e_tests_generation_denied")
         .first<{ actor: string; outcome: string; detail: string }>();
       expect(denied).toMatchObject({ actor: "drive-by-user", outcome: "denied" });
+    });
+
+    // Authorization used to be hardcoded to maintainer-only here, ignoring whatever a repo's own
+    // .gittensory.yml commandAuthorization configured -- a self-hoster who wants their contributors to be
+    // able to trigger test generation had no way to widen it. It now respects settings.commandAuthorization,
+    // the exact same resolved (and safely clamped) policy the text-command version already uses.
+    it("dispatches generation for a COLLABORATOR (not just a maintainer) once the repo widens commandAuthorization for generate-tests", async () => {
+      const repoFullName = "JSONbored/checkbox-4589-widened";
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => ({ response: "```typescript\n" + CHECKBOX_TEST_SOURCE + "\n```" }) } as unknown as Ai,
+        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+      });
+      await seedCheckboxPr(env, repoFullName, 6013, "checkbox-4589-widened-sha");
+      await upsertRepositorySettings(env, {
+        repoFullName,
+        commentMode: "off",
+        publicSurface: "off",
+        autoLabelEnabled: false,
+        checkRunMode: "off",
+        gateCheckMode: "off",
+        requireLinkedIssue: false,
+        linkedIssueGateMode: "off",
+        manifestPolicyGateMode: "advisory",
+        aiReviewMode: "off",
+        commandAuthorization: { default: ["maintainer"], commands: { "generate-tests": ["maintainer", "collaborator"] } },
+      });
+      const posted = { count: 0, body: "" };
+      stubCheckboxFetch(6013, "collab-user", "write", posted); // "write" permission resolves to the COLLABORATOR association
+
+      await processJob(env, checkboxWebhook(repoFullName, 6013, 911, { login: "collab-user" }));
+
+      expect(posted.count).toBe(1);
+      expect(posted.body).toContain("test('checkbox-generated coverage'");
+      const audited = await env.DB.prepare("select outcome, actor from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation")
+        .first<{ outcome: string; actor: string }>();
+      expect(audited).toMatchObject({ outcome: "completed", actor: "collab-user" });
+    });
+
+    it("still denies the PR's own author even if the repo tries to configure the raw pr_author role for generate-tests (safety clamp holds)", async () => {
+      const repoFullName = "JSONbored/checkbox-4589-clamped";
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: vi.fn() } as unknown as Ai,
+        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+      });
+      // seedCheckboxPr's own PR fixture is authored by "contributor" -- the SAME login checks the box below.
+      await seedCheckboxPr(env, repoFullName, 6014, "checkbox-4589-clamped-sha");
+      await upsertRepositorySettings(env, {
+        repoFullName,
+        commentMode: "off",
+        publicSurface: "off",
+        autoLabelEnabled: false,
+        checkRunMode: "off",
+        gateCheckMode: "off",
+        requireLinkedIssue: false,
+        linkedIssueGateMode: "off",
+        manifestPolicyGateMode: "advisory",
+        aiReviewMode: "off",
+        // A repo attempting to grant its own PR authors unconditional access -- normalizeCommandRoleList drops
+        // the spoofable raw pr_author role for any MAINTAINER_ONLY_DEFAULT_COMMANDS entry (generate-tests is
+        // one), re-clamped at the point of use regardless of what's stored here.
+        commandAuthorization: { default: ["maintainer"], commands: { "generate-tests": ["pr_author"] } },
+      });
+      const posted = { count: 0, body: "" };
+      stubCheckboxFetch(6014, "contributor", "read", posted);
+
+      await processJob(env, checkboxWebhook(repoFullName, 6014, 912, { login: "contributor" }));
+
+      expect(posted.count).toBe(0);
+      const denied = await env.DB.prepare("select actor, outcome from audit_events where event_type = ?")
+        .bind("github_app.e2e_tests_generation_denied")
+        .first<{ actor: string; outcome: string }>();
+      expect(denied).toMatchObject({ actor: "contributor", outcome: "denied" });
     });
 
     it("skips a bot-initiated edit (the bot's own comment re-render) without dispatching generation", async () => {
@@ -4872,7 +4974,7 @@ describe("queue processors", () => {
       expect(posted.count).toBeGreaterThan(0);
       expect(posted.body).toContain("<details><summary><b>Test coverage</b></summary>");
       expect(posted.body).toContain("No changed test files or passing validation evidence were detected for this PR.");
-      expect(posted.body).toContain("- [ ] <!-- gittensory-generate-tests:v1 --> Generate an AI Playwright test for this PR");
+      expect(posted.body).toContain("- [ ] <!-- gittensory-generate-tests:v1 --> **[BETA]** Generate an AI Playwright test for this PR");
     });
 
     it("handles a sparse payload with no repository, sender, or issue without throwing", async () => {

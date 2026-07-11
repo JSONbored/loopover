@@ -70,7 +70,12 @@ describe("resolveRepositorySettings — self-tune override overlay (flag-gated)"
     const repo = "acme/fallback";
     await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, 'acme', 'fallback', 1, 1)").bind(repo).run();
 
+    // mockClear immediately after spyOn: under heavy parallel load a prior attempt of THIS test can time out
+    // (vitest's global retry: 1) while its body is still in flight (JS can't cancel an in-flight async
+    // function), and vi.spyOn on an already-spied method reuses the same mock's call history -- without this,
+    // an abandoned first attempt's call leaks into the retry's count and toHaveBeenCalledOnce() flakes.
     const getGlobalSpy = vi.spyOn(repositories, "getGlobalContributorBlacklist").mockRejectedValue(new Error("transient DB issue"));
+    getGlobalSpy.mockClear();
 
     try {
       const settings = await resolveRepositorySettings(env, repo);

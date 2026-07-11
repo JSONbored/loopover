@@ -47,6 +47,7 @@ test("parseMinerGoalSpec: valid raw config normalizes every field and keeps non-
     maxConcurrentClaims: 2,
     issueDiscoveryPolicy: "encouraged",
     feasibilityGate: { enabled: false, suppressedReasons: ["duplicate_cluster_high"] },
+    selfPlagiarism: { similarityThreshold: 0.85 },
   });
   assert.deepEqual(parsed.warnings, []);
 });
@@ -155,6 +156,7 @@ test("parseMinerGoalSpec: malformed fields fall back independently with targeted
     maxConcurrentClaims: 1,
     issueDiscoveryPolicy: "neutral",
     feasibilityGate: { enabled: true, suppressedReasons: [] },
+    selfPlagiarism: { similarityThreshold: 0.85 },
   });
   const warningText = parsed.warnings.join(" ");
   assert.match(warningText, /minerEnabled/i);

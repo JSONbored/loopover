@@ -35,8 +35,9 @@ export type GateOutcomeAuditRollup = {
 
 /** Map one grouped audit row into a breakdown bucket, or null when it is not a gate-outcome event. Pure. */
 export function classifyGateOutcomeAuditBucket(event: Pick<GateOutcomeAuditRollup, "eventType" | "outcome">): keyof GateOutcomeBreakdownCounts | null {
-  if (event.eventType === "agent.action.merge" && TERMINAL_AUTO_OUTCOMES.has(event.outcome)) return "autoMerged";
-  if (event.eventType === "agent.action.close" && TERMINAL_AUTO_OUTCOMES.has(event.outcome)) return "autoClosed";
+  if (!TERMINAL_AUTO_OUTCOMES.has(event.outcome)) return null;
+  if (event.eventType === "agent.action.merge") return "autoMerged";
+  if (event.eventType === "agent.action.close") return "autoClosed";
   if (event.eventType === "agent.action.hold") return "held";
   return null;
 }

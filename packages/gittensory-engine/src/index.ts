@@ -146,6 +146,7 @@ export {
 export * from "./governor/rate-limit.js";
 export * from "./governor/budget-cap.js";
 export * from "./governor/self-plagiarism.js";
+export * from "./governor/reputation-throttle.js";
 export {
   GOVERNOR_LEDGER_EVENT_TYPES,
   normalizeGovernorLedgerEvent,
@@ -283,7 +284,10 @@ export { hasPlanSkippedSteps } from "./plan-skipped.js";
 export { hasPlanCompletedSteps } from "./plan-completed.js";
 export { isPlanBlocked } from "./plan-blocked.js";
 export { isPlanProgressComplete } from "./plan-progress-complete.js";
-export { resolvePlanOverallStatus, type PlanOverallStatus } from "./plan-overall-status.js";
+export {
+  resolvePlanOverallStatus,
+  type PlanOverallStatus,
+} from "./plan-overall-status.js";
 export { hasPlanReadySteps } from "./plan-ready.js";
 export { isPlanTerminated } from "./plan-terminated.js";
 export * from "./plan-templates.js";
@@ -376,10 +380,7 @@ export {
   type FreshnessIssue,
 } from "./opportunity-freshness.js";
 export { computeOpportunityCompetition } from "./opportunity-competition.js";
-export {
-  computeLaneFit,
-  type GoalModelInput,
-} from "./goal-model.js";
+export { computeLaneFit, type GoalModelInput } from "./goal-model.js";
 export {
   classifyContributorFit,
   type ContributorFit,
@@ -423,7 +424,11 @@ export {
 } from "./duplicate-winner.js";
 // Issue-centric RAG query composition (#2320, extracted in #4254): the pure query builder + the shared
 // minimum-query floor; the Vectorize/D1 retrieval backend intentionally stays in the backend.
-export { MIN_QUERY_CHARS, buildIssueRagQuery, type IssueRagQueryInput } from "./issue-rag-query.js";
+export {
+  MIN_QUERY_CHARS,
+  buildIssueRagQuery,
+  type IssueRagQueryInput,
+} from "./issue-rag-query.js";
 // #782 deterministic local scorer (extracted in #4253): pure token-scoring from changed-file metadata,
 // shared by the published CLIs and the hosted Worker. The Node-coupled local-branch.ts stays in the backend.
 export {

@@ -30,9 +30,24 @@ if [ -z "$container_id" ]; then
   exit 1
 fi
 
+# Retry, don't single-probe: `docker compose up -d` returns as soon as the container STARTS, well before
+# the app inside has bound its port -- a single immediate curl reliably false-fails on a normal boot. Budget
+# matches the gittensory service's own Docker healthcheck start_period (60s, docker-compose.yml) plus margin,
+# polling often enough that a normal ~15-20s boot returns almost immediately once actually ready.
+READY_RETRIES="${SELFHOST_READY_RETRIES:-45}"
+READY_RETRY_DELAY_SECONDS="${SELFHOST_READY_RETRY_DELAY_SECONDS:-2}"
+
 echo "selfhost post-update check: probing $READY_URL"
-if ! curl -sf "$READY_URL" >/dev/null; then
-  echo "error: $READY_URL did not return HTTP 2xx" >&2
+ready=0
+for _ in $(seq 1 "$READY_RETRIES"); do
+  if curl -sf "$READY_URL" >/dev/null; then
+    ready=1
+    break
+  fi
+  sleep "$READY_RETRY_DELAY_SECONDS"
+done
+if [ "$ready" -ne 1 ]; then
+  echo "error: $READY_URL did not return HTTP 2xx after $READY_RETRIES attempts ($((READY_RETRIES * READY_RETRY_DELAY_SECONDS))s)" >&2
   exit 1
 fi
 

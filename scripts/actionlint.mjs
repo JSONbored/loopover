@@ -68,3 +68,4 @@ async function runActionlint() {
 
 const result = await runActionlint();
 process.exit(result.code);
+// cache-verification no-op 1783739035

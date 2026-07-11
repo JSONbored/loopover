@@ -23,7 +23,16 @@
 // the Governor chokepoint's own dry-run/live action-mode dial (#2342), which gates autonomous WRITING at all
 // for a repo. `"observe"` here is specifically for safely calibrating the predicted-gate/slop thresholds
 // against live traffic before ever trusting them to gate a real submission.
+//
+// KILL-SWITCH (#2339): checked FIRST, before any other logic -- flipping the kill-switch must halt this
+// chokepoint immediately, the same way it halts the Governor chokepoint (#2340). Reuses
+// `isMinerKillSwitchActive` (kill-switch.ts, #2341) directly rather than a bespoke wrapper -- the exact "single
+// shared helper, not duplicated per call site" #2339's own deliverable calls for; `loop-reentry-policy.ts`'s
+// `shouldReenter` consults the identical function. `killSwitchScope` is REQUIRED (not optional-with-a-
+// permissive-default) so a caller cannot forget to resolve and pass it -- the same fail-closed-by-construction
+// discipline as every other required field here.
 
+import { isMinerKillSwitchActive, type MinerKillSwitchScope } from "../governor/kill-switch.js";
 import type { PredictedGateVerdict } from "../predicted-gate.js";
 import type { SelfReviewSlopAssessment, SelfReviewSlopBand } from "./self-review-adapter.js";
 
@@ -51,6 +60,8 @@ export function isSlopBandWithinThreshold(band: SelfReviewSlopBand, threshold: S
 export type SubmissionGateMode = "observe" | "enforce";
 
 export type SubmissionGateCandidate = {
+  /** Checked FIRST, before any other field below -- see the module doc comment's KILL-SWITCH section. */
+  killSwitchScope: MinerKillSwitchScope;
   /** `null` means the predictor was unreachable or errored -- fails closed, exactly like a genuine non-passing
    *  verdict, never treated as "no opinion, so allow". */
   predictedGateVerdict: PredictedGateVerdict | null;
@@ -92,9 +103,15 @@ function evaluateSubmissionSignals(candidate: SubmissionGateCandidate): string[]
 /**
  * THE gate: build (or invoke) `gittensory_open_pr`'s action spec ONLY when this returns `allow: true`. Requires
  * BOTH a clean predicted-gate pass AND a slop band at or under the configured threshold; any missing signal, or
- * `mode: "observe"`, forces `allow: false`. Pure; identical inputs always yield the identical decision.
+ * `mode: "observe"`, forces `allow: false`. The kill-switch is checked FIRST, before any other logic -- an
+ * active kill-switch blocks unconditionally, regardless of otherwise-passing signals. Pure; identical inputs
+ * always yield the identical decision.
  */
 export function shouldSubmit(candidate: SubmissionGateCandidate): SubmissionGateDecision {
+  if (isMinerKillSwitchActive(candidate.killSwitchScope)) {
+    return { allow: false, reasons: [`${candidate.killSwitchScope}_kill_switch_active`] };
+  }
+
   const reasons = evaluateSubmissionSignals(candidate);
   const signalsPass = reasons.length === 0;
 

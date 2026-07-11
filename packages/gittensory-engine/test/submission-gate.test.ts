@@ -51,6 +51,7 @@ function slop(band: SelfReviewSlopBand, slopRisk = 0): SelfReviewSlopAssessment 
 
 function baseCandidate(overrides: Partial<SubmissionGateCandidate> = {}): SubmissionGateCandidate {
   return {
+    killSwitchScope: "none",
     predictedGateVerdict: passingVerdict(),
     slopAssessment: slop("clean"),
     slopThreshold: "low",
@@ -68,6 +69,21 @@ test("barrel: the public entrypoint re-exports the submission gate (#2336)", () 
 test("pass/pass: a clean predicted-gate pass with slop under threshold allows, with no reasons", () => {
   const decision = shouldSubmit(baseCandidate());
   assert.deepEqual(decision, { allow: true, reasons: [] });
+});
+
+test("kill-switch (#2339): a global kill-switch blocks unconditionally, even with every other signal otherwise passing", () => {
+  const decision = shouldSubmit(baseCandidate({ killSwitchScope: "global" }));
+  assert.deepEqual(decision, { allow: false, reasons: ["global_kill_switch_active"] });
+});
+
+test("kill-switch (#2339): a per-repo kill-switch blocks unconditionally, checked before any signal or mode logic", () => {
+  const decision = shouldSubmit(baseCandidate({ killSwitchScope: "repo", mode: "observe" }));
+  assert.deepEqual(decision, { allow: false, reasons: ["repo_kill_switch_active"] });
+});
+
+test("kill-switch (#2339): an inactive kill-switch (scope 'none') never itself blocks -- signals are still evaluated normally", () => {
+  const decision = shouldSubmit(baseCandidate({ killSwitchScope: "none" }));
+  assert.equal(decision.allow, true);
 });
 
 test("fail/pass: a non-passing predicted-gate verdict blocks even with slop cleanly under threshold", () => {

@@ -31,7 +31,16 @@ exit "\${STUB_POST_UPDATE_EXIT:-0}"
 `;
 
 function git(args: string[], cwd: string) {
-  const result = spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, ...GIT_ENV } });
+  // -c commit.gpgsign=false: these are disposable sandbox repos for exercising the script's git
+  // plumbing, not real commits -- they must never depend on (or block on) a contributor's personal
+  // signing setup. Without this, a machine with `commit.gpgsign=true` and a hardware-backed signing
+  // key (e.g. a TouchID-gated SSH key) makes every sandbox commit wait on an interactive prompt that
+  // never comes in a test run, which manifests as a flaky ~15s test timeout on an arbitrary test.
+  const result = spawnSync("git", ["-c", "commit.gpgsign=false", ...args], {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, ...GIT_ENV },
+  });
   if (result.status !== 0) {
     throw new Error(`git ${args.join(" ")} failed in ${cwd}: ${result.stderr}`);
   }

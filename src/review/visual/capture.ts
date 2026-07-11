@@ -16,6 +16,7 @@
 // default TanStack route convention; those hooks can return if a per-repo visual config is added.
 import { base64Encode, sha256Hex } from "../../utils/crypto";
 import type { AiContentBlock } from "../../types";
+import { isSafeHttpUrl } from "../content-lane/safe-url";
 import { downscaleForVision } from "./image-downscale";
 import type { GitHubRateLimitAdmissionKey } from "../../github/client";
 import { dispatchVisualCaptureFallback, fallbackShotR2Key, isFallbackDispatchInFlight, markFallbackDispatched } from "./actions-fallback";
@@ -41,6 +42,10 @@ const DEFAULT_ROUTE_FILE = /apps\/[^/]+\/src\/routes\/(.+?)\.(?:tsx|jsx)$/i;
 // wall-clock — Browser Rendering is the costliest binding.
 const MAX_ROUTES = 2;
 const MAX_CONFIGURED_ROUTES = 5;
+const MAX_EXTERNAL_SCREENSHOT_REDIRECTS = 2;
+const MAX_EXTERNAL_SCREENSHOT_BYTES = 4 * 1024 * 1024;
+const EXTERNAL_SCREENSHOT_FETCH_TIMEOUT_MS = 8_000;
+const ALLOWED_EXTERNAL_SCREENSHOT_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
 /** A single captured route's before/after shot URLs (desktop + mobile), plus an optional pixel-diff overlay
  *  per viewport (#3674) — self-host only (isVisualDiffAvailable), and only when the diff clears the visual-
@@ -118,6 +123,80 @@ export async function fetchShotContentBlock(url: string): Promise<AiContentBlock
     if (!response.ok) return undefined;
     const bytes = new Uint8Array(await response.arrayBuffer());
     return { type: "image", data: base64Encode(await downscaleForVision(bytes)), mimeType: "image/png" };
+  } catch {
+    return undefined;
+  }
+}
+
+
+function redirectLocation(response: Response, currentUrl: string): string {
+  const location = response.headers.get("location");
+  if (!location) return "";
+  try {
+    return new URL(location, currentUrl).toString();
+  } catch {
+    return "";
+  }
+}
+
+async function readBoundedResponseBytes(response: Response, maxBytes: number): Promise<Uint8Array | undefined> {
+  const contentLength = Number(response.headers.get("content-length") ?? "");
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) return undefined;
+  /* v8 ignore next -- Fetch Response bodies are present in Workers/Node; keep the fallback for nonstandard test doubles. */
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return bytes.byteLength > maxBytes ? undefined : bytes;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) return undefined;
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+/**
+ * Fetch a contributor-supplied screenshot-table image with SSRF/resource guards before it can be compared
+ * locally or forwarded to a vision provider. Unlike bot-produced shot URLs, these URLs come from PR markdown:
+ * re-check every redirect hop, cap bytes before buffering, require a real image content type, and time out.
+ */
+export async function fetchExternalScreenshotContentBlock(url: string): Promise<AiContentBlock | undefined> {
+  try {
+    let currentUrl = url;
+    for (let redirects = 0; redirects <= MAX_EXTERNAL_SCREENSHOT_REDIRECTS; redirects += 1) {
+      if (!isSafeHttpUrl(currentUrl)) return undefined;
+      const response = await fetch(currentUrl, { redirect: "manual", signal: AbortSignal.timeout(EXTERNAL_SCREENSHOT_FETCH_TIMEOUT_MS) });
+      if (response.status >= 300 && response.status < 400) {
+        const nextUrl = redirectLocation(response, currentUrl);
+        if (!nextUrl) return undefined;
+        currentUrl = nextUrl;
+        continue;
+      }
+      if (!response.ok) return undefined;
+      const mimeType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+      if (!ALLOWED_EXTERNAL_SCREENSHOT_MIME_TYPES.has(mimeType)) return undefined;
+      const bytes = await readBoundedResponseBytes(response, MAX_EXTERNAL_SCREENSHOT_BYTES);
+      if (!bytes) return undefined;
+      const imageBytes = mimeType === "image/png" ? await downscaleForVision(bytes) : bytes;
+      return { type: "image", data: base64Encode(imageBytes), mimeType };
+    }
+    return undefined;
   } catch {
     return undefined;
   }

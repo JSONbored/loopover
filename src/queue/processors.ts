@@ -437,7 +437,7 @@ export {
 // Nothing in this file calls processJob itself, so this is a pure re-export (no separate import needed).
 export { processJob } from "./job-dispatch";
 import { isVisualPath } from "../review/visual/paths";
-import { buildCapture, fetchShotContentBlock, hasSuccessfulBotCapture, resolveVisualRoutes, type CaptureRoute } from "../review/visual/capture";
+import { buildCapture, fetchExternalScreenshotContentBlock, fetchShotContentBlock, hasSuccessfulBotCapture, resolveVisualRoutes, type CaptureRoute } from "../review/visual/capture";
 import {
   clearFallbackDispatchMarker,
   fallbackShotFileName,
@@ -7078,8 +7078,8 @@ export async function runScreenshotTableVisionForAdvisory(
       /* v8 ignore next -- defensive: rawPairs only contains rows with >=2 urls, so both slots exist here. */
       if (!beforeUrl || !afterUrl) continue;
       const [beforeBlock, afterBlock] = await Promise.all([
-        fetchShotContentBlock(beforeUrl),
-        fetchShotContentBlock(afterUrl),
+        fetchExternalScreenshotContentBlock(beforeUrl),
+        fetchExternalScreenshotContentBlock(afterUrl),
       ]);
       if (!beforeBlock || !afterBlock) continue;
       /* v8 ignore next -- defensive: fetchShotContentBlock's only success return shape is {type:"image",...}. */

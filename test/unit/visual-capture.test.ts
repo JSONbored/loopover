@@ -5,7 +5,7 @@ import {
   latestGitHubRestRateLimitObservation,
 } from "../../src/github/client";
 import { fallbackShotR2Key, markFallbackDispatched } from "../../src/review/visual/actions-fallback";
-import { buildCapture, fetchShotContentBlock, hasSuccessfulBotCapture, mapFilesToRoutes, resolvePreviewUrlTemplate, resolveVisualRoutes } from "../../src/review/visual/capture";
+import { buildCapture, fetchExternalScreenshotContentBlock, fetchShotContentBlock, hasSuccessfulBotCapture, mapFilesToRoutes, resolvePreviewUrlTemplate, resolveVisualRoutes } from "../../src/review/visual/capture";
 import type { CaptureRoute } from "../../src/review/visual/capture";
 import * as pixelDiffModule from "../../src/review/visual/pixel-diff";
 import * as previewUrlModule from "../../src/review/visual/preview-url";
@@ -1845,5 +1845,105 @@ describe("fetchShotContentBlock (#4111)", () => {
   it("returns undefined (never throws) when fetch itself rejects", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network down"); }));
     await expect(fetchShotContentBlock("https://x/gittensory/shot?key=broken")).resolves.toBeUndefined();
+  });
+});
+
+
+describe("fetchExternalScreenshotContentBlock", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns an image block for safe public image responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "image/png" } })),
+    );
+
+    await expect(fetchExternalScreenshotContentBlock("https://example.com/before.png")).resolves.toEqual({
+      type: "image",
+      data: Buffer.from([1, 2, 3]).toString("base64"),
+      mimeType: "image/png",
+    });
+  });
+
+  it("revalidates redirect targets before fetching contributor screenshots", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(null, { status: 302, headers: { location: "http://127.0.0.1/metadata" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchExternalScreenshotContentBlock("https://example.com/before.png")).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.com/before.png",
+      expect.objectContaining({ redirect: "manual" }),
+    );
+  });
+
+  it("rejects oversized contributor screenshots before buffering the body", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(new Uint8Array([1]), {
+          status: 200,
+          headers: { "content-type": "image/png", "content-length": String(4 * 1024 * 1024 + 1) },
+        }),
+      ),
+    );
+
+    await expect(fetchExternalScreenshotContentBlock("https://example.com/huge.png")).resolves.toBeUndefined();
+  });
+
+  it("rejects non-image contributor screenshot responses", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("secret", { status: 200, headers: { "content-type": "text/plain" } })));
+
+    await expect(fetchExternalScreenshotContentBlock("https://example.com/not-image.txt")).resolves.toBeUndefined();
+  });
+
+  it("follows safe redirects and preserves non-png image MIME types", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: "/after.jpg" } }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([4, 5]), { status: 200, headers: { "content-type": "image/jpeg; charset=binary" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchExternalScreenshotContentBlock("https://example.com/before.png")).resolves.toEqual({
+      type: "image",
+      data: Buffer.from([4, 5]).toString("base64"),
+      mimeType: "image/jpeg",
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "https://example.com/after.jpg", expect.objectContaining({ redirect: "manual" }));
+  });
+
+  it("rejects invalid inputs, broken redirects, non-ok responses, overlong streams, and thrown fetches", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchExternalScreenshotContentBlock("http://example.com/before.png")).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 302 }));
+    await expect(fetchExternalScreenshotContentBlock("https://example.com/no-location.png")).resolves.toBeUndefined();
+
+    fetchMock.mockResolvedValueOnce(new Response("missing", { status: 404 }));
+    await expect(fetchExternalScreenshotContentBlock("https://example.com/missing.png")).resolves.toBeUndefined();
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(new Uint8Array(4 * 1024 * 1024 + 1), { status: 200, headers: { "content-type": "image/png" } }),
+    );
+    await expect(fetchExternalScreenshotContentBlock("https://example.com/stream-too-large.png")).resolves.toBeUndefined();
+
+    fetchMock.mockRejectedValueOnce(new Error("network down"));
+    await expect(fetchExternalScreenshotContentBlock("https://example.com/broken.png")).resolves.toBeUndefined();
+  });
+
+  it("stops after the bounded redirect budget", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL) => new Response(null, { status: 302, headers: { location: "https://example.com/next.png" } })),
+    );
+
+    await expect(fetchExternalScreenshotContentBlock("https://example.com/first.png")).resolves.toBeUndefined();
   });
 });

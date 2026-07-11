@@ -92,6 +92,47 @@ test("continue: one iteration below the ceiling still continues", () => {
   assert.equal(decideNextAction(state), "continue");
 });
 
+test("abandon (cost_ceiling_reached): the loop's own cumulative cost ceiling stops the loop even mid-progress", () => {
+  const state = baseState({
+    iterationNumber: 2,
+    maxIterations: 10,
+    costCeilingReached: true,
+    selfReview: { kind: "fail", blockerCodes: ["a_brand_new_blocker_never_seen_before"] },
+    previousBlockerCodes: ["missing_linked_issue"],
+  });
+  const decision = decideNextActionWithReason(state);
+  assert.equal(decision.action, "abandon");
+  assert.equal(decision.abandonReason, "cost_ceiling_reached");
+});
+
+test("abandon (cost_ceiling_reached): checked before no_progress, but after the iteration ceiling -- max_iterations still wins when both fire", () => {
+  const state = baseState({ iterationNumber: 5, maxIterations: 5, costCeilingReached: true });
+  const decision = decideNextActionWithReason(state);
+  assert.equal(decision.abandonReason, "max_iterations_reached");
+});
+
+test("continue: costCeilingReached omitted (undefined) does not itself trigger an abandon -- the field is optional", () => {
+  const state = baseState({
+    iterationNumber: 2,
+    maxIterations: 10,
+    selfReview: { kind: "fail", blockerCodes: ["a_new_code"] },
+    previousBlockerCodes: ["a_different_code"],
+  });
+  assert.equal(state.costCeilingReached, undefined);
+  assert.equal(decideNextAction(state), "continue");
+});
+
+test("continue: costCeilingReached explicitly false behaves identically to omitted", () => {
+  const state = baseState({
+    iterationNumber: 2,
+    maxIterations: 10,
+    costCeilingReached: false,
+    selfReview: { kind: "fail", blockerCodes: ["a_new_code"] },
+    previousBlockerCodes: ["a_different_code"],
+  });
+  assert.equal(decideNextAction(state), "continue");
+});
+
 test("abandon (no_progress): an identical blocker set to the prior iteration stops wasting turns", () => {
   const state = baseState({
     iterationNumber: 2,

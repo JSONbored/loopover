@@ -11,9 +11,9 @@
 //     wins over EVERYTHING else, including a self-review that would otherwise pass. Continuing to submit to a
 //     repo that has already shown it does not want automated contributions is the exact anti-pattern this
 //     guards against, regardless of how good any individual attempt looks.
-//   - "reward MERGED net-positive (never submission volume)" -- the no-progress detector and iteration ceiling
-//     exist so a stuck loop stops wasting turns chasing a submission that was never going to land, rather than
-//     grinding toward *a* submission for its own sake.
+//   - "reward MERGED net-positive (never submission volume)" -- the no-progress detector and the iteration/cost
+//     ceilings exist so a stuck loop stops wasting turns (or spend) chasing a submission that was never going
+//     to land, rather than grinding toward *a* submission for its own sake.
 //
 // AUTONOMY DIAL (not yet wired): `src/settings/autonomy.ts`'s `resolveAutonomy`/`isActingAutonomyLevel` is the
 // existing reusable deny-by-default pattern this policy's eventual live autonomy-level check should consult
@@ -27,7 +27,7 @@ export type IterateLoopAction = "continue" | "handoff" | "abandon";
 
 /** Every distinct reason `decideNextAction` can abandon for -- kept as a closed literal union so a caller
  *  recording the decision (the attempt-log primitive, per #2333) has a stable, exhaustive vocabulary. */
-export type AbandonReason = "rejection_signaled" | "self_review_ambiguous" | "max_iterations_reached" | "no_progress";
+export type AbandonReason = "rejection_signaled" | "self_review_ambiguous" | "max_iterations_reached" | "cost_ceiling_reached" | "no_progress";
 
 /**
  * The self-review outcome as the policy needs it -- narrower than the full {@link SelfReviewVerdict} (self-
@@ -60,6 +60,13 @@ export type IterationState = {
   /** Hard ceiling enforced INSIDE this policy (#2333's own deliverable: not left to an external caller to
    *  remember to enforce). `iterationNumber >= maxIterations` abandons regardless of self-review outcome. */
   maxIterations: number;
+  /** True when the loop's own cumulative cost ceiling (e.g. total driver turns spent across every iteration of
+   *  this attempt so far, not just this one) has been reached or exceeded -- the loop mechanics' (#2333) OWN
+   *  "max-cost ceiling enforced inside the loop" deliverable, alongside the iteration ceiling above. This
+   *  policy has no notion of what "cost" means; the caller computes the boolean from whatever cost signal it
+   *  tracks. Optional and defaults to not-reached, so `IterationState` fixtures that predate this field remain
+   *  valid. */
+  costCeilingReached?: boolean | undefined;
   selfReview: SelfReviewOutcome;
   /** The prior iteration's `fail` blocker codes, for the no-progress detector -- `null` when there is no prior
    *  iteration to compare (the first iteration, or the prior iteration did not reach a `fail` outcome). */
@@ -116,9 +123,10 @@ function blockerSetsEqual(current: readonly string[], previous: readonly string[
  * 3. `selfReview.kind === "pass"` -- the ONLY path to `"handoff"`.
  * 4. `iterationNumber >= maxIterations` -- abandons at the hard ceiling regardless of whether the blocker set
  *    was still changing (genuine incremental progress does not buy unlimited iterations).
- * 5. The current `fail` blocker set is identical to `previousBlockerCodes` -- abandons (no progress, stop
+ * 5. `costCeilingReached` -- abandons at the hard cost ceiling, same rationale as the iteration ceiling above.
+ * 6. The current `fail` blocker set is identical to `previousBlockerCodes` -- abandons (no progress, stop
  *    wasting turns).
- * 6. Otherwise -- continue.
+ * 7. Otherwise -- continue.
  */
 export function decideNextActionWithReason(state: IterationState): IterateLoopDecision {
   if (state.rejectionSignaled) {
@@ -139,6 +147,13 @@ export function decideNextActionWithReason(state: IterationState): IterateLoopDe
       action: "abandon",
       abandonReason: "max_iterations_reached",
       reason: `Reached the iteration ceiling (${state.maxIterations}) without a clean predicted-gate pass.`,
+    };
+  }
+  if (state.costCeilingReached === true) {
+    return {
+      action: "abandon",
+      abandonReason: "cost_ceiling_reached",
+      reason: "Reached the attempt's cost ceiling (cumulative driver spend across every iteration so far) without a clean predicted-gate pass.",
     };
   }
   if (state.previousBlockerCodes !== null && blockerSetsEqual(state.selfReview.blockerCodes, state.previousBlockerCodes)) {

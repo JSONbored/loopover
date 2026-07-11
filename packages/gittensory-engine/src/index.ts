@@ -229,6 +229,14 @@ export {
   type SelfReviewOutcome,
 } from "./miner/iterate-policy.js";
 export {
+  runIterateLoop,
+  type IterateLoopDeps,
+  type IterateLoopInput,
+  type IterateLoopIterationRecord,
+  type IterateLoopOutcome,
+  type IterateLoopResult,
+} from "./miner/iterate-loop.js";
+export {
   codingAgentModeExecutes,
   isGlobalMinerCodingAgentPause,
   resolveCodingAgentExecutionMode,

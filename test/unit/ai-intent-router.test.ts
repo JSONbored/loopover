@@ -2,8 +2,24 @@ import { describe, expect, it, vi } from "vitest";
 import { __intentRouterInternals, classifyGittensoryIntent } from "../../src/services/ai-intent-router";
 import { createTestEnv } from "../helpers/d1";
 
-const ADVISORY_ON = { slop: false, e2eTestGen: false, planner: false, summaries: false, chatQa: false, intentRouting: true };
-const ADVISORY_OFF = { slop: false, e2eTestGen: false, planner: false, summaries: false, chatQa: false, intentRouting: false };
+const ADVISORY_ON = {
+  slop: false,
+  e2eTestGen: false,
+  planner: false,
+  summaries: false,
+  chatQa: false,
+  chatQaFrontierFallback: false,
+  intentRouting: true,
+};
+const ADVISORY_OFF = {
+  slop: false,
+  e2eTestGen: false,
+  planner: false,
+  summaries: false,
+  chatQa: false,
+  chatQaFrontierFallback: false,
+  intentRouting: false,
+};
 
 describe("classifyGittensoryIntent", () => {
   it("declines when intentRouting is off (does not call the advisory provider)", async () => {

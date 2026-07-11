@@ -1383,6 +1383,100 @@ describe("queue processors", () => {
       expect(seen.comments[0]).not.toContain("Interpreted");
       expect(seen.comments[0]).not.toContain("Gittensory readiness blockers");
     });
+
+    it("#4596: hold policy tracks the intent-routing invocation and still classifies normally under the ceiling", async () => {
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI_ADVISORY: { run: async () => ({ response: '{"command": "blockers"}' }) } as unknown as Ai,
+      });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 5, commandRateLimitWindowHours: 24 });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 312, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
+      const seen = { comments: [] as string[] };
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("raw.githubusercontent.com") && url.includes(".gittensory.yml")) {
+          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n", { status: 200 });
+        }
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
+        if (url.includes("/issues/312/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/312/comments") && method === "POST") {
+          seen.comments.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? ""));
+          return Response.json({ id: seen.comments.length }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      await processJob(env, { type: "github-webhook", deliveryId: "intent-routing-under-ceiling", eventName: "issue_comment", payload: mentionPayload(312, "@gittensory why is this stuck?") });
+      expect(seen.comments).toHaveLength(1);
+      expect(seen.comments[0]).toContain('Interpreted "why is this stuck?" as `@gittensory blockers`');
+      const invocations = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.intent_routing_invocation'").first<{ n: number }>();
+      expect(invocations?.n).toBe(1);
+    });
+
+    it("#4596: hold policy throttles intent-routing once the AI ceiling is crossed and skips the classifier (fails open to the existing did-you-mean hint)", async () => {
+      const advisoryRun = vi.fn(async () => ({ response: '{"command": "blockers"}' }));
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI_ADVISORY: { run: advisoryRun } as unknown as Ai });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 1, commandRateLimitWindowHours: 24 });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 313, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
+      // Already at the ceiling (1) -- the next invocation must be held before it ever reaches the classifier.
+      await repositoriesModule.recordAuditEvent(env, {
+        eventType: "github_app.intent_routing_invocation",
+        actor: "maintainer",
+        targetKey: "JSONbored/gittensory#313#intent-routing",
+        outcome: "completed",
+      });
+      const seen = { comments: [] as string[] };
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("raw.githubusercontent.com") && url.includes(".gittensory.yml")) {
+          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n", { status: 200 });
+        }
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
+        if (url.includes("/issues/313/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/313/comments") && method === "POST") {
+          seen.comments.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? ""));
+          return Response.json({ id: seen.comments.length }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      await processJob(env, { type: "github-webhook", deliveryId: "intent-routing-over-ceiling", eventName: "issue_comment", payload: mentionPayload(313, "@gittensory why is this stuck?") });
+      expect(advisoryRun).not.toHaveBeenCalled(); // throttled -- the classifier never ran
+      expect(seen.comments).toHaveLength(1); // fails open: the plain did-you-mean fallback still posts
+      expect(seen.comments[0]).not.toContain("Interpreted");
+      expect(seen.comments[0]).not.toContain("Gittensory readiness blockers");
+    });
+
+    it("#4596: REGRESSION: a redelivered webhook does not re-classify or double-count the intent-routing invocation", async () => {
+      const advisoryRun = vi.fn(async () => ({ response: '{"command": "blockers"}' }));
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI_ADVISORY: { run: advisoryRun } as unknown as Ai });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 5, commandRateLimitWindowHours: 24 });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 314, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
+      const seen = { comments: [] as string[] };
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("raw.githubusercontent.com") && url.includes(".gittensory.yml")) {
+          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n", { status: 200 });
+        }
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
+        if (url.includes("/issues/314/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/314/comments") && method === "POST") {
+          seen.comments.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? ""));
+          return Response.json({ id: seen.comments.length }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      const payload = mentionPayload(314, "@gittensory why is this stuck?");
+      await processJob(env, { type: "github-webhook", deliveryId: "intent-routing-redelivered", eventName: "issue_comment", payload });
+      await processJob(env, { type: "github-webhook", deliveryId: "intent-routing-redelivered", eventName: "issue_comment", payload });
+      expect(advisoryRun).toHaveBeenCalledTimes(1); // the replay never re-invokes the classifier
+      const invocations = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.intent_routing_invocation'").first<{ n: number }>();
+      expect(invocations?.n).toBe(1); // only ONE invocation recorded despite two processing passes
+    });
   });
 
   it("denies a maintainer Q&A command from an org member without real repo permission (#788)", async () => {

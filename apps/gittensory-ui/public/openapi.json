@@ -9178,7 +9178,7 @@
               },
               "intentRouting": {
                 "type": "boolean",
-                "description": "Opt a closed-set intent-classification router (#4596) into unrecognized `@gittensory` mentions: maps a free-text question to the closest existing Q&A command (never an action command) instead of the plain did-you-mean hint. Ollama-only, same as chatQa (never uses chatQaFrontierFallback). Co-requisite: set `commandRateLimitPolicy` to `hold`."
+                "description": "Opt a closed-set intent-classification router (#4596) into unrecognized `@gittensory` mentions: maps a free-text question to the closest existing Q&A command (never an action command) instead of the plain did-you-mean hint. Ollama-only, same as chatQa. Co-requisite: set `commandRateLimitPolicy` to `hold`."
               }
             },
             "required": [

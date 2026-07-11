@@ -8,6 +8,12 @@
 // `source:path:line`) + the matched line count — never the code content. Fail-safe: returns [] without a token /
 // headSha, on a bad repoFullName, or when the tree fetch fails; a single malformed candidate is skipped, never
 // aborting the scan.
+//
+// The chunk-normalization + suffix-automaton matching primitives below (`isSourceExt`, `isExcludedPath`,
+// `normalizeFileBlocks`, `buildMatchIndex`, `longestSharedRun`) are also exported for `duplication-delta.ts` (#4741,
+// part of #4737), which detects the REVERSE signal — duplication a PR REMOVES/consolidates rather than introduces —
+// by reusing this exact "what counts as a duplicate" definition against reconstructed pre-PR content instead of
+// inventing a second, differently-tuned similarity algorithm.
 import type {
   AnalyzerDiagnostics,
   EnrichRequest,
@@ -103,13 +109,13 @@ function extOf(path: string): string | null {
   return path.slice(dot + 1).toLowerCase();
 }
 
-function isSourceExt(path: string): boolean {
+export function isSourceExt(path: string): boolean {
   const ext = extOf(path);
   return ext !== null && SOURCE_EXTS.has(ext);
 }
 
 /** Paths that are generated / vendored / minified / type-declaration: copy-paste there is noise, not a defect. */
-function isExcludedPath(path: string): boolean {
+export function isExcludedPath(path: string): boolean {
   if (path.endsWith(".d.ts")) return true;
   if (path.includes(".min.")) return true;
   const lower = path.toLowerCase();
@@ -145,7 +151,7 @@ export function normalizeLine(raw: string): string | null {
   return collapsed;
 }
 
-interface NormBlock {
+export interface NormBlock {
   /** Normalized significant lines, in order. */
   norm: string[];
   /** Parallel array: the ORIGINAL new-file line number for each entry of `norm`. */
@@ -209,7 +215,7 @@ export function extractAddedBlocks(patch: string | undefined): NormBlock[] {
 /** Split a full file's text into blocks of significant lines (with 1-based source line numbers), breaking a block
  *  at every blank/trivial line — the same gap-aware grouping `extractAddedBlocks` uses. Indexing each block
  *  separately means a matched run can never bridge across a blank or trivial line in the source file. */
-function normalizeFileBlocks(text: string): NormBlock[] {
+export function normalizeFileBlocks(text: string): NormBlock[] {
   const blocks: NormBlock[] = [];
   let current: NormBlock | null = null;
   const lines = text.split("\n");
@@ -228,26 +234,26 @@ function normalizeFileBlocks(text: string): NormBlock[] {
   return blocks;
 }
 
-interface SuffixState {
+export interface SuffixState {
   len: number;
   link: number;
   firstPos: number;
   next: Map<string, number>;
 }
 
-interface MatchIndex {
+export interface MatchIndex {
   block: NormBlock;
   states: SuffixState[];
 }
 
-type SharedRunResult =
+export type SharedRunResult =
   | { status: "matched"; headLine: number; sourceLine: number; length: number }
   | { status: "aborted" }
   | null;
 
 /** Build a suffix automaton over candidate significant lines, so longest-run lookup is exact and linear instead of
  *  order-dependent on a capped list of repeated MIN_RUN-window starts. */
-function buildMatchIndex(block: NormBlock, signal?: AbortSignal): MatchIndex | null {
+export function buildMatchIndex(block: NormBlock, signal?: AbortSignal): MatchIndex | null {
   const states: SuffixState[] = [
     { len: 0, link: -1, firstPos: -1, next: new Map() },
   ];
@@ -302,7 +308,7 @@ function buildMatchIndex(block: NormBlock, signal?: AbortSignal): MatchIndex | n
 
 /** Find the LONGEST contiguous run shared between an added block and an indexed candidate. Returns the head + source
  *  line numbers of the run start and its length, or null when no run of >= MIN_RUN significant lines is shared. */
-function longestSharedRun(
+export function longestSharedRun(
   added: NormBlock,
   index: MatchIndex,
   signal?: AbortSignal,

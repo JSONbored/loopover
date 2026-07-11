@@ -463,6 +463,8 @@ export function renderBrief(
     }
   }
 
+  lines.push(...renderDescriptorSection("duplicationDelta", findings.duplicationDelta));
+
   const churnHotspots = findings.churnHotspot ?? [];
   if (churnHotspots.length) {
     lines.push(

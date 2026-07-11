@@ -696,6 +696,7 @@ export interface BriefFindings {
   history?: HistoryFinding[];
   docCommentDrift?: DocCommentDriftFinding[];
   duplication?: DuplicationFinding[];
+  duplicationDelta?: DuplicationDeltaFinding[];
   churnHotspot?: ChurnHotspotFinding[];
   blameLink?: BlameLinkFinding[];
   approvalIntegrity?: ApprovalIntegrityFinding[];
@@ -757,6 +758,24 @@ export interface DuplicationFinding {
   /** 1-based line where the run begins in the existing source file. */
   sourceLine: number;
   /** Number of contiguous significant lines that matched verbatim (after whitespace normalization). */
+  lines: number;
+}
+
+/** The reverse of `DuplicationFinding`: a duplicate block PAIR that existed within a changed file's PRE-PR content
+ *  and is no longer both present after — a consolidation/removal the no-checkout reviewer cannot see (it has no
+ *  visibility into the file's past). Uses the shared `reconstructOldContent` primitive (#4739) to recover the
+ *  pre-PR text, then the same chunk-normalization + suffix-automaton matcher `duplication-scan.ts` uses, so "what
+ *  counts as a duplicate" stays identical between the add- and remove-detectors. Scope: per-file only — a pair
+ *  split across two different files is not detected. Reports pre-PR locations + the matched line count only,
+ *  never code content. (#4741) */
+export interface DuplicationDeltaFinding {
+  /** Path of the changed file whose pre-PR content held the now-resolved duplicate pair. */
+  file: string;
+  /** Pre-PR (old-content) line where the duplicate copy that is NO LONGER present in the new content began. */
+  line: number;
+  /** Pre-PR (old-content) line of the pair's other half. */
+  duplicateOfLine: number;
+  /** Number of contiguous significant lines that matched verbatim pre-PR (after whitespace normalization). */
   lines: number;
 }
 

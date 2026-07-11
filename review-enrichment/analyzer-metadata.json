@@ -665,6 +665,36 @@
       }
     },
     {
+      "name": "duplicationDelta",
+      "title": "Resolved duplication (before/after)",
+      "category": "quality",
+      "cost": "github-light",
+      "defaultEnabled": true,
+      "profiles": [
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "files",
+        "github-token",
+        "head-sha"
+      ],
+      "limits": {
+        "minRun": 8,
+        "maxFiles": 20,
+        "maxFindings": 25,
+        "maxFetchBytes": 1000000,
+        "maxBlocksPerFile": 150
+      },
+      "docs": {
+        "summary": "Flags a duplicate block pair that existed in a changed file's pre-PR content and is no longer both present — a consolidation the no-checkout reviewer cannot see.",
+        "looksAt": "Each changed file's pre-PR content (reconstructed from its patch) compared against its own post-PR content, using the same chunk-normalization + suffix-automaton matcher as the `duplication` analyzer.",
+        "reports": "The file and the pre-PR locations of the resolved duplicate pair, plus the matched line count. Never file contents.",
+        "network": "Calls the GitHub API for each changed file's content at headSha. Requires headSha and token forwarding for private repos.",
+        "notes": "Complements `duplication` (which flags NEW duplication introduced) with the reverse, before/after signal. Per-file only in this version: a duplicate pair split across two different files is not detected."
+      }
+    },
+    {
       "name": "churnHotspot",
       "title": "Churn hotspots",
       "category": "history",

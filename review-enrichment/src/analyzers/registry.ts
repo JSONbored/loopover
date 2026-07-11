@@ -11,6 +11,7 @@ import { dependencyAnalyzer } from "./dependency/descriptor.js";
 import { scanDependencyDiffInventory } from "./dependency-diff.js";
 import { scanDocCommentDrift } from "./doc-comment-drift.js";
 import { scanDuplication } from "./duplication-scan.js";
+import { scanDuplicationDelta } from "./duplication-delta.js";
 import { scanEol } from "./eol-check.js";
 import { scanHardcodedUrl } from "./hardcoded-url.js";
 import { scanHeavyDependencies } from "./heavy-dependency.js";
@@ -517,6 +518,47 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanDuplication(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "duplicationDelta",
+    title: "Resolved duplication (before/after)",
+    category: "quality",
+    cost: "github-light",
+    defaultEnabled: true,
+    requires: ["files", "github-token", "head-sha"],
+    limits: {
+      minRun: 8,
+      maxFiles: 20,
+      maxFindings: DEFAULT_MAX_FINDINGS,
+      maxFetchBytes: 1_000_000,
+      maxBlocksPerFile: 150,
+    },
+    docs: {
+      summary:
+        "Flags a duplicate block pair that existed in a changed file's pre-PR content and is no longer both present — a consolidation the no-checkout reviewer cannot see.",
+      looksAt:
+        "Each changed file's pre-PR content (reconstructed from its patch) compared against its own post-PR content, using the same chunk-normalization + suffix-automaton matcher as the `duplication` analyzer.",
+      reports:
+        "The file and the pre-PR locations of the resolved duplicate pair, plus the matched line count. Never file contents.",
+      network:
+        "Calls the GitHub API for each changed file's content at headSha. Requires headSha and token forwarding for private repos.",
+      notes:
+        "Complements `duplication` (which flags NEW duplication introduced) with the reverse, before/after signal. Per-file only in this version: a duplicate pair split across two different files is not detected.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = [
+        "### Resolved duplication (previously-duplicated code now consolidated or removed)",
+      ];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} was near-identical to ${helpers.safeCodeSpan(`${item.file}:${item.duplicateOfLine}`)} before this PR (~${item.lines} lines) — no longer both present`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal, analysis, diagnostics }) =>
+      scanDuplicationDelta(req, fetch, { signal, analysis, diagnostics }),
   }),
   descriptor({
     name: "churnHotspot",

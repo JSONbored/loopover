@@ -151,6 +151,7 @@ export * from "./governor/write-rate-limit.js";
 export * from "./governor/run-halt.js";
 export * from "./governor/kill-switch.js";
 export * from "./governor/action-mode.js";
+export * from "./governor/chokepoint.js";
 export {
   GOVERNOR_LEDGER_EVENT_TYPES,
   normalizeGovernorLedgerEvent,

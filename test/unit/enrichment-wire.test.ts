@@ -4,6 +4,7 @@ import {
   buildReviewEnrichment,
   isReesGithubTokenForwardingEnabled,
   probeReesSecretAtStartup,
+  resetReesAuthRejectedForTests,
   resolveReesAnalyzers,
   resolveReesAnalyzerBudgetMs,
   resolveReesProfile,
@@ -65,6 +66,10 @@ describe("probeReesSecretAtStartup", () => {
   });
   afterEach(() => {
     globalThis.fetch = realFetch;
+    // The 401/403 test below sets the module-level reesAuthRejected circuit-breaker flag (#3738) for real --
+    // reset it so it can never leak into a LATER test in this file (including buildReviewEnrichment's own
+    // suite, which shares this same module instance via the static import above).
+    resetReesAuthRejectedForTests();
   });
 
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -617,6 +622,85 @@ describe("buildReviewEnrichment", () => {
     expect(
       (calls[0]!.headers as Record<string, string>).authorization,
     ).toBeUndefined();
+  });
+});
+
+describe("REGRESSION (#3738): REES auth-rejected circuit breaker", () => {
+  let realFetch: typeof fetch;
+  beforeEach(() => {
+    realFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    resetReesAuthRejectedForTests();
+  });
+
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("buildReviewEnrichment proceeds normally by default (circuit breaker starts closed)", async () => {
+    const fetchSpy = vi.fn(async () => ({ ok: true, json: async () => ({ promptSection: "brief" }) }) as unknown as Response);
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    const r = await buildReviewEnrichment(env({ REES_URL: "https://r" }), input);
+    expect(r?.promptSection).toBe("brief");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("once the startup probe confirms a 401, buildReviewEnrichment skips every /v1/enrich call without fetching, for the rest of the process", async () => {
+    const fetchSpy = vi.fn(async () => ({ ok: false, status: 401 }) as Response);
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      probeReesSecretAtStartup(env({ REES_URL: "https://rees.example", REES_SHARED_SECRET: "s3cret" }));
+      await flush();
+      fetchSpy.mockClear();
+
+      const r1 = await buildReviewEnrichment(env({ REES_URL: "https://rees.example", REES_SHARED_SECRET: "s3cret" }), input);
+      const r2 = await buildReviewEnrichment(env({ REES_URL: "https://rees.example", REES_SHARED_SECRET: "s3cret" }), input);
+      expect(r1).toBeUndefined();
+      expect(r2).toBeUndefined();
+      expect(fetchSpy).not.toHaveBeenCalled(); // never even attempted the doomed call
+      expect(
+        warnSpy.mock.calls.some((c) => JSON.parse(c[0] as string).event === "rees_enrich_skipped_auth_rejected"),
+      ).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+      errSpy.mockRestore();
+    }
+  });
+
+  it("caps the skip log at 3 occurrences to avoid spamming logs on every subsequent PR review", async () => {
+    globalThis.fetch = vi.fn(async () => ({ ok: false, status: 403 }) as Response) as unknown as typeof fetch;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      probeReesSecretAtStartup(env({ REES_URL: "https://rees.example", REES_SHARED_SECRET: "s3cret" }));
+      await flush();
+      for (let i = 0; i < 5; i += 1) {
+        await buildReviewEnrichment(env({ REES_URL: "https://rees.example", REES_SHARED_SECRET: "s3cret" }), input);
+      }
+      const skipLogs = warnSpy.mock.calls.filter((c) => JSON.parse(c[0] as string).event === "rees_enrich_skipped_auth_rejected");
+      expect(skipLogs).toHaveLength(3);
+    } finally {
+      warnSpy.mockRestore();
+      errSpy.mockRestore();
+    }
+  });
+
+  it("a NON-auth probe failure (e.g. 500) does NOT trip the circuit breaker -- buildReviewEnrichment still attempts the call", async () => {
+    const fetchSpy = vi.fn(async () => ({ ok: false, status: 500 }) as Response);
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      probeReesSecretAtStartup(env({ REES_URL: "https://rees.example", REES_SHARED_SECRET: "s3cret" }));
+      await flush();
+      fetchSpy.mockClear();
+
+      await buildReviewEnrichment(env({ REES_URL: "https://rees.example", REES_SHARED_SECRET: "s3cret" }), input);
+      expect(fetchSpy).toHaveBeenCalledTimes(1); // still attempted -- 500 isn't a confirmed secret mismatch
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 });
 

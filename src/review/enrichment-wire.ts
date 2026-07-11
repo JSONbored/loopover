@@ -53,6 +53,21 @@ function sharedSecretWasNormalized(
   return (normalized ?? "") !== raw;
 }
 
+// Set true once the startup probe confirms REES rejects the shared secret (401/403). Once set,
+// buildReviewEnrichment skips every /v1/enrich call for the rest of this process's lifetime instead of
+// repeating a call that's confirmed to fail on every PR review, each one logging review_context_fetch_failed.
+// Cleared only by a process restart -- exactly the action fixing the secret mismatch already requires.
+let reesAuthRejected = false;
+let reesAuthRejectedSkipLoggedCount = 0;
+const MAX_REES_AUTH_REJECTED_SKIP_LOGS = 3;
+
+/** Test-only: this module-level circuit-breaker state otherwise persists for the life of the process (by
+ *  design), which would leak across unrelated test cases sharing this module instance within one test file. */
+export function resetReesAuthRejectedForTests(): void {
+  reesAuthRejected = false;
+  reesAuthRejectedSkipLoggedCount = 0;
+}
+
 /**
  * Fire-and-forget startup probe that POSTs to REES /v1/ping to verify the shared secret matches.
  * Logs rees_ping_ok on success, or rees_secret_mismatch / rees_secret_missing / rees_ping_error on
@@ -109,13 +124,14 @@ export function probeReesSecretAtStartup(env: Env): void {
         );
       } else {
         const isAuthError = response.status === 401 || response.status === 403;
+        if (isAuthError) reesAuthRejected = true;
         console.error(
           JSON.stringify({
             level: "error",
             event: isAuthError ? "rees_secret_mismatch" : "rees_ping_error",
             status: response.status,
             message: isAuthError
-              ? `REES /v1/ping rejected the bearer token (${response.status}). The REES_SHARED_SECRET on this engine does not match the REES_SHARED_SECRET on the REES service. All /v1/enrich calls will fail until both are set to the same bare string.`
+              ? `REES /v1/ping rejected the bearer token (${response.status}). The REES_SHARED_SECRET on this engine does not match the REES_SHARED_SECRET on the REES service. All /v1/enrich calls are disabled for this process lifetime -- restart the engine after fixing both secrets.`
               : `REES /v1/ping returned an unexpected status (${response.status}). Check the REES service logs.`,
           }),
         );
@@ -370,6 +386,23 @@ export async function buildReviewEnrichment(
   const cfg = reesConfig(env);
   const base = cfg.REES_URL?.trim();
   if (!base) return undefined;
+  if (reesAuthRejected) {
+    // The startup probe already confirmed REES rejects this secret -- skip the call rather than repeat a
+    // guaranteed 401/403 on every single PR review. Cap the log volume; the operator already got the loud
+    // rees_secret_mismatch error at startup, this is just a reminder the skip is still active.
+    if (reesAuthRejectedSkipLoggedCount < MAX_REES_AUTH_REJECTED_SKIP_LOGS) {
+      reesAuthRejectedSkipLoggedCount += 1;
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "rees_enrich_skipped_auth_rejected",
+          message:
+            "Skipping REES /v1/enrich call: startup probe confirmed the shared secret is rejected. Fix REES_SHARED_SECRET on both the engine and the REES service, then restart the engine.",
+        }),
+      );
+    }
+    return undefined;
+  }
   const sharedSecret = normalizeSharedSecret(cfg.REES_SHARED_SECRET);
   const authConfigured = Boolean(sharedSecret);
   const authSecretNormalized = sharedSecretWasNormalized(

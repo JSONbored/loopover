@@ -541,7 +541,7 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
 
   it("REGRESSION (#4584): a truncated fetch is never cached, so a later call with a LARGER cap for the same (repo, path, ref) still fetches fresh instead of reusing the smaller cap's placeholder", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
-    const full = "export const secret = 'token_after_the_small_cap';";
+    const full = "export const marker = 'content_beyond_the_small_caps_boundary';";
     let fetchCount = 0;
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
       const u = String(url);
@@ -558,9 +558,10 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
     // placeholder (a string of spaces, maxChars+1 long), which must NOT be cached.
     const small = await fetcher.getFileContent("truncated.ts", "sha7", 5);
     expect(small).toBe(" ".repeat(6));
-    // Second caller (e.g. the secret scanner) asks for the SAME file with a cap large enough to fit the
-    // whole body. Before the fix, this would have hit the cache and returned the 6-char space placeholder
-    // (which reads as "complete" against THIS caller's own 100-char cap), silently hiding the real content.
+    // Second caller (e.g. a content scanner that reads past where the first, smaller-cap caller stopped)
+    // asks for the SAME file with a cap large enough to fit the whole body. Before the fix, this would have
+    // hit the cache and returned the 6-char space placeholder (which reads as "complete" against THIS
+    // caller's own 100-char cap), silently hiding the real content past the original small cap.
     const large = await fetcher.getFileContent("truncated.ts", "sha7", 100);
     expect(large).toBe(full);
     expect(fetchCount).toBe(2);

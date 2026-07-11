@@ -103,6 +103,35 @@ test("scanUnusedExport: does not flag when the head file uses the export locally
   assert.deepEqual(findings, []);
 });
 
+test("scanUnusedExport: uses the analysis-context fetchText for file content when supplied, instead of the bare fetch path", async () => {
+  // #4824: the file-content fetch now goes through the shared boundedFetchText helper, which prefers
+  // options.analysis.fetchText (mirrors duplication-delta.ts's own fetchFileAtHead) when an AnalysisContext is
+  // supplied — the raw fetchFn passed as the second positional arg must never be invoked in that case. The head
+  // content references the export locally, so referencesSymbolInSource short-circuits before any search is
+  // attempted — analysis.fetchJson is never called either.
+  const patch = ["@@ -0,0 +1,2 @@", "+export function helper() {}", "+helper();"].join("\n");
+  const head = "export function helper() {}\nhelper();";
+  let fetchTextCalls = 0;
+  const analysis = {
+    fetchText: async (_url, _opts) => {
+      fetchTextCalls += 1;
+      return { ok: true, status: 200, data: head, bytes: head.length, elapsedMs: 0, endpointCategory: "github-contents" };
+    },
+    fetchJson: async () => {
+      throw new Error("fetchJson should not be called: the local reference short-circuits before any search");
+    },
+  };
+  const findings = await scanUnusedExport(
+    req([{ path: "src/util.ts", status: "added", patch }]),
+    async () => {
+      throw new Error("bare fetch should not be used when analysis.fetchText is supplied");
+    },
+    { analysis },
+  );
+  assert.equal(fetchTextCalls, 1);
+  assert.deepEqual(findings, []);
+});
+
 test("scanUnusedExport: enforces the maxSearches cap", async () => {
   const patch = ["@@ -0,0 +1,1 @@", "+export function fn() {}"].join("\n");
   const files = Array.from({ length: 12 }, (_, i) => ({

@@ -6,7 +6,10 @@
 // interface|type|enum NAME` declarations in `index.*` files (re-export lists and `export *` are ignored, since they
 // aggregate symbols documented at their definition); a missing token/head-sha, an unresolvable repo slug, or any
 // fetch error yields no finding rather than an error.
-import type { EnrichRequest, UndocumentedExportFinding } from "../types.js";
+import type { AnalyzerDiagnostics, EnrichRequest, UndocumentedExportFinding } from "../types.js";
+import type { AnalysisContext } from "../analysis-context.js";
+import { boundedFetchText } from "../external-fetch.js";
+import { githubHeaders } from "../github-headers.js";
 import { isDiffFileHeaderLine } from "./diff-lines.js";
 
 const GITHUB_API = "https://api.github.com";
@@ -30,6 +33,8 @@ const DIRECTIVE_COMMENT_RE =
 
 interface ScanOptions {
   signal?: AbortSignal;
+  analysis?: Pick<AnalysisContext, "fetchText">;
+  diagnostics?: AnalyzerDiagnostics;
 }
 
 /** Split a `const`/`let`/`var` declarator list on TOP-LEVEL commas, tracking ()/{}/[] depth and string literals so a
@@ -148,31 +153,35 @@ export function hasPrecedingDocComment(lines: string[], lineIndex: number): bool
   return j >= 0 && lines[j]!.trimStart().startsWith("/**");
 }
 
-async function readBoundedText(resp: Response, signal?: AbortSignal): Promise<string | null> {
-  const length = Number(resp.headers.get("content-length"));
-  if (Number.isFinite(length) && length > MAX_FETCH_BYTES) return null;
-  if (!resp.body) return null;
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let size = 0;
-  let text = "";
-  try {
-    while (true) {
-      if (signal?.aborted) return null;
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_FETCH_BYTES) {
-        await reader.cancel();
-        return null;
-      }
-      text += decoder.decode(value, { stream: true });
-    }
-    text += decoder.decode();
-    return text;
-  } finally {
-    reader.releaseLock();
-  }
+/** Fetch a changed entrypoint's raw content at `headSha` through the shared bounded-text helper (with the analysis
+ *  context's caching/metering when supplied, mirroring `duplication-delta.ts`'s own `fetchFileAtHead`). Returns
+ *  null on any non-OK / oversized / network outcome so the caller fails safe. */
+async function fetchFileAtHead(
+  owner: string,
+  repo: string,
+  path: string,
+  headSha: string,
+  token: string,
+  fetchFn: typeof fetch,
+  options: ScanOptions,
+): Promise<string | null> {
+  const encoded = path.split("/").map(encodeURIComponent).join("/");
+  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encoded}?ref=${encodeURIComponent(headSha)}`;
+  const fetchOptions = {
+    endpointCategory: "github-contents",
+    headers: githubHeaders(token, { raw: true }),
+    signal: options.signal,
+    fetchImpl: fetchFn,
+    diagnostics: options.diagnostics,
+    phase: "undocumented-export",
+    subcall: "github-contents",
+    maxBytes: MAX_FETCH_BYTES,
+    maxCallsPerCategory: MAX_FILES,
+  };
+  const response = options.analysis
+    ? await options.analysis.fetchText(url, fetchOptions)
+    : await boundedFetchText(url, fetchOptions);
+  return response.ok ? response.data : null;
 }
 
 /** Analyzer entrypoint: for each changed `index.*` entrypoint, fetch it at headSha and flag added exports with no
@@ -189,13 +198,6 @@ export async function scanUndocumentedExport(
   const [owner, repo] = parts;
   if (parts.length !== 2 || !owner || !repo || !SLUG_RE.test(owner) || !SLUG_RE.test(repo)) return [];
 
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${githubToken}`,
-    // `vnd.github.raw` returns the file's raw bytes from the Contents API — the same media type the sibling
-    // github-light analyzer doc-comment-drift.ts uses to fetch a file at headSha.
-    Accept: "application/vnd.github.raw",
-    "X-GitHub-Api-Version": "2022-11-28",
-  };
   // Parse added exports FIRST (cheap, pure), then spend the MAX_FILES fetch budget only on entrypoints that actually
   // have added exports — so index files with no relevant additions can't consume the budget and hide later ones.
   const candidates: Array<{ file: (typeof files)[number]; added: Array<{ symbol: string; newLine: number }> }> = [];
@@ -211,17 +213,7 @@ export async function scanUndocumentedExport(
   for (const { file, added } of candidates) {
     if (options.signal?.aborted) break;
 
-    let content: string | null = null;
-    try {
-      const path = file.path.split("/").map(encodeURIComponent).join("/");
-      const resp = await fetchFn(
-        `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path}?ref=${encodeURIComponent(headSha)}`,
-        { headers, signal: options.signal },
-      );
-      if (resp.ok) content = await readBoundedText(resp, options.signal);
-    } catch {
-      content = null;
-    }
+    const content = await fetchFileAtHead(owner, repo, file.path, headSha, githubToken, fetchFn, options);
     if (!content) continue;
     if (options.signal?.aborted) break; // an abort during the fetch should suppress this file's findings too
 

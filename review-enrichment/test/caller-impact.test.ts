@@ -190,6 +190,45 @@ test("scanCallerImpact: flags a removed export confirmed to be imported by an un
   assert.match(brief, /src\/consumer\.ts/);
 });
 
+test("scanCallerImpact: uses the analysis-context fetchJson/fetchText when supplied, instead of the bare fetch path", async () => {
+  // #4824: the search AND the caller-file-content fetch now go through the shared boundedFetch* helpers, which
+  // prefer options.analysis.fetchJson/fetchText (mirrors duplication-delta.ts's own fetchFileAtHead) when an
+  // AnalysisContext is supplied — the raw fetchFn passed as the second positional arg must never be invoked.
+  resetExternalFetchCircuitBreakerForTest();
+  let fetchJsonCalls = 0;
+  let fetchTextCalls = 0;
+  const analysis = {
+    fetchJson: async (_url, _opts) => {
+      fetchJsonCalls += 1;
+      return {
+        ok: true,
+        status: 200,
+        data: JSON.parse(searchJson([{ path: "src/consumer.ts" }, { path: "src/utils.ts" }])),
+        bytes: 0,
+        elapsedMs: 0,
+        endpointCategory: "github-code-search-callers",
+      };
+    },
+    fetchText: async (_url, _opts) => {
+      fetchTextCalls += 1;
+      const data = `import { removedHelper } from "./utils";\nremovedHelper();`;
+      return { ok: true, status: 200, data, bytes: data.length, elapsedMs: 0, endpointCategory: "github-contents" };
+    },
+  };
+  const findings = await scanCallerImpact(
+    req([{ path: "src/utils.ts", patch: REMOVED_PATCH }]),
+    async () => {
+      throw new Error("bare fetch should not be used when analysis is supplied");
+    },
+    { analysis },
+  );
+  assert.equal(fetchJsonCalls, 1);
+  assert.equal(fetchTextCalls, 1);
+  assert.deepEqual(findings, [
+    { file: "src/utils.ts", line: 2, symbol: "removedHelper", callers: ["src/consumer.ts"] },
+  ]);
+});
+
 test("scanCallerImpact: caller list is capped at MAX_CALLERS_PER_FINDING (5)", async () => {
   resetExternalFetchCircuitBreakerForTest();
   const items = Array.from({ length: 7 }, (_, i) => ({ path: `src/c${i}.ts` }));

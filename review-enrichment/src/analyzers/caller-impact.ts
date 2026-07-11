@@ -26,7 +26,7 @@ import type {
   EnrichRequest,
 } from "../types.js";
 import type { AnalysisContext } from "../analysis-context.js";
-import { boundedFetchJson } from "../external-fetch.js";
+import { boundedFetchJson, boundedFetchText } from "../external-fetch.js";
 import { githubHeaders } from "../github-headers.js";
 import { exportedNames, isPublicEntrypoint } from "./api-break.js";
 import { isTestPath } from "./test-ratio.js";
@@ -49,7 +49,7 @@ const SKIP_RE = /(?:\.d\.ts$|\.min\.|(?:^|\/)(?:dist|build|vendor|node_modules)\
 
 interface ScanOptions {
   signal?: AbortSignal;
-  analysis?: Pick<AnalysisContext, "fetchJson">;
+  analysis?: Pick<AnalysisContext, "fetchJson" | "fetchText">;
   diagnostics?: AnalyzerDiagnostics;
 }
 
@@ -238,33 +238,9 @@ export function candidateCallerPaths(
   return out;
 }
 
-async function readBoundedText(resp: Response, signal?: AbortSignal): Promise<string | null> {
-  const length = Number(resp.headers.get("content-length"));
-  if (Number.isFinite(length) && length > MAX_FETCH_BYTES) return null;
-  if (!resp.body) return null;
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let size = 0;
-  let text = "";
-  try {
-    while (true) {
-      if (signal?.aborted) return null;
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_FETCH_BYTES) {
-        await reader.cancel();
-        return null;
-      }
-      text += decoder.decode(value, { stream: true });
-    }
-    text += decoder.decode();
-    return text;
-  } finally {
-    reader.releaseLock();
-  }
-}
-
+/** Fetch a changed file's raw content at `headSha` through the shared bounded-text helper (with the analysis
+ *  context's caching/metering when supplied, mirroring `duplication-delta.ts`'s own `fetchFileAtHead`). Returns
+ *  null on any non-OK / oversized / network outcome so the caller fails safe. */
 async function fetchFileAtHead(
   owner: string,
   repo: string,
@@ -272,19 +248,25 @@ async function fetchFileAtHead(
   headSha: string,
   token: string,
   fetchImpl: typeof fetch,
-  signal: AbortSignal | undefined,
+  options: ScanOptions,
 ): Promise<string | null> {
-  try {
-    const encoded = path.split("/").map(encodeURIComponent).join("/");
-    const resp = await fetchImpl(
-      `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encoded}?ref=${encodeURIComponent(headSha)}`,
-      { headers: githubHeaders(token, { raw: true }), signal },
-    );
-    if (!resp.ok) return null;
-    return await readBoundedText(resp, signal);
-  } catch {
-    return null;
-  }
+  const encoded = path.split("/").map(encodeURIComponent).join("/");
+  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encoded}?ref=${encodeURIComponent(headSha)}`;
+  const fetchOptions = {
+    endpointCategory: "github-contents",
+    headers: githubHeaders(token, { raw: true }),
+    signal: options.signal,
+    fetchImpl,
+    diagnostics: options.diagnostics,
+    phase: "caller-impact",
+    subcall: "github-contents",
+    maxBytes: MAX_FETCH_BYTES,
+    maxCallsPerCategory: MAX_FILE_FETCHES,
+  };
+  const response = options.analysis
+    ? await options.analysis.fetchText(url, fetchOptions)
+    : await boundedFetchText(url, fetchOptions);
+  return response.ok ? response.data : null;
 }
 
 async function searchSymbolReferences(
@@ -344,7 +326,7 @@ export async function scanCallerImpact(
       return null;
     }
     fileFetches += 1;
-    const content = await fetchFileAtHead(owner, repo, path, headSha, githubToken, fetchFn, options.signal);
+    const content = await fetchFileAtHead(owner, repo, path, headSha, githubToken, fetchFn, options);
     fileCache.set(path, content);
     return content;
   };

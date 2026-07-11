@@ -96,6 +96,28 @@ test("scanUndocumentedExport: flags the undocumented export, not the documented 
   assert.match(brief, /undoc/);
 });
 
+test("scanUndocumentedExport: uses the analysis-context fetchText when supplied, instead of the bare fetch path", async () => {
+  // #4824: the entrypoint-content fetch now goes through the shared boundedFetchText helper, which prefers
+  // options.analysis.fetchText (mirrors duplication-delta.ts's own fetchFileAtHead) when an AnalysisContext is
+  // supplied — the raw fetchFn passed as the second positional arg must never be invoked in that case.
+  let analysisCalls = 0;
+  const analysis = {
+    fetchText: async (_url, _opts) => {
+      analysisCalls += 1;
+      return { ok: true, status: 200, data: HEAD, bytes: HEAD.length, elapsedMs: 0, endpointCategory: "github-contents" };
+    },
+  };
+  const findings = await scanUndocumentedExport(
+    req([{ path: "src/index.ts", status: "modified", patch: PATCH }]),
+    async () => {
+      throw new Error("bare fetch should not be used when analysis.fetchText is supplied");
+    },
+    { analysis },
+  );
+  assert.equal(analysisCalls, 1);
+  assert.deepEqual(findings, [{ file: "src/index.ts", line: 4, symbol: "undoc" }]);
+});
+
 test("scanUndocumentedExport: fetches the entrypoint at the head ref with a per-segment-encoded path", async () => {
   let calledUrl = "";
   const recording = async (url) => {

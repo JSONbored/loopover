@@ -369,7 +369,7 @@ describe("check-engine-parity script", () => {
         "if (PLACEHOLDER_VALUE_PATTERN.test(value)) return true;",
         "if (new Set(value.toLowerCase()).size <= 2) return true;",
         "if (LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN.test(value)) return true;",
-        "if (ALL_LOWERCASE_SEGMENTS_PATTERN.test(value) && SELF_NAMING_FIXTURE_SUFFIX_PATTERN.test(value)) return true;",
+        "if (KNOWN_FIXTURE_SECRET_VALUES.has(value)) return true;",
         "return hasLongSequentialRun(value);",
       ].join("\n");
       const hostKinds = SECRET_DETECTION_MARKERS.filter((marker) => marker.startsWith('"')).join("\n");

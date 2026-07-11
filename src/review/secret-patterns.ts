@@ -72,29 +72,25 @@ export function hasLongSequentialRun(value: string): boolean {
 // plausible credentials and must still be reported by the generic assignment scanner.
 const LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN = /^(?:[a-z]+-)*mock(?:-[a-z]+)*$/;
 
-// All-lowercase-letters value check, shared by the self-naming-suffix exclusion below.
-const ALL_LOWERCASE_SEGMENTS_PATTERN = /^[a-z]+(?:[-_][a-z]+)*$/;
-
-// #4579-followup (metagraphed/gittensory#4524 "token = default-session-token"/"beta-session-token",
-// awesome-claude#4758 "embedded_secret: unsafe_install_or_secret" -- both confirmed live, no real secret
-// present): a value whose OWN last hyphen/underscore-separated segment is itself one of the same secret-shaped
-// trigger words reads as a NAME for a concept ("this is a kind of token/secret"), not an opaque credential --
-// a real generated token/key value never ends by literally restating what kind of thing it is. Deliberately
-// NARROWER than "any multi-segment lowercase phrase": a Diceware-style passphrase like
-// "alpha-bravo-charlie-delta" doesn't end in a trigger word, so it still correctly flags (regression guard
-// below) -- only values that self-identify as a token/secret/key/password NAME are excluded.
-const SELF_NAMING_FIXTURE_SUFFIX_PATTERN = /[-_](?:token|secret|key|password|passwd)$/i;
+// #4579-followup: these exact live false-positive literals are fixture/enum names, not credentials. Keep
+// this allowlist intentionally closed: a broad suffix rule would suppress plausible human-chosen secrets such
+// as `client_secret = "correct-horse-battery-secret"`.
+const KNOWN_FIXTURE_SECRET_VALUES = new Set([
+  "installation-token",
+  "default-session-token",
+  "beta-session-token",
+  "unsafe_install_or_secret",
+]);
 
 /** True for an obvious non-secret filler value: a known placeholder phrase, a string built from at most 2
  *  distinct characters (e.g. "xxxxxxxxxxxxxxxx", "----------------"), a long monotonic character-code run
- *  (e.g. "abcdefghijklmnop123"), or a lowercase identifier whose own last segment self-names as a secret kind
- *  (e.g. "default-session-token", "unsafe_install_or_secret"). Mirrored (drift-checked, not imported) in
+ *  (e.g. "abcdefghijklmnop123"), or a known fixture/enum literal. Mirrored (drift-checked, not imported) in
  *  review-enrichment/src/analyzers/secret-scan.ts — see this file's header. */
 export function isPlaceholderSecretValue(value: string): boolean {
   if (PLACEHOLDER_VALUE_PATTERN.test(value)) return true;
   if (new Set(value.toLowerCase()).size <= 2) return true;
   if (LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN.test(value)) return true;
-  if (ALL_LOWERCASE_SEGMENTS_PATTERN.test(value) && SELF_NAMING_FIXTURE_SUFFIX_PATTERN.test(value)) return true;
+  if (KNOWN_FIXTURE_SECRET_VALUES.has(value)) return true;
   return hasLongSequentialRun(value);
 }
 

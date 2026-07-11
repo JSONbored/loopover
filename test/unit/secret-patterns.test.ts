@@ -83,13 +83,21 @@ describe("secret-patterns — shared secret-detection primitives (#4608)", () =>
       expect(isPlaceholderSecretValue("mock-aK9xQ2mZw7Ln4Rv8Pt3Bh6")).toBe(false);
     });
 
-    it("flags a lowercase identifier whose own last segment self-names as a secret kind", () => {
+    it("flags every known fixture/enum literal in the closed allowlist", () => {
+      expect(isPlaceholderSecretValue("installation-token")).toBe(true);
       expect(isPlaceholderSecretValue("default-session-token")).toBe(true);
+      expect(isPlaceholderSecretValue("beta-session-token")).toBe(true);
       expect(isPlaceholderSecretValue("unsafe_install_or_secret")).toBe(true);
     });
 
-    it("does NOT flag a self-naming-suffix-shaped value once digits/mixed case break the ALL-lowercase check", () => {
+    it("does NOT flag a token/secret/key/password-suffixed value that isn't in the closed fixture set (#4579-followup regression)", () => {
+      // Same self-naming SHAPE as the known fixtures above (ends in "-token"/"-secret"/"-key"/"-passwd"),
+      // but none of these exact literals are in KNOWN_FIXTURE_SECRET_VALUES, so a real human-chosen secret
+      // is no longer swept in just because its suffix happens to restate what kind of thing it is.
       expect(isPlaceholderSecretValue("session2024-token")).toBe(false);
+      expect(isPlaceholderSecretValue("correct-horse-battery-secret")).toBe(false);
+      expect(isPlaceholderSecretValue("legacy-system-passwd")).toBe(false);
+      expect(isPlaceholderSecretValue("internal-service-key")).toBe(false);
     });
 
     it("does NOT flag a multi-segment lowercase passphrase that does not self-name as a secret kind", () => {

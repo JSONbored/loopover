@@ -91,7 +91,7 @@ export function RunHistoryPage({
   return (
     <Card>
       <CardHeader>
-        <h2 className="text-token-lg font-display font-semibold leading-none tracking-tight">Run history</h2>
+        <h2 className="font-display text-token-lg font-semibold">Run history</h2>
         <p className="text-token-sm text-muted-foreground">
           Local, read-only view over the miner&apos;s per-repo run state (`miner_run_state`).
         </p>

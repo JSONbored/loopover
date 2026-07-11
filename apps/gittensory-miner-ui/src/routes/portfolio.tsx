@@ -81,7 +81,7 @@ export function PortfolioPage({
   return (
     <Card>
       <CardHeader>
-        <h2 className="text-token-lg font-display font-semibold leading-none tracking-tight">Portfolio queue</h2>
+        <h2 className="font-display text-token-lg font-semibold">Portfolio queue</h2>
         <p className="text-token-sm text-muted-foreground">
           Local, read-only summary of the miner&apos;s portfolio queue (`miner_portfolio_queue`).
         </p>

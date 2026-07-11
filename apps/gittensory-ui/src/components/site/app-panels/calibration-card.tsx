@@ -1,4 +1,9 @@
-import { BoundaryBadge, MiniSparkbar, Stat, StatusPill } from "@/components/site/control-primitives";
+import {
+  BoundaryBadge,
+  MiniSparkbar,
+  Stat,
+  StatusPill,
+} from "@/components/site/control-primitives";
 import { TrendChart } from "@/components/site/trend-chart";
 import {
   calibrationHasSamples,
@@ -21,8 +26,8 @@ export function CalibrationCard({ calibration }: { calibration: GateCalibration 
         <div>
           <h2 className="font-display text-token-lg font-semibold">Confidence calibration</h2>
           <p className="mt-1 text-token-xs text-muted-foreground">
-            Predicted merge confidence vs realized kept-rate per bucket. Public-safe aggregate counts
-            only.
+            Predicted merge confidence vs realized kept-rate per bucket. Public-safe aggregate
+            counts only.
           </p>
         </div>
         <StatusPill status={status.tone}>{status.label}</StatusPill>

@@ -11,11 +11,51 @@ import {
 
 function emptyBins() {
   return [
-    { label: "50–60%", minConfidence: 0.5, maxConfidence: 0.6, sampleSize: 0, keptCount: 0, revertedCount: 0, keptRate: null },
-    { label: "60–70%", minConfidence: 0.6, maxConfidence: 0.7, sampleSize: 0, keptCount: 0, revertedCount: 0, keptRate: null },
-    { label: "70–80%", minConfidence: 0.7, maxConfidence: 0.8, sampleSize: 0, keptCount: 0, revertedCount: 0, keptRate: null },
-    { label: "80–90%", minConfidence: 0.8, maxConfidence: 0.9, sampleSize: 0, keptCount: 0, revertedCount: 0, keptRate: null },
-    { label: "90–100%", minConfidence: 0.9, maxConfidence: 1, sampleSize: 0, keptCount: 0, revertedCount: 0, keptRate: null },
+    {
+      label: "50–60%",
+      minConfidence: 0.5,
+      maxConfidence: 0.6,
+      sampleSize: 0,
+      keptCount: 0,
+      revertedCount: 0,
+      keptRate: null,
+    },
+    {
+      label: "60–70%",
+      minConfidence: 0.6,
+      maxConfidence: 0.7,
+      sampleSize: 0,
+      keptCount: 0,
+      revertedCount: 0,
+      keptRate: null,
+    },
+    {
+      label: "70–80%",
+      minConfidence: 0.7,
+      maxConfidence: 0.8,
+      sampleSize: 0,
+      keptCount: 0,
+      revertedCount: 0,
+      keptRate: null,
+    },
+    {
+      label: "80–90%",
+      minConfidence: 0.8,
+      maxConfidence: 0.9,
+      sampleSize: 0,
+      keptCount: 0,
+      revertedCount: 0,
+      keptRate: null,
+    },
+    {
+      label: "90–100%",
+      minConfidence: 0.9,
+      maxConfidence: 1,
+      sampleSize: 0,
+      keptCount: 0,
+      revertedCount: 0,
+      keptRate: null,
+    },
   ];
 }
 
@@ -44,7 +84,17 @@ describe("calibrationStatus", () => {
       calibrationStatus(
         calibration({
           recommendedFloor: 0.94,
-          bins: [{ label: "90–100%", minConfidence: 0.9, maxConfidence: 1, sampleSize: 2, keptCount: 1, revertedCount: 1, keptRate: 0.5 }],
+          bins: [
+            {
+              label: "90–100%",
+              minConfidence: 0.9,
+              maxConfidence: 1,
+              sampleSize: 2,
+              keptCount: 1,
+              revertedCount: 1,
+              keptRate: 0.5,
+            },
+          ],
         }),
       ),
     ).toEqual({ tone: "warn", label: "raise confidence floor" });
@@ -54,7 +104,17 @@ describe("calibrationStatus", () => {
     expect(
       calibrationStatus(
         calibration({
-          bins: [{ label: "90–100%", minConfidence: 0.9, maxConfidence: 1, sampleSize: 3, keptCount: 3, revertedCount: 0, keptRate: 1 }],
+          bins: [
+            {
+              label: "90–100%",
+              minConfidence: 0.9,
+              maxConfidence: 1,
+              sampleSize: 3,
+              keptCount: 3,
+              revertedCount: 0,
+              keptRate: 1,
+            },
+          ],
         }),
       ),
     ).toEqual({ tone: "ready", label: "floor adequate" });
@@ -69,8 +129,24 @@ describe("calibrationTrendValues", () => {
   it("scales kept rates to percentage points for TrendChart", () => {
     expect(
       calibrationTrendValues([
-        { label: "80–90%", minConfidence: 0.8, maxConfidence: 0.9, sampleSize: 2, keptCount: 2, revertedCount: 0, keptRate: 1 },
-        { label: "90–100%", minConfidence: 0.9, maxConfidence: 1, sampleSize: 2, keptCount: 1, revertedCount: 1, keptRate: 0.5 },
+        {
+          label: "80–90%",
+          minConfidence: 0.8,
+          maxConfidence: 0.9,
+          sampleSize: 2,
+          keptCount: 2,
+          revertedCount: 0,
+          keptRate: 1,
+        },
+        {
+          label: "90–100%",
+          minConfidence: 0.9,
+          maxConfidence: 1,
+          sampleSize: 2,
+          keptCount: 1,
+          revertedCount: 1,
+          keptRate: 0.5,
+        },
       ]),
     ).toEqual([100, 50]);
   });
@@ -94,7 +170,15 @@ describe("CalibrationCard", () => {
           keptAvgConfidence: 0.95,
           bins: [
             ...emptyBins().slice(0, 4),
-            { label: "90–100%", minConfidence: 0.9, maxConfidence: 1, sampleSize: 2, keptCount: 2, revertedCount: 0, keptRate: 1 },
+            {
+              label: "90–100%",
+              minConfidence: 0.9,
+              maxConfidence: 1,
+              sampleSize: 2,
+              keptCount: 2,
+              revertedCount: 0,
+              keptRate: 1,
+            },
           ],
         })}
       />,
@@ -116,11 +200,51 @@ describe("CalibrationCard", () => {
           keptAvgConfidence: 0.88,
           note: "Raise confidenceFloor 0.9 → 0.94: a merge at 0.92 confidence was reverted.",
           bins: [
-            { label: "50–60%", minConfidence: 0.5, maxConfidence: 0.6, sampleSize: 0, keptCount: 0, revertedCount: 0, keptRate: null },
-            { label: "60–70%", minConfidence: 0.6, maxConfidence: 0.7, sampleSize: 0, keptCount: 0, revertedCount: 0, keptRate: null },
-            { label: "70–80%", minConfidence: 0.7, maxConfidence: 0.8, sampleSize: 1, keptCount: 1, revertedCount: 0, keptRate: 1 },
-            { label: "80–90%", minConfidence: 0.8, maxConfidence: 0.9, sampleSize: 2, keptCount: 2, revertedCount: 0, keptRate: 1 },
-            { label: "90–100%", minConfidence: 0.9, maxConfidence: 1, sampleSize: 2, keptCount: 1, revertedCount: 1, keptRate: 0.5 },
+            {
+              label: "50–60%",
+              minConfidence: 0.5,
+              maxConfidence: 0.6,
+              sampleSize: 0,
+              keptCount: 0,
+              revertedCount: 0,
+              keptRate: null,
+            },
+            {
+              label: "60–70%",
+              minConfidence: 0.6,
+              maxConfidence: 0.7,
+              sampleSize: 0,
+              keptCount: 0,
+              revertedCount: 0,
+              keptRate: null,
+            },
+            {
+              label: "70–80%",
+              minConfidence: 0.7,
+              maxConfidence: 0.8,
+              sampleSize: 1,
+              keptCount: 1,
+              revertedCount: 0,
+              keptRate: 1,
+            },
+            {
+              label: "80–90%",
+              minConfidence: 0.8,
+              maxConfidence: 0.9,
+              sampleSize: 2,
+              keptCount: 2,
+              revertedCount: 0,
+              keptRate: 1,
+            },
+            {
+              label: "90–100%",
+              minConfidence: 0.9,
+              maxConfidence: 1,
+              sampleSize: 2,
+              keptCount: 1,
+              revertedCount: 1,
+              keptRate: 0.5,
+            },
           ],
         })}
       />,

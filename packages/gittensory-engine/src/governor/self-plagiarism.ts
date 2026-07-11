@@ -97,7 +97,7 @@ function asClaimMember(record: OwnSubmissionRecord): DuplicateClaimMember {
       : null) ??
     (typeof record.issueNumber === "number" && Number.isFinite(record.issueNumber) ? record.issueNumber : null) ??
     0;
-  return { number, linkedIssueClaimedAt: record.submittedAt ?? null };
+  return { number, linkedIssueClaimedAt: record.submittedAt };
 }
 
 function buildVerdict(

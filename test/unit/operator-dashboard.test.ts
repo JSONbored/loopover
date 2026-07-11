@@ -33,6 +33,15 @@ describe("operator dashboard payload", () => {
       distribution: [],
       sampleSize: 0,
     });
+    expect(payload.calibration).toMatchObject({
+      currentFloor: 0,
+      mergedCount: 0,
+      revertedCount: 0,
+      recommendedFloor: null,
+      bins: expect.arrayContaining([
+        expect.objectContaining({ label: "90–100%", sampleSize: 0, keptRate: null }),
+      ]),
+    });
     // Empty fleet → instanceCount 0, null precision card ("—"), no-outlier delta.
     expect(payload.fleetMetrics.instanceCount).toBe(0);
     expect(payload.metrics).toEqual(

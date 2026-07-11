@@ -70,6 +70,49 @@ export interface Calibration {
   /** Per-reasonCode close distribution + how many of each a human REOPENED and the gate did NOT re-merge. */
   closesByReason: Array<{ reasonCode: string; closes: number; disputed: number }>;
   disputedCloseCount: number;
+  /** Predicted merge-confidence band vs realized kept-rate (not reverted) per bucket. */
+  bins: CalibrationBin[];
+}
+
+/** One confidence band in the calibration curve (#2192). */
+export type CalibrationBin = {
+  label: string;
+  minConfidence: number;
+  maxConfidence: number;
+  sampleSize: number;
+  keptCount: number;
+  revertedCount: number;
+  /** keptCount / sampleSize; null when sampleSize === 0. */
+  keptRate: number | null;
+};
+
+const CALIBRATION_BIN_EDGES = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0] as const;
+
+/** Fold merge-confidence samples into fixed calibration bins for the analytics curve card. */
+export function buildCalibrationBins(
+  samples: ReadonlyArray<{ confidence: number; kept: boolean }>,
+): CalibrationBin[] {
+  const bins: CalibrationBin[] = [];
+  for (let i = 0; i < CALIBRATION_BIN_EDGES.length - 1; i += 1) {
+    const min = CALIBRATION_BIN_EDGES[i]!;
+    const max = CALIBRATION_BIN_EDGES[i + 1]!;
+    const isLast = i === CALIBRATION_BIN_EDGES.length - 2;
+    const inBin = samples.filter(
+      (sample) => sample.confidence >= min && (isLast ? sample.confidence <= max : sample.confidence < max),
+    );
+    const keptCount = inBin.filter((sample) => sample.kept).length;
+    const sampleSize = inBin.length;
+    bins.push({
+      label: `${Math.round(min * 100)}–${Math.round(max * 100)}%`,
+      minConfidence: min,
+      maxConfidence: max,
+      sampleSize,
+      keptCount,
+      revertedCount: sampleSize - keptCount,
+      keptRate: sampleSize > 0 ? Number((keptCount / sampleSize).toFixed(3)) : null,
+    });
+  }
+  return bins;
 }
 
 /** The minimal agent-config shape the ops endpoints read. (Subset of reviewbot's AgentConfig.) */
@@ -277,10 +320,13 @@ export async function computeCalibration(env: Env, config: OpsAgentConfig): Prom
   };
   const kept: number[] = [];
   const rev: number[] = [];
+  const binSamples: Array<{ confidence: number; kept: boolean }> = [];
   for (const r of mergedRows.results ?? []) {
     const c = confidenceOf(r.decision_json);
     if (c == null) continue;
-    (reverted.has(r.id) ? rev : kept).push(c);
+    const isKept = !reverted.has(r.id);
+    binSamples.push({ confidence: c, kept: isKept });
+    (isKept ? kept : rev).push(c);
   }
   const avg = (xs: number[]): number | null => (xs.length ? Number((xs.reduce((a, b) => a + b, 0) / xs.length).toFixed(3)) : null);
   const currentFloor = config.confidenceFloor ?? 0;
@@ -302,6 +348,7 @@ export async function computeCalibration(env: Env, config: OpsAgentConfig): Prom
     note,
     closesByReason,
     disputedCloseCount,
+    bins: buildCalibrationBins(binSamples),
   };
 }
 

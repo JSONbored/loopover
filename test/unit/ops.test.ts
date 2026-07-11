@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildCalibrationBins,
   computeAgentHealth,
   computeCalibration,
   defaultOpsHealthDeps,
@@ -83,6 +84,12 @@ describe("computeCalibration", () => {
     expect(cal.revertedCount).toBe(1);
     expect(cal.revertedMaxConfidence).toBe(0.92);
     expect(cal.recommendedFloor).toBe(0.94); // 0.92 + 0.02
+    expect(cal.bins.find((bin) => bin.label === "90–100%")).toMatchObject({
+      sampleSize: 3,
+      keptCount: 2,
+      revertedCount: 1,
+      keptRate: expect.closeTo(2 / 3, 3),
+    });
   });
 
   it("recommends no change when nothing was reverted", async () => {
@@ -103,6 +110,39 @@ describe("computeCalibration", () => {
     const cal = await computeCalibration(env, { slug: "x", secrets: {} }); // no confidenceFloor
     expect(cal.currentFloor).toBe(0);
     expect(cal.recommendedFloor).toBe(0.52);
+  });
+});
+
+describe("buildCalibrationBins", () => {
+  it("returns five empty bins when there are no confidence samples", () => {
+    expect(buildCalibrationBins([])).toEqual([
+      { label: "50–60%", minConfidence: 0.5, maxConfidence: 0.6, sampleSize: 0, keptCount: 0, revertedCount: 0, keptRate: null },
+      { label: "60–70%", minConfidence: 0.6, maxConfidence: 0.7, sampleSize: 0, keptCount: 0, revertedCount: 0, keptRate: null },
+      { label: "70–80%", minConfidence: 0.7, maxConfidence: 0.8, sampleSize: 0, keptCount: 0, revertedCount: 0, keptRate: null },
+      { label: "80–90%", minConfidence: 0.8, maxConfidence: 0.9, sampleSize: 0, keptCount: 0, revertedCount: 0, keptRate: null },
+      { label: "90–100%", minConfidence: 0.9, maxConfidence: 1, sampleSize: 0, keptCount: 0, revertedCount: 0, keptRate: null },
+    ]);
+  });
+
+  it("folds a single sample into one populated bin", () => {
+    expect(buildCalibrationBins([{ confidence: 0.95, kept: true }])).toEqual(
+      expect.arrayContaining([
+        { label: "90–100%", minConfidence: 0.9, maxConfidence: 1, sampleSize: 1, keptCount: 1, revertedCount: 0, keptRate: 1 },
+      ]),
+    );
+  });
+
+  it("builds a full kept-rate curve across multiple confidence bands", () => {
+    const bins = buildCalibrationBins([
+      { confidence: 0.75, kept: true },
+      { confidence: 0.85, kept: true },
+      { confidence: 0.85, kept: false },
+      { confidence: 0.95, kept: true },
+      { confidence: 0.95, kept: false },
+    ]);
+    expect(bins.find((bin) => bin.label === "70–80%")).toMatchObject({ sampleSize: 1, keptRate: 1 });
+    expect(bins.find((bin) => bin.label === "80–90%")).toMatchObject({ sampleSize: 2, keptRate: 0.5 });
+    expect(bins.find((bin) => bin.label === "90–100%")).toMatchObject({ sampleSize: 2, keptRate: 0.5 });
   });
 });
 

@@ -27,6 +27,7 @@ import type {
 } from "../types";
 import { computeFleetAnalytics, type FleetAnalytics } from "../orb/analytics";
 import { computeGateEval, type GateEvalReport } from "../review/parity";
+import { computeCalibration, type Calibration } from "../review/ops";
 import { computeCycleTimeAggregate, type CycleTimeAggregate } from "../review/stats";
 import { loadUpstreamStatus, type UpstreamStatus } from "../upstream/ruleset";
 import { nowIso } from "../utils/json";
@@ -66,6 +67,8 @@ export type OperatorDashboardPayload = {
   gateEval: GateEvalReport;
   // PR review cycle-time percentiles (#2194): gate decision → outcome from review_audit; fail-safe empty aggregate.
   cycleTime: CycleTimeAggregate;
+  // Confidence-vs-outcome calibration curve (#2192): merge confidence bins + recommended floor from computeCalibration.
+  calibration: Calibration;
 };
 
 const USAGE_WINDOW_DAYS = 7;
@@ -91,6 +94,7 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     fleetMetrics,
     gateEval,
     cycleTime,
+    calibration,
   ] = await Promise.all([
     listRepositories(env),
     listInstallations(env),
@@ -112,6 +116,7 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     computeGateEval(env, { days: 90, nowMs: Date.now() }),
     // #2194: cycle-time percentiles from the stats feed; fails safe to an empty aggregate.
     computeCycleTimeAggregate(env, { days: 90, nowMs: Date.now() }),
+    computeCalibration(env, operatorAgentConfig(env)),
   ]);
   const weeklyValueReport = buildWeeklyValueReport({
     generatedAt: nowIso(),
@@ -207,7 +212,16 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     fleetMetrics,
     gateEval,
     cycleTime,
+    calibration,
   };
+}
+
+function operatorAgentConfig(env: Env): { slug: string; secrets: Record<string, never> } {
+  const slug =
+    typeof env.GITHUB_APP_SLUG === "string" && env.GITHUB_APP_SLUG.trim()
+      ? env.GITHUB_APP_SLUG.trim()
+      : "gittensory";
+  return { slug, secrets: {} };
 }
 
 export function latestUsageRollup(rollups: ProductUsageDailyRollupRecord[]): ProductUsageDailyRollupRecord | null {

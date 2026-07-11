@@ -106,6 +106,34 @@ test("immediate abandon: maxIterations <= 0 abandons before ever invoking the dr
   assert.equal(events[0]?.eventType, "attempt_aborted");
 });
 
+test("paused mode: does not invoke the coding-agent driver (regression for pause gate bypass)", async () => {
+  let driverCalled = false;
+  const { deps, events } = collectingDeps({ driver: { async run() { driverCalled = true; return okResult(); } } });
+  const result = await runIterateLoop(passingInput({ mode: "paused", maxIterations: 1 }), deps);
+
+  assert.equal(driverCalled, false, "paused is a kill switch and must not call driver.run");
+  assert.equal(result.outcome, "abandon");
+  assert.equal(result.finalDecision.abandonReason, "self_review_ambiguous");
+  assert.equal(result.iterationsUsed, 1);
+  assert.equal(result.totalTurnsUsed, 0);
+  assert.equal(result.iterations[0]?.driverResult.error, "coding_agent_paused");
+  assert.equal(events.some((event) => event.eventType === "attempt_aborted" && event.actionClass === "codegen" && event.reason === "coding_agent_paused"), true);
+});
+
+test("dry_run mode: records a shadow coding-agent invocation without calling the driver (regression for dry-run gate bypass)", async () => {
+  let driverCalled = false;
+  const { deps, events } = collectingDeps({ driver: { async run() { driverCalled = true; return okResult(); } } });
+  const result = await runIterateLoop(passingInput({ mode: "dry_run", maxIterations: 1 }), deps);
+
+  assert.equal(driverCalled, false, "dry-run must not spawn the underlying coding-agent session");
+  assert.equal(result.outcome, "handoff");
+  assert.equal(result.iterationsUsed, 1);
+  assert.equal(result.totalTurnsUsed, 0);
+  assert.equal(result.iterations[0]?.driverResult.ok, true);
+  assert.match(result.iterations[0]?.driverResult.summary ?? "", /dry-run: would invoke coding agent/);
+  assert.equal(events.some((event) => event.eventType === "attempt_shadow" && event.actionClass === "codegen" && event.mode === "dry_run"), true);
+});
+
 test("handoff: a clean predicted-gate pass on the first iteration hands off, with a full HandoffPacket", async () => {
   const { deps, events } = collectingDeps({ driver: driverReturning(okResult(["src/upload.ts"], 5)) });
   const result = await runIterateLoop(passingInput({ maxIterations: 3 }), deps);

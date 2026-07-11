@@ -27,7 +27,8 @@
 // pretooluse-hook append-failure handling elsewhere in this package).
 
 import type { CodingAgentDriver, CodingAgentDriverResult, CodingAgentDriverTask } from "./coding-agent-driver.js";
-import type { CodingAgentExecutionMode } from "./coding-agent-mode.js";
+import { codingAgentModeExecutes, type CodingAgentExecutionMode } from "./coding-agent-mode.js";
+import { invokeCodingAgentDriver } from "./coding-agent-invoke.js";
 import type { AttemptLogEvent, AttemptLogEventType } from "./attempt-log.js";
 import { runSelfReview, type AttemptDiffState, type SelfReviewAdapterDeps, type SelfReviewContext, type SelfReviewVerdict } from "./self-review-adapter.js";
 import { decideNextActionWithReason, deriveSelfReviewOutcome, type IterateLoopDecision, type HandoffPacket, type IterationState, type SelfReviewOutcome } from "./iterate-policy.js";
@@ -139,10 +140,16 @@ function evaluateSelfReviewOutcome(input: IterateLoopInput, driverResult: Coding
 }
 
 /** A thrown driver error is normalized into the same `{ ok: false }` shape a driver returning gracefully would
- *  produce, so {@link evaluateSelfReviewOutcome} has exactly one failure path to handle, not two. */
-async function runDriverSafely(driver: CodingAgentDriver, task: CodingAgentDriverTask): Promise<CodingAgentDriverResult> {
+ *  produce, so {@link evaluateSelfReviewOutcome} has exactly one failure path to handle, not two. Non-live modes
+ *  are also resolved here, at the driver boundary, so paused/dry-run attempts never spawn the underlying agent. */
+async function runDriverSafely(input: IterateLoopInput, deps: IterateLoopDeps, task: CodingAgentDriverTask): Promise<CodingAgentDriverResult> {
+  if (!codingAgentModeExecutes(input.mode)) {
+    return invokeCodingAgentDriver(deps.driver, input.mode, task, {
+      append: (event) => safeAppendAttemptLogEvent(deps, event),
+    });
+  }
   try {
-    return await driver.run(task);
+    return await deps.driver.run(task);
   } catch (error) {
     return { ok: false, changedFiles: [], summary: "", error: `driver_threw: ${error instanceof Error ? error.message : String(error)}` };
   }
@@ -257,7 +264,7 @@ export async function runIterateLoop(input: IterateLoopInput, deps: IterateLoopD
   let totalTurnsUsed = 0;
 
   for (let iterationNumber = 1; iterationNumber <= maxIterations; iterationNumber += 1) {
-    const driverResult = await runDriverSafely(deps.driver, {
+    const driverResult = await runDriverSafely(input, deps, {
       attemptId: input.attemptId,
       workingDirectory: input.workingDirectory,
       acceptanceCriteriaPath: input.acceptanceCriteriaPath,

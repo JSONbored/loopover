@@ -22,6 +22,16 @@ export type RunStateApiDeps = {
   fileExists: (path: string) => boolean;
 };
 
+function isLoopbackAddress(remoteAddress: string | undefined): boolean {
+  if (remoteAddress === undefined) return true;
+  return (
+    remoteAddress === "::1" ||
+    remoteAddress === "::ffff:127.0.0.1" ||
+    remoteAddress === "127.0.0.1" ||
+    remoteAddress.startsWith("127.")
+  );
+}
+
 const defaultDeps: RunStateApiDeps = {
   loadRunStateModule: () => import("../../packages/gittensory-miner/lib/run-state.js") as Promise<RunStateModule>,
   fileExists: existsSync,
@@ -33,8 +43,12 @@ export async function handleRunStateRequest(
   method: string | undefined,
   url: string | undefined,
   deps: RunStateApiDeps = defaultDeps,
+  remoteAddress?: string,
 ): Promise<{ status: number; body: string } | null> {
   if (url !== "/api/run-state" || (method !== undefined && method !== "GET")) return null;
+  if (!isLoopbackAddress(remoteAddress)) {
+    return { status: 403, body: JSON.stringify({ error: "run-state API is only available from loopback clients" }) };
+  }
   try {
     const runState = await deps.loadRunStateModule();
     // Fresh install: no DB file yet. Serve the empty list WITHOUT initializing the store (that would create
@@ -54,14 +68,14 @@ export function runStateApiPlugin(deps: RunStateApiDeps = defaultDeps): Plugin {
   const attach = (middlewares: {
     use: (
       fn: (
-        req: { method?: string; url?: string },
+        req: { method?: string; socket?: { remoteAddress?: string }; url?: string },
         res: { statusCode: number; setHeader: (k: string, v: string) => void; end: (body: string) => void },
         next: () => void,
       ) => void,
     ) => void;
   }) => {
     middlewares.use((req, res, next) => {
-      void handleRunStateRequest(req.method, req.url, deps).then((handled) => {
+      void handleRunStateRequest(req.method, req.url, deps, req.socket?.remoteAddress).then((handled) => {
         if (!handled) return next();
         res.statusCode = handled.status;
         res.setHeader("Content-Type", "application/json");

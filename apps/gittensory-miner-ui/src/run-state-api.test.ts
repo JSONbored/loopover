@@ -16,8 +16,8 @@ function deps(overrides: Partial<RunStateApiDeps> = {}): RunStateApiDeps {
 }
 
 describe("handleRunStateRequest (#4305)", () => {
-  it("serves the run-state rows via the existing run-state.js exports", async () => {
-    const handled = await handleRunStateRequest("GET", "/api/run-state", deps());
+  it("serves the run-state rows via the existing run-state.js exports for loopback clients", async () => {
+    const handled = await handleRunStateRequest("GET", "/api/run-state", deps(), "127.0.0.1");
     expect(handled).toEqual({ status: 200, body: JSON.stringify({ rows }) });
   });
 
@@ -39,6 +39,31 @@ describe("handleRunStateRequest (#4305)", () => {
     );
     expect(handled).toEqual({ status: 200, body: JSON.stringify({ rows: [] }) });
     expect(listed).toBe(false);
+  });
+
+  it("denies non-loopback clients before loading the local store", async () => {
+    let loaded = false;
+    const handled = await handleRunStateRequest(
+      "GET",
+      "/api/run-state",
+      deps({
+        loadRunStateModule: async () => {
+          loaded = true;
+          throw new Error("must not load");
+        },
+      }),
+      "192.168.1.50",
+    );
+    expect(handled).toEqual({
+      status: 403,
+      body: JSON.stringify({ error: "run-state API is only available from loopback clients" }),
+    });
+    expect(loaded).toBe(false);
+  });
+
+  it("allows IPv6-mapped loopback clients", async () => {
+    const handled = await handleRunStateRequest("GET", "/api/run-state", deps(), "::ffff:127.0.0.1");
+    expect(handled).toEqual({ status: 200, body: JSON.stringify({ rows }) });
   });
 
   it("falls through (null) for other paths and non-GET methods", async () => {

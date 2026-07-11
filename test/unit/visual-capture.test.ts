@@ -1926,6 +1926,11 @@ describe("fetchExternalScreenshotContentBlock", () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 302 }));
     await expect(fetchExternalScreenshotContentBlock("https://example.com/no-location.png")).resolves.toBeUndefined();
 
+    // A Location header the URL parser itself rejects (not merely absent) -- exercises redirectLocation's own
+    // catch, distinct from the no-header branch above.
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: "http://[not-valid-ipv6" } }));
+    await expect(fetchExternalScreenshotContentBlock("https://example.com/malformed-location.png")).resolves.toBeUndefined();
+
     fetchMock.mockResolvedValueOnce(new Response("missing", { status: 404 }));
     await expect(fetchExternalScreenshotContentBlock("https://example.com/missing.png")).resolves.toBeUndefined();
 

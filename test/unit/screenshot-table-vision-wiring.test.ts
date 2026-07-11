@@ -51,8 +51,8 @@ function stubShotsAndProvider(providerResponseText: string | null, bytes: { befo
     if (url === "https://api.anthropic.com/v1/messages") {
       return providerResponseText === null ? new Response("upstream error", { status: 500 }) : anthropicOk(providerResponseText);
     }
-    if (url === BEFORE_URL) return new Response(new Uint8Array(bytes.before), { status: 200 });
-    if (url === AFTER_URL) return new Response(new Uint8Array(bytes.after), { status: 200 });
+    if (url === BEFORE_URL) return new Response(new Uint8Array(bytes.before), { status: 200, headers: { "content-type": "image/png" } });
+    if (url === AFTER_URL) return new Response(new Uint8Array(bytes.after), { status: 200, headers: { "content-type": "image/png" } });
     return new Response("not found", { status: 404 });
   }));
 }
@@ -380,8 +380,8 @@ describe("runScreenshotTableVisionForAdvisory (#4366)", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url === "https://api.anthropic.com/v1/messages") return anthropicOk(findingsResponse([]));
-      if (url === BEFORE_URL) return new Response(new Uint8Array([1]), { status: 200 });
-      if (url === AFTER_URL) return new Response(new Uint8Array([2]), { status: 200 });
+      if (url === BEFORE_URL) return new Response(new Uint8Array([1]), { status: 200, headers: { "content-type": "image/png" } });
+      if (url === AFTER_URL) return new Response(new Uint8Array([2]), { status: 200, headers: { "content-type": "image/png" } });
       return new Response("not found", { status: 404 });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -406,7 +406,7 @@ describe("runScreenshotTableVisionForAdvisory (#4366)", () => {
     const env = byokEnv();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url === BEFORE_URL) return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+      if (url === BEFORE_URL) return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "image/png" } });
       return new Response("not found", { status: 404 });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -472,8 +472,8 @@ describe("runScreenshotTableVisionForAdvisory (#4366)", () => {
     await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-key", model: null });
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url === BEFORE_URL) return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
-      if (url === AFTER_URL) return new Response(new Uint8Array([4, 5, 6]), { status: 200 });
+      if (url === BEFORE_URL) return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "image/png" } });
+      if (url === AFTER_URL) return new Response(new Uint8Array([4, 5, 6]), { status: 200, headers: { "content-type": "image/png" } });
       return new Response("not found", { status: 404 });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -527,8 +527,8 @@ describe("runScreenshotTableVisionForAdvisory (#4366)", () => {
     ].join("\n");
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url === BEFORE_URL || url === AFTER_URL) return new Response(new Uint8Array([1, 1, 1]), { status: 200 });
-      if (url === secondBefore || url === secondAfter) return new Response(new Uint8Array([2, 2, 2]), { status: 200 });
+      if (url === BEFORE_URL || url === AFTER_URL) return new Response(new Uint8Array([1, 1, 1]), { status: 200, headers: { "content-type": "image/png" } });
+      if (url === secondBefore || url === secondAfter) return new Response(new Uint8Array([2, 2, 2]), { status: 200, headers: { "content-type": "image/png" } });
       return new Response("not found", { status: 404 });
     });
     vi.stubGlobal("fetch", fetchMock);

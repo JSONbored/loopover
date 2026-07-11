@@ -130,6 +130,54 @@ describe("checkSubmissionFreshness (#3007)", () => {
     expect(result).toEqual({ fresh: true });
   });
 
+  it("a referencing PR authored by the miner's OWN login in a different case does not count as already-addressed", async () => {
+    const { claimLedger } = stubClaimLedger([activeClaim]);
+    const { eventLedger } = stubEventLedger();
+    const fetchLiveIssueSnapshot = vi.fn(async () => ({
+      state: "open" as const,
+      referencingPrs: [{ number: 99, state: "open" as const, authorLogin: "Miner-Bot" }],
+    }));
+
+    const result = await checkSubmissionFreshness(
+      { repoFullName: "acme/widgets", issueNumber: 42, minerLogin: "miner-bot" },
+      { claimLedger, fetchLiveIssueSnapshot, eventLedger },
+    );
+
+    expect(result).toEqual({ fresh: true });
+  });
+
+  it("already-addressed abort still fires for a differently-cased OTHER author (case-insensitivity isn't a blanket bypass)", async () => {
+    const { claimLedger } = stubClaimLedger([activeClaim]);
+    const { eventLedger } = stubEventLedger();
+    const fetchLiveIssueSnapshot = vi.fn(async () => ({
+      state: "open" as const,
+      referencingPrs: [{ number: 99, state: "open" as const, authorLogin: "SOMEONE-ELSE" }],
+    }));
+
+    const result = await checkSubmissionFreshness(
+      { repoFullName: "acme/widgets", issueNumber: 42, minerLogin: "miner-bot" },
+      { claimLedger, fetchLiveIssueSnapshot, eventLedger },
+    );
+
+    expect(result).toEqual({ fresh: false, reason: "already_addressed" });
+  });
+
+  it("a referencing PR with a non-string authorLogin is ignored rather than crashing or false-flagging", async () => {
+    const { claimLedger } = stubClaimLedger([activeClaim]);
+    const { eventLedger } = stubEventLedger();
+    const fetchLiveIssueSnapshot = vi.fn(async () => ({
+      state: "open" as const,
+      referencingPrs: [{ number: 99, state: "open" as const, authorLogin: undefined as unknown as string }],
+    }));
+
+    const result = await checkSubmissionFreshness(
+      { repoFullName: "acme/widgets", issueNumber: 42, minerLogin: "miner-bot" },
+      { claimLedger, fetchLiveIssueSnapshot, eventLedger },
+    );
+
+    expect(result).toEqual({ fresh: true });
+  });
+
   it("a CLOSED (not merged) referencing PR from another author does not count as already-addressed", async () => {
     const { claimLedger } = stubClaimLedger([activeClaim]);
     const { eventLedger } = stubEventLedger();

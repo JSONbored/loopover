@@ -68,9 +68,13 @@ export async function checkSubmissionFreshness(candidate, deps) {
     return abort(eventLedger, repoFullName, candidate.issueNumber, "issue_closed");
   }
 
+  // GitHub logins are case-insensitive for identity purposes (the same account can be echoed back with
+  // different casing by different API responses), so a strict `!==` would misclassify the miner's own
+  // referencing PR as "another author" whenever the casing happens to differ -- compare case-normalized.
+  const minerLoginKey = minerLogin.toLowerCase();
   const referencingPrs = Array.isArray(snapshot.referencingPrs) ? snapshot.referencingPrs : [];
   const addressedByAnotherAuthor = referencingPrs.some(
-    (pr) => pr.authorLogin !== minerLogin && (pr.state === "merged" || pr.state === "open"),
+    (pr) => typeof pr.authorLogin === "string" && pr.authorLogin.trim().toLowerCase() !== minerLoginKey && (pr.state === "merged" || pr.state === "open"),
   );
   if (addressedByAnotherAuthor) {
     return abort(eventLedger, repoFullName, candidate.issueNumber, "already_addressed");

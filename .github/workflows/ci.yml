@@ -438,7 +438,11 @@ jobs:
       - name: Test with coverage (shard ${{ matrix.shard }}/4)
         id: coverage
         env:
-          VITEST_JUNIT_PATH: reports/junit/vitest.xml
+          # Disables vitest.config.ts's own global 90% threshold check for THIS per-shard invocation -- a
+          # single shard only exercises part of the tree, so it would always false-fail. The global-threshold
+          # "catastrophe net" this disables is NOT dropped from CI, though: validate-tests-merge (below) merges
+          # all 4 shards' coverage via vitest's own --mergeReports and re-checks the threshold against that
+          # merged (whole-suite) total, without COVERAGE_NO_THRESHOLDS set.
           COVERAGE_NO_THRESHOLDS: "true"
           # Same self-contained-test-file narrowing as the pre-sharding job had -- see the `mcpCliHarness`/
           # `minerTestHarness` filter comments in the `changes` job above for the full rationale.
@@ -460,7 +464,7 @@ jobs:
               --exclude "test/unit/miner-calibration-types.test.ts"
             )
           fi
-          npm run test:coverage -- --maxWorkers=4 --shard=${{ matrix.shard }}/4 "${EXCLUDE_ARGS[@]}"
+          npm run test:coverage -- --maxWorkers=4 --shard=${{ matrix.shard }}/4 --reporter=default --reporter=blob --reporter=junit --outputFile.blob=blob-report/report.blob --outputFile.junit=reports/junit/vitest.xml "${EXCLUDE_ARGS[@]}"
       - name: Test failure guidance
         if: ${{ failure() && steps.coverage.conclusion == 'failure' }}
         run: |
@@ -474,6 +478,15 @@ jobs:
             echo "::error title=Coverage::coverage/lcov.info is missing or empty"
             exit 1
           fi
+      # Consumed by validate-tests-merge to re-check the global coverage threshold against all 4 shards
+      # combined -- see this job's own header comment.
+      - name: Upload coverage blob report
+        if: ${{ success() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-blob-shard-${{ matrix.shard }}
+          path: blob-report/report.blob
+          retention-days: 1
       # Direct upload for trusted contexts (push + same-repo PRs). Multiple shards' uploads for the same
       # commit/PR are additive in Codecov -- see this job's own header comment.
       - name: Upload coverage to Codecov
@@ -534,6 +547,61 @@ jobs:
           override_pr: ${{ github.event.pull_request.number }}
           fail_ci_if_error: false
 
+  # Re-checks vitest.config.ts's global 90% coverage threshold against all 4 shards MERGED -- each shard
+  # above deliberately disables that check for itself (COVERAGE_NO_THRESHOLDS=true), since a single shard's
+  # partial view would always false-fail it. This is the "loose catastrophe net" (e.g. a deleted test file)
+  # vitest.config.ts's own comment describes; Codecov's patch gate (changed-lines only) doesn't cover a
+  # whole-repo regression outside the diff, so this is what actually restores that backstop for CI, using
+  # vitest's own --mergeReports against each shard's uploaded blob report.
+  validate-tests-merge:
+    name: validate-tests-merge
+    needs: [changes, validate-tests]
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Neutralize untrusted npm config
+        run: rm -f .npmrc
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # Same cache key as validate-code/validate-tests -- a cache hit here is the common case since those
+      # jobs run concurrently and one of them usually wins the race to populate it first.
+      - name: Restore node_modules cache
+        id: node-modules-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            node_modules
+            apps/gittensory-ui/node_modules
+          key: npm-${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true) && 'fork' || 'trusted' }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('package.json', 'apps/*/package.json', 'packages/*/package.json', 'package-lock.json') }}
+      - name: Install dependencies (retry on transient failures)
+        if: ${{ steps.node-modules-cache.outputs.cache-hit != 'true' }}
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci --prefer-offline --no-audit --no-fund; then
+              exit 0
+            fi
+            echo "::warning::npm ci failed (attempt ${attempt}/3); retrying in 10s"
+            sleep 10
+          done
+          echo "::error::npm ci failed after 3 attempts"
+          exit 1
+      - name: Download all shards' blob reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: coverage-blob-shard-*
+          path: all-blob-reports
+          merge-multiple: true
+      - name: Merge shard coverage and check the global threshold
+        run: npx vitest run --coverage --mergeReports=all-blob-reports
+
   # Diff-scoped security gate: fails only on vulnerabilities this PR introduces.
   # Ambient advisories in untouched deps are handled by Renovate + the scheduled
   # audit workflow, so one upstream CVE never blocks unrelated PRs.
@@ -563,7 +631,7 @@ jobs:
   # Path-filtered jobs report "skipped", which is treated as success.
   validate:
     name: validate
-    needs: [changes, validate-code, validate-tests, security]
+    needs: [changes, validate-code, validate-tests, validate-tests-merge, security]
     if: ${{ always() }}
     # Pure result-aggregation (reads needs.*.result, echoes pass/fail) -- no build/test work, so it never
     # needed the self-hosted pool's cached toolchain (#2507).

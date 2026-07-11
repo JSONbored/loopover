@@ -26,6 +26,10 @@ import {
   FindingsBreakdownCard,
   type FindingsBreakdown,
 } from "@/components/site/app-panels/findings-breakdown-card";
+import {
+  SlopBandCalibrationCard,
+  type SlopOutcomeCalibration,
+} from "@/components/site/app-panels/slop-band-calibration-card";
 import { useApiResource } from "@/lib/api/use-api-resource";
 import { exportOperatorDashboardCsv } from "@/lib/csv-export";
 
@@ -121,6 +125,7 @@ type OperatorDashboard = {
   agentHealth?: ReversalHealth;
   acceptance?: FindingAcceptance;
   findingsBreakdown?: FindingsBreakdown;
+  slopCalibration?: SlopOutcomeCalibration;
 };
 
 function ProductAnalytics() {
@@ -226,6 +231,8 @@ function ProductAnalytics() {
           <AcceptanceRateCard acceptance={data.acceptance} />
 
           <FindingsBreakdownCard findings={data.findingsBreakdown} />
+
+          <SlopBandCalibrationCard calibration={data.slopCalibration} />
 
           {data.usageSummary ? (
             <ProductUsageBreakdownPanel

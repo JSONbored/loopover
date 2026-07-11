@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildOperatorDashboardPayload, latestUsageRollup, __operatorDashboardInternals } from "../../src/services/operator-dashboard";
+import {
+  buildOperatorDashboardPayload,
+  latestUsageRollup,
+  __operatorDashboardInternals,
+} from "../../src/services/operator-dashboard";
 import type { ProductUsageDailyRollupRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -8,7 +12,9 @@ const FORBIDDEN_EXPORT_TERMS =
 
 describe("operator dashboard payload", () => {
   it("builds operator metrics from product usage rollups without sensitive strings", async () => {
-    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "operator-dashboard-test-salt" });
+    const env = createTestEnv({
+      PRODUCT_USAGE_HASH_SALT: "operator-dashboard-test-salt",
+    });
     const payload = await buildOperatorDashboardPayload(env);
     const serialized = JSON.stringify(payload);
 
@@ -20,8 +26,13 @@ describe("operator dashboard payload", () => {
       ]),
     );
     expect(payload.weeklyValueReport.variant).toBe("operator");
-    expect(payload.usageSummary).toMatchObject({ totalEvents: expect.any(Number), activeActors: expect.any(Number) });
-    expect(payload.commandUsefulness.totals).toMatchObject({ feedbackCount: expect.any(Number) });
+    expect(payload.usageSummary).toMatchObject({
+      totalEvents: expect.any(Number),
+      activeActors: expect.any(Number),
+    });
+    expect(payload.commandUsefulness.totals).toMatchObject({
+      feedbackCount: expect.any(Number),
+    });
     expect(serialized).not.toMatch(FORBIDDEN_EXPORT_TERMS);
     // #2191: gate-eval report is surfaced read-only; with no review_audit signal it fails safe to an empty
     // report (no rows, no signal) rather than being absent.
@@ -40,18 +51,31 @@ describe("operator dashboard payload", () => {
       recentAutoActions: 0,
       reversedTargets: [],
     });
+    // #2196: org-wide slop-band calibration is surfaced read-only; with no resolved PRs carrying a slop band
+    // it fails safe to an empty calibration (no overall rate, undecidable discrimination) rather than absent.
+    expect(payload.slopCalibration).toMatchObject({
+      totalResolved: 0,
+      overallMergeRate: null,
+      discriminates: null,
+    });
     // Empty fleet → instanceCount 0, null precision card ("—"), no-outlier delta.
     expect(payload.fleetMetrics.instanceCount).toBe(0);
     expect(payload.metrics).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ label: "Fleet instances", value: "0", delta: "self-host fleet" }),
+        expect.objectContaining({
+          label: "Fleet instances",
+          value: "0",
+          delta: "self-host fleet",
+        }),
         expect.objectContaining({ label: "Fleet merge precision", value: "—" }),
       ]),
     );
   });
 
   it("falls back to the default agent slug when GITHUB_APP_SLUG is unset or blank", async () => {
-    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "operator-dashboard-test-salt" });
+    const env = createTestEnv({
+      PRODUCT_USAGE_HASH_SALT: "operator-dashboard-test-salt",
+    });
     delete (env as Partial<Env>).GITHUB_APP_SLUG;
     const missingSlug = await buildOperatorDashboardPayload(env);
     expect(missingSlug.agentHealth).toMatchObject({
@@ -63,7 +87,10 @@ describe("operator dashboard payload", () => {
     });
 
     const blankSlug = await buildOperatorDashboardPayload(
-      createTestEnv({ PRODUCT_USAGE_HASH_SALT: "operator-dashboard-test-salt", GITHUB_APP_SLUG: "   " }),
+      createTestEnv({
+        PRODUCT_USAGE_HASH_SALT: "operator-dashboard-test-salt",
+        GITHUB_APP_SLUG: "   ",
+      }),
     );
     expect(blankSlug.agentHealth).toMatchObject({
       reversals: 0,
@@ -76,30 +103,44 @@ describe("operator dashboard payload", () => {
 
   it("operatorAgentConfig trims a configured slug and falls back when absent", () => {
     const { operatorAgentConfig } = __operatorDashboardInternals;
-    expect(operatorAgentConfig(createTestEnv({ GITHUB_APP_SLUG: "  custom-app  " }))).toEqual({
+    expect(
+      operatorAgentConfig(createTestEnv({ GITHUB_APP_SLUG: "  custom-app  " })),
+    ).toEqual({
       slug: "custom-app",
       secrets: {},
     });
-    expect(operatorAgentConfig(createTestEnv({ GITHUB_APP_SLUG: "gittensory" }))).toEqual({
+    expect(
+      operatorAgentConfig(createTestEnv({ GITHUB_APP_SLUG: "gittensory" })),
+    ).toEqual({
       slug: "gittensory",
       secrets: {},
     });
     const unset = createTestEnv();
     delete (unset as Partial<Env>).GITHUB_APP_SLUG;
-    expect(operatorAgentConfig(unset)).toEqual({ slug: "gittensory", secrets: {} });
-    expect(operatorAgentConfig(createTestEnv({ GITHUB_APP_SLUG: "" }))).toEqual({
+    expect(operatorAgentConfig(unset)).toEqual({
       slug: "gittensory",
       secrets: {},
     });
+    expect(operatorAgentConfig(createTestEnv({ GITHUB_APP_SLUG: "" }))).toEqual(
+      {
+        slug: "gittensory",
+        secrets: {},
+      },
+    );
   });
 
   it("surfaces populated fleet metrics + outliers from orb_signals", async () => {
     const env = createTestEnv();
     let n = 0;
-    const seed = async (instance: string, count: number, outcome: string): Promise<void> => {
+    const seed = async (
+      instance: string,
+      count: number,
+      outcome: string,
+    ): Promise<void> => {
       for (let i = 0; i < count; i++) {
-        await env.DB
-          .prepare(`INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag) VALUES (?, ?, ?, 'merge', ?, 'none')`)
+        await env.DB.prepare(
+          `INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag) VALUES (?, ?, ?, 'merge', ?, 'none')`,
+        )
           .bind(instance, `r${n}`, `p${n++}`, outcome)
           .run();
       }
@@ -108,15 +149,28 @@ describe("operator dashboard payload", () => {
     await seed("good2", 5, "merged"); // precision 1.0
     await seed("bad", 5, "closed"); // precision 0.0 → outlier vs the median (1.0)
     for (const id of ["good1", "good2", "bad"]) {
-      await env.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES (?, 1)`).bind(id).run(); // only registered instances count
+      await env.DB.prepare(
+        `INSERT INTO orb_instances (instance_id, registered) VALUES (?, 1)`,
+      )
+        .bind(id)
+        .run(); // only registered instances count
     }
     const payload = await buildOperatorDashboardPayload(env);
     expect(payload.fleetMetrics.instanceCount).toBe(3);
-    expect(payload.fleetMetrics.outliers.map((o) => o.instanceId)).toContain("bad");
+    expect(payload.fleetMetrics.outliers.map((o) => o.instanceId)).toContain(
+      "bad",
+    );
     expect(payload.metrics).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ label: "Fleet instances", value: "3", delta: "1 outlier(s)" }),
-        expect.objectContaining({ label: "Fleet merge precision", value: "100%" }),
+        expect.objectContaining({
+          label: "Fleet instances",
+          value: "3",
+          delta: "1 outlier(s)",
+        }),
+        expect.objectContaining({
+          label: "Fleet merge precision",
+          value: "100%",
+        }),
       ]),
     );
   });

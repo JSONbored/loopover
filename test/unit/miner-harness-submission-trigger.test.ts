@@ -278,10 +278,10 @@ describe("evaluateAndRecordHarnessSubmissionTrigger (#2337)", () => {
       evaluateAndRecordHarnessSubmissionTrigger({ killSwitchScope: "none", repoFullName: "acme/widgets" } as never, { eventLedger }),
     ).toThrow("invalid_handoff_packet");
     expect(() =>
-      evaluateAndRecordHarnessSubmissionTrigger({ killSwitchScope: "none", repoFullName: "acme/widgets", handoffPacket: handoffPacket() }, null as never),
+      evaluateAndRecordHarnessSubmissionTrigger({ killSwitchScope: "none", repoFullName: "acme/widgets", handoffPacket: handoffPacket() } as never, null as never),
     ).toThrow("invalid_harness_submission_deps");
     expect(() =>
-      evaluateAndRecordHarnessSubmissionTrigger({ killSwitchScope: "none", repoFullName: "acme/widgets", handoffPacket: handoffPacket() }, {} as never),
+      evaluateAndRecordHarnessSubmissionTrigger({ killSwitchScope: "none", repoFullName: "acme/widgets", handoffPacket: handoffPacket() } as never, {} as never),
     ).toThrow("invalid_event_ledger");
   });
 });

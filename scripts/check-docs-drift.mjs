@@ -90,7 +90,7 @@ export function extractRepositorySettingsFields(typesText) {
 }
 
 /** RepositorySettings fields deliberately excluded from the "every field must have SOME
- *  `.gittensory.yml.example` mention" check below, for two distinct reasons -- flagging either as "undocumented"
+ *  `.gittensory.yml.example` mention" check below, for three distinct reasons -- flagging any as "undocumented"
  *  would be a false drift signal, not a real gap:
  *   - Not a maintainer-settable knob at all: `repoFullName` is the row's own identity key (set once at
  *     creation, the opposite of something a maintainer overrides via config); `createdAt`/`updatedAt` are
@@ -103,8 +103,19 @@ export function extractRepositorySettingsFields(typesText) {
  *     exclusion, with the same rationale, in `SETTINGS_OPERATOR_ONLY_FIELDS` in
  *     test/unit/focus-manifest.test.ts's `.gittensory.yml.example field-exhaustiveness` suite. (An #4617 audit
  *     pass first flagged this field as an undocumented gap without that context; cross-checking the existing
- *     exhaustiveness suite before "fixing" it here caught the false positive.) */
-const NOT_YML_CONFIGURABLE_SETTINGS_FIELDS = new Set(["repoFullName", "createdAt", "updatedAt", "agentGlobalFreezeOverride"]);
+ *     exhaustiveness suite before "fixing" it here caught the false positive.)
+ *   - `skipAutomationBotAuthors`: genuinely settable (global env default + per-repo `inherit`/`off`/`enabled`
+ *     override, mirroring `moderationGateMode`'s shape), but DELIBERATELY not wired into the
+ *     FocusManifest/`.gittensory.yml` parsing path -- DB-only for now, confirmed as an intentional scope choice
+ *     for this feature rather than an oversight. It is correctly absent from `FocusManifestSettings` (so the
+ *     separate `.gittensory.yml.example` field-exhaustiveness suite never expected a token for it either). */
+const NOT_YML_CONFIGURABLE_SETTINGS_FIELDS = new Set([
+  "repoFullName",
+  "createdAt",
+  "updatedAt",
+  "agentGlobalFreezeOverride",
+  "skipAutomationBotAuthors",
+]);
 
 /** RepositorySettings fields whose `.gittensory.yml.example` documentation exists under a DIFFERENT, shorter
  *  name than the field itself -- almost always because the yml groups several sibling fields under one named

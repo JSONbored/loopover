@@ -159,9 +159,9 @@ export function clearPublicRepoStatsCacheForTests(): void {
 }
 
 // Parses PUBLIC_REPO_STATS_ALLOWLIST into a lowercased "owner/repo" set, mirroring publicStatsProjects's
-// comma-separated parsing in src/review/public-stats.ts. Empty/unset -> empty set -> no allowlist restriction
-// (#4612): a self-hosted fork's own repo works out of the box, with no code change, exactly like the sibling
-// badge.svg route already does for any installed repo.
+// comma-separated parsing in src/review/public-stats.ts. Empty/unset -> empty set -> deny all public
+// repo-stats requests so the unauthenticated route cannot proxy arbitrary GitHub API calls with the
+// deployment's server-side token.
 function publicRepoStatsAllowlist(env: Pick<Env, "PUBLIC_REPO_STATS_ALLOWLIST">): Set<string> {
   const allowlist = new Set<string>();
   for (const entry of (env.PUBLIC_REPO_STATS_ALLOWLIST ?? "").split(",")) {
@@ -180,7 +180,7 @@ function publicRepoFullName(env: Pick<Env, "PUBLIC_REPO_STATS_ALLOWLIST">, owner
   const normalizedRepoName = repoName.toLowerCase();
   const normalizedFullName = `${normalizedOwnerName}/${normalizedRepoName}`;
   const allowlist = publicRepoStatsAllowlist(env);
-  if (allowlist.size > 0 && !allowlist.has(normalizedFullName)) throw new Error("invalid_github_repo");
+  if (!allowlist.has(normalizedFullName)) throw new Error("invalid_github_repo");
   return normalizedFullName;
 }
 

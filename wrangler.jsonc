@@ -192,6 +192,9 @@
     // src/env.d.ts for the full split rationale). These three repos' historical audit_events rows remain real and
     // safe to publish even though the cutover allowlist above no longer lists them.
     "GITTENSORY_PUBLIC_STATS_REPOS": "JSONbored/gittensory,JSONbored/awesome-claude,JSONbored/metagraphed",
+    // Website chrome repo stats are public and proxied through the server-side GitHub token, so require
+    // an explicit narrow allowlist instead of letting unset config proxy arbitrary owner/repo pairs.
+    "PUBLIC_REPO_STATS_ALLOWLIST": "JSONbored/gittensory",
     // Duplicate-winner adjudication (#dup-winner): when a same-issue cluster of OPEN PRs forms, spare exactly
     // ONE winner — the lowest-numbered (earliest opened) open PR — instead of blocking/closing every sibling.
     // Only the LOSERS get the duplicate blocker + close reason + slop penalty + panel block; the winner is

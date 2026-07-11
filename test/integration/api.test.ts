@@ -126,7 +126,7 @@ describe("api routes", () => {
 
   it("serves public GitHub repo stats without relying on browser GitHub quota", async () => {
     const app = createApp();
-    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token", PUBLIC_REPO_STATS_ALLOWLIST: "JSONbored/gittensory" });
     const calls: Array<{ url: string; authorization?: string }> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
@@ -158,8 +158,10 @@ describe("api routes", () => {
   it("REGRESSION (#regression-safe-propagation): serves public GitHub repo stats when GITHUB_PUBLIC_TOKEN is unset, still unauthenticated (self-host operators can run without it)", async () => {
     const app = createApp();
     // No GITHUB_PUBLIC_TOKEN at all -- exercises fetchRepoStatsFromGitHub's admission-key "token absent" branch,
-    // distinct from the "token present" branch every other stats test in this file exercises.
-    const env = createTestEnv({});
+    // distinct from the "token present" branch every other stats test in this file exercises. The allowlist
+    // entry is required independently of that concern (an unset PUBLIC_REPO_STATS_ALLOWLIST now denies all
+    // repos by default) so this test keeps isolating the token-absent behavior it's actually regression-testing.
+    const env = createTestEnv({ PUBLIC_REPO_STATS_ALLOWLIST: "acme/anon" });
     const calls: Array<{ url: string; authorization: string | null }> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const authorization = new Headers(init?.headers).get("authorization");
@@ -173,27 +175,16 @@ describe("api routes", () => {
     expect(calls).toEqual([{ url: "https://api.github.com/repos/acme/anon", authorization: null }]);
   });
 
-  it("serves public GitHub repo stats for any repo when PUBLIC_REPO_STATS_ALLOWLIST is unset (#4612)", async () => {
+  it("rejects public GitHub repo stats when PUBLIC_REPO_STATS_ALLOWLIST is unset", async () => {
     const app = createApp();
-    // No PUBLIC_REPO_STATS_ALLOWLIST override: a self-hoster's own fork must work without code changes.
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
-    const calls: string[] = [];
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
-      calls.push(input.toString());
-      return Response.json({ full_name: "acme/widgets", html_url: "https://github.com/acme/widgets", stargazers_count: 5, forks_count: 1 });
-    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
 
     const response = await app.request("/v1/public/github/repos/acme/widgets/stats", {}, env);
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      repoFullName: "acme/widgets",
-      htmlUrl: "https://github.com/acme/widgets",
-      stargazers_count: 5,
-      forks_count: 1,
-      source: "github",
-      stale: false,
-    });
-    expect(calls).toEqual(["https://api.github.com/repos/acme/widgets"]);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "invalid_github_repo" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("rejects public GitHub repo stats for repos outside a configured PUBLIC_REPO_STATS_ALLOWLIST, tolerating whitespace/casing/empty entries (#4612)", async () => {
@@ -223,7 +214,7 @@ describe("api routes", () => {
 
   it("normalizes allowlisted public GitHub repo stats casing before fetching and caching", async () => {
     const app = createApp();
-    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token", PUBLIC_REPO_STATS_ALLOWLIST: "JSONbored/gittensory" });
     const calls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       calls.push(input.toString());

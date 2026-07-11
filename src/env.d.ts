@@ -178,11 +178,11 @@ declare global {
     GITTENSOR_REGISTRY_URL: string;
     GITHUB_PUBLIC_TOKEN?: string;
     /** Public repo-stats endpoint (#4612): comma-separated allowlist of "owner/repo" pairs (case-insensitive)
-     *  permitted to query GET /v1/public/github/repos/:owner/:repo/stats. Default "" (unset) => allow any
-     *  syntactically-valid owner/repo -- this route proxies the live GitHub API rather than gittensory's own
-     *  installation DB, so (unlike the sibling badge.svg route) there is no "installed" gate to fall back on
-     *  instead. Set this to restrict a deployment to specific repos. Mirrors GITTENSORY_PUBLIC_STATS_REPOS's
-     *  comma-separated shape (src/review/public-stats.ts). See src/github/public.ts. */
+     *  permitted to query GET /v1/public/github/repos/:owner/:repo/stats. Default "" (unset) denies all repos
+     *  because this unauthenticated route proxies the live GitHub API with the deployment's server-side token.
+     *  Set this to the exact public repos that should expose website chrome stats. Mirrors
+     *  GITTENSORY_PUBLIC_STATS_REPOS's comma-separated shape (src/review/public-stats.ts). See
+     *  src/github/public.ts. */
     PUBLIC_REPO_STATS_ALLOWLIST?: string;
     /** #703: owner-gated global to apply upstream sigmoid time-decay in score previews. Default off. */
     SCORING_TIME_DECAY_ENABLED?: string;

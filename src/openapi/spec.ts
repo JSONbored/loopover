@@ -185,7 +185,7 @@ export function buildOpenApiSpec() {
     path: "/v1/public/github/repos/{owner}/{repo}/stats",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
-      200: { description: "Public GitHub repository stars/forks for the website chrome; any syntactically-valid owner/repo is accepted unless the deployment configures PUBLIC_REPO_STATS_ALLOWLIST.", content: { "application/json": { schema: PublicRepoStatsSchema } } },
+      200: { description: "Public GitHub repository stars/forks for the website chrome; PUBLIC_REPO_STATS_ALLOWLIST must explicitly include the owner/repo.", content: { "application/json": { schema: PublicRepoStatsSchema } } },
       400: { description: "Invalid or non-allowlisted GitHub repository" },
       503: { description: "GitHub repository stats are unavailable" },
     },

@@ -7,6 +7,7 @@ import {
   expectedF1SimpleTaskGraph,
   translateIdeaToTaskGraph,
   translateIdeaToTaskGraphOrThrow,
+  finalizeIdeaTaskGraph,
   validateIdeaSubmission,
   validateIdeaTaskGraph,
 } from "../../packages/gittensory-engine/src/idea-intake-bridge";
@@ -96,12 +97,22 @@ describe("translateIdeaToTaskGraph (#4798)", () => {
   });
 
   it("supports bullet and then-separated multi-step ideas", () => {
+    const bulletsOnly = translateIdeaToTaskGraph({
+      repoFullName: "acme/widgets",
+      idea: "- Add welcome banner\n- Wire docs link in nav",
+    });
+    expect(bulletsOnly.ok).toBe(true);
+    if (!bulletsOnly.ok) return;
+    expect(bulletsOnly.taskGraph.summary).toBe("Add welcome banner");
+    expect(bulletsOnly.taskGraph.tasks).toHaveLength(2);
+
     const bullets = translateIdeaToTaskGraph({
       repoFullName: "acme/widgets",
-      idea: "Improve onboarding\n- Add welcome banner\n- Wire docs link in nav",
+      idea: "Improve onboarding flow\n- Add welcome banner\n- Wire docs link in nav",
     });
     expect(bullets.ok).toBe(true);
     if (!bullets.ok) return;
+    expect(bullets.taskGraph.summary).toBe("Improve onboarding flow");
     expect(bullets.taskGraph.tasks).toHaveLength(2);
 
     const thenChain = translateIdeaToTaskGraph({
@@ -177,6 +188,16 @@ describe("translateIdeaToTaskGraph (#4798)", () => {
         tasks: [{ ...valid.taskGraph.tasks[0]!, dependsOn: ["missing-task"] }],
       }).map((error) => error.code),
     ).toContain("unknown_dependency");
+
+    const forwardRef = {
+      ...valid.taskGraph,
+      tasks: [
+        { ...valid.taskGraph.tasks[0]!, id: "task-1", dependsOn: [] },
+        { ...valid.taskGraph.tasks[0]!, id: "task-2", dependsOn: ["task-3"] },
+        { ...valid.taskGraph.tasks[0]!, id: "task-3", dependsOn: [] },
+      ],
+    };
+    expect(validateIdeaTaskGraph(forwardRef).map((error) => error.code)).not.toContain("unknown_dependency");
   });
 
   it("translateIdeaToTaskGraphOrThrow throws aggregated validation errors", () => {
@@ -199,12 +220,34 @@ describe("translateIdeaToTaskGraph (#4798)", () => {
     expect(numberedOnly.taskGraph.tasks).toHaveLength(2);
   });
 
+  it("validateIdeaSubmission rejects non-string repoFullName values", () => {
+    expect(validateIdeaSubmission({ repoFullName: 123 as unknown as string, idea: "Ship export" })).toEqual([
+      expect.objectContaining({ code: "invalid_repo_full_name", field: "repoFullName" }),
+    ]);
+  });
+
+  it("finalizeIdeaTaskGraph returns validation failures for structurally invalid graphs", () => {
+    const valid = translateIdeaToTaskGraph(F1_SIMPLE_IDEA_EXAMPLE);
+    expect(valid.ok).toBe(true);
+    if (!valid.ok) return;
+
+    expect(finalizeIdeaTaskGraph({ ...valid.taskGraph, tasks: [] })).toEqual({
+      ok: false,
+      errors: expect.arrayContaining([expect.objectContaining({ code: "tasks_required" })]),
+    });
+    expect(finalizeIdeaTaskGraph(valid.taskGraph)).toEqual(valid);
+  });
+
   it("truncates very long step titles and slugifies punctuation-only ideas", () => {
-    const longStep = `${"x".repeat(140)} for settings`;
-    const long = translateIdeaToTaskGraph({ repoFullName: "acme/widgets", idea: longStep });
-    expect(long.ok).toBe(true);
-    if (!long.ok) return;
-    expect(long.taskGraph.tasks[0]?.title.endsWith("...")).toBe(true);
+    const atLimit = translateIdeaToTaskGraph({ repoFullName: "acme/widgets", idea: "x".repeat(120) });
+    expect(atLimit.ok).toBe(true);
+    if (!atLimit.ok) return;
+    expect(atLimit.taskGraph.tasks[0]?.title).toBe("x".repeat(120));
+
+    const overLimit = translateIdeaToTaskGraph({ repoFullName: "acme/widgets", idea: "x".repeat(121) });
+    expect(overLimit.ok).toBe(true);
+    if (!overLimit.ok) return;
+    expect(overLimit.taskGraph.tasks[0]?.title).toBe(`${"x".repeat(117)}...`);
 
     const punctuation = translateIdeaToTaskGraph({ repoFullName: "acme/widgets", idea: "***" });
     expect(punctuation.ok).toBe(true);

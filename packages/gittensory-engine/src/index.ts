@@ -408,6 +408,7 @@ export {
   expectedF1SimpleTaskGraph,
   translateIdeaToTaskGraph,
   translateIdeaToTaskGraphOrThrow,
+  finalizeIdeaTaskGraph,
   validateIdeaSubmission,
   validateIdeaTaskGraph,
   type IdeaIntakeError,

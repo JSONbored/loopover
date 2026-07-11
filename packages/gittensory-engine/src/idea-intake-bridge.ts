@@ -128,14 +128,19 @@ function slugify(text: string): string {
 
 function sentenceCase(text: string): string {
   const trimmed = text.trim();
+  /* v8 ignore next -- splitIdeaIntoSteps never emits whitespace-only steps; defensive early return. */
   if (!trimmed) return trimmed;
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
 }
 
 function titleFromStep(step: string, fallbackIndex: number): string {
-  const firstLine = step.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  const firstLine = step.split(/\r?\n/, 1)[0].trim();
+  /* v8 ignore next -- numbered/bullet parsing trims each step; defensive fallback when the first line is blank. */
   const candidate = firstLine.length > 0 ? firstLine : `Task ${fallbackIndex}`;
-  return candidate.length > 120 ? `${candidate.slice(0, 117)}...` : candidate;
+  if (candidate.length > 120) {
+    return `${candidate.slice(0, 117)}...`;
+  }
+  return candidate;
 }
 
 function acceptanceCriteriaForStep(step: string, repoFullName: string): string[] {
@@ -325,6 +330,11 @@ export function translateIdeaToTaskGraph(input: IdeaSubmissionInput): IdeaIntake
     tasks,
   };
 
+  return finalizeIdeaTaskGraph(taskGraph);
+}
+
+/** Validate a built task-graph and return the public result union (#4798). */
+export function finalizeIdeaTaskGraph(taskGraph: IdeaTaskGraph): IdeaIntakeResult {
   const graphErrors = validateIdeaTaskGraph(taskGraph);
   if (graphErrors.length > 0) return { ok: false, errors: graphErrors };
   return { ok: true, taskGraph };

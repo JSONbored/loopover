@@ -51,7 +51,23 @@ if [ "$ready" -ne 1 ]; then
   exit 1
 fi
 
-status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+# Same race as the /ready probe above, one layer down: Docker's OWN healthcheck (docker-compose.yml)
+# reports "starting" until its FIRST probe completes, which can still be true here even though /ready
+# already answered 2xx (the two checks run on independent schedules) -- a normal boot must not fail on
+# a state that is expected to resolve on its own within seconds. Only "starting" is worth waiting
+# through; any other non-healthy/running status (unhealthy, exited, restarting, ...) is a real problem
+# and fails immediately rather than burning the full retry budget on something that will not resolve.
+status=""
+for _ in $(seq 1 "$READY_RETRIES"); do
+  status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+  if [ "$status" = "healthy" ] || [ "$status" = "running" ]; then
+    break
+  fi
+  if [ "$status" != "starting" ]; then
+    break
+  fi
+  sleep "$READY_RETRY_DELAY_SECONDS"
+done
 echo "selfhost post-update check: $SERVICE container status=$status"
 if [ "$status" != "healthy" ] && [ "$status" != "running" ]; then
   echo "error: expected healthy or running, got $status" >&2

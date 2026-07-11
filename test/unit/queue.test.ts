@@ -28731,7 +28731,7 @@ describe("queue processors", () => {
         autoLabelEnabled: true,
         createMissingLabel: false,
         checkRunMode: "off",
-        gateCheckMode: "enabled",
+        gateCheckMode: "enabled", reviewCheckMode: "required",
         linkedIssueGateMode: "off",
         aiReviewMode: "off",
         linkedIssueLabelPropagation: {
@@ -28777,7 +28777,7 @@ describe("queue processors", () => {
         autoLabelEnabled: true,
         createMissingLabel: false,
         checkRunMode: "off",
-        gateCheckMode: "enabled",
+        gateCheckMode: "enabled", reviewCheckMode: "required",
         linkedIssueGateMode: "off",
         aiReviewMode: "off",
         linkedIssueLabelPropagation: {

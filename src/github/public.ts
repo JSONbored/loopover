@@ -1,4 +1,4 @@
-import { timeoutFetch } from "./client";
+import { githubRateLimitAdmissionKeyForPublicToken, timeoutFetch, type GitHubRateLimitAdmissionKey } from "./client";
 
 export type PublicContributorProfile = {
   login: string;
@@ -72,9 +72,22 @@ export async function fetchPublicContributorProfile(login: string, env?: Pick<En
     // loop doesn't exhaust it and silently degrade (mirrors fetchPublicRepoStats) (#790).
     ...(env?.GITHUB_PUBLIC_TOKEN ? { authorization: `Bearer ${env.GITHUB_PUBLIC_TOKEN}` } : {}),
   };
+  // #regression-safe-propagation: this is the single highest-volume unattributed GitHub caller found in a
+  // fleet-wide audit -- the 500-login evidence batch (processors.ts) calls this once per login, each call
+  // issuing up to 6 raw GETs, all on the SAME shared env.GITHUB_PUBLIC_TOKEN -- up to ~3000 requests/batch with
+  // no rate-limit admission tracking at all, so a 403 anywhere in that batch silently fell into
+  // `key_scope="unknown"` instead of the real "public" key_scope bucket (confirmed live: 837 scheduled + 279
+  // exhausted secondary-rate-limit 403s in 90 minutes in production). Opting in costs nothing (no extra call)
+  // and makes this loop's real impact on the shared public-token rate-limit bucket finally visible.
+  const admissionKey: GitHubRateLimitAdmissionKey | undefined = env?.GITHUB_PUBLIC_TOKEN ? githubRateLimitAdmissionKeyForPublicToken() : undefined;
   try {
     const fetchWithTimeout = (url: string): Promise<Response> =>
-      timeoutFetch(url, { headers, signal: AbortSignal.timeout(GITHUB_PUBLIC_FETCH_TIMEOUT_MS) });
+      timeoutFetch(url, {
+        headers,
+        signal: AbortSignal.timeout(GITHUB_PUBLIC_FETCH_TIMEOUT_MS),
+        githubRateLimitAdmission: admissionKey !== undefined,
+        ...(admissionKey ? { githubRateLimitAdmissionKey: admissionKey } : {}),
+      });
     const [userResponse, reposResponse] = await Promise.all([
       fetchWithTimeout(`https://api.github.com/users/${safeLogin}`),
       fetchWithTimeout(`https://api.github.com/users/${safeLogin}/repos?per_page=100&sort=updated`),
@@ -173,6 +186,9 @@ function publicRepoFullName(env: Pick<Env, "PUBLIC_REPO_STATS_ALLOWLIST">, owner
 
 async function fetchRepoStatsFromGitHub(env: Pick<Env, "GITHUB_PUBLIC_TOKEN">, repoFullName: string, nowMs: number): Promise<PublicRepoStats> {
   const [owner, repo] = repoFullName.split("/") as [string, string];
+  // #regression-safe-propagation: same shared-public-token attribution gap as fetchPublicContributorProfile
+  // above, fixed the same way -- a rate-limited response here previously fell into key_scope="unknown".
+  const admissionKey: GitHubRateLimitAdmissionKey | undefined = env.GITHUB_PUBLIC_TOKEN ? githubRateLimitAdmissionKeyForPublicToken() : undefined;
   const response = await timeoutFetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
     headers: {
       accept: "application/vnd.github+json",
@@ -180,6 +196,8 @@ async function fetchRepoStatsFromGitHub(env: Pick<Env, "GITHUB_PUBLIC_TOKEN">, r
       "x-github-api-version": "2022-11-28",
       ...(env.GITHUB_PUBLIC_TOKEN ? { authorization: `Bearer ${env.GITHUB_PUBLIC_TOKEN}` } : {}),
     },
+    githubRateLimitAdmission: admissionKey !== undefined,
+    ...(admissionKey ? { githubRateLimitAdmissionKey: admissionKey } : {}),
   });
   if (!response.ok) throw new Error(`github_repo_stats_unavailable:${response.status}`);
   const body = (await response.json()) as GitHubPublicRepoResponse;

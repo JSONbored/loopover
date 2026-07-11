@@ -12,7 +12,7 @@
 // fail-safe: any missing CI data / fetch error degrades to "no grounding" and the review proceeds on the diff.
 
 import { createInstallationToken } from "../github/app";
-import { githubRateLimitAdmissionKeyForInstallation, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../github/client";
+import { githubRateLimitAdmissionKeyForToken, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../github/client";
 import { getCachedGroundingFileContent, putCachedGroundingFileContent, recordAuditEvent } from "../db/repositories";
 import type { CheckSummaryRecord, PullRequestFileRecord } from "../types";
 import { repoParts } from "../utils/json";
@@ -126,14 +126,15 @@ function toGroundingFiles(files: PullRequestFileRecord[]): PullRequestFile[] {
  * treats null as "skip this file" and degrades to no-grounding when nothing is readable.
  */
 export async function makeGithubFileFetcher(env: Env, repoFullName: string, installationId: number | null | undefined): Promise<FileFetcher> {
-  // Resolve the token once (best-effort): installation token > public token > none.
+  // Resolve the token once (best-effort): installation token > public token > none. `admissionKey` is derived
+  // from the FINAL token (#regression-safe-propagation), after the public-token fallback is applied -- computing
+  // it before that fallback (against the pre-fallback `installationId`-only branch) left every fallback call
+  // with `admissionKey: undefined` even though the actual token used (`GITHUB_PUBLIC_TOKEN`) has a perfectly
+  // nameable scope, silently dropping every such call into `key_scope="unknown"` on any rate-limited response.
   let token: string | undefined;
-  let admissionKey: GitHubRateLimitAdmissionKey | undefined;
-  if (installationId) {
-    token = await createInstallationToken(env, installationId).catch(() => undefined);
-    admissionKey = token !== undefined ? githubRateLimitAdmissionKeyForInstallation(installationId) : undefined;
-  }
+  if (installationId) token = await createInstallationToken(env, installationId).catch(() => undefined);
   token = token ?? env.GITHUB_PUBLIC_TOKEN;
+  const admissionKey: GitHubRateLimitAdmissionKey | undefined = githubRateLimitAdmissionKeyForToken(env, token, installationId);
   const { owner, name } = repoParts(repoFullName);
   return {
     async getFileContent(path: string, ref: string, maxChars = 24_001): Promise<string | null> {

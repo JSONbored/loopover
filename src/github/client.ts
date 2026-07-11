@@ -317,7 +317,20 @@ function isVolatileSingleFlightEligibleGithubUrl(url: string, headers: Headers):
   const path = githubApiPath(url);
   return (
     !/^\/repos\/[^/]+\/[^/]+\/contents(?:\/|$|[?#])/.test(path) &&
-    !/^\/repos\/[^/]+\/[^/]+\/git\/(?:trees|blobs)\//.test(path)
+    !/^\/repos\/[^/]+\/[^/]+\/git\/(?:trees|blobs)\//.test(path) &&
+    // A bare single-issue read and a collaborator-permission check (#regression-safe-propagation) each gate a
+    // TRUST decision (linked-issue label propagation's own-merge-closed check, and its maintainer-authored-issue
+    // relaxation) rather than merely reducing redundant reads within one review pass, which is what this
+    // coalescing mechanism was built for. Sharing one in-flight promise's outcome -- success OR a transient
+    // failure -- across genuinely INDEPENDENT callers (a webhook re-review racing a sweep tick, or simply two
+    // near-simultaneous webhook deliveries for the same PR merge) means one caller's momentary fetch/rate-limit
+    // hiccup silently becomes every concurrent caller's answer too, not just its own -- exactly the mechanism
+    // that let a transient GitHub hiccup permanently strip a correct propagated label (confirmed in production:
+    // `sensitive`-class coalescing observed inside the exact incident window, see #regression-safe-propagation).
+    // Excluding these two endpoint shapes costs at most one extra GitHub call when two truly-identical reads
+    // genuinely overlap -- worth it for a check whose wrong answer silently corrupts gittensor scoring.
+    !/^\/repos\/[^/]+\/[^/]+\/issues\/\d+(?:$|[?#])/.test(path) &&
+    !/^\/repos\/[^/]+\/[^/]+\/collaborators\/[^/]+\/permission(?:$|[?#])/.test(path)
   );
 }
 
@@ -436,6 +449,14 @@ async function fetchWithGitHubRetry(input: RequestInfo | URL, init?: GitHubTimeo
     // Retry a transient rate-limit (with backoff) instead of surfacing it; stop once exhausted or it's not a limit.
     const rateLimited = await isRateLimitedResponse(response);
     if (!rateLimited) break;
+    // Deliberately UNCONDITIONAL, unlike observeGitHubRestRateLimit two lines above (#regression-safe-propagation):
+    // an existing Grafana alert/runbook queries this exact metric BY key_scope specifically to catch a caller
+    // that never opted into admission tracking -- key_scope="unknown" is the diagnostic signal that surfaces
+    // exactly that class of bug (it's how the src/github/public.ts and src/review/rag-index.ts / grounding-
+    // wire.ts wiring bugs landed alongside this fix were actually found in production). Gating this on
+    // `admissionKey` would make a FUTURE unattributed caller's rate-limiting invisible instead of diagnosable --
+    // strictly worse than a merely-imprecise "unknown" bucket. Fix the caller's wiring (as those three were),
+    // don't hide the symptom here.
     recordGitHubRateLimitResponseMetric(
       response.status,
       admissionKey,

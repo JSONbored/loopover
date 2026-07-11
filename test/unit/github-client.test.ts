@@ -1012,6 +1012,69 @@ describe("timeoutFetch", () => {
     expect(await secondResponse.text()).toBe("body-2");
   });
 
+  it("REGRESSION (#regression-safe-propagation): does not volatile-single-flight a bare linked-issue read, so two concurrent trust rechecks for the same issue never share one outcome", async () => {
+    let getFetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      const fetchId = (getFetches += 1);
+      return Response.json({ number: 42, state: fetchId === 1 ? "closed" : "open" });
+    });
+
+    const url = "https://api.github.com/repos/o/r/issues/42";
+    const first = timeoutFetch(url);
+    const second = timeoutFetch(url);
+    await Promise.resolve();
+    // Two genuinely independent concurrent callers (e.g. a webhook re-review racing a sweep tick) must each get
+    // their OWN live read of the issue -- never one caller's snapshot (or a transient failure) silently reused
+    // as the other's answer, which is exactly how a momentary hiccup used to permanently strip a correctly
+    // propagated label.
+    expect(getFetches).toBe(2);
+    const [firstResponse, secondResponse] = await Promise.all([first, second]);
+    expect(firstResponse.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBeNull();
+    expect(secondResponse.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBeNull();
+    expect(await firstResponse.json()).toMatchObject({ state: "closed" });
+    expect(await secondResponse.json()).toMatchObject({ state: "open" });
+  });
+
+  it("REGRESSION (#regression-safe-propagation): does not volatile-single-flight a collaborator-permission check, so a transient error on one caller's read never becomes another concurrent caller's answer", async () => {
+    let getFetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      const fetchId = (getFetches += 1);
+      // The first concurrent caller hits a transient error; the second must NOT inherit that outcome.
+      if (fetchId === 1) return new Response("server error", { status: 500 });
+      return Response.json({ permission: "write" });
+    });
+
+    const url = "https://api.github.com/repos/o/r/collaborators/rando/permission";
+    const first = timeoutFetch(url);
+    const second = timeoutFetch(url);
+    await Promise.resolve();
+    expect(getFetches).toBe(2);
+    const [firstResponse, secondResponse] = await Promise.all([first, second]);
+    expect(firstResponse.status).toBe(500);
+    expect(secondResponse.status).toBe(200);
+  });
+
+  it("REGRESSION (#regression-safe-propagation): the new exclusion regexes are precise -- a bare collaborators list (no /permission) and an issue's comments sub-resource are still volatile-single-flighted", async () => {
+    let getFetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      const fetchId = (getFetches += 1);
+      return Response.json([{ id: fetchId }]);
+    });
+
+    // Neither URL matches the new /collaborators/{login}/permission or /issues/{n} exclusions -- both should
+    // still coalesce onto one in-flight request, same as before this fix.
+    const collaboratorsList = "https://api.github.com/repos/o/r/collaborators";
+    const [first, second] = await Promise.all([timeoutFetch(collaboratorsList), timeoutFetch(collaboratorsList)]);
+    expect(getFetches).toBe(1);
+    expect(await first.json()).toEqual(await second.json());
+
+    getFetches = 0;
+    const issueComments = "https://api.github.com/repos/o/r/issues/42/comments";
+    const [thirdCall, fourthCall] = await Promise.all([timeoutFetch(issueComments), timeoutFetch(issueComments)]);
+    expect(getFetches).toBe(1);
+    expect(await thirdCall.json()).toEqual(await fourthCall.json());
+  });
+
   it("keeps volatile single-flight scoped by exact authorization identity", async () => {
     let releaseFetch!: () => void;
     const fetchGate = new Promise<void>((resolve) => {

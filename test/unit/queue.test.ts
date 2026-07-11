@@ -28668,7 +28668,12 @@ describe("queue processors", () => {
       expect(seen.removed).toEqual(["gittensor:bug"]);
     });
 
-    it("fails open to the normal title-based label when the linked issue's fetch fails (#priority-linked-issue-gate)", async () => {
+    it("REGRESSION (#regression-safe-propagation, was: 'fails open to the normal title-based label'): skips the label decision entirely — never falls back to title — when the linked issue's fetch fails, leaving existing labels untouched", async () => {
+      // Before the fix, a fetch failure here fell through to the title guess and OVERWROTE whatever labels
+      // were already correct — the exact mechanism (an inconclusive recheck treated as a confirmed absence
+      // of propagation authority) that let a transient GitHub hiccup permanently strip a correctly propagated
+      // gittensor:feature/gittensor:priority label down to gittensor:bug (confirmed in production, PRs
+      // #4716/#4783 and 116 others in a 2-day sample). A fetch failure must now be a no-op, not a downgrade.
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
       await upsertRepositorySettings(env, {
@@ -28703,8 +28708,115 @@ describe("queue processors", () => {
       });
 
       expect(seen.issueFetches).toBe(1);
-      expect(seen.posted).toEqual(["gittensor:bug"]);
-      expect(seen.removed.sort()).toEqual(["gittensor:feature", "gittensor:priority"]);
+      expect(seen.posted).toEqual([]);
+      expect(seen.removed).toEqual([]);
+      const events = await env.DB.prepare(
+        `select outcome, detail from audit_events where event_type = 'github_app.type_label_decision' and target_key = 'JSONbored/gittensory#221'`,
+      ).all();
+      expect(events.results).toEqual([{ outcome: "denied", detail: "propagation_inconclusive" }]);
+    });
+
+    it("REGRESSION (#regression-safe-propagation): a second pass whose propagation recheck is inconclusive never clobbers a first pass's already-correct propagated labels", async () => {
+      // Reproduces the exact PR #4716/#4783 shape end-to-end: an EARLIER pass correctly propagates
+      // gittensor:feature/gittensor:priority from the linked issue, then a LATER pass (a webhook re-review, a
+      // sweep tick, or simply a second near-simultaneous delivery for the same merge) re-runs the same
+      // decision but this time the linked issue's fetch fails transiently. The later pass must leave the
+      // correct labels exactly as the first pass left them.
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "widget", full_name: "acme/widget", private: false, owner: { login: "acme" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "acme/widget",
+        commentMode: "off",
+        publicSurface: "label_only",
+        autoLabelEnabled: true,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+        linkedIssueLabelPropagation: {
+          enabled: true,
+          mode: "exclusive_type_label",
+          mappings: [{ issueLabel: "gittensor:feature", prLabel: "gittensor:feature", removeOtherTypeLabels: true }],
+        },
+      });
+      const seen = { posted: [] as string[], removed: [] as string[], issueFetches: 0 };
+      let issueShouldFail = false;
+      stubPropagationFetch(4716, 2216, seen, () =>
+        issueShouldFail
+          ? new Response("server error", { status: 500 })
+          : Response.json({ number: 2216, state: "open", user: { login: "contributor" }, labels: ["gittensor:feature"] }),
+      );
+      // Each pass uses a DIFFERENT action/head SHA so the second is a genuinely fresh re-evaluation, not a
+      // same-head no-op the surface-publish guard would short-circuit before ever reaching the label block.
+      const webhookPayload = (action: "opened" | "synchronize", headSha: string) => ({
+        action,
+        installation: { id: 123, account: { login: "acme", id: 1, type: "User" as const } },
+        repository: { name: "widget", full_name: "acme/widget", private: false, owner: { login: "acme" } },
+        pull_request: { number: 4716, title: "fix: some bug", state: "open", user: { login: "contributor" }, author_association: "NONE" as const, head: { sha: headSha }, labels: [], body: "Closes #2216" },
+      });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "pass-1-correct", eventName: "pull_request", payload: webhookPayload("opened", "sha4716a") });
+      expect(seen.posted).toEqual(["gittensor:feature"]);
+      expect(seen.removed.sort()).toEqual(["gittensor:bug", "gittensor:priority"]);
+
+      issueShouldFail = true;
+      await processJob(env, { type: "github-webhook", deliveryId: "pass-2-inconclusive", eventName: "pull_request", payload: webhookPayload("synchronize", "sha4716b") });
+      // No FURTHER posts/removes happened in pass 2 -- the correct labels from pass 1 are exactly as they were.
+      expect(seen.posted).toEqual(["gittensor:feature"]);
+      expect(seen.removed.sort()).toEqual(["gittensor:bug", "gittensor:priority"]);
+    });
+
+    it("REGRESSION (#regression-safe-propagation): a contended per-PR actuation lock skips the label decision entirely instead of racing the pass that already holds it", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "label_only",
+        autoLabelEnabled: true,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+        linkedIssueLabelPropagation: {
+          enabled: true,
+          mode: "exclusive_type_label",
+          mappings: [{ issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: true }],
+        },
+      });
+      const seen = { posted: [] as string[], removed: [] as string[], issueFetches: 0 };
+      stubPropagationFetch(223, 1, seen, () => Response.json({ number: 1, state: "open", user: { login: "contributor" }, labels: ["gittensor:priority"] }));
+
+      // Simulates a concurrent pass (a sibling webhook delivery, or the sweep) already holding this exact
+      // PR's actuation lock when this pass reaches the type-label block.
+      const held = await claimPrActuationLock(env, "JSONbored/gittensory", 223);
+      expect(held.acquired).toBe(true);
+      try {
+        await processJob(env, {
+          type: "github-webhook",
+          deliveryId: "priority-propagation-lock-contended",
+          eventName: "pull_request",
+          payload: {
+            action: "opened",
+            installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+            repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+            pull_request: { number: 223, title: "fix: some bug", state: "open", user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha223" }, labels: [], body: "Fixes #1" },
+          },
+        });
+      } finally {
+        await releasePrActuationLock(env, "JSONbored/gittensory", 223, held.ownerToken);
+      }
+
+      // The fetch never even reaches the linked-issue check -- the lock is claimed BEFORE any propagation work.
+      expect(seen.issueFetches).toBe(0);
+      expect(seen.posted).toEqual([]);
+      expect(seen.removed).toEqual([]);
+      const events = await env.DB.prepare(
+        `select outcome, detail from audit_events where event_type = 'github_app.type_label_decision' and target_key = 'JSONbored/gittensory#223'`,
+      ).all();
+      expect(events.results).toEqual([{ outcome: "denied", detail: "lock_contended" }]);
     });
 
     it("never fetches a linked issue and keeps normal behavior when propagation is left at its default (disabled) (#priority-linked-issue-gate)", async () => {

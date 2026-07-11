@@ -5,7 +5,11 @@ import { processJob, splitRepoForRag } from "../../src/queue/processors";
 import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import * as githubApp from "../../src/github/app";
-import { githubRateLimitAdmissionKeyForInstallation, latestGitHubRestRateLimitObservation } from "../../src/github/client";
+import {
+  githubRateLimitAdmissionKeyForInstallation,
+  githubRateLimitAdmissionKeyForPublicToken,
+  latestGitHubRestRateLimitObservation,
+} from "../../src/github/client";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { createTestEnv, TestD1Database } from "../helpers/d1";
 
@@ -240,6 +244,41 @@ describe("indexRepo: full repo index (tree → chunk → embed → upsert)", () 
       });
     } finally {
       tokenSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("REGRESSION (#regression-safe-propagation): attributes the public-token fallback read to key_scope=\"public-token\", not an undefined/unknown admission key", async () => {
+    const { env } = indexEnv();
+    env.GITHUB_PUBLIC_TOKEN = "public-token-value";
+    const key = githubRateLimitAdmissionKeyForPublicToken();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const headers = {
+        "x-ratelimit-resource": "core",
+        "x-ratelimit-remaining": "44",
+        "x-ratelimit-reset": String(Date.parse("2026-06-24T12:10:00.000Z") / 1000),
+      };
+      const url = String(input);
+      if (url.includes("/git/trees/")) return Response.json({ tree: [{ type: "blob", path: "src/a.ts", size: 20 }] }, { headers });
+      if (url.includes("/contents/src/a.ts")) return new Response("export const a = 1;\n", { status: 200, headers });
+      return new Response("missing", { status: 404, headers });
+    });
+
+    try {
+      // REPO's own installationId is null -- resolveReadToken falls through to the public-token read.
+      await indexRepo(env, PROJECT, REPO);
+      // Before the fix, this admission-key path was left `undefined` on the public-token fallback (only the
+      // installation-token branch computed a key), so this observation was silently dropped instead of
+      // recorded under "public-token" -- indistinguishable from an unattributed "unknown" call on any
+      // rate-limited response.
+      expect(latestGitHubRestRateLimitObservation(key)).toEqual({
+        remaining: 44,
+        resetAt: "2026-06-24T12:10:00.000Z",
+        observedAtMs: Date.parse("2026-06-24T12:00:00.000Z"),
+      });
+    } finally {
       vi.useRealTimers();
     }
   });

@@ -11,7 +11,11 @@ import {
 import { getCachedGroundingFileContent, putCachedGroundingFileContent, upsertCheckSummary, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import * as repositoriesModule from "../../src/db/repositories";
 import * as githubApp from "../../src/github/app";
-import { githubRateLimitAdmissionKeyForInstallation, latestGitHubRestRateLimitObservation } from "../../src/github/client";
+import {
+  githubRateLimitAdmissionKeyForInstallation,
+  githubRateLimitAdmissionKeyForPublicToken,
+  latestGitHubRestRateLimitObservation,
+} from "../../src/github/client";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import type { Advisory, CheckSummaryRecord, JsonValue, PullRequestFileRecord, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -725,6 +729,40 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
     // The installation-token path failed → it fell back to the public token, not a Bearer install token.
     expect(sawAuth).toBe("Bearer ghp_public");
     fetchSpy.mockRestore();
+  });
+
+  it("REGRESSION (#regression-safe-propagation): attributes the public-token fallback (installation-token mint failed) to key_scope=\"public-token\", not a dropped/undefined admission key", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_public" });
+    const key = githubRateLimitAdmissionKeyForPublicToken();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      return new Response("body", {
+        status: 200,
+        headers: {
+          "x-ratelimit-resource": "core",
+          "x-ratelimit-remaining": "17",
+          "x-ratelimit-reset": String(Date.parse("2026-06-24T12:10:00.000Z") / 1000),
+        },
+      });
+    });
+
+    try {
+      // No GitHub App key is configured, so createInstallationToken rejects and the fetcher falls back to the
+      // public token -- before the fix, `admissionKey` was computed ONLY on the installationId branch (before
+      // the fallback reassigns `token`), so this exact path left admissionKey undefined despite the request
+      // actually authenticating with a perfectly nameable token.
+      const fetcher = await makeGithubFileFetcher(env, "acme/widgets", 12345);
+      expect(await fetcher.getFileContent("ok.ts", "sha7")).toBe("body");
+      expect(latestGitHubRestRateLimitObservation(key)).toEqual({
+        remaining: 17,
+        resetAt: "2026-06-24T12:10:00.000Z",
+        observedAtMs: Date.parse("2026-06-24T12:00:00.000Z"),
+      });
+    } finally {
+      fetchSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it("uses installation-token contents reads and records admission telemetry when token mint succeeds", async () => {

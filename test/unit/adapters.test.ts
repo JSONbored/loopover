@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { normalizeGittBountySnapshot } from "../../src/bounties/ingest";
 import { fetchPublicContributorProfile } from "../../src/github/public";
+import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { jsonString, normalizeRepoFullName, parseJson, repoParts } from "../../src/utils/json";
 
 describe("small adapters and normalizers", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    resetMetrics();
   });
 
   it("keeps JSON helpers predictable on missing and malformed values", () => {
@@ -191,5 +193,20 @@ describe("small adapters and normalizers", () => {
     authHeaders.length = 0;
     await fetchPublicContributorProfile("dev");
     expect(authHeaders).toEqual([null, null]);
+  });
+
+  it("REGRESSION (#regression-safe-propagation): attributes a rate-limited public-profile lookup to key_scope=\"public-token\", not an unattributed \"unknown\" bucket", async () => {
+    vi.stubGlobal("fetch", async () =>
+      Response.json({ message: "API rate limit exceeded" }, { status: 403, headers: { "retry-after": "0", "x-ratelimit-remaining": "0" } }),
+    );
+    // Before the fix, this loop (the 500-login evidence batch's per-login profile lookup, the single highest-
+    // volume unattributed GitHub caller found in a fleet-wide audit) never opted into rate-limit admission at
+    // all, so every hit here silently fell into key_scope="unknown" -- indistinguishable from a genuinely
+    // mis-keyed opt-in, which is exactly what buried a confirmed secondary-rate-limit storm in production
+    // (invisible via structured logs, only found through this metric).
+    await fetchPublicContributorProfile("dev", { GITHUB_PUBLIC_TOKEN: "public-token" });
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_responses_total{key_scope="public"');
+    expect(metrics).not.toContain('gittensory_github_rest_rate_limit_responses_total{key_scope="unknown"');
   });
 });

@@ -155,6 +155,24 @@ describe("api routes", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("REGRESSION (#regression-safe-propagation): serves public GitHub repo stats when GITHUB_PUBLIC_TOKEN is unset, still unauthenticated (self-host operators can run without it)", async () => {
+    const app = createApp();
+    // No GITHUB_PUBLIC_TOKEN at all -- exercises fetchRepoStatsFromGitHub's admission-key "token absent" branch,
+    // distinct from the "token present" branch every other stats test in this file exercises.
+    const env = createTestEnv({});
+    const calls: Array<{ url: string; authorization: string | null }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const authorization = new Headers(init?.headers).get("authorization");
+      calls.push({ url: input.toString(), authorization });
+      return Response.json({ full_name: "acme/anon", html_url: "https://github.com/acme/anon", stargazers_count: 2, forks_count: 0 });
+    });
+
+    const response = await app.request("/v1/public/github/repos/acme/anon/stats", {}, env);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ repoFullName: "acme/anon", stargazers_count: 2, source: "github" });
+    expect(calls).toEqual([{ url: "https://api.github.com/repos/acme/anon", authorization: null }]);
+  });
+
   it("serves public GitHub repo stats for any repo when PUBLIC_REPO_STATS_ALLOWLIST is unset (#4612)", async () => {
     const app = createApp();
     // No PUBLIC_REPO_STATS_ALLOWLIST override: a self-hoster's own fork must work without code changes.

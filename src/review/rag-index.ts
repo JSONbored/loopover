@@ -26,7 +26,7 @@
 // GitHub call, and does no adapter use — the deploy is byte-identical to today.
 
 import { createInstallationToken } from "../github/app";
-import { githubRateLimitAdmissionKeyForInstallation, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../github/client";
+import { githubRateLimitAdmissionKeyForToken, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../github/client";
 import { incr } from "../selfhost/metrics";
 import { isConfigFile, isDependencyManifestFile } from "../signals/path-matchers";
 import { repoParts } from "../utils/json";
@@ -76,13 +76,17 @@ const UPSERT_BATCH = 50;
 const GITHUB_FETCH_TIMEOUT_MS = 10_000;
 
 /** Resolve the read token once for a repo: installation token (private-repo read) → public token → none.
- *  Best-effort — a token failure degrades to the next fallback, never throws. (Mirrors makeGithubFileFetcher.) */
+ *  Best-effort — a token failure degrades to the next fallback, never throws. (Mirrors makeGithubFileFetcher.)
+ *  `admissionKey` is derived from the FINAL token (#regression-safe-propagation), not computed before the
+ *  public-token fallback is applied -- deriving it early left every call on the fallback path (installation
+ *  token absent or its mint failed) with `admissionKey: undefined` even though the actual token used
+ *  (`GITHUB_PUBLIC_TOKEN`) has a perfectly nameable scope, silently dropping every such call into
+ *  `key_scope="unknown"` on any rate-limited response instead of the real "public" key_scope bucket. */
 async function resolveReadToken(env: Env, installationId: number | null | undefined): Promise<{ token: string | undefined; admissionKey?: GitHubRateLimitAdmissionKey | undefined }> {
-  if (installationId) {
-    const token = await createInstallationToken(env, installationId).catch(() => undefined);
-    if (token) return { token, admissionKey: githubRateLimitAdmissionKeyForInstallation(installationId) };
-  }
-  return { token: env.GITHUB_PUBLIC_TOKEN };
+  const token = installationId
+    ? ((await createInstallationToken(env, installationId).catch(() => undefined)) ?? env.GITHUB_PUBLIC_TOKEN)
+    : env.GITHUB_PUBLIC_TOKEN;
+  return { token, admissionKey: githubRateLimitAdmissionKeyForToken(env, token, installationId) };
 }
 
 /** Shared GitHub headers for the read calls (raw media type returns file bodies directly). */

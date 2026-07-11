@@ -9322,6 +9322,24 @@ async function maybeApplyManifestPolicyGate(
   }
 }
 
+/** Logs + audits a deliberate type-label no-op (#regression-safe-propagation): every reason this fires means
+ *  "labels are left exactly as they are this pass," never "labels were cleared." Shared by every reason the
+ *  type-label block below skips a pass -- the outer typeLabelsEnabled/gittensor_only gate, a contended
+ *  per-PR actuation lock, and an inconclusive propagation recheck -- so all of them log/audit identically
+ *  instead of duplicating the same two calls at each skip site. */
+async function logTypeLabelSkip(env: Env, repoFullName: string, pullNumber: number, reason: string): Promise<void> {
+  console.log(
+    JSON.stringify({ event: "type_label_decision", repoFullName, pull: pullNumber, applied: false, reason }),
+  );
+  await recordAuditEvent(env, {
+    eventType: "github_app.type_label_decision",
+    targetKey: `${repoFullName}#${pullNumber}`,
+    outcome: "denied",
+    detail: reason,
+    metadata: { labels: [], source: null },
+  }).catch(() => undefined);
+}
+
 async function maybePublishPrPublicSurface(
   env: Env,
   installationId: number,
@@ -9572,98 +9590,126 @@ async function maybePublishPrPublicSurface(
     decision.skipReason !== "miner_detection_unavailable" &&
     decision.skipReason !== "not_official_gittensor_miner"
   ) {
-    try {
-      // Same reasoning as `typeLabelsEnabled` above: `settings.typeLabels` is optional only for
-      // RepositorySettings-fixture-construction backward compat -- getRepositorySettings always
-      // resolves it to a concrete, complete PrTypeLabelSet (parseTypeLabelSet never returns
-      // undefined), so the `?? DEFAULT_TYPE_LABELS` fallback is unreachable on this webhook-
-      // integration path.
-      /* v8 ignore next -- see the comment above */
-      const typeLabels = settings.typeLabels ?? DEFAULT_TYPE_LABELS;
-      const propagation = settings.linkedIssueLabelPropagation;
-      // Caller-gated (mirrors shouldCollectLinkedIssueEvidence/resolveLinkedIssueHardRule's own
-      // cheap-check-before-fetch precedent): zero extra GitHub calls when propagation is off, which
-      // is the default -- a repo that never opts in pays nothing for this feature.
-      const linkedIssueLabels =
-        propagation?.enabled && pr.linkedIssues.length > 0
-          ? await fetchLinkedIssueLabelsForPropagation({
+    // Per-PR mutual exclusion (#regression-safe-propagation, mirrors the agent-maintenance claim at #2129
+    // below in maybeRunAgentMaintenance): a merge fans out into a BURST of near-simultaneous webhook
+    // deliveries for the SAME PR -- the merge event itself, the linked issue's own auto-close, and even an
+    // echo of THIS block's own label writes a moment earlier -- so a webhook re-review and a sweep-driven
+    // agent-regate-pr job (or simply two overlapping webhook deliveries) can each reach this block
+    // concurrently, each with its own independently-timed live linked-issue fetch. Confirmed in production:
+    // a correct propagation_exclusive decision, followed within 30-90s by a second concurrent pass computing
+    // a DIFFERENT (wrong) verdict that then overwrote the first. A losing pass must defer to the next tick,
+    // never compute-and-act on a stale/racing verdict for a PR another pass is actively deciding for.
+    const typeLabelLock = await claimPrActuationLock(env, repoFullName, pr.number);
+    if (!typeLabelLock.acquired) {
+      await logTypeLabelSkip(env, repoFullName, pr.number, "lock_contended");
+    } else {
+      try {
+        // Same reasoning as `typeLabelsEnabled` above: `settings.typeLabels` is optional only for
+        // RepositorySettings-fixture-construction backward compat -- getRepositorySettings always
+        // resolves it to a concrete, complete PrTypeLabelSet (parseTypeLabelSet never returns
+        // undefined), so the `?? DEFAULT_TYPE_LABELS` fallback is unreachable on this webhook-
+        // integration path.
+        /* v8 ignore next -- see the comment above */
+        const typeLabels = settings.typeLabels ?? DEFAULT_TYPE_LABELS;
+        const propagation = settings.linkedIssueLabelPropagation;
+        // Caller-gated (mirrors shouldCollectLinkedIssueEvidence/resolveLinkedIssueHardRule's own
+        // cheap-check-before-fetch precedent): zero extra GitHub calls when propagation is off, which
+        // is the default -- a repo that never opts in pays nothing for this feature.
+        const propagationResult =
+          propagation?.enabled && pr.linkedIssues.length > 0
+            ? await fetchLinkedIssueLabelsForPropagation({
+                env,
+                repoFullName,
+                linkedIssues: pr.linkedIssues,
+                installationId,
+                prAuthorLogin: pr.authorLogin,
+                mappings: propagation.mappings,
+                // #4528: lets a closed linked issue still count when THIS PR's own merge is what closed it
+                // (the standard "Closes #N" auto-close), instead of losing propagation authority the instant
+                // the merge that's supposed to earn the label also closes its evidence.
+                prMergedAt: pr.mergedAt ?? null,
+              })
+            : { labels: [], inconclusive: false };
+        // #regression-safe-propagation: an INCONCLUSIVE recheck (the linked issue's facts or the
+        // maintainer-authored-issue permission check could not be verified this pass -- a transient GitHub
+        // fetch/rate-limit failure, never a confirmed "no") must NEVER be treated the same as a confirmed
+        // absence of propagation authority. Falling through to the title heuristic here would silently
+        // downgrade/remove a real, previously-applied propagation label the moment ANY transient hiccup hits
+        // this recheck -- exactly the bug #4528 was meant to close and didn't, because that fix only ever
+        // covered the CONFIRMED-closed-by-this-merge case, not an unrelated fetch failure. Leave existing
+        // labels untouched and defer; the next tick gets a fresh, hopefully-conclusive read.
+        if (propagationResult.labels.length === 0 && propagationResult.inconclusive) {
+          await logTypeLabelSkip(env, repoFullName, pr.number, "propagation_inconclusive");
+        } else {
+          const decisionResult = resolvePrTypeLabel({
+            title: pr.title,
+            linkedIssueLabels: propagationResult.labels,
+            labels: typeLabels,
+            propagation,
+          });
+          for (const label of decisionResult.applyLabels) {
+            await ensurePullRequestLabel(
               env,
-              repoFullName,
-              linkedIssues: pr.linkedIssues,
               installationId,
-              prAuthorLogin: pr.authorLogin,
-              mappings: propagation.mappings,
-              // #4528: lets a closed linked issue still count when THIS PR's own merge is what closed it
-              // (the standard "Closes #N" auto-close), instead of losing propagation authority the instant
-              // the merge that's supposed to earn the label also closes its evidence.
-              prMergedAt: pr.mergedAt ?? null,
-            })
-          : [];
-      const decisionResult = resolvePrTypeLabel({
-        title: pr.title,
-        linkedIssueLabels,
-        labels: typeLabels,
-        propagation,
-      });
-      for (const label of decisionResult.applyLabels) {
-        await ensurePullRequestLabel(
-          env,
-          installationId,
-          repoFullName,
-          pr.number,
-          label,
-          { createMissingLabel: true, mode },
+              repoFullName,
+              pr.number,
+              label,
+              { createMissingLabel: true, mode },
+            );
+          }
+          for (const label of decisionResult.removeLabels) {
+            await removePullRequestLabel(
+              env,
+              installationId,
+              repoFullName,
+              pr.number,
+              label,
+              mode,
+            );
+          }
+          console.log(
+            JSON.stringify({
+              event: "type_label_decision",
+              repoFullName,
+              pull: pr.number,
+              applied: true,
+              labels: decisionResult.applyLabels,
+              source: decisionResult.source,
+            }),
+          );
+          await recordAuditEvent(env, {
+            eventType: "github_app.type_label_decision",
+            targetKey: `${repoFullName}#${pr.number}`,
+            outcome: "completed",
+            // `|| "none"` is unreachable: resolvePrTypeLabel's "title" source always resolves a non-empty
+            // label (deriveKindFromTitle only ever returns "bug"/"feature", and parseTypeLabelSet always
+            // falls back a built-in category to its default rather than an empty string), and its
+            // propagation sources only ever use a mapping's `prLabel`, which normalizeMapping drops
+            // entirely when empty -- applyLabels can never be [] here.
+            /* v8 ignore next */
+            detail: `applied labels: ${decisionResult.applyLabels.join(", ") || "none"}`,
+            metadata: { labels: decisionResult.applyLabels, source: decisionResult.source },
+          }).catch(() => undefined);
+        }
+      } catch (error) {
+        console.log(
+          JSON.stringify({
+            event: "type_label_error",
+            repoFullName,
+            pull: pr.number,
+            message: errorMessage(error).slice(0, 150),
+          }),
         );
+        await recordAuditEvent(env, {
+          eventType: "github_app.type_label_decision",
+          targetKey: `${repoFullName}#${pr.number}`,
+          outcome: "error",
+          detail: errorMessage(error).slice(0, 150),
+          metadata: { labels: [], source: null },
+        }).catch(() => undefined);
+      } finally {
+        await releasePrActuationLock(env, repoFullName, pr.number, typeLabelLock.ownerToken);
       }
-      for (const label of decisionResult.removeLabels) {
-        await removePullRequestLabel(
-          env,
-          installationId,
-          repoFullName,
-          pr.number,
-          label,
-          mode,
-        );
-      }
-      console.log(
-        JSON.stringify({
-          event: "type_label_decision",
-          repoFullName,
-          pull: pr.number,
-          applied: true,
-          labels: decisionResult.applyLabels,
-          source: decisionResult.source,
-        }),
-      );
-      await recordAuditEvent(env, {
-        eventType: "github_app.type_label_decision",
-        targetKey: `${repoFullName}#${pr.number}`,
-        outcome: "completed",
-        // `|| "none"` is unreachable: resolvePrTypeLabel's "title" source always resolves a non-empty
-        // label (deriveKindFromTitle only ever returns "bug"/"feature", and parseTypeLabelSet always
-        // falls back a built-in category to its default rather than an empty string), and its
-        // propagation sources only ever use a mapping's `prLabel`, which normalizeMapping drops
-        // entirely when empty -- applyLabels can never be [] here.
-        /* v8 ignore next */
-        detail: `applied labels: ${decisionResult.applyLabels.join(", ") || "none"}`,
-        metadata: { labels: decisionResult.applyLabels, source: decisionResult.source },
-      }).catch(() => undefined);
-    } catch (error) {
-      console.log(
-        JSON.stringify({
-          event: "type_label_error",
-          repoFullName,
-          pull: pr.number,
-          message: errorMessage(error).slice(0, 150),
-        }),
-      );
-      await recordAuditEvent(env, {
-        eventType: "github_app.type_label_decision",
-        targetKey: `${repoFullName}#${pr.number}`,
-        outcome: "error",
-        detail: errorMessage(error).slice(0, 150),
-        metadata: { labels: [], source: null },
-      }).catch(() => undefined);
     }
   } else {
     const skipReason = settings.agentPaused
@@ -9671,22 +9717,7 @@ async function maybePublishPrPublicSurface(
       : decision.skipReason === "miner_detection_unavailable" || decision.skipReason === "not_official_gittensor_miner"
         ? decision.skipReason
         : "typeLabelsEnabled_false";
-    console.log(
-      JSON.stringify({
-        event: "type_label_decision",
-        repoFullName,
-        pull: pr.number,
-        applied: false,
-        reason: skipReason,
-      }),
-    );
-    await recordAuditEvent(env, {
-      eventType: "github_app.type_label_decision",
-      targetKey: `${repoFullName}#${pr.number}`,
-      outcome: "denied",
-      detail: skipReason,
-      metadata: { labels: [], source: null },
-    }).catch(() => undefined);
+    await logTypeLabelSkip(env, repoFullName, pr.number, skipReason);
   }
 
   // Respect the per-repo agent pause: suppress all public surface mutations (label, comment, context

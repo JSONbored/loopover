@@ -2,6 +2,7 @@ import { fetchLinkedIssueFacts, type LinkedIssueFactsFetch, type LinkedIssueFact
 import { createInstallationToken, getRepositoryCollaboratorPermission } from "../github/app";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { parseGitHubLoginList } from "../auth/security";
+import { errorMessage } from "../utils/json";
 import type { LinkedIssueLabelPropagationMapping } from "../types";
 
 // The GitHub-fetch orchestrator for linked-issue label propagation (#priority-linked-issue-gate), kept
@@ -19,25 +20,52 @@ import type { LinkedIssueLabelPropagationMapping } from "../types";
 // directly, without needing to trust every call site to have gone through the capped extractor first.
 const MAX_LINKED_ISSUES_TO_FETCH = 50;
 
+/** Tri-state outcome of a maintainer-permission check (#regression-safe-propagation, mirrors
+ *  {@link LinkedIssueFactsFetch}'s found/not_found/fetch_error split for the identical reason): a live
+ *  GitHub collaborator-permission read can come back as a CONFIRMED "maintainer" or "not_maintainer" (a
+ *  resolved response, even a 404 -- GitHub telling us plainly this login isn't a collaborator), or it can
+ *  fail to resolve at all (network/5xx/secondary-rate-limit) -- "inconclusive". These must never be
+ *  conflated: a transient fetch failure is NOT evidence the login lacks maintainer permission, and treating
+ *  it as such is exactly how a momentary GitHub hiccup used to silently and permanently downgrade a
+ *  correct `gittensor:feature`/`gittensor:priority` label to `gittensor:bug` (confirmed in production: 837
+ *  unattributed + 279 attributed secondary-rate-limit 403s in a single 90-minute window, directly
+ *  overlapping observed downgrades). */
+type MaintainerCheckResult = "maintainer" | "not_maintainer" | "inconclusive";
+
 /** Whether `login` holds a maintainer-equivalent permission on `repoFullName` -- the literal repo owner,
  *  a fleet-operator in the global `ADMIN_GITHUB_LOGINS` allowlist, or a live GitHub collaborator with
  *  admin/maintain/write access (#priority-linked-issue-gate-ownership). Mirrors
  *  `hasMaintainerOrOwnerPermission` in `src/queue/processors.ts` (kept as its own copy here rather than
  *  imported, since that one is private to a file this module's header comment explicitly must NOT pull
- *  into its import graph -- see the file-level comment above). Fail-CLOSED: a collaborator-permission
- *  fetch error resolves to `null` inside `getRepositoryCollaboratorPermission` itself, which this treats
- *  the same as "not a maintainer" -- consistent with this whole file's bias toward denying an
- *  unverifiable trust claim rather than granting one. */
-async function isRepoMaintainerLogin(env: Env, installationId: number, repoFullName: string, login: string): Promise<boolean> {
+ *  into its import graph -- see the file-level comment above). A CONFIRMED answer (including a 404,
+ *  `getRepositoryCollaboratorPermission`'s real "not a collaborator" signal) resolves deterministically;
+ *  a thrown fetch error (network/5xx/rate-limit) is INCONCLUSIVE, not "not a maintainer" -- logged here
+ *  (this call site was previously a silent `.catch(() => null)`, invisible in production telemetry even
+ *  during a confirmed live rate-limit storm) and left for the caller to treat as unverifiable rather than
+ *  a confirmed negative (#regression-safe-propagation). */
+async function isRepoMaintainerLogin(env: Env, installationId: number, repoFullName: string, login: string): Promise<MaintainerCheckResult> {
   // The ": \"\"" fallback is unreachable via the real webhook path: repoFullName is always the
   // "owner/repo"-formatted payload.repository.full_name, and the surrounding pipeline already requires a
   // repository match on that exact format before this function's caller runs (mirrors the identical
   // pattern + rationale in `hasMaintainerOrOwnerPermission`, `src/queue/processors.ts`).
   /* v8 ignore next */
   const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")).toLowerCase() : "";
-  if (login === repoOwner || parseGitHubLoginList(env.ADMIN_GITHUB_LOGINS).has(login)) return true;
-  const permission = await getRepositoryCollaboratorPermission(env, installationId, repoFullName, login).catch(() => null);
-  return permission != null && new Set(["admin", "maintain", "write"]).has(permission);
+  if (login === repoOwner || parseGitHubLoginList(env.ADMIN_GITHUB_LOGINS).has(login)) return "maintainer";
+  let permission: Awaited<ReturnType<typeof getRepositoryCollaboratorPermission>>;
+  try {
+    permission = await getRepositoryCollaboratorPermission(env, installationId, repoFullName, login);
+  } catch (error) {
+    console.log(
+      JSON.stringify({
+        event: "repo_maintainer_check_failed",
+        repoFullName,
+        login,
+        message: errorMessage(error).slice(0, 150),
+      }),
+    );
+    return "inconclusive";
+  }
+  return permission != null && new Set(["admin", "maintain", "write"]).has(permission) ? "maintainer" : "not_maintainer";
 }
 
 /** True when the linked issue's authority for propagation can be trusted (#4528): it's still OPEN, or it
@@ -52,6 +80,22 @@ function isLinkedIssueTrustworthy(facts: LinkedIssueFactsResult, prMergedAt: str
   if (facts.state === "open") return true;
   return prMergedAt !== null && facts.closedAt !== null && facts.closedAt >= prMergedAt;
 }
+
+/** {@link resolveIssueLabelsForPropagation}'s and {@link fetchLinkedIssueLabelsForPropagation}'s return shape
+ *  (#regression-safe-propagation). `labels` is exactly what today's plain `string[]` used to be. `inconclusive`
+ *  is the NEW signal: true when this issue's (or, aggregated, ANY linked issue's) propagation evidence could
+ *  not be verified this pass -- a `fetch_error` reading the issue itself, or an errored (not merely negative)
+ *  maintainer-permission check -- as opposed to a confirmed, deterministic "no" (issue genuinely not
+ *  trustworthy right now, genuinely not authored/assigned to the PR author, genuinely not maintainer-owned).
+ *  The caller (`src/queue/processors.ts`'s type-label block) must treat `inconclusive` + empty `labels` as
+ *  "could not recheck this pass" and leave existing labels untouched, never as "propagation confirmed absent" --
+ *  that conflation is the exact mechanism that let a transient GitHub hiccup permanently strip a correct
+ *  propagated label (#4528's fix closed the narrower "issue closed by this PR's own merge" race but never
+ *  this one). */
+export type LinkedIssuePropagationLabels = {
+  labels: string[];
+  inconclusive: boolean;
+};
 
 /** Per-issue label resolution for {@link fetchLinkedIssueLabelsForPropagation}: a direct PR-author-is-
  *  issue-author-or-assignee match unlocks EVERY label the issue carries (today's original behavior,
@@ -68,24 +112,52 @@ function isLinkedIssueTrustworthy(facts: LinkedIssueFactsResult, prMergedAt: str
  *  maintainer-permission check (and its GitHub API call) entirely -- byte-identical to the pre-fix
  *  behavior for any caller that hasn't opted in. Logs once per issue when the returned set is smaller
  *  than what the issue actually carries, so a future "why didn't my PR inherit the label" report is
- *  diagnosable from structured logs instead of a source read. */
+ *  diagnosable from structured logs instead of a source read.
+ *
+ *  Returns `inconclusive: true` (#regression-safe-propagation) ONLY for a genuinely unverifiable pass --
+ *  the issue fetch itself failed (`fetch_error`), or the maintainer-permission check errored -- never for a
+ *  confirmed negative (issue not trustworthy, no ownership match, a resolved "not a collaborator" 404). A
+ *  confirmed `not_found` (a proven-nonexistent issue) is likewise NOT inconclusive -- that is real,
+ *  deterministic evidence, not a hiccup. */
 async function resolveIssueLabelsForPropagation(
   args: { env: Env; repoFullName: string; installationId: number },
   result: LinkedIssueFactsFetch,
   prAuthorLogin: string | undefined,
   relaxableLabels: ReadonlySet<string>,
   prMergedAt: string | null,
-): Promise<string[]> {
-  if (result.status !== "found" || !isLinkedIssueTrustworthy(result.facts, prMergedAt) || !prAuthorLogin) return [];
+): Promise<LinkedIssuePropagationLabels> {
+  if (result.status === "fetch_error") {
+    console.log(
+      JSON.stringify({
+        event: "linked_issue_label_propagation_inconclusive",
+        repoFullName: args.repoFullName,
+        reason: "issue_fetch_error",
+      }),
+    );
+    return { labels: [], inconclusive: true };
+  }
+  if (result.status !== "found" || !isLinkedIssueTrustworthy(result.facts, prMergedAt) || !prAuthorLogin) return { labels: [], inconclusive: false };
   const allLabels = result.facts.labels;
   const issueAuthorLogin = result.facts.authorLogin?.toLowerCase();
   const assignees = result.facts.assignees.map((login) => login.toLowerCase());
-  if (issueAuthorLogin === prAuthorLogin || assignees.includes(prAuthorLogin)) return allLabels;
+  if (issueAuthorLogin === prAuthorLogin || assignees.includes(prAuthorLogin)) return { labels: allLabels, inconclusive: false };
 
-  const maintainerAuthored =
-    relaxableLabels.size > 0 &&
-    !!issueAuthorLogin &&
-    (await isRepoMaintainerLogin(args.env, args.installationId, args.repoFullName, issueAuthorLogin));
+  const maintainerCheck: MaintainerCheckResult =
+    relaxableLabels.size > 0 && !!issueAuthorLogin
+      ? await isRepoMaintainerLogin(args.env, args.installationId, args.repoFullName, issueAuthorLogin)
+      : "not_maintainer";
+  if (maintainerCheck === "inconclusive") {
+    console.log(
+      JSON.stringify({
+        event: "linked_issue_label_propagation_inconclusive",
+        repoFullName: args.repoFullName,
+        issueNumber: result.facts.number,
+        reason: "maintainer_check_error",
+      }),
+    );
+    return { labels: [], inconclusive: true };
+  }
+  const maintainerAuthored = maintainerCheck === "maintainer";
   const kept = maintainerAuthored ? allLabels.filter((label) => relaxableLabels.has(label.toLowerCase())) : [];
 
   if (kept.length < allLabels.length && allLabels.length > 0) {
@@ -99,7 +171,7 @@ async function resolveIssueLabelsForPropagation(
       }),
     );
   }
-  return kept;
+  return { labels: kept, inconclusive: false };
 }
 
 /** FETCH every linked issue's labels (fail-open) and flatten into one label list for
@@ -107,7 +179,7 @@ async function resolveIssueLabelsForPropagation(
  *  closed no earlier than THIS PR's own merge (#4528, {@link isLinkedIssueTrustworthy}), can contribute
  *  labels; closing-keyword text in a PR body is author-controlled and is not authority by itself. Mirrors
  *  `resolveLinkedIssueHardRule`'s own fetch idiom (`src/review/linked-issue-hard-rules.ts`): a per-issue
- *  fetch failure contributes no labels rather than throwing, so if EVERY linked issue fails, the result is
+ *  fetch failure contributes no labels rather than throwing, so if EVERY linked issue fails, `labels` is
  *  `[]` — which can never match a mapping, meaning a sensitive label like `gittensor:priority` never applies
  *  when its authority (the linked issue) cannot be verified. The bare `Promise.all` below is safe without a
  *  per-item `.catch` because `fetchLinkedIssueFacts` (`src/github/backfill.ts`) never throws for a network,
@@ -125,7 +197,14 @@ async function resolveIssueLabelsForPropagation(
  *  either flag) reproduces today's strict author-or-assignee-only behavior exactly.
  *
  *  `prMergedAt` (#4528) is this PR's own `merged_at`, or `null` while unmerged -- the caller's `pr.mergedAt`
- *  straight from the DB row, no extra fetch. */
+ *  straight from the DB row, no extra fetch.
+ *
+ *  Returns {@link LinkedIssuePropagationLabels} (#regression-safe-propagation), NOT a bare `string[]`:
+ *  `inconclusive` is true when ANY linked issue's resolution was inconclusive (fetch failure or an errored
+ *  maintainer-permission check), aggregated across every linked issue with a plain OR -- deliberately
+ *  coarse. A caller only needs to distinguish "confirmed: no propagation applies" from "could not fully
+ *  verify this pass" when `labels` came back empty; when even one linked issue resolved with real labels,
+ *  those labels are just as trustworthy as before regardless of a sibling issue's fetch trouble. */
 export async function fetchLinkedIssueLabelsForPropagation(args: {
   env: Env;
   repoFullName: string;
@@ -134,8 +213,8 @@ export async function fetchLinkedIssueLabelsForPropagation(args: {
   prAuthorLogin: string | null | undefined;
   mappings?: readonly LinkedIssueLabelPropagationMapping[] | undefined;
   prMergedAt?: string | null | undefined;
-}): Promise<string[]> {
-  if (args.linkedIssues.length === 0) return [];
+}): Promise<LinkedIssuePropagationLabels> {
+  if (args.linkedIssues.length === 0) return { labels: [], inconclusive: false };
   const linkedIssues = args.linkedIssues.slice(0, MAX_LINKED_ISSUES_TO_FETCH);
   const token =
     (await createInstallationToken(args.env, args.installationId).catch(
@@ -175,7 +254,7 @@ export async function fetchLinkedIssueLabelsForPropagation(args: {
       ),
     ),
   );
-  const perIssueLabels = await Promise.all(
+  const perIssueResults = await Promise.all(
     results.map((result) =>
       resolveIssueLabelsForPropagation(
         { env: args.env, repoFullName: args.repoFullName, installationId: args.installationId },
@@ -186,5 +265,8 @@ export async function fetchLinkedIssueLabelsForPropagation(args: {
       ),
     ),
   );
-  return perIssueLabels.flat();
+  return {
+    labels: perIssueResults.flatMap((result) => result.labels),
+    inconclusive: perIssueResults.some((result) => result.inconclusive),
+  };
 }

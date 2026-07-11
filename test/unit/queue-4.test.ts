@@ -5597,7 +5597,7 @@ describe("queue processors", () => {
     expect(aggregate?.metadata_json).toContain('"transient":true');
     // The total publish failure (nothing reached the PR) escalates to Sentry at error level, not just the ledger —
     // this still fires BEFORE the retryable throw, so the failure stays observable even though the job also retries.
-    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ kind: "publish", repo: "JSONbored/gittensory" }));
+    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ kind: "publish", repo: "JSONbored/gittensory" }), "pr_public_surface_publish_failed");
     captureSpy.mockRestore();
   });
 

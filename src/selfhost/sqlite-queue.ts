@@ -320,7 +320,7 @@ export function createSqliteQueue(
           error: errorMessageWithCause(error),
         }),
       );
-      captureError(error, { kind: "queue_dead_letter_revive_crashed" });
+      captureError(error, { kind: "queue_dead_letter_revive_crashed" }, "queue_dead_letter_revive_crashed");
     }
   }
 
@@ -441,7 +441,7 @@ export function createSqliteQueue(
           error: errorMessageWithCause(error),
         }),
       );
-      captureError(error, { kind: "queue_foreground_liveness_release_crashed" });
+      captureError(error, { kind: "queue_foreground_liveness_release_crashed" }, "queue_foreground_liveness_release_crashed");
     }
   }
 
@@ -826,7 +826,7 @@ export function createSqliteQueue(
         reason: "processing_timeout",
         recovered,
         timeoutMs: processingTimeoutMs,
-      });
+      }, "processing_timeout");
     }
     const job = claimNext();
     if (!job) return false;
@@ -854,7 +854,7 @@ export function createSqliteQueue(
           kind: "job_dead",
           reason: "unparseable_payload",
           jobId: job.id,
-        });
+        }, "unparseable_payload");
         return true;
       }
       const jobTraceParent = message.type === "github-webhook" ? message.traceParent : undefined;
@@ -1113,7 +1113,7 @@ export function createSqliteQueue(
             jobType: extractPayloadType(job.payload),
             jobId: job.id,
             attempts,
-          });
+          }, "job_dead");
         } else {
           const retryDelayMs = consumingRetryDelayMs(error, backoff(attempts));
           driver.query(
@@ -1163,7 +1163,7 @@ export function createSqliteQueue(
           error: errorMessageWithCause(error),
         }),
       );
-      captureError(error, { kind: "queue_pump_crashed" });
+      captureError(error, { kind: "queue_pump_crashed" }, "queue_pump_crashed");
     } finally {
       active--;
     }

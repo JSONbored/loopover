@@ -392,6 +392,7 @@ describe("runAiReviewForAdvisory", () => {
           expect.objectContaining({ status: "unparseable_output" }),
         ]),
       }),
+      "ai_review_inconclusive",
     );
     captureSpy.mockRestore();
   });
@@ -413,7 +414,7 @@ describe("runAiReviewForAdvisory", () => {
       confirmedContributor: true,
     });
     expect(adv.findings.map((f) => f.code)).toEqual(["ai_review_inconclusive"]);
-    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ reason: "ai_review_inconclusive", repo: "acme/widgets", head_sha: "sha3" }));
+    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ reason: "ai_review_inconclusive", repo: "acme/widgets", head_sha: "sha3" }), "ai_review_inconclusive");
     captureSpy.mockRestore();
   });
 
@@ -684,6 +685,7 @@ describe("runAiReviewForAdvisory", () => {
         head_sha: "sha3",
         reviewer_count: 0,
       }),
+      "ai_review_public_summary_missing",
     );
     captureSpy.mockRestore();
   });

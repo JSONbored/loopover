@@ -752,7 +752,7 @@ export async function runAiReviewForAdvisory(
         public_notes: hasPublicReviewAssessment(result.advisoryNotes),
         /* v8 ignore next -- current review runner always supplies diagnostics for completed AI attempts. */
         review_diagnostics: result.reviewDiagnostics ?? [],
-      });
+      }, "ai_review_inconclusive");
     }
     args.advisory.findings.push(...findings);
     const metadataFor = (
@@ -828,6 +828,7 @@ export async function runAiReviewForAdvisory(
           null,
         combine: env.AI_REVIEW_PLAN?.combine ?? null,
       },
+      "ai_review_public_summary_missing",
     );
     return {
       notes:
@@ -848,13 +849,16 @@ export async function runAiReviewForAdvisory(
         error: errorMessage(error),
       }),
     );
+    // error is a genuinely caught exception here (unlike the two captures above, which construct their own
+    // Error to report a known condition) -- named to mirror the structured log's own "event" field just above,
+    // not the exception's native class, so every unexpected review crash groups under one readable title.
     captureReviewFailure(error, {
       kind: "review",
       installationId: args.installationId,
       repo: args.repoFullName,
       pr: args.pr.number,
       head_sha: args.advisory.headSha,
-    });
+    }, "ai_review_failed");
     return undefined;
   } finally {
     // #regate-dup-prep: only release a lock THIS call actually claimed. A caller-supplied

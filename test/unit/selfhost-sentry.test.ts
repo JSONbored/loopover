@@ -578,6 +578,40 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(mocks.captureException).toHaveBeenCalledTimes(2);
   });
 
+  it("captureError with an eventName renames the captured Error so the Sentry title isn't the generic 'Error'", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    captureError(new Error("self-host queue processing lease expired"), { kind: "job_dead" }, "processing_timeout");
+    expect(lastCapturedError().name).toBe("processing_timeout");
+    expect(lastCapturedError().message).toBe("self-host queue processing lease expired");
+  });
+
+  it("captureError without an eventName leaves a caught exception's own name untouched", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    class HttpError extends Error {
+      constructor(message: string) {
+        super(message);
+        this.name = "HttpError";
+      }
+    }
+    captureError(new HttpError("merge already in progress"), { kind: "agent_merge_blocked" });
+    expect(lastCapturedError().name).toBe("HttpError");
+  });
+
+  it("captureReviewFailure with an eventName renames the captured Error the same way captureError does", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    captureReviewFailure(new Error("AI review inconclusive — no usable verdict for the PR head"), { repo: "o/r" }, "ai_review_inconclusive");
+    expect(lastCapturedError().name).toBe("ai_review_inconclusive");
+  });
+
+  it("captureError/captureReviewFailure with an eventName still names a non-Error value's synthesized Error", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    captureError("plain string failure", undefined, "boot");
+    expect(lastCapturedError().name).toBe("boot");
+    expect(lastCapturedError().message).toBe("plain string failure");
+    captureReviewFailure("plain string review failure", undefined, "ai_review_failed");
+    expect(lastCapturedError().name).toBe("ai_review_failed");
+  });
+
   it("adds active OTEL trace ids to captured Sentry events", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     otelMocks.currentOtelTraceIds.mockReturnValue({

@@ -317,12 +317,12 @@ async function main(): Promise<void> {
       }),
     );
     process.on("uncaughtException", (error) => {
-      captureError(error, { kind: "uncaughtException" });
+      captureError(error, { kind: "uncaughtException" }, "uncaughtException");
       console.error(error);
       void flushSentry().finally(() => process.exit(1));
     });
     process.on("unhandledRejection", (reason) => {
-      captureError(reason, { kind: "unhandledRejection" });
+      captureError(reason, { kind: "unhandledRejection" }, "unhandledRejection");
       console.error(reason);
     });
     // Central error forwarding (#1468): operational failures are structured JSON logs emitted through stdout and
@@ -1069,7 +1069,7 @@ async function main(): Promise<void> {
       state: orbRelayRegistrationState,
       register: registerOrbRelayTargetWithRetry,
       ...(relayDrainState ? { drainState: relayDrainState } : {}),
-    }).catch((error) => captureError(error, { kind: "orb_relay_register" }));
+    }).catch((error) => captureError(error, { kind: "orb_relay_register" }, "orb_relay_register"));
   void attemptOrbRelayRegistration();
   setInterval(() => void attemptOrbRelayRegistration(), 60_000);
   // Dashboard-visible counterparts to the streak/no-progress alert gate in isOrbRelayRegistrationAlerting:
@@ -1093,7 +1093,7 @@ async function main(): Promise<void> {
   };
   if (isD1SizeProbeEnabled(d1ProbeEnv)) {
     /* v8 ignore start -- self-host entrypoint timer; probe logic itself is unit-tested in d1-size-probe.test.ts. */
-    const runD1Probe = () => runD1SizeProbe(d1ProbeEnv).catch((error) => captureError(error, { kind: "d1_size_probe" }));
+    const runD1Probe = () => runD1SizeProbe(d1ProbeEnv).catch((error) => captureError(error, { kind: "d1_size_probe" }, "d1_size_probe"));
     void runD1Probe();
     setInterval(runD1Probe, 900_000);
     /* v8 ignore stop */
@@ -1127,14 +1127,14 @@ async function main(): Promise<void> {
       }
     };
     void drainRelay().catch((error) =>
-      captureError(error, { kind: "orb_relay_drain" }),
+      captureError(error, { kind: "orb_relay_drain" }, "orb_relay_drain"),
     );
     // 30s matches broker-client's request timeout so a slow/degraded broker's in-flight drain has fully
     // timed out (or completed) before the next tick would otherwise pile another request on top of it.
     setInterval(
       () =>
         void drainRelay().catch((error) =>
-          captureError(error, { kind: "orb_relay_drain" }),
+          captureError(error, { kind: "orb_relay_drain" }, "orb_relay_drain"),
         ),
       30_000,
     );
@@ -1160,7 +1160,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  captureError(error, { kind: "boot" });
+  captureError(error, { kind: "boot" }, "boot");
   console.error(error);
   /* v8 ignore next -- boot failure exits the process; shutdown helper is covered independently. */
   void Promise.all([shutdownOpenTelemetry(), flushSentry()]).finally(() => process.exit(1));

@@ -1405,7 +1405,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect((await auditFor(env, "merge"))?.outcome).toBe("error");
     // "not mergeable" is immediately terminal (classifyMergeFailure), so this held-for-human outcome must be
     // Sentry-visible, not just an audit_events row a maintainer has to go looking for (#3862/#3863 gap sweep).
-    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ kind: "agent_merge_blocked", repo: "owner/repo", pr: 7 }));
+    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ kind: "agent_merge_blocked", repo: "owner/repo", pr: 7 }), "agent_merge_blocked");
     captureSpy.mockRestore();
   });
 
@@ -1444,7 +1444,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(refreshInstallationHealthForInstallation).toHaveBeenCalledWith(env, 123);
     // Non-merge action classes have no retry loop, so a single failure is already this pass's terminal outcome
     // and must be Sentry-visible immediately (#3862/#3863 gap sweep).
-    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ kind: "agent_action_execution_failed", actionClass: "close" }));
+    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ kind: "agent_action_execution_failed", actionClass: "close" }), "agent_action_execution_failed");
     captureSpy.mockRestore();
   });
 
@@ -1875,7 +1875,7 @@ describe("executeIssueMaintenanceActions (#2270 issue-side actuation)", () => {
     const outcomes = await executeIssueMaintenanceActions(env, issueCtx(), [issueClose]);
     expect(outcomes[0]?.outcome).toBe("error");
     expect((await auditFor(env, "close"))?.outcome).toBe("error");
-    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ kind: "agent_issue_action_execution_failed", actionClass: "close" }));
+    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ kind: "agent_issue_action_execution_failed", actionClass: "close" }), "agent_issue_action_execution_failed");
     captureSpy.mockRestore();
   });
 

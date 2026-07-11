@@ -1489,6 +1489,7 @@ describe("queue processors", () => {
         reviewer_count: 0,
         public_notes: false,
       }),
+      "ai_review_public_summary_missing",
     );
     captureSpy.mockRestore();
   });

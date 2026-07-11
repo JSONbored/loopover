@@ -7941,7 +7941,7 @@ async function maybePublishPrPublicSurface(
           pr: pr.number,
           head_sha: advisory.headSha,
           failedOutputs: failedOutputs.map((failure) => failure.output),
-        });
+        }, "pr_public_surface_publish_failed");
         // At least one output failed for a reason that can plausibly clear on its own (rate limit / 5xx / momentary
         // token issue) — retry the whole job instead of leaving the review permanently unposted. A mix of transient
         // and permanent failures still retries: the permanent one re-fails identically next pass and re-audits, but
@@ -9039,7 +9039,7 @@ async function maybePublishPrPublicSurface(
         head_sha: advisory.headSha,
         reviewer_count: aiReview?.reviewerCount ?? 0,
         public_notes: hasPublicReviewAssessment(aiReview?.notes),
-      });
+      }, "ai_review_public_summary_missing");
     }
 
     // Secrets-scan (#audit-3.4): always scans the REAL resolved diff and, on a CONCRETE credential hit, appends a

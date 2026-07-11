@@ -431,26 +431,40 @@ export async function buildSentryOpenTelemetryBridge(): Promise<OpenTelemetryBri
   };
 }
 
-/** Capture an error with optional structured context. No-op when Sentry is off. */
+/** Name a synthetic Error before capture so its Sentry issue title reads "eventName: message" instead of the
+ *  generic "Error: message" (or a caught exception's own class name, e.g. "HttpError: ..."). Mirrors
+ *  forwardStructuredLogToSentry's `errorEvent.name = event` below — same discipline, applied to the handful of
+ *  call sites that construct their OWN `new Error(...)` purely to report a known condition, not to a genuinely
+ *  caught exception (which keeps its real name/type — mislabeling those would hide what actually threw). Only
+ *  renames when the caller opts in; every other captureError/captureReviewFailure call is unaffected. */
+function namedCaptureError(error: unknown, eventName?: string): Error {
+  const err = error instanceof Error ? error : new Error(String(error));
+  if (eventName) err.name = eventName;
+  return err;
+}
+
+/** Capture an error with optional structured context. No-op when Sentry is off. `eventName`, when given, becomes
+ *  the Sentry issue title's prefix (see {@link namedCaptureError}) instead of the generic "Error". */
 export function captureError(
   error: unknown,
   context?: Record<string, unknown>,
+  eventName?: string,
 ): void {
   if (!active || !Sentry) return;
   Sentry.withScope((scope) => {
     setOtelTraceScope(scope);
     if (context) { const safeContext = hashedInstallationContext(context); scope.setContext("gittensory", safeContext); applyOperationalTags(scope, safeContext); }
-    Sentry!.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-    );
+    Sentry!.captureException(namedCaptureError(error, eventName));
   });
 }
 
 /** Capture a failed review at ERROR level, tagged by repo/PR/SHA for triage. A review that cannot be produced is a
- *  real failure the maintainer must SEE — not a warning that hides in the noise. No-op when off. */
+ *  real failure the maintainer must SEE — not a warning that hides in the noise. No-op when off. `eventName`, when
+ *  given, becomes the Sentry issue title's prefix (see {@link namedCaptureError}) instead of the generic "Error". */
 export function captureReviewFailure(
   error: unknown,
   context?: Record<string, unknown>,
+  eventName?: string,
 ): void {
   if (!active || !Sentry) return;
   Sentry.withScope((scope) => {
@@ -461,9 +475,7 @@ export function captureReviewFailure(
       scope.setContext("review", safeContext);
       applyOperationalTags(scope, safeContext);
     }
-    Sentry!.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-    );
+    Sentry!.captureException(namedCaptureError(error, eventName));
   });
 }
 

@@ -888,9 +888,11 @@ describe("queue processors", () => {
         },
       } as unknown as Queue,
     });
-    await upsertRepositoryFromGitHub(env, { name: "agent-a", full_name: "owner/agent-a", private: false, owner: { login: "owner" } });
-    await upsertRepositoryFromGitHub(env, { name: "agent-b", full_name: "owner/agent-b", private: false, owner: { login: "owner" } });
-    await upsertRepositoryFromGitHub(env, { name: "plain-repo", full_name: "owner/plain-repo", private: false, owner: { login: "owner" } });
+    // #sweep-requires-installation: acting-autonomy eligibility also requires a real installation now — give
+    // the repos that SHOULD be swept a real installationId, mirroring an actually-installed repo.
+    await upsertRepositoryFromGitHub(env, { name: "agent-a", full_name: "owner/agent-a", private: false, owner: { login: "owner" } }, 9201);
+    await upsertRepositoryFromGitHub(env, { name: "agent-b", full_name: "owner/agent-b", private: false, owner: { login: "owner" } }, 9202);
+    await upsertRepositoryFromGitHub(env, { name: "plain-repo", full_name: "owner/plain-repo", private: false, owner: { login: "owner" } }, 9203);
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-a", autonomy: { label: "auto" } });
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-b", autonomy: { merge: "auto_with_approval" } });
     await upsertRepositorySettings(env, { repoFullName: "owner/plain-repo", autonomy: { review: "observe" } }); // non-acting → not configured
@@ -906,6 +908,27 @@ describe("queue processors", () => {
     }>();
     expect(fanout?.outcome).toBe("queued");
     expect(JSON.parse(fanout?.metadata_json ?? "{}")).toMatchObject({ repoCount: 2, requestedBy: "schedule" });
+  });
+
+  it("REGRESSION (#sweep-requires-installation): an acting-autonomy repo with NO real installation is excluded, even though it resolves the operator's global-default autonomy", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_REPOS: "",
+      JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue,
+    });
+    // A repo that merely EXISTS locally (e.g. a stray row from an unrelated sync) with a real installation and
+    // acting autonomy — sweep-eligible.
+    await upsertRepositoryFromGitHub(env, { name: "installed-repo", full_name: "owner/installed-repo", private: false, owner: { login: "owner" } }, 9301);
+    await upsertRepositorySettings(env, { repoFullName: "owner/installed-repo", autonomy: { merge: "auto" } });
+    // Same acting autonomy, but NO installationId (never upserted with one) — this is exactly the shape a
+    // stray repositories row takes: it can still resolve a permissive global-default autonomy policy, but
+    // there is no GitHub App installation on it at all, so it must never be treated as agent-configured.
+    await upsertRepositoryFromGitHub(env, { name: "uninstalled-repo", full_name: "owner/uninstalled-repo", private: false, owner: { login: "owner" } });
+    await upsertRepositorySettings(env, { repoFullName: "owner/uninstalled-repo", autonomy: { merge: "auto" } });
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule" });
+
+    expect(sent.map((m) => (m.type === "agent-regate-sweep" ? m.repoFullName : null))).toEqual(["owner/installed-repo"]);
   });
 
   it("agent re-gate sweep ALSO fans out to allowlisted repos regardless of autonomy mode (#sweep-all-modes)", async () => {
@@ -931,8 +954,8 @@ describe("queue processors", () => {
       GITTENSORY_REVIEW_REPOS: "",
       JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue,
     });
-    await upsertRepositoryFromGitHub(env, { name: "agent-a", full_name: "owner/agent-a", private: false, owner: { login: "owner" } });
-    await upsertRepositoryFromGitHub(env, { name: "agent-b", full_name: "owner/agent-b", private: false, owner: { login: "owner" } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-a", full_name: "owner/agent-a", private: false, owner: { login: "owner" } }, 9204);
+    await upsertRepositoryFromGitHub(env, { name: "agent-b", full_name: "owner/agent-b", private: false, owner: { login: "owner" } }, 9205);
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-a", autonomy: { label: "auto" } });
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-b", autonomy: { label: "auto" } });
     const realResolve = repositorySettingsModule.resolveRepositorySettings;
@@ -964,8 +987,8 @@ describe("queue processors", () => {
         },
       } as unknown as Queue,
     });
-    await upsertRepositoryFromGitHub(env, { name: "agent-a", full_name: "owner/agent-a", private: false, owner: { login: "owner" } });
-    await upsertRepositoryFromGitHub(env, { name: "agent-b", full_name: "owner/agent-b", private: false, owner: { login: "owner" } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-a", full_name: "owner/agent-a", private: false, owner: { login: "owner" } }, 9206);
+    await upsertRepositoryFromGitHub(env, { name: "agent-b", full_name: "owner/agent-b", private: false, owner: { login: "owner" } }, 9207);
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-a", autonomy: { label: "auto" } });
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-b", autonomy: { label: "auto" } });
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -988,8 +1011,8 @@ describe("queue processors", () => {
       JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue,
     });
     const repoNames = ["r1", "r2", "r3", "r4", "r5", "r6"];
-    for (const name of repoNames) {
-      await upsertRepositoryFromGitHub(env, { name, full_name: `owner/${name}`, private: false, owner: { login: "owner" } });
+    for (const [index, name] of repoNames.entries()) {
+      await upsertRepositoryFromGitHub(env, { name, full_name: `owner/${name}`, private: false, owner: { login: "owner" } }, 9300 + index);
       await upsertRepositorySettings(env, { repoFullName: `owner/${name}`, autonomy: { label: "auto" } });
     }
     const { mapWithConcurrencyLimit: realMapWithConcurrencyLimit } =

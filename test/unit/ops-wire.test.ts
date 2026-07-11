@@ -173,6 +173,19 @@ async function seedRegisteredRepo(env: Env, fullName: string): Promise<void> {
     .run();
 }
 
+// A registered repo with a REAL installation + acting-autonomy settings, so opsScanRepos's "prefer
+// agent-configured repos" branch picks it up (#sweep-requires-installation: installation_id is required
+// alongside the autonomy row, matching the real upsertRepositoryFromGitHub invariant).
+async function seedAgentConfiguredRepo(env: Env, fullName: string, installationId: number): Promise<void> {
+  const [owner, name] = fullName.split("/");
+  await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered, installation_id) VALUES (?, ?, ?, 1, 1, ?)")
+    .bind(fullName, owner, name, installationId)
+    .run();
+  await env.DB.prepare("INSERT INTO repository_settings (repo_full_name, autonomy_json) VALUES (?, ?)")
+    .bind(fullName, JSON.stringify({ review: "auto" }))
+    .run();
+}
+
 // Seed a gate-block ledger anomaly: blocked PRs that later MERGED (false positives) over the min sample.
 async function seedGateFalsePositiveAnomaly(env: Env, repoFullName: string): Promise<void> {
   for (let i = 1; i <= 6; i += 1) {
@@ -226,6 +239,21 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
 
     expect(found["owner/clean"]).toBeUndefined();
     expect(errors.mock.calls.map((c) => String(c[0])).some((line) => line.includes("ops_anomaly\""))).toBe(false);
+  });
+
+  it("REGRESSION (#sweep-requires-installation): prefers the agent-configured repo and never scans an uninstalled registered repo when a configured one exists", async () => {
+    const env = createTestEnv();
+    await seedAgentConfiguredRepo(env, "owner/configured", 9501);
+    await seedGateFalsePositiveAnomaly(env, "owner/configured");
+    // Registered, but no real installation -- must not count as "agent-configured" merely by resolving the
+    // operator's global-default autonomy, and must be excluded from the scan once a configured repo exists.
+    await seedRegisteredRepo(env, "owner/no-install");
+    await seedGateFalsePositiveAnomaly(env, "owner/no-install");
+
+    const found = await runOpsAlerts(env);
+
+    expect(found["owner/configured"]?.some((a) => /gate false-positive spike/.test(a))).toBe(true);
+    expect(found["owner/no-install"]).toBeUndefined();
   });
 
   it("detects and reports a review burst end-to-end (a PR published far more review surfaces than normal in the window)", async () => {

@@ -57,7 +57,11 @@ async function watchedRepos(env: Env): Promise<Array<{ fullName: string; install
   for (const repo of byKey.values()) {
     try {
       const settings = await resolveRepositorySettings(env, repo.fullName);
-      if (isConvergenceRepoAllowed(env, repo.fullName) || isAgentConfigured(settings.autonomy)) configured.push(repo);
+      // #sweep-requires-installation: mirrors fanOutAgentRegateSweepJobs's own guard -- a repo with no real
+      // GitHub App installation must never be treated as agent-configured purely because it resolves the
+      // operator's global-default autonomy by merely having a local row.
+      const hasInstallation = typeof repo.installationId === "number";
+      if (isConvergenceRepoAllowed(env, repo.fullName) || (hasInstallation && isAgentConfigured(settings.autonomy))) configured.push(repo);
     } catch {
       /* a settings blip on one repo must not abort the whole watchdog scan */
     }

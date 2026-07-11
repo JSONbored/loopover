@@ -106,6 +106,10 @@ async function selfTuneRepos(env: Env): Promise<string[]> {
   const configured: string[] = [];
   for (const repo of repos) {
     try {
+      // #sweep-requires-installation: a repo with no real GitHub App installation must never be treated as
+      // agent-configured purely because it resolves the operator's global-default autonomy by merely having
+      // a local row -- mirrors fanOutAgentRegateSweepJobs's own guard.
+      if (typeof repo.installationId !== "number") continue;
       const settings = await resolveRepositorySettings(env, repo.fullName);
       if (!isAgentConfigured(settings.autonomy)) continue;
       const manifest = await loadRepoFocusManifest(env, repo.fullName).catch(() => null);

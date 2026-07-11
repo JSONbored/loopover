@@ -29,11 +29,14 @@ function poisonDbPrepare(env: Env, pattern: RegExp): void {
 }
 
 // Mark a repo registered so recapScanRepos picks it up (mirrors ops-wire.test.ts's seedRegisteredRepo).
-async function seedRegisteredRepo(env: Env, fullName: string): Promise<void> {
+async function seedRegisteredRepo(env: Env, fullName: string, installationId?: number): Promise<void> {
   const [owner, name] = fullName.split("/");
+  // installationId is only needed by tests that rely on the acting-autonomy selection path
+  // (#sweep-requires-installation): a repo with no real installation is never treated as agent-configured,
+  // regardless of its resolved autonomy settings.
   await (env.DB as unknown as { prepare: (s: string) => { bind: (...v: unknown[]) => { run: () => Promise<unknown> } } })
-    .prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 1)")
-    .bind(fullName, owner, name)
+    .prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered, installation_id) VALUES (?, ?, ?, 1, 1, ?)")
+    .bind(fullName, owner, name, installationId ?? null)
     .run();
 }
 
@@ -231,7 +234,7 @@ describe("runMaintainerRecapJob — cross-repo digest (#1963, #2248)", () => {
 
   it("prefers agent-configured repos over the full registered set when at least one is configured", async () => {
     const env = createTestEnv({ DISCORD_WEBHOOK_URL: HOOK });
-    await seedRegisteredRepo(env, "owner/configured");
+    await seedRegisteredRepo(env, "owner/configured", 9402);
     await seedMergedPr(env, "owner/configured", 1);
     await upsertRepositorySettings(env, { repoFullName: "owner/configured", autonomy: { merge: "auto" } });
     await seedRegisteredRepo(env, "owner/unconfigured");

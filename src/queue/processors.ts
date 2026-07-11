@@ -878,10 +878,20 @@ export async function fanOutAgentRegateSweepJobs(
       // outcome for just this repo (it gets picked up again next tick) instead of rejecting.
       try {
         const settings = await resolveRepositorySettings(env, repoFullName);
+        // #sweep-requires-installation: isAgentConfigured resolves the OPERATOR'S global-default autonomy
+        // (e.g. a self-host `.gittensory.yml` settings.autonomy block meant for the repos this instance
+        // actually operates on) for ANY repoFullName, regardless of whether the GitHub App is installed
+        // there. A repo that merely has a local `repositories` row (a stray subnet-registry row, say) with
+        // no real `installationId` would otherwise inherit that global default and look "agent-configured"
+        // purely by existing — even though no installation token exists to act on it, and it was never
+        // intentionally onboarded. Require a real installation before the autonomy-based path can make a
+        // repo eligible; the explicit allowlist path is untouched (GITTENSORY_REVIEW_REPOS is a deliberate,
+        // operator-typed signal independent of installation state, e.g. reviewing ahead of a pending install).
+        const hasInstallation = typeof repo.installationId === "number";
         if (
           !(
             isConvergenceRepoAllowed(env, repoFullName) ||
-            isAgentConfigured(settings.autonomy)
+            (hasInstallation && isAgentConfigured(settings.autonomy))
           )
         )
           return { kind: "ineligible" };

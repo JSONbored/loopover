@@ -44,7 +44,12 @@ async function watchedRepos(env: Env): Promise<Array<{ fullName: string; install
   for (const repo of byKey.values()) {
     try {
       const settings = await resolveRepositorySettings(env, repo.fullName);
-      if (isConvergenceRepoAllowed(env, repo.fullName) || isAgentConfigured(settings.autonomy)) configured.push(repo);
+      // #sweep-requires-installation: isAgentConfigured resolves the operator's global-default autonomy for
+      // ANY repoFullName -- a repo that merely has a local row (no real GitHub App installation) would
+      // otherwise inherit that default and look "agent-configured" purely by existing. Require a real
+      // installation before the autonomy-based path counts; the explicit allowlist stays untouched.
+      const hasInstallation = typeof repo.installationId === "number";
+      if (isConvergenceRepoAllowed(env, repo.fullName) || (hasInstallation && isAgentConfigured(settings.autonomy))) configured.push(repo);
     } catch {
       /* a settings blip on one repo must not abort the whole reconciliation scan */
     }

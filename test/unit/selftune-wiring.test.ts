@@ -30,8 +30,11 @@ function poisonDbPrepare(env: Env, pattern: RegExp): void {
 
 async function seedRegisteredRepo(env: Env, fullName: string, autonomyJson: string): Promise<void> {
   const [owner, name] = fullName.split("/");
-  await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 1)")
-    .bind(fullName, owner, name)
+  // installation_id is required alongside is_installed=1 (#sweep-requires-installation): selfTuneRepos now
+  // requires a real installation before isAgentConfigured counts, matching the real upsertRepositoryFromGitHub
+  // invariant (isInstalled is only ever true alongside a real installationId).
+  await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered, installation_id) VALUES (?, ?, ?, 1, 1, ?)")
+    .bind(fullName, owner, name, 9401)
     .run();
   // Opt the repo into the acting-autonomy surface so isAgentConfigured(settings.autonomy) is true (selfTuneRepos filter).
   await env.DB.prepare("INSERT INTO repository_settings (repo_full_name, autonomy_json) VALUES (?, ?)")
@@ -271,6 +274,23 @@ describe("selfTuneRepos — per-repo review.selftune FORCE-OFF (#4104)", () => {
     expect(await loadShadowOverride(env as never, "owner/opted-out")).toBeNull();
     expect(await loadOverride(env as never, "owner/opted-out")).toBeNull();
     expect((await listOverrideAudit(env as never, "owner/opted-out")).length).toBe(0);
+  });
+
+  it("REGRESSION (#sweep-requires-installation): an acting-autonomy repo with NO real installation is excluded from the tuning pass, even though it resolves the operator's global-default autonomy", async () => {
+    const owner = "owner";
+    const name = "no-install";
+    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "true" });
+    await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 0, 1)")
+      .bind(`${owner}/${name}`, owner, name)
+      .run();
+    await env.DB.prepare("INSERT INTO repository_settings (repo_full_name, autonomy_json) VALUES (?, ?)")
+      .bind(`${owner}/${name}`, ACTING_AUTONOMY)
+      .run();
+    await seedRecommendationOutcomes(env, `${owner}/${name}`, 5, 10); // would otherwise be a clear tightening signal
+
+    await runSelfTune(env);
+
+    expect(await loadShadowOverride(env as never, `${owner}/${name}`)).toBeNull();
   });
 
   it("unset review.selftune (the default) does not change today's behavior — an agent-configured repo still tunes normally", async () => {

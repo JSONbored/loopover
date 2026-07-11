@@ -102,9 +102,13 @@ declare global {
     CLAUDE_AI_MODEL?: string;
     CLAUDE_AI_EFFORT?: string;
     CLAUDE_AI_TIMEOUT_MS?: string;
+    /** Fast-fail deadline for a stalled-no-output claude-code subprocess (#4994) — see resolveClaudeFirstOutputTimeoutMs. */
+    CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS?: string;
     CODEX_AI_MODEL?: string;
     CODEX_AI_EFFORT?: string;
     CODEX_AI_TIMEOUT_MS?: string;
+    /** Fast-fail deadline for a stalled-no-output codex subprocess (#codex-first-output-timeout) — see resolveCodexFirstOutputTimeoutMs. */
+    CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS?: string;
     OLLAMA_AI_BASE_URL?: string;
     OLLAMA_AI_API_KEY?: string;
     OLLAMA_AI_MODEL?: string;

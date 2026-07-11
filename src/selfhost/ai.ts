@@ -227,6 +227,19 @@ export function resolveCodexFirstOutputTimeoutMs(env: Record<string, string | un
   return 30_000;
 }
 
+// #4994: the SAME fast-fail deadline as resolveCodexFirstOutputTimeoutMs above, for the claude-code CLI. When this
+// pattern was first built (#codex-first-output-timeout), Claude Code had no prod-observed dead-air hang, so it was
+// deliberately left unwired for that provider (see the historical rationale that used to live on SpawnFn's
+// `firstOutputTimeoutMs` field). That premise is now stale: `selfhost_ai_provider_failed: subscription_cli_timeout`
+// for `provider: claude-code` accumulated 4,030+ events over 12 days in production (GITTENSORY-K/M/8/Z), the exact
+// shape this mechanism exists to catch and distinguish from a genuine full-timeout. Same bounds/defaults as Codex's
+// version for consistency; independent env var so either CLI's deadline can be tuned without affecting the other.
+export function resolveClaudeFirstOutputTimeoutMs(env: Record<string, string | undefined>): number {
+  const raw = Number(firstConfigured(env.CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS));
+  if (Number.isFinite(raw) && raw > 0) return Math.min(120_000, Math.max(1_000, raw));
+  return 30_000;
+}
+
 /** Read the per-call repo override matching this provider variant (#3902) -- ollama/openai/openai-compatible
  *  each have their OWN `.gittensory.yml` field, so a bare `options.model`-style single field would collide
  *  across variants sharing this one function. `firstConfigured` gives the repo override priority over the
@@ -646,11 +659,12 @@ type SpawnFn = (
     input?: string;
     timeoutMs: number;
     cwd?: string;
-    // Optional, generic on SpawnFn (not codex-specific) so any CLI whose real progress lands on STDOUT (not
-    // stderr banners/logs) could opt in later — but ONLY codex wires it up today (see
-    // resolveCodexFirstOutputTimeoutMs): Claude Code has no comparable prod-observed dead-air hang, so leaving
-    // this undefined for that caller keeps its spawn path byte-identical to before this option existed. See the
-    // stdout-only rationale on the timer construction below — this deadline is cleared by stdout data ONLY.
+    // Optional, generic on SpawnFn so any CLI whose real progress lands on STDOUT (not stderr banners/logs) can
+    // opt in. Originally codex-only (resolveCodexFirstOutputTimeoutMs) — claude-code was deliberately left
+    // unwired on the belief it had no comparable dead-air hang, until GITTENSORY-K/M/8/Z (#4994) proved that
+    // premise stale (4,030+ subscription_cli_timeout events). Both CLI providers wire this up now
+    // (resolveCodexFirstOutputTimeoutMs / resolveClaudeFirstOutputTimeoutMs). See the stdout-only rationale on
+    // the timer construction below — this deadline is cleared by stdout data ONLY.
     firstOutputTimeoutMs?: number;
   },
 ) => Promise<{ stdout: string; code: number | null; stderr?: string; timedOut?: boolean; stalledNoOutput?: boolean }>;
@@ -794,6 +808,10 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
       const claudeModel = resolveModel(configuredClaudeModel(parentEnv, options.claudeModel), model, "claude-sonnet-5");
       const effort = resolveEffort(firstConfigured(options.claudeEffort, parentEnv.CLAUDE_AI_EFFORT));
       const timeoutMs = resolveClaudeCliTimeoutMs(parentEnv);
+      // #4994: same clamp reasoning as createCodexAi's identical line — keeps the fast-fail deadline strictly
+      // below the full timeout even if a low CLAUDE_AI_TIMEOUT_MS override (floor 30_000ms) would otherwise let
+      // them collide, which would make the "outer" timeout unreachable and defeat having two distinct signals.
+      const firstOutputTimeoutMs = Math.min(resolveClaudeFirstOutputTimeoutMs(parentEnv), Math.max(1, timeoutMs - 1));
       let attempted = false;
       let stdoutForMetrics = "";
       try {
@@ -820,12 +838,20 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
         const spawn = spawnImpl ?? (await defaultSpawn());
         const args = ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "plan", "--effort", effort, "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"];
         attempted = true;
-        const { stdout, code, stderr, timedOut } = await spawn(
+        const { stdout, code, stderr, timedOut, stalledNoOutput } = await spawn(
           "claude",
           args,
-          { env, input: prompt, timeoutMs, cwd: await isolatedCliCwd() },
+          { env, input: prompt, timeoutMs, firstOutputTimeoutMs, cwd: await isolatedCliCwd() },
         );
         stdoutForMetrics = stdout;
+        if (timedOut && stalledNoOutput) {
+          // Fast-fail path (#4994, GITTENSORY-K/M/8/Z), mirrors createCodexAi's identical stalled-no-output
+          // branch: killed at firstOutputTimeoutMs, well before the full timeoutMs, because STDOUT produced no
+          // bytes at all. A distinct error (never reusing `subscription_cli_timeout`) so this fast-fail is
+          // separately countable in Sentry/logs from a genuine full-timeout where the process was at least
+          // emitting output before it was killed.
+          throw new Error("claude_stalled_no_output: no stdout within firstOutputTimeoutMs — claude likely hung");
+        }
         if (timedOut) throw new Error("subscription_cli_timeout");
         // Surface the STRUCTURED error envelope FIRST. `claude --output-format json` reports API/auth/model errors in its
         // stdout JSON ({is_error,api_error_status}) on a NON-ZERO exit too — e.g. an unknown model exits 1 with the 404

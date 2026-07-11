@@ -86,6 +86,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/ai.ts",
   },
   {
+    name: "CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS",
+    firstReference: "src/selfhost/ai.ts",
+  },
+  {
     name: "CLAUDE_AI_MODEL",
     firstReference: "src/selfhost/ai.ts",
   },
@@ -482,6 +486,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `BACKUP_ACKNOWLEDGED` | `src/server.ts` |",
   "| `BROWSER_WS_ENDPOINT` | `src/selfhost/stubs/puppeteer.ts` |",
   "| `CLAUDE_AI_EFFORT` | `src/selfhost/ai.ts` |",
+  "| `CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS` | `src/selfhost/ai.ts` |",
   "| `CLAUDE_AI_MODEL` | `src/selfhost/ai.ts` |",
   "| `CLAUDE_AI_TIMEOUT_MS` | `src/selfhost/ai.ts` |",
   "| `CLOUDFLARE_D1_MONITOR_ACCOUNT_ID` | `src/selfhost/d1-size-probe.ts` |",

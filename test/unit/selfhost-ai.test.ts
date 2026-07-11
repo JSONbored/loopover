@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveCodexAuthPath, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveCodexFirstOutputTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, subscriptionCliEnv, withAdvisoryAiEnv } from "../../src/selfhost/ai";
+import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveClaudeFirstOutputTimeoutMs, resolveCodexAuthPath, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveCodexFirstOutputTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, subscriptionCliEnv, withAdvisoryAiEnv } from "../../src/selfhost/ai";
 import { labelSelfHostReviewerModel, labelSelfHostReviewerModels } from "../../src/selfhost/ai-config";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 
@@ -77,6 +77,22 @@ describe("provider-specific CLI timeouts (#selfhost — no shared timeout ambigu
     expect(resolveCodexFirstOutputTimeoutMs({ CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS: "not-a-number" })).toBe(30_000);
     // zero/negative also falls back (raw > 0 false branch)
     expect(resolveCodexFirstOutputTimeoutMs({ CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS: "0" })).toBe(30_000);
+  });
+  it("resolveClaudeFirstOutputTimeoutMs defaults to 30s, is independent of effort, and honors + clamps CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS (#4994)", () => {
+    // absent → the 30s default (?? right side)
+    expect(resolveClaudeFirstOutputTimeoutMs({})).toBe(30_000);
+    // effort must NOT scale this deadline — a slow COMPLETION is not a slow first byte.
+    expect(resolveClaudeFirstOutputTimeoutMs({ CLAUDE_AI_EFFORT: "max" })).toBe(30_000);
+    // present + valid → honored verbatim (?? left side, within bounds)
+    expect(resolveClaudeFirstOutputTimeoutMs({ CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS: "15000" })).toBe(15_000);
+    // clamped to the 1s floor
+    expect(resolveClaudeFirstOutputTimeoutMs({ CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS: "1" })).toBe(1_000);
+    // clamped to the 120s ceiling (well under the shortest full timeout, 120_000ms)
+    expect(resolveClaudeFirstOutputTimeoutMs({ CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS: "999999" })).toBe(120_000);
+    // non-finite/garbage falls back to the default (Number.isFinite false branch)
+    expect(resolveClaudeFirstOutputTimeoutMs({ CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS: "not-a-number" })).toBe(30_000);
+    // zero/negative also falls back (raw > 0 false branch)
+    expect(resolveClaudeFirstOutputTimeoutMs({ CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS: "0" })).toBe(30_000);
   });
 });
 
@@ -1348,6 +1364,35 @@ describe("subscription CLI helpers + fail-safe", () => {
     }
   });
 
+  // REGRESSION (GITTENSORY-K/M/8/Z, #4994): the real defaultSpawn fast-fail path against a genuinely-hung fake
+  // `claude` that writes nothing to either stream and never exits — mirrors the identical codex real-subprocess
+  // test below, proving createClaudeCodeAi's plumbing (not just a stubbed spawn) actually wires
+  // firstOutputTimeoutMs through to the shared defaultSpawn timer logic.
+  it("REAL subprocess: a fake claude that never writes to either stream is killed at the fast-fail deadline, not the full timeout", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fakecli-"));
+    const fake = join(dir, "claude");
+    writeFileSync(fake, "#!/usr/bin/env node\nprocess.stdin.on('data',()=>{});\nsetInterval(()=>{},1000);\n");
+    chmodSync(fake, 0o755);
+    const origPath = process.env.PATH;
+    try {
+      const start = Date.now();
+      await expect(
+        createClaudeCodeAi({
+          PATH: `${dir}:${origPath ?? ""}`,
+          CLAUDE_CODE_OAUTH_TOKEN: "t",
+          // Full timeout stays large (60s) so a false-pass (hitting the FULL timeout instead of the fast one)
+          // would make this test hang for a minute rather than silently succeed for the wrong reason.
+          CLAUDE_AI_TIMEOUT_MS: "60000",
+          CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS: "200",
+        }).run("sonnet", { prompt: "hello" }),
+      ).rejects.toThrow(/claude_stalled_no_output/);
+      // Killed at ~200ms (the fast-fail deadline), nowhere near the 60_000ms full timeout.
+      expect(Date.now() - start).toBeLessThan(5_000);
+    } finally {
+      process.env.PATH = origPath;
+    }
+  }, 10_000);
+
   it("drives the REAL subprocess (defaultSpawn) against a fake `codex` on PATH", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fakecli-"));
     const fake = join(dir, "codex");
@@ -1537,6 +1582,32 @@ describe("subscription CLI helpers + fail-safe", () => {
     const timedOut: StubSpawn = async () => ({ stdout: "", code: null, timedOut: true });
     await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, timedOut).run("m", { prompt: "x" })).rejects.toThrow(
       /subscription_cli_timeout/,
+    );
+  });
+
+  it("REGRESSION (GITTENSORY-K/M/8/Z, #4994): a stalled-no-output timeout is thrown as claude_stalled_no_output, distinct from subscription_cli_timeout, and passes firstOutputTimeoutMs through to spawn", async () => {
+    let capturedOpts: { timeoutMs: number; firstOutputTimeoutMs?: number } | undefined;
+    const stalled: StubSpawn = async (_cmd, _args, o) => {
+      capturedOpts = o;
+      return { stdout: "", code: null, stderr: "", timedOut: true, stalledNoOutput: true };
+    };
+    await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, stalled).run("m", { prompt: "x" })).rejects.toThrow(
+      /claude_stalled_no_output/,
+    );
+    // Never the generic message — the whole point is that these two failure modes are separately observable.
+    await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, stalled).run("m", { prompt: "x" })).rejects.not.toThrow(
+      /^subscription_cli_timeout/,
+    );
+    // The fast-fail deadline defaults to 30s and is strictly less than the (180s-default) full timeout.
+    expect(capturedOpts?.firstOutputTimeoutMs).toBe(30_000);
+    expect(capturedOpts?.timeoutMs).toBe(180_000);
+    expect(capturedOpts?.firstOutputTimeoutMs).toBeLessThan(capturedOpts!.timeoutMs);
+  });
+
+  it("a full timeout WITHOUT stalledNoOutput still throws the generic subscription_cli_timeout, not claude_stalled_no_output (some output was produced before the kill)", async () => {
+    const timedOutWithOutput: StubSpawn = async () => ({ stdout: "partial output before kill", code: null, timedOut: true, stalledNoOutput: false });
+    await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, timedOutWithOutput).run("m", { prompt: "x" })).rejects.toThrow(
+      /^subscription_cli_timeout$/,
     );
   });
 
@@ -1768,7 +1839,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     }
   });
 
-  it("defaultSpawn's spawn-error handler clears whichever timers were actually armed — firstOutputTimer present (codex) vs absent (claude-code)", async () => {
+  it("defaultSpawn's spawn-error handler clears the firstOutputTimer for both providers (#4994: both now arm one)", async () => {
     // Explicit env (no ambient CODEX_HOME / GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER inherited from the operator's
     // shell) so this reaches the REAL ENOENT spawn error deterministically, rather than short-circuiting on the
     // credential-isolation guard the way an ambient CODEX_HOME would.
@@ -1778,8 +1849,9 @@ describe("subscription CLI helpers + fail-safe", () => {
         { prompt: "x" },
       ),
     ).rejects.toThrow(/ENOENT/);
-    // Claude Code never sets firstOutputTimeoutMs (no comparable prod hang), so this exercises the SAME spawn()
-    // error path's firstOutputTimer-ABSENT branch — the option is simply never passed for this provider.
+    // Claude Code now also passes firstOutputTimeoutMs (#4994) — this exercises the SAME spawn() error path's
+    // firstOutputTimer-PRESENT branch for claude too, proving the error handler clears it cleanly (no leaked
+    // timer, no unhandled rejection) rather than only ever having been exercised via codex.
     await expect(
       createClaudeCodeAi({ PATH: "/nonexistent-gittensory-empty", CLAUDE_CODE_OAUTH_TOKEN: "t" }).run("sonnet", { prompt: "x" }),
     ).rejects.toThrow(/ENOENT/);

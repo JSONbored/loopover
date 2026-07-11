@@ -543,7 +543,7 @@ export const ANALYZER_DESCRIPTORS = [
       network:
         "Calls the GitHub API for each changed file's content at headSha. Requires headSha and token forwarding for private repos.",
       notes:
-        "Complements `duplication` (which flags NEW duplication introduced) with the reverse, before/after signal. Per-file only in this version: a duplicate pair split across two different files is not detected.",
+        "Complements `duplication` (which flags NEW duplication introduced) with the reverse, before/after signal. Per-file only in this version: a duplicate pair split across two different files is not detected. Uses a greedy (not globally optimal) old-to-new block assignment, which can rarely under-report a resolved pair as still-present in multi-candidate scenarios -- an acknowledged v1 heuristic limit, not a correctness/data-integrity issue.",
     },
     render: (findings, helpers) => {
       if (!findings.length) return [];

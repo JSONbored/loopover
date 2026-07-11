@@ -138,7 +138,17 @@ export function findInternalDuplicatePairs(
  *  claim a surviving NEW occurrence and the remaining (N - M) do not — instead of every old copy independently
  *  matching the SAME still-present text and all appearing to "survive". Returns a parallel boolean array over
  *  `oldBlocks`. An aborted signal stops early; every OLD block not yet processed is left `false` ("not confirmed
- *  to survive") rather than risk reporting a stale/partial comparison as conclusive. */
+ *  to survive") rather than risk reporting a stale/partial comparison as conclusive.
+ *
+ *  KNOWN v1 LIMITATION: this is a greedy, order-dependent assignment, not a globally optimal bipartite matching.
+ *  In a multi-candidate scenario where old blocks match NEW occurrences asymmetrically (e.g. old block A matches
+ *  BOTH remaining new occurrences but old block B matches only one of them), first-come-first-claimed can let A
+ *  grab the occurrence B needed, leaving B unmatched even though a different (optimal) assignment would have
+ *  paired both. The practical effect is a false "resolved" report for a duplicate pair that is, in fact, still
+ *  present — never a crash or a data-integrity issue, since this is an ADVISORY-ONLY signal (see epic #4737's
+ *  design constraints) that never gates anything. A true maximum-bipartite-matching algorithm (e.g. an
+ *  augmenting-path search) would close this gap; tracked as a separate, non-urgent follow-up rather than
+ *  attempted here. */
 export function assignSurvivors(
   oldBlocks: NormBlock[],
   newIndices: MatchIndex[],

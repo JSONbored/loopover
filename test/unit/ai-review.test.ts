@@ -8,6 +8,7 @@ import {
   resolveEffectiveAiReviewPlan,
   runGittensoryAiReview,
   type AiContentBlock,
+  type AiReviewDiagnostic,
   type GittensoryAiReviewInput,
 } from "../../src/services/ai-review";
 import { createTestEnv } from "../helpers/d1";
@@ -3081,7 +3082,7 @@ describe("pure helpers", () => {
     warnSpy.mockRestore();
   });
 
-  it("logs unparseable exhaustion separately when the model runs but returns unparseable output", async () => {
+  it("logs unparseable exhaustion separately when the model runs but returns unparseable output, including a response snippet for diagnosis (#observability-unparseable)", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const run = vi.fn(async () => ({ response: "not json at all" }));
     const env = createTestEnv({ AI: { run } as unknown as Ai });
@@ -3092,12 +3093,33 @@ describe("pure helpers", () => {
         .map((c) => c[0])
         .some((l) => typeof l === "string" && l.includes("ai_review_provider_exhausted")),
     ).toBe(false);
-    expect(
-      logSpy.mock.calls
-        .map((c) => c[0])
-        .some((l) => typeof l === "string" && l.includes("ai_review_provider_unparseable_exhausted")),
-    ).toBe(true);
+    const exhausted = logSpy.mock.calls
+      .map((c) => c[0])
+      .find((l) => typeof l === "string" && l.includes("ai_review_provider_unparseable_exhausted"));
+    expect(exhausted).toBeDefined();
+    expect(JSON.parse(exhausted as string)).toMatchObject({
+      event: "ai_review_provider_unparseable_exhausted",
+      responseSnippet: "not json at all",
+    });
     logSpy.mockRestore();
+  });
+
+  it("truncates the unparseable-output response snippet to 400 chars instead of logging the full response (#observability-unparseable), and never puts it on the returned diagnostics (#4111-style public/private boundary)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const longResponse = "not json, ".repeat(60); // 600 chars, well over the 400-char cap
+    const run = vi.fn(async () => ({ response: longResponse }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const diagnostics: AiReviewDiagnostic[] = [];
+    await runWorkersOpinion(env, "primary-model", "primary-model", "sys", "user", 256, diagnostics);
+    // reviewDiagnostics flows into result/Sentry context that must never carry raw provider text (see the
+    // "withholds unsafe provider and reviewer fallback text" test) -- the snippet only ever reaches the log.
+    expect(diagnostics[0]).not.toHaveProperty("responseSnippet");
+    const firstWarn = warnSpy.mock.calls
+      .map((c) => c[0])
+      .find((l) => typeof l === "string" && l.includes("ai_review_provider_unparseable_output"));
+    expect(JSON.parse(firstWarn as string).responseSnippet).toBe(longResponse.slice(0, 400));
+    expect(JSON.parse(firstWarn as string).responseSnippet.length).toBe(400);
+    warnSpy.mockRestore();
   });
 
   it("applies the default daily neuron budget when none is configured", async () => {

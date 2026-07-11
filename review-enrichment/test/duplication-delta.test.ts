@@ -28,6 +28,20 @@ const DUP_BLOCK = [
 const HEADER = "const fileHeaderMarkerForFixture = 'v1'";
 const TRAILER = "const fileTrailerMarkerForFixture = 'end'";
 
+// A second run of exactly MIN_RUN significant lines, sharing NO line text at all with DUP_BLOCK — used to build
+// asymmetric-candidacy fixtures for assignSurvivors (#4812): a block combining DUP_BLOCK + OTHER_BLOCK content
+// matches a NEW occurrence of EITHER one, while a block containing only one of them matches just that one.
+const OTHER_BLOCK = [
+  "const totalStakeWeightForValidator = validatorStats.baseWeight * validatorStats.uptimeFactor",
+  "const boundedStakeWeightValue = Math.min(validatorStats.maxWeight, Math.max(0, totalStakeWeightForValidator))",
+  "const consensusBonusApplied = validatorStats.consensusBonus * validatorStats.agreementFactor",
+  "const slashPenaltyApplied = validatorStats.slashCount * validatorStats.slashWeight",
+  "const settledStakeAmount = boundedStakeWeightValue + consensusBonusApplied - slashPenaltyApplied",
+  "const finalStakeRounded = Math.round(settledStakeAmount * 1000000) / 1000000",
+  "const safeFinalStake = Number.isFinite(finalStakeRounded) ? finalStakeRounded : 0",
+  "const persistedStakeForValidator = safeFinalStake",
+];
+
 // Build a synthetic (patch, oldContent, newContent) trio for a PURE CONTIGUOUS DELETION: oldLines = prefixLines +
 // removedLines + suffixLines; newLines = prefixLines + suffixLines. reconstructOldContent only ever reads the
 // hunk header's `+` (new-file) start number — never the `-` side — so a single-hunk, all-removed-lines patch
@@ -202,6 +216,120 @@ test("assignSurvivors: an already-aborted signal leaves every block unconfirmed 
   const oldBlocks = [{ norm: DUP_BLOCK, lineNos: [1, 2, 3, 4, 5, 6, 7, 8] }];
   const newIndices = [buildMatchIndex({ norm: DUP_BLOCK, lineNos: [1, 2, 3, 4, 5, 6, 7, 8] })];
   assert.deepEqual(assignSurvivors(oldBlocks, newIndices, AbortSignal.abort()), [false]);
+});
+
+// ── assignSurvivors: maximum-matching regression (#4812) ────────────────────
+
+test("assignSurvivors: asymmetric candidacy (#4812) — old A matches BOTH remaining new occurrences, old B matches only ONE — a maximum matching lets BOTH survive", () => {
+  // This is the exact scenario #4812 describes. Old block A's content is DUP_BLOCK immediately followed by
+  // OTHER_BLOCK, so it independently shares a full MIN_RUN run with EACH new occurrence; old block B's content is
+  // only DUP_BLOCK, so it shares a run with ONLY the DUP_BLOCK new occurrence.
+  //
+  // A first-come-first-claimed (greedy) walk processes A first, finds N1 (DUP_BLOCK) already matches on its FIRST
+  // candidate check, and claims it immediately without ever considering that A could equally take N2 instead --
+  // leaving B, which has no other candidate, permanently unmatched. Verified empirically against the actual
+  // pre-fix greedy implementation: it returns [true, false] for this exact fixture, not [true, true].
+  //
+  // A maximum matching finds the better assignment (A -> N2, B -> N1, via one augmenting-path re-route) and
+  // reports both as surviving -- closing the false "resolved duplication" gap #4812 tracks.
+  const oldA = { norm: [...DUP_BLOCK, ...OTHER_BLOCK], lineNos: Array.from({ length: 16 }, (_, i) => i + 1) };
+  const oldB = { norm: DUP_BLOCK, lineNos: [50, 51, 52, 53, 54, 55, 56, 57] };
+  const newN1 = buildMatchIndex({ norm: DUP_BLOCK, lineNos: [3, 4, 5, 6, 7, 8, 9, 10] });
+  const newN2 = buildMatchIndex({ norm: OTHER_BLOCK, lineNos: [20, 21, 22, 23, 24, 25, 26, 27] });
+  assert.deepEqual(assignSurvivors([oldA, oldB], [newN1, newN2], undefined), [true, true]);
+});
+
+test("assignSurvivors: an odd number (3) of old blocks against two new occurrences — the augmenting search re-routes to match two, the un-matchable third correctly does not survive", () => {
+  // Extends the asymmetric fixture with a THIRD old block (C) that, like B, matches ONLY the DUP_BLOCK new
+  // occurrence. Only 2 new occurrences exist, so at most 2 of the 3 old blocks can ever survive -- exercises the
+  // augmenting-path search's OWN re-route failing (C tries to displace B from N1, recurses into B's search, which
+  // exhausts every new index and returns false) in addition to the re-route that DOES succeed (B displacing A).
+  const oldA = { norm: [...DUP_BLOCK, ...OTHER_BLOCK], lineNos: Array.from({ length: 16 }, (_, i) => i + 1) };
+  const oldB = { norm: DUP_BLOCK, lineNos: [50, 51, 52, 53, 54, 55, 56, 57] };
+  const oldC = { norm: DUP_BLOCK, lineNos: [60, 61, 62, 63, 64, 65, 66, 67] };
+  const newN1 = buildMatchIndex({ norm: DUP_BLOCK, lineNos: [3, 4, 5, 6, 7, 8, 9, 10] });
+  const newN2 = buildMatchIndex({ norm: OTHER_BLOCK, lineNos: [20, 21, 22, 23, 24, 25, 26, 27] });
+  assert.deepEqual(assignSurvivors([oldA, oldB, oldC], [newN1, newN2], undefined), [true, true, false]);
+});
+
+test("assignSurvivors: an odd number (3) of identical old blocks against a single new occurrence — exactly one survives", () => {
+  const oldBlocks = [
+    { norm: DUP_BLOCK, lineNos: [1, 2, 3, 4, 5, 6, 7, 8] },
+    { norm: DUP_BLOCK, lineNos: [20, 21, 22, 23, 24, 25, 26, 27] },
+    { norm: DUP_BLOCK, lineNos: [40, 41, 42, 43, 44, 45, 46, 47] },
+  ];
+  const newIndices = [buildMatchIndex({ norm: DUP_BLOCK, lineNos: [3, 4, 5, 6, 7, 8, 9, 10] })];
+  assert.deepEqual(assignSurvivors(oldBlocks, newIndices, undefined), [true, false, false]);
+});
+
+test("assignSurvivors: an odd number (3) of new occurrences, most non-matching (decoys) — same result as if the decoys were absent", () => {
+  const oldBlocks = [
+    { norm: DUP_BLOCK, lineNos: [3, 4, 5, 6, 7, 8, 9, 10] },
+    { norm: DUP_BLOCK, lineNos: [12, 13, 14, 15, 16, 17, 18, 19] },
+  ];
+  const newIndices = [
+    buildMatchIndex({ norm: OTHER_BLOCK, lineNos: [1, 2, 3, 4, 5, 6, 7, 8] }), // decoy: does not match either old block
+    buildMatchIndex({ norm: DUP_BLOCK, lineNos: [20, 21, 22, 23, 24, 25, 26, 27] }), // the one real match
+    buildMatchIndex({ norm: ["a totally unrelated short filler line here"], lineNos: [40] }), // decoy: too short to match
+  ];
+  assert.deepEqual(assignSurvivors(oldBlocks, newIndices, undefined), [true, false]);
+});
+
+test("assignSurvivors: a signal that aborts on the OUTER per-old-block checkpoint during phase 1 discards the whole result, including an already-confirmed row", () => {
+  // Read #5 lands on the outer per-old-block abort check for i=1 -- AFTER old block 0's adjacency row (which DOES
+  // match) has already been fully computed (reads #1-4: top-level check, i=0's outer check, i=0/n=0's inner
+  // check, then longestSharedRun's own a=0 poll). Even though old block 0 would clearly survive, a mid-build
+  // abort must discard everything computed so far in phase 1 rather than let phase 2 match over an incomplete
+  // adjacency matrix -- which could silently under-report a survivor exactly like the old greedy bug.
+  let reads = 0;
+  const fakeSignal = {
+    get aborted() {
+      reads += 1;
+      return reads === 5;
+    },
+  };
+  const oldBlocks = [
+    { norm: DUP_BLOCK, lineNos: [1, 2, 3, 4, 5, 6, 7, 8] },
+    { norm: DUP_BLOCK, lineNos: [20, 21, 22, 23, 24, 25, 26, 27] },
+  ];
+  const newIndices = [buildMatchIndex({ norm: DUP_BLOCK, lineNos: [1, 2, 3, 4, 5, 6, 7, 8] })];
+  assert.deepEqual(assignSurvivors(oldBlocks, newIndices, fakeSignal), [false, false]);
+});
+
+test("assignSurvivors: a signal that aborts on the INNER per-new-index checkpoint during phase 1 discards the whole result", () => {
+  // Read #5 lands on the inner per-new-index abort check for n=1, after n=0 was already compared for the only old
+  // block (reads #1-4: top-level, outer i=0, inner n=0, longestSharedRun's a=0 poll for n=0). Exercises the INNER
+  // loop's own checkpoint, a distinct line from the outer per-old-block one covered by the prior test.
+  let reads = 0;
+  const fakeSignal = {
+    get aborted() {
+      reads += 1;
+      return reads === 5;
+    },
+  };
+  const oldBlocks = [{ norm: DUP_BLOCK, lineNos: [1, 2, 3, 4, 5, 6, 7, 8] }];
+  const newIndices = [
+    buildMatchIndex({ norm: DUP_BLOCK, lineNos: [1, 2, 3, 4, 5, 6, 7, 8] }),
+    buildMatchIndex({ norm: OTHER_BLOCK, lineNos: [20, 21, 22, 23, 24, 25, 26, 27] }),
+  ];
+  assert.deepEqual(assignSurvivors(oldBlocks, newIndices, fakeSignal), [false]);
+});
+
+test("assignSurvivors: a signal that flips aborted INSIDE a longestSharedRun call itself (not either loop's own checkpoint) still discards the whole result", () => {
+  // Read #4 lands on longestSharedRun's own internal poll (its first line, a=0) for the only old/new pair --
+  // AFTER assignSurvivors' own pre-checks (top-level, outer i=0, inner n=0) already saw "not aborted" (reads
+  // #1-3). Exercises the `run?.status === "aborted"` branch specifically, distinct from either loop's own
+  // checkpoint covered by the two prior tests.
+  let reads = 0;
+  const fakeSignal = {
+    get aborted() {
+      reads += 1;
+      return reads === 4;
+    },
+  };
+  const oldBlocks = [{ norm: DUP_BLOCK, lineNos: [1, 2, 3, 4, 5, 6, 7, 8] }];
+  const newIndices = [buildMatchIndex({ norm: DUP_BLOCK, lineNos: [1, 2, 3, 4, 5, 6, 7, 8] })];
+  assert.deepEqual(assignSurvivors(oldBlocks, newIndices, fakeSignal), [false]);
 });
 
 // ── scanDuplicationDelta: fail-safe guards ──────────────────────────────────

@@ -9,13 +9,13 @@
 // duplicate" is identical between the add-detector and this remove-detector — never a second, differently-tuned
 // similarity algorithm running side by side with the first.
 //
-// Scope (v1): PER FILE only. For each changed file, find pairs of near-identical blocks that existed in its
-// RECONSTRUCTED OLD content, then GREEDILY ASSIGN each old block (in file order) to an unclaimed matching NEW
-// block. That assignment step matters: if OLD had two near-identical copies of some text and NEW keeps exactly
-// one, a naive "does this old block's text exist ANYWHERE in NEW" check would say BOTH old copies "survive" (the
-// single remaining occurrence matches either query) and the resolved-duplication signal would never fire. Greedy
-// assignment lets only as many old blocks "survive" as there are still-distinct matching occurrences in NEW; any
-// old block left unclaimed — but that WAS part of an old duplicate pair — is the resolved-duplication finding.
+// Scope: PER FILE only. For each changed file, find pairs of near-identical blocks that existed in its
+// RECONSTRUCTED OLD content, then assign each old block to an unclaimed matching NEW block via a maximum
+// bipartite matching (#4812) over the old/new candidate graph — never a naive per-block "does this old block's
+// text exist ANYWHERE in NEW" check, which would say BOTH old copies of a since-deduped block "survive" (the
+// single remaining occurrence matches either query) and the resolved-duplication signal would never fire. The
+// matching lets only as many old blocks "survive" as there are still-distinct matching occurrences in NEW; any
+// old block left unmatched — but that WAS part of an old duplicate pair — is the resolved-duplication finding.
 // Cross-file duplication removal (the twin lived in a DIFFERENT file, changed or not) is NOT detected —
 // deliberately out of scope for this version (see PR description for the follow-up), not silently approximated.
 //
@@ -132,44 +132,72 @@ export function findInternalDuplicatePairs(
   return pairs;
 }
 
-/** Greedily assign each OLD block (in file order) to an UNCLAIMED matching NEW block (>= MIN_RUN significant
- *  lines), each NEW block usable by at most one OLD block. This is what lets duplicate COUNT reductions show up:
- *  if OLD had N near-identical copies of some text and NEW retains only M (M < N), exactly M of the N old blocks
- *  claim a surviving NEW occurrence and the remaining (N - M) do not — instead of every old copy independently
- *  matching the SAME still-present text and all appearing to "survive". Returns a parallel boolean array over
- *  `oldBlocks`. An aborted signal stops early; every OLD block not yet processed is left `false` ("not confirmed
- *  to survive") rather than risk reporting a stale/partial comparison as conclusive.
+/** Assign each OLD block to an UNCLAIMED matching NEW block (>= MIN_RUN significant lines) via a true MAXIMUM
+ *  bipartite matching — Kuhn's algorithm, an O(V*E) augmenting-path search over the old-block/new-index
+ *  candidate graph — each NEW block usable by at most one OLD block. This is what lets duplicate COUNT
+ *  reductions show up: if OLD had N near-identical copies of some text and NEW retains only M (M < N), exactly M
+ *  of the N old blocks claim a surviving NEW occurrence and the remaining (N - M) do not — instead of every old
+ *  copy independently matching the SAME still-present text and all appearing to "survive". Returns a parallel
+ *  boolean array over `oldBlocks`.
  *
- *  KNOWN v1 LIMITATION: this is a greedy, order-dependent assignment, not a globally optimal bipartite matching.
- *  In a multi-candidate scenario where old blocks match NEW occurrences asymmetrically (e.g. old block A matches
- *  BOTH remaining new occurrences but old block B matches only one of them), first-come-first-claimed can let A
- *  grab the occurrence B needed, leaving B unmatched even though a different (optimal) assignment would have
- *  paired both. The practical effect is a false "resolved" report for a duplicate pair that is, in fact, still
- *  present — never a crash or a data-integrity issue, since this is an ADVISORY-ONLY signal (see epic #4737's
- *  design constraints) that never gates anything. A true maximum-bipartite-matching algorithm (e.g. an
- *  augmenting-path search) would close this gap; tracked as a separate, non-urgent follow-up rather than
- *  attempted here. */
+ *  A maximum matching (rather than a greedy, order-dependent one) is required because old-to-new candidacy can be
+ *  asymmetric: if old block A matches BOTH of two remaining NEW occurrences but old block B matches only ONE of
+ *  them, a first-come-first-claimed walk can let A grab the occurrence B needed, under-reporting a pair that is,
+ *  in fact, still present (#4812, closing a known v1 heuristic gap). Kuhn's algorithm avoids this by re-routing
+ *  an already-matched old block onto a different NEW occurrence it also fits, whenever doing so frees up an
+ *  augmenting path for the old block currently being placed — so every old block that COULD be matched, IS
+ *  matched.
+ *
+ *  Two-phase, so the abort-signal contract stays exactly what it was: phase 1 builds the full old×new adjacency
+ *  matrix (the only part that calls `longestSharedRun`, i.e. the only part that can be slow or need aborting);
+ *  phase 2 runs Kuhn's search purely over that already-known, in-memory boolean matrix (no further comparison
+ *  work, so nothing left to abort). An aborted signal — checked before starting, and again before/after every
+ *  `longestSharedRun` call in phase 1 — discards the whole in-progress matrix and returns all-`false` rather than
+ *  run the matching over incomplete candidacy data, which could silently under-report a survivor exactly the way
+ *  the old greedy version could. */
 export function assignSurvivors(
   oldBlocks: NormBlock[],
   newIndices: MatchIndex[],
   signal: AbortSignal | undefined,
 ): boolean[] {
-  const claimed = new Array<boolean>(newIndices.length).fill(false);
   const survived = new Array<boolean>(oldBlocks.length).fill(false);
+  if (signal?.aborted) return survived;
+
+  // Phase 1: the full candidacy matrix, `adjacency[i][n]` true iff old block i shares a >= MIN_RUN run with new
+  // index n. Any abort here discards everything (returns all-`false`) — a partially built matrix under-counts
+  // real edges, and matching over it would silently reintroduce the old greedy bug in a new shape.
+  const adjacency: boolean[][] = [];
   for (let i = 0; i < oldBlocks.length; i += 1) {
     if (signal?.aborted) return survived;
+    const row = new Array<boolean>(newIndices.length).fill(false);
     for (let n = 0; n < newIndices.length; n += 1) {
-      if (claimed[n]) continue;
       if (signal?.aborted) return survived;
       const run = longestSharedRun(oldBlocks[i]!, newIndices[n]!, signal);
       if (run?.status === "aborted") return survived;
-      if (run?.status === "matched") {
-        claimed[n] = true;
-        survived[i] = true;
-        break;
+      if (run?.status === "matched") row[n] = true;
+    }
+    adjacency.push(row);
+  }
+
+  // Phase 2: Kuhn's algorithm. `matchOf[n]` is the OLD block index currently claiming NEW index `n` (-1 = free).
+  // `visited` is scoped to one top-level old block's augmenting search so a NEW index already tried (and
+  // rejected) THIS search is never revisited, but is fair game for the NEXT old block's own search.
+  const matchOf = new Array<number>(newIndices.length).fill(-1);
+  const tryAugment = (i: number, visited: boolean[]): boolean => {
+    for (let n = 0; n < newIndices.length; n += 1) {
+      if (!adjacency[i]![n] || visited[n]) continue;
+      visited[n] = true;
+      if (matchOf[n] === -1 || tryAugment(matchOf[n]!, visited)) {
+        matchOf[n] = i;
+        return true;
       }
     }
+    return false;
+  };
+  for (let i = 0; i < oldBlocks.length; i += 1) {
+    survived[i] = tryAugment(i, new Array<boolean>(newIndices.length).fill(false));
   }
+
   return survived;
 }
 

@@ -965,7 +965,7 @@ services:
       interval: 30s
       retries: 5
 
-# Native Docker Compose secrets (#4937-secrets-hardening): file-mounted (at /run/secrets/<name>), never
+# Native Docker Compose secrets: file-mounted (at /run/secrets/<name>), never
 # exposed via `docker inspect`/`docker compose config` the way a plain `environment:`/`env_file` value is.
 # Read by the app's existing generic <NAME>_FILE loader (src/selfhost/load-file-secrets.ts) via the
 # `environment:` defaults set below on the gittensory service. Every file here is created empty (a no-op --

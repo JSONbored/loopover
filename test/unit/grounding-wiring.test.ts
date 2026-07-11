@@ -539,6 +539,46 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
     fetchSpy.mockRestore();
   });
 
+  it("REGRESSION (#4584): a truncated fetch is never cached, so a later call with a LARGER cap for the same (repo, path, ref) still fetches fresh instead of reusing the smaller cap's placeholder", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
+    const full = "export const secret = 'token_after_the_small_cap';";
+    let fetchCount = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = String(url);
+      if (u.includes("/contents/truncated.ts")) {
+        fetchCount += 1;
+        // An explicit Content-Length over the caller's cap (as GitHub's Contents API always sends) takes the
+        // early-bail placeholder path -- matches the real exploit shape (`+1` bytes of spaces, not a real prefix).
+        return new Response(full, { status: 200, headers: { "content-length": String(full.length) } });
+      }
+      return new Response("missing", { status: 404 });
+    });
+    const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+    // First caller has a small cap -- the file exceeds it, so getFileContent returns the truncation
+    // placeholder (a string of spaces, maxChars+1 long), which must NOT be cached.
+    const small = await fetcher.getFileContent("truncated.ts", "sha7", 5);
+    expect(small).toBe(" ".repeat(6));
+    // Second caller (e.g. the secret scanner) asks for the SAME file with a cap large enough to fit the
+    // whole body. Before the fix, this would have hit the cache and returned the 6-char space placeholder
+    // (which reads as "complete" against THIS caller's own 100-char cap), silently hiding the real content.
+    const large = await fetcher.getFileContent("truncated.ts", "sha7", 100);
+    expect(large).toBe(full);
+    expect(fetchCount).toBe(2);
+    fetchSpy.mockRestore();
+  });
+
+  it("REGRESSION (#4584): a truncated fetch writes no row to grounding_file_content_cache at all", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("x".repeat(50), { status: 200 }));
+    try {
+      const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+      await fetcher.getFileContent("nocache.ts", "sha7", 10);
+      expect(await getCachedGroundingFileContent(env, "acme/widgets", "nocache.ts", "sha7")).toBeNull();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("a throwing cache READ degrades to a fresh live fetch (fail-safe, never blocks the file fetch)", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
     const prepareSpy = vi.spyOn(env.DB, "prepare").mockImplementation(() => {

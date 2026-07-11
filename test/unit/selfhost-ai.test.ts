@@ -472,6 +472,47 @@ describe("createChainAi (fallback)", () => {
     expect(logged.attempt).toBeUndefined();
     errorSpy.mockRestore();
   });
+
+  it("REGRESSION (#5046): finalAttempt:false logs the provider failure at warn, not error (a retried attempt is not yet Sentry-worthy)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const failing: StubSpawn = async () => ({ stdout: "", code: 1, stderr: "transient" });
+
+    await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, failing).run("m", { prompt: "x", attempt: 0, finalAttempt: false })).rejects.toThrow();
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    const logged = JSON.parse(String(warnSpy.mock.calls[0]?.[0]));
+    expect(logged).toMatchObject({ level: "warn", event: "selfhost_ai_provider_failed", attempt: 0 });
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it("REGRESSION (#5046): finalAttempt:true (the exhausted attempt) still logs the provider failure at error", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const failing: StubSpawn = async () => ({ stdout: "", code: 1, stderr: "final" });
+
+    await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, failing).run("m", { prompt: "x", attempt: 2, finalAttempt: true })).rejects.toThrow();
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    const logged = JSON.parse(String(errorSpy.mock.calls[0]?.[0]));
+    expect(logged).toMatchObject({ level: "error", event: "selfhost_ai_provider_failed", attempt: 2 });
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it("REGRESSION (#5046): a single-shot caller that never sets finalAttempt keeps today's always-loud behavior", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const failing: StubSpawn = async () => ({ stdout: "", code: 1, stderr: "single shot" });
+
+    await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, failing).run("m", { prompt: "x" })).rejects.toThrow();
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
 });
 
 describe("AI provider request duration/error metrics (#4367)", () => {

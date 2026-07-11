@@ -147,12 +147,20 @@ async function runWorkersSlopOpinion(env: Env, system: string, user: string, max
   const gatewayId = env.AI_GATEWAY_ID?.trim();
   const extra: AiGatewayOptions | undefined = gatewayId ? { gateway: { id: gatewayId } } : undefined;
   // Primary then a reliable per-slot fallback (distinct model families), 3× retry each before giving up.
-  for (const model of WORKERS_SLOP_MODELS) {
+  for (const [modelIndex, model] of WORKERS_SLOP_MODELS.entries()) {
     for (let attempt = 0; attempt < WORKERS_SLOP_ATTEMPTS_PER_MODEL; attempt += 1) {
       try {
+        // #5046: this loop has no logging of its own -- the provider's own error log is the ONLY visibility
+        // into a failure here, so the truly last attempt must stay Sentry-visible (finalAttempt unset/true);
+        // every earlier attempt is about to be retried and can log quietly.
         const result = await ai.run(
           model,
-          { max_tokens: maxTokens, temperature: 0, messages: [{ role: "system", content: system }, { role: "user", content: user }] },
+          {
+            max_tokens: maxTokens,
+            temperature: 0,
+            messages: [{ role: "system", content: system }, { role: "user", content: user }],
+            finalAttempt: attempt === WORKERS_SLOP_ATTEMPTS_PER_MODEL - 1 && modelIndex === WORKERS_SLOP_MODELS.length - 1,
+          },
           extra,
         );
         const parsed = parseSlopOpinion(coerceAiText(result));

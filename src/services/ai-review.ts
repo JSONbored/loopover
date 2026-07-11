@@ -1069,6 +1069,10 @@ async function runWorkersOpinion(
             ...(correlation?.openaiCompatibleModel !== undefined ? { openaiCompatibleModel: correlation.openaiCompatibleModel } : {}),
             ...(correlation?.anthropicModel !== undefined ? { anthropicModel: correlation.anthropicModel } : {}),
             attempt,
+            // #5046: only the truly last attempt (last model, last retry) should escalate to Sentry via the
+            // provider's own error log -- every earlier attempt in this loop is about to be retried, and this
+            // loop's own per-attempt warn below is already the correct signal for those.
+            finalAttempt: attempt === 2 && modelIndex === models.length - 1,
           },
           extra,
         );
@@ -1790,6 +1794,9 @@ async function runDualAiTieBreakJudgeCall(
               : {}),
             ...(correlation?.pullNumber !== undefined ? { pullNumber: correlation.pullNumber } : {}),
             attempt,
+            // #5046: same reasoning as runWorkersOpinion above -- only the truly last attempt escalates the
+            // provider's own error log to Sentry.
+            finalAttempt: attempt === 2 && modelIndex === models.length - 1,
           },
           extra,
         );

@@ -40,6 +40,15 @@ interface AiRunOptions {
   repoFullName?: string;
   pullNumber?: number;
   attempt?: number;
+  // True (or omitted, the safe default) when this is the LAST attempt the caller's own retry loop will make —
+  // false marks an attempt the caller is about to retry. logSelfHostAiProviderFailed uses this to log at warn
+  // (a retried attempt is not yet a real problem) instead of error (Sentry-visible) for a non-final attempt,
+  // matching the "per-attempt=warn, exhausted=error" policy runWorkersOpinion's OWN logging already documents
+  // (#26) -- previously this file's error log fired on every single attempt regardless, amplifying one review's
+  // 3x-retry-per-model into up to 6 separate Sentry events for what the caller treats as one failure (#5046).
+  // Callers with no retry loop of their own (a single ai.run() call) leave this unset, so their one attempt IS
+  // final and stays loud, unchanged from before this field existed.
+  finalAttempt?: boolean;
   // `.gittensory.yml` `review.ai_model` (#selfhost-ai-model-override): per-repo override for the subscription
   // CLI providers, resolved by the caller from the repo's manifest and forwarded here so this file makes no
   // manifest fetch of its own. Each field is read ONLY by its matching provider's `.run()` (claude-code reads
@@ -786,10 +795,16 @@ function logSelfHostAiProviderFailed(input: {
   repoFullName?: string | undefined;
   pullNumber?: number | undefined;
   attempt?: number | undefined;
+  finalAttempt?: boolean | undefined;
 }): void {
-  console.error(
+  // #5046: only the FINAL attempt of a caller's own retry loop is Sentry-visible (error); a retried attempt logs
+  // at warn (still in Workers Logs, but not forwarded) -- explicit `false` is the only thing that quiets it, so
+  // a single-shot caller that never sets this field keeps today's always-loud behavior.
+  const level = input.finalAttempt === false ? "warn" : "error";
+  const log = level === "warn" ? console.warn : console.error;
+  log(
     JSON.stringify({
-      level: "error",
+      level,
       event: "selfhost_ai_provider_failed",
       provider: input.provider,
       model: input.model || "default",
@@ -884,6 +899,7 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
           repoFullName: options.repoFullName,
           pullNumber: options.pullNumber,
           attempt: options.attempt,
+          finalAttempt: options.finalAttempt,
         });
         throw error;
       } finally {
@@ -982,6 +998,7 @@ export function createCodexAi(
           repoFullName: options.repoFullName,
           pullNumber: options.pullNumber,
           attempt: options.attempt,
+          finalAttempt: options.finalAttempt,
         });
         throw error;
       } finally {

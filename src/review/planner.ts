@@ -113,10 +113,14 @@ async function runPlannerModel(env: Env, system: string, user: string): Promise<
   if (!ai || typeof ai.run !== "function") return { text: null };
   const gatewayId = env.AI_GATEWAY_ID?.trim();
   const extra = gatewayId ? { gateway: { id: gatewayId } } : undefined;
-  for (const model of [BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0]]) {
+  const models = [BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0]];
+  for (const [modelIndex, model] of models.entries()) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const result = await ai.run(model, { max_tokens: PLANNER_MAX_TOKENS, temperature: 0.2, messages: [{ role: "system", content: system }, { role: "user", content: user }] }, extra);
+        // #5046: this loop has no logging of its own -- the provider's own error log is the ONLY visibility
+        // into a failure here, so the truly last attempt must stay Sentry-visible (finalAttempt unset/true);
+        // every earlier attempt is about to be retried and can log quietly.
+        const result = await ai.run(model, { max_tokens: PLANNER_MAX_TOKENS, temperature: 0.2, messages: [{ role: "system", content: system }, { role: "user", content: user }], finalAttempt: attempt === 1 && modelIndex === models.length - 1 }, extra);
         const text = coerceAiText(result).trim();
         if (text) return { text, usage: coerceAiUsage(result) };
       } catch {

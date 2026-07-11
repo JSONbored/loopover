@@ -224,6 +224,16 @@ describe("GitHub PR action primitives (#778)", () => {
     expect(calls[0]?.url).toMatch(/\/repos\/owner\/repo\/issues\/7\/comments$/);
   });
 
+  it("#5063: surfaces the created comment's html_url (used to build the ask/chat 'replying to' link) when GitHub returns one", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return Response.json({ id: 9, html_url: "https://github.com/owner/repo/pull/7#issuecomment-9" });
+    });
+    const result = await createIssueComment(envWithKey(), 123, "owner/repo", 7, "hello");
+    expect(result).toEqual({ id: 9, html_url: "https://github.com/owner/repo/pull/7#issuecomment-9" });
+  });
+
   it("walks paginated issue events to find the true most recent closer", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

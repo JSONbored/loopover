@@ -302,11 +302,33 @@ describe("generateChatQaAnswer", () => {
     expect(result).toMatchObject({ status: "error", reason: "chat_answer_failed" });
   });
 
-  it("reports an error status when the provider returns an empty/unrecognized response shape", async () => {
+  it("reports an error status when the provider returns an empty/unrecognized response shape on BOTH attempts (retries once, then gives up)", async () => {
     const run = vi.fn(async () => ({ unexpected: "shape" }));
     const env = createTestEnv({ AI_ADVISORY: { run } as unknown as Ai, AI_DAILY_NEURON_BUDGET: "10000" });
     const result = await generateChatQaAnswer(env, { bundle: bundleFixture(), question: "why?", advisoryAiRouting: ADVISORY_ON, repoFullName: "owner/repo", issueNumber: 1 });
     expect(result).toMatchObject({ status: "error", reason: "empty_chat_answer" });
+    expect(run).toHaveBeenCalledTimes(2); // one bare retry on an empty completion, not an unbounded loop
+  });
+
+  it("recovers a transiently-empty first completion: retries once and succeeds when the second attempt returns real text", async () => {
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({ unexpected: "shape" })
+      .mockResolvedValueOnce({ response: "Recovered on the second attempt." });
+    const env = createTestEnv({ AI_ADVISORY: { run } as unknown as Ai, AI_DAILY_NEURON_BUDGET: "10000" });
+    const result = await generateChatQaAnswer(env, { bundle: bundleFixture(), question: "why?", advisoryAiRouting: ADVISORY_ON, repoFullName: "owner/repo", issueNumber: 1 });
+    expect(result).toMatchObject({ status: "ok", text: "Recovered on the second attempt." });
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("never retries when the provider throws (network/auth failure), only when it resolves empty", async () => {
+    const run = vi.fn(async () => {
+      throw new Error("provider_down");
+    });
+    const env = createTestEnv({ AI_ADVISORY: { run } as unknown as Ai, AI_DAILY_NEURON_BUDGET: "10000" });
+    const result = await generateChatQaAnswer(env, { bundle: bundleFixture(), question: "why?", advisoryAiRouting: ADVISORY_ON, repoFullName: "owner/repo", issueNumber: 1 });
+    expect(result).toMatchObject({ status: "error", reason: "provider_down" });
+    expect(run).toHaveBeenCalledTimes(1); // a thrown error is not the "empty completion" case -- no retry
   });
 });
 

@@ -795,6 +795,35 @@ describe("GitHub mention commands", () => {
     expect(notRouted).not.toContain("Interpreted");
   });
 
+  it("#5063: renders a 'replying to' link and the fresh-reply phrasing when replyingToUrl is set (ask/chat only), and the original in-place phrasing when it is not", () => {
+    const reply = buildPublicAgentCommandComment({
+      env: {},
+      command: parseGittensoryMentionCommand("@gittensory ask what should I fix first?")!,
+      repo: null,
+      issue: { number: 40, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "author",
+      bundle: sampleBundle(),
+      replyingToUrl: "https://github.com/acme/widget/pull/40#issuecomment-123456789",
+    });
+    expect(reply).toContain("> 💬 Replying to [this comment](https://github.com/acme/widget/pull/40#issuecomment-123456789).");
+    expect(reply).toContain("Gittensory posted this as a fresh reply -- it never updates or replaces the PR review panel.");
+    expect(reply).not.toContain("Gittensory updated this command response in place");
+
+    const panelUpdate = buildPublicAgentCommandComment({
+      env: {},
+      command: parseGittensoryMentionCommand("@gittensory preflight")!,
+      repo: null,
+      issue: { number: 41, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "author",
+      bundle: sampleBundle(),
+    });
+    expect(panelUpdate).not.toContain("Replying to");
+    expect(panelUpdate).toContain("Gittensory updated this command response in place from cached public-safe context.");
+    expect(panelUpdate).not.toContain("fresh reply");
+  });
+
   it("REGRESSION (#4596): neutralizes markdown/HTML and zero-width-spaces @mentions in the interpreted-from question, same as the ask/chat question lines (#2457)", () => {
     const forged = buildPublicAgentCommandComment({
       env: {},

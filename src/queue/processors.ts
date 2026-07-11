@@ -12652,6 +12652,14 @@ async function maybeProcessGittensoryMentionCommand(
           route: "github_app.chat_qa",
         })
       : null;
+  // Q&A commands (#5063): ask/chat answer a SPECIFIC question at a point in time, unlike every other command
+  // here (preflight/blockers/etc.), which reports the PR's CURRENT state and therefore reasonably shares one
+  // persistent, continuously-updated panel comment. Reusing that same panel slot for ask/chat meant each new
+  // question silently overwrote the previous answer (and could overwrite the review verdict itself), with the
+  // reply landing wherever the panel comment originally happened to sit -- never near the question that
+  // prompted it. Post a fresh reply per invocation instead, linking back to the triggering comment.
+  const isQaCommand = command.name === "ask" || command.name === "chat";
+  const replyingToUrl = isQaCommand ? (payload.comment?.html_url ?? undefined) : undefined;
   const body = buildPublicAgentCommandComment({
     command,
     repo,
@@ -12665,16 +12673,21 @@ async function maybeProcessGittensoryMentionCommand(
     maintainerDigest,
     chatAnswer,
     interpretedFrom,
+    replyingToUrl,
     env,
   });
-  const responseComment = await createOrUpdateAgentCommandComment(
-    env,
-    installationId,
-    repoFullName,
-    issue.number,
-    body,
-    mentionMode,
-  );
+  const responseComment = isQaCommand
+    ? mentionMode === "live"
+      ? await createIssueComment(env, installationId, repoFullName, issue.number, body)
+      : null
+    : await createOrUpdateAgentCommandComment(
+        env,
+        installationId,
+        repoFullName,
+        issue.number,
+        body,
+        mentionMode,
+      );
   await upsertAgentCommandAnswer(env, {
     id: answerId,
     repoFullName,
@@ -12690,10 +12703,12 @@ async function maybeProcessGittensoryMentionCommand(
       responseCommentStored: Boolean(responseComment?.id),
     },
   });
-  // createOrUpdateAgentCommandComment already suppresses the answer-card post for a non-live mode. As with
-  // gate-override above, what must NOT happen unconditionally is recording this as a completed reply: a
-  // paused/dry-run mention command never posted the card, so telemetry (and the feedback prompt, which
-  // presumes a real reply exists to react to) must reflect that instead of a reply that never happened.
+  // Both posting paths above suppress the actual write for a non-live mode -- createOrUpdateAgentCommandComment
+  // does it internally; the isQaCommand branch checks mentionMode itself before calling createIssueComment,
+  // which has no such awareness of its own. As with gate-override above, what must NOT happen unconditionally
+  // is recording this as a completed reply: a paused/dry-run mention command never posted anything, so
+  // telemetry (and the feedback prompt, which presumes a real reply exists to react to) must reflect that
+  // instead of a reply that never happened.
   if (mentionMode === "live") {
     await recordAuditEvent(env, {
       eventType: "github_app.agent_command_replied",

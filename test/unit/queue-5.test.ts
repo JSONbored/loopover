@@ -1301,6 +1301,151 @@ describe("queue processors", () => {
       expect(seen.comments[0]).not.toContain("not enabled on this instance");
     });
 
+    it("#5063: posts a FRESH, separate reply comment for each chat invocation (never edits a shared comment), each linking back to its own triggering comment", async () => {
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI_ADVISORY: { run: async () => ({ response: "Answer to the question." }) } as unknown as Ai,
+      });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 320, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
+      const posted: Array<{ body: string; commentId: number }> = [];
+      let nextResponseCommentId = 9500;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("raw.githubusercontent.com") && url.includes(".gittensory.yml")) {
+          return new Response("settings:\n  advisoryAiRouting:\n    chatQa: true\n", { status: 200 });
+        }
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
+        if (url.includes("/issues/320/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/320/comments") && method === "POST") {
+          const body = String(JSON.parse(String(init?.body ?? "{}")).body ?? "");
+          const id = nextResponseCommentId++;
+          posted.push({ body, commentId: id });
+          return Response.json({ id, html_url: `https://github.com/JSONbored/gittensory/pull/320#issuecomment-${id}` }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      const basePayload = {
+        action: "created" as const,
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 320, title: "Rate limit target", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+      };
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "qa-reply-first",
+        eventName: "issue_comment",
+        payload: {
+          ...basePayload,
+          comment: { id: 9001, body: "@gittensory chat what does this PR add?", html_url: "https://github.com/JSONbored/gittensory/pull/320#issuecomment-9001", user: { login: "maintainer", type: "User" }, author_association: "OWNER" },
+        },
+      });
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "qa-reply-second",
+        eventName: "issue_comment",
+        payload: {
+          ...basePayload,
+          comment: { id: 9002, body: "@gittensory chat tell me more?", html_url: "https://github.com/JSONbored/gittensory/pull/320#issuecomment-9002", user: { login: "maintainer", type: "User" }, author_association: "OWNER" },
+        },
+      });
+      expect(posted).toHaveLength(2); // two distinct replies -- never one comment overwritten twice
+      expect(posted[0]?.body).toContain("Replying to [this comment](https://github.com/JSONbored/gittensory/pull/320#issuecomment-9001)");
+      expect(posted[1]?.body).toContain("Replying to [this comment](https://github.com/JSONbored/gittensory/pull/320#issuecomment-9002)");
+      expect(posted[0]?.commentId).not.toBe(posted[1]?.commentId);
+    });
+
+    it("#5063: never edits an existing PR-panel review comment when dispatching chat -- posts a separate reply instead", async () => {
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI_ADVISORY: { run: async () => ({ response: "Answer." }) } as unknown as Ai,
+      });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 321, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
+      const patchCalls: string[] = [];
+      const postedBodies: string[] = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("raw.githubusercontent.com") && url.includes(".gittensory.yml")) {
+          return new Response("settings:\n  advisoryAiRouting:\n    chatQa: true\n", { status: 200 });
+        }
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
+        if (url.includes("/issues/321/comments") && method === "GET") {
+          // An existing PR-panel review comment: createOrUpdateAgentCommandComment would find + edit this for
+          // any OTHER command's answer card, but chat must never reach (or touch) it.
+          return Response.json([{ id: 500, body: "<!-- gittensory-pr-panel:v1 -->\n\nExisting review verdict.", user: { login: "gittensory-orb[bot]", type: "Bot" } }]);
+        }
+        if (url.includes("/issues/comments/500") && method === "PATCH") {
+          patchCalls.push(url);
+          return Response.json({ id: 500 });
+        }
+        if (url.includes("/issues/321/comments") && method === "POST") {
+          const body = String(JSON.parse(String(init?.body ?? "{}")).body ?? "");
+          postedBodies.push(body);
+          return Response.json({ id: 999, html_url: "https://github.com/JSONbored/gittensory/pull/321#issuecomment-999" }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "qa-reply-preserves-panel",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 321, title: "Rate limit target", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+          comment: { id: 7001, body: "@gittensory chat what changed?", html_url: "https://github.com/JSONbored/gittensory/pull/321#issuecomment-7001", user: { login: "maintainer", type: "User" }, author_association: "OWNER" },
+        },
+      });
+      expect(patchCalls).toHaveLength(0); // the existing panel comment (id 500) is never edited
+      expect(postedBodies).toHaveLength(1); // chat's answer is a brand-new comment instead
+      expect(postedBodies[0]).toContain("Replying to");
+      expect(postedBodies[0]).not.toContain("Existing review verdict");
+    });
+
+    it("#5063: dry-run mode never posts a live chat reply, but still records the reply as never-happened (not a completed answer)", async () => {
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI_ADVISORY: { run: async () => ({ response: "Answer to the question." }) } as unknown as Ai,
+      });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentDryRun: true });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 322, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
+      const postedBodies: string[] = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("raw.githubusercontent.com") && url.includes(".gittensory.yml")) {
+          return new Response("settings:\n  advisoryAiRouting:\n    chatQa: true\n", { status: 200 });
+        }
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
+        if (url.includes("/issues/322/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/322/comments") && method === "POST") {
+          postedBodies.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? ""));
+          return Response.json({ id: 1 }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "qa-reply-dry-run",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 322, title: "Rate limit target", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+          comment: { id: 7002, body: "@gittensory chat what changed?", html_url: "https://github.com/JSONbored/gittensory/pull/322#issuecomment-7002", user: { login: "maintainer", type: "User" }, author_association: "OWNER" },
+        },
+      });
+      expect(postedBodies).toHaveLength(0); // dry-run: createIssueComment is never called at all
+      const replied = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.agent_command_replied'").first<{ n: number }>();
+      expect(replied?.n).toBe(0); // no reply was actually posted, so it must not be recorded as one
+    });
+
     it("#4595: chat declines gracefully end-to-end (never posts model text) when chatQa is off, the default", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 308, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });

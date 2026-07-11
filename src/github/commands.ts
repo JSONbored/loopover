@@ -417,6 +417,11 @@ export function buildPublicAgentCommandComment(args: {
    *  mention to `matchedCommand` -- shown as a visible "interpreted as" note (req 6) so a wrong match is
    *  immediately correctable, rather than silently answering a different question than the one asked. */
   interpretedFrom?: { question: string; matchedCommand: GittensoryMentionCommandName } | undefined;
+  /** GitHub's own `html_url` for the triggering comment (from the webhook payload), set by the dispatcher only
+   *  for ask/chat -- these two post a FRESH reply per invocation instead of updating the shared PR panel in
+   *  place, so this renders a visible "replying to" link back to the specific question being answered. Every
+   *  other command still shares the panel slot and has no single triggering comment to point back at. */
+  replyingToUrl?: string | undefined;
   /** Resolved by the caller from `env.PUBLIC_SITE_ORIGIN` -- see `gittensoryFooter` (#4613). */
   env: GittensoryFooterEnv;
 }): string {
@@ -447,7 +452,9 @@ export function buildPublicAgentCommandComment(args: {
     "",
     "> [!NOTE]",
     `> **${COMMAND_TITLES[commandName]}**`,
-    "> Gittensory updated this command response in place from cached public-safe context.",
+    args.replyingToUrl
+      ? "> Gittensory posted this as a fresh reply -- it never updates or replaces the PR review panel."
+      : "> Gittensory updated this command response in place from cached public-safe context.",
     "",
     "| Signal | State |",
     "| --- | --- |",
@@ -457,6 +464,7 @@ export function buildPublicAgentCommandComment(args: {
     "",
     `Command: \`@gittensory ${commandName}\``,
     "",
+    ...(args.replyingToUrl ? [`> 💬 Replying to [this comment](${args.replyingToUrl}).`, ""] : []),
     // (#4596 req 6) Free-form contributor text, same neutralization as the chat question line (#2457) --
     // this is the first place a re-routed mention's own text is echoed back into a trusted bot comment.
     ...(args.interpretedFrom

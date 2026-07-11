@@ -181,7 +181,7 @@ export async function updatePullRequestBranch(
 }
 
 /** Post a plain issue/PR comment (used for the templated close message before closing). */
-export async function createIssueComment(env: Env, installationId: number, repoFullName: string, issueNumber: number, body: string): Promise<{ id: number }> {
+export async function createIssueComment(env: Env, installationId: number, repoFullName: string, issueNumber: number, body: string): Promise<{ id: number; html_url?: string | undefined }> {
   const { owner, repo } = splitRepo(repoFullName);
   return withInstallationTokenRetry(env, installationId, async (token) => {
     const octokit = makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));
@@ -191,7 +191,8 @@ export async function createIssueComment(env: Env, installationId: number, repoF
       issue_number: issueNumber,
       body,
     });
-    return { id: (response.data as { id: number }).id };
+    const data = response.data as { id: number; html_url?: string };
+    return { id: data.id, html_url: data.html_url };
   });
 }
 

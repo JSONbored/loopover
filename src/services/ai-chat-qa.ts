@@ -148,15 +148,23 @@ export async function generateChatQaAnswer(env: Env, req: ChatQaRequest): Promis
   }
 
   try {
-    const response = await ai.run(model, {
-      messages: [
-        { role: "system", content: CHAT_QA_SYSTEM_PROMPT },
-        { role: "user", content: prompt },
-      ],
-      max_tokens: maxOutputTokens,
-      temperature: 0.1,
-    });
-    const rawText = extractAiText(response);
+    // A local/quantized model occasionally returns a genuinely empty completion for no discernible reason --
+    // ai.run() resolves normally, extractAiText() just finds nothing usable in it (not a network/auth failure,
+    // which throws instead and is never retried here). One bare retry recovers most of these transient blanks
+    // without masking a real, persistent failure: if it's STILL empty on the second try, the loop falls
+    // through with rawText === "" and the check below throws exactly as it always did.
+    let rawText = "";
+    for (let attempt = 0; attempt < 2 && !rawText; attempt += 1) {
+      const response = await ai.run(model, {
+        messages: [
+          { role: "system", content: CHAT_QA_SYSTEM_PROMPT },
+          { role: "user", content: prompt },
+        ],
+        max_tokens: maxOutputTokens,
+        temperature: 0.1,
+      });
+      rawText = extractAiText(response) ?? "";
+    }
     if (!rawText) throw new Error("empty_chat_answer");
     if (containsPublicForbiddenText(rawText)) {
       await recordChatAi(env, req, { model, status: "unsafe", estimatedNeurons, detail: "chat answer failed public sanitizer", usedFrontier });

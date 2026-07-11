@@ -218,6 +218,27 @@ declare global {
     /** Self-host Slack incoming-webhook URL (`https://hooks.slack.com/services/…`) — per-action notifications
      *  (merged/closed/manual) for ANY repo. Sibling of DISCORD_WEBHOOK_URL; set either, both, or neither. */
     SLACK_WEBHOOK_URL?: string;
+    /** Experimental (#4937/#5007): enables PagerDuty incident paging from src/services/notify-pagerduty.ts.
+     *  Default OFF — unset/false keeps every export there a no-op. Truthy: `/^(1|true|yes|on)$/i`. */
+    GITTENSORY_ENABLE_PAGERDUTY?: string;
+    /** Global fallback PagerDuty Events API v2 routing key (32 lowercase hex chars) for any repo not present in
+     *  PAGERDUTY_REPO_ROUTING_KEYS (a JSON `{repoFullName: routingKey}` map, read directly off the env — same
+     *  deliberately-untyped pattern as DISCORD_REPO_WEBHOOKS, since a free-form per-repo map isn't worth a
+     *  formal interface field). Only read when GITTENSORY_ENABLE_PAGERDUTY is set. */
+    PAGERDUTY_ROUTING_KEY?: string;
+    /** Alert-fatigue control: the minimum anomaly severity (`info` < `warning` < `error` < `critical`) that
+     *  actually pages, for any repo not present in PAGERDUTY_REPO_MIN_SEVERITY (a JSON `{repoFullName:
+     *  severity}` map, same deliberately-untyped pattern as PAGERDUTY_REPO_ROUTING_KEYS). Defaults to `error`
+     *  when unset — the quietest safe default, so routine calibration nudges (gate/slop/recommendation drift)
+     *  never page; only active-incident anomalies (review/failure bursts) do. Lower a specific repo's threshold
+     *  via the map to page on its calibration nudges too. */
+    PAGERDUTY_MIN_SEVERITY?: string;
+    /** Alert-fatigue control: minutes to suppress a REPEAT page for the same repo's ongoing anomaly condition
+     *  (`dedup_key`) after one already paged, for any repo not present in PAGERDUTY_REPO_COOLDOWN_MINUTES (a
+     *  JSON `{repoFullName: minutes}` map, same deliberately-untyped pattern as the other per-repo maps above).
+     *  Defaults to 60 when unset. This is on top of PagerDuty's own `dedup_key` coalescing (which prevents
+     *  duplicate *incidents*, not duplicate *pages* for a still-open one). */
+    PAGERDUTY_COOLDOWN_MINUTES?: string;
     GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN?: string;
     PRODUCT_USAGE_HASH_SALT?: string;
     GITTENSORY_API_TOKEN: string;

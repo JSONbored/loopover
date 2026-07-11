@@ -36,6 +36,7 @@ import { isAgentConfigured } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { loadGatePrecisionReport, type GatePrecisionReport } from "../services/gate-precision";
 import { buildRepoOutcomeCalibration, type OutcomeCalibration } from "../services/outcome-calibration";
+import { triggerPagerDutyIncident, type PagerDutySeverity } from "../services/notify-pagerduty";
 import { errorMessage, nowIso } from "../utils/json";
 
 /** True when the ops observability surface is enabled. Flag-OFF (default) → every export below is a no-op /
@@ -144,6 +145,29 @@ export function detectOutcomeAnomalies(snapshot: RepoOutcomeSnapshot): string[] 
   return out;
 }
 
+/** Classify one {@link detectOutcomeAnomalies} line by how urgently it needs a human, for PagerDuty's
+ *  {@link resolvePagerDutyMinSeverity} gate. The three calibration-style anomalies (gate/slop/recommendation)
+ *  are "worth recalibrating sometime" signals; the two burst anomalies are active-incident signals — the
+ *  #ops-anomaly-metric Prometheus counter below already draws this same line. Matches on each anomaly's own
+ *  fixed message prefix (see {@link detectOutcomeAnomalies}), so this never needs the detector's return type
+ *  (`string[]`) to change and stays decoupled from its already-tested, OpenAPI-exposed shape. */
+export function classifyAnomalySeverity(line: string): PagerDutySeverity {
+  return line.startsWith("review burst:") || line.startsWith("review failure burst:") ? "error" : "warning";
+}
+
+/** The worst (highest-severity) anomaly in a non-empty list, for the PagerDuty summary + severity — so a
+ *  repo with both a routine calibration nudge and an active-incident burst pages (if at all) at the burst's
+ *  urgency, not whichever anomaly happened to sort first. */
+export function worstAnomaly(anomalies: string[]): { line: string; severity: PagerDutySeverity } {
+  const severityRank: Record<PagerDutySeverity, number> = { info: 0, warning: 1, error: 2, critical: 3 };
+  let best = { line: anomalies[0] ?? "ops anomaly detected", severity: classifyAnomalySeverity(anomalies[0] ?? "") };
+  for (const line of anomalies) {
+    const severity = classifyAnomalySeverity(line);
+    if (severityRank[severity] > severityRank[best.severity]) best = { line, severity };
+  }
+  return best;
+}
+
 // ── Cron alerts: scan gittensory's outcome data, emit a structured log on drift (flag-gated by the caller) ──
 
 /** The registered repos to scan. Scoped to REGISTERED repos (the ones gittensory actually tracks outcomes
@@ -196,6 +220,27 @@ export async function runOpsAlerts(env: Env): Promise<Record<string, string[]>> 
         // Structured log = gittensory's notify path (no Discord/operator webhook exists) AND the Sentry path
         // (level:"error" + an `event` field reaches forwardStructuredLogToSentry). One line per repo.
         console.error(JSON.stringify({ level: "error", event: "ops_anomaly", repo: repoFullName, at: nowIso(), anomalies }));
+        // Experimental PagerDuty paging (#4937): no-op unless GITTENSORY_ENABLE_PAGERDUTY is set AND a routing
+        // key resolves for this repo (resolvePagerDutyRoutingKey). ops_anomaly is this codebase's own existing
+        // "something needs a human" judgment call -- reusing it here (rather than paging on every
+        // captureError/captureReviewFailure call, which would need its own frequency/threshold policy first)
+        // keeps this narrow and low-risk. Pages at the WORST anomaly's severity; triggerPagerDutyIncident itself
+        // applies the min-severity floor (routine calibration nudges never page by default) and a cooldown (a
+        // still-ongoing anomaly across consecutive cron ticks does not re-page every tick) -- see its own
+        // comment for why alert fatigue needed both controls, not just PagerDuty's own dedup_key. Awaited (not
+        // fire-and-forget) so a page failure is captured within THIS tick's own error handling, not orphaned
+        // after runOpsAlerts has already returned -- triggerPagerDutyIncident itself never throws and bounds
+        // its own HTTP call to a 5s timeout, so this cannot hang the scan. This does not yet send a matching
+        // "resolve" event once anomalies clear (would need tracking previous-tick state) -- an operator
+        // currently resolves the incident manually once the underlying condition is fixed.
+        const worst = worstAnomaly(anomalies);
+        await triggerPagerDutyIncident(env, {
+          repoFullName,
+          summary: worst.line,
+          severity: worst.severity,
+          dedupKey: `ops_anomaly:${repoFullName}`,
+          customDetails: { anomalies },
+        });
         // #ops-anomaly-metric: Prometheus counterpart to the log line above so a self-host operator can alert on
         // /metrics instead of grepping Workers Logs. Scoped to reviewBurst/reviewFailureBurst -- the two anomalies
         // this module exists to catch fast (#orb-ci-stuck-repeat / #review-burst-blind-spot) -- rather than every

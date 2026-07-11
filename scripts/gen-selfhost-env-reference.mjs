@@ -9,6 +9,7 @@ export const DEFAULT_SOURCE_ROOTS = [
   "src/selfhost",
   "src/server.ts",
   "src/services/notify-discord.ts",
+  "src/services/notify-pagerduty.ts",
   "scripts/build-selfhost.mjs",
   "scripts/migrate-selfhost-sqlite-to-postgres.ts",
   "scripts/smoke-observability-traces.mjs",

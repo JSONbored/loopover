@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { recordAiUsageEvent, recordAuditEvent, recordGateBlockOutcome, upsertPullRequestFromGitHub } from "../../src/db/repositories";
 import {
+  classifyAnomalySeverity,
   computeOpsStats,
   detectOutcomeAnomalies,
   isOpsEnabled,
   type RepoOutcomeSnapshot,
   runOpsAlerts,
+  worstAnomaly,
 } from "../../src/review/ops-wire";
 import { counterValue, resetMetrics, setSelfHostedMetricsMode } from "../../src/selfhost/metrics";
 import { createTestEnv } from "../helpers/d1";
@@ -159,6 +161,39 @@ describe("detectOutcomeAnomalies — over gittensory's own outcome data", () => 
   it("does NOT flag a review burst when none was computed (absent/null)", () => {
     expect(detectOutcomeAnomalies({ ...healthySnapshot, reviewBurst: null }).some((a) => /review burst/.test(a))).toBe(false);
     expect(detectOutcomeAnomalies(healthySnapshot).some((a) => /review burst/.test(a))).toBe(false); // field omitted entirely
+  });
+});
+
+describe("classifyAnomalySeverity — PagerDuty min-severity classification", () => {
+  it("classifies the two burst anomalies as error (active-incident grade)", () => {
+    expect(classifyAnomalySeverity("review burst: owner/repo#42 published 9 review surfaces in the last 2h")).toBe("error");
+    expect(classifyAnomalySeverity("review failure burst: owner/repo#42 produced 4 inconclusive calls")).toBe("error");
+  });
+
+  it("classifies the three calibration-style anomalies as warning (worth recalibrating sometime)", () => {
+    expect(classifyAnomalySeverity("gate false-positive spike: `slop_risk` blocked 10 PR(s)")).toBe("warning");
+    expect(classifyAnomalySeverity("slop score NOT discriminating (30 resolved PRs)")).toBe("warning");
+    expect(classifyAnomalySeverity("recommendations not panning out: 8/10 resolved outcomes were negative")).toBe("warning");
+  });
+});
+
+describe("worstAnomaly — highest-severity anomaly wins for the PagerDuty page", () => {
+  it("a single anomaly is its own worst", () => {
+    expect(worstAnomaly(["slop score NOT discriminating (30 resolved PRs)"])).toEqual({ line: "slop score NOT discriminating (30 resolved PRs)", severity: "warning" });
+  });
+
+  it("a later, higher-severity anomaly overtakes an earlier lower-severity one", () => {
+    const anomalies = ["gate false-positive spike: `slop_risk` blocked 10 PR(s)", "review burst: owner/repo#42 published 9 review surfaces in the last 2h"];
+    expect(worstAnomaly(anomalies)).toEqual({ line: anomalies[1], severity: "error" });
+  });
+
+  it("a later, lower-or-equal-severity anomaly never demotes the current worst", () => {
+    const anomalies = ["review burst: owner/repo#42 published 9 review surfaces in the last 2h", "slop score NOT discriminating (30 resolved PRs)"];
+    expect(worstAnomaly(anomalies)).toEqual({ line: anomalies[0], severity: "error" });
+  });
+
+  it("an empty list falls back to a generic line (defensive — runOpsAlerts never calls this with one)", () => {
+    expect(worstAnomaly([])).toEqual({ line: "ops anomaly detected", severity: "warning" });
   });
 });
 
@@ -356,6 +391,64 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
 
     expect(found).toEqual({});
     expect(errors.mock.calls.map((c) => String(c[0])).some((line) => line.includes("ops_anomaly_error"))).toBe(true);
+  });
+
+  // ── Experimental PagerDuty paging (#4937): fatigue-controlled wiring on top of the anomaly scan ──────────
+  const PD_KEY = "a".repeat(32);
+  function stubPagerDutyFetch(status = 202): Array<{ body: { dedup_key: string; payload: { summary: string; severity: string } } }> {
+    const calls: Array<{ body: { dedup_key: string; payload: { summary: string; severity: string } } }> = [];
+    vi.stubGlobal("fetch", async (_url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ body: JSON.parse(String(init?.body)) });
+      return new Response(null, { status });
+    });
+    return calls;
+  }
+
+  it("pages at the WORST anomaly's severity, not whichever one happened to sort first", async () => {
+    const calls = stubPagerDutyFetch();
+    const env = createTestEnv({ GITTENSORY_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: PD_KEY });
+    await seedRegisteredRepo(env, "owner/repo");
+    // A calibration nudge (warning-grade) AND a review burst (error-grade) on the same repo, same tick.
+    await seedGateFalsePositiveAnomaly(env, "owner/repo");
+    for (let i = 0; i < 7; i += 1) {
+      await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", actor: "contributor", targetKey: "owner/repo#99", outcome: "completed" });
+    }
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await runOpsAlerts(env);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body.payload.severity).toBe("error");
+    expect(calls[0]?.body.payload.summary).toMatch(/review burst/);
+    expect(calls[0]?.body.dedup_key).toBe("ops_anomaly:owner/repo");
+  });
+
+  it("does NOT page for a repo whose only anomaly is a routine calibration nudge (default min-severity floor)", async () => {
+    const calls = stubPagerDutyFetch();
+    const env = createTestEnv({ GITTENSORY_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: PD_KEY });
+    await seedRegisteredRepo(env, "owner/repo");
+    await seedGateFalsePositiveAnomaly(env, "owner/repo"); // warning-grade only, no burst
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const found = await runOpsAlerts(env);
+
+    expect(found["owner/repo"]?.some((a) => /gate false-positive spike/.test(a))).toBe(true); // still logged/Sentry-visible
+    expect(calls).toEqual([]); // but never paged — below the default error floor
+  });
+
+  it("does NOT page at all when GITTENSORY_ENABLE_PAGERDUTY is unset (default OFF, byte-identical to today)", async () => {
+    const calls = stubPagerDutyFetch();
+    const env = createTestEnv(); // no PagerDuty env vars
+    await seedRegisteredRepo(env, "owner/repo");
+    for (let i = 0; i < 7; i += 1) {
+      await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", actor: "contributor", targetKey: "owner/repo#99", outcome: "completed" });
+    }
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const found = await runOpsAlerts(env);
+
+    expect(found["owner/repo"]?.some((a) => /review burst/.test(a))).toBe(true);
+    expect(calls).toEqual([]);
   });
 });
 

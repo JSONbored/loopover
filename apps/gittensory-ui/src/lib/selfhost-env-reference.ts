@@ -190,6 +190,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/installation-concurrency-admission.ts",
   },
   {
+    name: "GITTENSORY_ENABLE_PAGERDUTY",
+    firstReference: "src/services/notify-pagerduty.ts",
+  },
+  {
     name: "GITTENSORY_REPO_CONFIG_DIR",
     firstReference: "src/server.ts",
   },
@@ -340,6 +344,18 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   {
     name: "OTEL_TRACES_SAMPLER_ARG",
     firstReference: "src/selfhost/otel.ts",
+  },
+  {
+    name: "PAGERDUTY_COOLDOWN_MINUTES",
+    firstReference: "src/services/notify-pagerduty.ts",
+  },
+  {
+    name: "PAGERDUTY_MIN_SEVERITY",
+    firstReference: "src/services/notify-pagerduty.ts",
+  },
+  {
+    name: "PAGERDUTY_ROUTING_KEY",
+    firstReference: "src/services/notify-pagerduty.ts",
   },
   {
     name: "PGPOOL_MAX",
@@ -512,6 +528,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `GITHUB_INSTALLATION_CONCURRENCY_DEFER_MS` | `src/selfhost/installation-concurrency-admission.ts` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_ENABLED` | `src/selfhost/installation-concurrency-admission.ts` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_LIMIT` | `src/selfhost/installation-concurrency-admission.ts` |",
+  "| `GITTENSORY_ENABLE_PAGERDUTY` | `src/services/notify-pagerduty.ts` |",
   "| `GITTENSORY_REPO_CONFIG_DIR` | `src/server.ts` |",
   "| `GITTENSORY_VERSION` | `src/selfhost/otel.ts` |",
   "| `HOME` | `src/selfhost/ai.ts` |",
@@ -550,6 +567,9 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `OTEL_TRACES_EXPORTER` | `src/selfhost/otel.ts` |",
   "| `OTEL_TRACES_SAMPLER` | `src/selfhost/otel.ts` |",
   "| `OTEL_TRACES_SAMPLER_ARG` | `src/selfhost/otel.ts` |",
+  "| `PAGERDUTY_COOLDOWN_MINUTES` | `src/services/notify-pagerduty.ts` |",
+  "| `PAGERDUTY_MIN_SEVERITY` | `src/services/notify-pagerduty.ts` |",
+  "| `PAGERDUTY_ROUTING_KEY` | `src/services/notify-pagerduty.ts` |",
   "| `PGPOOL_MAX` | `src/selfhost/queue-common.ts` |",
   "| `PGVECTOR_ENABLED` | `src/server.ts` |",
   "| `PORT` | `src/server.ts` |",

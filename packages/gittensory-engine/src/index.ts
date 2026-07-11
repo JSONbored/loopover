@@ -254,6 +254,12 @@ export {
   type LoopReentryOutcome,
 } from "./miner/loop-reentry-policy.js";
 export {
+  DEFAULT_MAX_CONSECUTIVE_GATE_BLOCKS,
+  evaluateHarnessSubmissionTrigger,
+  type HarnessSubmissionTriggerCandidate,
+  type HarnessSubmissionTriggerDecision,
+} from "./miner/harness-submission-trigger.js";
+export {
   codingAgentModeExecutes,
   isGlobalMinerCodingAgentPause,
   resolveCodingAgentExecutionMode,

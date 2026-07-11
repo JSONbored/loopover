@@ -237,6 +237,14 @@ export {
   type IterateLoopResult,
 } from "./miner/iterate-loop.js";
 export {
+  isSlopBandWithinThreshold,
+  shouldSubmit,
+  SUBMISSION_GATE_PASSING_CONCLUSION,
+  type SubmissionGateCandidate,
+  type SubmissionGateDecision,
+  type SubmissionGateMode,
+} from "./miner/submission-gate.js";
+export {
   codingAgentModeExecutes,
   isGlobalMinerCodingAgentPause,
   resolveCodingAgentExecutionMode,

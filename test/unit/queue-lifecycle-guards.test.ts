@@ -4708,3 +4708,132 @@ describe("auto-action convergence: end-to-end plan+execute for the general heuri
   });
 });
 
+// #automation-bot-skip: waste elimination for known automation authors (release-please's github-actions[bot],
+// Renovate, Dependabot). End-to-end wiring on top of automation-bot-skip.test.ts's pure-function coverage --
+// these pin the webhook + re-entry integration points, including the SECURITY property that a human pushing
+// to an existing bot PR's branch still gets full review of their own commits.
+describe("automation-bot-skip: end-to-end webhook + re-entry wiring (#automation-bot-skip)", () => {
+  const basePayload = {
+    installation: { id: 9101, account: { login: "owner", id: 1, type: "Organization" } },
+    repository: { name: "bot-skip-repo", full_name: "owner/bot-skip-repo", private: false, owner: { login: "owner" } },
+  };
+
+  // resolveRepositorySettings itself probes for a config-as-code override (.gittensory.yml/.json in both the
+  // repo root and .github/) BEFORE the skip check can even run (it needs the resolved settings for the
+  // per-repo override) -- so those 4 raw.githubusercontent.com probes are unavoidable, pre-existing overhead
+  // on EVERY webhook, not the "waste" this feature eliminates. The real signal is that NOTHING beyond that
+  // touches the actual GitHub REST API (api.github.com) -- no installation-token fetch, no PR/files read, no
+  // comment/check-run publish, no AI provider call.
+  async function fetchCallTracker() {
+    const state = { urls: [] as string[] };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      state.urls.push(input.toString());
+      return new Response("not found", { status: 404 });
+    });
+    return state;
+  }
+
+  it("a genuine bot-triggered PR (sender IS the bot, matching the stored author) is skipped entirely: audited, zero GitHub/AI fetch calls, delivery marked processed", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    const calls = await fetchCallTracker();
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "bot-skip-genuine",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        ...basePayload,
+        sender: { login: "renovate[bot]", type: "Bot" },
+        pull_request: { number: 401, title: "chore(deps): bump foo", state: "open", user: { login: "renovate[bot]", type: "Bot" }, labels: [], body: "" },
+      },
+    });
+
+    expect(calls.urls.some((url) => url.includes("api.github.com"))).toBe(false);
+    const skipAudit = await env.DB.prepare("select detail, actor from audit_events where event_type = 'github_app.automation_bot_pr_skipped' and target_key = 'owner/bot-skip-repo#401'").first<{ detail: string; actor: string }>();
+    expect(skipAudit?.actor).toBe("renovate[bot]");
+    expect(skipAudit?.detail).toContain("automation-bot author");
+    const webhookEvent = await env.DB.prepare("select status from webhook_events where delivery_id = 'bot-skip-genuine'").first<{ status: string }>();
+    expect(webhookEvent?.status).toBe("processed");
+  });
+
+  it("SECURITY: a human who pushes to an existing bot-authored PR's branch (synchronize) is NOT skipped -- the live webhook actor, not the stored author, gates the skip", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await fetchCallTracker();
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "bot-skip-exploit-attempt",
+      eventName: "pull_request",
+      payload: {
+        action: "synchronize",
+        ...basePayload,
+        sender: { login: "malicious-contributor", type: "User" },
+        pull_request: { number: 402, title: "chore(deps): bump foo", state: "open", user: { login: "renovate[bot]", type: "Bot" }, labels: [], body: "", head: { sha: "hijacked-sha" } },
+      },
+    });
+
+    const skipAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.automation_bot_pr_skipped' and target_key = 'owner/bot-skip-repo#402'").first<{ n: number }>();
+    expect(skipAudit?.n).toBe(0);
+  });
+
+  it("a per-repo 'off' override forces full review even for a genuine bot-triggered PR", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await fetchCallTracker();
+    await upsertRepositorySettings(env, { repoFullName: "owner/bot-skip-repo", skipAutomationBotAuthors: "off" });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "bot-skip-repo-off-override",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        ...basePayload,
+        sender: { login: "dependabot[bot]", type: "Bot" },
+        pull_request: { number: 403, title: "chore(deps): bump bar", state: "open", user: { login: "dependabot[bot]", type: "Bot" }, labels: [], body: "" },
+      },
+    });
+
+    const skipAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.automation_bot_pr_skipped' and target_key = 'owner/bot-skip-repo#403'").first<{ n: number }>();
+    expect(skipAudit?.n).toBe(0);
+  });
+
+  it("a per-repo 'enabled' override skips a genuine bot-triggered PR even when the global default is OFF", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_SKIP_AUTOMATION_BOT_PRS: "false" });
+    const calls = await fetchCallTracker();
+    await upsertRepositorySettings(env, { repoFullName: "owner/bot-skip-repo", skipAutomationBotAuthors: "enabled" });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "bot-skip-repo-enabled-override",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        ...basePayload,
+        sender: { login: "github-actions[bot]", type: "Bot" },
+        pull_request: { number: 404, title: "chore(release): 1.2.3", state: "open", user: { login: "github-actions[bot]", type: "Bot" }, labels: [], body: "" },
+      },
+    });
+
+    expect(calls.urls.some((url) => url.includes("api.github.com"))).toBe(false);
+    const skipAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.automation_bot_pr_skipped' and target_key = 'owner/bot-skip-repo#404'").first<{ n: number }>();
+    expect(skipAudit?.n).toBe(1);
+  });
+
+  it("the re-entry sweep path (agent-regate-pr) also respects the skip for a stored bot author, without even the live resync fetch", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9101, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "bot-skip-repo", full_name: "owner/bot-skip-repo", private: false, owner: { login: "owner" } }, 9101);
+    await upsertPullRequestFromGitHub(env, "owner/bot-skip-repo", { number: 405, title: "chore(deps): bump baz", state: "open", user: { login: "renovate[bot]", type: "Bot" }, head: { sha: "sha405" }, labels: [], body: "" });
+    const calls = await fetchCallTracker();
+
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "bot-skip-sweep", repoFullName: "owner/bot-skip-repo", prNumber: 405, installationId: 9101 });
+
+    // The re-entry check runs BEFORE even the live-head resync GET, so a genuine bot author skips without any
+    // GitHub REST API call at all -- not merely without a comment/check-run publish.
+    expect(calls.urls.some((url) => url.includes("api.github.com"))).toBe(false);
+    const stored = await getPullRequest(env, "owner/bot-skip-repo", 405);
+    expect(stored?.headSha).toBe("sha405");
+  });
+});
+

@@ -6516,8 +6516,11 @@ describe("queue processors", () => {
         AI_PUBLIC_COMMENTS_ENABLED: "true",
         AI_DAILY_NEURON_BUDGET: "100000",
       });
-      await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
       // #one-shot-review-cadence: isolate this test to the automation-bot-exemption-from-the-LABEL-freeze mechanism.
+      // #automation-bot-skip: ALSO isolate from the newer, broader automation-bot-skip.ts early-return in
+      // reReviewStoredPullRequest -- that skip would otherwise short-circuit before ever reaching the freeze
+      // logic this test targets, so it's explicitly turned off here too.
+      await seedRegateChurnRepo(env, { publicSurface: "comment_only", skipAutomationBotAuthors: "off" });
       await upsertRepoFocusManifest(env, "JSONbored/gittensory", { review: { auto_review: { cadence: "continuous" } } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 81, title: "Bot's held PR", state: "open", user: { login: "dependabot[bot]" }, head: { sha: "a81-v1" }, labels: [{ name: "manual-review" }], body: "Closes #1" });
       await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 81, status: "complete", reviewsSyncedAt: new Date().toISOString() });

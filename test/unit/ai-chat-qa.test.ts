@@ -3,9 +3,17 @@ import { __chatQaInternals, CHAT_QA_FALLBACK_COMMAND, generateChatQaAnswer } fro
 import type { AgentRunBundle } from "../../src/services/agent-orchestrator";
 import { createTestEnv } from "../helpers/d1";
 
-const ADVISORY_ON = { slop: false, e2eTestGen: false, planner: false, summaries: false, chatQa: true, chatQaFrontierFallback: false };
-const ADVISORY_OFF = { slop: false, e2eTestGen: false, planner: false, summaries: false, chatQa: false, chatQaFrontierFallback: false };
-const ADVISORY_ON_FRONTIER_FALLBACK = { slop: false, e2eTestGen: false, planner: false, summaries: false, chatQa: true, chatQaFrontierFallback: true };
+const ADVISORY_ON = { slop: false, e2eTestGen: false, planner: false, summaries: false, chatQa: true, chatQaFrontierFallback: false, intentRouting: false };
+const ADVISORY_OFF = { slop: false, e2eTestGen: false, planner: false, summaries: false, chatQa: false, chatQaFrontierFallback: false, intentRouting: false };
+const ADVISORY_ON_FRONTIER_FALLBACK = {
+  slop: false,
+  e2eTestGen: false,
+  planner: false,
+  summaries: false,
+  chatQa: true,
+  chatQaFrontierFallback: true,
+  intentRouting: false,
+};
 
 function bundleFixture(runOverrides?: Partial<AgentRunBundle["run"]>, actionOverrides?: Partial<AgentRunBundle["actions"][number]>): AgentRunBundle {
   return {

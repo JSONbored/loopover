@@ -1304,6 +1304,10 @@ export type AdvisoryAiRoutingConfig = {
    *  Default false -- preserves the original Ollama-only behavior for every existing deployment; a self-hoster
    *  without a local GPU may enable this to use their own frontier subscription/tokens for chat instead. */
   chatQaFrontierFallback: boolean;
+  /** Closed-set intent-classification router for unrecognized `@gittensory` mentions (#4596): maps free-text
+   *  questions to the closest existing Q&A command (never an action command) rather than the plain
+   *  did-you-mean hint. Ollama-only, same as chatQa -- never falls back to the frontier env.AI. Default false. */
+  intentRouting: boolean;
 };
 
 /** A blocked contributor (#1425, anti-abuse): a GitHub `login` plus optional maintainer metadata. The converged

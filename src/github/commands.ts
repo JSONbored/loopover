@@ -60,6 +60,24 @@ export type MaintainerQueueDigestCommandName = (typeof MAINTAINER_QUEUE_DIGEST_C
 // not the deterministic snapshot-section path, so it needs no REFRESH_/EMPTY_SECTION_TITLES entry.
 type SnapshotCommandName = Exclude<GittensoryMentionCommandName, "help" | "miner-context" | "chat" | MaintainerQueueDigestCommandName>;
 
+// Closed set the intent-classification router (#4596) may EVER route to: existing Q&A commands with real,
+// already-tested answer content. Deliberately excludes help (that IS the fallback this replaces),
+// miner-context (a narrow lookup, not natural-language-answerable), and every maintainer-queue-digest
+// command (dashboard listings). This is the HARD runtime allowlist a classifier's raw output is filtered
+// through before ever being trusted (req 3): never the action catalog, never anything outside this list,
+// no matter what the model claims.
+export const INTENT_ROUTABLE_COMMANDS = ["preflight", "blockers", "duplicate-check", "next-action", "reviewability", "repo-fit", "packet", "ask", "chat"] as const;
+export type IntentRoutableCommandName = (typeof INTENT_ROUTABLE_COMMANDS)[number];
+const INTENT_ROUTABLE_COMMAND_SET: ReadonlySet<string> = new Set(INTENT_ROUTABLE_COMMANDS);
+
+/** The hard runtime allowlist check itself (req 3) -- a plain Set membership test, not a prompt instruction.
+ *  Exhaustively testable: any value that is not EXACTLY one of the 9 literal strings above returns false,
+ *  including every action-command name, every maintainer-only command name, "help", arbitrary strings, and
+ *  non-string values a malformed/adversarial model response might produce. */
+export function isIntentRoutableCommand(value: unknown): value is IntentRoutableCommandName {
+  return typeof value === "string" && INTENT_ROUTABLE_COMMAND_SET.has(value);
+}
+
 // Action commands are NOT Q&A: they perform a side effect (handled before the mention-command path) rather
 // than producing a public answer card. They are intentionally kept OUT of the Q&A catalog/unions so the
 // exhaustive Q&A switches stay total, but parseGittensoryMentionCommand still recognizes them (so a bare
@@ -129,6 +147,12 @@ export type GittensoryMentionCommand = {
   argument?: string | undefined;
   /** Present when a non-empty verb was unrecognized and downgraded to `help` (#2170). */
   unknownVerb?: string | undefined;
+  /** The full free-form text after `@gittensory` (unrecognized verb token plus any trailing words, or the
+   *  whole trailing text when there was no verb-shaped token at all), present whenever the mention downgrades
+   *  to `help` with non-trivial trailing content -- e.g. "@gittensory why is this stuck?" yields
+   *  "why is this stuck?". Feeds the intent-classification router (#4596); `undefined` for a bare
+   *  "@gittensory help" with nothing else to classify. */
+  unrecognizedText?: string | undefined;
 };
 
 type PublicAnswerCard = {
@@ -256,7 +280,12 @@ export function parseGittensoryMentionCommand(body: string | null | undefined): 
   if (!match) return null;
   const rawVerbToken = match[1]?.toLowerCase();
   if (!rawVerbToken) {
-    return { name: "help", raw: match[0].trim() };
+    // match[2] is always defined for the same reason as the branches below (a `*`-quantified group outside
+    // any optional wrapper) -- it holds whatever followed "@gittensory" when nothing verb-shaped matched at
+    // all (e.g. "@gittensory 123 why is this stuck" or a bare "@gittensory" with only punctuation after it).
+    /* v8 ignore next */
+    const bareTrailing = (match[2] ?? "").trim();
+    return { name: "help", raw: match[0].trim(), unrecognizedText: bareTrailing.length > 0 ? bareTrailing : undefined };
   }
   const requested = (GITTENSORY_ACTION_COMMAND_ALIASES[rawVerbToken] ?? rawVerbToken) as GittensoryMentionCommandName | GittensoryActionCommandName;
   if (ACTION_COMMANDS.has(requested as GittensoryActionCommandName)) {
@@ -281,7 +310,13 @@ export function parseGittensoryMentionCommand(body: string | null | undefined): 
       question: question && question.length > 0 ? question : undefined,
     };
   }
-  return { name: "help", raw: match[0].trim(), unknownVerb: rawVerbToken };
+  // match[2] is always defined for the same reason as the branches above; concatenated onto the unrecognized
+  // verb token itself, it reconstructs the full free-form text a contributor actually typed (e.g. "why is
+  // this stuck?" -> verb "why" + trailing " is this stuck?"), which is what the intent router (#4596)
+  // classifies -- the verb token alone is rarely enough context.
+  /* v8 ignore next */
+  const unrecognizedText = `${rawVerbToken}${match[2] ?? ""}`.trim();
+  return { name: "help", raw: match[0].trim(), unknownVerb: rawVerbToken, unrecognizedText };
 }
 
 export function isMaintainerAssociation(association: string | null | undefined): boolean {
@@ -378,6 +413,10 @@ export function buildPublicAgentCommandComment(args: {
   /** Grounded `@gittensory chat` answer (#4595). Only read when `command.name === "chat"`; the dispatcher
    *  resolves it via generateChatQaAnswer before composing the card. */
   chatAnswer?: ChatQaResult | null | undefined;
+  /** Set by the dispatcher when the intent-classification router (#4596) re-routed an unrecognized-verb
+   *  mention to `matchedCommand` -- shown as a visible "interpreted as" note (req 6) so a wrong match is
+   *  immediately correctable, rather than silently answering a different question than the one asked. */
+  interpretedFrom?: { question: string; matchedCommand: GittensoryMentionCommandName } | undefined;
   /** Resolved by the caller from `env.PUBLIC_SITE_ORIGIN` -- see `gittensoryFooter` (#4613). */
   env: GittensoryFooterEnv;
 }): string {
@@ -418,6 +457,11 @@ export function buildPublicAgentCommandComment(args: {
     "",
     `Command: \`@gittensory ${commandName}\``,
     "",
+    // (#4596 req 6) Free-form contributor text, same neutralization as the chat question line (#2457) --
+    // this is the first place a re-routed mention's own text is echoed back into a trusted bot comment.
+    ...(args.interpretedFrom
+      ? [`> 🎯 Interpreted "${neutralizePublicMarkdownText(sanitizePublicComment(args.interpretedFrom.question))}" as \`@gittensory ${args.interpretedFrom.matchedCommand}\`. Use the exact command if this is wrong.`, ""]
+      : []),
     "<details>",
     "<summary>Command result</summary>",
     "",

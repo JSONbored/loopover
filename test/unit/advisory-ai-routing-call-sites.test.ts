@@ -35,7 +35,15 @@ describe("runAiSlopForAdvisory routes through AI_ADVISORY (#4364)", () => {
     });
     await runAiSlopForAdvisory(env, {
       mode: "live",
-      settings: settingsFixture({ slop: true, e2eTestGen: false, planner: false, summaries: false, chatQa: false, chatQaFrontierFallback: false }),
+      settings: settingsFixture({
+        slop: true,
+        e2eTestGen: false,
+        planner: false,
+        summaries: false,
+        chatQa: false,
+        chatQaFrontierFallback: false,
+        intentRouting: false,
+      }),
       advisory,
       repoFullName: "owner/repo",
       pr: { number: 1, title: "t" },
@@ -80,7 +88,15 @@ describe("runAiSlopForAdvisory routes through AI_ADVISORY (#4364)", () => {
     const env = createTestEnv({ AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI: { run: frontierRun } as unknown as Ai });
     await runAiSlopForAdvisory(env, {
       mode: "live",
-      settings: settingsFixture({ slop: true, e2eTestGen: false, planner: false, summaries: false, chatQa: false, chatQaFrontierFallback: false }),
+      settings: settingsFixture({
+        slop: true,
+        e2eTestGen: false,
+        planner: false,
+        summaries: false,
+        chatQa: false,
+        chatQaFrontierFallback: false,
+        intentRouting: false,
+      }),
       advisory,
       repoFullName: "owner/repo",
       pr: { number: 3, title: "t" },

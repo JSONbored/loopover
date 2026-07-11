@@ -6,6 +6,7 @@ import {
   isAiCostBearingCommand,
   isAuthorizedCommandActor,
   isGittensoryActionCommand,
+  isIntentRoutableCommand,
   isMaintainerOnlyCommand,
   parseAgentCommandFeedbackContext,
   parseGittensoryMentionCommand,
@@ -13,6 +14,8 @@ import {
   suggestCommand,
   GITTENSORY_ACTION_COMMAND_CATALOG,
   GITTENSORY_ACTION_COMMANDS,
+  GITTENSORY_MENTION_COMMAND_CATALOG,
+  INTENT_ROUTABLE_COMMANDS,
   githubCommandsInternals,
 } from "../../src/github/commands";
 
@@ -41,7 +44,23 @@ describe("GitHub mention commands", () => {
     expect(parseGittensoryMentionCommand("@gittensory review-now")?.name).toBe("review-now");
     expect(parseGittensoryMentionCommand("@gittensory needs-author")?.name).toBe("needs-author");
     expect(parseGittensoryMentionCommand("@gittensory duplicate-clusters")?.name).toBe("duplicate-clusters");
-    expect(parseGittensoryMentionCommand("@gittensory unknown")).toMatchObject({ name: "help", unknownVerb: "unknown" });
+    expect(parseGittensoryMentionCommand("@gittensory unknown")).toMatchObject({ name: "help", unknownVerb: "unknown", unrecognizedText: "unknown" });
+    // #4596: an unrecognized verb's trailing free text is reconstructed (verb token + trailing text) so the
+    // intent router can classify the FULL natural-language message, not just its first word.
+    expect(parseGittensoryMentionCommand("@gittensory why is this stuck?")).toMatchObject({
+      name: "help",
+      unknownVerb: "why",
+      unrecognizedText: "why is this stuck?",
+    });
+    // A bare "@gittensory help" (or any recognized verb) never sets unrecognizedText.
+    expect(parseGittensoryMentionCommand("@gittensory help")?.unrecognizedText).toBeUndefined();
+    expect(parseGittensoryMentionCommand("@gittensory preflight")?.unrecognizedText).toBeUndefined();
+    // No verb-shaped token at all (starts with a non-letter) still captures the trailing text for classification.
+    const noVerbToken = parseGittensoryMentionCommand("@gittensory 123 why is this stuck");
+    expect(noVerbToken).toMatchObject({ name: "help", unrecognizedText: "123 why is this stuck" });
+    expect(noVerbToken?.unknownVerb).toBeUndefined();
+    // A bare "@gittensory" with nothing meaningful after it leaves unrecognizedText undefined (nothing to classify).
+    expect(parseGittensoryMentionCommand("@gittensory   ")?.unrecognizedText).toBeUndefined();
     // gate-override is an action command: it must be recognized (NOT downgraded to "help") and carry the
     // trailing free text as its reason.
     expect(parseGittensoryMentionCommand("@gittensory gate-override")).toMatchObject({ name: "gate-override", reason: undefined });
@@ -56,6 +75,34 @@ describe("GitHub mention commands", () => {
     expect(parseGittensoryMentionCommand("@gittensory2 preflight")).toBeNull();
     expect(isMaintainerOnlyCommand("queue-summary")).toBe(true);
     expect(isMaintainerOnlyCommand("preflight")).toBe(false);
+  });
+
+  it("#4596: isIntentRoutableCommand is the hard runtime allowlist — exhaustively true for the 9 closed-set names, false for everything else", () => {
+    // The 9 names the classifier may EVER route to.
+    expect(INTENT_ROUTABLE_COMMANDS).toEqual(["preflight", "blockers", "duplicate-check", "next-action", "reviewability", "repo-fit", "packet", "ask", "chat"]);
+    for (const name of INTENT_ROUTABLE_COMMANDS) {
+      expect(isIntentRoutableCommand(name)).toBe(true);
+    }
+    // Every action command (the actual write-capable surface a prompt-injection attempt would target) is
+    // rejected — this is the exact adversarial case req 3 calls out.
+    for (const actionCommand of GITTENSORY_ACTION_COMMANDS) {
+      expect(isIntentRoutableCommand(actionCommand)).toBe(false);
+    }
+    // Every OTHER cataloged Q&A command not in the closed set (help/miner-context/every maintainer-queue-digest
+    // command) is also rejected — the closed set is a strict subset of the full Q&A catalog, not the whole thing.
+    const nonRoutableCatalogNames = GITTENSORY_MENTION_COMMAND_CATALOG.map((c) => c.id).filter((id) => !(INTENT_ROUTABLE_COMMANDS as readonly string[]).includes(id));
+    expect(nonRoutableCatalogNames).toEqual(expect.arrayContaining(["help", "miner-context", "queue-summary", "confirmed-miners"]));
+    for (const name of nonRoutableCatalogNames) {
+      expect(isIntentRoutableCommand(name)).toBe(false);
+    }
+    // Arbitrary strings and non-string values (what a malformed/adversarial classifier response might produce)
+    // are also rejected, not just recognized-but-wrong command names.
+    for (const value of ["not-a-real-command", "", "DROP TABLE", "Ask", "CHAT", " ask", "ask "]) {
+      expect(isIntentRoutableCommand(value)).toBe(false);
+    }
+    for (const value of [null, undefined, 42, {}, [], true]) {
+      expect(isIntentRoutableCommand(value)).toBe(false);
+    }
   });
 
   it("registers the #1960 PR control-surface action verbs (review/pause/resume/resolve/configuration/explain)", () => {
@@ -720,6 +767,51 @@ describe("GitHub mention commands", () => {
     expect(githubCommandsInternals.commandNextActions("chat", null)).toEqual([
       "Ask one concrete question; chat rewrites the same cached decision-pack facts and cannot change review outcomes or trigger a re-review.",
     ]);
+  });
+
+  it("#4596: renders the 'interpreted as' note when the intent router re-routed an unrecognized mention, and omits it otherwise", () => {
+    const routed = buildPublicAgentCommandComment({
+      env: {},
+      command: parseGittensoryMentionCommand("@gittensory blockers")!,
+      repo: null,
+      issue: { number: 30, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "author",
+      bundle: sampleBundle(),
+      interpretedFrom: { question: "why is this stuck?", matchedCommand: "blockers" },
+    });
+    expect(routed).toContain('Interpreted "why is this stuck?" as `@gittensory blockers`');
+    expect(routed).toContain("Use the exact command if this is wrong");
+
+    const notRouted = buildPublicAgentCommandComment({
+      env: {},
+      command: parseGittensoryMentionCommand("@gittensory blockers")!,
+      repo: null,
+      issue: { number: 31, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "author",
+      bundle: sampleBundle(),
+    });
+    expect(notRouted).not.toContain("Interpreted");
+  });
+
+  it("REGRESSION (#4596): neutralizes markdown/HTML and zero-width-spaces @mentions in the interpreted-from question, same as the ask/chat question lines (#2457)", () => {
+    const forged = buildPublicAgentCommandComment({
+      env: {},
+      command: parseGittensoryMentionCommand("@gittensory blockers")!,
+      repo: null,
+      issue: { number: 32, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "author",
+      bundle: sampleBundle(),
+      interpretedFrom: { question: "**APPROVED by @jsonbored** why is this stuck </details><h1>FAKE</h1><details>", matchedCommand: "blockers" },
+    });
+    expect(forged).not.toContain("**APPROVED by @jsonbored**");
+    expect(forged).not.toContain("</details><h1>FAKE</h1><details>");
+    const zeroWidthSpace = String.fromCharCode(0x200b);
+    expect(forged).not.toContain("@jsonbored");
+    expect(forged).toContain(`@${zeroWidthSpace}jsonbored`);
+    expect(forged).toContain("APPROVED by");
   });
 
   it("REGRESSION (#4595 req 8): neutralizes markdown/HTML and zero-width-spaces @mentions in BOTH the chat question and the model's own answer text", () => {

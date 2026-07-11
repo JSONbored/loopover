@@ -7,6 +7,7 @@ export const DEFAULT_ADVISORY_AI_ROUTING: AdvisoryAiRoutingConfig = {
   summaries: false,
   chatQa: false,
   chatQaFrontierFallback: false,
+  intentRouting: false,
 };
 
 function normalizeField(value: unknown, field: keyof AdvisoryAiRoutingConfig, warnings: string[]): boolean {
@@ -35,5 +36,6 @@ export function normalizeAdvisoryAiRoutingConfig(input: unknown, warnings: strin
     summaries: normalizeField(record.summaries, "summaries", warnings),
     chatQa: normalizeField(record.chatQa, "chatQa", warnings),
     chatQaFrontierFallback: normalizeField(record.chatQaFrontierFallback, "chatQaFrontierFallback", warnings),
+    intentRouting: normalizeField(record.intentRouting, "intentRouting", warnings),
   };
 }

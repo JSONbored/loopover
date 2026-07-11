@@ -769,6 +769,11 @@ export const RepositorySettingsSchema = z
           .describe(
             "Opt-in only (#4595 follow-up): when true, `@gittensory chat` falls back to the shared frontier env.AI chain if env.AI_ADVISORY is unconfigured, instead of declining. Meaningless unless `chatQa` is also true. Default false -- a self-hoster without a local GPU may enable this to use their own frontier subscription/tokens for chat instead.",
           ),
+        intentRouting: z
+          .boolean()
+          .describe(
+            "Opt a closed-set intent-classification router (#4596) into unrecognized `@gittensory` mentions: maps a free-text question to the closest existing Q&A command (never an action command) instead of the plain did-you-mean hint. Ollama-only, same as chatQa. Co-requisite: set `commandRateLimitPolicy` to `hold`.",
+          ),
       })
       .optional(),
     gittensorLabel: z.string(),

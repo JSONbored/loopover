@@ -12,7 +12,10 @@ describe("normalizeAdvisoryAiRoutingConfig", () => {
   it("normalizes a fully-valid config", () => {
     const warnings: string[] = [];
     expect(
-      normalizeAdvisoryAiRoutingConfig({ slop: true, e2eTestGen: true, planner: true, summaries: true, chatQa: true, chatQaFrontierFallback: true }, warnings),
+      normalizeAdvisoryAiRoutingConfig(
+        { slop: true, e2eTestGen: true, planner: true, summaries: true, chatQa: true, chatQaFrontierFallback: true, intentRouting: true },
+        warnings,
+      ),
     ).toEqual({
       slop: true,
       e2eTestGen: true,
@@ -20,17 +23,21 @@ describe("normalizeAdvisoryAiRoutingConfig", () => {
       summaries: true,
       chatQa: true,
       chatQaFrontierFallback: true,
+      intentRouting: true,
     });
     expect(warnings).toEqual([]);
   });
 
-  it.each(["slop", "e2eTestGen", "planner", "summaries", "chatQa", "chatQaFrontierFallback"] as const)("defaults %s to false when omitted", (field) => {
-    const warnings: string[] = [];
-    expect(normalizeAdvisoryAiRoutingConfig({}, warnings)[field]).toBe(false);
-    expect(warnings).toEqual([]);
-  });
+  it.each(["slop", "e2eTestGen", "planner", "summaries", "chatQa", "chatQaFrontierFallback", "intentRouting"] as const)(
+    "defaults %s to false when omitted",
+    (field) => {
+      const warnings: string[] = [];
+      expect(normalizeAdvisoryAiRoutingConfig({}, warnings)[field]).toBe(false);
+      expect(warnings).toEqual([]);
+    },
+  );
 
-  it.each(["slop", "e2eTestGen", "planner", "summaries", "chatQa", "chatQaFrontierFallback"] as const)(
+  it.each(["slop", "e2eTestGen", "planner", "summaries", "chatQa", "chatQaFrontierFallback", "intentRouting"] as const)(
     "falls back to false and warns on a non-boolean %s",
     (field) => {
       const warnings: string[] = [];

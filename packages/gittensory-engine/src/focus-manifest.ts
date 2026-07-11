@@ -1961,6 +1961,7 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[],
     if (typeof rawRouting.summaries === "boolean") sparseRouting.summaries = validated.summaries;
     if (typeof rawRouting.chatQa === "boolean") sparseRouting.chatQa = validated.chatQa;
     if (typeof rawRouting.chatQaFrontierFallback === "boolean") sparseRouting.chatQaFrontierFallback = validated.chatQaFrontierFallback;
+    if (typeof rawRouting.intentRouting === "boolean") sparseRouting.intentRouting = validated.intentRouting;
     out.advisoryAiRouting = sparseRouting;
   } else if (r.advisoryAiRouting !== undefined) {
     warnings.push(`Manifest "settings.advisoryAiRouting" must be an object; ignoring it and keeping any existing policy.`);

@@ -901,6 +901,7 @@ settings:
   #   summaries: false     # AI summaries/rewrite text. Default: false.
   #   chatQa: false        # @gittensory chat <question> grounded LLM Q&A. Ollama-first (never the frontier env.AI unless chatQaFrontierFallback below is also true); needs env.AI_ADVISORY set. Co-requisite: commandRateLimitPolicy: hold (defaults off). Default: false.
   #   chatQaFrontierFallback: false  # Opt-in only: falls back to the frontier env.AI chain if env.AI_ADVISORY is unconfigured, instead of declining. Meaningless unless chatQa is also true. Default: false.
+  #   intentRouting: false # Closed-set intent classifier for unrecognized @gittensory mentions -> existing Q&A commands only. Ollama-ONLY, same as chatQa (never uses chatQaFrontierFallback). Co-requisite: commandRateLimitPolicy: hold. Default: false.
 
 # Maintainer AI review tuning (`.gittensory.yml` top-level `review:` block). These knobs shape the advisory AI
 # review prompt and file selection only — gate/slop/secret-scan are unaffected.

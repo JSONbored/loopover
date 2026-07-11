@@ -546,6 +546,7 @@ import { buildFixHandoffBlocks } from "../review/fix-handoff-render";
 import { buildE2eTestGenCommentBody, type E2eTestGenCommitOutcome } from "../review/e2e-test-gen-render";
 import { resolveE2eTestGenInstructions, runGittensoryE2eTestGeneration } from "../services/ai-e2e-test-gen";
 import { generateChatQaAnswer } from "../services/ai-chat-qa";
+import { classifyGittensoryIntent } from "../services/ai-intent-router";
 import { commitE2eTestToPrBranch } from "../github/e2e-test-commit";
 import { shouldApplyRepoCultureProfile } from "../review/repo-culture-profile-wire";
 import { applyReviewMemorySuppression, getCachedReviewSuppressions, invalidateReviewSuppressionCache, shouldApplyReviewMemory } from "../review/review-memory-wire";
@@ -12271,6 +12272,62 @@ async function maybeThrottleGittensoryCommand(
   return true;
 }
 
+const INTENT_ROUTING_RATE_LIMIT_EVENT_TYPE = "github_app.intent_routing_invocation";
+
+/**
+ * Dedicated rate limit for the intent-classification router (#4596): every unrecognized-verb mention with
+ * non-trivial trailing text that reaches the classifier consumes ONE tick here, using the SAME AI-cost-bearing
+ * ceiling (`commandRateLimitAiMaxPerWindow`) and "off"/"hold" policy switch as every other AI-cost-bearing
+ * command -- kept as its OWN counter (not folded into any single command's bucket via
+ * `maybeThrottleGittensoryCommand`) because an unrecognized-verb mention isn't attributable to any one command
+ * until AFTER classification runs, and a "no match" classification must still count for budget-ledger
+ * consistency (req 5) even though it never becomes a real command dispatch. Fails OPEN on any throttle: this
+ * only ever skips the classifier call itself, never blocks the existing did-you-mean fallback it would
+ * otherwise replace -- a contributor still gets a reply either way.
+ */
+async function maybeThrottleIntentRouting(
+  env: Env,
+  args: {
+    deliveryId: string;
+    repoFullName: string;
+    issueNumber: number;
+    commenter: string;
+    settings: RepositorySettings;
+  },
+): Promise<boolean> {
+  /* v8 ignore next -- resolveRepositorySettings always resolves a concrete "off"/"hold"; the undefined side is defensive against the field's optional TS type. */
+  const policy = args.settings.commandRateLimitPolicy ?? "off";
+  if (policy === "off") return false;
+
+  const targetKey = `${args.repoFullName}#${args.issueNumber}#intent-routing`;
+  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  const alreadySeen = await hasAuditEventForDelivery(env, args.commenter, INTENT_ROUTING_RATE_LIMIT_EVENT_TYPE, targetKey, args.deliveryId, redeliverySinceIso);
+  // A redelivered webhook must not re-classify (and re-spend shared neuron budget) for one real mention.
+  if (alreadySeen) return true;
+
+  /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer; the undefined side is defensive against the field's optional TS type. */
+  const maxPerWindow = args.settings.commandRateLimitAiMaxPerWindow ?? 5;
+  /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer; the undefined side is defensive against the field's optional TS type. */
+  const windowHours = args.settings.commandRateLimitWindowHours ?? 24;
+  const sinceIso = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
+  const priorInvocations = await countRecentAuditEventsForActorAndTarget(env, args.commenter, INTENT_ROUTING_RATE_LIMIT_EVENT_TYPE, targetKey, sinceIso);
+  const invocationCount = priorInvocations + 1;
+
+  await recordAuditEvent(env, {
+    eventType: INTENT_ROUTING_RATE_LIMIT_EVENT_TYPE,
+    actor: args.commenter,
+    targetKey,
+    outcome: "completed",
+    detail: `intent-routing invocation ${invocationCount}/${maxPerWindow} within ${windowHours}h window`,
+    metadata: { deliveryId: args.deliveryId, repoFullName: args.repoFullName },
+  }).catch(
+    /* v8 ignore next -- fail-safe: an audit write failure never blocks the classifier attempt */
+    () => undefined,
+  );
+
+  return invocationCount > maxPerWindow;
+}
+
 async function maybeProcessGittensoryMentionCommand(
   env: Env,
   deliveryId: string,
@@ -12280,7 +12337,7 @@ async function maybeProcessGittensoryMentionCommand(
   // this an `edited` comment re-runs the agent + rewrites the card, and a `deleted` command still posts an answer
   // card for a command that no longer exists (#review-audit).
   if (payload.action !== "created") return false;
-  const command = parseGittensoryMentionCommand(payload.comment?.body);
+  let command = parseGittensoryMentionCommand(payload.comment?.body);
   if (!command) return false;
   // Action commands (gate-override + the #1960 PR control-surface verbs) are handled by their own dispatch
   // earlier in processGitHubWebhook; they never produce a Q&A answer card here. Bail so the rest of this
@@ -12393,6 +12450,43 @@ async function maybeProcessGittensoryMentionCommand(
         commenter,
       ),
     ]);
+
+  // Intent-classification router (#4596): an unrecognized-verb mention with real trailing text (e.g. "why is
+  // this stuck?") gets ONE chance to be re-routed to an existing Q&A command BEFORE authorization/rate-limit/
+  // dispatch run, so the rest of this handler proceeds completely normally for whatever it resolves to -- the
+  // matched command's OWN authorization, rate limit, and rendering all apply unchanged, exactly as if the
+  // contributor had typed the exact verb. A no-match (or anything not enabled/available) leaves `command`
+  // untouched and the existing did-you-mean fallback renders exactly as it always has.
+  let interpretedFrom: { question: string; matchedCommand: GittensoryMentionCommandName } | undefined;
+  if (command.name === "help" && command.unrecognizedText && settings.advisoryAiRouting?.intentRouting === true) {
+    const throttled = await maybeThrottleIntentRouting(env, { deliveryId, repoFullName, issueNumber: issue.number, commenter, settings });
+    if (!throttled) {
+      const classification = await classifyGittensoryIntent(env, {
+        text: command.unrecognizedText,
+        advisoryAiRouting: settings.advisoryAiRouting,
+        repoFullName,
+        issueNumber: issue.number,
+        actor: commenter,
+        route: "github_app.intent_routing",
+      });
+      if (classification.status === "matched") {
+        const matchedCommand = classification.command;
+        interpretedFrom = { question: command.unrecognizedText, matchedCommand };
+        command = {
+          name: matchedCommand,
+          raw: command.raw,
+          question: matchedCommand === "ask" || matchedCommand === "chat" ? command.unrecognizedText : undefined,
+        };
+      }
+    }
+  }
+  // Re-assert the action-command exclusion TypeScript's control-flow narrowing loses across the `let`
+  // reassignment above: dead code by construction (INTENT_ROUTABLE_COMMANDS, github/commands.ts, never
+  // contains an action-command name, so `command.name` can never actually be one here), but restores
+  // `command.name`'s narrowed type for every reference below.
+  /* v8 ignore next */
+  if (isGittensoryActionCommand(command.name)) return false;
+
   // Respect pause/dry-run/global-freeze like every other agent-driven write in this file (#2258) — the answer
   // card is a live public comment post, same as gate-override's confirmation comment.
   const mentionMode = resolveAgentActionMode({
@@ -12529,6 +12623,7 @@ async function maybeProcessGittensoryMentionCommand(
     bundle,
     maintainerDigest,
     chatAnswer,
+    interpretedFrom,
     env,
   });
   const responseComment = await createOrUpdateAgentCommandComment(

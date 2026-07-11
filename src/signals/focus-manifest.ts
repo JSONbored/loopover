@@ -600,6 +600,7 @@ export function resolveEffectiveSettings(
       summaries: advisoryAiRoutingOverride.summaries ?? base.summaries,
       chatQa: advisoryAiRoutingOverride.chatQa ?? base.chatQa,
       chatQaFrontierFallback: advisoryAiRoutingOverride.chatQaFrontierFallback ?? base.chatQaFrontierFallback,
+      intentRouting: advisoryAiRoutingOverride.intentRouting ?? base.intentRouting,
     };
   }
   applyGateConfigOverrides(effective, manifest.gate);

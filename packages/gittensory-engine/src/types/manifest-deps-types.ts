@@ -119,6 +119,9 @@ export type AdvisoryAiRoutingConfig = {
    *  env.AI_ADVISORY is unconfigured, instead of declining. Meaningless unless {@link chatQa} is also true.
    *  Default false. */
   chatQaFrontierFallback: boolean;
+  /** Closed-set intent-classification router for unrecognized `@gittensory` mentions (#4596). Ollama-only,
+   *  same as chatQa. Default false. */
+  intentRouting: boolean;
 };
 
 export type ContributorBlacklistEntry = {

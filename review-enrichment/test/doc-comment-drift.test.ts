@@ -341,6 +341,29 @@ test("scanDocCommentDrift: stops on an already-aborted signal", async () => {
   assert.deepEqual(out, []);
 });
 
+test("scanDocCommentDrift: uses the analysis-context fetchText when supplied, instead of the bare fetch path", async () => {
+  // #4759: the file-content fetch now goes through the shared boundedFetchText helper, which prefers
+  // options.analysis.fetchText (mirrors duplication-delta.ts's own fetchFileAtHead) when an AnalysisContext is
+  // supplied — the raw fetchFn passed as the second positional arg must never be invoked in that case.
+  let analysisCalls = 0;
+  const analysis = {
+    fetchText: async (_url, _opts) => {
+      analysisCalls += 1;
+      return { ok: true, status: 200, data: DRIFTED, bytes: DRIFTED.length, elapsedMs: 0, endpointCategory: "github-contents" };
+    },
+  };
+  const findings = await scanDocCommentDrift(
+    baseReq([{ path: "src/a.ts", patch: DRIFT_PATCH }]),
+    async () => {
+      throw new Error("bare fetch should not be used when analysis.fetchText is supplied");
+    },
+    { analysis },
+  );
+  assert.equal(analysisCalls, 1);
+  assert.equal(findings.length, 1);
+  assert.deepEqual(findings[0].staleParams, ["oldName"]);
+});
+
 test("renderBrief emits a public-safe doc-comment-drift block", () => {
   const { promptSection } = renderBrief({
     docCommentDrift: [{ file: "src/a.ts", line: 4, symbol: "doThing", staleParams: ["oldName"] }],

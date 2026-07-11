@@ -3,7 +3,9 @@
 // files and other changed consumer files at headSha (injected fetch), reverse-applies the patch to recover the
 // pre-PR member set, and only reports high-confidence misses (explicit enum/union cases, no default branch). Bounded
 // file-fetch caps; fail-safe on missing token/headSha, bad slug, or fetch errors.
-import type { EnrichRequest, ExhaustivenessFinding } from "../types.js";
+import type { AnalyzerDiagnostics, EnrichRequest, ExhaustivenessFinding } from "../types.js";
+import type { AnalysisContext } from "../analysis-context.js";
+import { boundedFetchText } from "../external-fetch.js";
 import { githubHeaders } from "../github-headers.js";
 import { reconstructOldContent } from "./reconstruct-old-content.js";
 import { isDiffFileHeaderLine } from "./diff-lines.js";
@@ -28,6 +30,8 @@ const DEFAULT_CASE_RE = /^\s*default\s*:/;
 
 interface ScanOptions {
   signal?: AbortSignal;
+  analysis?: Pick<AnalysisContext, "fetchText">;
+  diagnostics?: AnalyzerDiagnostics;
 }
 
 interface AddedMemberCandidate {
@@ -46,33 +50,9 @@ function isScannablePath(path: string): boolean {
   return SOURCE_RE.test(path) && !SKIP_RE.test(path) && !isTestPath(path);
 }
 
-async function readBoundedText(resp: Response, signal?: AbortSignal): Promise<string | null> {
-  const length = Number(resp.headers.get("content-length"));
-  if (Number.isFinite(length) && length > MAX_FETCH_BYTES) return null;
-  if (!resp.body) return null;
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let size = 0;
-  let text = "";
-  try {
-    while (true) {
-      if (signal?.aborted) return null;
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_FETCH_BYTES) {
-        await reader.cancel();
-        return null;
-      }
-      text += decoder.decode(value, { stream: true });
-    }
-    text += decoder.decode();
-    return text;
-  } finally {
-    reader.releaseLock();
-  }
-}
-
+/** Fetch a changed file's raw content at `headSha` through the shared bounded-text helper (#4759) — with the
+ *  analysis context's caching/metering when supplied, mirroring `duplication-delta.ts`'s own `fetchFileAtHead`.
+ *  Returns null on any non-OK / oversized / network outcome so the caller fails safe. */
 async function fetchFileAtHead(
   owner: string,
   repo: string,
@@ -80,19 +60,25 @@ async function fetchFileAtHead(
   headSha: string,
   token: string,
   fetchFn: typeof fetch,
-  signal: AbortSignal | undefined,
+  options: ScanOptions,
 ): Promise<string | null> {
-  try {
-    const encoded = path.split("/").map(encodeURIComponent).join("/");
-    const resp = await fetchFn(
-      `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encoded}?ref=${encodeURIComponent(headSha)}`,
-      { headers: githubHeaders(token, { raw: true }), signal },
-    );
-    if (!resp.ok) return null;
-    return await readBoundedText(resp, signal);
-  } catch {
-    return null;
-  }
+  const encoded = path.split("/").map(encodeURIComponent).join("/");
+  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encoded}?ref=${encodeURIComponent(headSha)}`;
+  const fetchOptions = {
+    endpointCategory: "github-contents",
+    headers: githubHeaders(token, { raw: true }),
+    signal: options.signal,
+    fetchImpl: fetchFn,
+    diagnostics: options.diagnostics,
+    phase: "exhaustiveness",
+    subcall: "github-contents",
+    maxBytes: MAX_FETCH_BYTES,
+    maxCallsPerCategory: MAX_FETCHES,
+  };
+  const response = options.analysis
+    ? await options.analysis.fetchText(url, fetchOptions)
+    : await boundedFetchText(url, fetchOptions);
+  return response.ok ? response.data : null;
 }
 
 /** Walk a unified diff and collect newly added enum/union members with their declaring type name and new-file line. */
@@ -296,7 +282,7 @@ export async function scanExhaustivenessDrift(
       return null;
     }
     fetches += 1;
-    const content = await fetchFileAtHead(owner, repo, path, headSha, githubToken, fetchFn, options.signal);
+    const content = await fetchFileAtHead(owner, repo, path, headSha, githubToken, fetchFn, options);
     contentCache.set(path, content);
     return content;
   };

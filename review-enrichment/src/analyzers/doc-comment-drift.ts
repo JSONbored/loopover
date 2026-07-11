@@ -5,9 +5,13 @@
 // non-parameter signature edit (return type, name, modifier, parameter type) over PRE-EXISTING stale docs a
 // non-finding. Deliberately conservative: only NAMED `function` declarations whose parameters are confidently
 // enumerable (any destructuring / non-identifier param → skip the function). Reports symbol + stale params + line.
-import type { EnrichRequest, DocCommentDriftFinding } from "../types.js";
+import type { AnalyzerDiagnostics, EnrichRequest, DocCommentDriftFinding } from "../types.js";
+import type { AnalysisContext } from "../analysis-context.js";
+import { boundedFetchText } from "../external-fetch.js";
+import { githubHeaders } from "../github-headers.js";
 import { reconstructOldContent } from "./reconstruct-old-content.js";
 
+const GITHUB_API = "https://api.github.com";
 const MAX_FILES = 20;
 const MAX_FINDINGS = 50;
 const MAX_SIGNATURE_LINES = 40;
@@ -22,34 +26,39 @@ const FUNC_DECL_RE = /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\
 
 interface ScanOptions {
   signal?: AbortSignal;
+  analysis?: Pick<AnalysisContext, "fetchText">;
+  diagnostics?: AnalyzerDiagnostics;
 }
 
-async function readBoundedText(resp: Response, signal?: AbortSignal): Promise<string | null> {
-  const length = Number(resp.headers.get("content-length"));
-  if (Number.isFinite(length) && length > MAX_FETCH_BYTES) return null;
-  if (!resp.body) return null;
-
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let size = 0;
-  let text = "";
-  try {
-    while (true) {
-      if (signal?.aborted) return null;
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_FETCH_BYTES) {
-        await reader.cancel();
-        return null;
-      }
-      text += decoder.decode(value, { stream: true });
-    }
-    text += decoder.decode();
-    return text;
-  } finally {
-    reader.releaseLock();
-  }
+/** Fetch a changed file's raw content at `headSha` through the shared bounded-text helper (#4759) — with the
+ *  analysis context's caching/metering when supplied, mirroring `duplication-delta.ts`'s own `fetchFileAtHead`.
+ *  Returns null on any non-OK / oversized / network outcome so the caller fails safe. */
+async function fetchFileAtHead(
+  owner: string,
+  repo: string,
+  path: string,
+  headSha: string,
+  token: string,
+  fetchFn: typeof fetch,
+  options: ScanOptions,
+): Promise<string | null> {
+  const encoded = path.split("/").map(encodeURIComponent).join("/");
+  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encoded}?ref=${encodeURIComponent(headSha)}`;
+  const fetchOptions = {
+    endpointCategory: "github-contents",
+    headers: githubHeaders(token, { raw: true }),
+    signal: options.signal,
+    fetchImpl: fetchFn,
+    diagnostics: options.diagnostics,
+    phase: "docCommentDrift",
+    subcall: "github-contents",
+    maxBytes: MAX_FETCH_BYTES,
+    maxCallsPerCategory: MAX_FILES,
+  };
+  const response = options.analysis
+    ? await options.analysis.fetchText(url, fetchOptions)
+    : await boundedFetchText(url, fetchOptions);
+  return response.ok ? response.data : null;
 }
 
 /** Map every named `function NAME` declaration in `content` to its enumerable parameter-name set. A function whose
@@ -312,11 +321,6 @@ export async function scanDocCommentDrift(
   const repo = parts[1];
   if (parts.length !== 2 || !owner || !repo || !SLUG_RE.test(owner) || !SLUG_RE.test(repo)) return [];
 
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${githubToken}`,
-    Accept: "application/vnd.github.raw",
-    "X-GitHub-Api-Version": "2022-11-28",
-  };
   const sources = files
     .filter((file) => file.patch && SOURCE_RE.test(file.path) && !SKIP_RE.test(file.path))
     .slice(0, MAX_FILES);
@@ -325,17 +329,7 @@ export async function scanDocCommentDrift(
   for (const file of sources) {
     if (options.signal?.aborted) break;
 
-    let content: string | null = null;
-    try {
-      const path = file.path.split("/").map(encodeURIComponent).join("/");
-      const resp = await fetchFn(
-        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path}?ref=${encodeURIComponent(headSha)}`,
-        { headers, signal: options.signal },
-      );
-      if (resp.ok) content = await readBoundedText(resp, options.signal);
-    } catch {
-      content = null;
-    }
+    const content = await fetchFileAtHead(owner, repo, file.path, headSha, githubToken, fetchFn, options);
     if (!content) continue;
     if (options.signal?.aborted) break; // an abort during the fetch should suppress this file's findings too
 

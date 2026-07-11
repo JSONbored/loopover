@@ -27,7 +27,9 @@
 // that file, never a crash -- checked via plain truthiness, NEVER a strict `=== null` compare (see
 // reconstruct-old-content.ts's own doc comment: an empty string is falsy but `!== null`, so a strict-null check
 // would wrongly treat a brand-new file's "" as valid before-content).
-import type { EnrichRequest, ComplexityDeltaFinding } from "../types.js";
+import type { AnalyzerDiagnostics, EnrichRequest, ComplexityDeltaFinding } from "../types.js";
+import type { AnalysisContext } from "../analysis-context.js";
+import { boundedFetchText } from "../external-fetch.js";
 import { githubHeaders } from "../github-headers.js";
 import { reconstructOldContent } from "./reconstruct-old-content.js";
 import { isJsTsPath, scanContentForComplexity } from "./complexity.js";
@@ -41,36 +43,13 @@ const MAX_FETCH_BYTES = 1_000_000;
 
 interface ScanOptions {
   signal?: AbortSignal;
+  analysis?: Pick<AnalysisContext, "fetchText">;
+  diagnostics?: AnalyzerDiagnostics;
 }
 
-async function readBoundedText(resp: Response, signal?: AbortSignal): Promise<string | null> {
-  const length = Number(resp.headers.get("content-length"));
-  if (Number.isFinite(length) && length > MAX_FETCH_BYTES) return null;
-  if (!resp.body) return null;
-
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let size = 0;
-  let text = "";
-  try {
-    while (true) {
-      if (signal?.aborted) return null;
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_FETCH_BYTES) {
-        await reader.cancel();
-        return null;
-      }
-      text += decoder.decode(value, { stream: true });
-    }
-    text += decoder.decode();
-    return text;
-  } finally {
-    reader.releaseLock();
-  }
-}
-
+/** Fetch a changed file's raw content at `headSha` through the shared bounded-text helper (#4759) — with the
+ *  analysis context's caching/metering when supplied, mirroring `duplication-delta.ts`'s own `fetchFileAtHead`.
+ *  Returns null on any non-OK / oversized / network outcome so the caller fails safe. */
 async function fetchFileAtHeadSha(
   owner: string,
   repo: string,
@@ -78,19 +57,25 @@ async function fetchFileAtHeadSha(
   headSha: string,
   token: string,
   fetchFn: typeof fetch,
-  signal: AbortSignal | undefined,
+  options: ScanOptions,
 ): Promise<string | null> {
-  try {
-    const encoded = path.split("/").map(encodeURIComponent).join("/");
-    const resp = await fetchFn(
-      `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encoded}?ref=${encodeURIComponent(headSha)}`,
-      { headers: githubHeaders(token, { raw: true }), signal },
-    );
-    if (!resp.ok) return null;
-    return await readBoundedText(resp, signal);
-  } catch {
-    return null;
-  }
+  const encoded = path.split("/").map(encodeURIComponent).join("/");
+  const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encoded}?ref=${encodeURIComponent(headSha)}`;
+  const fetchOptions = {
+    endpointCategory: "github-contents",
+    headers: githubHeaders(token, { raw: true }),
+    signal: options.signal,
+    fetchImpl: fetchFn,
+    diagnostics: options.diagnostics,
+    phase: "complexityDelta",
+    subcall: "github-contents",
+    maxBytes: MAX_FETCH_BYTES,
+    maxCallsPerCategory: MAX_FILES,
+  };
+  const response = options.analysis
+    ? await options.analysis.fetchText(url, fetchOptions)
+    : await boundedFetchText(url, fetchOptions);
+  return response.ok ? response.data : null;
 }
 
 /** Full-file-scan the reconstructed OLD content and the NEW (head) content of one file with
@@ -155,7 +140,7 @@ export async function scanComplexityDelta(
       headSha,
       githubToken,
       fetchFn,
-      options.signal,
+      options,
     );
     if (!headContent) continue;
     if (options.signal?.aborted) break; // an abort during the fetch should suppress this file's findings too

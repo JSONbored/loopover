@@ -204,7 +204,10 @@ test("scanComplexityDelta: stops on an already-aborted signal", async () => {
 
 test("scanComplexityDelta: an abort that becomes true before the body read begins yields no findings for that file", async () => {
   // The signal is still false when the per-file loop's pre-fetch check runs, but flips true INSIDE the fetch
-  // itself -- readBoundedText's own first internal check (not the outer one) must catch this.
+  // itself, before the Response is even returned. The shared boundedFetchText helper (#4759) has no signal-polling
+  // of its own inside its read loop -- it just reads whatever Response the mocked fetchImpl hands back, which
+  // succeeds here regardless of the signal's state -- so it's the loop's OWN post-fetch check that must catch the
+  // now-true signal and discard this file's content.
   const abortController = new AbortController();
   const out = await scanComplexityDelta(
     baseReq([{ path: "src/a.ts", patch: CALC_PATCH }]),
@@ -218,9 +221,10 @@ test("scanComplexityDelta: an abort that becomes true before the body read begin
 });
 
 test("scanComplexityDelta: an abort that fires only after a file's content is fully read stops further files", async () => {
-  // The signal flips true DURING the body read's final chunk (after readBoundedText's last internal check already
-  // passed), so readBoundedText itself returns the content successfully -- the OUTER post-fetch check must still
-  // catch it and stop before a second file is ever fetched.
+  // The signal flips true DURING the body read's final chunk. The shared boundedFetchText helper (#4759) has no
+  // signal-polling of its own inside its read loop, so it finishes reading this (mocked, in-memory) stream and
+  // returns the content successfully -- the loop's OWN post-fetch check must still catch it and stop before a
+  // second file is ever fetched.
   const abortController = new AbortController();
   let fetchCalls = 0;
   const out = await scanComplexityDelta(
@@ -295,6 +299,36 @@ test("scanComplexityDelta: respects the findings cap across files and stops fetc
   );
   assert.equal(out.length, 25);
   assert.equal(fetchCalls, 1); // the cap was hit mid-file-1, so file 2 is never fetched
+});
+
+test("scanComplexityDelta: uses the analysis-context fetchText when supplied, instead of the bare fetch path", async () => {
+  // #4759: the file-content fetch now goes through the shared boundedFetchText helper, which prefers
+  // options.analysis.fetchText (mirrors duplication-delta.ts's own fetchFileAtHead) when an AnalysisContext is
+  // supplied — the raw fetchFn passed as the second positional arg must never be invoked in that case.
+  let analysisCalls = 0;
+  const analysis = {
+    fetchText: async (_url, _opts) => {
+      analysisCalls += 1;
+      return {
+        ok: true,
+        status: 200,
+        data: HEAD_CONTENT,
+        bytes: HEAD_CONTENT.length,
+        elapsedMs: 0,
+        endpointCategory: "github-contents",
+      };
+    },
+  };
+  const findings = await scanComplexityDelta(
+    baseReq([{ path: "src/calc.ts", patch: CALC_PATCH }]),
+    async () => {
+      throw new Error("bare fetch should not be used when analysis.fetchText is supplied");
+    },
+    { analysis },
+  );
+  assert.equal(analysisCalls, 1);
+  assert.equal(findings.length, 1);
+  assert.deepEqual(findings[0], { file: "src/calc.ts", line: 1, name: "calc", before: 5, after: 2, delta: -3 });
 });
 
 test("renderBrief emits a public-safe complexity-delta block", () => {

@@ -387,9 +387,10 @@ import {
   releaseTransientLockIfOwner,
   type TransientLockClaim,
 } from "./transient-locks";
-// #4013 step 1: temporary re-export shim so test/unit/queue.test.ts's existing
+// #4013 step 1: temporary re-export shim so test/unit/queue.test.ts and its size-split siblings
+// (queue-2/3/4/5.test.ts, queue-lifecycle-guards.test.ts)'s existing
 // `import { claimPrActuationLock, releasePrActuationLock } from "../../src/queue/processors"` keeps working
-// unchanged -- those tests are deeply interspersed with unrelated ones in that file, not in a cleanly
+// unchanged -- those tests are deeply interspersed with unrelated ones in that file family, not in a cleanly
 // extractable describe block, so relocating them is deliberately deferred rather than forced into this PR.
 export { claimPrActuationLock, releasePrActuationLock } from "./transient-locks";
 import { isVisualPath } from "../review/visual/paths";
@@ -14418,8 +14419,8 @@ async function closeReviewEvasionSelfCloseIfActive(
     // rethrow) IS reachable and IS exercised by the existing re-close-failure tests -- only the else branch
     // (this `if`'s implicit non-Error path) and the fallback statement below are ignored. Concretely: a 500
     // from GitHub on the re-close PATCH makes closePullRequest reject with a RequestError, which is exactly
-    // what test/unit/queue.test.ts's "REGRESSION (gate-flagged): a retry after the re-close failure
-    // converges -- the PR ends up closed, and the strike is recorded exactly once" drives through this `if`.
+    // what test/unit/queue-lifecycle-guards.test.ts's "REGRESSION (gate-flagged): a retry after the re-close
+    // failure converges -- the PR ends up closed, and the strike is recorded exactly once" drives through this `if`.
     /* v8 ignore else */
     if (closeError instanceof Error) throw closeError;
     /* v8 ignore next -- unreachable, see above. */

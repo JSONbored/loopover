@@ -1316,7 +1316,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(capturedInput).toBe("Review this diff.");
   });
 
-  it("Claude Code runs with --permission-mode bypassPermissions, not plan (#observability-plan-mode-injection-lookalike): disallowedTools already forbids every mutating tool, and 'plan' activates the interactive Plan-Mode workflow instead of just restricting permissions", async () => {
+  it("Claude Code disables all built-in and MCP tools while keeping bypassPermissions headless (#observability-plan-mode-injection-lookalike)", async () => {
     let seen: string[] = [];
     const cap: StubSpawn = async (_c, a) => {
       seen = a;
@@ -1325,6 +1325,10 @@ describe("subscription CLI helpers + fail-safe", () => {
     await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, cap).run("", { prompt: "x" });
     expect(seen[seen.indexOf("--permission-mode") + 1]).toBe("bypassPermissions");
     expect(seen).not.toContain("plan");
+    expect(seen[seen.indexOf("--tools") + 1]).toBe("");
+    expect(seen).toContain("--strict-mcp-config");
+    expect(seen[seen.indexOf("--disallowedTools") + 1]).toBe("mcp__*");
+    expect(seen[seen.indexOf("--disallowedTools") + 1]).not.toContain("Bash");
   });
 
   it("chat-only CLIs reject embeds so the chain routes embeddings to an embed-capable provider (Claude review + ollama embed)", async () => {

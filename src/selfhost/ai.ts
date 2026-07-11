@@ -882,13 +882,26 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
         const prompt = toCliPrompt(options, systemAppend);
         const spawn = spawnImpl ?? (await defaultSpawn());
         const cwd = await isolatedCliCwd();
-        // bypassPermissions (not "plan"): --disallowedTools already forbids every mutating/networked tool, so
-        // nothing left needs an interactive approval prompt -- and this call has no TTY to answer one anyway.
-        // "plan" activates Claude Code's full interactive Plan-Mode WORKFLOW (explore, draft a plan, wait for
-        // ExitPlanMode approval), not just a permission restriction, which confused the model into treating a
-        // one-shot review request as an interactive planning session instead of returning a JSON verdict
-        // (#observability-plan-mode-injection-lookalike, live in ai_review_provider_unparseable_exhausted).
-        const args = ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "bypassPermissions", "--effort", effort, "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"];
+        // Keep bypassPermissions (not "plan") only to avoid a headless approval prompt; the actual boundary is
+        // tool removal. --tools "" removes every built-in tool, --strict-mcp-config prevents user/home MCP config
+        // from loading, and mcp__* is a defense-in-depth deny for CLIs that still have MCP tools available. This
+        // avoids a brittle mutating-tool denylist while preserving the one-shot JSON review flow.
+        const args = [
+          "--print",
+          "--output-format",
+          "json",
+          "--model",
+          claudeModel,
+          "--permission-mode",
+          "bypassPermissions",
+          "--effort",
+          effort,
+          "--tools",
+          "",
+          "--strict-mcp-config",
+          "--disallowedTools",
+          "mcp__*",
+        ];
         // A dedicated system-prompt-file channel (not textual stdin-prepending) marks repo instructions
         // unambiguously SYSTEM rather than author-controlled content -- see writeClaudeSystemPromptFile's doc
         // comment for why the textual-prepend approach this replaces was itself the bug.

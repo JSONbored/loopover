@@ -24,6 +24,11 @@ describe("GITHUB_ID_BIGINT_WIDENING_SQL (#selfhost-github-id-overflow)", () => {
     expect(GITHUB_ID_BIGINT_WIDENING_SQL).toContain("ALTER TABLE github_agent_command_answers ALTER COLUMN response_comment_id TYPE bigint");
   });
 
+  it("covers the two columns found via the live-schema sweep (added by later ALTER TABLE ADD COLUMN migrations, not the original CREATE TABLE statements)", () => {
+    expect(GITHUB_ID_BIGINT_WIDENING_SQL).toContain("ALTER TABLE installations ALTER COLUMN app_id TYPE bigint");
+    expect(GITHUB_ID_BIGINT_WIDENING_SQL).toContain("ALTER TABLE orb_github_installations ALTER COLUMN account_id TYPE bigint");
+  });
+
   it("is additive-only DDL, never destructive", () => {
     expect(GITHUB_ID_BIGINT_WIDENING_SQL).not.toMatch(/DROP|DELETE|TRUNCATE/i);
   });

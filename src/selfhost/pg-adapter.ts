@@ -162,10 +162,10 @@ export const GITHUB_ID_BIGINT_WIDENING_SQL = [
  *  mirroring tuneGithubRateLimitObservationsAutovacuum's shape exactly. Must run AFTER migrations (every table
  *  above has to exist by then, so a mid-batch "relation does not exist" is not a realistic failure mode here);
  *  best-effort by design -- a failure here must not stop the self-host from booting. Postgres's simple-query
- *  protocol runs this whole multi-statement string as one implicit transaction, so either all 19 ALTERs commit
- *  together or (on any single failure) none do -- fine given every ALTER is independently idempotent and this
- *  reruns unconditionally on every boot: a failed attempt just retries whole next boot instead of leaving a
- *  partially-widened, inconsistent state. */
+ *  protocol runs this whole multi-statement string as one implicit transaction, so either every ALTER in the
+ *  list commits together or (on any single failure) none do -- fine given each ALTER is independently
+ *  idempotent and this reruns unconditionally on every boot: a failed attempt just retries the whole batch
+ *  next boot instead of leaving a partially-widened, inconsistent state. */
 export async function widenGithubIdColumnsToBigint(db: D1Database): Promise<void> {
   await db.exec(GITHUB_ID_BIGINT_WIDENING_SQL).catch((error: unknown) => {
     console.error(

@@ -5,7 +5,13 @@ vi.mock("@jsonbored/gittensory-engine", async () => {
 });
 
 import { buildHouseRulesAgentSdkHooks, runHouseRulesEnforcedCodingAgentAttempt } from "../../packages/gittensory-miner/lib/coding-agent-house-rules.js";
-import type { AgentSdkQueryFn, CodingAgentDriverTask } from "@jsonbored/gittensory-engine";
+// Typed from source, not the "@jsonbored/gittensory-engine" package specifier: that resolves via the
+// workspace package's dist/ (git-ignored, only built by CI's later "Build engine package" step -- #ci-engine-
+// build-order), which runs AFTER Typecheck, so a real (non-vi.mock) `import type` from the package specifier
+// fails TS2307 in CI even though it resolves fine locally with a stale/leftover dist/ already on disk. The
+// vi.mock above already redirects the package specifier to this exact source file at runtime; importing
+// types from the same source path keeps both resolutions consistent and needs no build step at all.
+import type { AgentSdkQueryFn, CodingAgentDriverTask } from "../../packages/gittensory-engine/src/index";
 
 // buildHouseRulesPreToolUseHook's own deny-rule matching logic (matcher, glob, path-tokenizing, force-push
 // detection) is already exhaustively tested in miner-pretooluse-hook.test.ts. These tests cover only this

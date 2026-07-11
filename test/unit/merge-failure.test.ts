@@ -13,6 +13,12 @@ describe("classifyMergeFailure", () => {
     expect(result.reason).toMatch(/base branch moved/i);
   });
 
+  it("REGRESSION (#5003, GITTENSORY-1K): retries the transient 405 'Merge already in progress' race instead of holding it", () => {
+    const result = classifyMergeFailure(httpError(405, "Merge already in progress"));
+    expect(result.terminal).toBe(false);
+    expect(result.reason).toMatch(/already in progress/i);
+  });
+
   it("still treats a policy 405 (required reviews/checks) as terminal", () => {
     const result = classifyMergeFailure(httpError(405, "At least 1 approving review is required by reviewers with write access."));
     expect(result.terminal).toBe(true);

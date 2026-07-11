@@ -33,6 +33,15 @@ function isBaseBranchMovedMessage(message: string): boolean {
   return /base branch was modified/i.test(message);
 }
 
+/** True for the transient "Merge already in progress" 405 (GITTENSORY-1K) — another merge request for the
+ *  SAME PR (a manual click, a concurrent duplicate job) is already being processed by GitHub. Not a policy
+ *  rejection: the in-flight merge either lands (making this retry a no-op once the PR is no longer open) or
+ *  fails (making a retry the right move), so it resolves the same way isBaseBranchMovedMessage's TOCTOU race
+ *  does — re-attempt rather than hold. */
+function isMergeAlreadyInProgressMessage(message: string): boolean {
+  return /merge already in progress/i.test(message);
+}
+
 function isConvergenceForbiddenMessage(message: string): boolean {
   return /resource not accessible by integration|secondary rate limit|api rate limit|abuse detection/i.test(message);
 }
@@ -55,6 +64,7 @@ export function classifyMergeFailure(error: unknown): { terminal: boolean; reaso
   // A 405 "Base branch was modified" is a benign TOCTOU race, not a policy rejection — retry against the new base
   // (the executor caps retries at MERGE_RETRY_CAP before escalating to the same terminal hold).
   if (status === 405 && isBaseBranchMovedMessage(message)) return { terminal: false, reason: `base branch moved during merge — retrying: ${message}` };
+  if (status === 405 && isMergeAlreadyInProgressMessage(message)) return { terminal: false, reason: `a merge for this PR was already in progress — retrying: ${message}` };
   if (status === 405) return { terminal: true, reason: `merge not allowed (405 — repo merge policy forbids an automated merge): ${message}` };
   if (status === 409) return { terminal: true, reason: `merge conflict / required check absent (409): ${message}` };
   if (isMergeConflictMessage(message)) return { terminal: true, reason: `branch conflicts with base — contributor must rebase: ${message}` };

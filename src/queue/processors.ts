@@ -348,7 +348,7 @@ import {
   PR_PANEL_GENERATE_TESTS_MARKER,
   type ContributorProfile,
 } from "../signals/engine";
-import { isDuplicateClusterWinnerByClaim, resolveDuplicateClusterWinnerNumber } from "../signals/duplicate-winner";
+import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
 import { buildAiReviewDiff, buildSecretScanDiff, buildUnifiedReviewDiff, totalAddedLineCount } from "../review/review-diff";
 // #4013 step 4 (prep): buildAiReviewDiff/buildSecretScanDiff moved to review-diff.ts (a natural existing
 // home -- both already wrapped buildUnifiedReviewDiff there) rather than staying here, since keeping them
@@ -383,6 +383,24 @@ export { claimPrActuationLock, releasePrActuationLock } from "./transient-locks"
 // two files circularly dependent.
 import { generateSignalSnapshots, loadOpenQueueCounts } from "./signal-snapshot";
 export { generateSignalSnapshots } from "./signal-snapshot";
+// #4013 step 3: same shim shape for the duplicate-cluster adjudication/reconciliation functions -- imported
+// here for this file's own internal callers, and re-exported so test/unit/duplicate-winner.test.ts and
+// test/unit/reconcile-live-duplicate-siblings.test.ts's existing
+// `import { ... } from "../../src/queue/processors"` keeps working unchanged.
+import {
+  dupWinnerLinkedDuplicateCount,
+  dupWinnerLinkedDuplicateWinnerNumber,
+  linkedIssueDuplicatePullRequestRecordsForGate,
+  linkedIssueDuplicatePullRequestsForGate,
+  reconcileLiveDuplicateSiblings,
+} from "./duplicate-detection";
+export {
+  dupWinnerLinkedDuplicateCount,
+  dupWinnerLinkedDuplicateWinnerNumber,
+  linkedIssueDuplicatePullRequestRecordsForGate,
+  linkedIssueDuplicatePullRequestsForGate,
+  reconcileLiveDuplicateSiblings,
+} from "./duplicate-detection";
 // #4013 step 4: same shim shape for the AI-slop-advisory gating/orchestration functions -- imported here
 // for this file's own internal callers, and re-exported so test/unit/advisory-ai-routing-call-sites.test.ts,
 // test/unit/ai-slop.test.ts, and test/unit/gate-check-policy.test.ts's existing
@@ -8204,133 +8222,6 @@ export async function runLinkedIssueSatisfactionForAdvisory(
     );
     return null;
   }
-}
-
-/**
- * Duplicate-winner adjudication (#dup-winner) seam for the close-reason disposition. Given a PR's open
- * duplicate-sibling numbers (from {@link linkedIssueDuplicatePullRequestsForGate}, open-only), return the
- * `linkedDuplicateCount` the agent planner reads. When the flag is ON and this PR is the cluster winner, return
- * 0 so the winner's close reason OMITS the "duplicate of another open PR" cause (agent-actions only adds it
- * when count > 0). Flag-OFF (default) returns the real sibling count — byte-identical to today.
- */
-export function dupWinnerLinkedDuplicateCount(
-  openSiblings: Pick<PullRequestRecord, "number" | "linkedIssueClaimedAt" | "createdAt">[],
-  prNumber: number,
-  linkedIssueClaimedAt: string | null | undefined,
-  duplicateWinnerEnabled: boolean,
-  createdAt?: string | null | undefined,
-): number {
-  if (
-    duplicateWinnerEnabled &&
-    isDuplicateClusterWinnerByClaim({ number: prNumber, linkedIssueClaimedAt, createdAt }, openSiblings)
-  )
-    return 0;
-  return openSiblings.length;
-}
-
-/**
- * Duplicate-winner adjudication (#dup-winner-credit) seam for naming the cluster's actual winner in a loser's
- * close comment. Returns `null` (generic "duplicate of another open PR" wording, byte-identical to before this
- * existed) when the flag is off, this PR IS the winner (nothing to name — its close reason omits the cause
- * entirely via {@link dupWinnerLinkedDuplicateCount}), or the election is too ambiguous to name a specific
- * winner ({@link resolveDuplicateClusterWinnerNumber}'s fail-closed `null`).
- */
-export function dupWinnerLinkedDuplicateWinnerNumber(
-  openSiblings: Pick<PullRequestRecord, "number" | "linkedIssueClaimedAt" | "createdAt">[],
-  prNumber: number,
-  linkedIssueClaimedAt: string | null | undefined,
-  duplicateWinnerEnabled: boolean,
-  createdAt?: string | null | undefined,
-): number | null {
-  if (!duplicateWinnerEnabled) return null;
-  const winner = resolveDuplicateClusterWinnerNumber({ number: prNumber, linkedIssueClaimedAt, createdAt }, openSiblings);
-  return winner === null || winner === prNumber ? null : winner;
-}
-
-/**
- * Live-reconcile the duplicate cluster's open siblings before the winner is elected (#dup-winner / audit #15).
- *
- * The stored open-PR cache ({@link listOtherOpenPullRequests}) lags GitHub: a sibling that was closed/merged on
- * GitHub but is still cached `open` would keep "winning" the duplicate cluster, demoting the real lowest-OPEN PR
- * to a loser and auto-closing it via the `duplicate_pr_risk` blocker. Only a LOWER-numbered overlapping sibling
- * can demote this PR from winner, so re-fetch the LIVE state of just those siblings and drop any that are no
- * longer open. Then the downstream election ({@link isDuplicateClusterWinner}) reflects ground truth.
- *
- * FAIL-OPEN to the stored state: a sibling is dropped ONLY on a positive "not open" confirmation — an unreadable
- * live fetch keeps it, so a transient GitHub hiccup never newly spares a real loser. Flag-OFF (default), no
- * linked issues, or no lower overlapping sibling ⇒ returns the input unchanged with no extra API calls.
- */
-export async function reconcileLiveDuplicateSiblings(
-  env: Env,
-  installationId: number | null,
-  repoFullName: string,
-  pr: PullRequestRecord,
-  otherOpenPullRequests: PullRequestRecord[],
-): Promise<PullRequestRecord[]> {
-  if (env.GITTENSORY_DUPLICATE_WINNER !== "true") return otherOpenPullRequests;
-  const linkedIssues = new Set(pr.linkedIssues);
-  if (linkedIssues.size === 0) return otherOpenPullRequests;
-  const overlapping = otherOpenPullRequests.filter(
-    (other) =>
-      other.state === "open" &&
-      other.linkedIssues.some((issue) => linkedIssues.has(issue)),
-  );
-  if (overlapping.length === 0) return otherOpenPullRequests;
-  const installationToken =
-    installationId === null
-      ? undefined
-      : await createInstallationToken(env, installationId).catch(
-          () => undefined,
-        );
-  const token = installationToken ?? env.GITHUB_PUBLIC_TOKEN;
-  const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
-  const staleClosed = new Set<number>();
-  await Promise.all(
-    overlapping.map(async (sibling) => {
-      // #2537: deliberately NOT durable-cached (flagged by the gate's own review) -- despite recomputing every
-      // delivery, this reconcile feeds duplicate-winner selection, which can auto-CLOSE the CURRENT PR when
-      // duplicateWinnerEnabled. A cached "open" read up to PR_STATE_CACHE_MAX_AGE_MS stale after a missed
-      // `closed` webhook would keep an already-closed sibling eligible as the winner, wrongly closing this PR
-      // as the loser. That is the same class of irreversible-actuation risk the merge/close decision and
-      // gate-override guard against, so this stays on the raw live fetch like they do.
-      const liveState = await fetchLivePullRequestState(
-        env,
-        repoFullName,
-        sibling.number,
-        token,
-        admissionKey,
-      ).catch(() => undefined);
-      if (liveState !== undefined && liveState !== "open")
-        staleClosed.add(sibling.number);
-    }),
-  );
-  if (staleClosed.size === 0) return otherOpenPullRequests;
-  return otherOpenPullRequests.filter(
-    (other) => !staleClosed.has(other.number),
-  );
-}
-
-export function linkedIssueDuplicatePullRequestsForGate(
-  pr: PullRequestRecord,
-  pullRequests: PullRequestRecord[],
-): number[] {
-  return linkedIssueDuplicatePullRequestRecordsForGate(pr, pullRequests).map((otherPr) => otherPr.number);
-}
-
-export function linkedIssueDuplicatePullRequestRecordsForGate(
-  pr: PullRequestRecord,
-  pullRequests: PullRequestRecord[],
-): PullRequestRecord[] {
-  const linkedIssues = new Set(pr.linkedIssues);
-  if (linkedIssues.size === 0) return [];
-  return [
-    ...new Map(
-      pullRequests.flatMap((otherPr) => {
-        if (otherPr.number === pr.number || otherPr.state !== "open") return [];
-        return otherPr.linkedIssues.some((issue) => linkedIssues.has(issue)) ? [[otherPr.number, otherPr] as const] : [];
-      }),
-    ).values(),
-  ].sort((left, right) => left.number - right.number);
 }
 
 async function auditGateCheckPermissionMissing(

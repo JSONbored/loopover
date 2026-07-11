@@ -68,6 +68,27 @@ test("buildSelfReviewPredictedGateInput: maps identity fields, omitting keys the
   assert.ok(!("labels" in input), "labels must be omitted, not set to undefined, when the diff state has none");
 });
 
+test("buildSelfReviewPredictedGateInput: includes labels and authorAssociation when the diff state sets them", () => {
+  const input = buildSelfReviewPredictedGateInput({
+    ...BASE_DIFF_STATE,
+    labels: ["gittensor:feature"],
+    authorAssociation: "CONTRIBUTOR",
+  });
+  assert.deepEqual(input.labels, ["gittensor:feature"]);
+  assert.equal(input.authorAssociation, "CONTRIBUTOR");
+});
+
+test("buildSelfReviewPredictedGateInput: omits body and linkedIssues when the diff state leaves them undefined", () => {
+  const input = buildSelfReviewPredictedGateInput({
+    repoFullName: "acme/widgets",
+    contributorLogin: "miner1",
+    title: "Add retry to the upload client",
+    changedFiles: [],
+  });
+  assert.ok(!("body" in input));
+  assert.ok(!("linkedIssues" in input));
+});
+
 test("buildSelfReviewChangedPaths: extracts the real changed file paths", () => {
   const paths = buildSelfReviewChangedPaths({
     ...BASE_DIFF_STATE,
@@ -85,6 +106,11 @@ test("buildSelfReviewSlopInput: derives hasLinkedIssue from the diff state and t
   const withoutIssue = buildSelfReviewSlopInput({ ...BASE_DIFF_STATE, linkedIssues: [], body: undefined }, baseContext());
   assert.equal(withoutIssue.hasLinkedIssue, false);
   assert.equal(withoutIssue.description, null, "an undefined body normalizes to null, matching SlopAssessmentInput's own nullable field");
+
+  // linkedIssues entirely UNDEFINED (not just an empty array) exercises the `?.length ?? 0` fallback chain
+  // distinctly from the empty-array case above.
+  const undefinedIssues = buildSelfReviewSlopInput({ ...BASE_DIFF_STATE, linkedIssues: undefined }, baseContext());
+  assert.equal(undefinedIssues.hasLinkedIssue, false);
 });
 
 test("runSelfReview: a genuinely passing synthetic diff matches calling buildPredictedGateVerdict directly", () => {
@@ -149,6 +175,26 @@ test("runSelfReview: threads changedPaths through so path-dependent checks are e
   const result = runSelfReview(BASE_DIFF_STATE, context, { runSlopAssessment: () => noopSlop });
   assert.equal(result.changedPaths.length, 1);
   assert.equal(result.changedPaths[0], "src/upload.ts");
+});
+
+test("runSelfReview: forwards optional context fields (bounties, issueQuality, confirmedContributor) through to buildPredictedGateVerdict", () => {
+  const context = baseContext({ confirmedContributor: true, bounties: [], issueQuality: null });
+  const result = runSelfReview(BASE_DIFF_STATE, context, { runSlopAssessment: () => noopSlop });
+
+  assert.equal(result.predictedGateVerdict.confirmedContributor, true);
+
+  const direct = buildPredictedGateVerdict({
+    input: buildSelfReviewPredictedGateInput(BASE_DIFF_STATE),
+    manifest: context.manifest,
+    repo: context.repo,
+    issues: context.issues,
+    pullRequests: context.pullRequests,
+    bounties: [],
+    issueQuality: null,
+    confirmedContributor: true,
+    changedPaths: ["src/upload.ts"],
+  });
+  assert.deepEqual(result.predictedGateVerdict, direct);
 });
 
 test("runSelfReview: passes the exact constructed slop input to the injected dependency and returns its result unchanged", () => {

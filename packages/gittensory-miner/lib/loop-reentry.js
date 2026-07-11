@@ -56,11 +56,12 @@ export function countReentriesSince(eventLedger, sinceMs) {
  * event. Fails closed (throws) on a malformed candidate or missing required dependency, mirroring
  * `recordManagePollSnapshot`'s own validation style.
  *
- * @param {{ repoFullName: string, outcome: "merged"|"disengaged"|"other", maxConsecutiveDisengagements?: number, maxReentriesPerHour?: number, maxReentriesPerSession?: number }} candidate
+ * @param {{ killSwitchScope: "global"|"repo"|"none", repoFullName: string, outcome: "merged"|"disengaged"|"other", maxConsecutiveDisengagements?: number, maxReentriesPerHour?: number, maxReentriesPerSession?: number }} candidate
  * @param {{ eventLedger: object, portfolioQueue: object, runState?: object, nowMs?: number, sessionStartMs?: number }} deps
  */
 export function attemptLoopReentry(candidate, deps) {
   if (!candidate || typeof candidate !== "object") throw new Error("invalid_loop_reentry_candidate");
+  if (!["global", "repo", "none"].includes(candidate.killSwitchScope)) throw new Error("invalid_kill_switch_scope");
   const repoFullName = typeof candidate.repoFullName === "string" ? candidate.repoFullName.trim() : "";
   if (!repoFullName) throw new Error("invalid_repo_full_name");
   if (!["merged", "disengaged", "other"].includes(candidate.outcome)) throw new Error("invalid_outcome");
@@ -79,6 +80,7 @@ export function attemptLoopReentry(candidate, deps) {
   const reentriesThisSession = countReentriesSince(eventLedger, sessionStartMs);
 
   const decision = shouldReenter({
+    killSwitchScope: candidate.killSwitchScope,
     repoFullName,
     outcome: candidate.outcome,
     consecutiveDisengagements,
@@ -101,6 +103,7 @@ export function attemptLoopReentry(candidate, deps) {
     type: LOOP_REENTRY_DECISION_EVENT,
     repoFullName,
     payload: {
+      killSwitchScope: candidate.killSwitchScope,
       outcome: candidate.outcome,
       reentered: decision.reenter,
       reasons: decision.reasons,

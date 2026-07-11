@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assessCopycat,
+  codeShingleList,
   codeShingles,
   containmentScore,
   copycatDirection,
@@ -43,6 +44,13 @@ describe("codeShingles", () => {
     expect(codeShingles(BLOCK).size).toBe(4);
   });
 
+  it("codeShingleList keeps duplicate shingles that codeShingles (the distinct set) collapses", () => {
+    // Two identical 3-line blocks back-to-back → shingles [ABC, BCA, CAB, ABC]: 4 in the list, 3 distinct.
+    const repeated = ["alpha();", "beta();", "gamma();", "alpha();", "beta();", "gamma();"];
+    expect(codeShingleList(repeated)).toHaveLength(4);
+    expect(codeShingles(repeated).size).toBe(3);
+  });
+
   it("ignores blank lines and normalizes whitespace/case before shingling", () => {
     const a = codeShingles(["Const   X = 1;", "", "  const y = 2;  ", "const z = 3;"]);
     const b = codeShingles(["const x = 1;", "const y = 2;", "const z = 3;"]);
@@ -71,6 +79,14 @@ describe("containmentScore", () => {
     // Candidate = the first 4 BLOCK lines (2 contained shingles) plus 2 novel lines (2 non-matching shingles)
     // → 4 shingles total, 2 contained → 50%.
     expect(containmentScore(HALF_COPIED, BLOCK)).toBe(50);
+  });
+
+  it("counts a repeated copied shingle as a MULTISET, not a distinct set (regression)", () => {
+    // Candidate shingles = [ABC, BCA, CAB, ABC]; prior art = {ABC}. Multiset: 2 of 4 contained → 50%.
+    // The earlier distinct-Set denominator undercounted this as 1 of 3 → 33%.
+    const repeatedCopier = ["alpha();", "beta();", "gamma();", "alpha();", "beta();", "gamma();"];
+    const priorArt = ["alpha();", "beta();", "gamma();"];
+    expect(containmentScore(repeatedCopier, priorArt)).toBe(50);
   });
 });
 

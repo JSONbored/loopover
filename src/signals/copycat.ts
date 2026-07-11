@@ -43,32 +43,42 @@ function normalizedLines(lines: readonly string[]): string[] {
   return lines.map(normalizeLine).filter((line) => line.length > 0);
 }
 
-/** Fold normalized lines into a set of SHINGLE_SIZE-line shingles. Fewer than SHINGLE_SIZE non-trivial lines
- *  collapse to a single whole-block shingle so tiny snippets still compare (never silently score 0). */
-export function codeShingles(lines: readonly string[]): Set<string> {
+/** Fold normalized lines into the ORDERED MULTISET of SHINGLE_SIZE-line shingles — duplicates preserved, so a
+ *  passage copied twice counts twice toward containment (see {@link containmentScore}, which must divide by the
+ *  candidate's TOTAL shingle count, not its distinct count). Fewer than SHINGLE_SIZE non-trivial lines collapse
+ *  to a single whole-block shingle so tiny snippets still compare (never silently score 0). */
+export function codeShingleList(lines: readonly string[]): string[] {
   const normalized = normalizedLines(lines);
-  if (normalized.length === 0) return new Set();
-  if (normalized.length < SHINGLE_SIZE) return new Set([normalized.join("\n")]);
-  const shingles = new Set<string>();
+  if (normalized.length === 0) return [];
+  if (normalized.length < SHINGLE_SIZE) return [normalized.join("\n")];
+  const shingles: string[] = [];
   for (let i = 0; i + SHINGLE_SIZE <= normalized.length; i += 1) {
-    shingles.add(normalized.slice(i, i + SHINGLE_SIZE).join("\n"));
+    shingles.push(normalized.slice(i, i + SHINGLE_SIZE).join("\n"));
   }
   return shingles;
 }
 
+/** The DISTINCT SHINGLE_SIZE-line shingles of `lines` — a de-duplicated view of {@link codeShingleList}, used as
+ *  the prior-art lookup set (membership only, so duplicates there are irrelevant). */
+export function codeShingles(lines: readonly string[]): Set<string> {
+  return new Set(codeShingleList(lines));
+}
+
 /** Asymmetric containment (0-100): the percentage of the CANDIDATE's added-code shingles that also appear in the
  *  PRIOR ART. Unlike symmetric Jaccard, this answers "how much of THIS PR is copied FROM prior art" without being
- *  diluted by a large prior-art corpus. 0 when either side has no comparable content. */
+ *  diluted by a large prior-art corpus. The candidate is a MULTISET (its total shingle count is the denominator,
+ *  so a repeated copied passage is not undercounted), while the prior art is a lookup Set (membership only). 0
+ *  when either side has no comparable content. */
 export function containmentScore(candidateLines: readonly string[], priorArtLines: readonly string[]): number {
-  const candidate = codeShingles(candidateLines);
-  if (candidate.size === 0) return 0;
+  const candidate = codeShingleList(candidateLines);
+  if (candidate.length === 0) return 0;
   const prior = codeShingles(priorArtLines);
   if (prior.size === 0) return 0;
   let contained = 0;
   for (const shingle of candidate) {
     if (prior.has(shingle)) contained += 1;
   }
-  return Math.round((contained / candidate.size) * 100);
+  return Math.round((contained / candidate.length) * 100);
 }
 
 /** Parse an ISO-8601 submission time to epoch ms; null for a missing/empty/unparseable value. */

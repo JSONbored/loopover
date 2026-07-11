@@ -1,8 +1,11 @@
 export const LOOP_REENTRY_DECISION_EVENT: "loop_reentry_decision";
 
 export type LoopReentryOutcome = "merged" | "disengaged" | "other";
+export type LoopReentryKillSwitchScope = "global" | "repo" | "none";
 
 export type LoopReentryCandidateInput = {
+  /** Checked FIRST by the pure `shouldReenter` policy, before any other logic. */
+  killSwitchScope: LoopReentryKillSwitchScope;
   repoFullName: string;
   outcome: LoopReentryOutcome;
   maxConsecutiveDisengagements?: number;

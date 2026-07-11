@@ -53,7 +53,7 @@ describe("attemptLoopReentry (#2338)", () => {
     portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue-42" });
 
     const result = attemptLoopReentry(
-      { repoFullName: "acme/widgets", outcome: "merged" },
+      { killSwitchScope: "none", repoFullName: "acme/widgets", outcome: "merged" },
       { eventLedger, portfolioQueue, runState },
     );
 
@@ -84,7 +84,7 @@ describe("attemptLoopReentry (#2338)", () => {
     expect(countConsecutiveDisengagements(eventLedger, "acme/widgets")).toBe(3);
 
     const result = attemptLoopReentry(
-      { repoFullName: "acme/widgets", outcome: "disengaged" },
+      { killSwitchScope: "none", repoFullName: "acme/widgets", outcome: "disengaged" },
       { eventLedger, portfolioQueue, runState },
     );
 
@@ -129,7 +129,7 @@ describe("attemptLoopReentry (#2338)", () => {
     expect(countReentriesSince(eventLedger, now - 60 * 60 * 1000)).toBe(4);
 
     const result = attemptLoopReentry(
-      { repoFullName: "acme/widgets", outcome: "merged", maxReentriesPerHour: 4 },
+      { killSwitchScope: "none", repoFullName: "acme/widgets", outcome: "merged", maxReentriesPerHour: 4 },
       { eventLedger, portfolioQueue, runState, nowMs: now },
     );
 
@@ -150,7 +150,7 @@ describe("attemptLoopReentry (#2338)", () => {
     }
 
     const result = attemptLoopReentry(
-      { repoFullName: "acme/widgets", outcome: "merged", maxReentriesPerHour: 1_000, maxReentriesPerSession: 20 },
+      { killSwitchScope: "none", repoFullName: "acme/widgets", outcome: "merged", maxReentriesPerHour: 1_000, maxReentriesPerSession: 20 },
       { eventLedger, portfolioQueue, runState, sessionStartMs: 0 },
     );
 
@@ -164,12 +164,32 @@ describe("attemptLoopReentry (#2338)", () => {
     const portfolioQueue = tempPortfolioQueue();
 
     expect(() => attemptLoopReentry(null as never, { eventLedger, portfolioQueue })).toThrow("invalid_loop_reentry_candidate");
-    expect(() => attemptLoopReentry({ outcome: "merged" } as never, { eventLedger, portfolioQueue })).toThrow("invalid_repo_full_name");
-    expect(() => attemptLoopReentry({ repoFullName: "", outcome: "merged" }, { eventLedger, portfolioQueue })).toThrow("invalid_repo_full_name");
-    expect(() => attemptLoopReentry({ repoFullName: "acme/widgets", outcome: "bogus" as never }, { eventLedger, portfolioQueue })).toThrow("invalid_outcome");
-    expect(() => attemptLoopReentry({ repoFullName: "acme/widgets", outcome: "merged" }, null as never)).toThrow("invalid_loop_reentry_deps");
-    expect(() => attemptLoopReentry({ repoFullName: "acme/widgets", outcome: "merged" }, { eventLedger } as never)).toThrow("invalid_portfolio_queue");
-    expect(() => attemptLoopReentry({ repoFullName: "acme/widgets", outcome: "merged" }, { portfolioQueue } as never)).toThrow("invalid_event_ledger");
+    expect(() => attemptLoopReentry({ repoFullName: "acme/widgets", outcome: "merged" } as never, { eventLedger, portfolioQueue })).toThrow("invalid_kill_switch_scope");
+    expect(() => attemptLoopReentry({ killSwitchScope: "bogus", repoFullName: "acme/widgets", outcome: "merged" } as never, { eventLedger, portfolioQueue })).toThrow("invalid_kill_switch_scope");
+    expect(() => attemptLoopReentry({ killSwitchScope: "none", outcome: "merged" } as never, { eventLedger, portfolioQueue })).toThrow("invalid_repo_full_name");
+    expect(() => attemptLoopReentry({ killSwitchScope: "none", repoFullName: "", outcome: "merged" }, { eventLedger, portfolioQueue })).toThrow("invalid_repo_full_name");
+    expect(() => attemptLoopReentry({ killSwitchScope: "none", repoFullName: "acme/widgets", outcome: "bogus" as never }, { eventLedger, portfolioQueue })).toThrow("invalid_outcome");
+    expect(() => attemptLoopReentry({ killSwitchScope: "none", repoFullName: "acme/widgets", outcome: "merged" }, null as never)).toThrow("invalid_loop_reentry_deps");
+    expect(() => attemptLoopReentry({ killSwitchScope: "none", repoFullName: "acme/widgets", outcome: "merged" }, { eventLedger } as never)).toThrow("invalid_portfolio_queue");
+    expect(() => attemptLoopReentry({ killSwitchScope: "none", repoFullName: "acme/widgets", outcome: "merged" }, { portfolioQueue } as never)).toThrow("invalid_event_ledger");
+  });
+
+  it("kill-switch (#2339): an active kill-switch blocks re-entry unconditionally, without dequeuing or moving run-state", () => {
+    const eventLedger = tempEventLedger();
+    const portfolioQueue = tempPortfolioQueue();
+    const runState = tempRunState();
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue-1" });
+
+    const result = attemptLoopReentry(
+      { killSwitchScope: "global", repoFullName: "acme/widgets", outcome: "merged" },
+      { eventLedger, portfolioQueue, runState },
+    );
+
+    expect(result.decision).toEqual({ reenter: false, reasons: ["global_kill_switch_active"] });
+    expect(result.dequeued).toBeNull();
+    expect(runState.getRunState("acme/widgets")).toBeNull();
+    expect(portfolioQueue.listQueue("acme/widgets")).toHaveLength(1);
+    expect(result.event.payload).toMatchObject({ killSwitchScope: "global" });
   });
 
   it("threads a caller-supplied loopSummary verbatim into the audit event payload for traceability", () => {
@@ -178,7 +198,7 @@ describe("attemptLoopReentry (#2338)", () => {
     portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue-1" });
     const loopSummary = { sinceSeq: 10, lastSeq: 42, events: { total: 3, byType: { pr_outcome: 1 } }, queue: { total: 1, byStatus: { queued: 1 } }, runState: "idle" };
 
-    const result = attemptLoopReentry({ repoFullName: "acme/widgets", outcome: "merged" }, { eventLedger, portfolioQueue, loopSummary });
+    const result = attemptLoopReentry({ killSwitchScope: "none", repoFullName: "acme/widgets", outcome: "merged" }, { eventLedger, portfolioQueue, loopSummary });
 
     expect(result.event.payload.loopSummary).toEqual(loopSummary);
   });
@@ -188,7 +208,7 @@ describe("attemptLoopReentry (#2338)", () => {
     const portfolioQueue = tempPortfolioQueue();
     portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue-1" });
 
-    const result = attemptLoopReentry({ repoFullName: "acme/widgets", outcome: "merged" }, { eventLedger, portfolioQueue });
+    const result = attemptLoopReentry({ killSwitchScope: "none", repoFullName: "acme/widgets", outcome: "merged" }, { eventLedger, portfolioQueue });
 
     expect(result.event.payload.loopSummary).toBeNull();
   });
@@ -198,7 +218,7 @@ describe("attemptLoopReentry (#2338)", () => {
     const portfolioQueue = tempPortfolioQueue();
     portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue-1" });
 
-    const result = attemptLoopReentry({ repoFullName: "acme/widgets", outcome: "merged" }, { eventLedger, portfolioQueue });
+    const result = attemptLoopReentry({ killSwitchScope: "none", repoFullName: "acme/widgets", outcome: "merged" }, { eventLedger, portfolioQueue });
     expect(result.decision.reenter).toBe(true);
     expect(result.dequeued?.identifier).toBe("issue-1");
   });

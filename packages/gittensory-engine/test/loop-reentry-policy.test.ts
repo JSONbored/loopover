@@ -11,6 +11,7 @@ import {
 
 function baseCandidate(overrides: Partial<LoopReentryCandidate> = {}): LoopReentryCandidate {
   return {
+    killSwitchScope: "none",
     repoFullName: "acme/widgets",
     outcome: "merged",
     consecutiveDisengagements: 0,
@@ -28,6 +29,23 @@ test("barrel: the public entrypoint re-exports the loop-reentry policy (#2338)",
 test("a merged outcome with every counter well within limits re-enters cleanly", () => {
   const decision = shouldReenter(baseCandidate({ outcome: "merged" }));
   assert.deepEqual(decision, { reenter: true, reasons: [] });
+});
+
+test("kill-switch (#2339): a global kill-switch blocks unconditionally, even with every counter otherwise clear", () => {
+  const decision = shouldReenter(baseCandidate({ killSwitchScope: "global" }));
+  assert.deepEqual(decision, { reenter: false, reasons: ["global_kill_switch_active"] });
+});
+
+test("kill-switch (#2339): a per-repo kill-switch blocks unconditionally, checked before the circuit breaker or rate caps", () => {
+  const decision = shouldReenter(
+    baseCandidate({ killSwitchScope: "repo", outcome: "disengaged", consecutiveDisengagements: 99 }),
+  );
+  assert.deepEqual(decision, { reenter: false, reasons: ["repo_kill_switch_active"] });
+});
+
+test("kill-switch (#2339): an inactive kill-switch (scope 'none') never itself blocks -- other checks are still evaluated normally", () => {
+  const decision = shouldReenter(baseCandidate({ killSwitchScope: "none" }));
+  assert.equal(decision.reenter, true);
 });
 
 test("an 'other' outcome (neither merged nor disengaged) is never subject to the per-repo circuit breaker", () => {

@@ -271,6 +271,18 @@ jobs:
         env:
           NODE_OPTIONS: ""
         run: node scripts/validate-observability-configs.mjs
+      # Runs ahead of Typecheck AND "Test with coverage" (#ci-engine-build-order): src/mcp/find-opportunities.ts
+      # (root backend, since #2281/#3985) imports packages/gittensory-miner/lib/opportunity-fanout.js --
+      # committed, pre-built JS -- which itself imports @jsonbored/gittensory-engine. That package's dist/ is
+      # gitignored and only exists after this build step, so ANY backend typecheck or test run needs it built
+      # first, not just a PR that touches packages/gittensory-engine/** directly (this step's original, too-
+      # narrow trigger). Originally ran after coverage (broke test:coverage on PRs that didn't touch the
+      # engine) and after Typecheck (broke a real, non-vi.mock `import type` from the package specifier with
+      # TS2307 in CI while passing locally against a stale leftover dist/ -- first hit by PR #5082). Now ahead
+      # of both.
+      - name: Build engine package
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.engine == 'true' }}
+        run: npm run build --workspace @jsonbored/gittensory-engine
       # .tsbuildinfo mutates every run (tsc's own incremental state), unlike node_modules above which is
       # immutable per lockfile -- so this needs the run_id-suffixed-key + restore-keys-prefix pattern (always
       # creates a new cache entry to save into, restore falls back to the most recent matching prefix) rather
@@ -294,16 +306,6 @@ jobs:
         with:
           path: .tsbuildinfo
           key: tsbuildinfo-${{ hashFiles('tsconfig.json', 'package-lock.json') }}-${{ github.run_id }}
-      # Moved ahead of "Test with coverage" (#ci-engine-build-order): src/mcp/find-opportunities.ts (root
-      # backend, since #2281/#3985) imports packages/gittensory-miner/lib/opportunity-fanout.js -- committed,
-      # pre-built JS -- which itself imports @jsonbored/gittensory-engine. That package's dist/ is gitignored
-      # and only exists after this build step, so ANY backend test run needs it built first, not just a PR
-      # that happens to touch packages/gittensory-engine/** directly (this step's original, too-narrow
-      # trigger, back when the two packages were still independent). Running late (its original position,
-      # after coverage) meant test:coverage failed to resolve the package on every PR that didn't touch it.
-      - name: Build engine package
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.engine == 'true' }}
-        run: npm run build --workspace @jsonbored/gittensory-engine
       - name: Worker runtime tests
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run test:workers

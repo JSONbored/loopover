@@ -578,14 +578,15 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(mocks.captureException).toHaveBeenCalledTimes(2);
   });
 
-  it("captureError with an eventName renames the captured Error so the Sentry title isn't the generic 'Error'", async () => {
+  it("captureError with an eventName renames the captured Error so the Sentry title isn't the generic 'Error', and groups it by that same name (#5010)", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     captureError(new Error("self-host queue processing lease expired"), { kind: "job_dead" }, "processing_timeout");
     expect(lastCapturedError().name).toBe("processing_timeout");
     expect(lastCapturedError().message).toBe("self-host queue processing lease expired");
+    expect(mocks.scope.setFingerprint).toHaveBeenCalledWith(["gittensory-error", "processing_timeout"]);
   });
 
-  it("captureError without an eventName leaves a caught exception's own name untouched", async () => {
+  it("captureError without an eventName leaves a caught exception's own name untouched, and never overrides Sentry's default grouping", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     class HttpError extends Error {
       constructor(message: string) {
@@ -595,12 +596,20 @@ describe("enabled when SENTRY_DSN is set", () => {
     }
     captureError(new HttpError("merge already in progress"), { kind: "agent_merge_blocked" });
     expect(lastCapturedError().name).toBe("HttpError");
+    expect(mocks.scope.setFingerprint).not.toHaveBeenCalled();
   });
 
-  it("captureReviewFailure with an eventName renames the captured Error the same way captureError does", async () => {
+  it("captureReviewFailure with an eventName renames the captured Error and groups it the same way captureError does (#5010) -- this is what consolidates the same failure captured from two different call sites (GITTENSORY-5/10, GITTENSORY-C/W) into one issue", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     captureReviewFailure(new Error("AI review inconclusive — no usable verdict for the PR head"), { repo: "o/r" }, "ai_review_inconclusive");
     expect(lastCapturedError().name).toBe("ai_review_inconclusive");
+    expect(mocks.scope.setFingerprint).toHaveBeenCalledWith(["gittensory-review-failure", "ai_review_inconclusive"]);
+  });
+
+  it("captureReviewFailure without an eventName never overrides Sentry's default grouping", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    captureReviewFailure(new Error("rev"), { repo: "o/r" });
+    expect(mocks.scope.setFingerprint).not.toHaveBeenCalled();
   });
 
   it("captureError/captureReviewFailure with an eventName still names a non-Error value's synthesized Error", async () => {

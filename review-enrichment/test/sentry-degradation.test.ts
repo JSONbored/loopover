@@ -100,6 +100,49 @@ test("captureAnalyzerDegradation tags and fingerprints sanitized analyzer failur
   assert.equal(serializedContext.includes("Bearer should_never_be_attached"), false);
 });
 
+test("captureAnalyzerDegradation groups by partialReason (WHY), not analyzer name (WHICH), so the same reason from different analyzers is one issue (#5010)", () => {
+  const sentry = sentryHarness();
+
+  captureAnalyzerDegradation(new Error("analyzer_timeout"), {
+    analyzer: "installScript",
+    repoFullName: "JSONbored/gittensory",
+    prNumber: 7,
+    headSha: "abc123",
+    timeoutMs: 1400,
+    partialReason: "analyzer_timeout",
+  } as never);
+  captureAnalyzerDegradation(new Error("analyzer_timeout"), {
+    analyzer: "nativeBuild",
+    repoFullName: "JSONbored/gittensory",
+    prNumber: 8,
+    headSha: "def456",
+    timeoutMs: 1400,
+    partialReason: "analyzer_timeout",
+  } as never);
+
+  // Same fingerprint from two DIFFERENT analyzers: both group into one Sentry issue.
+  assert.deepEqual(sentry.fingerprints, [
+    ["rees-analyzer-degraded", "analyzer_timeout"],
+    ["rees-analyzer-degraded", "analyzer_timeout"],
+  ]);
+  // The specific analyzer is still fully visible via the tag -- only the GROUPING changed.
+  assert.equal(sentry.tags.analyzer, "nativeBuild");
+});
+
+test("captureAnalyzerDegradation falls back to analyzer name when partialReason is absent", () => {
+  const sentry = sentryHarness();
+
+  captureAnalyzerDegradation(new Error("boom"), {
+    analyzer: "dependency",
+    repoFullName: "JSONbored/gittensory",
+    prNumber: 7,
+    headSha: "abc123",
+    timeoutMs: 8000,
+  });
+
+  assert.deepEqual(sentry.fingerprints, [["rees-analyzer-degraded", "dependency"]]);
+});
+
 test("captureAnalyzerDegradation filters tag values before sending them", () => {
   const sentry = sentryHarness();
   const secretLikeValue = ["ghp", "abcdefghijklmnopqrstuvwxyz1234567890"].join("_");

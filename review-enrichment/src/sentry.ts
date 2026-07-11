@@ -309,7 +309,14 @@ export function captureAnalyzerDegradation(error: unknown, context: AnalyzerDegr
     release: activeRelease,
     environment: activeEnvironment,
     },
-    fingerprint: ["rees-analyzer-degraded", context.analyzer],
+    // Group by WHY (partialReason, e.g. "analyzer_timeout"), not WHICH analyzer hit it (#5010): the generic
+    // reasons genuinely share one root cause (the shared, dynamically-shrinking per-analyzer time budget)
+    // regardless of which analyzer's turn it was, so grouping by analyzer name fragmented one condition into
+    // N issues (one per analyzer) that each individually looked small. A reason that IS inherently
+    // analyzer-specific (e.g. "bundlephobia-size_http_error") stays its own issue either way, since the
+    // reason string itself already encodes that specificity -- falls back to analyzer name only on the
+    // defensive case where partialReason is somehow absent.
+    fingerprint: ["rees-analyzer-degraded", context.partialReason ?? context.analyzer],
     tags: {
       event: "rees_analyzer_degraded",
       analyzer: context.analyzer,

@@ -444,7 +444,11 @@ function namedCaptureError(error: unknown, eventName?: string): Error {
 }
 
 /** Capture an error with optional structured context. No-op when Sentry is off. `eventName`, when given, becomes
- *  the Sentry issue title's prefix (see {@link namedCaptureError}) instead of the generic "Error". */
+ *  the Sentry issue title's prefix (see {@link namedCaptureError}) AND the grouping fingerprint (#5010) --
+ *  Sentry's default stack-trace-based grouping fragments the SAME logical failure into separate issues whenever
+ *  it is captured from more than one call site (e.g. two different functions each constructing the identical
+ *  `new Error("...")` message), which is exactly what happened to GITTENSORY-5/10 and GITTENSORY-C/W before this.
+ *  Mirrors forwardStructuredLogToSentry's identical `scope.setFingerprint(["gittensory-log", event])` discipline. */
 export function captureError(
   error: unknown,
   context?: Record<string, unknown>,
@@ -454,13 +458,15 @@ export function captureError(
   Sentry.withScope((scope) => {
     setOtelTraceScope(scope);
     if (context) { const safeContext = hashedInstallationContext(context); scope.setContext("gittensory", safeContext); applyOperationalTags(scope, safeContext); }
+    if (eventName) scope.setFingerprint(["gittensory-error", eventName]);
     Sentry!.captureException(namedCaptureError(error, eventName));
   });
 }
 
 /** Capture a failed review at ERROR level, tagged by repo/PR/SHA for triage. A review that cannot be produced is a
  *  real failure the maintainer must SEE — not a warning that hides in the noise. No-op when off. `eventName`, when
- *  given, becomes the Sentry issue title's prefix (see {@link namedCaptureError}) instead of the generic "Error". */
+ *  given, becomes the Sentry issue title's prefix AND the grouping fingerprint -- see {@link captureError}'s
+ *  identical discipline and #5010. */
 export function captureReviewFailure(
   error: unknown,
   context?: Record<string, unknown>,
@@ -475,6 +481,7 @@ export function captureReviewFailure(
       scope.setContext("review", safeContext);
       applyOperationalTags(scope, safeContext);
     }
+    if (eventName) scope.setFingerprint(["gittensory-review-failure", eventName]);
     Sentry!.captureException(namedCaptureError(error, eventName));
   });
 }

@@ -75,6 +75,48 @@ describe("GitHub PR assignees (#3182)", () => {
     expect(result).toEqual({ applied: false });
   });
 
+  it("REGRESSION (#4999): GitHub's 'Assigning agents is not supported' 403 degrades to applied:false instead of throwing", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/issues/4") && !url.includes("/assignees")) return Response.json({ assignees: [] });
+      // The exact GitHub REST error for assigning a non-collaborator "agent" login via an App installation
+      // token (GITTENSORY-1G, 198 Sentry events) -- this operation can never succeed with this auth model.
+      if (url.includes("/issues/4/assignees") && method === "POST") {
+        return Response.json(
+          {
+            message:
+              "Assigning agents is not supported with GitHub App installation tokens. Use a user token (personal access token or OAuth token) instead. - https://docs.github.com/rest/issues/assignees#add-assignees-to-an-issue",
+          },
+          { status: 403 },
+        );
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    const result = await ensurePullRequestAssignee(createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() }), 123, "JSONbored/gittensory", 4, "some-agent-login");
+
+    expect(result).toEqual({ applied: false });
+  });
+
+  it("REGRESSION (#4999): an UNRELATED 403 (e.g. a plain permissions rejection) still propagates instead of being silently swallowed", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/issues/4") && !url.includes("/assignees")) return Response.json({ assignees: [] });
+      if (url.includes("/issues/4/assignees") && method === "POST") {
+        return Response.json({ message: "Resource not accessible by integration" }, { status: 403 });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    await expect(
+      ensurePullRequestAssignee(createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() }), 123, "JSONbored/gittensory", 4, "alice"),
+    ).rejects.toThrow(/Resource not accessible by integration/);
+  });
+
   it("treats a response with no assignees field at all as an empty list, on both the GET and the POST", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();

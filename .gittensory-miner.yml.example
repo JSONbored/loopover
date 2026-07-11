@@ -60,3 +60,8 @@ issueDiscoveryPolicy: neutral
 feasibilityGate:
   enabled: true
   suppressedReasons: []
+
+# Self-plagiarism throttle (#2345): similarity threshold for the miner's own recent open_pr fingerprints.
+# Float in [0, 1]. Default: 0.85.
+selfPlagiarism:
+  similarityThreshold: 0.85

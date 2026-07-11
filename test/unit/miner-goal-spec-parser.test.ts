@@ -55,6 +55,7 @@ describe("MinerGoalSpec parser (#2301)", () => {
         maxConcurrentClaims: 2,
         issueDiscoveryPolicy: "encouraged",
         feasibilityGate: { enabled: false, suppressedReasons: ["duplicate_cluster_high"] },
+        selfPlagiarism: { similarityThreshold: 0.85 },
       },
       warnings: ['MinerGoalSpec field "blockedPaths" truncated an over-long entry.'],
     });
@@ -147,6 +148,7 @@ describe("MinerGoalSpec parser (#2301)", () => {
         maxConcurrentClaims: 1,
         issueDiscoveryPolicy: "neutral",
         feasibilityGate: { enabled: true, suppressedReasons: [] },
+        selfPlagiarism: { similarityThreshold: 0.85 },
       },
       warnings: expect.arrayContaining([
         expect.stringMatching(/minerEnabled/i),
@@ -199,6 +201,25 @@ describe("MinerGoalSpec parser (#2301)", () => {
     expect(suppressedOnly.spec.feasibilityGate).toEqual({ enabled: true, suppressedReasons: ["issue_missing"] });
   });
 
+  it("a selfPlagiarism policy alone (all other fields default) marks the spec present", () => {
+    const parsed = parseMinerGoalSpec({ selfPlagiarism: { similarityThreshold: 0.9 } });
+    expect(parsed.present).toBe(true);
+    expect(parsed.spec.selfPlagiarism).toEqual({ similarityThreshold: 0.9 });
+  });
+
+  it("normalizes nested selfPlagiarism sub-fields and rejects a non-mapping value", () => {
+    const malformed = parseMinerGoalSpec({
+      wantedPaths: ["src/**"],
+      selfPlagiarism: { similarityThreshold: "not-a-number" },
+    });
+    expect(malformed.spec.selfPlagiarism).toEqual({ similarityThreshold: 0.85 });
+    expect(malformed.warnings.join(" ")).toMatch(/selfPlagiarism\.similarityThreshold/i);
+
+    const arrayValue = parseMinerGoalSpec({ wantedPaths: ["src/**"], selfPlagiarism: ["not", "a", "mapping"] });
+    expect(arrayValue.spec.selfPlagiarism).toEqual({ similarityThreshold: 0.85 });
+    expect(arrayValue.warnings.join(" ")).toMatch(/selfPlagiarism.*must be a mapping/i);
+  });
+
   it("rejects claim counts below one after flooring", () => {
     const parsed = parseMinerGoalSpec({
       wantedPaths: ["src/**"],
@@ -227,6 +248,7 @@ describe("MinerGoalSpec parser (#2301)", () => {
         maxConcurrentClaims: 1,
         issueDiscoveryPolicy: "neutral",
         feasibilityGate: { enabled: true, suppressedReasons: [] },
+        selfPlagiarism: { similarityThreshold: 0.85 },
       }),
     ).toEqual({
       present: false,

@@ -65,6 +65,21 @@
           "description": "buildFeasibilityVerdict avoid/raise reason codes this repo wants ignored. Default: []."
         }
       }
+    },
+    "selfPlagiarism": {
+      "type": "object",
+      "additionalProperties": true,
+      "default": { "similarityThreshold": 0.85 },
+      "description": "Self-plagiarism throttle consulted before open_pr (#2345). Default: { similarityThreshold: 0.85 }.",
+      "properties": {
+        "similarityThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.85,
+          "description": "Jaccard similarity threshold for near-duplicate diff fingerprints. Default: 0.85."
+        }
+      }
     }
   }
 }

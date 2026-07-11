@@ -1,5 +1,10 @@
 import { parse as parseYaml } from "yaml";
 
+import {
+  DEFAULT_SELF_PLAGIARISM_SIMILARITY_THRESHOLD,
+  resolveSelfPlagiarismConfig,
+} from "./governor/self-plagiarism.js";
+
 // MinerGoalSpec (#2293 / #2301). The type surface for `.gittensory-miner.yml` — the per-repo config a
 // maintainer/repo-owner drops in to tell an autonomous miner what to look for and how to behave when targeting
 // their repo. This is the MINER-side analogue of the review-side `.gittensory.yml` focus manifest (see
@@ -21,6 +26,12 @@ export type FeasibilityGatePolicy = {
    *  wants ignored — for a repo that doesn't want duplicate-cluster signals to affect feasibility, for example.
    *  String list. Default: [] (nothing suppressed). */
   suppressedReasons: readonly string[];
+};
+
+/** Per-repo self-plagiarism throttle tuning for Governor open_pr (#2345). */
+export type SelfPlagiarismPolicy = {
+  /** Jaccard similarity threshold in [0, 1] for near-duplicate diff fingerprints. Default: 0.85. */
+  similarityThreshold: number;
 };
 
 /** Per-repo miner configuration parsed from `.gittensory-miner.yml`. See {@link DEFAULT_MINER_GOAL_SPEC}. */
@@ -67,6 +78,10 @@ export type MinerGoalSpec = {
    * Default: { enabled: true, suppressedReasons: [] }.
    */
   feasibilityGate: FeasibilityGatePolicy;
+  /**
+   * Self-plagiarism throttle consulted before open_pr (#2345). Default: { similarityThreshold: 0.85 }.
+   */
+  selfPlagiarism: SelfPlagiarismPolicy;
 };
 
 /** The tolerant parser result for `.gittensory-miner.yml`: the normalized spec plus parse warnings and whether the
@@ -96,6 +111,7 @@ export const DEFAULT_MINER_GOAL_SPEC: Readonly<MinerGoalSpec> = Object.freeze({
   maxConcurrentClaims: 1,
   issueDiscoveryPolicy: "neutral",
   feasibilityGate: Object.freeze({ enabled: true, suppressedReasons: Object.freeze([]) }),
+  selfPlagiarism: Object.freeze({ similarityThreshold: DEFAULT_SELF_PLAGIARISM_SIMILARITY_THRESHOLD }),
 });
 
 const MAX_MINER_GOAL_SPEC_BYTES = 32_768;
@@ -113,6 +129,7 @@ function cloneDefaultMinerGoalSpec(): MinerGoalSpec {
       enabled: DEFAULT_MINER_GOAL_SPEC.feasibilityGate.enabled,
       suppressedReasons: [...DEFAULT_MINER_GOAL_SPEC.feasibilityGate.suppressedReasons],
     },
+    selfPlagiarism: { ...DEFAULT_MINER_GOAL_SPEC.selfPlagiarism },
   };
 }
 
@@ -190,6 +207,31 @@ function normalizeFeasibilityGatePolicy(
   };
 }
 
+function normalizeSelfPlagiarismPolicy(
+  value: unknown,
+  field: string,
+  fallback: SelfPlagiarismPolicy,
+  warnings: string[],
+): SelfPlagiarismPolicy {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    warnings.push(`MinerGoalSpec field "${field}" must be a mapping; falling back to defaults.`);
+    return fallback;
+  }
+  const resolved = resolveSelfPlagiarismConfig(value);
+  const record = value as Record<string, unknown>;
+  if (
+    record.similarityThreshold !== undefined &&
+    typeof record.similarityThreshold !== "number"
+  ) {
+    warnings.push(
+      `MinerGoalSpec field "${field}.similarityThreshold" must be a number; falling back to ${fallback.similarityThreshold}.`,
+    );
+    return fallback;
+  }
+  return resolved;
+}
+
 function normalizePositiveInteger(value: unknown, field: string, fallback: number, warnings: string[]): number {
   if (value === undefined || value === null) return fallback;
   if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -224,7 +266,8 @@ function hasConfiguredGoalFields(spec: MinerGoalSpec): boolean {
     spec.maxConcurrentClaims !== DEFAULT_MINER_GOAL_SPEC.maxConcurrentClaims ||
     spec.issueDiscoveryPolicy !== DEFAULT_MINER_GOAL_SPEC.issueDiscoveryPolicy ||
     spec.feasibilityGate.enabled !== DEFAULT_MINER_GOAL_SPEC.feasibilityGate.enabled ||
-    spec.feasibilityGate.suppressedReasons.length > 0
+    spec.feasibilityGate.suppressedReasons.length > 0 ||
+    spec.selfPlagiarism.similarityThreshold !== DEFAULT_MINER_GOAL_SPEC.selfPlagiarism.similarityThreshold
   );
 }
 
@@ -269,6 +312,12 @@ export function parseMinerGoalSpec(raw: unknown): ParsedMinerGoalSpec {
       record.feasibilityGate,
       "feasibilityGate",
       DEFAULT_MINER_GOAL_SPEC.feasibilityGate,
+      warnings,
+    ),
+    selfPlagiarism: normalizeSelfPlagiarismPolicy(
+      record.selfPlagiarism,
+      "selfPlagiarism",
+      DEFAULT_MINER_GOAL_SPEC.selfPlagiarism,
       warnings,
     ),
   };

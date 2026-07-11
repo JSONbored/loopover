@@ -56,3 +56,9 @@ Per-repo tuning for the feasibility gate (`buildFeasibilityVerdict`) a miner con
 
 - `enabled` (boolean, default: `true`) — whether the feasibility gate is consulted at all before a miner starts work.
 - `suppressedReasons` (string list, default: `[]`) — specific avoid/raise reason codes (e.g. `duplicate_cluster_high`) this repo wants ignored.
+
+### `selfPlagiarism` (object, default: `{ similarityThreshold: 0.85 }`)
+
+Per-repo tuning for the Governor self-plagiarism throttle consulted before `open_pr` (#2345). Compares a prospective PR's diff fingerprint against the miner's own recent submission history.
+
+- `similarityThreshold` (number in `[0, 1]`, default: `0.85`) — Jaccard similarity at/above which two fingerprints read as near-duplicates across repos.

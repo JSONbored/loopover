@@ -18,6 +18,7 @@ const SPEC_FIELDS = [
   "maxConcurrentClaims",
   "issueDiscoveryPolicy",
   "feasibilityGate",
+  "selfPlagiarism",
 ] as const;
 
 describe("miner goal spec docs (#2300)", () => {
@@ -55,6 +56,7 @@ describe("miner goal spec docs (#2300)", () => {
       maxConcurrentClaims: 1,
       issueDiscoveryPolicy: "neutral",
       feasibilityGate: { enabled: true, suppressedReasons: [] },
+      selfPlagiarism: { similarityThreshold: 0.85 },
     });
     expect(parsed.warnings).toEqual([]);
   });

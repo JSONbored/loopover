@@ -138,4 +138,63 @@ describe("buildHouseRulesPreToolUseHook (#2343)", () => {
     // downgrade a security decision to allow.
     expect(result).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
   });
+
+  it("a non-object hook input (malformed upstream event) has no shape to match against, so it allows rather than crashing", async () => {
+    // `input` is typed `unknown` at this boundary -- a real SDK/harness bug could hand this wrapper something
+    // that isn't the documented `{ tool_name, tool_input }` shape at all. With nothing recognizable to test
+    // against, no house rule CAN fire (every default rule keys off tool_name/path/command content) -- this is
+    // "no signal to act on" rather than a security gap, since the built-in rules never produce a false allow
+    // from a malformed shape (they simply find nothing to match).
+    const hook = buildHouseRulesPreToolUseHook();
+    const result = await hook(null as never);
+    expect(result).toEqual({});
+  });
+
+  it("a custom rule omitting `reason` falls back to the generic denylist message", async () => {
+    const hook = buildHouseRulesPreToolUseHook({
+      rules: [{ matcher: "*", pathPattern: "**/custom-blocked.txt" } as never],
+    });
+
+    const result = await hook({ hook_event_name: "PreToolUse", tool_name: "Write", tool_input: { file_path: "custom-blocked.txt" } });
+
+    expect(result).toMatchObject({
+      hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: "House rule denylist match." },
+    });
+  });
+
+  it("a deny with no string-typed tool_name records a null toolName in the ledger payload rather than crashing", async () => {
+    // The matcher `"*"` fires even with no tool name to test (matcherMatches substitutes "" for a non-string
+    // toolName before the regex test) -- a rule can deny purely on path/command content. This exercises the
+    // `typeof toolName === "string" ? toolName : null` fallback with a REAL deny, not a synthetic shape.
+    const ledger = openLedger();
+    const hook = buildHouseRulesPreToolUseHook({ repoFullName: "acme/widgets" }, { append: (event) => ledger.appendGovernorEvent(event) });
+
+    const result = await hook({ hook_event_name: "PreToolUse", tool_input: { file_path: ".env" } });
+
+    expect(result).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
+    const rows = ledger.readGovernorEvents({ repoFullName: "acme/widgets" });
+    expect(rows[0]?.payload).toMatchObject({ toolName: null });
+  });
+
+  it("fails closed with a formatted reason even when the thrown value is not an Error instance", async () => {
+    const throwingRule = new Proxy(
+      {},
+      {
+        get() {
+          // Deliberately a plain string, not `new Error(...)` -- exercises the `String(error)` fallback arm
+          // distinctly from the existing Error-instance fail-closed test above.
+          throw "synthetic non-Error rule access failure";
+        },
+      },
+    );
+    const hook = buildHouseRulesPreToolUseHook({ rules: [throwingRule as never] });
+
+    const result = await hook({ hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: "anything.ts" } });
+
+    expect(result).toMatchObject({
+      hookSpecificOutput: {
+        permissionDecisionReason: expect.stringContaining("pretooluse_hook_internal_error: synthetic non-Error rule access failure"),
+      },
+    });
+  });
 });

@@ -74,10 +74,14 @@ export function buildHouseRulesPreToolUseHook(config = {}, options = {}) {
 
       if (verdict.allowed) return {};
 
-      const reason = verdict.blockedBy?.reason ?? "House rule denylist match.";
+      // `verdict.blockedBy` is always set together with `!verdict.allowed` (evaluateDenyHooks's only two return
+      // shapes), and `.matcher` is always a defined string on it (ruleMatches gates every match on
+      // `typeof rule.matcher === "string"` -- a rule can never become `blockedBy` otherwise). `.reason` has no
+      // equivalent gate, so a caller-supplied custom rule omitting it is a real, reachable case.
+      const reason = verdict.blockedBy.reason ?? "House rule denylist match.";
       recordDenial(append, repoFullName, reason, {
         toolName: typeof toolName === "string" ? toolName : null,
-        matcher: verdict.blockedBy?.matcher ?? null,
+        matcher: verdict.blockedBy.matcher,
       });
       return denyOutput(reason);
     } catch (error) {

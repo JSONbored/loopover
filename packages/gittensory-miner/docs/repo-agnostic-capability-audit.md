@@ -85,15 +85,45 @@ redo them:
 
 ## Prioritized checklist for #4784
 
-- [ ] **High — forge abstraction (`opportunity-fanout.js`):** move the GitHub API version (7),
+- [x] **High — forge abstraction (`opportunity-fanout.js`):** move the GitHub API version (7),
   headers (69–71), repo path (83), search endpoint (241), and search-qualifier dialect (202) behind a
   per-tenant forge adapter; keep GitHub as the default.
-- [ ] **High — thread `apiBaseUrl` to the CLI (`discover-cli.js`):** surface the already-supported
+- [x] **High — thread `apiBaseUrl` to the CLI (`discover-cli.js`):** surface the already-supported
   `opportunity-fanout` `apiBaseUrl` override via config / a flag so a non-`api.github.com` host is
   reachable.
-- [ ] **Medium — credential env var (`discover-cli.js:102`):** make the token env var name
+- [x] **Medium — credential env var (`discover-cli.js:102`):** make the token env var name
   configurable (default `GITHUB_TOKEN`).
-- [ ] **Medium — pass tenant label taxonomy + goal spec through (`opportunity-ranker.js`, engine
+- [x] **Medium — pass tenant label taxonomy + goal spec through (`opportunity-ranker.js`, engine
   `DEFAULT_TYPE_LABELS`):** ensure the miner supplies the tenant's labels / goal spec instead of
   silently falling back to the gittensory defaults.
-- [ ] **Low — configurable user-agent (`opportunity-fanout.js:70`).**
+- [x] **Low — configurable user-agent (`opportunity-fanout.js:70`).**
+
+## Resolution (#4784)
+
+All five checklist items are resolved (or, where noted, explicitly deferred with a reason); gittensory's
+own github.com conventions survive only as defaults, and the existing gittensory discovery path is
+unchanged (`resolveForgeConfig()` with no overrides is byte-identical to the pre-#4784 hardcoded
+behavior).
+
+- **Forge abstraction — resolved.** [`lib/forge-config.js`](../lib/forge-config.js) is the per-tenant
+  forge adapter: `DEFAULT_FORGE_CONFIG` holds every github.com value (base URL, API version + version
+  header name, `accept` header, user-agent, repo path prefix, search endpoint, search qualifiers,
+  token env var) and `resolveForgeConfig(overrides)` fills any missing field from that default.
+  `opportunity-fanout.js` now reads these from the resolved forge instead of module constants, so the
+  API version, request headers, repo path, search endpoint, and search-qualifier dialect are all
+  per-tenant.
+- **`apiBaseUrl` reachable from the CLI — resolved.** `discover` accepts `--api-base-url <url>` (and
+  `runDiscover({ apiBaseUrl })`), threading the forge host that the fan-out already supported but that
+  the CLI never surfaced. A programmatic caller can also pass the rest of the forge knobs via
+  `runDiscover({ forge })`.
+- **Credential env var — resolved.** `discover --token-env <VAR>` (and `runDiscover({ tokenEnv })`)
+  reads a non-`GITHUB_TOKEN` variable, defaulting to `GITHUB_TOKEN`.
+- **Tenant goal spec through — resolved.** `runDiscover` forwards `goalSpecsByRepo` /
+  `goalSpecContentByRepo` to the ranker and surfaces `usedDefaultGoalSpec` in both the JSON and the
+  human-readable summary, so the fall-back to gittensory's built-in rubric is explicit rather than
+  silent. The **discovery** label taxonomy is the goal spec's generic `preferredLabels` /
+  `blockedLabels` (already per-tenant). The engine's `DEFAULT_TYPE_LABELS` (`gittensor:*`) is a
+  **review-stack** default (overridable per repo via the focus manifest) that the miner discovery
+  ranker never consults, so it is **deferred**: changing it belongs to the review path, not #4784's
+  discovery/claim scope.
+- **Configurable user-agent — resolved.** `forge.userAgent` (default `loopover-miner`).

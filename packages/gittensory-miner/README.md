@@ -27,6 +27,14 @@ The package also includes a metadata-only ranker: `rankCandidateIssues` composes
 (potential, feasibility, lane fit, freshness, dup risk) and returns fan-out candidates sorted by `rankScore`.
 It never clones source and never writes to GitHub.
 
+Discovery is per-tenant, not github.com-specific (#4784): `lib/forge-config.js` (`resolveForgeConfig`) holds the
+forge base URL, API version, request headers, repo path, search endpoint/qualifiers, user-agent, and credential env
+var behind one resolver with gittensory's github.com values as the only defaults, so the fan-out targets another
+forge unchanged. `gittensory-miner discover` surfaces `--api-base-url <url>` and `--token-env <VAR>` and forwards a
+tenant goal spec to the ranker, printing `usedDefaultGoalSpec` so a fall-back to the built-in rubric is explicit
+rather than silent. See [`docs/repo-agnostic-capability-audit.md`](docs/repo-agnostic-capability-audit.md) for the
+#4780 audit this executes.
+
 The package also includes an append-only governor decision ledger: `initGovernorLedger` / `appendGovernorEvent`
 persist structured allow/deny/throttle/kill-switch outcomes in local SQLite for contributor audit. Insert-only —
 no enforcement wiring yet. (#2328)

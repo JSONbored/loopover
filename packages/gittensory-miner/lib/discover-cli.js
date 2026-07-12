@@ -9,7 +9,7 @@ import { enqueueRankedDiscovery } from "./portfolio-discovery.js";
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
 
 const DISCOVER_USAGE =
-  "Usage: gittensory-miner discover <owner/repo> [<owner/repo>...] | --search <query> [--json]";
+  "Usage: gittensory-miner discover <owner/repo> [<owner/repo>...] | --search <query> [--json] [--api-base-url <url>] [--token-env <VAR>]";
 
 const MAX_DISCOVER_TITLE_DISPLAY_LENGTH = 240;
 const OSC_SEQUENCE_PATTERN = /\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g;
@@ -36,7 +36,10 @@ function parseRepoTarget(value) {
 }
 
 export function parseDiscoverArgs(args) {
-  const options = { json: false, search: null };
+  // `--api-base-url` and `--token-env` (#4784) thread the tenant's forge host and credential env var into the
+  // fan-out; they are kept off the parsed result unless supplied, so callers that pass neither see the exact
+  // pre-#4784 `{ targets, search, json }` shape.
+  const options = { json: false, search: null, apiBaseUrl: null, tokenEnv: null };
   const targets = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -49,6 +52,20 @@ export function parseDiscoverArgs(args) {
       const query = args[index + 1];
       if (!query || query.startsWith("-")) return { error: DISCOVER_USAGE };
       options.search = query;
+      index += 1;
+      continue;
+    }
+    if (token === "--api-base-url") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) return { error: DISCOVER_USAGE };
+      options.apiBaseUrl = value;
+      index += 1;
+      continue;
+    }
+    if (token === "--token-env") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) return { error: DISCOVER_USAGE };
+      options.tokenEnv = value;
       index += 1;
       continue;
     }
@@ -67,7 +84,13 @@ export function parseDiscoverArgs(args) {
     return { error: "Pass either repository targets or --search, not both." };
   }
 
-  return { targets, search: options.search, json: options.json };
+  return {
+    targets,
+    search: options.search,
+    json: options.json,
+    ...(options.apiBaseUrl !== null ? { apiBaseUrl: options.apiBaseUrl } : {}),
+    ...(options.tokenEnv !== null ? { tokenEnv: options.tokenEnv } : {}),
+  };
 }
 
 // The rate-limit line surfaces the telemetry the fanout already records (#4837) so an operator sees how close a
@@ -90,6 +113,13 @@ export function renderDiscoverSummary(result) {
   if (result.enqueueSummary.skippedBelowMinRank > 0) {
     lines.push(`skipped (below min rank): ${result.enqueueSummary.skippedBelowMinRank}`);
   }
+  // Make the fall-back to gittensory's built-in rubric explicit instead of silent (#4784): when no per-tenant goal
+  // spec is supplied, lane fit reflects gittensory's defaults, not the target repo's own conventions.
+  if (result.usedDefaultGoalSpec) {
+    lines.push(
+      "note: ranked with the built-in default goal spec (no per-tenant .gittensory-miner.yml supplied)",
+    );
+  }
   if (result.ranked.length === 0) {
     lines.push("", "no candidates found.");
     return lines.join("\n");
@@ -109,7 +139,14 @@ export async function runDiscover(args, options = {}) {
     return 2;
   }
 
-  const githubToken = options.githubToken ?? process.env.GITHUB_TOKEN ?? "";
+  // Credential env var is per-tenant (#4784): a `--token-env FORGE_PAT` flag (or `options.tokenEnv`) reads a
+  // non-`GITHUB_TOKEN` variable so a non-github.com forge's token is reachable, defaulting to GITHUB_TOKEN.
+  const tokenEnv = parsed.tokenEnv ?? options.tokenEnv ?? "GITHUB_TOKEN";
+  const githubToken = options.githubToken ?? process.env[tokenEnv] ?? "";
+  // A `--api-base-url` flag (or `options.apiBaseUrl`) surfaces the fan-out's existing forge-host override at the CLI
+  // (#4784); `options.forge` carries any remaining per-tenant forge knobs for a programmatic caller.
+  const apiBaseUrl = parsed.apiBaseUrl ?? options.apiBaseUrl;
+  const fanOutOptions = { apiBaseUrl, forge: options.forge };
   const fetchTargets = options.fetchCandidateIssuesWithSummary ?? fetchCandidateIssuesWithSummary;
   const searchTargets = options.searchCandidateIssuesWithSummary ?? searchCandidateIssuesWithSummary;
   const rankIssues = options.rankCandidateIssuesWithSummary ?? rankCandidateIssuesWithSummary;
@@ -121,10 +158,17 @@ export async function runDiscover(args, options = {}) {
   try {
     const fanOut =
       parsed.search !== null
-        ? await searchTargets(parsed.search, githubToken, { apiBaseUrl: options.apiBaseUrl })
-        : await fetchTargets(parsed.targets, githubToken, { apiBaseUrl: options.apiBaseUrl });
+        ? await searchTargets(parsed.search, githubToken, fanOutOptions)
+        : await fetchTargets(parsed.targets, githubToken, fanOutOptions);
 
-    const rankedSummary = rankIssues(fanOut.issues, { nowMs: options.nowMs });
+    // Pass any caller-supplied per-tenant goal specs through to the ranker so lane fit uses the tenant's
+    // conventions instead of silently falling back to gittensory's defaults (#4784); the fallback is surfaced via
+    // `usedDefaultGoalSpec` below rather than hidden.
+    const rankedSummary = rankIssues(fanOut.issues, {
+      nowMs: options.nowMs,
+      goalSpecsByRepo: options.goalSpecsByRepo,
+      goalSpecContentByRepo: options.goalSpecContentByRepo,
+    });
     const enqueueSummary = enqueue(rankedSummary.issues, { queueStore: portfolioQueue });
 
     const result = {
@@ -133,6 +177,7 @@ export async function runDiscover(args, options = {}) {
       rateLimitRemaining: fanOut.rateLimitRemaining,
       rateLimitResetAt: fanOut.rateLimitResetAt,
       ranked: rankedSummary.issues,
+      usedDefaultGoalSpec: rankedSummary.usedDefaultGoalSpec,
       enqueueSummary,
     };
 

@@ -101,6 +101,47 @@ describe("parseDiscoverArgs (#4247)", () => {
       error: "Unknown option: --verbose",
     });
   });
+
+  it("parses the per-tenant --api-base-url and --token-env flags (#4784)", () => {
+    expect(
+      parseDiscoverArgs([
+        "acme/widgets",
+        "--api-base-url",
+        "https://ghe.example.com/api/v3",
+        "--token-env",
+        "FORGE_PAT",
+      ]),
+    ).toEqual({
+      targets: [{ owner: "acme", repo: "widgets" }],
+      search: null,
+      json: false,
+      apiBaseUrl: "https://ghe.example.com/api/v3",
+      tokenEnv: "FORGE_PAT",
+    });
+  });
+
+  it("omits --api-base-url / --token-env keys entirely when not supplied (#4784)", () => {
+    expect(parseDiscoverArgs(["acme/widgets"])).toEqual({
+      targets: [{ owner: "acme", repo: "widgets" }],
+      search: null,
+      json: false,
+    });
+  });
+
+  it("rejects --api-base-url / --token-env missing their value (#4784)", () => {
+    expect(parseDiscoverArgs(["acme/widgets", "--api-base-url"])).toEqual({
+      error: expect.stringContaining("Usage: gittensory-miner discover"),
+    });
+    expect(parseDiscoverArgs(["acme/widgets", "--api-base-url", "--json"])).toEqual({
+      error: expect.stringContaining("Usage: gittensory-miner discover"),
+    });
+    expect(parseDiscoverArgs(["acme/widgets", "--token-env"])).toEqual({
+      error: expect.stringContaining("Usage: gittensory-miner discover"),
+    });
+    expect(parseDiscoverArgs(["acme/widgets", "--token-env", "--json"])).toEqual({
+      error: expect.stringContaining("Usage: gittensory-miner discover"),
+    });
+  });
 });
 
 describe("renderDiscoverSummary (#4247)", () => {
@@ -175,6 +216,21 @@ describe("renderDiscoverSummary (#4247)", () => {
       enqueueSummary: { enqueued: 0, skippedBelowMinRank: 0, skippedInvalid: 0, eventsAppended: 0 },
     });
     expect(empty).toContain("no candidates found.");
+    // Without the flag the fall-back note is absent (the default-goal-spec branch is opt-in on the result).
+    expect(empty).not.toContain("built-in default goal spec");
+  });
+
+  it("surfaces the default-goal-spec fall-back note when no per-tenant spec was supplied (#4784)", () => {
+    const text = renderDiscoverSummary({
+      fanOutCount: 1,
+      warnings: [],
+      rateLimitRemaining: null,
+      rateLimitResetAt: null,
+      ranked: [{ repoFullName: "acme/widgets", issueNumber: 1, title: "x", rankScore: 0.8 }],
+      usedDefaultGoalSpec: true,
+      enqueueSummary: { enqueued: 1, skippedBelowMinRank: 0, skippedInvalid: 0, eventsAppended: 0 },
+    });
+    expect(text).toContain("ranked with the built-in default goal spec");
   });
 
   it("surfaces rate-limit telemetry, and reports 'unknown' when the fanout captured none (#4837)", () => {
@@ -360,6 +416,107 @@ describe("runDiscover (#4247)", () => {
       if (previousDbPath === undefined) delete process.env.GITTENSORY_MINER_PORTFOLIO_QUEUE_DB;
       else process.env.GITTENSORY_MINER_PORTFOLIO_QUEUE_DB = previousDbPath;
     }
+  });
+
+  it("threads --token-env and --api-base-url into the fan-out (#4784)", async () => {
+    const portfolioQueue = tempQueueStore();
+    const previous = process.env.FORGE_PAT;
+    process.env.FORGE_PAT = "tenant-secret";
+    try {
+      const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+        issues: [fanOutIssue()],
+        warnings: [],
+        rateLimitRemaining: null,
+        rateLimitResetAt: null,
+      }));
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const exitCode = await runDiscover(
+        ["acme/widgets", "--api-base-url", "https://ghe.example.com/api/v3", "--token-env", "FORGE_PAT"],
+        { nowMs: NOW, initPortfolioQueue: () => portfolioQueue, fetchCandidateIssuesWithSummary },
+      );
+
+      expect(exitCode).toBe(0);
+      expect(fetchCandidateIssuesWithSummary).toHaveBeenCalledWith(
+        [{ owner: "acme", repo: "widgets" }],
+        "tenant-secret",
+        expect.objectContaining({ apiBaseUrl: "https://ghe.example.com/api/v3" }),
+      );
+    } finally {
+      if (previous === undefined) delete process.env.FORGE_PAT;
+      else process.env.FORGE_PAT = previous;
+    }
+  });
+
+  it("prefers an explicit githubToken option and a programmatic apiBaseUrl / tokenEnv (#4784)", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue()],
+      warnings: [],
+      rateLimitRemaining: null,
+      rateLimitResetAt: null,
+    }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runDiscover(["acme/widgets"], {
+      nowMs: NOW,
+      initPortfolioQueue: () => portfolioQueue,
+      fetchCandidateIssuesWithSummary,
+      githubToken: "explicit-token",
+      apiBaseUrl: "https://programmatic.example.com",
+      tokenEnv: "IGNORED_BECAUSE_TOKEN_IS_EXPLICIT",
+    });
+
+    expect(exitCode).toBe(0);
+    expect(fetchCandidateIssuesWithSummary).toHaveBeenCalledWith(
+      [{ owner: "acme", repo: "widgets" }],
+      "explicit-token",
+      expect.objectContaining({ apiBaseUrl: "https://programmatic.example.com" }),
+    );
+  });
+
+  it("forwards a per-tenant goal spec to the ranker and surfaces usedDefaultGoalSpec (#4784)", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue()],
+      warnings: [],
+      rateLimitRemaining: null,
+      rateLimitResetAt: null,
+    }));
+    const goalSpecContentByRepo = { "acme/widgets": "minerEnabled: true\n" };
+    const rankCandidateIssuesWithSummary = vi.fn(() => ({
+      issues: [
+        {
+          ...fanOutIssue(),
+          potential: 0.5,
+          feasibility: 0.5,
+          laneFit: 0.5,
+          freshness: 0.5,
+          dupRisk: 0,
+          rankScore: 0.5,
+        },
+      ],
+      skippedInvalid: 0,
+      usedDefaultGoalSpec: false,
+      defaultGoalSpec: {} as never,
+    }));
+
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const exitCode = await runDiscover(["acme/widgets", "--json"], {
+      nowMs: NOW,
+      initPortfolioQueue: () => portfolioQueue,
+      fetchCandidateIssuesWithSummary,
+      rankCandidateIssuesWithSummary,
+      goalSpecContentByRepo,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(rankCandidateIssuesWithSummary).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ goalSpecContentByRepo }),
+    );
+    const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(payload.usedDefaultGoalSpec).toBe(false);
   });
 });
 

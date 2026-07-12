@@ -1929,6 +1929,126 @@ describe("queue processors", () => {
     }
   }, 60_000);
 
+  it("REGRESSION (#5385-sentry, GITTENSORY-1E gate-finding): a retryable GitHub rate-limit error surfacing from real post-readiness review work STILL records the repair attempt before propagating for the queue's own retry", async () => {
+    // Gittensory review finding on PR #5482: the original fix recorded the attempt AFTER reReviewStoredPullRequest
+    // returns, so a retryable error thrown from a genuinely-executed (post-readiness) pass never got charged --
+    // it propagates straight out (correctly, for the queue's own retry), but the repair budget was never
+    // decremented, letting a PR stuck behind repeated rate-limiting/lock-contention reselect indefinitely.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9411, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo3", full_name: "owner/agent-repo3", private: false, owner: { login: "owner" } }, 9411);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo3", autonomy: { merge: "auto" }, aiReviewMode: "off", checkRunMode: "off", commentMode: "all_prs", publicSurface: "comment_only" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo3", { number: 5, title: "Healthy PR ready to review", state: "open", user: { login: "contributor" }, head: { sha: "ready-sha" }, base: { ref: "main" }, labels: [], body: "" });
+    const targetKey = "owner/agent-repo3#5#ready-sha";
+    let finalCommentAttempted = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (/\/pulls\/5(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 5, title: "Healthy PR ready to review", state: "open", user: { login: "contributor" }, head: { sha: "ready-sha" }, mergeable_state: "clean", labels: [], body: "" });
+      if (url.includes("/pulls/5/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/commits/ready-sha/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/ready-sha/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/5/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/5/comments") && method === "POST") {
+        finalCommentAttempted = true;
+        return new Response(JSON.stringify({ message: "API rate limit exceeded" }), { status: 403, headers: { "x-ratelimit-remaining": "0" } });
+      }
+      return Response.json({});
+    });
+
+    await expect(
+      processJob(env, { type: "agent-regate-pr", deliveryId: "regate-repair-ratelimit", repoFullName: "owner/agent-repo3", prNumber: 5, installationId: 9411, repairHeadSha: "ready-sha" }),
+    ).rejects.toThrow(/rate limit/i); // still propagates -- the queue must still retry this message
+
+    expect(finalCommentAttempted).toBe(true); // confirms the failure genuinely happened past readiness, mid real work
+    const attempts = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+      .bind("agent.sweep.regate.repair_attempt", targetKey)
+      .first<{ n: number }>();
+    expect(attempts?.n).toBe(1); // charged BEFORE the retryable error propagated -- the reported blocker
+  });
+
+  it("REGRESSION: a failing repair_attempt audit write in the finally block does NOT mask the original retryable error the queue needs to see", async () => {
+    // The finally block's own recordAuditEvent(...).catch(() => undefined) exists so a hiccup writing THIS
+    // audit row can never replace the pending rethrown rate-limit error with its own -- a `finally` that
+    // itself threw would otherwise silently swap in a non-retryable error, breaking the queue's retry
+    // classification for a failure that IS genuinely retryable.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9413, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo5", full_name: "owner/agent-repo5", private: false, owner: { login: "owner" } }, 9413);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo5", autonomy: { merge: "auto" }, aiReviewMode: "off", checkRunMode: "off", commentMode: "all_prs", publicSurface: "comment_only" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo5", { number: 5, title: "Healthy PR ready to review", state: "open", user: { login: "contributor" }, head: { sha: "ready-sha" }, base: { ref: "main" }, labels: [], body: "" });
+    const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
+    const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
+      if (event.eventType === "agent.sweep.regate.repair_attempt") throw new Error("audit DB down");
+      await originalRecordAuditEvent(auditEnv, event);
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (/\/pulls\/5(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 5, title: "Healthy PR ready to review", state: "open", user: { login: "contributor" }, head: { sha: "ready-sha" }, mergeable_state: "clean", labels: [], body: "" });
+      if (url.includes("/pulls/5/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/commits/ready-sha/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/ready-sha/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/5/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/5/comments") && method === "POST") {
+        return new Response(JSON.stringify({ message: "API rate limit exceeded" }), { status: 403, headers: { "x-ratelimit-remaining": "0" } });
+      }
+      return Response.json({});
+    });
+
+    try {
+      await expect(
+        processJob(env, { type: "agent-regate-pr", deliveryId: "regate-repair-ratelimit-audit-fail", repoFullName: "owner/agent-repo5", prNumber: 5, installationId: 9413, repairHeadSha: "ready-sha" }),
+      ).rejects.toThrow(/rate limit/i); // the ORIGINAL rate-limit error still wins, not "audit DB down"
+    } finally {
+      auditSpy.mockRestore();
+    }
+  });
+
+  it("REGRESSION (#5385-sentry, GITTENSORY-1E nit): a swallowed non-retryable failure AFTER readiness still records the repair attempt (unchanged contract, now driven by the onReachedReadiness callback rather than inferred from any error reaching the catch)", async () => {
+    // Gittensory review nit on PR #5482: confirms the catch's non-retryable branch can't ALSO fire for an error
+    // thrown BEFORE readiness was ever reached (which must NOT charge the budget) -- distinguishing the two no
+    // longer relies on "any swallowed error here = post-readiness", but on the callback actually having fired.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9412, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo4", full_name: "owner/agent-repo4", private: false, owner: { login: "owner" } }, 9412);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo4", autonomy: { merge: "auto" }, aiReviewMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo4", { number: 6, title: "Healthy PR ready to review", state: "open", user: { login: "contributor" }, head: { sha: "ready-sha-2" }, base: { ref: "main" }, labels: [], body: "" });
+    const targetKey = "owner/agent-repo4#6#ready-sha-2";
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    // Same poison as "agent re-gate sweep ... swallows a failing re-review" above: only the advisories INSERT
+    // (persistAdvisory, which runs immediately after readiness passes) fails; every other read/write -- including
+    // this fix's own repair_attempt insert -- keeps working.
+    env.DB.prepare = ((sql: string) => {
+      if (/insert\s+into\s+["'`]?advisories/i.test(sql)) throw new Error("advisory persist failed");
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (/\/pulls\/6(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 6, title: "Healthy PR ready to review", state: "open", user: { login: "contributor" }, head: { sha: "ready-sha-2" }, mergeable_state: "clean", labels: [], body: "" });
+      if (url.includes("/pulls/6/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/commits/ready-sha-2/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/ready-sha-2/status")) return Response.json({ state: "success", statuses: [] });
+      return Response.json({});
+    });
+
+    await expect(
+      processJob(env, { type: "agent-regate-pr", deliveryId: "regate-repair-advisory-fail", repoFullName: "owner/agent-repo4", prNumber: 6, installationId: 9412, repairHeadSha: "ready-sha-2" }),
+    ).resolves.toBeUndefined(); // swallowed, not rethrown -- matches the pre-existing non-retryable contract
+
+    expect(errors.mock.calls.some((call) => String(call[0]).includes("sweep_rereview_failed"))).toBe(true);
+    const attempts = await realPrepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+      .bind("agent.sweep.regate.repair_attempt", targetKey)
+      .first<{ n: number }>();
+    expect(attempts?.n).toBe(1); // still charged -- readiness genuinely passed before persistAdvisory threw
+    errors.mockRestore();
+  });
+
   it("agent re-gate sweep fail-opens when current Gate check reads fail during repair priority selection", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });

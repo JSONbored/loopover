@@ -835,6 +835,56 @@ services:
       start_period: 30s
       retries: 3
 
+  # Redacted AMS (gittensory-miner) ledger export -- a DEDICATED profile, not bundled into `observability`: unlike
+  # the engine's own reporting-exporter above, this only does anything useful when a miner is ALSO running on this
+  # same host with its ledgers under GITTENSORY_MINER_CONFIG_DIR (an engine-only maintainer deployment has nothing
+  # for it to read). Grafana must never mount that directory directly -- attempt_log_events.reason/.payload_json
+  # are free-form and can carry arbitrary internal detail (#5184 follow-up / PR #5471's flagged confidentiality
+  # gap) -- so this exporter reads the live ledgers read-only and writes a redacted snapshot into the SAME shared
+  # `grafana-reporting-data:/reporting` volume the engine's own exporter already writes to; only Grafana's
+  # ams-ledgers.yml datasources (pointed at /reporting/ams-*.sqlite) ever read from there.
+  ams-reporting-exporter:
+    image: alpine:3.20
+    restart: unless-stopped
+    <<: *default-logging
+    profiles: ["ams-observability"]
+    volumes:
+      # Read-only live-ledger access for the exporter only -- Grafana does not get this mount (mirrors the
+      # /appdb:ro pattern above). Point this at the SAME host directory your miner uses as GITTENSORY_MINER_CONFIG_DIR.
+      - "${GITTENSORY_MINER_CONFIG_DIR:-~/.config/gittensory-miner}:/ams-ledgers:ro"
+      - grafana-reporting-data:/reporting
+      # Directory bind mount, not a single-file one -- see reporting-exporter's own comment above for why
+      # (a single-file mount pins to the pre-`git pull` inode and silently never picks up a script update).
+      - ./scripts:/scripts:ro
+    environment:
+      GITTENSORY_AMS_ATTEMPT_LOG_SOURCE_DB: "${GITTENSORY_AMS_ATTEMPT_LOG_SOURCE_DB:-/ams-ledgers/attempt-log.sqlite3}"
+      GITTENSORY_AMS_PREDICTION_LEDGER_SOURCE_DB: "${GITTENSORY_AMS_PREDICTION_LEDGER_SOURCE_DB:-/ams-ledgers/prediction-ledger.sqlite3}"
+      GITTENSORY_REPORTING_DIR: /reporting
+      GITTENSORY_AMS_ATTEMPT_LOG_REPORTING_DB: "${GITTENSORY_AMS_ATTEMPT_LOG_REPORTING_DB:-/reporting/ams-attempt-log.sqlite}"
+      GITTENSORY_AMS_PREDICTION_LEDGER_REPORTING_DB: "${GITTENSORY_AMS_PREDICTION_LEDGER_REPORTING_DB:-/reporting/ams-prediction-ledger.sqlite}"
+      GITTENSORY_AMS_REPORTING_EXPORT_INTERVAL_SECONDS: "${GITTENSORY_AMS_REPORTING_EXPORT_INTERVAL_SECONDS:-30}"
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        apk add --no-cache sqlite >/dev/null 2>&1 &&
+        while true; do
+          sh /scripts/export-ams-reporting-db.sh || echo '[ams-reporting] export failed';
+          interval="$${GITTENSORY_AMS_REPORTING_EXPORT_INTERVAL_SECONDS:-30}";
+          case "$$interval" in ''|*[!0-9]*) interval=30;; esac;
+          sleep "$$interval";
+        done
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "db=\"$${GITTENSORY_AMS_ATTEMPT_LOG_REPORTING_DB:-/reporting/ams-attempt-log.sqlite}\"; test -s \"$$db\" && sqlite3 \"$$db\" 'PRAGMA quick_check;' | grep -q '^ok$'",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
   # ── Log pipeline (--profile observability) ─────────────────────────────────
   # Loki stores logs; Promtail discovers every container in this compose project via the read-only
   # docker-proxy (NOT a raw socket) and ships their logs to Loki. Browse in Grafana → Explore →

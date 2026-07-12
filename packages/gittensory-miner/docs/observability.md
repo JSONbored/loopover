@@ -32,14 +32,21 @@ not under the miner config directory.
    GF_INSTALL_PLUGINS=frser-sqlite-datasource
    ```
 
-2. **Publish sanitized AMS reporting exports** into Grafana's existing reporting mount. Do not mount
-   `GITTENSORY_MINER_CONFIG_DIR` into Grafana. The provisioned defaults are:
+2. **Run the AMS reporting exporter**, a dedicated compose profile (only useful when a miner also runs on this
+   same host — an engine-only deployment has nothing for it to read):
 
-   - `/reporting/ams-attempt-log.sqlite`
-   - `/reporting/ams-prediction-ledger.sqlite`
+   ```sh
+   docker compose --profile ams-observability up -d
+   ```
 
-   If your exporter writes elsewhere, edit the two `path:` values in `ams-ledgers.yml` to match the redacted export
-   locations.
+   Set `GITTENSORY_MINER_CONFIG_DIR` in your `.env` (see [`.env.example`](../../../.env.example)) to the same
+   directory your miner uses. The `ams-reporting-exporter` container mounts it **read-only**, runs
+   [`scripts/export-ams-reporting-db.sh`](../../../scripts/export-ams-reporting-db.sh) on an interval
+   (`GITTENSORY_AMS_REPORTING_EXPORT_INTERVAL_SECONDS`, default 30s), and writes the redacted snapshots into the
+   same `reporting` volume Grafana already reads — Grafana itself never mounts the live ledgers. The exported
+   schema drops `attempt_log_events.reason`/`.payload_json` (the free-form fields) entirely; every other column,
+   including the `predictions` table's `blocker_codes_json`/`warning_codes_json` (fixed, engine-defined codes —
+   never free text), passes through unchanged.
 
 3. **Restart Grafana.** The two datasources appear under **Connections → Data sources**, already provisioned
    (non-editable) so they survive restarts.
@@ -49,4 +56,5 @@ not under the miner config directory.
 Dashboards live in [`grafana/dashboards/`](../../../grafana/dashboards/) and are auto-provisioned from that
 directory. To visualize AMS activity, add a dashboard JSON there — or import one at runtime via the Grafana UI
 (**Dashboards → Import**) — and point its panels at the `AMS Attempt Log` / `AMS Prediction Ledger` datasources
-above. Panels should query only the sanitized reporting schema exposed by your exporter, never the raw ledger tables.
+above. Panels should query only the redacted reporting schema (e.g. `SELECT * FROM attempt_log_events`), never a
+`payload_json`/`reason` column — the exporter drops both, so a panel referencing them returns no such column.

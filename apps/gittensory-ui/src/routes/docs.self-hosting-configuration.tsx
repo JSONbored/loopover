@@ -122,6 +122,11 @@ function SelfHostingConfiguration() {
             description:
               "Private self-host only — illustrative fleet global default and per-repo overlay (deep-merge). Never commit real policy into these example paths.",
           },
+          {
+            title: "shared.gittensory.yml",
+            description:
+              "Private self-host only — lowest-priority cross-repo house policy for an operator running many repos (#1959). Write a default once instead of copy-pasting it into every repo's file.",
+          },
         ]}
       />
       <CodeBlock
@@ -163,6 +168,13 @@ cp config/examples/global.gittensory.yml gittensory-config/.gittensory.yml`}
             <code>config/examples/TEMPLATES.md</code>
           </a>{" "}
           — catalog + fleet usage notes
+        </li>
+        <li>
+          <a href="https://github.com/JSONbored/gittensory/blob/main/config/examples/README.md">
+            <code>config/examples/README.md</code>
+          </a>{" "}
+          — the full private-config layout, precedence chain, and deep-merge semantics, including
+          the shared base layer
         </li>
       </ul>
       <p>

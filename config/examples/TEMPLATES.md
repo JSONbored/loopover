@@ -12,6 +12,7 @@ mount (`GITTENSORY_REPO_CONFIG_DIR`).
 | [`gittensory.full.yml`](./gittensory.full.yml) | Exhaustive commented reference — every `gate:`, `settings:`, `review:`, and `features:` field |
 | [`global.gittensory.yml`](./global.gittensory.yml) | **Private only** — illustrative fleet-wide default for a self-host mount |
 | [`repo-override.gittensory.yml`](./repo-override.gittensory.yml) | **Private only** — per-repo overlay deep-merged over `global.gittensory.yml` |
+| [`shared.gittensory.yml`](./shared.gittensory.yml) | **Private only** — lowest-priority cross-repo house policy for multi-repo operators (#1959) |
 
 Canonical copies of the minimal and full templates also live at the repo root as
 [`.gittensory.minimal.yml`](../../.gittensory.minimal.yml) and
@@ -25,6 +26,7 @@ in sync with those files.
 | **Public** | `.gittensory.yml` or `.github/gittensory.yml` in git | Contributors | `wantedPaths`, test expectations, public review presentation |
 | **Private global** | `${GITTENSORY_REPO_CONFIG_DIR}/.gittensory.yml` | Operator only | Shared autonomy baseline, contributor caps, maintainer allowlists |
 | **Private per-repo** | `${GITTENSORY_REPO_CONFIG_DIR}/owner__repo/.gittensory.yml` | Operator only | Repo-specific CI context names, AI mode, overrides |
+| **Private shared base** | `${GITTENSORY_REPO_CONFIG_DIR}/_shared/.gittensory.yml` | Operator only | Lowest-priority cross-repo house policy for an operator running many repos (#1959) — see [README's "Shared base layer" section](./README.md#shared-base-layer-multi-repo-operators-1959) |
 
 When **either** a private global or private per-repo file exists, the loader **never fetches** the
 public repo file for that review — mount private policy deliberately. See [README.md](./README.md)

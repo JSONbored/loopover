@@ -4,9 +4,11 @@
 #
 # WHERE TO COPY (pick one):
 #   PUBLIC REPO — repo root as `.gittensory.yml` (or `.github/gittensory.yml`). Contributors can read it.
-#   PRIVATE SELF-HOST — `${GITTENSORY_REPO_CONFIG_DIR}/.gittensory.yml` (global default) or
-#     `${GITTENSORY_REPO_CONFIG_DIR}/owner__repo/.gittensory.yml` (per-repo override). Never commit real
-#     policy here to a public repo — use the private mount for thresholds, allowlists, and autonomy.
+#   PRIVATE SELF-HOST — `${GITTENSORY_REPO_CONFIG_DIR}/.gittensory.yml` (global default),
+#     `${GITTENSORY_REPO_CONFIG_DIR}/owner__repo/.gittensory.yml` (per-repo override), or
+#     `${GITTENSORY_REPO_CONFIG_DIR}/_shared/.gittensory.yml` (lowest-priority cross-repo base, #1959).
+#     Never commit real policy here to a public repo — use the private mount for thresholds,
+#     allowlists, and autonomy.
 #
 # Canonical copy also lives at the repo root as `.gittensory.minimal.yml` (kept in sync by CI).
 # For every supported field, defaults, and allowed values see `gittensory.full.yml` or

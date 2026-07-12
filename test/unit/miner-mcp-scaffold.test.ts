@@ -92,6 +92,7 @@ describe("gittensory-miner MCP server (#5153 scaffold)", () => {
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "gittensory_miner_get_audit_feed",
+      "gittensory_miner_get_governor_decisions",
       "gittensory_miner_get_plan",
       "gittensory_miner_get_portfolio_dashboard",
       "gittensory_miner_get_run_state",

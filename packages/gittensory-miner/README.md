@@ -147,7 +147,9 @@ It exposes these read-only tools:
 
 - `gittensory_miner_list_plans` / `gittensory_miner_get_plan` (#5161) — read-only access to the persisted plan store (`planId`, plan DAG, status, `updatedAt`) via `listPlans` / `loadPlan`; `list_plans` takes an optional `status` filter, `get_plan` takes a `planId` and returns an explicit `{ planId, found: false }` for an unknown id. These read the store-backed AMS plan store — distinct from ORB's stateless `gittensory_plan_status` tool.
 
-Further AMS-state-reading tools (status/doctor diagnostics, governor ledger) land as follow-up PRs on top of this server.
+- `gittensory_miner_get_governor_decisions` (#5159) — read-only projection of the governor decision log (`id`, `ts`, `eventType`, `repoFullName`, `actionClass`, `decision`, `reason`), optionally filtered by `repoFullName`. The projection **excludes the sensitive `payload_json` column by construction** — `governor-ledger.js` reads it with an explicit named-column SELECT, never `SELECT *`.
+
+Further AMS-state-reading tools (status/doctor diagnostics) land as follow-up PRs on top of this server.
 
 ## Version check
 

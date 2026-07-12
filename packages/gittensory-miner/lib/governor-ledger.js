@@ -66,6 +66,21 @@ function rowToEntry(row) {
   };
 }
 
+// Decision-log projection (#5159): the public, MCP-exposed shape. Deliberately omits payload_json (which #5134
+// is expanding with reputation/self-plagiarism/budget state). Kept honest by an explicit named-column SELECT
+// below — never SELECT * — so the sensitive column cannot leak even by accident.
+function rowToDecision(row) {
+  return {
+    id: row.id,
+    ts: row.ts,
+    eventType: row.event_type,
+    repoFullName: row.repo_full_name,
+    actionClass: row.action_class,
+    decision: row.decision,
+    reason: row.reason,
+  };
+}
+
 /**
  * Opens the append-only governor ledger, creating the table on first use. Rows are returned in ascending `id`
  * order (insertion order). (#2328)
@@ -103,6 +118,15 @@ export function initGovernorLedger(dbPath = resolveGovernorLedgerDbPath()) {
   const readByRepoStatement = db.prepare(
     "SELECT * FROM governor_events WHERE repo_full_name = ? ORDER BY id ASC",
   );
+  // Explicit named-column projection for the read-only decision log (#5159) — payload_json is intentionally
+  // NOT in this list, so widening it would be a deliberate edit that the redaction test guards against.
+  const decisionColumns = "id, ts, event_type, repo_full_name, action_class, decision, reason";
+  const readDecisionsAllStatement = db.prepare(
+    `SELECT ${decisionColumns} FROM governor_events ORDER BY id ASC`,
+  );
+  const readDecisionsByRepoStatement = db.prepare(
+    `SELECT ${decisionColumns} FROM governor_events WHERE repo_full_name = ? ORDER BY id ASC`,
+  );
 
   return {
     dbPath: resolvedPath,
@@ -127,6 +151,14 @@ export function initGovernorLedger(dbPath = resolveGovernorLedgerDbPath()) {
           ? readAllStatement.all()
           : readByRepoStatement.all(repoFullName);
       return rows.map(rowToEntry);
+    },
+    readGovernorDecisions(filter = {}) {
+      const repoFullName = normalizeOptionalRepoFullName(filter.repoFullName);
+      const rows =
+        repoFullName === undefined
+          ? readDecisionsAllStatement.all()
+          : readDecisionsByRepoStatement.all(repoFullName);
+      return rows.map(rowToDecision);
     },
     close() {
       db.close();

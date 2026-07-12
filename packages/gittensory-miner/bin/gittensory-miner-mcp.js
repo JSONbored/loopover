@@ -14,6 +14,7 @@ import { collectPortfolioDashboard } from "../lib/portfolio-dashboard.js";
 import { initPortfolioQueueStore } from "../lib/portfolio-queue.js";
 import { initRunStateStore } from "../lib/run-state.js";
 import { PLAN_STATUSES, openPlanStore } from "../lib/plan-store.js";
+import { initGovernorLedger } from "../lib/governor-ledger.js";
 
 // MCP stdio server for @jsonbored/gittensory-miner (scaffold #5153). Mirrors the packages/gittensory-mcp
 // harness (MCP SDK server + stdio transport). Tools:
@@ -28,7 +29,9 @@ import { PLAN_STATUSES, openPlanStore } from "../lib/plan-store.js";
 //     listRunStates (read-only analog of ORB's gittensory_get_automation_state; no state-set mutation).
 //   - gittensory_miner_list_plans / gittensory_miner_get_plan (#5161): read-only access to the persisted
 //     plan store via plan-store.js's listPlans/loadPlan (distinct from ORB's stateless gittensory_plan_status).
-// Remaining AMS-state-reading tools (status/doctor, governor ledger, etc.) land as follow-ups.
+//   - gittensory_miner_get_governor_decisions (#5159): read-only governor decision-log projection via
+//     governor-ledger.js's readGovernorDecisions -- an explicit named-column read that excludes payload_json.
+// Remaining AMS-state-reading tools (status/doctor, etc.) land as follow-ups.
 
 // Read the version from this package's own package.json (always shipped) rather than a hand-synced
 // literal, so a release bump never has a second place to forget -- same approach as the mcp harness.
@@ -46,9 +49,9 @@ export const MINER_PING_STATUS = { status: "ok", tool: "gittensory_miner_ping" }
 
 /**
  * Build the miner MCP server with its tools registered. `options.initPortfolioQueue`, `options.openClaimLedger`,
- * `options.initEventLedger`, `options.initRunStateStore`, `options.openPlanStore`, and `options.nowMs` are
- * injection seams for tests (default to the real stores and the wall clock); the ping tool needs none. Each
- * store-backed tool opens its store only when invoked and closes any store it opened.
+ * `options.initEventLedger`, `options.initRunStateStore`, `options.openPlanStore`, `options.initGovernorLedger`,
+ * and `options.nowMs` are injection seams for tests (default to the real stores and the wall clock); the ping
+ * tool needs none. Each store-backed tool opens its store only when invoked and closes any store it opened.
  */
 export function createMinerMcpServer(options = {}) {
   const server = new McpServer({ name: "gittensory-miner", version: ownPackageJson.version });
@@ -211,6 +214,31 @@ export function createMinerMcpServer(options = {}) {
         return { content: [{ type: "text", text: JSON.stringify(result) }] };
       } finally {
         if (ownsStore) store.close();
+      }
+    },
+  );
+  server.registerTool(
+    "gittensory_miner_get_governor_decisions",
+    {
+      description:
+        "Read-only projection of the governor decision log: id, ts, eventType, repoFullName, actionClass, " +
+        "decision, reason per row. This projection INTENTIONALLY EXCLUDES the internal/sensitive payload column " +
+        "(reputation / self-plagiarism / budget state) by construction -- governor-ledger.js reads it with an " +
+        "explicit named-column SELECT, never SELECT *. Optional repoFullName filter (the only filter the ledger " +
+        "supports natively). Read-only; never writes to the ledger.",
+      inputSchema: {
+        repoFullName: z.string().min(1).optional(),
+      },
+    },
+    async ({ repoFullName }) => {
+      const ownsLedger = options.initGovernorLedger === undefined;
+      const ledger = (options.initGovernorLedger ?? initGovernorLedger)();
+      try {
+        const filter = {};
+        if (repoFullName !== undefined) filter.repoFullName = repoFullName;
+        return { content: [{ type: "text", text: JSON.stringify(ledger.readGovernorDecisions(filter)) }] };
+      } finally {
+        if (ownsLedger) ledger.close();
       }
     },
   );

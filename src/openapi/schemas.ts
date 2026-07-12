@@ -672,7 +672,7 @@ export const RepositorySettingsSchema = z
     checkRunDetailLevel: z.enum(["minimal", "standard"]),
     // @deprecated (#4618, tracked for removal in #5373): computed read-back of reviewCheckMode kept only
     // for API/dashboard back-compat display -- read reviewCheckMode instead.
-    gateCheckMode: z.enum(["off", "enabled"]),
+    gateCheckMode: z.enum(["off", "enabled"]).optional(),
     regateSweepOrderMode: z.enum(["staleness", "oldest-first"]),
     reviewCheckMode: z.enum(["required", "visible", "disabled"]),
     autoProjectMilestoneMatch: z.enum(["off", "suggest", "auto"]).optional(),
@@ -889,7 +889,7 @@ export const RepoSettingsPreviewSchema = z
       checkRunDetailLevel: z.enum(["minimal", "standard"]),
       // @deprecated (#4618, tracked for removal in #5373): computed read-back of reviewCheckMode kept only
       // for API/dashboard back-compat display -- read reviewCheckMode instead.
-      gateCheckMode: z.enum(["off", "enabled"]),
+      gateCheckMode: z.enum(["off", "enabled"]).optional(),
       regateSweepOrderMode: z.enum(["staleness", "oldest-first"]),
       reviewCheckMode: z.enum(["required", "visible", "disabled"]),
       autoProjectMilestoneMatch: z.enum(["off", "suggest", "auto"]).optional(),
@@ -1294,7 +1294,7 @@ export const InstallationRepairSchema = z
           checkRunMode: z.enum(["off", "enabled"]),
           // @deprecated (#4618, tracked for removal in #5373): computed read-back of reviewCheckMode kept only
           // for API/dashboard back-compat display -- read reviewCheckMode instead.
-          gateCheckMode: z.enum(["off", "enabled"]),
+          gateCheckMode: z.enum(["off", "enabled"]).optional(),
           reviewCheckMode: z.enum(["required", "visible", "disabled"]),
           autoProjectMilestoneMatch: z.enum(["off", "suggest", "auto"]).optional(),
           autoProjectMilestoneMatchBackend: z.enum(["github", "linear"]).optional(),
@@ -2215,7 +2215,7 @@ export const RegistrationReadinessSchema = z
       checkRunMode: z.enum(["off", "enabled"]),
       // @deprecated (#4618, tracked for removal in #5373): computed read-back of reviewCheckMode kept only
       // for API/dashboard back-compat display -- read reviewCheckMode instead.
-      gateCheckMode: z.enum(["off", "enabled"]),
+      gateCheckMode: z.enum(["off", "enabled"]).optional(),
       reviewCheckMode: z.enum(["required", "visible", "disabled"]),
       autoProjectMilestoneMatch: z.enum(["off", "suggest", "auto"]).optional(),
       autoProjectMilestoneMatchBackend: z.enum(["github", "linear"]).optional(),

@@ -155,9 +155,10 @@ export type RepositorySettings = {
   publicSignalLevel: "minimal" | "standard";
   checkRunMode: "off" | "enabled";
   checkRunDetailLevel: "minimal" | "standard";
-  /** @deprecated (#4618, tracked for removal in #5373) computed read-back of {@link reviewCheckMode}
-   *  below, kept only for API/dashboard back-compat display -- read `reviewCheckMode` instead. */
-  gateCheckMode: "off" | "enabled";
+  /** @deprecated (#4618, being removed per #5373) computed read-back of {@link reviewCheckMode} below,
+   *  kept only for API/dashboard back-compat display -- read `reviewCheckMode` instead. Optional (widened
+   *  ahead of full removal) so callers building a partial RepositorySettings no longer need to supply it. */
+  gateCheckMode?: "off" | "enabled" | undefined;
   /** Scheduled re-gate sweep candidate ordering (#3815). `staleness` (default) picks whichever open PR the
    *  sweep has gone longest WITHOUT re-gating (see selectRegateCandidates), which is what gives the sweep its
    *  documented full-coverage-in-ceil(open/max)-ticks convergence guarantee even under dry-run/pause (when

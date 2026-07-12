@@ -57,15 +57,63 @@ describe("resolveAmsPolicy (#5132)", () => {
     expect(result).toEqual({ spec: DEFAULT_AMS_POLICY_SPEC, source: "default", warnings: [] });
   });
 
-  it("falls through to the repo's own .gittensory-ams.yml when no local file exists", async () => {
+  it("clamps repo fallback policy so repo-controlled content cannot loosen safe defaults", async () => {
     const root = tempRoot();
     const fetchImpl = routedFetch({
-      ".gittensory-ams.yml": () => textResponse("submissionMode: enforce\nslopThreshold: clean\n"),
+      ".gittensory-ams.yml": () =>
+        textResponse(
+          [
+            "submissionMode: enforce",
+            "slopThreshold: high",
+            "capLimits:",
+            "  budget: 100",
+            "  turns: 200",
+            "  elapsedMs: 3600000",
+            "convergenceThresholds:",
+            "  maxConsecutiveFailures: 20",
+            "  maxReenqueues: 20",
+            "maxIterations: 30",
+            "maxTurnsPerIteration: 60",
+          ].join("\n"),
+        ),
     });
     const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { GITTENSORY_MINER_CONFIG_DIR: root } });
     expect(result.source).toBe("repo");
-    expect(result.spec.submissionMode).toBe("enforce");
-    expect(result.spec.slopThreshold).toBe("clean");
+    expect(result.spec).toEqual(DEFAULT_AMS_POLICY_SPEC);
+    expect(result.warnings.join(" ")).toMatch(/cannot loosen/i);
+  });
+
+  it("allows repo fallback policy to make safe defaults more restrictive", async () => {
+    const root = tempRoot();
+    const fetchImpl = routedFetch({
+      ".gittensory-ams.yml": () =>
+        textResponse(
+          [
+            "submissionMode: observe",
+            "slopThreshold: clean",
+            "capLimits:",
+            "  budget: 2",
+            "  turns: 3",
+            "  elapsedMs: 1000",
+            "convergenceThresholds:",
+            "  maxConsecutiveFailures: 1",
+            "  maxReenqueues: 0",
+            "maxIterations: 1",
+            "maxTurnsPerIteration: 2",
+          ].join("\n"),
+        ),
+    });
+    const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { GITTENSORY_MINER_CONFIG_DIR: root } });
+    expect(result.source).toBe("repo");
+    expect(result.spec).toEqual({
+      submissionMode: "observe",
+      slopThreshold: "clean",
+      capLimits: { budget: 2, turns: 3, elapsedMs: 1000 },
+      convergenceThresholds: { maxConsecutiveFailures: 1, maxReenqueues: 0 },
+      maxIterations: 1,
+      maxTurnsPerIteration: 2,
+    });
+    expect(result.warnings).toEqual([]);
   });
 
   it("REGRESSION: the operator's own local file fully REPLACES the repo's file, never merges", async () => {
@@ -135,6 +183,7 @@ describe("resolveAmsPolicy (#5132)", () => {
     });
     const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { GITTENSORY_MINER_CONFIG_DIR: root } });
     expect(result.source).toBe("repo");
-    expect(result.spec.submissionMode).toBe("enforce");
+    expect(result.spec.submissionMode).toBe("observe");
+    expect(result.warnings.join(" ")).toMatch(/cannot loosen/i);
   });
 });

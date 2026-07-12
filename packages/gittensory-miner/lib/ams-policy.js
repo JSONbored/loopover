@@ -6,8 +6,9 @@ import { resolveLocalStoreDbPath } from "./local-store.js";
 // (ams-policy-spec.ts, engine package) is the type/parser surface; this module is the actual fetch+resolve
 // caller, mirroring `.gittensory.yml`'s own established self-host precedent (src/selfhost/private-config.ts's
 // `makeLocalManifestReader`): the operator's own local file, when present, FULLY REPLACES whatever the
-// target repo's own file says -- never a field-by-field merge. The repo's file is only ever consulted as a
-// fallback default for an operator who hasn't set their own local policy.
+// target repo's own file says -- never a field-by-field merge. The repo's file can only ever propose a
+// more restrictive fallback for an operator who hasn't set their own local policy; repo-controlled content
+// is clamped to the engine's safe deny-by-default policy before it becomes effective.
 //
 // This is deliberately NOT the same resolution shape as self-review-context.js/rejection-signal.js, which
 // only ever read from the target repo: AmsPolicySpec's fields are the OPERATOR's own execution-risk policy
@@ -15,6 +16,42 @@ import { resolveLocalStoreDbPath } from "./local-store.js";
 
 const AMS_POLICY_FILENAME = ".gittensory-ams.yml";
 const DEFAULT_RAW_CONTENT_BASE_URL = "https://raw.githubusercontent.com";
+
+const SLOP_THRESHOLD_RANK = { clean: 0, low: 1, elevated: 2, high: 3 };
+
+function clampNumberToDefault(value, fallback) {
+  return Math.min(value, fallback);
+}
+
+function clampRepoAmsPolicySpec(spec, warnings) {
+  const clamped = {
+    submissionMode: spec.submissionMode === "observe" ? "observe" : DEFAULT_AMS_POLICY_SPEC.submissionMode,
+    slopThreshold:
+      SLOP_THRESHOLD_RANK[spec.slopThreshold] <= SLOP_THRESHOLD_RANK[DEFAULT_AMS_POLICY_SPEC.slopThreshold]
+        ? spec.slopThreshold
+        : DEFAULT_AMS_POLICY_SPEC.slopThreshold,
+    capLimits: {
+      budget: clampNumberToDefault(spec.capLimits.budget, DEFAULT_AMS_POLICY_SPEC.capLimits.budget),
+      turns: clampNumberToDefault(spec.capLimits.turns, DEFAULT_AMS_POLICY_SPEC.capLimits.turns),
+      elapsedMs: clampNumberToDefault(spec.capLimits.elapsedMs, DEFAULT_AMS_POLICY_SPEC.capLimits.elapsedMs),
+    },
+    convergenceThresholds: {
+      maxConsecutiveFailures: clampNumberToDefault(
+        spec.convergenceThresholds.maxConsecutiveFailures,
+        DEFAULT_AMS_POLICY_SPEC.convergenceThresholds.maxConsecutiveFailures,
+      ),
+      maxReenqueues: clampNumberToDefault(spec.convergenceThresholds.maxReenqueues, DEFAULT_AMS_POLICY_SPEC.convergenceThresholds.maxReenqueues),
+    },
+    maxIterations: clampNumberToDefault(spec.maxIterations, DEFAULT_AMS_POLICY_SPEC.maxIterations),
+    maxTurnsPerIteration: clampNumberToDefault(spec.maxTurnsPerIteration, DEFAULT_AMS_POLICY_SPEC.maxTurnsPerIteration),
+  };
+
+  if (JSON.stringify(clamped) !== JSON.stringify(spec)) {
+    warnings.push("Repo-controlled AmsPolicySpec cannot loosen the miner's safe default execution policy; permissive fields were clamped.");
+  }
+
+  return clamped;
+}
 
 /** Resolve the operator's local AMS policy file path: explicit env var > `GITTENSORY_MINER_CONFIG_DIR` >
  *  `XDG_CONFIG_HOME`/`~/.config`, mirroring every other local-store path in this package. */
@@ -73,7 +110,7 @@ async function fetchRepoAmsPolicyContent(target, resolved) {
 /**
  * Resolve the real, effective AMS execution policy for one attempt against `repoFullName`: the operator's
  * own local `.gittensory-ams.yml` when present (source: "local"), else the target repo's own proposed file
- * when present (source: "repo"), else the engine's safe defaults (source: "default"). Never throws -- an
+ * clamped to safe defaults when present (source: "repo"), else the engine's safe defaults (source: "default"). Never throws -- an
  * unreadable/malformed file at either layer degrades to the next layer or the safe defaults, same discipline
  * as every other tolerant parser in this pipeline.
  *
@@ -99,7 +136,7 @@ export async function resolveAmsPolicy(repoFullName, options = {}) {
     const repoContent = await fetchRepoAmsPolicyContent(target, resolved);
     if (repoContent !== null) {
       const parsed = parseAmsPolicySpecContent(repoContent);
-      return { spec: parsed.spec, source: "repo", warnings: parsed.warnings };
+      return { spec: clampRepoAmsPolicySpec(parsed.spec, parsed.warnings), source: "repo", warnings: parsed.warnings };
     }
   }
 

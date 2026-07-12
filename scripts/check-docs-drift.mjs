@@ -129,7 +129,6 @@ const NOT_YML_CONFIGURABLE_SETTINGS_FIELDS = new Set([
  *  alias per row is enough. Any `*GateMode` field is deliberately absent from this manifest even though its own
  *  yml key is ALSO renamed the same way -- GATE_MODE_MANIFEST above already owns that exhaustive cross-check. */
 export const SETTINGS_ALIAS_MANIFEST = [
-  { field: "gateCheckMode", aliases: ["checkMode"] },
   { field: "reviewCheckMode", aliases: ["checkMode"] },
   { field: "gatePack", aliases: ["pack:"] },
   { field: "qualityGateMinScore", aliases: ["minScore"] },

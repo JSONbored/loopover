@@ -234,6 +234,26 @@ describe("computeContributorCalibration — per-login calibration read (#2349)",
     expect(await computeContributorCalibration(env, "someone-else")).toEqual({ sampleSize: 1, agreementRate: 1 });
   });
 
+  it("uses the matching lower(login) expression index for canonicalized calibration lookups", async () => {
+    const env = createTestEnv();
+
+    const idx = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name = ?")
+      .bind("predicted_gate_calibration_ledger_login_lower_idx")
+      .first<{ name: string }>();
+    expect(idx?.name).toBe("predicted_gate_calibration_ledger_login_lower_idx");
+
+    const plan = await env.DB.prepare(
+      `EXPLAIN QUERY PLAN SELECT COUNT(*) AS sampleSize, COALESCE(AVG(agreed), 0) AS agreementRate
+         FROM predicted_gate_calibration_ledger
+        WHERE lower(login) = ?`,
+    )
+      .bind("octocat")
+      .all<{ detail: string }>();
+    const detail = (plan.results ?? []).map((row) => row.detail).join(" ");
+    expect(detail).toContain("predicted_gate_calibration_ledger_login_lower_idx");
+    expect(detail).not.toContain("SCAN predicted_gate_calibration_ledger");
+  });
+
   it("aggregates across ALL of a login's history regardless of which repo each pairing came from", async () => {
     const env = createTestEnv();
     await seedLedgerRow(env, { login: "octocat", project: "owner/repo-a", pullNumber: 1, agreed: true });

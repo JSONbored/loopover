@@ -36,6 +36,7 @@ export function printHelp(input) {
       "  gittensory-miner plan list [--status pending|running|completed|failed] [--json]",
       "  gittensory-miner plan show <planId> [--json]",
       "  gittensory-miner governor list [--repo <owner/repo>] [--type allowed|denied|throttled|kill_switch] [--json]",
+      "  gittensory-miner metrics                                      Print prediction-accuracy counters as Prometheus text",
       "  gittensory-miner feasibility <claimStatus> <duplicateClusterRisk> <issueStatus> [--not-found] [--json]",
       "  gittensory-miner hooks check --tool <name> --input <json> [--json]",
       "  gittensory-miner state get <owner/repo> [--json]",

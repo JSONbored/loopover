@@ -6,6 +6,7 @@ import { runDiscover } from "../lib/discover-cli.js";
 import { runFeasibilityCli } from "../lib/feasibility-cli.js";
 import { runGovernorCli } from "../lib/governor-ledger-cli.js";
 import { runLedgerCli } from "../lib/event-ledger-cli.js";
+import { runMetricsCli } from "../lib/prediction-metrics-cli.js";
 import { runLoop } from "../lib/loop-cli.js";
 import { runManagePoll } from "../lib/manage-poll.js";
 import { runManageStatus } from "../lib/manage-status.js";
@@ -60,6 +61,10 @@ if (cliArgs[0] === "claim") {
 
 if (cliArgs[0] === "ledger") {
   process.exit(runLedgerCli(cliArgs[1], cliArgs.slice(2)));
+}
+
+if (cliArgs[0] === "metrics") {
+  process.exit(runMetricsCli(cliArgs.slice(1)));
 }
 
 if (cliArgs[0] === "plan") {

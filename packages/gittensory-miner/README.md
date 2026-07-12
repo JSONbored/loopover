@@ -143,7 +143,9 @@ It exposes these read-only tools:
 
 - `gittensory_miner_get_run_state` (#5160) — read-only per-repo run-state (`idle` / `discovering` / `planning` / `preparing`) via `getRunState` / `listRunStates`. Pass `repoFullName` for one repo (a null state means none recorded yet), or omit it to list all. The read-only analog of ORB's `gittensory_get_automation_state`; adds no state-set mutation.
 
-Further AMS-state-reading tools (status/doctor diagnostics, governor ledger, plan store) land as follow-up PRs on top of this server.
+- `gittensory_miner_list_plans` / `gittensory_miner_get_plan` (#5161) — read-only access to the persisted plan store (`planId`, plan DAG, status, `updatedAt`) via `listPlans` / `loadPlan`; `list_plans` takes an optional `status` filter, `get_plan` takes a `planId` and returns an explicit `{ planId, found: false }` for an unknown id. These read the store-backed AMS plan store — distinct from ORB's stateless `gittensory_plan_status` tool.
+
+Further AMS-state-reading tools (status/doctor diagnostics, governor ledger) land as follow-up PRs on top of this server.
 
 ## Version check
 

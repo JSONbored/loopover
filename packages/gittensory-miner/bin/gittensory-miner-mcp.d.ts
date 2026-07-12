@@ -31,11 +31,21 @@ export interface MinerMcpServerOptions {
     listRunStates(): unknown[];
     close(): void;
   };
+  /**
+   * Override the plan-store opener (defaults to the real on-disk store); injection seam for tests. Typed to the
+   * minimal read surface the plan tools use (never savePlan).
+   */
+  openPlanStore?: () => {
+    loadPlan(planId: string): unknown;
+    listPlans(filter?: { status?: string | null }): unknown[];
+    close(): void;
+  };
 }
 
 /**
  * Build the miner MCP server with its tools registered (gittensory_miner_ping,
  * gittensory_miner_get_portfolio_dashboard, gittensory_miner_list_claims, gittensory_miner_get_audit_feed,
- * gittensory_miner_get_run_state). `options` supplies test injection seams; production callers pass nothing.
+ * gittensory_miner_get_run_state, gittensory_miner_list_plans, gittensory_miner_get_plan). `options` supplies
+ * test injection seams; production callers pass nothing.
  */
 export function createMinerMcpServer(options?: MinerMcpServerOptions): McpServer;

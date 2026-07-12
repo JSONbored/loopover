@@ -13,6 +13,7 @@ import { initEventLedger } from "../lib/event-ledger.js";
 import { collectPortfolioDashboard } from "../lib/portfolio-dashboard.js";
 import { initPortfolioQueueStore } from "../lib/portfolio-queue.js";
 import { initRunStateStore } from "../lib/run-state.js";
+import { PLAN_STATUSES, openPlanStore } from "../lib/plan-store.js";
 
 // MCP stdio server for @jsonbored/gittensory-miner (scaffold #5153). Mirrors the packages/gittensory-mcp
 // harness (MCP SDK server + stdio transport). Tools:
@@ -25,7 +26,9 @@ import { initRunStateStore } from "../lib/run-state.js";
 //     collectEventLedgerAuditFeed() (same filters as `ledger list`; never returns payload_json).
 //   - gittensory_miner_get_run_state (#5160): read-only per-repo run-state via run-state.js's getRunState/
 //     listRunStates (read-only analog of ORB's gittensory_get_automation_state; no state-set mutation).
-// Remaining AMS-state-reading tools (status/doctor, governor ledger, plan store, etc.) land as follow-ups.
+//   - gittensory_miner_list_plans / gittensory_miner_get_plan (#5161): read-only access to the persisted
+//     plan store via plan-store.js's listPlans/loadPlan (distinct from ORB's stateless gittensory_plan_status).
+// Remaining AMS-state-reading tools (status/doctor, governor ledger, etc.) land as follow-ups.
 
 // Read the version from this package's own package.json (always shipped) rather than a hand-synced
 // literal, so a release bump never has a second place to forget -- same approach as the mcp harness.
@@ -43,9 +46,9 @@ export const MINER_PING_STATUS = { status: "ok", tool: "gittensory_miner_ping" }
 
 /**
  * Build the miner MCP server with its tools registered. `options.initPortfolioQueue`, `options.openClaimLedger`,
- * `options.initEventLedger`, `options.initRunStateStore`, and `options.nowMs` are injection seams for tests
- * (default to the real stores and the wall clock); the ping tool needs none. Each store-backed tool opens its
- * store only when invoked and closes any store it opened.
+ * `options.initEventLedger`, `options.initRunStateStore`, `options.openPlanStore`, and `options.nowMs` are
+ * injection seams for tests (default to the real stores and the wall clock); the ping tool needs none. Each
+ * store-backed tool opens its store only when invoked and closes any store it opened.
  */
 export function createMinerMcpServer(options = {}) {
   const server = new McpServer({ name: "gittensory-miner", version: ownPackageJson.version });
@@ -157,6 +160,54 @@ export function createMinerMcpServer(options = {}) {
           repoFullName === undefined
             ? { states: store.listRunStates() }
             : { repoFullName, state: store.getRunState(repoFullName) };
+        return { content: [{ type: "text", text: JSON.stringify(result) }] };
+      } finally {
+        if (ownsStore) store.close();
+      }
+    },
+  );
+  server.registerTool(
+    "gittensory_miner_list_plans",
+    {
+      description:
+        "Read-only list of the miner's PERSISTED plan store (planId, plan DAG, status, updatedAt), optionally " +
+        "filtered by status. Wraps plan-store.js's existing listPlans query -- no new logic, no mutation. NOTE: " +
+        "this is the store-backed AMS plan store; it is distinct from ORB's stateless gittensory_plan_status " +
+        "tool, which reads the caller's in-memory plan object rather than any persisted store.",
+      inputSchema: {
+        status: z.enum(PLAN_STATUSES).optional(),
+      },
+    },
+    async ({ status }) => {
+      const ownsStore = options.openPlanStore === undefined;
+      const store = (options.openPlanStore ?? openPlanStore)();
+      try {
+        const filter = {};
+        if (status !== undefined) filter.status = status;
+        return { content: [{ type: "text", text: JSON.stringify(store.listPlans(filter)) }] };
+      } finally {
+        if (ownsStore) store.close();
+      }
+    },
+  );
+  server.registerTool(
+    "gittensory_miner_get_plan",
+    {
+      description:
+        "Read-only fetch of one persisted plan record by planId (the full plan DAG, status, updatedAt), or an " +
+        "explicit { planId, found: false } for an unknown id. Wraps plan-store.js's existing loadPlan lookup -- " +
+        "no mutation, no DAG/planning logic. Store-backed AMS plan store; distinct from ORB's stateless " +
+        "gittensory_plan_status tool.",
+      inputSchema: {
+        planId: z.string().min(1),
+      },
+    },
+    async ({ planId }) => {
+      const ownsStore = options.openPlanStore === undefined;
+      const store = (options.openPlanStore ?? openPlanStore)();
+      try {
+        const plan = store.loadPlan(planId);
+        const result = plan === null ? { planId, found: false } : { found: true, plan };
         return { content: [{ type: "text", text: JSON.stringify(result) }] };
       } finally {
         if (ownsStore) store.close();

@@ -92,9 +92,11 @@ describe("gittensory-miner MCP server (#5153 scaffold)", () => {
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "gittensory_miner_get_audit_feed",
+      "gittensory_miner_get_plan",
       "gittensory_miner_get_portfolio_dashboard",
       "gittensory_miner_get_run_state",
       "gittensory_miner_list_claims",
+      "gittensory_miner_list_plans",
       "gittensory_miner_ping",
     ]);
   });
@@ -260,5 +262,79 @@ describe("gittensory_miner_get_run_state (#5160)", () => {
     await callRunState(await runStateClient(store), { repoFullName: "acme/api" });
     expect(store.calls).toEqual(["getRunState"]);
     expect(store.calls).not.toContain("setRunState");
+  });
+});
+
+const PLAN_RECORDS = [
+  { planId: "p1", plan: { steps: [] }, status: "running", updatedAt: "2026-01-01T00:00:00Z" },
+  { planId: "p2", plan: { steps: [] }, status: "completed", updatedAt: "2026-01-02T00:00:00Z" },
+];
+
+// Fake plan store that records calls and throws from the mutator, so a test can assert the plan tools reach
+// only loadPlan/listPlans and never savePlan. listPlans applies the same optional status filter the real one does.
+function fakePlanStore(records: Array<{ planId: string; status: string }>) {
+  const calls: string[] = [];
+  return {
+    calls,
+    loadPlan(planId: string): unknown {
+      calls.push("loadPlan");
+      return records.find((record) => record.planId === planId) ?? null;
+    },
+    listPlans(filter: { status?: string | null } = {}): unknown[] {
+      calls.push("listPlans");
+      return records.filter((record) => filter.status == null || record.status === filter.status);
+    },
+    savePlan(): never {
+      calls.push("savePlan");
+      throw new Error("savePlan must not be reachable via a read tool");
+    },
+    close(): void {
+      calls.push("close");
+    },
+  };
+}
+
+describe("gittensory_miner_list_plans / get_plan (#5161)", () => {
+  function planClient(store: ReturnType<typeof fakePlanStore>): Promise<Client> {
+    return connectedClient({ openPlanStore: () => store });
+  }
+  async function callTool(client: Client, name: string, args: Record<string, unknown>): Promise<unknown> {
+    const result = (await client.callTool({ name, arguments: args })) as Content;
+    return JSON.parse(toolText(result));
+  }
+
+  it("list_plans returns every plan when no status filter is given", async () => {
+    const out = await callTool(await planClient(fakePlanStore(PLAN_RECORDS)), "gittensory_miner_list_plans", {});
+    expect(out).toEqual(PLAN_RECORDS);
+  });
+
+  it("list_plans passes an optional status filter through to listPlans", async () => {
+    const out = await callTool(await planClient(fakePlanStore(PLAN_RECORDS)), "gittensory_miner_list_plans", {
+      status: "running",
+    });
+    expect(out).toEqual([PLAN_RECORDS[0]]);
+  });
+
+  it("get_plan returns the full record for an existing planId", async () => {
+    const out = await callTool(await planClient(fakePlanStore(PLAN_RECORDS)), "gittensory_miner_get_plan", {
+      planId: "p2",
+    });
+    expect(out).toEqual({ found: true, plan: PLAN_RECORDS[1] });
+  });
+
+  it("get_plan returns an explicit not-found result for an unknown planId (no throw)", async () => {
+    const out = await callTool(await planClient(fakePlanStore(PLAN_RECORDS)), "gittensory_miner_get_plan", {
+      planId: "nope",
+    });
+    expect(out).toEqual({ planId: "nope", found: false });
+  });
+
+  it("only reads — neither tool reaches savePlan (invariant)", async () => {
+    const store = fakePlanStore(PLAN_RECORDS);
+    const client = await planClient(store);
+    await callTool(client, "gittensory_miner_list_plans", {});
+    await callTool(client, "gittensory_miner_get_plan", { planId: "p1" });
+    expect(store.calls).toEqual(["listPlans", "loadPlan"]);
+    expect(store.calls).not.toContain("savePlan");
   });
 });

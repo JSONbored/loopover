@@ -11,6 +11,7 @@ import { runManageStatus } from "../lib/manage-status.js";
 import { runPlanCli } from "../lib/plan-store-cli.js";
 import { runClaimCli } from "../lib/claim-ledger-cli.js";
 import { runQueueCli } from "../lib/portfolio-queue-cli.js";
+import { runOrbExportCli } from "../lib/orb-export.js";
 import { runStateCli } from "../lib/run-state-cli.js";
 import { runInit } from "../lib/laptop-init.js";
 import { runDoctor, runStatus } from "../lib/status.js";
@@ -44,6 +45,10 @@ if (cliArgs[0] === "manage" && cliArgs[1] === "status") {
 
 if (cliArgs[0] === "queue") {
   process.exit(runQueueCli(cliArgs[1], cliArgs.slice(2)));
+}
+
+if (cliArgs[0] === "orb" && cliArgs[1] === "export") {
+  process.exit(runOrbExportCli(cliArgs.slice(2)));
 }
 
 if (cliArgs[0] === "claim") {

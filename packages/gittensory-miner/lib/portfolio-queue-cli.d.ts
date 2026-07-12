@@ -1,4 +1,5 @@
 import type { PortfolioQueueStore, QueueEntry } from "./portfolio-queue.js";
+import type { PortfolioQueueManager } from "./portfolio-queue-manager.js";
 
 export type ParsedQueueListArgs =
   | {
@@ -23,6 +24,12 @@ export function parseQueueNextArgs(args: string[]): ParsedQueueNextArgs;
 
 export function parseQueueDoneArgs(args: string[]): ParsedQueueDoneArgs;
 
+export type ParsedQueueClaimBatchArgs =
+  | { json: boolean; globalWipCap: number; perRepoWipCap: number }
+  | { error: string };
+
+export function parseQueueClaimBatchArgs(args: string[]): ParsedQueueClaimBatchArgs;
+
 export function renderQueueTable(entries: QueueEntry[]): string;
 
 export function runQueueList(
@@ -40,8 +47,16 @@ export function runQueueDone(
   options?: { initPortfolioQueue?: () => PortfolioQueueStore },
 ): number;
 
+export function runQueueClaimBatch(
+  args: string[],
+  options?: { initPortfolioQueueManager?: (opts: unknown) => PortfolioQueueManager },
+): number;
+
 export function runQueueCli(
   subcommand: string | undefined,
   args: string[],
-  options?: { initPortfolioQueue?: () => PortfolioQueueStore },
+  options?: {
+    initPortfolioQueue?: () => PortfolioQueueStore;
+    initPortfolioQueueManager?: (opts: unknown) => PortfolioQueueManager;
+  },
 ): number;

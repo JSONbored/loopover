@@ -1,9 +1,12 @@
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
+import { initPortfolioQueueManager } from "./portfolio-queue-manager.js";
 import { runPortfolioDashboard } from "./portfolio-dashboard.js";
 
 const QUEUE_LIST_USAGE = "Usage: gittensory-miner queue list [--repo <owner/repo>] [--json]";
 const QUEUE_NEXT_USAGE = "Usage: gittensory-miner queue next [--json]";
 const QUEUE_DONE_USAGE = "Usage: gittensory-miner queue done <owner/repo> <identifier> [--json]";
+const QUEUE_CLAIM_BATCH_USAGE =
+  "Usage: gittensory-miner queue claim-batch [--global-wip <n>] [--per-repo-wip <n>] [--json]";
 
 function parseRepoArg(value, usage) {
   if (!value) return { error: usage };
@@ -207,10 +210,66 @@ export function runQueueDone(args, options = {}) {
   }
 }
 
+export function parseQueueClaimBatchArgs(args) {
+  const options = { json: false, globalWipCap: 1, perRepoWipCap: 1 };
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === "--json") {
+      options.json = true;
+      continue;
+    }
+    if (token === "--global-wip" || token === "--per-repo-wip") {
+      const value = Number(args[index + 1]);
+      if (args[index + 1] === undefined || !Number.isFinite(value) || value < 0) {
+        return { error: QUEUE_CLAIM_BATCH_USAGE };
+      }
+      if (token === "--global-wip") options.globalWipCap = value;
+      else options.perRepoWipCap = value;
+      index += 1;
+      continue;
+    }
+    return { error: QUEUE_CLAIM_BATCH_USAGE };
+  }
+  return options;
+}
+
+/** Claim the next caps-aware batch via the WIP-cap-aware batch claimer (portfolio-queue-manager.js), which also
+ *  reclaims any leases orphaned by a crashed process first (#4833 wires the previously caller-less claimer). */
+export function runQueueClaimBatch(args, options = {}) {
+  const parsed = parseQueueClaimBatchArgs(args);
+  if ("error" in parsed) {
+    console.error(parsed.error);
+    return 2;
+  }
+
+  // Open the manager INSIDE the try so a store open failure returns 2 instead of crashing; the finally guards the
+  // close with `?.` since the initializer may have thrown before assigning.
+  const ownsManager = options.initPortfolioQueueManager === undefined;
+  let manager;
+  try {
+    manager = (options.initPortfolioQueueManager ?? initPortfolioQueueManager)({
+      caps: { globalWipCap: parsed.globalWipCap, perRepoWipCap: parsed.perRepoWipCap },
+    });
+    const claimed = manager.claimNextBatch();
+    if (parsed.json) {
+      console.log(JSON.stringify({ claimed }, null, 2));
+    } else {
+      console.log(claimed.length === 0 ? "none" : claimed.map((entry) => entry.identifier).join("\n"));
+    }
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 2;
+  } finally {
+    if (ownsManager) manager?.close();
+  }
+}
+
 export function runQueueCli(subcommand, args, options = {}) {
   if (subcommand === "list") return runQueueList(args, options);
   if (subcommand === "next") return runQueueNext(args, options);
   if (subcommand === "done") return runQueueDone(args, options);
+  if (subcommand === "claim-batch") return runQueueClaimBatch(args, options);
   if (subcommand === "dashboard") return runPortfolioDashboard(args, options);
   console.error(`Unknown queue subcommand: ${subcommand ?? ""}. ${QUEUE_LIST_USAGE}`);
   return 2;

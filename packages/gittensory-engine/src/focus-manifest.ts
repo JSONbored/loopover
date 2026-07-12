@@ -75,9 +75,18 @@ export type FocusManifestIssueDiscoveryPolicy = "encouraged" | "neutral" | "disc
  */
 export type FocusManifestGateConfig = {
   present: boolean;
+  /** `gate.enabled` (legacy): a boolean shorthand for `checkMode` below -- `true` maps to `"required"`,
+   *  `false` maps to `"disabled"` (see resolveEffectiveSettings/applyGateConfigOverrides). Despite the name,
+   *  this controls ONLY whether the "Gittensory Orb Review Agent" check-run publishes -- it has NO effect on
+   *  gate evaluation, disposition, comments, labels, audit, spend, or autonomous merge/close, all of which run
+   *  identically regardless of this field. It also cannot express `checkMode`'s third state (`"visible"`), and
+   *  is silently ignored once `checkMode` is set (see the parse-time warning a few lines below this type).
+   *  Caused two real incidents under this exact ambiguity (2026-07: an operator flipping `enabled` to restore
+   *  unrelated spend/gate behavior twice got a surprise check-run side effect instead) -- prefer `checkMode`
+   *  explicitly for any new config. */
   enabled: boolean | null;
   /** `gate.checkMode` (#2852): explicit required|visible|disabled review-check publish mode. Takes
-   *  precedence over the legacy `enabled` boolean below when both are set (see resolveEffectiveSettings).
+   *  precedence over the legacy `enabled` boolean above when both are set (see resolveEffectiveSettings).
    *  null (unset) ⇒ fall back to `enabled`, then to `settings.reviewCheckMode` (DB/dashboard), then default. */
   checkMode: ReviewCheckMode | null;
   pack: GatePolicyPack | null;
@@ -1364,6 +1373,19 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
   // default, so only an explicit `true` is worth flagging.
   if (gate.firstTimeContributorGrace === true) {
     warnings.push(`Manifest field "gate.firstTimeContributorGrace" is currently reserved/inert — it does not soften a blocker outcome for first-time contributors.`);
+  }
+  // gate.enabled only controls whether the "Gittensory Orb Review Agent" check-run publishes (the legacy
+  // enabled -> reviewCheckMode alias in applyGateConfigOverrides) -- it does NOT gate spend, merge, comment,
+  // label, or close behavior, and it cannot express checkMode's "visible" state. checkMode always wins when
+  // both are set, so once an operator sets checkMode, a lingering enabled becomes pure inert noise they have
+  // no reason to notice or remove -- only warn while checkMode is still absent (a paired enabled+checkMode
+  // config, the documented convention, is not worth flagging). Caused two real incidents under this exact
+  // ambiguity (an operator flipping enabled to restore unrelated spend/gate behavior got a surprise check-run
+  // side effect instead, twice).
+  if (gate.enabled !== null && gate.checkMode === null) {
+    warnings.push(
+      `Manifest field "gate.enabled" only controls whether the Gittensory Orb Review Agent check-run publishes — it does not gate spend, merge, comment, label, or close behavior, and it cannot express reviewCheckMode's "visible" state. Set "gate.checkMode" (required/visible/disabled) explicitly instead of "gate.enabled".`,
+    );
   }
   gate.present =
     gate.enabled !== null ||

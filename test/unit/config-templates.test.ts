@@ -184,11 +184,14 @@ describe("config/examples review templates (#1682)", () => {
     const manifest = parseFocusManifestContent(readConfigExample("gittensory.minimal.yml"), "repo_file");
     expect(manifest.warnings).toEqual([]);
     expect(manifest.present).toBe(true);
-    expect(manifest.gate.enabled).toBe(false);
+    // #5355: the minimal starter uses checkMode: disabled (not the ambiguous legacy enabled: false) so it
+    // stays warnings-clean and demonstrates the current best practice.
+    expect(manifest.gate.enabled).toBeNull();
+    expect(manifest.gate.checkMode).toBe("disabled");
     expect(isAgentConfigured(manifest.settings.autonomy)).toBe(false);
     const round = parseFocusManifest({ gate: gateConfigToJson(manifest.gate), settings: { autonomy: manifest.settings.autonomy } });
     expect(round.warnings).toEqual([]);
-    expect(round.gate.enabled).toBe(false);
+    expect(round.gate.checkMode).toBe("disabled");
     expect(isAgentConfigured(round.settings.autonomy)).toBe(false);
   });
 
@@ -254,6 +257,7 @@ describe("config/examples review templates (#1682)", () => {
     const yml = [
       "gate:",
       "  enabled: true",
+      "  checkMode: required",
       "  linkedIssue: block",
       "review:",
       "  inline_comments: true",
@@ -267,6 +271,7 @@ describe("config/examples review templates (#1682)", () => {
     expect(imported.warnings).toEqual([]);
     expect(imported.present).toBe(true);
     expect(imported.gate.enabled).toBe(true);
+    expect(imported.gate.checkMode).toBe("required");
     expect(imported.gate.linkedIssue).toBe("block");
     expect(imported.review.inlineComments).toBe(true);
     expect(imported.review.excludePaths).toEqual(["dist/**"]);

@@ -968,6 +968,9 @@ async function createOrUpdateNamedCheckRun(
         return null;
       }
     };
+    // Upgrade-migration safety net, not dead code (see GITTENSORY_LEGACY_GATE_CHECK_NAME's doc comment):
+    // completes any pre-rename "Gittensory Gate" check-run still pending on this SHA once the current
+    // check finishes, so a self-hoster upgrading mid-flight never gets stuck with a permanently-pending status.
     const finalizeLegacyPendingCheckRuns = async (): Promise<void> => {
       const legacyNames = check.supersedeLegacyNames ?? [];
       if (legacyNames.length === 0 || check.checkRunId) return;

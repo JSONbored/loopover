@@ -23,6 +23,7 @@ maintainerNotes: [private maintainer note]
 publicNotes: [keep reviews focused]
 gate:
   enabled: false
+  checkMode: disabled
 settings:
   commentMode: all_prs
 review:
@@ -223,7 +224,7 @@ unknownSecretKey: super-secret-value
   });
 
   it("keeps known JSON manifests quiet and non-object JSON invalid", () => {
-    expect(lintManifestText(JSON.stringify({ gate: { enabled: true } }))).toMatchObject({
+    expect(lintManifestText(JSON.stringify({ gate: { enabled: true, checkMode: "required" } }))).toMatchObject({
       ok: true,
       warnings: [],
       recognizedFields: ["gate"],

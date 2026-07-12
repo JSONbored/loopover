@@ -107,9 +107,13 @@ publicNotes:
 #   block    — the finding can become a hard `Gittensory Gate` blocker
 #              (always confirmed-contributor-gated).
 gate:
-  # Gate master switch. Turns the whole deterministic gate on; the per-dimension
-  # modes below only refine an already-enabled gate.
-  # Bool. Default: false (gate off).
+  # Legacy check-run publish switch (#5355) — despite the name, this does NOT turn the deterministic
+  # gate itself on or off. Gate evaluation, comments, labels, audit records, spend, and autonomous
+  # merge/close all run identically whether this is true, false, or unset; the per-dimension modes
+  # below are what actually configure gate evaluation. `enabled` is only a boolean shorthand for
+  # `checkMode` below: true maps to `required`, false maps to `disabled`, and it cannot express
+  # `checkMode`'s third state (`visible`). Prefer setting `checkMode` explicitly instead of this field.
+  # Bool. Default: unset (falls through to `checkMode`, then to the dashboard `reviewCheckMode` setting).
   enabled: true
 
   # Review-CHECK publish mode (#2852) — controls ONLY whether/how the "Gittensory Orb Review Agent"

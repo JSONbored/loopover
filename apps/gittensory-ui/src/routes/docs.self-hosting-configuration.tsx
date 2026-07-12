@@ -411,7 +411,7 @@ GITHUB_METADATA_CACHE_TTL_SECONDS=600`}
           {
             title: "Gate activation (DB or private config)",
             description:
-              "Whether the Gittensory check-run and deterministic gate rules run for a repo. Stored in the instance database (control panel, PUT /v1/repos/:owner/:repo/settings, or POST …/activation) and/or in gate.checkMode / gate.enabled in .gittensory.yml. The one-click activation endpoint applies advisory-first defaults: gate on, linked-issue/duplicate/quality rules in advisory mode, AI review still off.",
+              "The one-click POST …/activation endpoint bundles two independent axes into one advisory-first default: the review-check publish mode (reviewCheckMode: required, checkRunMode: enabled) and the actual per-dimension gate rules (linkedIssueGateMode, duplicatePrGateMode, qualityGateMode: all advisory; AI review still off). .gittensory.yml's gate.checkMode / gate.enabled only ever set the first axis (the check-run publish mode) — the dimension rules themselves are configured separately via gate.linkedIssue, gate.duplicates, gate.readiness.mode, etc. (see Tuning your reviews). Gate rule evaluation itself is never gated by checkMode/enabled/checkRunMode; those only control whether/how the check-run publishes on GitHub.",
           },
           {
             title: "Gittensor registration (is_registered)",
@@ -468,7 +468,7 @@ GITTENSORY_REVIEW_REPUTATION=false`}
       <CodeBlock
         filename="owner__repo/.gittensory.yml"
         code={`gate:
-  enabled: true
+  checkMode: visible
   aiReview:
     mode: advisory
     allAuthors: true

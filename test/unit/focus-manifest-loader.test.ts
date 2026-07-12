@@ -528,4 +528,18 @@ describe("focus-manifest loader — container-private config (self-host)", () =>
       "Container-private shared base manifest (`review.shared_config`) is malformed or oversized; ignoring it and continuing (#2046).",
     );
   });
+
+  it("surfaces the gate.enabled/checkMode ambiguity warning from a private-config `gate:` block (#5355)", async () => {
+    // The real 2026-07 incident: an operator's private VPS config set gate.enabled without gate.checkMode.
+    // loadPublicRepoFocusManifest (the PR-comment path) never consults the local reader at all -- so this
+    // warning can only ever reach a human through loadRepoFocusManifest, i.e. the maintainer-gated
+    // /v1/repos/:owner/:repo/focus-manifest API route. Lock in that the private config's own `gate.enabled`
+    // reaches the loader's returned manifest.warnings, not just the public repo_file path.
+    const env = createTestEnv();
+    setLocalManifestReader(async () => "gate:\n  enabled: true\n");
+    const manifest = await loadRepoFocusManifest(env, "owner/private");
+    expect(manifest.gate.enabled).toBe(true);
+    expect(manifest.gate.checkMode).toBeNull();
+    expect(manifest.warnings.some((w) => /gate\.enabled.*only controls whether the Gittensory Orb Review Agent check-run publishes/.test(w))).toBe(true);
+  });
 });

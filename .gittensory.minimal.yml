@@ -19,7 +19,7 @@
 #   - "src/**"
 
 gate:
-  enabled: false
+  checkMode: disabled
 
 settings:
   autonomy:

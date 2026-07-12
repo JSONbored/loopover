@@ -4500,6 +4500,76 @@ describe("queue processors", () => {
     expect(fanned.filter((job) => job.type === "agent-regate-pr" && job.prNumber === 56)).toHaveLength(2); // woken again for the new head
   });
 
+  it("REGRESSION (#5385-sentry, GITTENSORY-1D): a sibling-wake lookup miss fails OPEN to the bare (headSha-less) key and the shorter 60s window, instead of skipping the wake", async () => {
+    // wakeOverCapSiblingPullRequests re-resolves the sibling's OWN current head SHA via a fresh getPullRequest
+    // lookup (not the already-fetched author-scoped record) so the coalescing key reflects the truly-latest
+    // commit. Force JUST that lookup to miss (as it would for a PR not yet/no-longer tracked locally) while
+    // every other getPullRequest call in this same pass resolves normally -- proving the documented fail-open
+    // fallback (bare key, CI_COALESCE_WINDOW_SECONDS) actually fires instead of silently dropping the wake.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 54, title: "Farmer PR zero", state: "open", user: { login: "farmer99" }, head: { sha: "f54" }, labels: [], body: "w" });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 56, title: "Farmer PR two (already over cap)", state: "open", user: { login: "farmer99" }, head: { sha: "f56" }, labels: [], body: "y" });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      checkRunMode: "off",
+      reviewCheckMode: "required",
+      aiReviewMode: "advisory",
+      autonomy: { close: "auto", label: "auto" },
+      contributorOpenPrCap: 2,
+    });
+    const realGetPullRequest = repositoriesModule.getPullRequest;
+    vi.spyOn(repositoriesModule, "getPullRequest").mockImplementation(async (spyEnv, fullName, number) => {
+      if (number === 56) return null; // simulate PR56 not being found locally at wake time
+      return realGetPullRequest(spyEnv, fullName, number);
+    });
+    const setSpy = vi.spyOn(env.SELFHOST_TRANSIENT_CACHE!, "set");
+    const fanned: import("../../src/types").JobMessage[] = [];
+    const realSend = env.JOBS.send.bind(env.JOBS);
+    env.JOBS.send = (async (message: import("../../src/types").JobMessage, options?: QueueSendOptions) => {
+      if (message.type === "agent-regate-pr") fanned.push(message);
+      return realSend(message, options);
+    }) as typeof env.JOBS.send;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/55/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/55/reviews")) return Response.json([]);
+      if (url.includes("/pulls/55/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/54")) return Response.json({ number: 54, state: "open", user: { login: "farmer99" }, head: { sha: "f54" }, mergeable_state: "clean" });
+      if (url.endsWith("/pulls/56")) return Response.json({ number: 56, state: "open", user: { login: "farmer99" }, head: { sha: "f56" }, mergeable_state: "clean" });
+      if (url.endsWith("/pulls/55")) return Response.json({ number: 55, state: "open", user: { login: "farmer99" }, head: { sha: "f55" }, mergeable_state: "clean" });
+      if (url.includes("/commits/f55/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/f55/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/55/labels")) return Response.json([]);
+      if (url.includes("/issues/55/comments")) return Response.json([]);
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "sibling-lookup-miss",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 55, title: "Farmer PR one", state: "open", user: { login: "farmer99" }, head: { sha: "f55" }, labels: [], body: "x", mergeable_state: "clean", reviewDecision: "APPROVED" },
+      },
+    });
+
+    expect(fanned.some((job) => job.type === "agent-regate-pr" && job.prNumber === 56)).toBe(true); // still woken despite the lookup miss
+    const call = setSpy.mock.calls.find(([key]) => (key as string).startsWith("contributor-cap-wake:jsonbored/gittensory#56"));
+    expect(call?.[0]).toBe("contributor-cap-wake:jsonbored/gittensory#56"); // bare key -- no headSha suffix
+    expect(call?.[2]).toBe(60); // CI_COALESCE_WINDOW_SECONDS, not the ~1800s headSha-keyed cooldown
+  });
+
   it("contributor open-ISSUE cap (#2270): a contributor's 3rd open issue (over a cap of 2) is labeled + closed deterministically", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, {

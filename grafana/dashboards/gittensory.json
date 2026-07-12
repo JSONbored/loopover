@@ -1452,7 +1452,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(pg_stat_activity_count{datname=\"gittensory\"}) or vector(0)",
+          "expr": "sum(pg_stat_activity_count{datname=\"loopover\"}) or vector(0)",
           "legendFormat": "connections",
           "refId": "A"
         }
@@ -1500,7 +1500,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "pg_database_size_bytes{datname=\"gittensory\"} or vector(0)",
+          "expr": "pg_database_size_bytes{datname=\"loopover\"} or vector(0)",
           "legendFormat": "size",
           "refId": "A"
         }
@@ -1599,7 +1599,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (state) (pg_stat_activity_count{datname=\"gittensory\"}) or vector(0)",
+          "expr": "sum by (state) (pg_stat_activity_count{datname=\"loopover\"}) or vector(0)",
           "legendFormat": "{{state}}",
           "refId": "A"
         }
@@ -1646,7 +1646,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(pg_stat_activity_count{datname=\"gittensory\", wait_event_type=\"Lock\"}) or vector(0)",
+          "expr": "sum(pg_stat_activity_count{datname=\"loopover\", wait_event_type=\"Lock\"}) or vector(0)",
           "legendFormat": "lock waits",
           "refId": "A"
         },
@@ -1655,7 +1655,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max(pg_stat_activity_max_tx_duration{datname=\"gittensory\"}) or vector(0)",
+          "expr": "max(pg_stat_activity_max_tx_duration{datname=\"loopover\"}) or vector(0)",
           "legendFormat": "max transaction seconds",
           "refId": "B"
         },
@@ -1664,7 +1664,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "rate(pg_stat_database_deadlocks{datname=\"gittensory\"}[5m]) or vector(0)",
+          "expr": "rate(pg_stat_database_deadlocks{datname=\"loopover\"}[5m]) or vector(0)",
           "legendFormat": "deadlocks/s",
           "refId": "C"
         }
@@ -1711,7 +1711,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "pg_database_size_bytes{datname=\"gittensory\"} or vector(0)",
+          "expr": "pg_database_size_bytes{datname=\"loopover\"} or vector(0)",
           "legendFormat": "database bytes",
           "refId": "A"
         },
@@ -1720,7 +1720,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "topk(10, pg_stat_user_tables_n_live_tup{datname=\"gittensory\"}) or vector(0)",
+          "expr": "topk(10, pg_stat_user_tables_n_live_tup{datname=\"loopover\"}) or vector(0)",
           "legendFormat": "{{relname}} live rows",
           "refId": "B"
         }
@@ -1767,7 +1767,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "topk(10, pg_stat_user_tables_n_dead_tup{datname=\"gittensory\"}) or vector(0)",
+          "expr": "topk(10, pg_stat_user_tables_n_dead_tup{datname=\"loopover\"}) or vector(0)",
           "legendFormat": "{{relname}} dead rows",
           "refId": "A"
         },
@@ -1776,7 +1776,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (relname) (increase(pg_stat_user_tables_autovacuum_count{datname=\"gittensory\"}[1h])) or vector(0)",
+          "expr": "sum by (relname) (increase(pg_stat_user_tables_autovacuum_count{datname=\"loopover\"}[1h])) or vector(0)",
           "legendFormat": "{{relname}} autovacuum/hour",
           "refId": "B"
         }

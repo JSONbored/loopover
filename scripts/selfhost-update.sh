@@ -14,9 +14,9 @@
 #   - gittensory-config/ (private per-repo .gittensory.yml policy)
 #   - .deploy-backups/ (operator deploy-backup snapshots)
 #   - any *.local or docker-compose.local-*.yml compose override, or alertmanager config files
-#   - named data volumes (gittensory-data, gittensory-pg, qdrant-data, gittensory-backups,
+#   - named data volumes (loopover-data, loopover-pg, qdrant-data, loopover-backups,
 #     grafana-data) -- untouched because this script only fetches source and rebuilds the
-#     gittensory app image; it never runs `docker volume` commands or touches compose profiles.
+#     loopover app image; it never runs `docker volume` commands or touches compose profiles.
 #
 # Optional knobs:
 #   SELFHOST_UPDATE_REMOTE=upstream SELFHOST_UPDATE_BRANCH=main ./scripts/selfhost-update.sh
@@ -39,7 +39,7 @@ require_cmd() {
 require_cmd git
 
 if ! git -C "$SCRIPT_DIR/.." rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "error: run this script from the gittensory git checkout" >&2
+  echo "error: run this script from the loopover git checkout" >&2
   exit 1
 fi
 

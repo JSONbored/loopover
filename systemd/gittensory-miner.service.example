@@ -5,7 +5,7 @@
 # WHY A PERSISTENT SERVICE, NOT A .timer: `gittensory-miner loop` is a long-running daemon that schedules its
 # own cycles internally (kill-switch check -> run-loop boundary gate -> attempt -> loop-closure -> reentry), so
 # it is a Type=simple service supervised by systemd, NOT a oneshot unit fired by a .timer. (Contrast
-# gittensory-docker-prune.service.example, which IS a genuine periodic batch and therefore does pair with a
+# loopover-docker-prune.service.example, which IS a genuine periodic batch and therefore does pair with a
 # .timer.) See DEPLOYMENT.md's "Bare-host (systemd, no Docker)" section.
 #
 # Install (adjust the placeholders below to your host):

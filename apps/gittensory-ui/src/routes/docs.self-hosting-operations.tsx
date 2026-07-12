@@ -55,7 +55,7 @@ function SelfHostingOperations() {
       <CodeBlock
         lang="bash"
         code={`docker compose ps
-docker compose logs -f gittensory
+docker compose logs -f loopover
 curl http://localhost:8787/ready
 curl http://localhost:8787/metrics`}
       />
@@ -406,7 +406,7 @@ DISCORD_REPO_WEBHOOKS={"owner/repoA":"https://discord.com/api/webhooks/...","own
         <strong>expected steady state, not a leak</strong> — this instance runs{" "}
         <code>scripts/deploy-selfhost-prebuilt.sh</code>, which rebuilds the image from the current
         git checkout on every deploy and intentionally keeps prior layers around in the build cache
-        for faster rebuilds. The <code>gittensory-docker-safe-prune</code> systemd timer (below)
+        for faster rebuilds. The <code>loopover-docker-safe-prune</code> systemd timer (below)
         already runs daily against this exact instance and reclaims it on a schedule, so this is not
         a number to chase down manually.
       </p>
@@ -486,11 +486,11 @@ DISCORD_REPO_WEBHOOKS={"owner/repoA":"https://discord.com/api/webhooks/...","own
       </p>
       <CodeBlock
         lang="bash"
-        code={`sudo cp systemd/gittensory-docker-prune.service.example /etc/systemd/system/gittensory-docker-prune.service
-sudo cp systemd/gittensory-docker-prune.timer.example /etc/systemd/system/gittensory-docker-prune.timer
-sudo $EDITOR /etc/systemd/system/gittensory-docker-prune.service   # set WorkingDirectory / ExecStart to your path
+        code={`sudo cp systemd/loopover-docker-prune.service.example /etc/systemd/system/loopover-docker-prune.service
+sudo cp systemd/loopover-docker-prune.timer.example /etc/systemd/system/loopover-docker-prune.timer
+sudo $EDITOR /etc/systemd/system/loopover-docker-prune.service   # set WorkingDirectory / ExecStart to your path
 sudo systemctl daemon-reload
-sudo systemctl enable --now gittensory-docker-prune.timer`}
+sudo systemctl enable --now loopover-docker-prune.timer`}
       />
       <p>
         Run it manually at any time with <code>docker system df</code> before and after to see what
@@ -549,7 +549,7 @@ services:
         condition: service_completed_successfully
     environment:
       <<: *runner-tmp-env
-      RUNNER_NAME: gittensory-runner-2
+      RUNNER_NAME: loopover-runner-2
       RUNNER_SCOPE: \${RUNNER_SCOPE:-repo}
       REPO_URL: \${RUNNER_REPO_URL:-}
       RUNNER_TOKEN: \${RUNNER_TOKEN:-}
@@ -581,7 +581,7 @@ SENTRY_RELEASE=gittensory-selfhost@2026.07.05
         Official release images bake <code>GITTENSORY_VERSION</code> as the default release id;
         override with <code>SENTRY_RELEASE</code> when you tag custom builds. Mount secrets with{" "}
         <code>SENTRY_DSN_FILE</code> instead of inline env when you prefer a file-backed DSN. After
-        changing Sentry env, restart the <code>gittensory</code> service — there is no hot reload.
+        changing Sentry env, restart the <code>loopover</code> service — there is no hot reload.
       </p>
       <Callout variant="note">
         Community self-hosters should send events only to their own DSN. The shipped stack never
@@ -885,8 +885,8 @@ SENTRY_ORG_SLUG=<your-sentry-org-slug>
 
       <h2>Updating and rolling back</h2>
       <p>
-        Day-two operator flow: pull or build a new app image, restart only the{" "}
-        <code>gittensory</code> service, verify <code>/ready</code>, and confirm the release id. Use{" "}
+        Day-two operator flow: pull or build a new app image, restart only the <code>loopover</code>{" "}
+        service, verify <code>/ready</code>, and confirm the release id. Use{" "}
         <Link to="/docs/self-hosting-releases">Releases and images</Link> to pick a tag; use the
         checklists below so updates never overwrite operator-owned secrets, config, or data.
       </p>
@@ -903,9 +903,9 @@ SENTRY_ORG_SLUG=<your-sentry-org-slug>
             <code>.gittensory.yml</code> policy.
           </li>
           <li>
-            Named data volumes — especially <code>gittensory-data</code> (SQLite DB, Codex/Claude
-            auth under <code>/data</code>), <code>gittensory-pg</code>, <code>qdrant-data</code>,{" "}
-            <code>gittensory-backups</code>, and Grafana&apos;s <code>grafana-data</code>.
+            Named data volumes — especially <code>loopover-data</code> (SQLite DB, Codex/Claude auth
+            under <code>/data</code>), <code>loopover-pg</code>, <code>qdrant-data</code>,{" "}
+            <code>loopover-backups</code>, and Grafana&apos;s <code>grafana-data</code>.
           </li>
           <li>
             Optional <code>docker-compose.override.yml</code> — still loaded via{" "}
@@ -918,14 +918,14 @@ SENTRY_ORG_SLUG=<your-sentry-org-slug>
       <FeatureRow
         items={[
           {
-            title: "Restart gittensory only (normal app update)",
+            title: "Restart loopover only (normal app update)",
             description:
-              "Both deploy-selfhost-image.sh and deploy-selfhost-prebuilt.sh run docker compose up -d --no-deps gittensory. Redis, Postgres, Qdrant, Grafana, backup sidecars, and every volume stay running with their existing data.",
+              "Both deploy-selfhost-image.sh and deploy-selfhost-prebuilt.sh run docker compose up -d --no-deps loopover. Redis, Postgres, Qdrant, Grafana, backup sidecars, and every volume stay running with their existing data.",
           },
           {
             title: "Recreate a profile service (separate step)",
             description:
-              "Only when you deliberately change that service's image or major version — e.g. docker compose --profile postgres pull postgres && docker compose --profile postgres up -d postgres. Never required just to ship a new gittensory app build.",
+              "Only when you deliberately change that service's image or major version — e.g. docker compose --profile postgres pull postgres && docker compose --profile postgres up -d postgres. Never required just to ship a new loopover app build.",
           },
         ]}
       />
@@ -953,7 +953,7 @@ SENTRY_ORG_SLUG=<your-sentry-org-slug>
         </li>
         <li>
           Image path only: note the current tag or digest from <code>docker inspect</code> on the
-          running <code>gittensory</code> container so rollback has a known-good target.
+          running <code>loopover</code> container so rollback has a known-good target.
         </li>
         <li>
           Confirm routine health is green before you start —{" "}
@@ -964,7 +964,7 @@ SENTRY_ORG_SLUG=<your-sentry-org-slug>
       <h3>Path 1: pull a published image</h3>
       <p>
         <code>scripts/deploy-selfhost-image.sh</code> pulls a tag or digest, restarts only the{" "}
-        <code>gittensory</code> service, waits for it to report <code>healthy</code> via{" "}
+        <code>loopover</code> service, waits for it to report <code>healthy</code> via{" "}
         <code>docker inspect</code>&apos;s health status (configurable timeout, default 180s), and
         then persists the resolved image reference back to <code>GITTENSORY_IMAGE</code> in{" "}
         <code>.env</code> so the next plain invocation reuses it.
@@ -1036,7 +1036,7 @@ git merge --ff-only origin/main
         <code>scripts/deploy-selfhost-prebuilt.sh</code> is the actual rebuild step (this is how{" "}
         <code>GITTENSORY_VERSION</code> ends up as a short git SHA instead of an image tag). It
         builds the bundle inside a Dockerized Node container — the host itself never needs Node or
-        npm installed — then restarts only the <code>gittensory</code> service the same way as the
+        npm installed — then restarts only the <code>loopover</code> service the same way as the
         image path. <code>SENTRY_RELEASE</code> defaults to{" "}
         <code>gittensory-selfhost@&lt;short git SHA of the current HEAD&gt;</code> unless you
         override it, so each deploy from a new commit gets a distinct release id automatically. When{" "}
@@ -1062,7 +1062,7 @@ git merge --ff-only origin/main
           <code>curl http://localhost:8787/ready</code> returns HTTP 200.
         </li>
         <li>
-          <code>docker compose ps gittensory</code> shows <code>healthy</code>.
+          <code>docker compose ps loopover</code> shows <code>healthy</code>.
         </li>
         <li>
           Tail logs for <code>selfhost_listening</code> and, on first boot after a schema bump,{" "}
@@ -1078,9 +1078,9 @@ git merge --ff-only origin/main
         code={`./scripts/selfhost-post-update-check.sh
 # equivalent manual checks:
 curl -sf http://localhost:8787/ready
-docker compose ps gittensory
+docker compose ps loopover
 grep -E '^(GITTENSORY_IMAGE|GITTENSORY_VERSION|SENTRY_RELEASE)=' .env
-docker inspect --format '{{.Config.Image}}' "$(docker compose ps -q gittensory)"`}
+docker inspect --format '{{.Config.Image}}' "$(docker compose ps -q loopover)"`}
       />
       <p>
         If any check fails, see <Link to="/docs/self-hosting-troubleshooting">Troubleshooting</Link>
@@ -1147,8 +1147,8 @@ docker inspect --format '{{.Config.Image}}' "$(docker compose ps -q gittensory)"
       <p>
         Stopping the container does not delete anything — <code>docker compose stop</code> or{" "}
         <code>docker compose down</code> (without <code>-v</code>) leaves every named volume (
-        <code>gittensory-data</code>, <code>gittensory-pg</code>, <code>qdrant-data</code>,{" "}
-        <code>gittensory-backups</code>, <code>grafana-data</code>, and the rest declared in{" "}
+        <code>loopover-data</code>, <code>loopover-pg</code>, <code>qdrant-data</code>,{" "}
+        <code>loopover-backups</code>, <code>grafana-data</code>, and the rest declared in{" "}
         <code>docker-compose.yml</code>) on disk, along with the <code>./gittensory-config</code>{" "}
         host directory (a bind mount, not a named volume, so it is never affected by <code>-v</code>{" "}
         either way). Pick one:
@@ -1168,7 +1168,7 @@ docker inspect --format '{{.Config.Image}}' "$(docker compose ps -q gittensory)"
           {
             title: "Delete everything",
             description:
-              "docker compose down -v removes every named volume permanently — the review database, vector index, Grafana dashboards state, and any local backup archives in gittensory-backups go with it. This does not touch ./gittensory-config (delete that host directory yourself if it should go too).",
+              "docker compose down -v removes every named volume permanently — the review database, vector index, Grafana dashboards state, and any local backup archives in loopover-backups go with it. This does not touch ./gittensory-config (delete that host directory yourself if it should go too).",
           },
         ]}
       />
@@ -1215,13 +1215,13 @@ docker inspect --format '{{.Config.Image}}' "$(docker compose ps -q gittensory)"
         request (<code>isAuthorizedGitHubSessionLogin</code> in <code>src/auth/security.ts</code>) —
         it is never cached at startup or baked into an issued session. To remove someone&apos;s
         operator access, delete their login from the comma/whitespace-separated list in{" "}
-        <code>.env</code> and restart the <code>gittensory</code> service so the process picks up
-        the new value:
+        <code>.env</code> and restart the <code>loopover</code> service so the process picks up the
+        new value:
       </p>
       <CodeBlock
         lang="bash"
         code={`$EDITOR .env   # remove the login from ADMIN_GITHUB_LOGINS
-docker compose up -d --no-deps gittensory`}
+docker compose up -d --no-deps loopover`}
       />
       <p>
         This takes effect on their very next control-panel request after the restart — no signed-in

@@ -1,7 +1,7 @@
-# Pairs with gittensory-docker-prune.service.example. See that file for install instructions.
+# Pairs with loopover-docker-prune.service.example. See that file for install instructions.
 
 [Unit]
-Description=Run gittensory-docker-prune.service daily
+Description=Run loopover-docker-prune.service daily
 
 [Timer]
 OnCalendar=daily

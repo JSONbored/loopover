@@ -2,14 +2,14 @@
 # Post-update verification for a self-host instance (#1823).
 #
 # Run after deploy-selfhost-image.sh, deploy-selfhost-prebuilt.sh, or any manual
-# `docker compose up -d --no-deps gittensory` that ships a new app image.
+# `docker compose up -d --no-deps loopover` that ships a new app image.
 #
 # Checks /ready, compose health, .env release metadata, and the running container image.
 # Does not modify .env, volumes, gittensory-config/, or any profile service.
 set -euo pipefail
 
 ENV_FILE="${SELFHOST_ENV_FILE:-.env}"
-SERVICE="${SELFHOST_SERVICE:-gittensory}"
+SERVICE="${SELFHOST_SERVICE:-loopover}"
 PORT="${PORT:-8787}"
 READY_URL="${SELFHOST_READY_URL:-http://127.0.0.1:${PORT}/ready}"
 
@@ -32,7 +32,7 @@ fi
 
 # Retry, don't single-probe: `docker compose up -d` returns as soon as the container STARTS, well before
 # the app inside has bound its port -- a single immediate curl reliably false-fails on a normal boot. Budget
-# matches the gittensory service's own Docker healthcheck start_period (60s, docker-compose.yml) plus margin,
+# matches the loopover service's own Docker healthcheck start_period (60s, docker-compose.yml) plus margin,
 # polling often enough that a normal ~15-20s boot returns almost immediately once actually ready.
 READY_RETRIES="${SELFHOST_READY_RETRIES:-45}"
 READY_RETRY_DELAY_SECONDS="${SELFHOST_READY_RETRY_DELAY_SECONDS:-2}"

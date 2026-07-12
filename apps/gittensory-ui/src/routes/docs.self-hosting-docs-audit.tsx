@@ -130,7 +130,7 @@ function SelfHostingDocsAudit() {
         </li>
         <li>
           <strong>Operator-owned paths:</strong> <code>gittensory-config/</code>,{" "}
-          <code>gittensory-data</code>, and secrets via <code>.env</code> or <code>*_FILE</code>{" "}
+          <code>loopover-data</code>, and secrets via <code>.env</code> or <code>*_FILE</code>{" "}
           mounts — never baked into images.
         </li>
       </ul>

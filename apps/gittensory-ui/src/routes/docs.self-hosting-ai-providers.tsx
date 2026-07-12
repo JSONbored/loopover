@@ -185,7 +185,7 @@ CLAUDE_AI_EFFORT=medium`}
         creation time, so a plain restart keeps serving the old value — recreate the service
         instead:
       </p>
-      <CodeBlock code={`docker compose up -d --no-deps gittensory`} />
+      <CodeBlock code={`docker compose up -d --no-deps loopover`} />
       <p>
         Prefer not pasting the raw token into <code>.env</code>? Write it into{" "}
         <code>secrets/claude_code_oauth_token.txt</code> instead (see{" "}

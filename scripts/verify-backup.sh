@@ -6,7 +6,7 @@
 # restores the Postgres dump into a throwaway database and runs a sanity query — it refuses to touch the live
 # database. Run on demand (newest backup, or a specific file):
 #   docker compose --profile backup run --rm backup sh /scripts/verify-backup.sh
-#   docker compose --profile backup run --rm backup sh /scripts/verify-backup.sh /backups/postgres/gittensory-<ts>.dump
+#   docker compose --profile backup run --rm backup sh /scripts/verify-backup.sh /backups/postgres/loopover-<ts>.dump
 set -eu
 
 OUT=${BACKUP_OUT_DIR:-/backups}
@@ -149,7 +149,7 @@ pg_connect_arg() {
     # Host/port/dbname/user are wildcarded: each passfile is single-purpose, deleted at the end of this
     # run via the `cleanup` trap, so there's no value in re-deriving the exact host/port/dbname libpq will
     # resolve -- which the query string can override anyway -- just to match them precisely.
-    pg_passfile=$(mktemp "${TMPDIR:-/tmp}/gittensory-pgpass.XXXXXX")
+    pg_passfile=$(mktemp "${TMPDIR:-/tmp}/loopover-pgpass.XXXXXX")
     chmod 600 "$pg_passfile"
     printf '*:*:*:*:%s\n' "$(pgpass_escape "$pg_password_value")" > "$pg_passfile"
     PG_PASSFILES="$PG_PASSFILES $pg_passfile"

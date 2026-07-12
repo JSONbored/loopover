@@ -2,7 +2,7 @@
 # Self-host backup: active DB backup (Postgres dump or online SQLite backup) + a Qdrant snapshot, with retention.
 # Run by the `backup` compose service (--profile backup) on a loop, or on demand:
 #   docker compose --profile backup run --rm backup sh /scripts/backup.sh
-# Backups land in the `gittensory-backups` volume at /backups/{postgres,sqlite,qdrant}.
+# Backups land in the `loopover-backups` volume at /backups/{postgres,sqlite,qdrant}.
 set -eu
 
 # shellcheck source=selfhost-pg-url.sh
@@ -32,7 +32,7 @@ normalize_backup_retain() {
 
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 RETAIN=$(normalize_backup_retain "${BACKUP_RETAIN:-7}")
-DB=${DATABASE_PATH:-/data/gittensory.sqlite}
+DB=${DATABASE_PATH:-/data/loopover.sqlite}
 PG_DB="${GITTENSORY_BACKUP_SOURCE_DATABASE_URL:-${DATABASE_URL:-}}"
 OUT=${BACKUP_OUT_DIR:-/backups}
 PGPASSFILE_CREATED=""
@@ -233,7 +233,7 @@ prepare_pg_env() {
         exit 1
         ;;
     esac
-    PGPASSFILE_CREATED=$(mktemp "${TMPDIR:-/tmp}/gittensory-pgpass.XXXXXX")
+    PGPASSFILE_CREATED=$(mktemp "${TMPDIR:-/tmp}/loopover-pgpass.XXXXXX")
     chmod 600 "$PGPASSFILE_CREATED"
     printf '*:*:*:*:%s\n' "$(pgpass_escape "$PGPASSWORD_VALUE")" > "$PGPASSFILE_CREATED"
     export PGPASSFILE="$PGPASSFILE_CREATED"
@@ -248,7 +248,7 @@ case "$PG_DB" in
       exit 1
     fi
     prepare_pg_env
-    POSTGRES_OUT="$OUT/postgres/gittensory-$TS.dump"
+    POSTGRES_OUT="$OUT/postgres/loopover-$TS.dump"
     pg_dump -Fc -f "$POSTGRES_OUT" "$PG_SANITIZED_URL"
     POSTGRES_MANIFEST_FILE="postgres/$(basename "$POSTGRES_OUT")"
     POSTGRES_MANIFEST_BYTES=$(file_bytes "$POSTGRES_OUT")
@@ -256,7 +256,7 @@ case "$PG_DB" in
     ;;
   *)
     if [ -f "$DB" ]; then
-      SQLITE_OUT="$OUT/sqlite/gittensory-$TS.sqlite"
+      SQLITE_OUT="$OUT/sqlite/loopover-$TS.sqlite"
       # `.backup` can exit 0 while writing a partial/corrupt file, so verify the result
       # (non-empty AND `PRAGMA integrity_check` == ok) before we gzip it or let retention
       # prune older, good backups. A failed backup must be loud, not silently "successful".

@@ -3,7 +3,7 @@
 # Grafana must not mount the miner's live GITTENSORY_MINER_CONFIG_DIR ledgers. The attempt log and prediction
 # ledger contain free-form reasons, payload JSON, repo/target identifiers, readiness scores, and blocker/warning
 # codes that are private AMS intelligence. Instead, expose only redacted reporting-export snapshots, mirroring the
-# maintainer GittensoryDB pattern in sqlite.yml.
+# maintainer LoopoverDB pattern in sqlite.yml.
 #
 # PATH — the absolute path varies per install, so `path:` below is a documented placeholder. Publish sanitized AMS
 # reporting exports into Grafana's existing reporting mount (for example /reporting/ams-attempt-log.sqlite and

@@ -1,6 +1,6 @@
 #!/bin/sh
-# Automated Docker resource hygiene for a 24/7 self-hosted gittensory stack (#audit-rate-headroom). Runs on
-# the HOST (via the systemd timer in systemd/gittensory-docker-prune.{service,timer}.example), not as a
+# Automated Docker resource hygiene for a 24/7 self-hosted loopover stack (#audit-rate-headroom). Runs on
+# the HOST (via the systemd timer in systemd/loopover-docker-prune.{service,timer}.example), not as a
 # compose service: reclaiming unused images and build cache needs real Docker daemon access, which this
 # repo deliberately does not grant to any container (see docker-compose.yml's docker-proxy and runner
 # service comments on why raw docker.sock exposure into a container is avoided).
@@ -22,7 +22,7 @@
 # itself been stopped for at least RETAIN_HOURS is ever removed.
 #
 # SAFE BY DESIGN: only prunes stopped containers, unused images, and build cache -- NEVER volumes
-# (gittensory-data, gittensory-backups, postgres-data, qdrant-storage, runner-work, etc.), so it cannot
+# (loopover-data, loopover-backups, postgres-data, qdrant-storage, runner-work, etc.), so it cannot
 # delete application data, backups, vector-store state, or a runner's registration/job data.
 #
 # Usage:

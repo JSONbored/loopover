@@ -2,10 +2,10 @@
 # database produced by reporting-exporter; it never mounts the live application database.
 apiVersion: 1
 datasources:
-  - name: GittensoryDB
+  - name: LoopoverDB
     type: frser-sqlite-datasource
     uid: gittensory-db
     access: proxy
     editable: false
     jsonData:
-      path: /reporting/gittensory-reporting.sqlite
+      path: /reporting/loopover-reporting.sqlite

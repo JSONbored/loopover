@@ -14,7 +14,7 @@ set -euo pipefail
 
 ENV_FILE="${SELFHOST_ENV_FILE:-.env}"
 NODE_IMAGE="${SELFHOST_NODE_IMAGE:-public.ecr.aws/docker/library/node:24-slim}"
-SERVICE="${SELFHOST_SERVICE:-gittensory}"
+SERVICE="${SELFHOST_SERVICE:-loopover}"
 SKIP_SENTRY_UPLOAD="${SELFHOST_SKIP_SENTRY_UPLOAD:-0}"
 SENTRY_CLI_PACKAGE="${SENTRY_CLI_PACKAGE:-@sentry/cli@3.6.0}"
 
@@ -117,7 +117,7 @@ require_cmd docker
 docker compose version >/dev/null
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "error: run this script from the gittensory git checkout" >&2
+  echo "error: run this script from the loopover git checkout" >&2
   exit 1
 fi
 

@@ -30,7 +30,7 @@ function createHarness() {
   const envPath = join(dir, ".env");
 
   mkdirSync(binDir);
-  writeFileSync(join(dir, "docker-compose.yml"), "services:\n  gittensory:\n    image: old\n");
+  writeFileSync(join(dir, "docker-compose.yml"), "services:\n  loopover:\n    image: old\n");
   writeFileSync(
     join(binDir, "docker"),
     `#!/usr/bin/env bash
@@ -156,7 +156,7 @@ describe("self-host image deploy script", () => {
       // REGRESSION: without this reset, an operator's own docker-compose.override.yml build: block for this
       // service silently wins over the pulled image at `up --no-build` time (found deploying live).
       expect(harness.readImages()).toContain("build: !reset null");
-      expect(harness.readCalls()).toContain("up -d --no-build --no-deps gittensory");
+      expect(harness.readCalls()).toContain("up -d --no-build --no-deps loopover");
       expect(harness.readCalls()).not.toContain(" build ");
     } finally {
       harness.cleanup();

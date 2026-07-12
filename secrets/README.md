@@ -46,7 +46,7 @@ To use a secret file instead of an inline `.env` value:
    ```sh
    cp /path/to/your-downloaded-key.pem secrets/github_app_private_key.pem
    ```
-3. Restart the `gittensory` service (`docker compose up -d --no-deps gittensory`, or run
+3. Restart the `loopover` service (`docker compose up -d --no-deps loopover`, or run
    `./scripts/selfhost-update.sh`).
 
 Leave each file at the `644` the init script (`scripts/selfhost-init-secrets.sh`) sets by default —
@@ -58,8 +58,8 @@ see the tradeoff explained above for why `600` breaks the app's own ability to r
 |---|---|---|
 | `github_app_private_key.pem` | `GITHUB_APP_PRIVATE_KEY_FILE` | Your GitHub App's private key (PEM). |
 | `github_webhook_secret.txt` | `GITHUB_WEBHOOK_SECRET_FILE` | HMAC key GitHub webhook deliveries are verified against. |
-| `gittensory_api_token.txt` | `GITTENSORY_API_TOKEN_FILE` | Server-to-server API bearer token. |
-| `gittensory_mcp_token.txt` | `GITTENSORY_MCP_TOKEN_FILE` | Shared MCP bearer token. |
+| `loopover_api_token.txt` | `GITTENSORY_API_TOKEN_FILE` | Server-to-server API bearer token. |
+| `loopover_mcp_token.txt` | `GITTENSORY_MCP_TOKEN_FILE` | Shared MCP bearer token. |
 | `internal_job_token.txt` | `INTERNAL_JOB_TOKEN_FILE` | Gates internal-only routes (e.g. `/v1/internal/*`). |
 | `selfhost_setup_token.txt` | `SELFHOST_SETUP_TOKEN_FILE` | Unlocks the first-run `/setup` wizard. |
 | `token_encryption_secret.txt` | `TOKEN_ENCRYPTION_SECRET_FILE` | AES-256-GCM master secret for maintainer BYOK keys at rest. |
@@ -70,7 +70,7 @@ see the tradeoff explained above for why `600` breaks the app's own ability to r
 
 This is not the full list of every secret-shaped env var the stack supports (AI provider API keys,
 Discord/Slack webhooks, Postgres/Grafana credentials for their optional profiles, etc.) — it covers
-the vars used by the always-on `gittensory` service. The same `<NAME>_FILE` convention works for any
+the vars used by the always-on `loopover` service. The same `<NAME>_FILE` convention works for any
 of those too; add a matching `secrets:` entry in `docker-compose.yml` (or a
 `docker-compose.override.yml`) if you want the same treatment for one of them.
 

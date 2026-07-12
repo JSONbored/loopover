@@ -1,5 +1,5 @@
 #!/bin/sh
-# Expose retained backup freshness from the gittensory-backups volume in Prometheus text format.
+# Expose retained backup freshness from the loopover-backups volume in Prometheus text format.
 # Intended for the backup-exporter compose sidecar; it never touches the live database.
 set -eu
 

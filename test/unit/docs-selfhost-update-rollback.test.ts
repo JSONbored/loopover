@@ -23,7 +23,7 @@ describe("self-host update + rollback docs (#1823)", () => {
     expect(operations).toContain("Post-update checklist");
     expect(operations).toContain("Operator-owned");
     expect(operations).toContain("gittensory-config/");
-    expect(operations).toContain("gittensory-data");
+    expect(operations).toContain("loopover-data");
     expect(operations).toContain("Migrations are forward-only");
   });
 

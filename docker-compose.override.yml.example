@@ -1,10 +1,10 @@
-# Optional CPU-priority tuning for boxes running `--profile runners` alongside the main `gittensory`
+# Optional CPU-priority tuning for boxes running `--profile runners` alongside the main `loopover`
 # app on the SAME host. Copy to `docker-compose.override.yml` (gitignored, auto-loaded by `docker
 # compose` alongside docker-compose.yml) and adjust the numbers for your host if you use this pattern.
 #
 # WHY THIS EXISTS: with no limits set (the default -- see docker-compose.yml), every container competes
 # for the host's CPUs on equal footing. On a box that ALSO runs `--profile runners`, a burst of CI jobs
-# can starve the `gittensory` app itself of CPU, slowing down (or queuing up) the very review work the
+# can starve the `loopover` app itself of CPU, slowing down (or queuing up) the very review work the
 # app exists to do -- discovered running this exact pattern in production on an 8-vCPU box: 3 uncapped
 # runner containers left the app starved under load.
 #
@@ -21,16 +21,16 @@
 # scheduler (driven by the relative `cpu_shares` below) resolves real contention when multiple containers
 # actually want the CPU at once.
 #
-# Sizing guide for a different host: pick a `gittensory` : `runner` cpu_shares ratio reflecting how
+# Sizing guide for a different host: pick a `loopover` : `runner` cpu_shares ratio reflecting how
 # strongly you want review work to win contention (8:1 below is deliberately aggressive), and keep each
 # runner replica's `cpus` ceiling at roughly (host vCPUs) / (number of runner replicas you plan to run),
 # so a single busy runner can't monopolize the box even before shares kick in.
 #
 # This is the HOST-level (Docker CPU scheduling) half of the fix. The APPLICATION-level half is the
-# MAINTENANCE_ADMISSION_* knobs in .env.example: gittensory itself defers its own maintenance sweeps
+# MAINTENANCE_ADMISSION_* knobs in .env.example: loopover itself defers its own maintenance sweeps
 # (contributor evidence, RAG indexing, drift scans...) under queue/host pressure so live webhook/review
 # work always wins there too. Also see ./scripts/selfhost-docker-prune.sh (and its systemd timer under
-# systemd/gittensory-docker-prune.*.example) for the disk-usage side of running CI builds on the same box
+# systemd/loopover-docker-prune.*.example) for the disk-usage side of running CI builds on the same box
 # (build cache/image growth, not just CPU).
 # The RECOMMENDED alternative to all of this: don't co-locate runners with the review stack at all -- use
 # GitHub-hosted CI, or a separate dedicated runner host (see the runner service's comment in
@@ -47,7 +47,7 @@
 # operations docs for a complete, copy-pasteable multi-runner service snippet.
 
 services:
-  gittensory:
+  loopover:
     cpu_shares: 4096
 
   runner:

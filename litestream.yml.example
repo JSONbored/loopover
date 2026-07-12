@@ -1,13 +1,13 @@
 # Litestream continuous-backup config for the self-host SQLite DB (SAMPLE — placeholders only).
-# Streams /data/gittensory.sqlite to your object store so you can restore to any point in time.
+# Streams /data/loopover.sqlite to your object store so you can restore to any point in time.
 # Copy to litestream.yml, edit the bucket/endpoint, and mount it at /etc/litestream.yml (see docker-compose.yml).
 # Docs: https://litestream.io
 dbs:
-  - path: /data/gittensory.sqlite
+  - path: /data/loopover.sqlite
     replicas:
       - type: s3
         bucket: your-backup-bucket
-        path: gittensory
+        path: loopover
         # For S3-compatible stores (Backblaze B2, MinIO, R2) set the endpoint; omit it for AWS S3.
         endpoint: ${LITESTREAM_ENDPOINT}
         region: ${LITESTREAM_REGION}

@@ -10,7 +10,7 @@ function readYaml(path: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-// A burst of CI jobs (--profile runners) can starve the main `gittensory` app of CPU on a shared host
+// A burst of CI jobs (--profile runners) can starve the main `loopover` app of CPU on a shared host
 // with no limits set (the default). docker-compose.override.yml.example documents a proven cpu_shares +
 // cpus pattern for that case -- pure structural checks only (no `docker` CLI invocation: the self-hosted
 // runner container this actually runs on does not have Docker-in-Docker access, so a test that shells out
@@ -22,7 +22,7 @@ describe("docker-compose.override.yml.example", () => {
     const exampleServices = Object.keys(example.services as Record<string, unknown>);
     const baseServices = Object.keys(base.services as Record<string, unknown>);
 
-    expect(exampleServices).toEqual(["gittensory", "runner"]);
+    expect(exampleServices).toEqual(["loopover", "runner"]);
     for (const name of exampleServices) {
       expect(baseServices).toContain(name);
     }
@@ -32,7 +32,7 @@ describe("docker-compose.override.yml.example", () => {
     const example = readYaml("docker-compose.override.yml.example");
     const services = example.services as Record<string, Record<string, unknown>>;
 
-    const appShares = Number(services.gittensory?.cpu_shares);
+    const appShares = Number(services.loopover?.cpu_shares);
     const runnerShares = Number(services.runner?.cpu_shares);
     expect(Number.isFinite(appShares) && Number.isFinite(runnerShares)).toBe(true);
     expect(appShares).toBeGreaterThan(runnerShares);

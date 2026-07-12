@@ -9,10 +9,10 @@ set -eu
 # purely so a test can simulate "the script logic changed" without editing this file.
 SCRIPT_VERSION="${GITTENSORY_REPORTING_SCRIPT_VERSION:-2}"
 
-APP_DB="${GITTENSORY_REPORTING_SOURCE_DB:-/appdb/gittensory.sqlite}"
+APP_DB="${GITTENSORY_REPORTING_SOURCE_DB:-/appdb/loopover.sqlite}"
 PG_DB="${GITTENSORY_REPORTING_SOURCE_DATABASE_URL:-${DATABASE_URL:-}}"
 OUT_DIR="${GITTENSORY_REPORTING_DIR:-/reporting}"
-OUT_DB="${GITTENSORY_REPORTING_DB:-$OUT_DIR/gittensory-reporting.sqlite}"
+OUT_DB="${GITTENSORY_REPORTING_DB:-$OUT_DIR/loopover-reporting.sqlite}"
 TMP_DB="${OUT_DB}.tmp"
 FINGERPRINT_FILE="${OUT_DB}.fingerprint"
 CSV_TMP_DIR="$(mktemp -d)"

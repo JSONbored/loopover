@@ -120,7 +120,7 @@ describe("self-host backup script", () => {
     const postgresBackups = readdirSync(join(root, "backups", "postgres"));
     expect(output).toContain("[backup] postgres ->");
     expect(postgresBackups).toHaveLength(1);
-    expect(postgresBackups[0]).toMatch(/^gittensory-\d{8}T\d{6}Z\.dump$/);
+    expect(postgresBackups[0]).toMatch(/^loopover-\d{8}T\d{6}Z\.dump$/);
     expect(readdirSync(join(root, "backups", "sqlite"))).toEqual([]);
   });
 
@@ -151,7 +151,7 @@ describe("self-host backup script", () => {
     // basename only, not a hardcoded /tmp/ prefix: mktemp resolves under $TMPDIR, which macOS sets to a
     // per-user private directory rather than /tmp (the CI runner's Linux environment does default to /tmp,
     // but the assertion shouldn't assume that).
-    expect(passfilePath).toMatch(/\/gittensory-pgpass\.[^/]+$/);
+    expect(passfilePath).toMatch(/\/loopover-pgpass\.[^/]+$/);
     expect(passfileContent).toBe("*:*:*:*:SuperSecret123!");
     expect(passfileModeOk).toBe("yes");
   });
@@ -351,7 +351,7 @@ describe("self-host backup script", () => {
     const sqliteBackups = readdirSync(join(root, "backups", "sqlite"));
     expect(output).toContain("[backup] sqlite ->");
     expect(sqliteBackups).toHaveLength(1);
-    expect(sqliteBackups[0]).toMatch(/^gittensory-\d{8}T\d{6}Z\.sqlite\.gz$/);
+    expect(sqliteBackups[0]).toMatch(/^loopover-\d{8}T\d{6}Z\.sqlite\.gz$/);
     expect(existsSync(join(root, "backups", "postgres"))).toBe(true);
     expect(readdirSync(join(root, "backups", "postgres"))).toEqual([]);
   });

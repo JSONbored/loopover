@@ -174,14 +174,14 @@ describe("Gittensory Self-Host Grafana dashboard", () => {
 
     expect(titles).toEqual(expect.arrayContaining(["Postgres & Backups", "Postgres Connections by State", "Postgres Locks & Slow Transactions", "Postgres Size & Table Growth", "Dead Tuples / Autovacuum", "Backup Freshness"]));
     expect(targets.some((target) => target.expr === 'pg_up or vector(0)')).toBe(true);
-    expect(targets.some((target) => target.expr === 'sum(pg_stat_activity_count{datname="gittensory"}) or vector(0)')).toBe(true);
-    expect(targets.some((target) => target.expr === 'sum by (state) (pg_stat_activity_count{datname="gittensory"}) or vector(0)')).toBe(true);
-    expect(targets.some((target) => target.expr === 'sum(pg_stat_activity_count{datname="gittensory", wait_event_type="Lock"}) or vector(0)')).toBe(true);
-    expect(targets.some((target) => target.expr === 'max(pg_stat_activity_max_tx_duration{datname="gittensory"}) or vector(0)')).toBe(true);
-    expect(targets.some((target) => target.expr === 'pg_database_size_bytes{datname="gittensory"} or vector(0)')).toBe(true);
-    expect(targets.some((target) => target.expr === 'topk(10, pg_stat_user_tables_n_live_tup{datname="gittensory"}) or vector(0)')).toBe(true);
-    expect(targets.some((target) => target.expr === 'topk(10, pg_stat_user_tables_n_dead_tup{datname="gittensory"}) or vector(0)')).toBe(true);
-    expect(targets.some((target) => target.expr === 'sum by (relname) (increase(pg_stat_user_tables_autovacuum_count{datname="gittensory"}[1h])) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'sum(pg_stat_activity_count{datname="loopover"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'sum by (state) (pg_stat_activity_count{datname="loopover"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'sum(pg_stat_activity_count{datname="loopover", wait_event_type="Lock"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'max(pg_stat_activity_max_tx_duration{datname="loopover"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'pg_database_size_bytes{datname="loopover"} or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'topk(10, pg_stat_user_tables_n_live_tup{datname="loopover"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'topk(10, pg_stat_user_tables_n_dead_tup{datname="loopover"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'sum by (relname) (increase(pg_stat_user_tables_autovacuum_count{datname="loopover"}[1h])) or vector(0)')).toBe(true);
     expect(targets.some((target) => target.expr === 'gittensory_backup_files{target=~"postgres|sqlite|qdrant"} or vector(0)')).toBe(true);
   });
 
@@ -189,17 +189,17 @@ describe("Gittensory Self-Host Grafana dashboard", () => {
     const alerts = readFileSync(selfhostAlertsPath, "utf8");
 
     expect(alerts).toContain("alert: GittensoryPostgresConnectionPressure");
-    expect(alerts).toContain('sum(pg_stat_activity_count{datname="gittensory"})');
+    expect(alerts).toContain('sum(pg_stat_activity_count{datname="loopover"})');
     expect(alerts).toContain("alert: GittensoryPostgresLockWaits");
-    expect(alerts).toContain('pg_stat_activity_count{datname="gittensory", wait_event_type="Lock"}');
+    expect(alerts).toContain('pg_stat_activity_count{datname="loopover", wait_event_type="Lock"}');
     expect(alerts).toContain("alert: GittensoryPostgresSlowTransaction");
-    expect(alerts).toContain('pg_stat_activity_max_tx_duration{datname="gittensory"}');
+    expect(alerts).toContain('pg_stat_activity_max_tx_duration{datname="loopover"}');
     expect(alerts).toContain("alert: GittensoryPostgresDeadlocks");
-    expect(alerts).toContain('pg_stat_database_deadlocks{datname="gittensory"}');
+    expect(alerts).toContain('pg_stat_database_deadlocks{datname="loopover"}');
     expect(alerts).toContain("alert: GittensoryPostgresDatabaseGrowingFast");
-    expect(alerts).toContain('deriv(pg_database_size_bytes{datname="gittensory"}[6h]) > 262144');
+    expect(alerts).toContain('deriv(pg_database_size_bytes{datname="loopover"}[6h]) > 262144');
     expect(alerts).toContain("alert: GittensoryPostgresDeadTuplesHigh");
-    expect(alerts).toContain('pg_stat_user_tables_n_dead_tup{datname="gittensory"}');
+    expect(alerts).toContain('pg_stat_user_tables_n_dead_tup{datname="loopover"}');
     expect(alerts).toContain("alert: GittensoryBackupMissing");
     expect(alerts).toContain('gittensory_backup_files{target=~"postgres|sqlite"} == 0');
     expect(alerts).toContain("alert: GittensoryBackupStale");

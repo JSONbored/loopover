@@ -1,4 +1,4 @@
-# Self-host for gittensory (#980). Two ways to boot the `gittensory` service — everything else in
+# Self-host for loopover (#980). Two ways to boot the `loopover` service — everything else in
 # this compose file (profiles, env, health checks) is identical either way:
 #
 #   RECOMMENDED: ./scripts/deploy-selfhost-image.sh     # pulls the published image, no local build
@@ -72,7 +72,7 @@ x-runner-tmp-env: &runner-tmp-env
 
 services:
   # ── Core app (always runs) ─────────────────────────────────────────────────
-  gittensory:
+  loopover:
     build:
       context: .
       args:
@@ -88,7 +88,7 @@ services:
         required: false
     environment:
       PORT: "8787"
-      DATABASE_PATH: /data/gittensory.sqlite
+      DATABASE_PATH: /data/loopover.sqlite
       # Container-private per-repo config (#1390): point at a mounted dir holding {owner}__{repo}/.gittensory.yml
       # files layered over an optional root .gittensory.yml global default, itself layered over an optional
       # _shared/.gittensory.yml cross-repo base for multi-repo operators (#1959) — a higher layer overrides only the
@@ -108,10 +108,10 @@ services:
       OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: "${OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE:-cumulative}"
       OTEL_METRIC_EXPORT_INTERVAL: "${OTEL_METRIC_EXPORT_INTERVAL:-10000}"
       # Uncomment the next two lines and activate --profile postgres to use Postgres:
-      # DATABASE_URL: postgres://gittensory:${POSTGRES_PASSWORD:-CHANGEME}@postgres:5432/gittensory
+      # DATABASE_URL: postgres://loopover:${POSTGRES_PASSWORD:-CHANGEME}@postgres:5432/loopover
       # PGVECTOR_ENABLED: "true"
       # With --profile pgbouncer, route through the pooler instead of postgres directly:
-      # DATABASE_URL: postgres://gittensory:${POSTGRES_PASSWORD:-CHANGEME}@pgbouncer:5432/gittensory
+      # DATABASE_URL: postgres://loopover:${POSTGRES_PASSWORD:-CHANGEME}@pgbouncer:5432/loopover
       # Required shared transient state for review correctness, webhook dedup, and rate limiting.
       REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
       # Enables the GitHub GET-response cache when >0 (0 disables); not a per-entry TTL, see .env.example.
@@ -122,8 +122,8 @@ services:
       # additive, zero effect on an operator who has never touched secrets/.
       GITHUB_APP_PRIVATE_KEY_FILE: "${GITHUB_APP_PRIVATE_KEY_FILE:-/run/secrets/github_app_private_key}"
       GITHUB_WEBHOOK_SECRET_FILE: "${GITHUB_WEBHOOK_SECRET_FILE:-/run/secrets/github_webhook_secret}"
-      GITTENSORY_API_TOKEN_FILE: "${GITTENSORY_API_TOKEN_FILE:-/run/secrets/gittensory_api_token}"
-      GITTENSORY_MCP_TOKEN_FILE: "${GITTENSORY_MCP_TOKEN_FILE:-/run/secrets/gittensory_mcp_token}"
+      GITTENSORY_API_TOKEN_FILE: "${GITTENSORY_API_TOKEN_FILE:-/run/secrets/loopover_api_token}"
+      GITTENSORY_MCP_TOKEN_FILE: "${GITTENSORY_MCP_TOKEN_FILE:-/run/secrets/loopover_mcp_token}"
       INTERNAL_JOB_TOKEN_FILE: "${INTERNAL_JOB_TOKEN_FILE:-/run/secrets/internal_job_token}"
       SELFHOST_SETUP_TOKEN_FILE: "${SELFHOST_SETUP_TOKEN_FILE:-/run/secrets/selfhost_setup_token}"
       TOKEN_ENCRYPTION_SECRET_FILE: "${TOKEN_ENCRYPTION_SECRET_FILE:-/run/secrets/token_encryption_secret}"
@@ -141,7 +141,7 @@ services:
       # short-lived GitHub tokens from the Orb on demand (no own App private key). See .env.example.
       # ORB_BROKER_URL: https://gittensory-api.aethereal.dev   # override only for a private Orb deployment
     volumes:
-      - gittensory-data:/data
+      - loopover-data:/data
       # Container-private per-repo config dir (read-only). Create ./gittensory-config/{owner}__{repo}/.gittensory.yml
       # locally, optionally alongside a ./gittensory-config/.gittensory.yml global default that every per-repo file
       # is deep-merged over (gitignored — never commit real policy; see config/examples/ for generic templates).
@@ -162,8 +162,8 @@ services:
     secrets:
       - github_app_private_key
       - github_webhook_secret
-      - gittensory_api_token
-      - gittensory_mcp_token
+      - loopover_api_token
+      - loopover_mcp_token
       - internal_job_token
       - selfhost_setup_token
       - token_encryption_secret
@@ -180,7 +180,7 @@ services:
       qdrant:
         condition: service_healthy
         required: false
-      # Same pattern for --profile postgres / --profile pgbouncer: without this, compose starts gittensory
+      # Same pattern for --profile postgres / --profile pgbouncer: without this, compose starts loopover
       # in parallel with a cold Postgres initdb instead of waiting for it, and the app's own waitForPostgres()
       # fallback (~30s hard cap) commonly loses that race on a slow disk/first pull, crash-looping the app via
       # restart: unless-stopped before Postgres is reachable. required:false keeps the default SQLite path
@@ -282,11 +282,11 @@ services:
     <<: *default-logging
     profiles: ["postgres", "pgbouncer"]
     environment:
-      POSTGRES_USER: gittensory
+      POSTGRES_USER: loopover
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGEME}
-      POSTGRES_DB: gittensory
+      POSTGRES_DB: loopover
     volumes:
-      - gittensory-pg:/var/lib/postgresql/data
+      - loopover-pg:/var/lib/postgresql/data
     deploy:
       resources:
         limits:
@@ -296,7 +296,7 @@ services:
     # the pgvector extension) can plausibly take longer than the 5x10s=50s this healthcheck otherwise
     # allows before Docker marks the service unhealthy and fails every downstream service_healthy gate.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gittensory"]
+      test: ["CMD-SHELL", "pg_isready -U loopover"]
       interval: 10s
       timeout: 5s
       start_period: 20s
@@ -304,7 +304,7 @@ services:
 
   # ── PgBouncer (--profile pgbouncer) ───────────────────────────────────────
   # Transaction-mode pooler — allows hundreds of app clients with a small PG connection cap.
-  # Set DATABASE_URL in gittensory to: postgres://gittensory:<pw>@pgbouncer:5432/gittensory
+  # Set DATABASE_URL in loopover to: postgres://loopover:<pw>@pgbouncer:5432/loopover
   pgbouncer:
     image: edoburu/pgbouncer:v1.25.2-p0
     restart: unless-stopped
@@ -316,8 +316,8 @@ services:
     environment:
       DB_HOST: postgres
       DB_PORT: "5432"
-      DB_NAME: gittensory
-      DB_USER: gittensory
+      DB_NAME: loopover
+      DB_USER: loopover
       DB_PASSWORD: ${POSTGRES_PASSWORD:-CHANGEME}
       LISTEN_PORT: "5432"
       POOL_MODE: transaction
@@ -327,7 +327,7 @@ services:
     # The image ships the full postgresql-client toolchain (Alpine-based), so the same probe postgres itself
     # uses works here: pg_isready only checks that the server accepts the startup packet, not that auth
     # succeeds, so it reports "accepting connections" even before the upstream Postgres is reachable through
-    # the pooler — exactly the pooler-layer liveness signal gittensory's depends_on needs.
+    # the pooler — exactly the pooler-layer liveness signal loopover's depends_on needs.
     healthcheck:
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-p", "5432"]
       interval: 10s
@@ -346,8 +346,8 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATA_SOURCE_URI: "postgres:5432/gittensory?sslmode=disable"
-      DATA_SOURCE_USER: gittensory
+      DATA_SOURCE_URI: "postgres:5432/loopover?sslmode=disable"
+      DATA_SOURCE_USER: loopover
       DATA_SOURCE_PASS: ${POSTGRES_PASSWORD:-CHANGEME}
     expose:
       - "9187"
@@ -602,7 +602,7 @@ services:
     restart: unless-stopped
     <<: *default-logging
     profiles: ["rees"]
-    # Deliberately NOT `env_file: .env` like the gittensory service above: that would also hand this
+    # Deliberately NOT `env_file: .env` like the loopover service above: that would also hand this
     # analyzer service every unrelated secret in .env, and REES reads the same SENTRY_DSN key name the main
     # app uses (src/selfhost/sentry.ts) -- blanket-forwarding .env would silently point REES's error reporting
     # at the main app's Sentry project instead of a dedicated one. Add REES-specific Sentry vars via
@@ -623,7 +623,7 @@ services:
         limits:
           memory: "${REES_MEM_LIMIT:-512m}"
     # /health and /ready are both unconditional no-ops (REES has no DB/queue to probe), so unlike the
-    # gittensory service above there's no deeper readiness signal to prefer here; /health also matches
+    # loopover service above there's no deeper readiness signal to prefer here; /health also matches
     # Railway's own healthcheckPath for this service. `node -e fetch(...)` avoids assuming curl/wget exist --
     # review-enrichment/Dockerfile's runtime stage is node:22-slim, which installs neither.
     healthcheck:
@@ -649,10 +649,10 @@ services:
     profiles: ["litestream"]
     command: replicate
     depends_on:
-      gittensory:
+      loopover:
         condition: service_healthy
     volumes:
-      - gittensory-data:/data
+      - loopover-data:/data
       - ./litestream.yml:/etc/litestream.yml:ro
     environment:
       LITESTREAM_ACCESS_KEY_ID: ${LITESTREAM_ACCESS_KEY_ID:-}
@@ -662,7 +662,7 @@ services:
 
   # ── Caddy (--profile caddy) ────────────────────────────────────────────────
   # Auto-TLS via Let's Encrypt. Set DOMAIN=reviews.yourcompany.com in .env, then
-  # remove the plain `ports:` entry from the gittensory service above.
+  # remove the plain `ports:` entry from the loopover service above.
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -679,7 +679,7 @@ services:
     environment:
       DOMAIN: ${DOMAIN:-localhost}
     depends_on:
-      gittensory:
+      loopover:
         condition: service_healthy
 
   # ── Observability (--profile observability) ────────────────────────────────
@@ -787,11 +787,11 @@ services:
     <<: *default-logging
     profiles: ["observability"]
     depends_on:
-      gittensory:
+      loopover:
         condition: service_healthy
     volumes:
       # The exporter needs live DB read access to build the redacted snapshot. Grafana does not get this mount.
-      - gittensory-data:/appdb:ro
+      - loopover-data:/appdb:ro
       - grafana-reporting-data:/reporting
       # A DIRECTORY bind mount, not a single-file one (#reporting-exporter-stale-bind-mount): a single-file
       # bind mount pins the container to the file's INODE at container-creation time. `git pull` replaces a
@@ -803,15 +803,15 @@ services:
       # provisioning below already does.
       - ./scripts:/scripts:ro
     environment:
-      # Default SQLite app DB path maps app /data/gittensory.sqlite to exporter /appdb/gittensory.sqlite.
+      # Default SQLite app DB path maps app /data/loopover.sqlite to exporter /appdb/loopover.sqlite.
       # If you override DATABASE_PATH, set this to the matching /appdb/<file> path. When DATABASE_URL points at
       # Postgres, the exporter reads Postgres with psql and still writes the same redacted SQLite reporting DB
       # for Grafana. Set GITTENSORY_REPORTING_SOURCE_DATABASE_URL only if the reporting reader uses a different URL.
-      GITTENSORY_REPORTING_SOURCE_DB: "${GITTENSORY_REPORTING_SOURCE_DB:-/appdb/gittensory.sqlite}"
+      GITTENSORY_REPORTING_SOURCE_DB: "${GITTENSORY_REPORTING_SOURCE_DB:-/appdb/loopover.sqlite}"
       GITTENSORY_REPORTING_SOURCE_DATABASE_URL: "${GITTENSORY_REPORTING_SOURCE_DATABASE_URL:-}"
       DATABASE_URL: "${DATABASE_URL:-}"
       GITTENSORY_REPORTING_DIR: /reporting
-      GITTENSORY_REPORTING_DB: "${GITTENSORY_REPORTING_DB:-/reporting/gittensory-reporting.sqlite}"
+      GITTENSORY_REPORTING_DB: "${GITTENSORY_REPORTING_DB:-/reporting/loopover-reporting.sqlite}"
       GRAFANA_REPORTING_EXPORT_INTERVAL_SECONDS: "${GRAFANA_REPORTING_EXPORT_INTERVAL_SECONDS:-30}"
     command:
       - /bin/sh
@@ -828,7 +828,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "db=\"$${GITTENSORY_REPORTING_DB:-/reporting/gittensory-reporting.sqlite}\"; test -s \"$$db\" && sqlite3 \"$$db\" 'PRAGMA quick_check;' | grep -q '^ok$'",
+          "db=\"$${GITTENSORY_REPORTING_DB:-/reporting/loopover-reporting.sqlite}\"; test -s \"$$db\" && sqlite3 \"$$db\" 'PRAGMA quick_check;' | grep -q '^ok$'",
         ]
       interval: 30s
       timeout: 5s
@@ -888,7 +888,7 @@ services:
   # ── Log pipeline (--profile observability) ─────────────────────────────────
   # Loki stores logs; Promtail discovers every container in this compose project via the read-only
   # docker-proxy (NOT a raw socket) and ships their logs to Loki. Browse in Grafana → Explore →
-  # Loki, e.g. {service="gittensory"} | json | level="error".
+  # Loki, e.g. {service="loopover"} | json | level="error".
   loki:
     image: grafana/loki:3.7.3
     restart: unless-stopped
@@ -947,7 +947,7 @@ services:
     depends_on: [loki, docker-proxy]
     environment:
       # Promtail expands this into its Docker label filter so discovery stays inside this Compose project.
-      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-gittensory}
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-loopover}
     volumes:
       - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
       # Persist read positions so restarts don't re-ship the whole log history.
@@ -1007,7 +1007,7 @@ services:
   # ── Tailscale (--profile tailscale) ───────────────────────────────────────
   # Joins your tailnet so the stack is accessible via Tailscale IP/hostname — no
   # public ports exposed. Generate an auth key at tailscale.com/settings/keys and
-  # set TS_AUTHKEY= in .env. The gittensory service is reachable at the tailnet IP on port 8787.
+  # set TS_AUTHKEY= in .env. The loopover service is reachable at the tailnet IP on port 8787.
   tailscale:
     # Kept on the `stable` release channel rather than a version tag: tailscale's ghcr tags use a
     # non-obvious scheme and the client is happiest tracking the current stable. For a fully immutable
@@ -1017,7 +1017,7 @@ services:
     restart: unless-stopped
     <<: *default-logging
     profiles: ["tailscale"]
-    hostname: gittensory
+    hostname: loopover
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
@@ -1037,7 +1037,7 @@ services:
   # Runs `runs-on: self-hosted` jobs on this machine. Set RUNNER_TOKEN= (or ACCESS_TOKEN=)
   # and RUNNER_REPO_URL= (e.g. https://github.com/your-org/your-repo) in .env.
   # Get a token at: https://github.com/<owner>/<repo>/settings/actions/runners/new
-  # Running this alongside the main `gittensory` app on the SAME host? A burst of CI jobs can starve the
+  # Running this alongside the main `loopover` app on the SAME host? A burst of CI jobs can starve the
   # app of CPU with no limits set (the default below) -- confirmed in production: 3 uncapped runner
   # containers on an 8-vCPU box left the app starved under load. See docker-compose.override.yml.example
   # for a proven CPU-priority pattern (relative cpu_shares + a per-container cpus ceiling) before scaling
@@ -1072,7 +1072,7 @@ services:
       REPO_URL: ${RUNNER_REPO_URL:-}
       RUNNER_TOKEN: ${RUNNER_TOKEN:-}
       ACCESS_TOKEN: ${RUNNER_ACCESS_TOKEN:-}
-      RUNNER_NAME: ${RUNNER_NAME:-gittensory-runner}
+      RUNNER_NAME: ${RUNNER_NAME:-loopover-runner}
       LABELS: ${RUNNER_LABELS:-self-hosted,linux,x64}
       RUNNER_WORKDIR: /tmp/runner
       # Docker builds are disabled by default. To enable DinD (Docker-in-Docker) for workflows that
@@ -1092,7 +1092,7 @@ services:
 
   # ── Backups (--profile backup) ────────────────────────────────────────────
   # Active database backup (Postgres pg_dump or WAL-safe SQLite online backup) + a Qdrant snapshot, on a loop
-  # (default daily), kept in the gittensory-backups volume with retention. Run on demand:
+  # (default daily), kept in the loopover-backups volume with retention. Run on demand:
   #   docker compose --profile backup run --rm backup sh /scripts/backup.sh
   # Verify the newest backup is restorable (pg_restore --list / SQLite integrity_check; opt-in scratch restore):
   #   docker compose --profile backup run --rm backup sh /scripts/verify-backup.sh
@@ -1102,7 +1102,7 @@ services:
     <<: *default-logging
     profiles: ["backup"]
     environment:
-      DATABASE_PATH: /data/gittensory.sqlite
+      DATABASE_PATH: /data/loopover.sqlite
       DATABASE_URL: "${DATABASE_URL:-}"
       GITTENSORY_BACKUP_SOURCE_DATABASE_URL: "${GITTENSORY_BACKUP_SOURCE_DATABASE_URL:-}"
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
@@ -1113,8 +1113,8 @@ services:
       GITTENSORY_VERIFY_SCRATCH_DATABASE_URL: "${GITTENSORY_VERIFY_SCRATCH_DATABASE_URL:-}"
     volumes:
       # RW (not :ro) so SQLite's online-backup can use the WAL index; the script only ever reads the DB.
-      - gittensory-data:/data
-      - gittensory-backups:/backups
+      - loopover-data:/data
+      - loopover-backups:/backups
       # A DIRECTORY bind mount, not individual-file mounts (#reporting-exporter-stale-bind-mount): a
       # single-file bind mount pins the container to that file's INODE at container-creation time, so a
       # later `git pull` (which replaces a file via write-new-then-rename, not an in-place edit) leaves the
@@ -1149,7 +1149,7 @@ services:
     <<: *default-logging
     profiles: ["backup"]
     volumes:
-      - gittensory-backups:/backups:ro
+      - loopover-backups:/backups:ro
       # Directory mount, not a single-file one -- same #reporting-exporter-stale-bind-mount rationale as
       # the backup service above.
       - ./scripts:/scripts:ro
@@ -1167,20 +1167,20 @@ services:
 # Native Docker Compose secrets: file-mounted (at /run/secrets/<name>), never
 # exposed via `docker inspect`/`docker compose config` the way a plain `environment:`/`env_file` value is.
 # Read by the app's existing generic <NAME>_FILE loader (src/selfhost/load-file-secrets.ts) via the
-# `environment:` defaults set below on the gittensory service. Every file here is created empty (a no-op --
+# `environment:` defaults set below on the loopover service. Every file here is created empty (a no-op --
 # an inline .env value always wins, see secrets/README.md) by `scripts/selfhost-init-secrets.sh`, which
 # every deploy runs before `docker compose build/up` so a missing file source can never break a deploy for
-# an operator who has not opted into this convention. Scoped to the always-on gittensory service's own
+# an operator who has not opted into this convention. Scoped to the always-on loopover service's own
 # highest-value secrets for now -- the same convention extends to any other service the same way.
 secrets:
   github_app_private_key:
     file: ./secrets/github_app_private_key.pem
   github_webhook_secret:
     file: ./secrets/github_webhook_secret.txt
-  gittensory_api_token:
-    file: ./secrets/gittensory_api_token.txt
-  gittensory_mcp_token:
-    file: ./secrets/gittensory_mcp_token.txt
+  loopover_api_token:
+    file: ./secrets/loopover_api_token.txt
+  loopover_mcp_token:
+    file: ./secrets/loopover_mcp_token.txt
   internal_job_token:
     file: ./secrets/internal_job_token.txt
   selfhost_setup_token:
@@ -1197,8 +1197,8 @@ secrets:
     file: ./secrets/claude_code_oauth_token.txt
 
 volumes:
-  gittensory-data:
-  gittensory-pg:
+  loopover-data:
+  loopover-pg:
   qdrant-data:
   ollama-models:
   caddy-data:
@@ -1211,7 +1211,7 @@ volumes:
   promtail-data:
   tailscale-state:
   runner-work:
-  gittensory-backups:
+  loopover-backups:
   tempo-data:
 
 networks:

@@ -2,7 +2,7 @@
 
 Operator-facing runbook for **local SQLite state**: what the concurrency guarantees actually mean, how to recover from corruption, what to do when two miner processes collide on the same files, and how schema upgrades migrate your on-disk ledgers after a package update.
 
-> **Scope:** AMS local stores only. For laptop/fleet deployment layout see [`../DEPLOYMENT.md`](../DEPLOYMENT.md). For Grafana setup see [#5190](https://github.com/JSONbored/gittensory/issues/5190). For the optional hosted discovery plane see [`discovery-plane-operator-guide.md`](discovery-plane-operator-guide.md). This runbook does **not** cover the self-hosted **review stack** (Orb/API/GittensoryDB).
+> **Scope:** AMS local stores only. For laptop/fleet deployment layout see [`../DEPLOYMENT.md`](../DEPLOYMENT.md). For Grafana setup see [#5190](https://github.com/JSONbored/gittensory/issues/5190). For the optional hosted discovery plane see [`discovery-plane-operator-guide.md`](discovery-plane-operator-guide.md). This runbook does **not** cover the self-hosted **review stack** (Orb/API/LoopoverDB).
 
 ## Local state at a glance
 

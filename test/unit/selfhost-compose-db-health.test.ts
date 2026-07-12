@@ -17,7 +17,7 @@ describe("docker-compose.yml — postgres/pgbouncer startup ordering (#2500, #25
   it("gates the core app on a healthy postgres and pgbouncer without requiring either profile", () => {
     const compose = readYaml("docker-compose.yml");
     const services = (compose.services as Record<string, Record<string, unknown>>) ?? {};
-    const app = services.gittensory ?? {};
+    const app = services.loopover ?? {};
     const dependsOn = app.depends_on as Record<string, { condition?: string; required?: boolean }>;
 
     // redis stays required (always-on service); postgres/pgbouncer/qdrant are all required:false since only
@@ -28,7 +28,7 @@ describe("docker-compose.yml — postgres/pgbouncer startup ordering (#2500, #25
     expect(dependsOn.qdrant).toEqual({ condition: "service_healthy", required: false });
   });
 
-  it("gives pgbouncer a healthcheck so gittensory's depends_on has a real readiness signal to gate on", () => {
+  it("gives pgbouncer a healthcheck so loopover's depends_on has a real readiness signal to gate on", () => {
     const compose = readYaml("docker-compose.yml");
     const services = (compose.services as Record<string, Record<string, unknown>>) ?? {};
     const pgbouncer = services.pgbouncer ?? {};
@@ -41,7 +41,7 @@ describe("docker-compose.yml — postgres/pgbouncer startup ordering (#2500, #25
     expect(healthcheck.retries).toBeGreaterThan(0);
   });
 
-  it("still starts pgbouncer only after a healthy postgres (unaffected by the new gittensory dependency)", () => {
+  it("still starts pgbouncer only after a healthy postgres (unaffected by the new loopover dependency)", () => {
     const compose = readYaml("docker-compose.yml");
     const services = (compose.services as Record<string, Record<string, unknown>>) ?? {};
     const pgbouncer = services.pgbouncer ?? {};

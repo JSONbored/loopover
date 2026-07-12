@@ -26,7 +26,7 @@ The repo ships datasource provisioning at
 `AMS Prediction Ledger` (uid `ams-prediction-ledger`). Their default paths live under Grafana's reporting mount,
 not under the miner config directory.
 
-1. **Install the SQLite plugin** in Grafana — the same one the maintainer `GittensoryDB` datasource uses:
+1. **Install the SQLite plugin** in Grafana — the same one the maintainer `LoopoverDB` datasource uses:
 
    ```sh
    GF_INSTALL_PLUGINS=frser-sqlite-datasource

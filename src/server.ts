@@ -225,7 +225,7 @@ function buildSqliteBackend(
   consume: (m: JobMessage) => Promise<void>,
 ): Backend {
   const sqlite = new DatabaseSync(
-    process.env.DATABASE_PATH ?? "/data/gittensory.sqlite",
+    process.env.DATABASE_PATH ?? "/data/loopover.sqlite",
   );
   sqlite.exec(
     "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;",

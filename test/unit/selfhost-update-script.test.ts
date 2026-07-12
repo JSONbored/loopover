@@ -285,6 +285,6 @@ describe("selfhost-update.sh", () => {
     });
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("run this script from the gittensory git checkout");
+    expect(result.stderr).toContain("run this script from the loopover git checkout");
   });
 });

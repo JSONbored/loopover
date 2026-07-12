@@ -169,7 +169,7 @@ describe("scripts/backup.sh sqlite online-backup verification (#2084)", () => {
       "ts",
     ]);
     expect(manifest.postgres).toBeNull();
-    expect(manifest.sqlite?.file).toMatch(/^sqlite\/gittensory-\d{8}T\d{6}Z\.sqlite\.gz$/);
+    expect(manifest.sqlite?.file).toMatch(/^sqlite\/loopover-\d{8}T\d{6}Z\.sqlite\.gz$/);
     expect(manifest.sqlite?.bytes).toBe(
       statSync(join(harness.outDir, manifest.sqlite!.file)).size,
     );
@@ -181,7 +181,7 @@ describe("scripts/backup.sh sqlite online-backup verification (#2084)", () => {
 
     expect(res.status).toBe(0);
     const manifest = readManifest(harness);
-    expect(manifest.sqlite?.file).toMatch(/^sqlite\/gittensory-\d{8}T\d{6}Z\.sqlite\.gz$/);
+    expect(manifest.sqlite?.file).toMatch(/^sqlite\/loopover-\d{8}T\d{6}Z\.sqlite\.gz$/);
     expect(manifest.postgres).toBeNull();
     expect(manifest.qdrant.file).toBe("qdrant/qdrant-snapshot-123.snap");
     expect(readFileSync(join(harness.outDir, manifest.qdrant.file!), "utf8")).toBe(
@@ -196,7 +196,7 @@ describe("scripts/backup.sh sqlite online-backup verification (#2084)", () => {
     expect(res.stderr).toContain("BACKUP_RETAIN=0");
     const manifest = readManifest(harness);
     expect(manifest.retain).toBe(1);
-    expect(manifest.sqlite?.file).toMatch(/^sqlite\/gittensory-\d{8}T\d{6}Z\.sqlite\.gz$/);
+    expect(manifest.sqlite?.file).toMatch(/^sqlite\/loopover-\d{8}T\d{6}Z\.sqlite\.gz$/);
     expect(existsSync(join(harness.outDir, manifest.sqlite!.file))).toBe(true);
     expect(readdirSync(join(harness.outDir, "sqlite"))).toHaveLength(1);
   });
@@ -224,7 +224,7 @@ describe("scripts/backup.sh sqlite online-backup verification (#2084)", () => {
     expect(res.status).toBe(0);
     expect(res.stdout).toContain("[backup] postgres ->");
     const manifest = readManifest(harness);
-    expect(manifest.postgres?.file).toMatch(/^postgres\/gittensory-\d{8}T\d{6}Z\.dump$/);
+    expect(manifest.postgres?.file).toMatch(/^postgres\/loopover-\d{8}T\d{6}Z\.dump$/);
     expect(manifest.postgres?.bytes).toBe(
       statSync(join(harness.outDir, manifest.postgres!.file)).size,
     );

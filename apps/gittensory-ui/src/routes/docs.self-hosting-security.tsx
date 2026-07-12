@@ -67,7 +67,7 @@ function SelfHostingSecurity() {
         filename="shell"
         code={`./scripts/selfhost-init-secrets.sh   # creates empty placeholder files (idempotent)
 printf '%s' 'your-real-secret-value' > secrets/github_webhook_secret.txt
-docker compose up -d --no-deps gittensory`}
+docker compose up -d --no-deps loopover`}
       />
 
       <h2>Private policy</h2>

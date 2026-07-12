@@ -1,15 +1,15 @@
-# Caddy reverse proxy for gittensory (#980 self-host).
+# Caddy reverse proxy for loopover (#980 self-host).
 # Activated via: docker compose --profile caddy up
 #
 # DOMAIN is injected from the DOMAIN env var in docker-compose.yml.
 # Set DOMAIN=reviews.yourcompany.com in .env — Caddy fetches a TLS cert from Let's Encrypt automatically.
 # For local testing without a domain, set DOMAIN=localhost (self-signed cert, browser will warn).
 #
-# When using this profile, remove the `ports:` entry from the gittensory service in docker-compose.yml
+# When using this profile, remove the `ports:` entry from the loopover service in docker-compose.yml
 # so port 8787 is NOT exposed publicly — all traffic should flow through Caddy on 443.
 
 {$DOMAIN} {
-	reverse_proxy gittensory:8787 {
+	reverse_proxy loopover:8787 {
 		# Surface the real client IP to the app (logged in access events).
 		header_up X-Forwarded-For {remote_host}
 		header_up X-Real-IP {remote_host}

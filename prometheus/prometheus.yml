@@ -1,4 +1,4 @@
-# Prometheus scrape config for gittensory self-host (#980 observability).
+# Prometheus scrape config for loopover self-host (#980 observability).
 # Activated via: docker compose --profile observability up
 global:
   scrape_interval: 15s
@@ -18,7 +18,7 @@ alerting:
 scrape_configs:
   - job_name: gittensory
     static_configs:
-      - targets: ["gittensory:8787"]
+      - targets: ["loopover:8787"]
     metrics_path: /metrics
     scrape_interval: 15s
     scrape_timeout: 10s

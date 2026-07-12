@@ -43,7 +43,7 @@ rolled-back dry run. Pass --execute to commit the copy. Prefer DATABASE_URL over
 the Postgres credential is not exposed through process command lines.
 
 Options:
-  --sqlite <path>          SQLite source file. Defaults to DATABASE_PATH or /data/gittensory.sqlite.
+  --sqlite <path>          SQLite source file. Defaults to DATABASE_PATH or /data/loopover.sqlite.
   --postgres-url <url>     Postgres target URL. Defaults to DATABASE_URL; avoid this on shared hosts.
   --migrations-dir <path>  Migration directory. Defaults to migrations.
   --execute                Commit the copy. Omit for a rollback dry run.
@@ -54,7 +54,7 @@ Options:
 
 function parseArgs(argv: string[]): Options {
   const opts: Options = {
-    sqlitePath: process.env.DATABASE_PATH ?? "/data/gittensory.sqlite",
+    sqlitePath: process.env.DATABASE_PATH ?? "/data/loopover.sqlite",
     postgresUrl: process.env.DATABASE_URL ?? "",
     migrationsDir: process.env.MIGRATIONS_DIR ?? "migrations",
     execute: false,

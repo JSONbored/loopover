@@ -119,15 +119,15 @@ describe("self-host observability trace config", () => {
     expect(postgresExporter.profiles).toEqual(["postgres", "pgbouncer"]);
     expect(postgresExporter.depends_on?.postgres).toEqual({ condition: "service_healthy" });
     expect(postgresExporter.environment).toMatchObject({
-      DATA_SOURCE_URI: "postgres:5432/gittensory?sslmode=disable",
-      DATA_SOURCE_USER: "gittensory",
+      DATA_SOURCE_URI: "postgres:5432/loopover?sslmode=disable",
+      DATA_SOURCE_USER: "loopover",
       DATA_SOURCE_PASS: "${POSTGRES_PASSWORD:-CHANGEME}",
     });
 
     expect(backupExporter.profiles).toEqual(["backup"]);
     expect(backupExporter.volumes).toEqual(
       expect.arrayContaining([
-        "gittensory-backups:/backups:ro",
+        "loopover-backups:/backups:ro",
         "./scripts:/scripts:ro",
       ]),
     );

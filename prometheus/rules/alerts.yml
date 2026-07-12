@@ -226,7 +226,7 @@ groups:
         # consumes more than 80% of max_connections for 10m; use PgBouncer or lower app concurrency.
         expr: |
           (
-            sum(pg_stat_activity_count{datname="gittensory"})
+            sum(pg_stat_activity_count{datname="loopover"})
             /
             max(pg_settings_max_connections)
           ) > 0.80
@@ -241,7 +241,7 @@ groups:
       - alert: GittensoryPostgresLockWaits
         # Wait-event labels are emitted by the postgres_exporter stat_activity collector. Any sustained
         # lock wait means a write path is blocked and queue processing can appear stuck.
-        expr: sum(pg_stat_activity_count{datname="gittensory", wait_event_type="Lock"}) > 0
+        expr: sum(pg_stat_activity_count{datname="loopover", wait_event_type="Lock"}) > 0
         for: 5m
         labels:
           severity: warning
@@ -253,7 +253,7 @@ groups:
       - alert: GittensoryPostgresSlowTransaction
         # Long active transactions are the self-host proxy for slow/problem queries without requiring
         # pg_stat_statements or superuser-only setup.
-        expr: max(pg_stat_activity_max_tx_duration{datname="gittensory"}) > 120
+        expr: max(pg_stat_activity_max_tx_duration{datname="loopover"}) > 120
         for: 5m
         labels:
           severity: warning
@@ -264,7 +264,7 @@ groups:
 
       - alert: GittensoryPostgresDeadlocks
         # Deadlocks should be effectively zero; even a low rate points at competing write paths.
-        expr: rate(pg_stat_database_deadlocks{datname="gittensory"}[5m]) > 0
+        expr: rate(pg_stat_database_deadlocks{datname="loopover"}[5m]) > 0
         for: 2m
         labels:
           severity: warning
@@ -276,7 +276,7 @@ groups:
       - alert: GittensoryPostgresDatabaseGrowingFast
         # Growth over a 6h window smooths normal small-table churn while catching runaway queue/audit growth.
         # 262144 bytes/s is roughly 5.4 GiB over 6h.
-        expr: deriv(pg_database_size_bytes{datname="gittensory"}[6h]) > 262144
+        expr: deriv(pg_database_size_bytes{datname="loopover"}[6h]) > 262144
         for: 30m
         labels:
           severity: warning
@@ -289,15 +289,15 @@ groups:
         # Autovacuum pressure: high dead tuple ratio and enough absolute dead rows to avoid tiny-table noise.
         expr: |
           (
-            sum(pg_stat_user_tables_n_dead_tup{datname="gittensory"})
+            sum(pg_stat_user_tables_n_dead_tup{datname="loopover"})
             /
             clamp_min(
-              sum(pg_stat_user_tables_n_live_tup{datname="gittensory"} + pg_stat_user_tables_n_dead_tup{datname="gittensory"}),
+              sum(pg_stat_user_tables_n_live_tup{datname="loopover"} + pg_stat_user_tables_n_dead_tup{datname="loopover"}),
               1
             )
           ) > 0.20
           and
-          sum(pg_stat_user_tables_n_dead_tup{datname="gittensory"}) > 10000
+          sum(pg_stat_user_tables_n_dead_tup{datname="loopover"}) > 10000
         for: 30m
         labels:
           severity: warning
@@ -314,9 +314,9 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "No retained gittensory database backup found"
+          summary: "No retained loopover database backup found"
           description: "The backup profile is exposing metrics, but {{ $labels.target }} has no retained backup file after 2h."
-          runbook: "Run `docker compose --profile backup run --rm backup sh /backup.sh` and inspect the gittensory-backups volume. For Postgres, confirm DATABASE_URL is available to the backup service."
+          runbook: "Run `docker compose --profile backup run --rm backup sh /backup.sh` and inspect the loopover-backups volume. For Postgres, confirm DATABASE_URL is available to the backup service."
 
       - alert: GittensoryBackupStale
         # Default backup loop is daily. 26h allows one missed scrape/restart window before warning.

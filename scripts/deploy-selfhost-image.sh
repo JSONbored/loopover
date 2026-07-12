@@ -15,7 +15,7 @@
 set -euo pipefail
 
 ENV_FILE="${SELFHOST_ENV_FILE:-.env}"
-SERVICE="${SELFHOST_SERVICE:-gittensory}"
+SERVICE="${SELFHOST_SERVICE:-loopover}"
 HEALTH_TIMEOUT_SECONDS="${SELFHOST_HEALTH_TIMEOUT_SECONDS:-180}"
 DEFAULT_IMAGE="ghcr.io/jsonbored/gittensory-selfhost:latest"
 

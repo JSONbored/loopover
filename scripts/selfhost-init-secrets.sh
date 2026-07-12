@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ensure every Docker Compose secret file docker-compose.yml's `gittensory` service references
+# Ensure every Docker Compose secret file docker-compose.yml's `loopover` service references
 # actually exists on disk, so `docker compose build`/`up` never fails on a missing `secrets:` source
 # file -- Compose requires the file to exist even for an operator who has never touched this feature
 # and is relying entirely on inline .env values (see secrets/README.md: an inline value always wins
@@ -34,8 +34,8 @@ SECRETS_DIR="secrets"
 SECRET_FILES=(
   "github_app_private_key.pem"
   "github_webhook_secret.txt"
-  "gittensory_api_token.txt"
-  "gittensory_mcp_token.txt"
+  "loopover_api_token.txt"
+  "loopover_mcp_token.txt"
   "internal_job_token.txt"
   "selfhost_setup_token.txt"
   "token_encryption_secret.txt"

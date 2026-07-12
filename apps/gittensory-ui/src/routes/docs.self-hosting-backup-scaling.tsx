@@ -55,7 +55,7 @@ LITESTREAM_REGION=us-east-1`}
       <h2>Scheduled backups</h2>
       <p>
         The bundled <code>backup</code> profile writes the active app database to the{" "}
-        <code>gittensory-backups</code> volume. SQLite installs use an online backup; Postgres
+        <code>loopover-backups</code> volume. SQLite installs use an online backup; Postgres
         installs use <code>pg_dump</code>. The same run also snapshots Qdrant when it is enabled.
       </p>
       <CodeBlock lang="bash" code={`docker compose --profile backup up -d`} />
@@ -64,7 +64,7 @@ LITESTREAM_REGION=us-east-1`}
       <p>
         Each run keeps the newest <code>BACKUP_RETAIN</code> backups (default <strong>7</strong>) —
         applied <em>independently per target</em>: <code>postgres/</code>, <code>sqlite/</code>, and{" "}
-        <code>qdrant/</code> in the <code>gittensory-backups</code> volume each retain their own
+        <code>qdrant/</code> in the <code>loopover-backups</code> volume each retain their own
         newest 7, not 7 combined across all three. Set it in <code>.env</code> to change the window:
       </p>
       <CodeBlock filename=".env" code={`BACKUP_RETAIN=14`} />
@@ -108,7 +108,7 @@ LITESTREAM_REGION=us-east-1`}
       <CodeBlock
         filename=".env"
         code={`POSTGRES_PASSWORD=<password>
-DATABASE_URL=postgres://gittensory:<password>@pgbouncer:5432/gittensory
+DATABASE_URL=postgres://loopover:<password>@pgbouncer:5432/loopover
 REDIS_URL=redis://redis:6379
 QDRANT_URL=http://qdrant:6333`}
       />
@@ -131,9 +131,9 @@ QDRANT_URL=http://qdrant:6333`}
       </p>
       <CodeBlock
         lang="bash"
-        code={`export DATABASE_URL=postgres://gittensory:<password>@pgbouncer:5432/gittensory
-npm run selfhost:postgres:migrate -- --sqlite /data/gittensory.sqlite
-npm run selfhost:postgres:migrate -- --sqlite /data/gittensory.sqlite --execute`}
+        code={`export DATABASE_URL=postgres://loopover:<password>@pgbouncer:5432/loopover
+npm run selfhost:postgres:migrate -- --sqlite /data/loopover.sqlite
+npm run selfhost:postgres:migrate -- --sqlite /data/loopover.sqlite --execute`}
       />
 
       <h2>Restore checks</h2>

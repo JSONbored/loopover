@@ -75,6 +75,18 @@ describe("Grafana Sentry data source (#5369)", () => {
     expect(script).toContain("/health");
   });
 
+  it("keeps Sentry and Grafana credentials out of curl argv and child environments", () => {
+    const script = readFileSync(join(process.cwd(), "scripts/setup-sentry-datasource.sh"), "utf8");
+
+    expect(script).not.toContain("set -a");
+    expect(script).not.toContain('AUTH="admin:${GRAFANA_ADMIN_PASSWORD}"');
+    expect(script).not.toContain('-u "$AUTH"');
+    expect(script).not.toContain('-d "$(payload)"');
+    expect(script).toContain('--netrc-file "$NETRC_FILE"');
+    expect(script).toContain('--data-binary @-');
+    expect(script).toMatch(/env -u GRAFANA_ADMIN_PASSWORD -u SENTRY_API_TOKEN curl/);
+  });
+
   it("setup-sentry-datasource.sh is executable, matching setup-github-datasource.sh's own mode", () => {
     const mode = statSync(join(process.cwd(), "scripts/setup-sentry-datasource.sh")).mode;
     // Owner-execute bit (0o100).

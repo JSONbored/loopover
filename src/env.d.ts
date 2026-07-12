@@ -72,6 +72,12 @@ declare global {
      *  Deliberately NOT declared in this chunk; the review path keeps its current concurrency behavior. */
     PUBLIC_API_ORIGIN?: string;
     PUBLIC_SITE_ORIGIN?: string;
+    /** Comma-separated extra origins (each `scheme://host[:port]`) allowed as a post-GitHub-OAuth `returnTo`
+     *  redirect target, alongside PUBLIC_SITE_ORIGIN. Lets the web login flow work correctly from more than
+     *  one live UI domain at once (e.g. during a brand/domain migration) without breaking PUBLIC_SITE_ORIGIN's
+     *  single-value override contract for self-hosters. Unset ⇒ only PUBLIC_SITE_ORIGIN (+ localhost) is
+     *  allowed, exactly as before this var existed. */
+    PUBLIC_SITE_ORIGIN_ALIASES?: string;
     AI_SUMMARIES_ENABLED?: string;
     AI_PUBLIC_COMMENTS_ENABLED?: string;
     /** Model id for a genuine Cloudflare Workers AI binding only — no live deployment (hosted or self-host)

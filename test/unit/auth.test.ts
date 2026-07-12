@@ -789,6 +789,41 @@ describe("private-beta auth and rate limiting", () => {
     expect(local.returnTo).toBe("http://localhost:5173/app");
   });
 
+  it("PUBLIC_SITE_ORIGIN_ALIASES lets a login started on a second live domain return to that same domain (#4762)", async () => {
+    const env = createTestEnv({
+      GITHUB_OAUTH_CLIENT_ID: "client-id",
+      GITHUB_OAUTH_CLIENT_SECRET: "client-secret",
+      PUBLIC_SITE_ORIGIN: "https://gittensory.aethereal.dev",
+      PUBLIC_SITE_ORIGIN_ALIASES: "https://loopover.ai, https://staging.loopover.ai",
+    });
+
+    // The primary PUBLIC_SITE_ORIGIN still works exactly as before.
+    const primary = await startGitHubWebOAuth(env, "https://gittensory-api.aethereal.dev/v1/auth/github/start", "https://gittensory.aethereal.dev/app/workbench");
+    expect(primary.returnTo).toBe("https://gittensory.aethereal.dev/app/workbench");
+
+    // An aliased origin is accepted verbatim, not bounced to the primary origin's fallback.
+    const alias = await startGitHubWebOAuth(env, "https://gittensory-api.aethereal.dev/v1/auth/github/start", "https://loopover.ai/app/workbench");
+    expect(alias.returnTo).toBe("https://loopover.ai/app/workbench");
+
+    // A second, comma-separated alias (with surrounding whitespace) is also accepted.
+    const secondAlias = await startGitHubWebOAuth(env, "https://gittensory-api.aethereal.dev/v1/auth/github/start", "https://staging.loopover.ai/app");
+    expect(secondAlias.returnTo).toBe("https://staging.loopover.ai/app");
+
+    // An origin that is neither the primary nor an alias still falls back to the primary origin's /app.
+    const untrusted = await startGitHubWebOAuth(env, "https://gittensory-api.aethereal.dev/v1/auth/github/start", "https://evil.example/app");
+    expect(untrusted.returnTo).toBe("https://gittensory.aethereal.dev/app");
+
+    // Unset PUBLIC_SITE_ORIGIN_ALIASES behaves exactly as before this var existed -- only the primary origin.
+    const noAliases = createTestEnv({
+      GITHUB_OAUTH_CLIENT_ID: "client-id",
+      GITHUB_OAUTH_CLIENT_SECRET: "client-secret",
+      PUBLIC_SITE_ORIGIN: "https://gittensory.aethereal.dev",
+    });
+    delete (noAliases as Partial<Env>).PUBLIC_SITE_ORIGIN_ALIASES;
+    const rejected = await startGitHubWebOAuth(noAliases, "https://gittensory-api.aethereal.dev/v1/auth/github/start", "https://loopover.ai/app/workbench");
+    expect(rejected.returnTo).toBe("https://gittensory.aethereal.dev/app");
+  });
+
   it("verifies the GitHub token audience before minting a session on the token-exchange path", async () => {
     const env = createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id", GITHUB_OAUTH_CLIENT_SECRET: "client-secret" });
     const introspect = (appClientId: string | undefined) =>

@@ -27,5 +27,10 @@
       "pattern": "gittensory.aethereal.dev",
       "custom_domain": true,
     },
+    // LoopOver rebrand (issue #4762, Step 1): live side-by-side with the domain above, not a replacement yet.
+    {
+      "pattern": "loopover.ai",
+      "custom_domain": true,
+    },
   ],
 }

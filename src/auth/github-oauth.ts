@@ -245,8 +245,13 @@ function normalizeReturnTo(env: Env, value: string | undefined): string {
     // two lines up), so a separate hardcoded entry here was dead weight once a self-hoster sets their own
     // PUBLIC_SITE_ORIGIN -- it kept accepting the cloud origin as a valid redirect target even for a self-host
     // instance that never uses it (#4615). Rely solely on siteOrigin.
+    const aliasOrigins = (env.PUBLIC_SITE_ORIGIN_ALIASES ?? "")
+      .split(",")
+      .map((alias) => alias.trim().replace(/\/$/, ""))
+      .filter(Boolean);
     const allowedOrigins = new Set([
       siteOrigin.replace(/\/$/, ""),
+      ...aliasOrigins,
       "http://localhost:3000",
       "http://localhost:4173",
       "http://localhost:5173",

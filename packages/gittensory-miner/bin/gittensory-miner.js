@@ -21,6 +21,12 @@ import {
   startUpdateCheck,
 } from "../lib/update-check.js";
 import { resolveMinerVersion } from "../lib/version.js";
+import { loadFileSecrets } from "../lib/load-file-secrets.js";
+
+// #5178: resolve `<NAME>_FILE` secret-file indirection (GITHUB_TOKEN_FILE, coding-agent credential files) into
+// the plain env vars BEFORE any CLI reads them, so fleet-mode operators can mount Docker/Swarm/K8s secrets
+// instead of passing plaintext credentials that `docker inspect` would expose. Throws on an unreadable file.
+loadFileSecrets();
 
 const cliArgs = process.argv.slice(2);
 

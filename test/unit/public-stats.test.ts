@@ -34,11 +34,18 @@ function isWeekly(sql: string): boolean {
 function isEffort(sql: string): boolean {
   return sql.includes("reviewEffortMinutes");
 }
+// getOrbGlobalStats's own-ledger anti-join also references `github_app.pr_public_surface_published` (to skip
+// PRs the disposition query already counted) — exclude it here the same way isWeekly/isEffort already are, or
+// every stub that doesn't special-case `orb_pr_outcomes` would wrongly route the orb read through here too.
+function isOrbGlobal(sql: string): boolean {
+  return sql.includes("orb_pr_outcomes");
+}
 function isDispositions(sql: string): boolean {
   return (
     sql.includes("github_app.pr_public_surface_published") &&
     !isWeekly(sql) &&
-    !isEffort(sql)
+    !isEffort(sql) &&
+    !isOrbGlobal(sql)
   );
 }
 // The reversal read is the only one that inspects engine auto-actions (close/merge) against pull_requests state.

@@ -25,14 +25,15 @@
 // GLOBAL: the homepage total folds in every REGISTERED Orb installation's outcomes (getOrbGlobalStats) on top of
 // the own-ledger side, so the counter reflects the whole fleet, not just gittensory's own repos. The own-ledger
 // side (audit_events) is a FROZEN snapshot as of the self-host cutover -- it stops growing the day each repo's
-// live processing moved off this worker -- while orb_pr_outcomes keeps growing in realtime for any repo with the
-// central Orb App installed (including JSONbored's own, which still runs the Orb App for telemetry alongside its
-// self-hosted review engine). The two sources are NOT mutually exclusive by account: JSONbored appears in both,
-// but only overlaps for the few-day window before the cutover froze the own-ledger side, so no excludeAccount is
-// applied here -- a small, bounded double-count for that historical window is preferable to silently dropping
-// all of JSONbored's live post-cutover Orb data (which excluding "jsonbored" used to do, since every REGISTERED
-// installation currently happens to be a JSONbored account). See getOrbGlobalStats for the general-purpose
-// excludeAccount dedup this call deliberately does not use.
+// live processing moved off this worker, and can never grow again now that the old App has been fully deleted --
+// while orb_pr_outcomes keeps growing in realtime for any repo with the central Orb App installed (including
+// JSONbored's own, which still runs the Orb App for telemetry alongside its self-hosted review engine). The two
+// sources overlap by (repo, pr_number), not just by account: earlier reasoning here called that overlap "a small,
+// bounded double-count," but it was measured directly (2026-07-12) at 243 PRs (173 merged + 70 closed, 96% in one
+// repo) -- large enough to move accuracyPct and mislead visitors, not a rounding error. getOrbGlobalStats now
+// excludes exactly those overlapping (repo, pr_number) pairs via a NOT EXISTS anti-join against the same
+// `github_app.pr_public_surface_published` audit events this file's own disposition query reads, so the two sums
+// are over disjoint PR sets and can be added directly.
 import { getOrbGlobalStats } from "../orb/outcomes";
 
 /** FALLBACK estimate of maintainer review/triage time saved per reviewed PR, used ONLY when the real per-PR

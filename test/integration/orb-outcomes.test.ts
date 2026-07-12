@@ -96,4 +96,19 @@ describe("getOrbGlobalStats", () => {
     expect(await getOrbGlobalStats(e, { excludeAccount: "jsonbored" })).toEqual({ merged: 0, closed: 1, total: 1 }); // JSONbored dropped
     expect(await getOrbGlobalStats(e)).toEqual({ merged: 1, closed: 1, total: 2 }); // no exclude → both
   });
+
+  it("excludes a PR already counted by the own-ledger (published-surface audit event), but still counts an unrelated one", async () => {
+    const e = createTestEnv();
+    const db = e.DB as unknown as TestD1Database;
+    await registerInstall(e, 100, 1);
+    // acme/dup#1 was already published (and therefore counted) by the own-ledger disposition query.
+    await db
+      .prepare(
+        "INSERT INTO audit_events (id, event_type, target_key, outcome, created_at) VALUES ('evt-1', 'github_app.pr_public_surface_published', 'acme/dup#1', 'success', '2026-06-24T00:00:00Z')",
+      )
+      .run();
+    await recordOrbPrOutcome(e, "pull_request", closedPr("acme/dup", 1, "2026-06-24T00:00:00Z", 100)); // merged, already own-ledger-counted → must be excluded
+    await recordOrbPrOutcome(e, "pull_request", closedPr("acme/new", 2, null, 100)); // closed, no own-ledger counterpart → must still count
+    expect(await getOrbGlobalStats(e)).toEqual({ merged: 0, closed: 1, total: 1 });
+  });
 });

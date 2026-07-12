@@ -41,10 +41,16 @@ export interface OrbGlobalStats {
  * The public global aggregate: merged / closed / total terminal PR outcomes across REGISTERED installations
  * only (registered = 1) — an install that hasn't been opted in never contributes to the public counter. SUM over
  * no matching rows is NULL, so each total is nullish-guarded to 0 (fail-safe on an empty/cold table).
+ *
+ * The NOT EXISTS anti-join skips any (repo, pr_number) that already has a `github_app.pr_public_surface_published`
+ * audit event — i.e. a PR the own-ledger disposition query in public-stats.ts already counted. Without it, a PR
+ * reviewed before the self-host cutover (own-ledger) that also has a terminal outcome recorded here (Orb) gets
+ * counted twice. Quantified 2026-07-12: 243 PRs (173 merged + 70 closed), 96% in one repo, inflating the public
+ * "PRs reviewed" counter. That event_type's target_key only ever references the own-ledger's own repos, so this
+ * is a no-op for every other registered installation's outcomes.
  */
 export async function getOrbGlobalStats(env: Env, opts: { excludeAccount?: string } = {}): Promise<OrbGlobalStats> {
-  // excludeAccount de-dups an account already counted by another source — the homepage counts JSONbored's own
-  // repos via cloud review_audit, so it excludes that account here to avoid double-counting. "" = include all.
+  // excludeAccount de-dups an account already counted by another source. "" = include all.
   const exclude = (opts.excludeAccount ?? "").toLowerCase();
   const row = await env.DB.prepare(
     `SELECT
@@ -53,7 +59,12 @@ export async function getOrbGlobalStats(env: Env, opts: { excludeAccount?: strin
        COUNT(*) AS total
      FROM orb_pr_outcomes o
      JOIN orb_github_installations i ON i.installation_id = o.installation_id AND i.registered = 1
-     WHERE ? = '' OR LOWER(COALESCE(i.account_login, '')) <> ?`,
+     WHERE (? = '' OR LOWER(COALESCE(i.account_login, '')) <> ?)
+       AND NOT EXISTS (
+         SELECT 1 FROM audit_events ae
+         WHERE ae.event_type = 'github_app.pr_public_surface_published'
+           AND LOWER(ae.target_key) = LOWER(o.repository_full_name) || '#' || o.pr_number
+       )`,
   )
     .bind(exclude, exclude)
     .first<{ merged: number | null; closed: number | null; total: number | null }>();

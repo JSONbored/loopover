@@ -276,7 +276,7 @@ function loadBackgroundInternals({
   context.globalThis = context;
   const vmContext = createContext(context);
   new Script(badgeScript).runInContext(vmContext);
-  const backgroundForTest = backgroundScript.replace(/^import\s+["'][^"']+["'];\s*/m, "");
+  const backgroundForTest = backgroundScript.replace(/^import\s+["'][^"']+["'];\s*/gm, "");
   new Script(backgroundForTest).runInContext(vmContext);
   return vmContext.__gittensoryMinerBackgroundInternals as {
     loadIssueOpportunityContext: (message: {

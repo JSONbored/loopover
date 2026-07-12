@@ -1,0 +1,82 @@
+# Kubernetes workload for gittensory-miner (AMS) fleet mode (#5181).
+#
+# This is a StatefulSet, NOT a Deployment: the miner keeps all of its state in local SQLite ledgers
+# (claim-ledger.sqlite3, plan-store.sqlite3, …) under GITTENSORY_MINER_CONFIG_DIR, and those stores are NOT
+# safe for concurrent multi-pod access. A Deployment can only mount one shared PVC across every replica; a
+# StatefulSet's volumeClaimTemplates give each replica its OWN PersistentVolumeClaim, so N workers run with
+# fully isolated state — the safety property this manifest exists to guarantee. See k8s/README.md.
+#
+# Image: build from packages/gittensory-miner/Dockerfile at the monorepo root and push to your registry:
+#   docker build -f packages/gittensory-miner/Dockerfile -t <registry>/gittensory-miner:latest .
+# Then set `image:` below. Secrets come from k8s/miner-secret.example.yaml (apply that first).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: gittensory-miner
+  labels:
+    app.kubernetes.io/name: gittensory-miner
+    app.kubernetes.io/component: fleet-worker
+spec:
+  serviceName: gittensory-miner
+  # Scale the fleet by editing `replicas` (each replica is one isolated worker) or:
+  #   kubectl scale statefulset/gittensory-miner --replicas=<N>
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gittensory-miner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gittensory-miner
+        app.kubernetes.io/component: fleet-worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: miner
+          # Replace with the image you built + pushed from packages/gittensory-miner/Dockerfile.
+          image: gittensory-miner:latest
+          # ENTRYPOINT is `gittensory-miner`; `run` is the continuous fleet-worker loop.
+          args: ["run"]
+          env:
+            - name: GITTENSORY_MINER_CONFIG_DIR
+              value: /data/miner
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gittensory-miner-secrets
+                  key: GITHUB_TOKEN
+            # Coding-agent provider credentials — optional; present only for the providers you enable.
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gittensory-miner-secrets
+                  key: ANTHROPIC_API_KEY
+                  optional: true
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gittensory-miner-secrets
+                  key: OPENAI_API_KEY
+                  optional: true
+          volumeMounts:
+            - name: miner-data
+              mountPath: /data/miner
+          # A CLI worker, not a server: modest baseline with headroom for a coding-agent subprocess.
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+  # Per-pod PersistentVolumeClaim — each replica gets its OWN volume, never one shared across replicas.
+  volumeClaimTemplates:
+    - metadata:
+        name: miner-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

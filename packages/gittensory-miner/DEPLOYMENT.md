@@ -75,10 +75,24 @@ docker run --rm -it \
   doctor
 ```
 
+**Fleet mode — avoid plaintext credentials.** A plain `-e GITHUB_TOKEN` is visible via `docker inspect` on the host. Any credential can instead be supplied via a `<NAME>_FILE` companion pointing at a mounted secret (Docker/Swarm/K8s secret at `/run/secrets/<name>`); the miner reads and trims the file at startup into the plain `<NAME>`:
+
+```sh
+docker run --rm -it \
+  -e GITTENSORY_MINER_CONFIG_DIR=/data/miner \
+  -e GITHUB_TOKEN_FILE=/run/secrets/github_token \
+  --mount type=bind,src=/host/secrets/github_token,dst=/run/secrets/github_token,ro \
+  -v miner-data:/data/miner \
+  gittensory-miner:latest \
+  doctor
+```
+
+Precedence: an explicit plain `GITHUB_TOKEN` always **wins** over `GITHUB_TOKEN_FILE`. An unreadable `_FILE` path is a hard startup error (never a silent empty credential). The same `_FILE` convention applies to the coding-agent credential env vars your configured `MINER_CODING_AGENT_PROVIDER` requires.
+
 The image entrypoint is `gittensory-miner`; pass subcommands after the image name (`status`, `doctor`, `claim`, …).
 
 - **`/data/miner` volume** — holds all SQLite state (`claim-ledger.sqlite3`, `plan-store.sqlite3`, etc.) so containers are disposable. Defaults to `GITTENSORY_MINER_CONFIG_DIR=/data/miner` in the image.
-- **`GITHUB_TOKEN`** — supplied by the operator at run time; the image contains no credentials.
+- **`GITHUB_TOKEN`** (or **`GITHUB_TOKEN_FILE`**) — supplied by the operator at run time; the image contains no credentials.
 - **Scale** — launch additional containers with the same volume (or partitioned config dirs) for parallel attempts.
 
 The repo-root [`docker-compose.yml`](../../docker-compose.yml) documents the **self-hosted review stack** (the `gittensory` API/orb), not the miner CLI. Miners are clients of that stack (or of github.com directly) and do not require it to run locally.

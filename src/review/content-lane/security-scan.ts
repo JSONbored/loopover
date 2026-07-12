@@ -23,6 +23,7 @@ import {
   hasGenericSecretAssignment,
   isPlaceholderSecretValue,
   SECRET_PATTERNS,
+  secretPatternMatches,
 } from "../secret-patterns";
 
 export interface SecretScanResult {
@@ -33,7 +34,7 @@ export interface SecretScanResult {
 /** Scan a string for known credential / secret patterns. Deterministic, no deps. */
 export function scanForSecrets(text: string): SecretScanResult {
   if (!text) return { found: false, kinds: [] };
-  const kinds = SECRET_PATTERNS.filter((pattern) => pattern.re.test(text)).map((pattern) => pattern.name);
+  const kinds = SECRET_PATTERNS.filter((pattern) => secretPatternMatches(pattern, text)).map((pattern) => pattern.name);
   if (hasGenericSecretAssignment(text)) kinds.push("generic_secret_assignment");
   return { found: kinds.length > 0, kinds };
 }

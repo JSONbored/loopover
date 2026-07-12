@@ -8,6 +8,7 @@ import {
   isPlaceholderSecretValue,
   looksLikeDescriptivePlaceholderPhrase,
   SECRET_PATTERNS,
+  secretPatternMatches,
 } from "../../src/review/secret-patterns";
 
 // Direct unit coverage of the shared module extracted in #4608. secrets-scan.test.ts and
@@ -48,6 +49,38 @@ describe("secret-patterns — shared secret-detection primitives (#4608)", () =>
       for (const kind of ADVISORY_ONLY_SECRET_KINDS) {
         expect(HARD_SECRET_KINDS.has(kind)).toBe(false);
       }
+    });
+  });
+
+  describe("secretPatternMatches", () => {
+    const awsPattern = SECRET_PATTERNS.find((pattern) => pattern.name === "aws_access_key")!;
+
+    it("is a plain .test() for a pattern with no knownSafeValues (byte-identical to before)", () => {
+      const githubPattern = SECRET_PATTERNS.find((pattern) => pattern.name === "github_token")!;
+      expect(githubPattern.knownSafeValues).toBeUndefined();
+      expect(secretPatternMatches(githubPattern, "token ghp_" + "a".repeat(30))).toBe(true);
+      expect(secretPatternMatches(githubPattern, "just prose")).toBe(false);
+    });
+
+    it("does NOT flag AWS's own officially published documentation example key (#4284 regression)", () => {
+      expect(secretPatternMatches(awsPattern, "const key = \"AKIAIOSFODNN7EXAMPLE\";")).toBe(false);
+    });
+
+    it("still flags a real-shaped AWS access key that is not the known-safe literal", () => {
+      expect(secretPatternMatches(awsPattern, "AKIA" + "ABCDEFGHIJKLMNOP")).toBe(true);
+    });
+
+    it("still flags a genuine leak elsewhere in the same text, even alongside the known-safe example", () => {
+      const text = `const example = "AKIAIOSFODNN7EXAMPLE"; const real = "AKIA${"ABCDEFGHIJKLMNOP"}";`;
+      expect(secretPatternMatches(awsPattern, text)).toBe(true);
+    });
+
+    it("reuses an already-global-flagged pattern's regex as-is, rather than re-adding the g flag", () => {
+      // No live SECRET_PATTERNS entry carries the `g` flag today (a duplicate `gg` flag throws), but the
+      // branch that reuses an existing `g` flag instead of appending a second one must still be covered.
+      const alreadyGlobal = { name: "synthetic", re: /\bAKIA[0-9A-Z]{16}\b/g, knownSafeValues: new Set(["AKIAIOSFODNN7EXAMPLE"]) };
+      expect(secretPatternMatches(alreadyGlobal, "AKIAIOSFODNN7EXAMPLE")).toBe(false);
+      expect(secretPatternMatches(alreadyGlobal, "AKIA" + "ABCDEFGHIJKLMNOP")).toBe(true);
     });
   });
 

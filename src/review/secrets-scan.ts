@@ -14,7 +14,7 @@
 // itself before the #4608 extraction. See ./secret-patterns's header and
 // scripts/check-engine-parity.ts's SECRET_DETECTION_TWIN_PAIR for how REES's copy is kept from drifting.
 
-import { hasGenericSecretAssignment, SECRET_PATTERNS } from "./secret-patterns";
+import { hasGenericSecretAssignment, secretPatternMatches, SECRET_PATTERNS } from "./secret-patterns";
 
 // #3041: the one place the pattern list (format-specific SECRET_PATTERNS + the generic keyword-assignment
 // heuristic) is applied to a string. Both `scanForSecrets` (whole-text scan) and
@@ -22,7 +22,7 @@ import { hasGenericSecretAssignment, SECRET_PATTERNS } from "./secret-patterns";
 // exactly one implementation of "does this text contain secret-shaped content" to keep in sync.
 function matchedKindsIn(text: string): string[] {
   if (!text) return [];
-  const kinds = SECRET_PATTERNS.filter((pattern) => pattern.re.test(text)).map((pattern) => pattern.name);
+  const kinds = SECRET_PATTERNS.filter((pattern) => secretPatternMatches(pattern, text)).map((pattern) => pattern.name);
   if (hasGenericSecretAssignment(text)) kinds.push("generic_secret_assignment");
   return kinds;
 }

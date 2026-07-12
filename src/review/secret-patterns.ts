@@ -14,11 +14,29 @@
 // isPlaceholderSecretValue body and the kind names it shares with HARD_SECRET_KINDS below are instead
 // drift-checked mechanically — see scripts/check-engine-parity.ts's SECRET_DETECTION_TWIN_PAIR.
 
-export const SECRET_PATTERNS: Array<{ name: string; re: RegExp }> = [
+export interface SecretPattern {
+  name: string;
+  re: RegExp;
+  /** Exact matched-substring literals that are safe to ignore even though they match `re` -- e.g. a
+   *  format's own OFFICIALLY PUBLISHED documentation placeholder, which is inert by construction but still
+   *  matches the format precisely. Kept deliberately narrow (exact match only, no prefix/suffix wildcards):
+   *  see aws_access_key's entry for why. Absent for every other kind, which stays unconditional. */
+  knownSafeValues?: ReadonlySet<string>;
+}
+
+export const SECRET_PATTERNS: SecretPattern[] = [
   { name: "github_token", re: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/ },
   { name: "github_pat", re: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/ },
   { name: "private_key_block", re: /-----BEGIN(?: RSA| EC| OPENSSH| PGP| DSA)? PRIVATE KEY-----/ },
-  { name: "aws_access_key", re: /\bAKIA[0-9A-Z]{16}\b/ },
+  {
+    name: "aws_access_key",
+    re: /\bAKIA[0-9A-Z]{16}\b/,
+    // AWS's own officially published documentation placeholder (used across the AWS SDK's own docs and
+    // countless tutorials specifically so it reads as inert) -- confirmed to have caused 4 false-positive PR
+    // closes in gittensory's own #4284 subprocess-env-redaction-helper epic (a PR building a REDACTION
+    // feature needed this exact literal as a realistic-looking non-secret test fixture).
+    knownSafeValues: new Set(["AKIAIOSFODNN7EXAMPLE"]),
+  },
   { name: "slack_token", re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
   { name: "google_api_key", re: /\bAIza[0-9A-Za-z_-]{35}\b/ },
   { name: "gitlab_token", re: /\bglpat-[0-9A-Za-z_-]{20}(?![0-9A-Za-z_-])/ },
@@ -140,6 +158,22 @@ export function hasGenericSecretAssignment(text: string): boolean {
     // The captured value group is mandatory (not `?`/`*`-wrapped), so it is always present whenever the
     // overall match succeeds -- non-null by construction, not a runtime branch.
     if (!isPlaceholderSecretValue(match[1]!)) return true;
+  }
+  return false;
+}
+
+/** True when `pattern.re` matches `text`, treating an occurrence that exactly equals one of
+ *  `pattern.knownSafeValues` as a non-match. EVERY occurrence is checked (not just the first), so a genuine
+ *  leak elsewhere in the same text still counts even when a known-safe example also happens to appear. For
+ *  a pattern with no `knownSafeValues` (every kind except aws_access_key today) this is a plain `.test()`,
+ *  byte-identical to before. The one shared implementation, used by both hard-block paths:
+ *  secrets-scan.ts's matchedKindsIn and content-lane/security-scan.ts's scanForSecrets. */
+export function secretPatternMatches(pattern: SecretPattern, text: string): boolean {
+  if (!pattern.knownSafeValues) return pattern.re.test(text);
+  const globalRe = new RegExp(pattern.re.source, pattern.re.flags.includes("g") ? pattern.re.flags : `${pattern.re.flags}g`);
+  let match: RegExpExecArray | null;
+  while ((match = globalRe.exec(text)) !== null) {
+    if (!pattern.knownSafeValues.has(match[0])) return true;
   }
   return false;
 }

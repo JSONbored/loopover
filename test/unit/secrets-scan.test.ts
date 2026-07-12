@@ -26,7 +26,13 @@ describe("scanForSecrets — deterministic secret-pattern scanner", () => {
   });
 
   it("flags an AWS access key id", () => {
-    expect(scanForSecrets("AKIAIOSFODNN7EXAMPLE").kinds).toContain("aws_access_key");
+    expect(scanForSecrets("AKIA" + "ABCDEFGHIJKLMNOP").kinds).toContain("aws_access_key");
+  });
+
+  // #4284: AWS's own officially published documentation placeholder caused 4 false-positive PR closes in
+  // gittensory's own subprocess-env-redaction-helper epic before this exclusion existed.
+  it("does NOT flag AWS's own officially published documentation example key", () => {
+    expect(scanForSecrets("AKIAIOSFODNN7EXAMPLE").kinds).not.toContain("aws_access_key");
   });
 
   it("flags a Slack token", () => {
@@ -44,7 +50,7 @@ describe("scanForSecrets — deterministic secret-pattern scanner", () => {
   });
 
   it("collects multiple distinct kinds in one scan", () => {
-    const r = scanForSecrets("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 and AKIAIOSFODNN7EXAMPLE");
+    const r = scanForSecrets("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 and AKIA" + "ABCDEFGHIJKLMNOP");
     expect(r.found).toBe(true);
     expect(r.kinds).toEqual(expect.arrayContaining(["github_token", "aws_access_key"]));
   });

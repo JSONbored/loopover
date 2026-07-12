@@ -249,7 +249,6 @@ describe("extractRepoProfile (#2999)", () => {
     await seedChunk(env, "src/widget.ts", "x");
     await upsertRepositorySettings(env, {
       repoFullName: REPO,
-      gateCheckMode: "off",
       checkRunMode: "off",
       reviewCheckMode: "required",
     });
@@ -267,7 +266,6 @@ describe("extractRepoProfile (#2999)", () => {
     // gate.checkMode still gets reported as publishing one.
     await upsertRepositorySettings(env, {
       repoFullName: REPO,
-      gateCheckMode: "enabled",
       checkRunMode: "enabled",
       reviewCheckMode: "disabled",
     });

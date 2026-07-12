@@ -67,7 +67,6 @@ async function seedGateEnabledRepo(env: Env): Promise<void> {
     publicSurface: "off",
     autoLabelEnabled: false,
     checkRunMode: "off",
-    gateCheckMode: "enabled",
     reviewCheckMode: "required",
     slopGateMode: "advisory", // turns the shared gateFiles load on so the reuse branch is hit
   });

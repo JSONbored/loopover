@@ -39,7 +39,6 @@ function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettin
     publicSignalLevel: "standard",
     checkRunMode: "off",
     checkRunDetailLevel: "standard",
-    gateCheckMode: "off",
     regateSweepOrderMode: "staleness",
     reviewCheckMode: "disabled",
     gatePack: "gittensor",
@@ -303,7 +302,7 @@ describe("buildRepoSettingsPreview", () => {
     const gateOff = buildSampleCheckRunReadiness({
       repoFullName: repo.fullName,
       repo,
-      settings: settings({ checkRunMode: "enabled", checkRunDetailLevel: "standard", gateCheckMode: "off" }),
+      settings: settings({ checkRunMode: "enabled", checkRunDetailLevel: "standard" }),
       issues,
       pullRequests,
       sample: { authorLogin: "miner", authorAssociation: "CONTRIBUTOR", minerStatus: "confirmed", title: "Sample", labels: [], linkedIssues: [] },
@@ -313,12 +312,12 @@ describe("buildRepoSettingsPreview", () => {
     const gateOn = buildSampleCheckRunReadiness({
       repoFullName: repo.fullName,
       repo,
-      settings: settings({ checkRunMode: "enabled", checkRunDetailLevel: "standard", gateCheckMode: "enabled" }),
+      settings: settings({ checkRunMode: "enabled", checkRunDetailLevel: "standard" }),
       issues,
       pullRequests,
       sample: { authorLogin: "miner", authorAssociation: "CONTRIBUTOR", minerStatus: "confirmed", title: "Sample", labels: [], linkedIssues: [] },
       body: null,
-      decision: decidePublicSurface({ settings: settings({ checkRunMode: "enabled", gateCheckMode: "enabled" }), authorLogin: "miner", minerStatus: "confirmed" }),
+      decision: decidePublicSurface({ settings: settings({ checkRunMode: "enabled" }), authorLogin: "miner", minerStatus: "confirmed" }),
     });
     expect(gateOff?.components.length).toBeGreaterThan(0);
     expect(gateOn?.components.length).toBeGreaterThan(0);
@@ -342,7 +341,7 @@ describe("buildRepoSettingsPreview", () => {
   it("explains a missing Checks: write permission when the opt-in gate is enabled", () => {
     const preview = buildRepoSettingsPreview({env: {},
       ...base,
-      settings: settings({ publicSurface: "off", commentMode: "off", autoLabelEnabled: false, gateCheckMode: "enabled", reviewCheckMode: "required" }),
+      settings: settings({ publicSurface: "off", commentMode: "off", autoLabelEnabled: false, reviewCheckMode: "required" }),
       installation: { ...healthyInstall, status: "needs_attention", missingPermissions: ["checks"] },
       sample: { authorLogin: "contributor", minerStatus: "not_found" },
     });

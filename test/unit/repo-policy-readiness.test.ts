@@ -19,7 +19,6 @@ function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettin
     publicSignalLevel: "standard",
     checkRunMode: "enabled",
     checkRunDetailLevel: "standard",
-    gateCheckMode: "off",
     regateSweepOrderMode: "staleness",
     reviewCheckMode: "disabled",
     gatePack: "gittensor",

@@ -388,7 +388,6 @@ async function seedGateEnabledRepo(env: Env): Promise<void> {
     publicSurface: "off",
     autoLabelEnabled: false,
     checkRunMode: "off",
-    gateCheckMode: "enabled",
     reviewCheckMode: "required",
     linkedIssueGateMode: "block",
     requireLinkedIssue: true,

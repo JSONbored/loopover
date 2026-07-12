@@ -475,7 +475,7 @@ describe("processGitHubWebhook records the reputation outcome on a terminal PR (
     // GITTENSORY_REVIEW_UNIFIED_COMMENT on so the closing-PR comment path takes the unified-renderer branch.
     const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true", GITTENSORY_REVIEW_UNIFIED_COMMENT: "true" });
     // Gate enabled so the closing-PR public-surface path (skipped-gate + unified closed comment) executes.
-    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", gateCheckMode: "enabled" });
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory" });
     // External calls (token/miner/github) are best-effort + caught; stub them so nothing throws.
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
@@ -580,7 +580,7 @@ describe("processGitHubWebhook records the reputation outcome on a terminal PR (
     // Reputation ON, but the PR is still OPEN and the gate does not route it to manual → undefined outcome.
     const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
     // Gate OFF for this repo so the open PR's gate is `undefined` (not failure/action_required) → no "manual".
-    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", gateCheckMode: "off", publicSurface: "off", commentMode: "off" });
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", publicSurface: "off", commentMode: "off" });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });

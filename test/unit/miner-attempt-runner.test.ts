@@ -161,7 +161,7 @@ describe("runMinerAttempt (#2337) — the real create->review->gate->submit pipe
     expect(result.execResult).toEqual({ ranAt: 10_000 });
     expect(result.loopResult.outcome).toBe("handoff");
     // Real per-iteration driver costUsd summed into the loop result (#5135's loop needs this for budgetSpent).
-    expect(result.loopResult.totalCostUsd).toBe(0.42);
+    expect(((result.loopResult as unknown) as { totalCostUsd: number }).totalCostUsd).toBe(0.42);
   });
 
   it("defaults the open_pr body to an empty string when the loop input never set one", async () => {
@@ -192,8 +192,8 @@ describe("runMinerAttempt (#2337) — the real create->review->gate->submit pipe
 
     expect(result.outcome).toBe("abandon");
     // The failed iteration's real turnsUsed/costUsd still counted -- an abandoned attempt was still billed.
-    expect(result.loopResult.totalTurnsUsed).toBe(2);
-    expect(result.loopResult.totalCostUsd).toBe(0.11);
+    expect(((result.loopResult as unknown) as { totalTurnsUsed: number }).totalTurnsUsed).toBe(2);
+    expect(((result.loopResult as unknown) as { totalCostUsd: number }).totalCostUsd).toBe(0.11);
   });
 
   it("stale: a superseded claim aborts before the submission-gate or governor ever run", async () => {

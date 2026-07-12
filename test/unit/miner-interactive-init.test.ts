@@ -43,9 +43,13 @@ class FakeStdin extends EventEmitter {
 }
 
 function makeFakeStdout() {
+  const write = vi.fn((chunk: string | Uint8Array) => {
+    void chunk;
+    return true;
+  });
   return {
     isTTY: true,
-    write: vi.fn(() => true),
+    write,
   };
 }
 
@@ -188,22 +192,24 @@ describe("gittensory-miner interactive init raw TTY path (#5176)", () => {
     );
     expect(statSync(envFilePath).mode & 0o777).toBe(0o600);
     expect(
-      stdout.write.mock.calls.some(([chunk]) =>
+      (stdout.write.mock.calls as Array<[unknown]>).some(([chunk]) =>
         String(chunk).includes("Choose a coding-agent provider"),
       ),
     ).toBe(true);
     expect(
-      stdout.write.mock.calls.some(([chunk]) =>
+      (stdout.write.mock.calls as Array<[unknown]>).some(([chunk]) =>
         String(chunk).includes("Please choose a number from 1 to 4."),
       ),
     ).toBe(true);
     expect(
-      stdout.write.mock.calls.some(([chunk]) =>
+      (stdout.write.mock.calls as Array<[unknown]>).some(([chunk]) =>
         String(chunk).includes("Enter GITHUB_TOKEN: "),
       ),
     ).toBe(true);
     expect(
-      stdout.write.mock.calls.some(([chunk]) => String(chunk).includes("\n")),
+      (stdout.write.mock.calls as Array<[unknown]>).some(([chunk]) =>
+        String(chunk).includes("\n"),
+      ),
     ).toBe(true);
   });
 });

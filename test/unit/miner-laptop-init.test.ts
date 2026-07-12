@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   checkDockerPresent,
   checkLaptopStateSqlite,
+  type InteractiveInitPrompt,
   initLaptopState,
   resolveLaptopInitEnvFilePath,
   resolveLaptopStateDbPath,
@@ -97,7 +98,7 @@ describe("gittensory-miner laptop init (#2329)", () => {
       askChoice: vi.fn(
         async (
           question: string,
-          choices: Array<{ value: string }>,
+          choices: ReadonlyArray<{ value: string; label: string }>,
           defaultIndex: number,
         ) => {
           expect(question).toContain("coding-agent provider");
@@ -122,7 +123,7 @@ describe("gittensory-miner laptop init (#2329)", () => {
         }
         throw new Error(`unexpected question: ${question}`);
       }),
-    };
+    } satisfies InteractiveInitPrompt;
     const doctor = vi.fn(
       async (
         _args: string[],

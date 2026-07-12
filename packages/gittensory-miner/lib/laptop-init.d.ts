@@ -47,6 +47,13 @@ export function resolveLaptopInitEnvFilePath(
   env?: Record<string, string | undefined>,
 ): string;
 
+export function createInteractiveInitPrompt(
+  io?: {
+    stdin?: NodeJS.ReadStream;
+    stdout?: NodeJS.WriteStream;
+  },
+): InteractiveInitPrompt;
+
 export function initLaptopState(
   env?: Record<string, string | undefined>,
 ): LaptopInitResult;

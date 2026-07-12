@@ -138,6 +138,12 @@ function createCliProvider(
     // unconfigured in the way that matters — never hand back a driver whose every run() would throw.
     throw new Error(`unconfigured_coding_agent_driver_missing_spawn:${command}-cli`);
   }
+  if (options.hooks !== undefined) {
+    // CLI subprocess providers have no hook-registration surface. If a caller supplied house-rule hooks, treating
+    // them as "best effort" would silently run prompt-influenced local code without the policy the caller asked
+    // for, so fail closed until a CLI-native enforcement layer exists.
+    throw new Error(`unsupported_coding_agent_driver_hooks:${command}-cli`);
+  }
   const model = firstConfiguredEnvValue(env[modelEnvKey]);
   const timeoutMs = configuredTimeoutMs(env);
   const buildArgs = buildCliArgsWithConfiguredModel(model);

@@ -62,6 +62,12 @@ export function createRealCliSubprocessSpawn() {
  * automatic-enforcement guarantee `runHouseRulesEnforcedCodingAgentAttempt` gives task-level callers, but at
  * the raw driver-construction level `attempt-runner.js`'s `deps.driver` actually needs.
  *
+ * The default only applies to `agent-sdk`, the one provider with a real hook-registration surface. CLI
+ * subprocess providers (`claude-cli`/`codex-cli`) have none, and the engine's `createCliProvider` fails closed
+ * if `hooks` is supplied at all (driver-factory.ts) -- filling the default for them here would make every CLI
+ * construction throw. An explicitly-supplied `options.hooks` always wins and is forwarded as-is, so a caller
+ * that deliberately asks a CLI provider to enforce hooks still gets that same fail-closed rejection.
+ *
  * Fails closed (throws) when no provider is configured, or when a CLI provider is selected without a real
  * spawn available — never silently falls back to a driver that can never run.
  *
@@ -69,6 +75,7 @@ export function createRealCliSubprocessSpawn() {
  * @param {{
  *   spawn?: import("@jsonbored/gittensory-engine").CliSubprocessSpawnFn,
  *   query?: import("@jsonbored/gittensory-engine").AgentSdkQueryFn,
+ *   hooks?: import("@jsonbored/gittensory-engine").AgentSdkHooks,
  *   houseRulesConfig?: unknown,
  *   houseRulesOptions?: unknown,
  * }} [options]
@@ -79,11 +86,16 @@ export function constructProductionCodingAgentDriver(env, options = {}) {
   if (!providerName) {
     throw new Error("unconfigured_coding_agent_driver:no_provider_in_MINER_CODING_AGENT_PROVIDER");
   }
+  const hooks =
+    options.hooks ??
+    (providerName.trim().toLowerCase() === "agent-sdk"
+      ? buildHouseRulesAgentSdkHooks(options.houseRulesConfig, options.houseRulesOptions)
+      : undefined);
   return createCodingAgentDriver({
     providerName,
     env,
     spawn: options.spawn ?? createRealCliSubprocessSpawn(),
     ...(options.query !== undefined ? { query: options.query } : {}),
-    hooks: buildHouseRulesAgentSdkHooks(options.houseRulesConfig, options.houseRulesOptions),
+    ...(hooks !== undefined ? { hooks } : {}),
   });
 }

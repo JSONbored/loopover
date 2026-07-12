@@ -122,6 +122,21 @@ describe("constructProductionCodingAgentDriver (#5131)", () => {
     expect(typeof driver.run).toBe("function");
   });
 
+  it("REGRESSION: does NOT default-fill house-rule hooks for claude-cli/codex-cli — the default only applies to agent-sdk, the one provider that can enforce them", () => {
+    expect(() => constructProductionCodingAgentDriver({ MINER_CODING_AGENT_PROVIDER: "claude-cli" })).not.toThrow();
+    expect(() => constructProductionCodingAgentDriver({ MINER_CODING_AGENT_PROVIDER: "codex-cli" })).not.toThrow();
+  });
+
+  it("still fails closed for claude-cli/codex-cli when the caller EXPLICITLY supplies hooks (a real request the engine correctly rejects rather than silently dropping)", () => {
+    const explicitHooks = { PreToolUse: [{ hooks: [async () => ({})] }] };
+    expect(() =>
+      constructProductionCodingAgentDriver({ MINER_CODING_AGENT_PROVIDER: "claude-cli" }, { hooks: explicitHooks }),
+    ).toThrow(/unsupported_coding_agent_driver_hooks:claude-cli/);
+    expect(() =>
+      constructProductionCodingAgentDriver({ MINER_CODING_AGENT_PROVIDER: "codex-cli" }, { hooks: explicitHooks }),
+    ).toThrow(/unsupported_coding_agent_driver_hooks:codex-cli/);
+  });
+
   it("wires house-rule enforcement into the agent-sdk provider's hooks by default", async () => {
     const captured: { input?: Parameters<AgentSdkQueryFn>[0] } = {};
     const driver = constructProductionCodingAgentDriver(

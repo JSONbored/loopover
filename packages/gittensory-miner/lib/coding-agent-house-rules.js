@@ -36,9 +36,10 @@ export function buildHouseRulesAgentSdkHooks(config = {}, options = {}) {
  * {@link buildHouseRulesAgentSdkHooks} for the `agent-sdk` provider, so house-rule enforcement (#2343) is ON
  * by default rather than opt-in. An explicitly-supplied `hooks` option always wins (e.g. a test injecting its
  * own hook double, or a caller composing additional hooks of its own) -- this only fills the gap when the
- * caller omitted it entirely. Providers other than `agent-sdk` (`noop`, `claude-cli`, `codex-cli`) ignore
- * `hooks` entirely (only the in-process SDK session has a hook-registration concept), so defaulting it for
- * them is inert, never an error.
+ * caller omitted it entirely. CLI providers (`claude-cli`, `codex-cli`) have no hook-registration surface, and
+ * the engine fails closed if `hooks` is supplied to them at all -- so the default is scoped to `agent-sdk`
+ * only; a CLI attempt with no explicit `hooks` gets none (today's inert no-op), while one that explicitly
+ * supplies `hooks` still gets the engine's real fail-closed rejection instead of a silently unenforced run.
  *
  * @param {Parameters<typeof runCodingAgentAttempt>[0] & {
  *   houseRulesConfig?: Parameters<typeof buildHouseRulesPreToolUseHook>[0],
@@ -48,6 +49,10 @@ export function buildHouseRulesAgentSdkHooks(config = {}, options = {}) {
  */
 export function runHouseRulesEnforcedCodingAgentAttempt(options) {
   const { houseRulesConfig, houseRulesOptions, ...attemptOptions } = options;
-  const hooks = attemptOptions.hooks ?? buildHouseRulesAgentSdkHooks(houseRulesConfig, houseRulesOptions);
-  return runCodingAgentAttempt({ ...attemptOptions, hooks });
+  const hooks =
+    attemptOptions.hooks ??
+    (attemptOptions.providerName.trim().toLowerCase() === "agent-sdk"
+      ? buildHouseRulesAgentSdkHooks(houseRulesConfig, houseRulesOptions)
+      : undefined);
+  return runCodingAgentAttempt({ ...attemptOptions, ...(hooks !== undefined ? { hooks } : {}) });
 }

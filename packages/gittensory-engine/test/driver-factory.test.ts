@@ -97,6 +97,18 @@ test("a CLI provider without a spawn dependency fails closed (#4289)", () => {
   );
 });
 
+test("a CLI provider with hooks fails closed because subprocesses cannot enforce them", () => {
+  assert.throws(
+    () =>
+      createCodingAgentDriver({
+        providerName: "claude-cli",
+        spawn: async () => ({ stdout: "done", code: 0 }),
+        hooks: { PreToolUse: [{ hooks: [async () => ({})] }] },
+      }),
+    /unsupported_coding_agent_driver_hooks:claude-cli/,
+  );
+});
+
 test("resolveFirstConfiguredCodingAgentDriverName is primary-then-fallback over the provider list (#4289)", () => {
   assert.equal(
     resolveFirstConfiguredCodingAgentDriverName({ MINER_CODING_AGENT_PROVIDER: "mystery, agent-sdk" }),

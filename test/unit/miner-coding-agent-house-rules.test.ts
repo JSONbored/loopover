@@ -121,6 +121,26 @@ describe("runHouseRulesEnforcedCodingAgentAttempt (#2343 follow-up)", () => {
     expect(result.result.ok).toBe(true);
   });
 
+  it("REGRESSION: does NOT default-fill hooks for claude-cli — the default only applies to agent-sdk, the one provider that can enforce them", async () => {
+    const result = await runHouseRulesEnforcedCodingAgentAttempt({
+      providerName: "claude-cli",
+      task,
+      spawn: async () => ({ stdout: "done", code: 0 }),
+    });
+    expect(result.result.ok).toBe(true);
+  });
+
+  it("still fails closed for claude-cli when the caller EXPLICITLY supplies hooks (a real request the engine correctly rejects rather than silently dropping)", async () => {
+    await expect(
+      runHouseRulesEnforcedCodingAgentAttempt({
+        providerName: "claude-cli",
+        task,
+        spawn: async () => ({ stdout: "done", code: 0 }),
+        hooks: { PreToolUse: [{ hooks: [async () => ({})] }] },
+      }),
+    ).rejects.toThrow(/unsupported_coding_agent_driver_hooks:claude-cli/);
+  });
+
   it("a paused/dry-run attempt never constructs a driver, so hooks default harmlessly without ever being consulted", async () => {
     const result = await runHouseRulesEnforcedCodingAgentAttempt({
       providerName: "agent-sdk",

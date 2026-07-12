@@ -9,6 +9,9 @@ The interface itself lives in `@jsonbored/gittensory-engine`
 ([`packages/gittensory-engine/src/miner/coding-agent-driver.ts`](../../gittensory-engine/src/miner/coding-agent-driver.ts));
 the orchestration around it (mode gating, invocation, the factory) lives in the sibling modules described below.
 
+> **See also:** [Observing your miner](observability.md) — point Grafana at the miner's local SQLite ledgers
+> (attempt log, prediction ledger) to see what the driver actually did.
+
 ## Why a seam, and why this shape
 
 The design deliberately mirrors the review stack's `SelfHostAi` (`src/selfhost/ai.ts`) rather than inventing a new
@@ -23,18 +26,18 @@ autonomous continue/stop decisions — the task handed to a driver is already sc
 
 ```ts
 type CodingAgentDriverTask = {
-  attemptId: string;            // stable id for this attempt (keys the attempt log)
-  workingDirectory: string;     // the ONLY directory a driver may edit (see worktree isolation below)
+  attemptId: string; // stable id for this attempt (keys the attempt log)
+  workingDirectory: string; // the ONLY directory a driver may edit (see worktree isolation below)
   acceptanceCriteriaPath: string; // path to the immutable acceptance-criteria file written before the run
-  instructions: string;         // the metadata-only prompt (no source contents)
-  maxTurns: number;             // hard cap on agent iterations for this attempt
+  instructions: string; // the metadata-only prompt (no source contents)
+  maxTurns: number; // hard cap on agent iterations for this attempt
 };
 
 type CodingAgentDriverResult = {
   ok: boolean;
   changedFiles: readonly string[];
   summary: string;
-  transcript?: string;          // opaque provider transcript for operator inspection
+  transcript?: string; // opaque provider transcript for operator inspection
   turnsUsed?: number;
   error?: string;
 };
@@ -53,15 +56,15 @@ Agent-SDK driver (#4267) — register in `createCodingAgentDriver` as `claude-cl
 
 A driver never runs in isolation. The neighborhood it plugs into:
 
-| Concern | Module | What it provides |
-|---|---|---|
-| Execution mode | `coding-agent-mode.ts` | `paused` / `dry_run` / `live` with deny-toward-safety precedence; `codingAgentModeExecutes(mode)` is the single "should this attempt actually spawn?" boolean. A `dry_run` is a pure no-op at the driver boundary. |
-| Invocation | `coding-agent-invoke.ts` | `invokeCodingAgentDriver(driver, task, mode?, log?)` — gates on the mode, calls `driver.run`, and streams lifecycle events to an `AttemptLogSink`. |
-| Factory | `driver-factory.ts` | `createCodingAgentDriver(options)` resolves a driver by configured name; `resolveConfiguredCodingAgentDriverNames` / `isConfiguredCodingAgentDriver` deny unknown names by default; `runCodingAgentAttempt(options)` is the top-level "resolve + invoke" convenience. |
-| Attempt log | `attempt-log.ts` (#4294) | `ATTEMPT_LOG_EVENT_TYPES` + `normalizeAttemptLogEvent` + `createAttemptLogBuffer` + `formatAttemptLogJsonl` — an append-only, JSONL-exportable event trace per attempt, independent of any driver's own transcript. Durable persistence: `packages/gittensory-miner/lib/attempt-log.js` (sibling SQLite store; imports the engine normalizer). |
-| Metering | `attempt-metering.ts` (#4311) | `accumulateAttemptUsage` / `meterAttemptUsage` / `evaluateAttemptBudget` over `AttemptBudgetAxis` (`tokens` / `turns` / `wallClockMs` / `costUsd`). |
-| Acceptance criteria | (#4271) | The immutable criteria file at `task.acceptanceCriteriaPath`, written before the driver starts. |
-| Worktree isolation | (#4269) | Each attempt's `task.workingDirectory` is a dedicated git worktree; a driver must never edit outside it. |
+| Concern             | Module                        | What it provides                                                                                                                                                                                                                                                                                                                               |
+| ------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Execution mode      | `coding-agent-mode.ts`        | `paused` / `dry_run` / `live` with deny-toward-safety precedence; `codingAgentModeExecutes(mode)` is the single "should this attempt actually spawn?" boolean. A `dry_run` is a pure no-op at the driver boundary.                                                                                                                             |
+| Invocation          | `coding-agent-invoke.ts`      | `invokeCodingAgentDriver(driver, task, mode?, log?)` — gates on the mode, calls `driver.run`, and streams lifecycle events to an `AttemptLogSink`.                                                                                                                                                                                             |
+| Factory             | `driver-factory.ts`           | `createCodingAgentDriver(options)` resolves a driver by configured name; `resolveConfiguredCodingAgentDriverNames` / `isConfiguredCodingAgentDriver` deny unknown names by default; `runCodingAgentAttempt(options)` is the top-level "resolve + invoke" convenience.                                                                          |
+| Attempt log         | `attempt-log.ts` (#4294)      | `ATTEMPT_LOG_EVENT_TYPES` + `normalizeAttemptLogEvent` + `createAttemptLogBuffer` + `formatAttemptLogJsonl` — an append-only, JSONL-exportable event trace per attempt, independent of any driver's own transcript. Durable persistence: `packages/gittensory-miner/lib/attempt-log.js` (sibling SQLite store; imports the engine normalizer). |
+| Metering            | `attempt-metering.ts` (#4311) | `accumulateAttemptUsage` / `meterAttemptUsage` / `evaluateAttemptBudget` over `AttemptBudgetAxis` (`tokens` / `turns` / `wallClockMs` / `costUsd`).                                                                                                                                                                                            |
+| Acceptance criteria | (#4271)                       | The immutable criteria file at `task.acceptanceCriteriaPath`, written before the driver starts.                                                                                                                                                                                                                                                |
+| Worktree isolation  | (#4269)                       | Each attempt's `task.workingDirectory` is a dedicated git worktree; a driver must never edit outside it.                                                                                                                                                                                                                                       |
 
 ## Authoring a third driver
 

@@ -79,7 +79,7 @@ describe("opportunity fan-out per-tenant forge config (#4784)", () => {
     );
     expect(calls.some((call) => call.url.includes("/repos/"))).toBe(false);
     // Headers carry the tenant's accept/user-agent and a custom API-version header name+value (no github header).
-    const headers = calls[0].headers;
+    const headers = calls[0]?.headers ?? {};
     expect(headers.accept).toBe("application/vnd.forge+json");
     expect(headers["user-agent"]).toBe("acme-tenant-bot");
     expect(headers["x-forge-version"]).toBe("v9");
@@ -125,6 +125,6 @@ describe("opportunity fan-out per-tenant forge config (#4784)", () => {
     });
 
     // The top-level override supplies the host; the rest of the forge config (path prefix) still applies.
-    expect(calls[0].url).toBe("https://legacy.example.com/repositories/acme/widgets/contents/AI-USAGE.md");
+    expect(calls[0]?.url).toBe("https://legacy.example.com/repositories/acme/widgets/contents/AI-USAGE.md");
   });
 });

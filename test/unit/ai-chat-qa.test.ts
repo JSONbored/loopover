@@ -261,13 +261,13 @@ describe("generateChatQaAnswer", () => {
   it("redacts private lane signals from cached rationale before prompting the provider", async () => {
     const run = vi.fn(async () => ({ response: "Public-safe readiness answer." }));
     const env = createTestEnv({ AI_ADVISORY: { run } as unknown as Ai, AI_DAILY_NEURON_BUDGET: "10000" });
+    // publicSafeSummary (not why/blockedBy -- compactChatSignalBundle never reads either of those, by design;
+    // see the redaction-boundary comment above PRIVATE_DECISION_BLOCKER_PATTERN) is the field that actually
+    // reaches the prompt, so it's the one that must exercise the new PRIVATE_LANE_SIGNAL_PATTERN end-to-end.
     const result = await generateChatQaAnswer(env, {
       bundle: bundleFixture(undefined, {
-        why: [
-          "owner/repo: Maintainer cut: 1.",
-          "owner/repo: split lane (direct PR 1, issue-discovery 1); both lanes are useful here.",
-          "owner/repo: direct PR lane share 1 with no hard personal blocker.",
-        ],
+        publicSafeSummary:
+          "Maintainer cut: 1. Split lane (direct PR 1, issue-discovery 1); both lanes are useful here. Direct PR lane share 1 with no hard personal blocker.",
       }),
       question: "what should I know?",
       advisoryAiRouting: ADVISORY_ON,

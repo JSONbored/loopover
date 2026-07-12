@@ -6,21 +6,16 @@ vi.mock("@jsonbored/gittensory-engine", async () => {
 
 import { resolveRejectionSignaled } from "../../packages/gittensory-miner/lib/rejection-signal.js";
 
-// resolveRejectionSignaled fetches plain markdown text (AI-USAGE.md/CONTRIBUTING.md), never JSON, so
-// json() is never actually called -- it's here only to satisfy SelfReviewContextFetch's response shape.
 function textResponse(text: string | null, status = 200) {
   return {
     ok: status >= 200 && status < 300,
     status,
-    json: async (): Promise<unknown> => {
-      throw new Error("textResponse: json() is unused by resolveRejectionSignaled");
-    },
-    text: async () => text ?? "",
+    text: async () => text,
   };
 }
 
 /** Routes by URL substring; a null respond() throws to simulate a network failure. */
-function routedFetch(routes: Record<string, () => ReturnType<typeof textResponse>>) {
+function routedFetch(routes: Record<string, () => unknown>) {
   return async (url: string) => {
     for (const [substring, respond] of Object.entries(routes)) {
       if (url.includes(substring)) return respond();

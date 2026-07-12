@@ -160,11 +160,17 @@ export function checkCodexCliPresent(options = {}) {
   } catch {
     // auth.json missing or unreadable — codex would fail for lack of credentials at call time.
   }
-  return {
-    name: "codex-cli-present",
-    ok: true,
-    detail: authed ? `found at ${codexPath} (authenticated)` : `found at ${codexPath} (not authenticated: run \`codex auth\`)`,
-  };
+  if (authed) {
+    return { name: "codex-cli-present", ok: true, detail: `found at ${codexPath} (authenticated)` };
+  }
+  // codex-cli IS the configured driver but auth.json is missing/expired: a more specific, actionable remediation
+  // than the generic advisory below, mirroring ORB's codexAuthReadinessProbe/assertCodexAuthConfigured wording
+  // (#5166). `ok` stays true either way (unchanged by this issue, see #5165) since the CLI itself IS present --
+  // only the CLI-absent case is a hard doctor failure.
+  const detail = codingAgentProviderConfiguredFor(env, "codex-cli")
+    ? `found at ${codexPath} but auth.json is missing or expired — run \`codex auth\` to authenticate before attempts run`
+    : `found at ${codexPath} (not authenticated: run \`codex auth\`)`;
+  return { name: "codex-cli-present", ok: true, detail };
 }
 
 export function runInit(args = [], env = process.env) {

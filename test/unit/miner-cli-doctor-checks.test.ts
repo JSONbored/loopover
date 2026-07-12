@@ -131,6 +131,56 @@ describe("gittensory-miner doctor — coding-agent CLI checks (#4304)", () => {
       expect(check.detail).toBe("found at /usr/bin/codex (authenticated)");
     });
 
+    it("codex: auth-freshness remediation -- names the exact remediation step when codex-cli is configured and auth.json is missing", () => {
+      const check = checkCodexCliPresent({
+        env: { MINER_CODING_AGENT_PROVIDER: "codex-cli" },
+        resolveCodexPath: () => "/usr/bin/codex",
+        resolveCodexAuthPath: () => join(tempRoot(), "does-not-exist.json"),
+      });
+      expect(check.ok).toBe(true);
+      expect(check.detail).toBe(
+        "found at /usr/bin/codex but auth.json is missing or expired — run `codex auth` to authenticate before attempts run",
+      );
+    });
+
+    it("codex: auth-freshness remediation -- no remediation message when codex-cli is configured and auth.json IS present", () => {
+      const authFile = join(tempRoot(), "auth.json");
+      writeFileSync(authFile, "{}");
+      const check = checkCodexCliPresent({
+        env: { MINER_CODING_AGENT_PROVIDER: "codex-cli" },
+        resolveCodexPath: () => "/usr/bin/codex",
+        resolveCodexAuthPath: () => authFile,
+      });
+      expect(check.detail).toBe("found at /usr/bin/codex (authenticated)");
+      expect(check.detail).not.toContain("run `codex auth`");
+    });
+
+    it("codex: auth-freshness remediation -- a DIFFERENT provider configured keeps the generic advisory message unchanged", () => {
+      const check = checkCodexCliPresent({
+        env: { MINER_CODING_AGENT_PROVIDER: "claude-cli" },
+        resolveCodexPath: () => "/usr/bin/codex",
+        resolveCodexAuthPath: () => join(tempRoot(), "does-not-exist.json"),
+      });
+      expect(check.detail).toBe("found at /usr/bin/codex (not authenticated: run `codex auth`)");
+    });
+
+    it("invariant: the unconfigured-provider message shape never changes regardless of auth.json state", () => {
+      const authMissing = checkCodexCliPresent({
+        env: {},
+        resolveCodexPath: () => "/usr/bin/codex",
+        resolveCodexAuthPath: () => join(tempRoot(), "does-not-exist.json"),
+      });
+      const authPresentFile = join(tempRoot(), "auth.json");
+      writeFileSync(authPresentFile, "{}");
+      const authPresent = checkCodexCliPresent({
+        env: {},
+        resolveCodexPath: () => "/usr/bin/codex",
+        resolveCodexAuthPath: () => authPresentFile,
+      });
+      expect(authMissing.detail).toBe("found at /usr/bin/codex (not authenticated: run `codex auth`)");
+      expect(authPresent.detail).toBe("found at /usr/bin/codex (authenticated)");
+    });
+
     it("invariant: an unconfigured (or differently-configured) provider's CLI check is never reported as ok: false regardless of CLI presence", () => {
       const missingUnconfigured = checkClaudeCliPresent({ env: {}, resolveClaudePath: () => null });
       const presentUnconfigured = checkClaudeCliPresent({ env: {}, resolveClaudePath: () => "/usr/bin/claude" });

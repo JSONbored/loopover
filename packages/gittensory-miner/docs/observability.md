@@ -17,7 +17,7 @@ The planned **`miner-usage.json`** dashboard ([#5185](https://github.com/JSONbor
 
 ### Not the ORB review-stack dashboards
 
-If you also run the Gittensory **self-host review stack** with `--profile observability`, Grafana already ships dashboards such as **`Gittensory - AI usage`** (`grafana/dashboards/ai-usage.json`), which query the **review stack's** redacted reporting SQLite export (`uid: gittensory-db`). That answers *review-time AI usage* across configured providers.
+If you also run the Gittensory **self-host review stack** with `--profile observability`, Grafana already ships dashboards such as **`Gittensory - AI usage`** ([`grafana/dashboards/ai-usage.json`](../../../grafana/dashboards/ai-usage.json)), which query the **review stack's** redacted reporting SQLite export (`uid: gittensory-db`). That answers *review-time AI usage* across configured providers.
 
 The miner dashboard answers a different question: *what did my autonomous miner's coding-agent drivers attempt, and how did predicted gates score those targets?* Keep the two surfaces separate — do not point miner panels at `gittensory-db` or ORB panels at miner ledger files.
 
@@ -31,12 +31,22 @@ The miner dashboard answers a different question: *what did my autonomous miner'
 
    (`GF_INSTALL_PLUGINS` in [`docker-compose.yml`](../../../docker-compose.yml) includes `frser-sqlite-datasource`.)
 
-2. **Miner state on disk.** Run `gittensory-miner init` (or any command that touches a ledger) so the SQLite files exist:
+2. **Miner state on disk.** `gittensory-miner init` bootstraps the state directory and `laptop-state.sqlite3` only — it does **not** create the Grafana ledger files. Those SQLite stores are created lazily on first write:
+
+   | Ledger file | Created when |
+   |-------------|--------------|
+   | `attempt-log.sqlite3` | First coding-agent attempt (`gittensory-miner attempt`, or the autonomous loop) |
+   | `prediction-ledger.sqlite3` | First predicted-gate verdict recorded by the miner |
+
+   Confirm your state directory and bootstrap file:
 
    ```sh
    gittensory-miner status --json   # prints stateDir
-   gittensory-miner doctor --json   # confirms SQLite readiness
+   gittensory-miner init            # if laptop-state.sqlite3 is missing
+   gittensory-miner doctor --json   # confirms bootstrap SQLite only (not attempt/prediction ledgers)
    ```
+
+   Until attempts and predictions have run, datasource **Save & test** may fail with *file not found* — see [Troubleshooting](#troubleshooting).
 
 3. **Resolve your ledger paths** (defaults shown; override with env vars):
 
@@ -205,7 +215,7 @@ The dashboard exposes a **Provider** template variable (`claude-cli` / `codex-cl
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| *Database ok* fails / file not found | Grafana container cannot see host path | Add the `/miner-state:ro` volume mount; verify path inside container with `docker compose exec grafana ls -l /miner-state` |
+| *Database ok* fails / file not found | Grafana container cannot see host path, **or** ledger file not created yet | Add the `/miner-state:ro` volume mount; verify path inside container with `docker compose exec grafana ls -l /miner-state`. If the directory is visible but `attempt-log.sqlite3` / `prediction-ledger.sqlite3` are missing, run at least one miner attempt (and a prediction pass, if applicable) — `init` alone does not create them |
 | Empty panels | Miner has not run attempts yet | Run a dry attempt or check `attempt-log.sqlite3` size on disk |
 | `database is locked` | Miner writing while Grafana queries | Normal under load; retry. Ledgers use `busy_timeout`; heavy concurrent writes may still briefly block readers |
 | Plugin missing | Observability profile not used | Ensure `GF_INSTALL_PLUGINS` includes `frser-sqlite-datasource` or install the plugin manually |

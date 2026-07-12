@@ -1,6 +1,8 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { backupAcknowledgedGaugeValue } from "../../src/selfhost/health";
-import { counterValue, gauge, gaugeVector, hitRatio, incr, observe, registerMetricMeta, renderMetrics, resetMetrics, setSelfHostedMetricsMode } from "../../src/selfhost/metrics";
+import { DEFAULT_METRIC_META, counterValue, gauge, gaugeVector, hitRatio, incr, observe, registerMetricMeta, renderMetrics, resetMetrics, setSelfHostedMetricsMode } from "../../src/selfhost/metrics";
 
 afterEach(() => {
   resetMetrics();
@@ -352,5 +354,34 @@ describe("hitRatio (#2090)", () => {
     expect(counterValue("gittensory_redis_gh_response_cache_total", { result: "hit" })).toBe(4);
     expect(counterValue("gittensory_redis_gh_response_cache_total", { result: "miss" })).toBe(1);
     expect(counterValue("gittensory_redis_gh_response_cache_total", { result: "set" })).toBe(0);
+  });
+});
+
+describe("DEFAULT_METRIC_META completeness (drift guard, 2026-07 fix)", () => {
+  // Recursively walk src/ collecting every incr(/gauge(/gaugeVector(/observe( call site that uses a literal
+  // string metric name (dynamically-built names can't be statically checked this way, and there are none
+  // today). Every one of those names must carry HELP/TYPE metadata, or renderMetrics() silently emits it as a
+  // bare, undocumented sample forever -- exactly the class of gap #1943's audit found ~15 of.
+  function collectTsFiles(dir: string): string[] {
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) out.push(...collectTsFiles(full));
+      else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts")) out.push(full);
+    }
+    return out;
+  }
+
+  it("every literal metric name emitted anywhere in src/ has a registered DEFAULT_METRIC_META entry", () => {
+    const registered = new Set(DEFAULT_METRIC_META.map(([name]) => name));
+    const used = new Set<string>();
+    const pattern = /\b(?:incr|gauge|gaugeVector|observe)\(\s*"([a-z0-9_]+)"/g;
+    for (const file of collectTsFiles(join(process.cwd(), "src"))) {
+      const contents = readFileSync(file, "utf8");
+      for (const match of contents.matchAll(pattern)) used.add(match[1]!);
+    }
+    expect(used.size).toBeGreaterThan(50); // sanity: the scan found the real call sites, not an empty tree
+    const missing = [...used].filter((name) => !registered.has(name)).sort();
+    expect(missing).toEqual([]);
   });
 });

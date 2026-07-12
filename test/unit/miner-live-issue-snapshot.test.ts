@@ -33,7 +33,7 @@ describe("fetchLiveIssueSnapshot (#5132)", () => {
                 state: "OPEN",
                 closedByPullRequestsReferences: {
                   nodes: [
-                    { number: 42, state: "MERGED", author: { login: "alice" } },
+                    { number: 42, state: "MERGED", author: { login: "alice" }, createdAt: "2026-01-01T00:00:00Z" },
                     { number: 43, state: "OPEN", author: null },
                   ],
                 },
@@ -49,8 +49,8 @@ describe("fetchLiveIssueSnapshot (#5132)", () => {
     expect(snapshot).toEqual({
       state: "open",
       referencingPrs: [
-        { number: 42, state: "merged", authorLogin: "alice" },
-        { number: 43, state: "open", authorLogin: "" },
+        { number: 42, state: "merged", authorLogin: "alice", createdAt: "2026-01-01T00:00:00Z" },
+        { number: 43, state: "open", authorLogin: "", createdAt: null },
       ],
     });
     expect(capturedUrl).toBe("https://api.github.com/graphql");
@@ -112,7 +112,7 @@ describe("fetchLiveIssueSnapshot (#5132)", () => {
         },
       }),
     });
-    expect(snapshot).toEqual({ state: "open", referencingPrs: [{ number: 9, state: "closed", authorLogin: "" }] });
+    expect(snapshot).toEqual({ state: "open", referencingPrs: [{ number: 9, state: "closed", authorLogin: "", createdAt: null }] });
   });
 
   it("returns null when the response is not valid JSON or the fetch itself rejects", async () => {

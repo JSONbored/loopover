@@ -307,6 +307,155 @@ describe("runAttempt (#5132)", () => {
     expect(typeof deps.driver.run).toBe("function");
   });
 
+  it("REGRESSION (#4848): a real submitted outcome with a recoverable PR number runs the real claim-conflict check and surfaces its result", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({
+      outcome: "submitted",
+      spec: { command: "gh pr create", cwd: "/fake", timeoutMs: 1000 },
+      execResult: { code: 0, stdout: "https://github.com/acme/widgets/pull/123\n", stderr: "", timedOut: false },
+      loopResult: { outcome: "handoff", totalTurnsUsed: 3, totalCostUsd: 0.42, iterationsUsed: 2 },
+    });
+    const resolveClaimConflictSpy = vi.fn().mockResolvedValue({ checked: true, isWinner: true, winnerNumber: 123, competingCount: 0 });
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      attemptId: "conflict-attempt",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+      resolveClaimConflict: resolveClaimConflictSpy,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(resolveClaimConflictSpy).toHaveBeenCalledTimes(1);
+    const [input, deps] = resolveClaimConflictSpy.mock.calls[0]!;
+    expect(input).toMatchObject({
+      repoFullName: "acme/widgets",
+      issueNumber: 7,
+      selfPrNumber: 123,
+      minerLogin: "alice",
+    });
+    expect(typeof input.selfClaimedAt).toBe("string"); // the real claim-ledger record's own claimedAt
+    expect(typeof deps.fetchLiveIssueSnapshot).toBe("function");
+    expect(typeof deps.executeLocalWrite).toBe("function");
+  });
+
+  it("REGRESSION: uses the REAL default resolveClaimConflict (not just an injected override) when options.resolveClaimConflict is omitted", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const fetchLiveIssueSnapshot = vi.fn().mockResolvedValue({ state: "open" as const, referencingPrs: [] });
+    const executeLocalWrite = vi.fn();
+    const buildAttemptDepsSpy = vi.fn((env: Record<string, string | undefined>, ledgers: unknown) => ({
+      ...buildAttemptDeps(env, ledgers as never),
+      fetchLiveIssueSnapshot,
+      executeLocalWrite,
+    }));
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        buildAttemptDeps: buildAttemptDepsSpy,
+        runMinerAttempt: async () => ({
+          outcome: "submitted",
+          spec: { command: "gh pr create", cwd: "/fake", timeoutMs: 1000 },
+          execResult: { code: 0, stdout: "https://github.com/acme/widgets/pull/9\n" },
+          loopResult: {},
+        }),
+      }),
+      // resolveClaimConflict deliberately omitted -- exercises the real module-level default.
+    });
+
+    expect(fetchLiveIssueSnapshot).toHaveBeenCalledWith("acme/widgets", 7);
+    expect(executeLocalWrite).not.toHaveBeenCalled(); // no competing claims -> trivial win, no close_pr write
+    expect(JSON.parse(String(log.mock.calls[0]?.[0])).claimConflict).toEqual({
+      checked: true,
+      isWinner: true,
+      winnerNumber: 9,
+      competingCount: 0,
+    });
+  });
+
+  it("does not run the claim-conflict check on a non-submitted outcome", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const resolveClaimConflictSpy = vi.fn();
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: async () => ({ outcome: "abandon", loopResult: {} }) }),
+      resolveClaimConflict: resolveClaimConflictSpy,
+    });
+
+    expect(resolveClaimConflictSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not run the claim-conflict check on a submitted outcome whose PR number can't be recovered from execResult", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const resolveClaimConflictSpy = vi.fn();
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        runMinerAttempt: async () => ({
+          outcome: "submitted",
+          spec: { command: "gh pr create", cwd: "/fake", timeoutMs: 1000 },
+          execResult: { code: 0 },
+          loopResult: {},
+        }),
+      }),
+      resolveClaimConflict: resolveClaimConflictSpy,
+    });
+
+    expect(resolveClaimConflictSpy).not.toHaveBeenCalled();
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).not.toHaveProperty("claimConflict");
+  });
+
+  it("REGRESSION: a real claim-conflict LOSS is surfaced verbatim in the final JSON result", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const lossResult = { checked: true as const, isWinner: false as const, winnerNumber: 5, competingCount: 1, closeResult: { action: "close_pr", code: 0 } };
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        runMinerAttempt: async () => ({
+          outcome: "submitted",
+          spec: { command: "gh pr create", cwd: "/fake", timeoutMs: 1000 },
+          execResult: { code: 0, stdout: "https://github.com/acme/widgets/pull/6\n" },
+          loopResult: {},
+        }),
+      }),
+      resolveClaimConflict: async () => lossResult,
+    });
+
+    expect(JSON.parse(String(log.mock.calls[0]?.[0])).claimConflict).toEqual(lossResult);
+  });
+
   it("resolves live mode only when --live is passed, and threads it through to the real loopInput", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);

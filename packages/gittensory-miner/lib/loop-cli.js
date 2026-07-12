@@ -40,6 +40,7 @@ import { pollCheckRuns } from "./ci-poller.js";
 import { recordPrOutcomeSnapshot } from "./pr-outcome.js";
 import { buildLoopClosureSummary } from "./loop-closure.js";
 import { attemptLoopReentry } from "./loop-reentry.js";
+import { parsePrNumberFromExecResult } from "./pr-number-parse.js";
 import { DEFAULT_AMS_POLICY_SPEC } from "@jsonbored/gittensory-engine";
 
 const LOOP_USAGE =
@@ -148,20 +149,6 @@ function discoverArgv(parsed) {
 function parseIssueNumberFromIdentifier(identifier) {
   const match = typeof identifier === "string" ? identifier.match(ISSUE_IDENTIFIER_PATTERN) : null;
   return match ? Number(match[1]) : null;
-}
-
-/** `gh pr create` (local-write-tools.ts's `buildOpenPrSpec` -- no `--json` flag) prints the created PR's own
- *  URL to stdout on success; this is `gh`'s real, documented, stable CLI behavior, not an invented contract.
- *  Scoped to the exact target repo so an unrelated URL elsewhere in stdout/stderr noise can never match. */
-function parsePrNumberFromExecResult(execResult, repoFullName) {
-  if (!execResult || execResult.timedOut || execResult.code !== 0 || typeof execResult.stdout !== "string") {
-    return null;
-  }
-  const escapedRepo = repoFullName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = execResult.stdout.match(new RegExp(`github\\.com/${escapedRepo}/pull/(\\d+)`));
-  if (!match) return null;
-  const prNumber = Number(match[1]);
-  return Number.isInteger(prNumber) && prNumber > 0 ? prNumber : null;
 }
 
 function convergenceKey(repoFullName, identifier) {

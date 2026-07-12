@@ -12,6 +12,7 @@ vi.mock("@jsonbored/gittensory-engine", async () => {
 import {
   LOCAL_WRITE_BOUNDARY,
   buildApplyLabelsSpec,
+  buildClosePrSpec,
   buildCreateBranchSpec,
   buildDeleteBranchSpec,
   buildFileIssueSpec,
@@ -34,6 +35,20 @@ describe("local write-tool specs (#780)", () => {
     const s = buildOpenPrSpec({ repoFullName: "o/r", base: "main", head: "h", title: "it's a fix", body: "x", draft: true });
     expect(s.command).toContain("--title 'it'\\''s a fix'");
     expect(s.command.endsWith("--draft")).toBe(true);
+  });
+
+  it("close_pr closes with a preceding comment when one is supplied", () => {
+    const s = buildClosePrSpec({ repoFullName: "o/r", number: 7, comment: "Closing: lost the claim to #5" });
+    expect(s.action).toBe("close_pr");
+    expect(s.command).toBe("gh pr comment 7 --repo 'o/r' --body 'Closing: lost the claim to #5' && gh pr close 7 --repo 'o/r'");
+    expect(s.boundary).toBe(LOCAL_WRITE_BOUNDARY);
+    expect(s.inputs).toEqual({ repoFullName: "o/r", number: 7, comment: "Closing: lost the claim to #5" });
+  });
+
+  it("close_pr omits the comment step entirely when no comment is supplied", () => {
+    const s = buildClosePrSpec({ repoFullName: "o/r", number: 7 });
+    expect(s.command).toBe("gh pr close 7 --repo 'o/r'");
+    expect(s.inputs).toEqual({ repoFullName: "o/r", number: 7 });
   });
 
   it("file_issue includes each label as a --label arg, and omits them when none", () => {

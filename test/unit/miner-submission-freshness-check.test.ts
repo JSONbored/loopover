@@ -87,7 +87,7 @@ describe("checkSubmissionFreshness (#3007)", () => {
     const { eventLedger } = stubEventLedger();
     const fetchLiveIssueSnapshot = vi.fn(async () => ({
       state: "open" as const,
-      referencingPrs: [{ number: 99, state: "open" as const, authorLogin: "someone-else" }],
+      referencingPrs: [{ number: 99, state: "open" as const, authorLogin: "someone-else", createdAt: null }],
     }));
 
     const result = await checkSubmissionFreshness(
@@ -103,7 +103,7 @@ describe("checkSubmissionFreshness (#3007)", () => {
     const { eventLedger } = stubEventLedger();
     const fetchLiveIssueSnapshot = vi.fn(async () => ({
       state: "open" as const,
-      referencingPrs: [{ number: 99, state: "merged" as const, authorLogin: "someone-else" }],
+      referencingPrs: [{ number: 99, state: "merged" as const, authorLogin: "someone-else", createdAt: null }],
     }));
 
     const result = await checkSubmissionFreshness(
@@ -119,7 +119,7 @@ describe("checkSubmissionFreshness (#3007)", () => {
     const { eventLedger } = stubEventLedger();
     const fetchLiveIssueSnapshot = vi.fn(async () => ({
       state: "open" as const,
-      referencingPrs: [{ number: 99, state: "open" as const, authorLogin: "miner-bot" }],
+      referencingPrs: [{ number: 99, state: "open" as const, authorLogin: "miner-bot", createdAt: null }],
     }));
 
     const result = await checkSubmissionFreshness(
@@ -135,7 +135,7 @@ describe("checkSubmissionFreshness (#3007)", () => {
     const { eventLedger } = stubEventLedger();
     const fetchLiveIssueSnapshot = vi.fn(async () => ({
       state: "open" as const,
-      referencingPrs: [{ number: 99, state: "open" as const, authorLogin: "Miner-Bot" }],
+      referencingPrs: [{ number: 99, state: "open" as const, authorLogin: "Miner-Bot", createdAt: null }],
     }));
 
     const result = await checkSubmissionFreshness(
@@ -151,7 +151,7 @@ describe("checkSubmissionFreshness (#3007)", () => {
     const { eventLedger } = stubEventLedger();
     const fetchLiveIssueSnapshot = vi.fn(async () => ({
       state: "open" as const,
-      referencingPrs: [{ number: 99, state: "open" as const, authorLogin: "SOMEONE-ELSE" }],
+      referencingPrs: [{ number: 99, state: "open" as const, authorLogin: "SOMEONE-ELSE", createdAt: null }],
     }));
 
     const result = await checkSubmissionFreshness(
@@ -167,7 +167,7 @@ describe("checkSubmissionFreshness (#3007)", () => {
     const { eventLedger } = stubEventLedger();
     const fetchLiveIssueSnapshot = vi.fn(async () => ({
       state: "open" as const,
-      referencingPrs: [{ number: 99, state: "open" as const, authorLogin: undefined as unknown as string }],
+      referencingPrs: [{ number: 99, state: "open" as const, authorLogin: undefined as unknown as string, createdAt: null }],
     }));
 
     const result = await checkSubmissionFreshness(
@@ -183,7 +183,7 @@ describe("checkSubmissionFreshness (#3007)", () => {
     const { eventLedger } = stubEventLedger();
     const fetchLiveIssueSnapshot = vi.fn(async () => ({
       state: "open" as const,
-      referencingPrs: [{ number: 99, state: "closed" as const, authorLogin: "someone-else" }],
+      referencingPrs: [{ number: 99, state: "closed" as const, authorLogin: "someone-else", createdAt: null }],
     }));
 
     const result = await checkSubmissionFreshness(

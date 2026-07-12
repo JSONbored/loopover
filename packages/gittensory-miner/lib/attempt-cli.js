@@ -3,8 +3,10 @@
 // (worktree-allocator.js + attempt-worktree.js), the four ledgers (claim/event/attempt-log/governor), the
 // real coding-agent driver (#5131) and slop assessor (#5133), a live SelfReviewContext fetch (#5145), a real
 // coding-task spec (#5239), the operator's AmsPolicySpec execution policy (#5249), rejectionSignaled (#5241),
-// and finally a real runMinerAttempt call -- the first point in this epic where a real coding agent actually
-// runs, not just checks-and-reports-blocked.
+// a real runMinerAttempt call -- the first point in this epic where a real coding agent actually runs, not
+// just checks-and-reports-blocked -- and, only on a real "submitted" outcome, a real post-submission
+// claim-conflict resolution (#4848, claim-conflict-resolver.js) for the narrow race window
+// checkSubmissionFreshness cannot see (two miners submitting almost simultaneously).
 //
 // KNOWN, DOCUMENTED GAPS (not fabricated -- see attempt-input-builder.js's own header for the full list):
 // governor.convergenceInput is an honest first-attempt-shaped literal, not a real per-issue attempt-history
@@ -17,6 +19,8 @@ import { fetchLiveIssueSnapshot } from "./live-issue-snapshot.js";
 import { executeLocalWrite } from "./execute-local-write.js";
 import { openClaimLedger } from "./claim-ledger.js";
 import { resolveMinerGoalSpec } from "./miner-goal-spec.js";
+import { resolveClaimConflict } from "./claim-conflict-resolver.js";
+import { parsePrNumberFromExecResult } from "./pr-number-parse.js";
 import { initEventLedger } from "./event-ledger.js";
 import { initAttemptLog } from "./attempt-log.js";
 import { initGovernorLedger } from "./governor-ledger.js";
@@ -362,8 +366,9 @@ export async function runAttempt(args, options = {}) {
     // Real soft-claim (#5393): recorded once we've committed to a real attempt (past feasibility), so a
     // sibling miner process on this machine sees it via claimLedger.listClaims/listActiveClaims while this
     // attempt is in flight. Released in `finally` on every terminal outcome -- mirrors the worktree
-    // allocation slot's own acquire-then-always-release pattern below.
-    claimLedger.claimIssue(parsed.repoFullName, parsed.issueNumber, `attempt:${attemptId}`);
+    // allocation slot's own acquire-then-always-release pattern below. The real claimedAt this returns is
+    // ALSO this miner's own claim-time for the post-submission conflict check further down (#4848).
+    const claimRecord = claimLedger.claimIssue(parsed.repoFullName, parsed.issueNumber, `attempt:${attemptId}`);
     claimedIssue = true;
 
     const runAttemptPipeline = options.runMinerAttempt ?? runMinerAttempt;
@@ -382,6 +387,30 @@ export async function runAttempt(args, options = {}) {
     );
 
     worktreeResult.attemptOk = result.outcome === "submitted";
+
+    // Real claim-conflict resolution (#4848): only meaningful once a real PR exists, so this only ever runs
+    // on a real "submitted" outcome. checkSubmissionFreshness (inside runMinerAttempt) already caught the
+    // common pre-submission case; this closes the narrower TOCTOU window where two miners raced past that
+    // check almost simultaneously -- see claim-conflict-resolver.js's own header for why the adjudicator
+    // can only run POST-submission (it needs a real PR number on both sides of the election).
+    let claimConflict;
+    if (result.outcome === "submitted") {
+      const selfPrNumber = parsePrNumberFromExecResult(result.execResult, parsed.repoFullName);
+      if (selfPrNumber !== null) {
+        const resolveConflict = options.resolveClaimConflict ?? resolveClaimConflict;
+        claimConflict = await resolveConflict(
+          {
+            repoFullName: parsed.repoFullName,
+            issueNumber: parsed.issueNumber,
+            selfPrNumber,
+            selfClaimedAt: claimRecord.claimedAt,
+            minerLogin: parsed.minerLogin,
+          },
+          { fetchLiveIssueSnapshot: deps.fetchLiveIssueSnapshot, executeLocalWrite: deps.executeLocalWrite },
+        );
+      }
+    }
+
     const finalResult = {
       outcome: `attempt_${result.outcome}`,
       repoFullName: parsed.repoFullName,
@@ -404,6 +433,10 @@ export async function runAttempt(args, options = {}) {
       ...("decision" in result ? { decision: result.decision } : {}),
       ...("spec" in result ? { spec: result.spec } : {}),
       ...("execResult" in result ? { execResult: result.execResult } : {}),
+      // Present only on a real "submitted" outcome whose PR number was recoverable from execResult -- omitted
+      // (not fabricated as "checked: false") on every other outcome, and on a submitted outcome where the new
+      // PR's number genuinely couldn't be parsed (an honest gap, not silently swallowed).
+      ...(claimConflict !== undefined ? { claimConflict } : {}),
     };
 
     if (parsed.json) {

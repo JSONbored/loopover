@@ -10,7 +10,7 @@ export type SubmissionFreshnessCandidate = {
 
 export type LiveIssueSnapshot = {
   state: "open" | "closed";
-  referencingPrs: Array<{ number: number; state: "open" | "closed" | "merged"; authorLogin: string }>;
+  referencingPrs: Array<{ number: number; state: "open" | "closed" | "merged"; authorLogin: string; createdAt: string | null }>;
 };
 
 export type SubmissionFreshnessClaimLedger = {

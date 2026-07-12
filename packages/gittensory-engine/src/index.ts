@@ -349,6 +349,7 @@ export {
 export {
   LOCAL_WRITE_BOUNDARY,
   buildApplyLabelsSpec,
+  buildClosePrSpec,
   buildCreateBranchSpec,
   buildDeleteBranchSpec,
   buildFileIssueSpec,

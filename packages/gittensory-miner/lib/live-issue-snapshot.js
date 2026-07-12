@@ -21,6 +21,7 @@ const LIVE_ISSUE_SNAPSHOT_QUERY = `
             number
             state
             author { login }
+            createdAt
           }
         }
       }
@@ -50,7 +51,14 @@ function normalizeReferencingPr(node) {
   const state = normalizeIssueOrPrState(node.state);
   if (state !== "open" && state !== "closed" && state !== "merged") return null;
   const authorLogin = typeof node.author?.login === "string" ? node.author.login : "";
-  return { number: node.number, state, authorLogin };
+  // GitHub's real PR creation timestamp (ISO 8601), when present -- null otherwise (never fabricated). Not
+  // an ordering signal for the maintainer gate's own duplicate-cluster election (duplicate-winner.ts's own
+  // doc explains why: a PR can be backdated by editing an old placeholder to add the linked issue later), but
+  // it's the only real, publicly-observable claim-time proxy claim-conflict-resolver.js's own client-side
+  // caller has for a THIRD-PARTY PR -- unlike gittensory's own server, the miner has no continuous observation
+  // history to derive a true "first linked" timestamp from.
+  const createdAt = typeof node.createdAt === "string" ? node.createdAt : null;
+  return { number: node.number, state, authorLogin, createdAt };
 }
 
 function parseRepoFullName(repoFullName) {

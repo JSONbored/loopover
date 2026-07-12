@@ -44,6 +44,23 @@ export function buildOpenPrSpec(input: { repoFullName: string; base: string; hea
   return spec("open_pr", "Open a pull request from your local branch.", { repoFullName: input.repoFullName, base: input.base, head: input.head, title: input.title, body: input.body, draft }, command);
 }
 
+/** Close a pull request the miner itself opened (e.g. it lost a claim-conflict adjudication to an earlier
+ *  claimant, #4848) -- never used against a PR the miner does not own. `comment`, when supplied, is posted
+ *  before the close via a separate `gh pr comment` so the reason survives on the PR even though `gh pr close`
+ *  itself has no comment-body flag. */
+export function buildClosePrSpec(input: { repoFullName: string; number: number; comment?: string | undefined }): LocalWriteActionSpec {
+  const closeCommand = `gh pr close ${input.number} --repo ${sq(input.repoFullName)}`;
+  const command = input.comment
+    ? `gh pr comment ${input.number} --repo ${sq(input.repoFullName)} --body ${sq(input.comment)} && ${closeCommand}`
+    : closeCommand;
+  return spec(
+    "close_pr",
+    "Close a pull request you opened.",
+    { repoFullName: input.repoFullName, number: input.number, ...(input.comment ? { comment: input.comment } : {}) },
+    command,
+  );
+}
+
 /** File an issue (e.g. an issue-discovery proposal). */
 export function buildFileIssueSpec(input: { repoFullName: string; title: string; body: string; labels?: string[] | undefined }): LocalWriteActionSpec {
   const labels = input.labels ?? [];

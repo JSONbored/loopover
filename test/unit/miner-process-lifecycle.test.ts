@@ -95,7 +95,7 @@ describe("gittensory-miner process lifecycle / crash-safety (#4826)", () => {
     closeAllCleanupResources({ onError });
 
     expect(onError).toHaveBeenCalledTimes(1);
-    expect((onError.mock.calls[0][0] as Error).message).toBe("close failed");
+    expect((onError.mock.calls[0]?.[0] as Error).message).toBe("close failed");
     expect(ok.close).toHaveBeenCalledTimes(1);
     expect(cleanupResourceCount()).toBe(0);
   });
@@ -154,7 +154,7 @@ describe("gittensory-miner process lifecycle / crash-safety (#4826)", () => {
     handlers.get("uncaughtException")?.(error);
 
     expect(log).toHaveBeenCalledWith(expect.stringContaining("uncaught exception"));
-    expect(log.mock.calls[0][0] as string).toContain(error.stack);
+    expect(log.mock.calls[0]?.[0] as string).toContain(error.stack);
     expect(exit).toHaveBeenCalledWith(1);
   });
 
@@ -167,7 +167,7 @@ describe("gittensory-miner process lifecycle / crash-safety (#4826)", () => {
     Object.defineProperty(error, "stack", { value: undefined });
     handlers.get("uncaughtException")?.(error);
 
-    expect(log.mock.calls[0][0] as string).toContain("stackless");
+    expect(log.mock.calls[0]?.[0] as string).toContain("stackless");
   });
 
   it("stringifies a non-Error unhandled rejection reason and exits non-zero", () => {

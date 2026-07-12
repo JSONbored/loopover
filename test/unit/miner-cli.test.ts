@@ -64,6 +64,7 @@ describe("gittensory-miner CLI helpers", () => {
     const text = log.mock.calls[0]?.[0];
     expect(text).toContain("gittensory-miner --help");
     expect(text).toContain("gittensory-miner version");
+    expect(text).toContain("--interactive");
     expect(text).toContain("--no-update-check");
   });
 
@@ -167,9 +168,15 @@ describe("gittensory-miner startup update check (#2331)", () => {
     // exactly as a float64 and rounds DOWN to the same value, so Number(leftId) !== Number(rightId) would
     // wrongly report these two distinct numeric identifiers as equal. Comparing as strings (length, then
     // lexicographic) gets it right: the second is genuinely one greater than the first.
-    expect(compareSemver("0.1.0-9007199254740993", "0.1.0-9007199254740992")).toBe(1);
-    expect(compareSemver("0.1.0-9007199254740992", "0.1.0-9007199254740993")).toBe(-1);
-    expect(compareSemver("0.1.0-9007199254740992", "0.1.0-9007199254740992")).toBe(0);
+    expect(
+      compareSemver("0.1.0-9007199254740993", "0.1.0-9007199254740992"),
+    ).toBe(1);
+    expect(
+      compareSemver("0.1.0-9007199254740992", "0.1.0-9007199254740993"),
+    ).toBe(-1);
+    expect(
+      compareSemver("0.1.0-9007199254740992", "0.1.0-9007199254740992"),
+    ).toBe(0);
   });
 
   it("prints a one-line upgrade nudge when npm latest is newer", async () => {

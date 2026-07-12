@@ -26,12 +26,13 @@ For provider selection and the CLI-specific model/timeout overrides, see
    npm install && npm --workspace @jsonbored/gittensory-miner run build
    ```
 
-2. Inspect what is installed and where local state will live. `status` and `doctor` stay offline; `init --verify-token` is optional and makes one authenticated GitHub call up front:
+2. Inspect what is installed and where local state will live. `status` and `doctor` stay offline; `init --interactive` can collect `GITHUB_TOKEN` and provider settings into a starter `.env`, while `init --verify-token` remains the separate optional authenticated GitHub call:
 
    ```sh
    gittensory-miner status
    gittensory-miner doctor
-   gittensory-miner init --verify-token   # optional: validate GITHUB_TOKEN once before attempts
+   gittensory-miner init --interactive     # optional: collect token/provider settings into .env
+   gittensory-miner init --verify-token    # optional: validate GITHUB_TOKEN once before attempts
    ```
 
 3. Expected layout after first use (default paths):
@@ -93,6 +94,7 @@ To run the miner continuously on a plain Linux host without Docker, supervise `g
 
 ```sh
 npm install -g @jsonbored/gittensory-miner
+gittensory-miner init --interactive    # optional: collect token/provider settings into .env
 gittensory-miner init --verify-token   # optional: validate GITHUB_TOKEN before discovery/attempt runs
 sudo cp systemd/gittensory-miner.service.example /etc/systemd/system/gittensory-miner.service
 sudo $EDITOR /etc/systemd/system/gittensory-miner.service   # set User / WorkingDirectory / ExecStart / secrets

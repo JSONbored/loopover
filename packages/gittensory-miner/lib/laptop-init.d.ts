@@ -10,6 +10,28 @@ export type DoctorCheck = {
   detail: string;
 };
 
+export type InteractiveInitPrompt = {
+  askQuestion(question: string, defaultValue?: string): Promise<string>;
+  askSecret(question: string): Promise<string>;
+  askChoice(
+    question: string,
+    choices: ReadonlyArray<{ value: string; label: string }>,
+    defaultIndex?: number,
+  ): Promise<string>;
+};
+
+export type RunInitOptions = {
+  stdin?: NodeJS.ReadStream;
+  stdout?: NodeJS.WriteStream;
+  cwd?: string;
+  interactivePrompt?: InteractiveInitPrompt;
+  runDoctor?: (
+    args: string[],
+    env: Record<string, string | undefined>,
+    cwd: string,
+  ) => Promise<number> | number;
+};
+
 export type GithubTokenVerification = {
   ok: boolean;
   login: string | null;
@@ -17,13 +39,26 @@ export type GithubTokenVerification = {
   detail: string;
 };
 
-export function resolveLaptopStateDbPath(env?: Record<string, string | undefined>): string;
+export function resolveLaptopStateDbPath(
+  env?: Record<string, string | undefined>,
+): string;
 
-export function initLaptopState(env?: Record<string, string | undefined>): LaptopInitResult;
+export function resolveLaptopInitEnvFilePath(
+  env?: Record<string, string | undefined>,
+): string;
 
-export function checkLaptopStateSqlite(env?: Record<string, string | undefined>): DoctorCheck;
+export function initLaptopState(
+  env?: Record<string, string | undefined>,
+): LaptopInitResult;
 
-export function findExecutableOnPath(name: string, env?: Record<string, string | undefined>): string | null;
+export function checkLaptopStateSqlite(
+  env?: Record<string, string | undefined>,
+): DoctorCheck;
+
+export function findExecutableOnPath(
+  name: string,
+  env?: Record<string, string | undefined>,
+): string | null;
 
 export function checkDockerPresent(options?: {
   env?: Record<string, string | undefined>;
@@ -48,4 +83,8 @@ export function verifyGithubToken(options?: {
   timeoutMs?: number;
 }): Promise<GithubTokenVerification>;
 
-export function runInit(args?: string[], env?: Record<string, string | undefined>): Promise<number>;
+export function runInit(
+  args?: string[],
+  env?: Record<string, string | undefined>,
+  options?: RunInitOptions,
+): Promise<number>;

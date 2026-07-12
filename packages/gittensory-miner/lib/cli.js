@@ -1,5 +1,7 @@
 export function printVersion(input) {
-  console.log(`${input.packageName}/${input.packageVersion} (node ${process.version})`);
+  console.log(
+    `${input.packageName}/${input.packageVersion} (node ${process.version})`,
+  );
 }
 
 export function printHelp(input) {
@@ -14,7 +16,7 @@ export function printHelp(input) {
       "  gittensory-miner --version",
       "  gittensory-miner help",
       "  gittensory-miner version",
-      "  gittensory-miner init [--json] [--verify-token]              Bootstrap laptop-mode local SQLite state",
+      "  gittensory-miner init [--json] [--verify-token] [--interactive] Bootstrap laptop-mode local SQLite state",
       "  gittensory-miner status [--json]                              Show installed versions + local state paths",
       "  gittensory-miner doctor [--json]                              Check this laptop is set up correctly",
       "  gittensory-miner manage status [--json]                       Show managed PR rows from local portfolio + ledger",
@@ -50,6 +52,8 @@ export function printHelp(input) {
 
 export function runCli(cliArgs, input) {
   const command = cliArgs[0] ?? "";
-  console.error(`Unknown command: ${command}. Run ${input.packageName} --help.`);
+  console.error(
+    `Unknown command: ${command}. Run ${input.packageName} --help.`,
+  );
   return 1;
 }

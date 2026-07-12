@@ -71,12 +71,12 @@ Four independent local SQLite stores back the commands above. Each keeps its own
 env-var override — this is a DRY pass over their shared path-resolution/open boilerplate (`local-store.js`), not a
 merge into one database. (#4272)
 
-| Store | File | Table | Module | Env var override |
-| --- | --- | --- | --- | --- |
-| Run state | `run-state.sqlite3` | `miner_run_state` | `run-state.js` | `GITTENSORY_MINER_RUN_STATE_DB` |
-| Claim ledger | `claim-ledger.sqlite3` | `miner_claims` | `claim-ledger.js` | `GITTENSORY_MINER_CLAIM_LEDGER_DB` |
+| Store           | File                      | Table                   | Module               | Env var override                      |
+| --------------- | ------------------------- | ----------------------- | -------------------- | ------------------------------------- |
+| Run state       | `run-state.sqlite3`       | `miner_run_state`       | `run-state.js`       | `GITTENSORY_MINER_RUN_STATE_DB`       |
+| Claim ledger    | `claim-ledger.sqlite3`    | `miner_claims`          | `claim-ledger.js`    | `GITTENSORY_MINER_CLAIM_LEDGER_DB`    |
 | Portfolio queue | `portfolio-queue.sqlite3` | `miner_portfolio_queue` | `portfolio-queue.js` | `GITTENSORY_MINER_PORTFOLIO_QUEUE_DB` |
-| Event ledger | `event-ledger.sqlite3` | `miner_event_ledger` | `event-ledger.js` | `GITTENSORY_MINER_EVENT_LEDGER_DB` |
+| Event ledger    | `event-ledger.sqlite3`    | `miner_event_ledger`    | `event-ledger.js`    | `GITTENSORY_MINER_EVENT_LEDGER_DB`    |
 
 Every store resolves its file the same way: the store-specific env var above, else `GITTENSORY_MINER_CONFIG_DIR`,
 else `XDG_CONFIG_HOME` (falling back to `~/.config`), joined with `gittensory-miner/<file>`. Every store also opens
@@ -112,7 +112,7 @@ gittensory-miner doctor
 gittensory-miner status
 ```
 
-`init` creates `~/.config/gittensory-miner/` (or `GITTENSORY_MINER_CONFIG_DIR` / `XDG_CONFIG_HOME` overrides) and a local `laptop-state.sqlite3` bootstrap file. Re-running `init` is idempotent. Pass `--verify-token` to make one authenticated GitHub API call up front and fail fast if `GITHUB_TOKEN` is invalid or missing repository access scopes. `doctor` reports Node, the state directory, SQLite readiness, and whether Docker is installed (informational only).
+`init` creates `~/.config/gittensory-miner/` (or `GITTENSORY_MINER_CONFIG_DIR` / `XDG_CONFIG_HOME` overrides) and a local `laptop-state.sqlite3` bootstrap file. Re-running `init` is idempotent. Pass `--interactive` on first run to collect `GITHUB_TOKEN`, choose a coding-agent provider, and write a starter `.env` file in the state dir; `--verify-token` stays separate and makes one authenticated GitHub API call up front. `doctor` reports Node, the state directory, SQLite readiness, and whether Docker is installed (informational only).
 
 From a local checkout:
 
@@ -129,12 +129,12 @@ the first configured name wins, unknown names are skipped, and an empty/unset li
 construction fail-closed. See [`docs/coding-agent-driver.md`](docs/coding-agent-driver.md) for the interface-level
 contract and provider behavior.
 
-| Env var | Accepted values | Default / behavior |
-| --- | --- | --- |
-| `MINER_CODING_AGENT_PROVIDER` | `noop`, `claude-cli`, `codex-cli`, `agent-sdk` | Unset / empty means no provider is configured; the miner fails closed until a valid provider name is supplied. |
-| `MINER_CODING_AGENT_CLAUDE_MODEL` | Any Claude model string accepted by the local `claude` CLI | Unset means `claude-cli` uses the CLI's own default model. Ignored by `noop`, `codex-cli`, and `agent-sdk`. |
-| `MINER_CODING_AGENT_CODEX_MODEL` | Any Codex model string accepted by the local `codex` CLI | Unset means `codex-cli` uses the CLI's own default model. Ignored by `noop`, `claude-cli`, and `agent-sdk`. |
-| `MINER_CODING_AGENT_TIMEOUT_MS` | Positive integer milliseconds | Unset or invalid falls back to the CLI driver's default wall-clock timeout of `120000` ms. Ignored by `noop` and `agent-sdk`. |
+| Env var                           | Accepted values                                            | Default / behavior                                                                                                            |
+| --------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `MINER_CODING_AGENT_PROVIDER`     | `noop`, `claude-cli`, `codex-cli`, `agent-sdk`             | Unset / empty means no provider is configured; the miner fails closed until a valid provider name is supplied.                |
+| `MINER_CODING_AGENT_CLAUDE_MODEL` | Any Claude model string accepted by the local `claude` CLI | Unset means `claude-cli` uses the CLI's own default model. Ignored by `noop`, `codex-cli`, and `agent-sdk`.                   |
+| `MINER_CODING_AGENT_CODEX_MODEL`  | Any Codex model string accepted by the local `codex` CLI   | Unset means `codex-cli` uses the CLI's own default model. Ignored by `noop`, `claude-cli`, and `agent-sdk`.                   |
+| `MINER_CODING_AGENT_TIMEOUT_MS`   | Positive integer milliseconds                              | Unset or invalid falls back to the CLI driver's default wall-clock timeout of `120000` ms. Ignored by `noop` and `agent-sdk`. |
 
 ### Recognizing a stale or missing coding-agent credential
 
@@ -153,7 +153,7 @@ gittensory-miner --help
 gittensory-miner help
 gittensory-miner --version
 gittensory-miner version
-gittensory-miner init [--json] [--verify-token]
+gittensory-miner init [--json] [--verify-token] [--interactive]
 gittensory-miner status [--json]
 gittensory-miner doctor [--json]
 gittensory-miner manage status [--json]

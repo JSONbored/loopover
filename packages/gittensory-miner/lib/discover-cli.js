@@ -70,12 +70,22 @@ export function parseDiscoverArgs(args) {
   return { targets, search: options.search, json: options.json };
 }
 
+// The rate-limit line surfaces the telemetry the fanout already records (#4837) so an operator sees how close a
+// `discover` run is to being throttled without running a separate command. `unknown` covers the no-fetch/no-header
+// case where the fanout captured no remaining count.
+function renderRateLimitLine(result) {
+  const remaining = result.rateLimitRemaining === null ? "unknown" : String(result.rateLimitRemaining);
+  const resetSuffix = result.rateLimitResetAt === null ? "" : ` (resets ${result.rateLimitResetAt})`;
+  return `rate-limit remaining: ${remaining}${resetSuffix}`;
+}
+
 export function renderDiscoverSummary(result) {
   const lines = [
     `fanned out: ${result.fanOutCount} candidate issue(s)`,
     `ai-policy warnings: ${result.warnings.length}`,
     `ranked: ${result.ranked.length}`,
     `enqueued: ${result.enqueueSummary.enqueued}`,
+    renderRateLimitLine(result),
   ];
   if (result.enqueueSummary.skippedBelowMinRank > 0) {
     lines.push(`skipped (below min rank): ${result.enqueueSummary.skippedBelowMinRank}`);
@@ -120,6 +130,8 @@ export async function runDiscover(args, options = {}) {
     const result = {
       fanOutCount: fanOut.issues.length,
       warnings: fanOut.warnings,
+      rateLimitRemaining: fanOut.rateLimitRemaining,
+      rateLimitResetAt: fanOut.rateLimitResetAt,
       ranked: rankedSummary.issues,
       enqueueSummary,
     };

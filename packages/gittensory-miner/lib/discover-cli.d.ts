@@ -15,12 +15,13 @@ export type ParsedDiscoverArgs =
     }
   | { error: string };
 
-/** The subset of `CandidateIssueSummary` runDiscover actually reads, so callers may inject a fake without
- * fabricating rate-limit telemetry it never touches. A real `fetchCandidateIssuesWithSummary` result satisfies
- * this too, since it is a strict superset. */
+/** The subset of `CandidateIssueSummary` runDiscover actually reads. It surfaces the rate-limit telemetry (#4837),
+ * so a fake must supply it. A real `fetchCandidateIssuesWithSummary` result satisfies this, since it is a superset. */
 export type DiscoverFanOutSummary = {
   issues: RawCandidateIssue[];
   warnings: CandidateIssueWarning[];
+  rateLimitRemaining: number | null;
+  rateLimitResetAt: string | null;
 };
 
 /** The subset of a ranked entry that `renderDiscoverSummary` reads for its top-candidates listing. */
@@ -29,6 +30,8 @@ export type DiscoverRankedEntry = Pick<RankedCandidateIssue, "repoFullName" | "i
 export type DiscoverResult = {
   fanOutCount: number;
   warnings: CandidateIssueWarning[];
+  rateLimitRemaining: number | null;
+  rateLimitResetAt: string | null;
   ranked: DiscoverRankedEntry[];
   enqueueSummary: EnqueueRankedDiscoverySummary;
 };

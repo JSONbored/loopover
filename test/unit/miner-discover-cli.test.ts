@@ -108,6 +108,8 @@ describe("renderDiscoverSummary (#4247)", () => {
     const text = renderDiscoverSummary({
       fanOutCount: 2,
       warnings: [{ repoFullName: "acme/banned", stage: "policy:AI-USAGE.md", message: "denied" }],
+      rateLimitRemaining: 4993,
+      rateLimitResetAt: "2026-07-09T13:00:00.000Z",
       ranked: [
         { repoFullName: "acme/widgets", issueNumber: 1, title: "Add retry helper", rankScore: 0.8 },
         { repoFullName: "acme/widgets", issueNumber: 2, title: "Fix flaky test", rankScore: 0.4 },
@@ -118,6 +120,7 @@ describe("renderDiscoverSummary (#4247)", () => {
     expect(text).toContain("ai-policy warnings: 1");
     expect(text).toContain("ranked: 2");
     expect(text).toContain("enqueued: 2");
+    expect(text).toContain("rate-limit remaining: 4993 (resets 2026-07-09T13:00:00.000Z)");
     expect(text).toContain("acme/widgets#1  score=0.8000  Add retry helper");
     expect(text).not.toContain("skipped (below min rank)");
   });
@@ -126,6 +129,8 @@ describe("renderDiscoverSummary (#4247)", () => {
     const text = renderDiscoverSummary({
       fanOutCount: 1,
       warnings: [],
+      rateLimitRemaining: null,
+      rateLimitResetAt: null,
       ranked: [
         {
           repoFullName: "acme/widgets",
@@ -154,6 +159,8 @@ describe("renderDiscoverSummary (#4247)", () => {
     const withSkips = renderDiscoverSummary({
       fanOutCount: 1,
       warnings: [],
+      rateLimitRemaining: null,
+      rateLimitResetAt: null,
       ranked: [{ repoFullName: "acme/widgets", issueNumber: 1, title: "x", rankScore: 0.1 }],
       enqueueSummary: { enqueued: 0, skippedBelowMinRank: 1, skippedInvalid: 0, eventsAppended: 0 },
     });
@@ -162,10 +169,46 @@ describe("renderDiscoverSummary (#4247)", () => {
     const empty = renderDiscoverSummary({
       fanOutCount: 0,
       warnings: [],
+      rateLimitRemaining: null,
+      rateLimitResetAt: null,
       ranked: [],
       enqueueSummary: { enqueued: 0, skippedBelowMinRank: 0, skippedInvalid: 0, eventsAppended: 0 },
     });
     expect(empty).toContain("no candidates found.");
+  });
+
+  it("surfaces rate-limit telemetry, and reports 'unknown' when the fanout captured none (#4837)", () => {
+    const withTelemetry = renderDiscoverSummary({
+      fanOutCount: 0,
+      warnings: [],
+      rateLimitRemaining: 12,
+      rateLimitResetAt: "2026-07-09T13:30:00.000Z",
+      ranked: [],
+      enqueueSummary: { enqueued: 0, skippedBelowMinRank: 0, skippedInvalid: 0, eventsAppended: 0 },
+    });
+    expect(withTelemetry).toContain("rate-limit remaining: 12 (resets 2026-07-09T13:30:00.000Z)");
+
+    // A remaining count of zero must still print the number, not fall through to "unknown".
+    const throttled = renderDiscoverSummary({
+      fanOutCount: 0,
+      warnings: [],
+      rateLimitRemaining: 0,
+      rateLimitResetAt: null,
+      ranked: [],
+      enqueueSummary: { enqueued: 0, skippedBelowMinRank: 0, skippedInvalid: 0, eventsAppended: 0 },
+    });
+    expect(throttled).toContain("rate-limit remaining: 0");
+    expect(throttled).not.toContain("resets");
+
+    const noTelemetry = renderDiscoverSummary({
+      fanOutCount: 0,
+      warnings: [],
+      rateLimitRemaining: null,
+      rateLimitResetAt: null,
+      ranked: [],
+      enqueueSummary: { enqueued: 0, skippedBelowMinRank: 0, skippedInvalid: 0, eventsAppended: 0 },
+    });
+    expect(noTelemetry).toContain("rate-limit remaining: unknown");
   });
 });
 
@@ -178,6 +221,8 @@ describe("runDiscover (#4247)", () => {
         fanOutIssue({ issueNumber: 2, title: "Fix flaky test", labels: ["help wanted"] }),
       ],
       warnings: [],
+      rateLimitRemaining: 4987,
+      rateLimitResetAt: "2026-07-09T13:00:00.000Z",
     }));
     const searchCandidateIssuesWithSummary = vi.fn(async () => {
       throw new Error("must not be called for repo-target mode");
@@ -203,6 +248,9 @@ describe("runDiscover (#4247)", () => {
     expect(payload.fanOutCount).toBe(2);
     expect(payload.enqueueSummary.enqueued).toBe(2);
     expect(payload.ranked.map((entry: { issueNumber: number }) => entry.issueNumber)).toEqual([1, 2]);
+    // The fanout's rate-limit telemetry is surfaced verbatim in --json output (#4837).
+    expect(payload.rateLimitRemaining).toBe(4987);
+    expect(payload.rateLimitResetAt).toBe("2026-07-09T13:00:00.000Z");
 
     const queued = portfolioQueue.listQueue("acme/widgets");
     expect(queued.map((entry) => entry.identifier).sort()).toEqual(["issue:1", "issue:2"]);
@@ -216,6 +264,8 @@ describe("runDiscover (#4247)", () => {
     const searchCandidateIssuesWithSummary = vi.fn(async (query: string) => ({
       issues: [fanOutIssue({ issueNumber: 9, title: `Result for ${query}` })],
       warnings: [],
+      rateLimitRemaining: null,
+      rateLimitResetAt: null,
     }));
 
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -237,6 +287,8 @@ describe("runDiscover (#4247)", () => {
     const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
       issues: [fanOutIssue()],
       warnings: [],
+      rateLimitRemaining: 3200,
+      rateLimitResetAt: "2026-07-09T13:00:00.000Z",
     }));
 
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -249,6 +301,7 @@ describe("runDiscover (#4247)", () => {
     expect(exitCode).toBe(0);
     const text = String(log.mock.calls[0]?.[0]);
     expect(text).toContain("fanned out: 1 candidate issue(s)");
+    expect(text).toContain("rate-limit remaining: 3200 (resets 2026-07-09T13:00:00.000Z)");
     expect(text).toContain("top candidates:");
   });
 
@@ -290,6 +343,8 @@ describe("runDiscover (#4247)", () => {
       const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
         issues: [fanOutIssue({ issueNumber: 5 })],
         warnings: [],
+        rateLimitRemaining: null,
+        rateLimitResetAt: null,
       }));
       vi.spyOn(console, "log").mockImplementation(() => undefined);
 

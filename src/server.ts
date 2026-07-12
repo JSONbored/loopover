@@ -20,6 +20,7 @@ import {
   createSelfHostAi,
   isAiProviderHealthy,
   markAiProviderUnhealthyAtBoot,
+  providerNameFromBaseUrl,
   resolveAiReviewerPlan,
   resolveProviderNames,
   resolveRequiredCliProviders,
@@ -471,6 +472,7 @@ async function main(): Promise<void> {
         baseUrl: process.env.AI_EMBED_BASE_URL,
         apiKey: process.env.AI_EMBED_API_KEY ?? process.env.OPENAI_API_KEY,
         embedModel: process.env.AI_EMBED_MODEL,
+        providerName: providerNameFromBaseUrl(process.env.AI_EMBED_BASE_URL),
       })
     : undefined;
   if (embedAi)
@@ -491,6 +493,7 @@ async function main(): Promise<void> {
         baseUrl: process.env.AI_VISION_BASE_URL,
         apiKey: process.env.AI_VISION_API_KEY ?? process.env.OPENAI_API_KEY,
         model: process.env.AI_VISION_MODEL,
+        providerName: providerNameFromBaseUrl(process.env.AI_VISION_BASE_URL),
       })
     : undefined;
   if (visionAi)
@@ -513,6 +516,7 @@ async function main(): Promise<void> {
         baseUrl: process.env.AI_ADVISORY_BASE_URL,
         apiKey: process.env.AI_ADVISORY_API_KEY,
         model: process.env.AI_ADVISORY_MODEL,
+        providerName: providerNameFromBaseUrl(process.env.AI_ADVISORY_BASE_URL),
       })
     : undefined;
   if (advisoryAi)

@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveClaudeFirstOutputTimeoutMs, resolveCodexAuthPath, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveCodexFirstOutputTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, subscriptionCliEnv, withAdvisoryAiEnv, __selfHostAiInternals } from "../../src/selfhost/ai";
+import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, providerNameFromBaseUrl, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveClaudeFirstOutputTimeoutMs, resolveCodexAuthPath, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveCodexFirstOutputTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, subscriptionCliEnv, withAdvisoryAiEnv, __selfHostAiInternals } from "../../src/selfhost/ai";
 import { labelSelfHostReviewerModel, labelSelfHostReviewerModels } from "../../src/selfhost/ai-config";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 
@@ -213,6 +213,15 @@ describe("createOpenAiCompatibleAi (#979)", () => {
     ));
     const out = await createOpenAiCompatibleAi({ baseUrl: "http://o/v1", embedModel: "bge-m3" }).run("m", { text: ["hello"] });
     expect(out).toEqual({ data: [[0.1]], usage: { model: "bge-m3", inputTokens: 7, totalTokens: 7 } });
+  });
+
+  it("providerNameFromBaseUrl classifies the bundled Ollama service, OpenAI's endpoint, and any other host generically (#ai-usage-provider-attribution)", () => {
+    expect(providerNameFromBaseUrl("http://ollama:11434/v1")).toBe("ollama");
+    expect(providerNameFromBaseUrl("https://my-ollama-box.internal:11434/v1")).toBe("ollama");
+    expect(providerNameFromBaseUrl("https://api.openai.com/v1")).toBe("openai");
+    expect(providerNameFromBaseUrl("https://my-vllm-box.internal/v1")).toBe("openai-compatible");
+    expect(providerNameFromBaseUrl(undefined)).toBe("openai-compatible");
+    expect(providerNameFromBaseUrl("not a url")).toBe("openai-compatible");
   });
 
   it("buildAiUsage omits every undefined field and includes every defined one (direct unit test — costUsd/effort/an-undefined-model are never both exercised through the 3 real call sites)", () => {

@@ -609,6 +609,25 @@ function buildAiUsage(fields: {
   return usage;
 }
 
+/** Classify an AI_EMBED/AI_VISION/AI_ADVISORY base URL into `createOpenAiCompatibleAi`'s existing
+ *  `providerName` set (#ai-usage-provider-attribution): unlike the main review chain (an explicit
+ *  `AI_PROVIDER` selector), these auxiliary bindings accept ANY openai-compatible endpoint with no provider
+ *  knob of their own, so the configured base URL is the only signal available for attributing `ai_usage_events`
+ *  rows to a real provider instead of leaving them permanently unattributed. Recognizes the bundled
+ *  docker-compose `ollama` service and OpenAI's own endpoint; anything else (vLLM, LM Studio, a custom
+ *  hostname) is the honest generic "openai-compatible" bucket rather than a guessed, possibly-wrong label. */
+export function providerNameFromBaseUrl(baseUrl: string | undefined): "ollama" | "openai" | "openai-compatible" {
+  let hostname = "";
+  try {
+    hostname = baseUrl ? new URL(baseUrl).hostname : "";
+  } catch {
+    return "openai-compatible";
+  }
+  if (hostname === "api.openai.com") return "openai";
+  if (hostname.includes("ollama")) return "ollama";
+  return "openai-compatible";
+}
+
 const INPUT_TOKEN_KEYS = ["input_tokens", "inputTokens", "prompt_tokens", "promptTokens"] as const;
 const OUTPUT_TOKEN_KEYS = ["output_tokens", "outputTokens", "completion_tokens", "completionTokens"] as const;
 const TOTAL_TOKEN_KEYS = ["total_tokens", "totalTokens"] as const;

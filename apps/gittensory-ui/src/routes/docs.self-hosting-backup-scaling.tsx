@@ -155,8 +155,8 @@ npm run selfhost:postgres:migrate -- --sqlite /data/gittensory.sqlite --execute`
       </p>
       <CodeBlock
         lang="bash"
-        code={`docker compose --profile backup run --rm backup sh /verify-backup.sh
-docker compose --profile backup run --rm backup sh /verify-backup.sh /backups/postgres/gittensory-<timestamp>.dump`}
+        code={`docker compose --profile backup run --rm backup sh /scripts/verify-backup.sh
+docker compose --profile backup run --rm backup sh /scripts/verify-backup.sh /backups/postgres/gittensory-<timestamp>.dump`}
       />
       <p>
         A healthy run ends with <code>[verify] postgres archive OK: … (N TOC entries)</code> (or{" "}
@@ -173,7 +173,7 @@ docker compose --profile backup run --rm backup sh /verify-backup.sh /backups/po
         code={`docker compose --profile backup run --rm \\
   -e VERIFY_RESTORE_SCRATCH=1 \\
   -e GITTENSORY_VERIFY_SCRATCH_DATABASE_URL=postgres://user:pass@host:5432/gittensory_verify \\
-  backup sh /verify-backup.sh`}
+  backup sh /scripts/verify-backup.sh`}
       />
       <Callout variant="warn">
         The scratch restore runs <code>pg_restore --clean</code> against{" "}

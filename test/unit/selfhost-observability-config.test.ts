@@ -110,13 +110,13 @@ describe("self-host observability trace config", () => {
     expect(backupExporter.volumes).toEqual(
       expect.arrayContaining([
         "gittensory-backups:/backups:ro",
-        "./scripts/backup-metrics.sh:/backup-metrics.sh:ro",
+        "./scripts:/scripts:ro",
       ]),
     );
     expect(backupExporter.command).toEqual([
       "/bin/sh",
       "-c",
-      "apk add --no-cache busybox-extras && sh /backup-metrics.sh",
+      "apk add --no-cache busybox-extras && sh /scripts/backup-metrics.sh",
     ]);
     expect(backupExporter.healthcheck?.test).toEqual([
       "CMD-SHELL",

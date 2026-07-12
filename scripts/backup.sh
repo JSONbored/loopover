@@ -1,7 +1,7 @@
 #!/bin/sh
 # Self-host backup: active DB backup (Postgres dump or online SQLite backup) + a Qdrant snapshot, with retention.
 # Run by the `backup` compose service (--profile backup) on a loop, or on demand:
-#   docker compose --profile backup run --rm backup sh /backup.sh
+#   docker compose --profile backup run --rm backup sh /scripts/backup.sh
 # Backups land in the `gittensory-backups` volume at /backups/{postgres,sqlite,qdrant}.
 set -eu
 

@@ -680,7 +680,15 @@ services:
       # The exporter needs live DB read access to build the redacted snapshot. Grafana does not get this mount.
       - gittensory-data:/appdb:ro
       - grafana-reporting-data:/reporting
-      - ./scripts/export-grafana-reporting-db.sh:/export-grafana-reporting-db.sh:ro
+      # A DIRECTORY bind mount, not a single-file one (#reporting-exporter-stale-bind-mount): a single-file
+      # bind mount pins the container to the file's INODE at container-creation time. `git pull` replaces a
+      # file by writing a new blob then renaming it over the old path -- the old inode still exists on disk
+      # until every reference (including this bind mount) is dropped, so the running container keeps reading
+      # the pre-pull script forever, silently, with no error. Confirmed live: a script change survived
+      # multiple `git pull`s with zero effect until the container was force-recreated. Directory bind mounts
+      # don't have this problem -- they resolve the path fresh on every access, exactly like dashboard
+      # provisioning below already does.
+      - ./scripts:/scripts:ro
     environment:
       # Default SQLite app DB path maps app /data/gittensory.sqlite to exporter /appdb/gittensory.sqlite.
       # If you override DATABASE_PATH, set this to the matching /appdb/<file> path. When DATABASE_URL points at
@@ -698,7 +706,7 @@ services:
       - >-
         apk add --no-cache sqlite postgresql16-client >/dev/null 2>&1 &&
         while true; do
-          sh /export-grafana-reporting-db.sh || echo '[reporting] export failed';
+          sh /scripts/export-grafana-reporting-db.sh || echo '[reporting] export failed';
           interval="$${GRAFANA_REPORTING_EXPORT_INTERVAL_SECONDS:-30}";
           case "$$interval" in ''|*[!0-9]*) interval=30;; esac;
           sleep "$$interval";
@@ -910,9 +918,9 @@ services:
   # ── Backups (--profile backup) ────────────────────────────────────────────
   # Active database backup (Postgres pg_dump or WAL-safe SQLite online backup) + a Qdrant snapshot, on a loop
   # (default daily), kept in the gittensory-backups volume with retention. Run on demand:
-  #   docker compose --profile backup run --rm backup sh /backup.sh
+  #   docker compose --profile backup run --rm backup sh /scripts/backup.sh
   # Verify the newest backup is restorable (pg_restore --list / SQLite integrity_check; opt-in scratch restore):
-  #   docker compose --profile backup run --rm backup sh /verify-backup.sh
+  #   docker compose --profile backup run --rm backup sh /scripts/verify-backup.sh
   backup:
     image: alpine:3.20
     restart: unless-stopped
@@ -932,13 +940,15 @@ services:
       # RW (not :ro) so SQLite's online-backup can use the WAL index; the script only ever reads the DB.
       - gittensory-data:/data
       - gittensory-backups:/backups
-      - ./scripts/backup.sh:/backup.sh:ro
-      - ./scripts/verify-backup.sh:/verify-backup.sh:ro
-      # Shared url_decode/pgpass_escape helpers (#2910), sourced by both scripts above via
-      # `. "$(dirname "$0")/selfhost-pg-url.sh"` -- must be mounted at container root alongside them so that
-      # dirname-relative resolution finds it at /selfhost-pg-url.sh, the same way it finds
-      # scripts/selfhost-pg-url.sh when either script is run directly from a repo checkout.
-      - ./scripts/selfhost-pg-url.sh:/selfhost-pg-url.sh:ro
+      # A DIRECTORY bind mount, not individual-file mounts (#reporting-exporter-stale-bind-mount): a
+      # single-file bind mount pins the container to that file's INODE at container-creation time, so a
+      # later `git pull` (which replaces a file via write-new-then-rename, not an in-place edit) leaves the
+      # running container reading the pre-pull script forever with no error -- confirmed live on the
+      # reporting-exporter service, which had exactly this mount shape. Mounting the directory also
+      # naturally satisfies backup.sh/verify-backup.sh's own `. "$(dirname "$0")/selfhost-pg-url.sh"`
+      # dirname-relative sourcing: invoked as /scripts/backup.sh, dirname resolves to /scripts, finding
+      # /scripts/selfhost-pg-url.sh right alongside it -- the same layout a bare repo checkout already has.
+      - ./scripts:/scripts:ro
     # `docker compose run --rm backup sh /backup.sh` (or /verify-backup.sh) REPLACES `command:`, not
     # `entrypoint:`, so the package install must live in the entrypoint or an on-demand run gets a bare
     # container with no pg_restore/sqlite3/psql. The entrypoint installs packages once, then `exec "$@"`
@@ -954,7 +964,7 @@ services:
     command:
       - sh
       - -c
-      - "while true; do sh /backup.sh || echo '[backup] run failed'; sleep ${BACKUP_INTERVAL_SECONDS:-86400}; done"
+      - "while true; do sh /scripts/backup.sh || echo '[backup] run failed'; sleep ${BACKUP_INTERVAL_SECONDS:-86400}; done"
 
   # Read-only backup freshness exporter. It serves file-age metrics from the retained backup volume so
   # Prometheus can alert on missing or stale database backups without Grafana reading the live app DB.
@@ -965,13 +975,15 @@ services:
     profiles: ["backup"]
     volumes:
       - gittensory-backups:/backups:ro
-      - ./scripts/backup-metrics.sh:/backup-metrics.sh:ro
+      # Directory mount, not a single-file one -- same #reporting-exporter-stale-bind-mount rationale as
+      # the backup service above.
+      - ./scripts:/scripts:ro
     expose:
       - "9101"
     command:
       - /bin/sh
       - -c
-      - "apk add --no-cache busybox-extras && sh /backup-metrics.sh"
+      - "apk add --no-cache busybox-extras && sh /scripts/backup-metrics.sh"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9101/metrics | grep -q '^gittensory_backup_latest_timestamp_seconds'"]
       interval: 30s

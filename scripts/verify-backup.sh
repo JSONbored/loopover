@@ -5,8 +5,8 @@
 # temp copy. An OPT-IN scratch restore (VERIFY_RESTORE_SCRATCH=1 + a dedicated scratch DB URL) additionally
 # restores the Postgres dump into a throwaway database and runs a sanity query — it refuses to touch the live
 # database. Run on demand (newest backup, or a specific file):
-#   docker compose --profile backup run --rm backup sh /verify-backup.sh
-#   docker compose --profile backup run --rm backup sh /verify-backup.sh /backups/postgres/gittensory-<ts>.dump
+#   docker compose --profile backup run --rm backup sh /scripts/verify-backup.sh
+#   docker compose --profile backup run --rm backup sh /scripts/verify-backup.sh /backups/postgres/gittensory-<ts>.dump
 set -eu
 
 OUT=${BACKUP_OUT_DIR:-/backups}

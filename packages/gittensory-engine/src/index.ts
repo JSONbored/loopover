@@ -376,6 +376,13 @@ export {
   type SlopBand,
   type SlopChangedFile,
 } from "./signals/slop.js";
+// Scoped (not `export *`) because predicted-gate-engine.ts also defines its own hasClearNoIssueRationale --
+// a near-duplicate of slop.js's own export (see that function's doc comment) -- which would collide with the
+// one already re-exported above. Only buildCollisionReport + its result types are needed publicly so far
+// (#5145, the miner's real SelfReviewContext fetcher needs to compute inDuplicateCluster the same way the
+// live gate does), not this file's full internal surface.
+export { buildCollisionReport, type CollisionCluster, type CollisionReport } from "./signals/predicted-gate-engine.js";
+export type { CollisionItem } from "./types/predicted-gate-types.js";
 export * from "./plan-export.js";
 export { countPlanStepsByStatus } from "./plan-step-stats.js";
 export { countPlanSteps } from "./plan-step-count.js";

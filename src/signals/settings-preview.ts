@@ -191,6 +191,8 @@ export type RepoSettingsPreview = {
     publicSignalLevel: RepositorySettings["publicSignalLevel"];
     checkRunMode: RepositorySettings["checkRunMode"];
     checkRunDetailLevel: RepositorySettings["checkRunDetailLevel"];
+    /** @deprecated (#4618, tracked for removal in #5373) computed read-back of {@link reviewCheckMode}
+     *  kept only for API/dashboard back-compat display -- read `reviewCheckMode` instead. */
     gateCheckMode: RepositorySettings["gateCheckMode"];
     regateSweepOrderMode: RepositorySettings["regateSweepOrderMode"];
     reviewCheckMode: RepositorySettings["reviewCheckMode"];

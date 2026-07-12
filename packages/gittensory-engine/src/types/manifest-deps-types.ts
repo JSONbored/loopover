@@ -155,6 +155,8 @@ export type RepositorySettings = {
   publicSignalLevel: "minimal" | "standard";
   checkRunMode: "off" | "enabled";
   checkRunDetailLevel: "minimal" | "standard";
+  /** @deprecated (#4618, tracked for removal in #5373) computed read-back of {@link reviewCheckMode}
+   *  below, kept only for API/dashboard back-compat display -- read `reviewCheckMode` instead. */
   gateCheckMode: "off" | "enabled";
   /** Scheduled re-gate sweep candidate ordering (#3815). `staleness` (default) picks whichever open PR the
    *  sweep has gone longest WITHOUT re-gating (see selectRegateCandidates), which is what gives the sweep its

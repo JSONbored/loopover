@@ -19,6 +19,8 @@ export type MaintainerActivationPreview = {
   repoFullName: string;
   generatedAt: string;
   // What's on today, so the UI can show the current state next to the one-click ramp.
+  /** @deprecated (#4618, tracked for removal in #5373) sourced from the computed read-back
+   *  `RepositorySettings["gateCheckMode"]` -- kept only for API/dashboard back-compat display. */
   currentGateMode: RepositorySettings["gateCheckMode"];
   aiReviewConfigured: boolean;
   evaluatedCount: number;

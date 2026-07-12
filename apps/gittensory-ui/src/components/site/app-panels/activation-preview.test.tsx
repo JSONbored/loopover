@@ -96,7 +96,6 @@ describe("ActivationPreview", () => {
       ok: true,
       data: {
         repoFullName: "acme/widgets",
-        gateCheckMode: "enabled",
         reviewCheckMode: "required",
         checkRunMode: "enabled",
         linkedIssueGateMode: "advisory",

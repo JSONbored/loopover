@@ -601,6 +601,28 @@ describe("GitHub backfill", () => {
       expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "Gittensory Orb Review Agent", summary: "External gate failed" })]);
     });
 
+    it("does not skip a same-slug bot-owned-named check-run when GITHUB_APP_SLUG is unset (no self-hoster crash)", async () => {
+      // GITHUB_APP_SLUG is optional now (the retired review App was deleted) -- isOwnGitHubAppCheckRun must
+      // degrade to "never matches" instead of throwing on `env.GITHUB_APP_SLUG.trim()` when it's absent.
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      delete (env as Partial<Env>).GITHUB_APP_SLUG;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [{ name: "Gittensory Orb Review Agent", status: "completed", conclusion: "failure", output: { title: "Real gate failure" }, app: { slug: "gittensory" } }],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", new Set(["Gittensory Orb Review Agent"]));
+
+      expect(aggregate.ciState).toBe("failed");
+      expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "Gittensory Orb Review Agent", summary: "Real gate failure" })]);
+    });
+
     it("does not ignore classic statuses named like the Gate", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -2560,6 +2582,13 @@ describe("isOwnReviewThreadAuthor", () => {
     const blank = createTestEnv({ GITHUB_APP_SLUG: "" });
     expect(isOwnReviewThreadAuthor(blank, "gittensory[bot]")).toBe(false);
     expect(isOwnReviewThreadAuthor(blank, "")).toBe(false);
+  });
+
+  it("fails closed when GITHUB_APP_SLUG is unset (the retired review App was deleted)", () => {
+    const unset = createTestEnv();
+    delete (unset as Partial<Env>).GITHUB_APP_SLUG;
+    expect(isOwnReviewThreadAuthor(unset, "gittensory[bot]")).toBe(false);
+    expect(isOwnReviewThreadAuthor(unset, "")).toBe(false);
   });
 });
 

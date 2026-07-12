@@ -700,4 +700,101 @@ describe("runAttempt (#5132)", () => {
     expect(submittedExit).toBe(0);
     expect(onResult).toHaveBeenLastCalledWith(expect.objectContaining({ outcome: "attempt_submitted", spec: expect.objectContaining({ command: "gh pr create" }) }));
   });
+
+  it("REGRESSION: stakes a real active claim before running the attempt and releases it once the attempt finishes (#5393)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const claimIssueSpy = vi.spyOn(claimLedger, "claimIssue");
+    const releaseClaimSpy = vi.spyOn(claimLedger, "releaseClaim");
+    let activeDuringFlight: Array<{ issueNumber: number; status: string }> = [];
+    // The freshness check inside runMinerAttempt reads this same ledger to confirm the miner still holds an
+    // active claim -- capture what it would see while the attempt is in flight.
+    const runMinerAttemptSpy = vi.fn().mockImplementation(async () => {
+      activeDuringFlight = claimLedger.listActiveClaims("acme/widgets");
+      return { outcome: "submitted", spec: { command: "gh pr create", cwd: "/fake", timeoutMs: 1 }, execResult: { code: 0 }, loopResult: {} };
+    });
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+    });
+
+    expect(exitCode).toBe(0);
+    // A REAL claim was staked before the attempt ran and was active while it was in flight...
+    expect(claimIssueSpy).toHaveBeenCalledWith("acme/widgets", 7);
+    expect(activeDuringFlight).toHaveLength(1);
+    expect(activeDuringFlight[0]).toMatchObject({ issueNumber: 7, status: "active" });
+    // ...and released once the attempt finished, so `claim list` no longer shows it as active.
+    expect(releaseClaimSpy).toHaveBeenCalledWith("acme/widgets", 7);
+  });
+
+  it("blocks a second concurrent attempt when an active claim already exists on the same repo+issue, without running runMinerAttempt (#5393)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const appendAttemptLogEventSpy = vi.spyOn(attemptLog, "appendAttemptLogEvent");
+    const appendEventSpy = vi.spyOn(eventLedger, "appendEvent");
+    const runMinerAttemptSpy = vi.fn();
+    const onResult = vi.fn();
+    // A first, in-flight attempt already holds an active claim on this exact issue.
+    claimLedger.claimIssue("acme/widgets", 7);
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      attemptId: "conflicting-attempt",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+      onResult,
+    });
+
+    expect(exitCode).toBe(11);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      outcome: "blocked_claim_conflict",
+      reason: "claim_conflict",
+      repoFullName: "acme/widgets",
+      issueNumber: 7,
+      minerLogin: "alice",
+      base: "main",
+      mode: "dry_run",
+      attemptId: "conflicting-attempt",
+    });
+    // The duplicate never ran a real attempt against the already-claimed issue.
+    expect(runMinerAttemptSpy).not.toHaveBeenCalled();
+    expect(onResult).toHaveBeenCalledWith(expect.objectContaining({ outcome: "blocked_claim_conflict" }));
+    expect(appendAttemptLogEventSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "attempt_aborted", attemptId: "conflicting-attempt", reason: "claim_conflict" }),
+    );
+    expect(appendEventSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "attempt_blocked", repoFullName: "acme/widgets", payload: expect.objectContaining({ issueNumber: 7, reason: "claim_conflict" }) }),
+    );
+  });
+
+  it("blocks a conflicting claim with a human-readable message by default (#5393)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const runMinerAttemptSpy = vi.fn();
+    claimLedger.claimIssue("acme/widgets", 7);
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+    });
+
+    expect(exitCode).toBe(11);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("already holds an active claim on this issue"));
+    expect(runMinerAttemptSpy).not.toHaveBeenCalled();
+  });
 });

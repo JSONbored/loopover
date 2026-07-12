@@ -161,6 +161,7 @@ export async function runAttempt(args, options = {}) {
   let governorLedger = null;
   let allocation = null;
   let worktreeResult = null;
+  let claimed = false;
 
   try {
     allocator = (options.openWorktreeAllocator ?? openWorktreeAllocator)();
@@ -349,6 +350,55 @@ export async function runAttempt(args, options = {}) {
     });
     const governor = buildAttemptGovernorContext(env, amsPolicy.spec);
 
+    // Stake a REAL soft-claim before running the attempt (#5393): checkSubmissionFreshness inside
+    // runMinerAttempt requires this miner to hold an ACTIVE claim on the issue it is about to submit for,
+    // and a concurrent attempt/loop on the same repo+issue must observe an in-flight claim rather than
+    // silently duplicating work. Mirrors the worktree slot's acquire/release lifecycle above -- staked
+    // here, released in `finally` on every terminal outcome. An already-active claim (another in-flight
+    // attempt on this exact issue) blocks this one instead of racing it.
+    const conflictingClaim = claimLedger
+      .listActiveClaims(parsed.repoFullName)
+      .find((existing) => existing.issueNumber === parsed.issueNumber);
+    if (conflictingClaim) {
+      const reason = "claim_conflict";
+      attemptLog.appendAttemptLogEvent({
+        eventType: "attempt_aborted",
+        attemptId,
+        actionClass: "open_pr",
+        mode,
+        reason,
+        payload: { repoFullName: parsed.repoFullName, issueNumber: parsed.issueNumber },
+      });
+      eventLedger.appendEvent({
+        type: "attempt_blocked",
+        repoFullName: parsed.repoFullName,
+        payload: { issueNumber: parsed.issueNumber, reason },
+      });
+      const conflictResult = {
+        outcome: "blocked_claim_conflict",
+        reason,
+        repoFullName: parsed.repoFullName,
+        issueNumber: parsed.issueNumber,
+        minerLogin: parsed.minerLogin,
+        base: parsed.base,
+        mode,
+        attemptId,
+      };
+      if (parsed.json) {
+        console.log(JSON.stringify(conflictResult, null, 2));
+      } else {
+        console.error(
+          `Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: another in-flight attempt already holds an active claim on this issue.`,
+        );
+      }
+      options.onResult?.(conflictResult);
+      return 11;
+    }
+    // No conflict: stake this miner's own active claim. recordClaim is idempotent (a prior released/
+    // expired claim is re-activated in a single atomic statement), so a sequential retry re-claims cleanly.
+    claimLedger.claimIssue(parsed.repoFullName, parsed.issueNumber);
+    claimed = true;
+
     const runAttemptPipeline = options.runMinerAttempt ?? runMinerAttempt;
     const result = await runAttemptPipeline(
       {
@@ -424,6 +474,11 @@ export async function runAttempt(args, options = {}) {
     }
     if (allocation && allocator) allocator.release(attemptId);
     allocator?.close();
+    // Release the soft-claim on every terminal outcome (submitted/abandon/stale/blocked/governed, or a
+    // thrown error), mirroring the worktree slot's unconditional release above. Guarded by `claimed` so
+    // the pre-claim blocks (rejection/worktree-prep/infeasible/claim-conflict) -- which never staked one --
+    // don't touch another attempt's claim.
+    if (claimed) claimLedger.releaseClaim(parsed.repoFullName, parsed.issueNumber);
     claimLedger?.close();
     eventLedger?.close();
     attemptLog?.close();

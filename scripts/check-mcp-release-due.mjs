@@ -140,7 +140,7 @@ async function githubRequest({ token, method, path, body }) {
       accept: "application/vnd.github+json",
       authorization: `Bearer ${token}`,
       "content-type": "application/json",
-      "user-agent": "gittensory-mcp-release-watch",
+      "user-agent": "loopover-mcp-release-watch",
       "x-github-api-version": "2022-11-28",
     },
     body: body ? JSON.stringify(body) : undefined,

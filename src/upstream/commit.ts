@@ -1,10 +1,10 @@
-import { githubRateLimitAdmissionKeyForPublicToken, timeoutFetch } from "../github/client";
+import { githubRateLimitAdmissionKeyForPublicToken, PRODUCT_USER_AGENT, timeoutFetch } from "../github/client";
 import { LOW_REST_RATE_LIMIT_REMAINING, shouldWaitForGitHubRateLimit } from "../github/rate-limit";
 
 function upstreamCommitHeaders(token: string | undefined): Record<string, string> {
   return {
     accept: "application/vnd.github+json",
-    "user-agent": "gittensory/0.1",
+    "user-agent": PRODUCT_USER_AGENT,
     "x-github-api-version": "2022-11-28",
     ...(token ? { authorization: `Bearer ${token}` } : {}),
   };

@@ -43,7 +43,7 @@ export async function startGitHubDeviceFlow(env: Env): Promise<GitHubDeviceCodeR
     headers: {
       accept: "application/json",
       "content-type": "application/json",
-      "user-agent": "gittensory-api",
+      "user-agent": "loopover-api",
     },
     body: JSON.stringify({
       client_id: env.GITHUB_OAUTH_CLIENT_ID,
@@ -69,7 +69,7 @@ export async function pollGitHubDeviceFlow(env: Env, deviceCode: string) {
     headers: {
       accept: "application/json",
       "content-type": "application/json",
-      "user-agent": "gittensory-api",
+      "user-agent": "loopover-api",
     },
     body: JSON.stringify({
       client_id: env.GITHUB_OAUTH_CLIENT_ID,
@@ -130,7 +130,7 @@ export async function completeGitHubWebOAuth(
     headers: {
       accept: "application/json",
       "content-type": "application/json",
-      "user-agent": "gittensory-api",
+      "user-agent": "loopover-api",
     },
     body: JSON.stringify({
       client_id: env.GITHUB_OAUTH_CLIENT_ID,
@@ -183,7 +183,7 @@ export async function createSessionFromGitHubToken(
     headers: {
       accept: "application/vnd.github+json",
       authorization: `Bearer ${githubToken}`,
-      "user-agent": "gittensory-api",
+      "user-agent": "loopover-api",
       "x-github-api-version": "2022-11-28",
     },
   });
@@ -213,7 +213,7 @@ async function verifyTokenBelongsToApp(env: Env, githubToken: string): Promise<b
       accept: "application/vnd.github+json",
       authorization: `Basic ${btoa(`${env.GITHUB_OAUTH_CLIENT_ID}:${env.GITHUB_OAUTH_CLIENT_SECRET}`)}`,
       "content-type": "application/json",
-      "user-agent": "gittensory-api",
+      "user-agent": "loopover-api",
       "x-github-api-version": "2022-11-28",
     },
     body: JSON.stringify({ access_token: githubToken }),

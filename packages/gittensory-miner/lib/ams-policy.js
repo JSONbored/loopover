@@ -58,7 +58,7 @@ async function fetchRepoAmsPolicyContent(target, resolved) {
   for (const path of AMS_POLICY_SPEC_FILENAMES) {
     const url = `${resolved.rawContentBaseUrl}/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/HEAD/${path}`;
     try {
-      const response = await resolved.fetchImpl(url, { method: "GET", headers: { accept: "application/json", "user-agent": "gittensory-miner" } });
+      const response = await resolved.fetchImpl(url, { method: "GET", headers: { accept: "application/json", "user-agent": "loopover-miner" } });
       if (response.ok) {
         const text = await response.text();
         if (typeof text === "string") return text;

@@ -38,7 +38,7 @@ function parseRepoFullName(repoFullName) {
 function githubHeaders(githubToken) {
   const headers = {
     accept: "application/vnd.github+json",
-    "user-agent": "gittensory-miner",
+    "user-agent": "loopover-miner",
     "x-github-api-version": GITHUB_API_VERSION,
   };
   const token = typeof githubToken === "string" ? githubToken.trim() : "";
@@ -216,7 +216,7 @@ async function fetchManifestContent(target, resolved) {
   for (const path of MANIFEST_FILE_CANDIDATES) {
     const url = `${resolved.rawContentBaseUrl}/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/HEAD/${path}`;
     try {
-      const response = await resolved.fetchImpl(url, { method: "GET", headers: { accept: "application/json", "user-agent": "gittensory-miner" } });
+      const response = await resolved.fetchImpl(url, { method: "GET", headers: { accept: "application/json", "user-agent": "loopover-miner" } });
       if (response.ok) {
         const text = await response.text();
         if (typeof text === "string") return text;

@@ -15,7 +15,7 @@
 // (resolved via createInstallationToken). Every helper degrades to null/absent on failure — preview
 // discovery must NEVER sink a review.
 
-import { timeoutFetch, type GitHubRateLimitAdmissionKey } from "../../github/client";
+import { PRODUCT_USER_AGENT, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../../github/client";
 
 const DEFAULT_GITHUB_TIMEOUT_MS = 20_000;
 
@@ -46,7 +46,7 @@ async function githubJson<T>(
 ): Promise<T> {
   const headers = new Headers();
   headers.set("accept", "application/vnd.github+json");
-  headers.set("user-agent", "gittensory/0.1");
+  headers.set("user-agent", PRODUCT_USER_AGENT);
   headers.set("x-github-api-version", init.apiVersion || "2022-11-28");
   if (init.token) headers.set("authorization", `Bearer ${init.token}`);
   const response = await timeoutFetch(url, {

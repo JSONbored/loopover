@@ -190,7 +190,7 @@ describe("githubHeaders — the single shared GitHub REST header-builder (#4610,
   it("with no options, defaults to the standard accept + pinned api-version and omits content-type/authorization", () => {
     expect(githubHeaders()).toEqual({
       accept: "application/vnd.github+json",
-      "user-agent": "gittensory/0.1",
+      "user-agent": "loopover/0.1",
       "x-github-api-version": "2022-11-28",
     });
   });

@@ -36,7 +36,7 @@ function normalizeOptions(options = {}) {
 async function fetchPolicyDoc(target, path, resolved) {
   const url = `${resolved.rawContentBaseUrl}/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/HEAD/${path}`;
   try {
-    const response = await resolved.fetchImpl(url, { method: "GET", headers: { accept: "application/json", "user-agent": "gittensory-miner" } });
+    const response = await resolved.fetchImpl(url, { method: "GET", headers: { accept: "application/json", "user-agent": "loopover-miner" } });
     if (!response.ok) return null;
     const text = await response.text();
     return typeof text === "string" ? text : null;

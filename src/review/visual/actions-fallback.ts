@@ -32,7 +32,7 @@
 // dispatch inputs and surfaces the result as `workflow_run.display_title` in the completion webhook.
 // parseFallbackRunCorrelation reads it back; a run whose title doesn't match this exact shape is ignored
 // (fail-safe -- never guesses a PR from an unrelated run).
-import { timeoutFetch, type GitHubRateLimitAdmissionKey } from "../../github/client";
+import { PRODUCT_USER_AGENT, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../../github/client";
 import { sha256Hex } from "../../utils/crypto";
 import { isSafeHttpUrl } from "../content-lane/safe-url";
 import type { GitHubRepo } from "./preview-url";
@@ -97,7 +97,7 @@ export async function dispatchVisualCaptureFallback(params: {
     const headers = new Headers();
     headers.set("accept", "application/vnd.github+json");
     headers.set("content-type", "application/json");
-    headers.set("user-agent", "gittensory/0.1");
+    headers.set("user-agent", PRODUCT_USER_AGENT);
     headers.set("x-github-api-version", API_VERSION);
     headers.set("authorization", `Bearer ${params.token}`);
     const response = await timeoutFetch(`${base}/actions/workflows/${FALLBACK_WORKFLOW_FILE}/dispatches`, {
@@ -358,7 +358,7 @@ const MAX_FALLBACK_SHOTS = 24;
 function githubApiHeaders(token: string): Headers {
   const headers = new Headers();
   headers.set("accept", "application/vnd.github+json");
-  headers.set("user-agent", "gittensory/0.1");
+  headers.set("user-agent", PRODUCT_USER_AGENT);
   headers.set("x-github-api-version", API_VERSION);
   headers.set("authorization", `Bearer ${token}`);
   return headers;

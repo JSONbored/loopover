@@ -32,7 +32,7 @@ function githubGraphqlHeaders(githubToken) {
   const headers = {
     accept: "application/vnd.github+json",
     "content-type": "application/json",
-    "user-agent": "gittensory-miner",
+    "user-agent": "loopover-miner",
     "x-github-api-version": GITHUB_API_VERSION,
   };
   const token = typeof githubToken === "string" ? githubToken.trim() : "";

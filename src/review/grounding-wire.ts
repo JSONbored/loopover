@@ -12,7 +12,7 @@
 // fail-safe: any missing CI data / fetch error degrades to "no grounding" and the review proceeds on the diff.
 
 import { createInstallationToken } from "../github/app";
-import { githubRateLimitAdmissionKeyForToken, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../github/client";
+import { githubRateLimitAdmissionKeyForToken, PRODUCT_USER_AGENT, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../github/client";
 import { getCachedGroundingFileContent, putCachedGroundingFileContent, recordAuditEvent } from "../db/repositories";
 import type { CheckSummaryRecord, PullRequestFileRecord } from "../types";
 import { repoParts } from "../utils/json";
@@ -185,7 +185,7 @@ export async function makeGithubFileFetcher(env: Env, repoFullName: string, inst
             headers: {
               // raw media type returns the file body directly (no base64 envelope to decode).
               accept: "application/vnd.github.raw+json",
-              "user-agent": "gittensory/0.1",
+              "user-agent": PRODUCT_USER_AGENT,
               "x-github-api-version": "2022-11-28",
               ...(token ? { authorization: `Bearer ${token}` } : {}),
             },

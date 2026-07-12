@@ -29,6 +29,12 @@ const DEFAULT_METADATA_TTL_SECONDS = 10 * 60;
 const DEFAULT_COMMIT_TTL_SECONDS = 15 * 60;
 export const GITHUB_RESPONSE_CACHE_REPLAY_HEADER = "x-gittensory-cache";
 
+/** The single source of truth for the product's outbound User-Agent, used by every raw-`fetch`/`timeoutFetch`
+ *  call across `src/` that identifies itself generically (as opposed to a service-specific variant like the
+ *  self-host or content-lane User-Agent). Consolidates what had drifted into ~16 independently hardcoded
+ *  copies of the same literal. */
+export const PRODUCT_USER_AGENT = "loopover/0.1";
+
 /** The single shared GitHub REST header-builder for every raw-`fetch`/`timeoutFetch` call in `src/` (Octokit
  *  calls set their own headers internally and don't need this). Consolidates four independent, drifted
  *  `githubHeaders` copies that had each grown a different signature (#4610). `token` is optional — a public,
@@ -48,7 +54,7 @@ export function githubHeaders(options: GitHubHeadersOptions = {}): Record<string
   const { token, accept = "application/vnd.github+json", json = false, apiVersion = true } = options;
   return {
     accept,
-    "user-agent": "gittensory/0.1",
+    "user-agent": PRODUCT_USER_AGENT,
     ...(apiVersion ? { "x-github-api-version": "2022-11-28" } : {}),
     ...(json ? { "content-type": "application/json" } : {}),
     ...(token ? { authorization: `Bearer ${token}` } : {}),

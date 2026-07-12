@@ -71,7 +71,7 @@ function normalizePullNumber(value) {
 function githubHeaders(githubToken) {
   const headers = {
     accept: "application/vnd.github+json",
-    "user-agent": "gittensory-miner",
+    "user-agent": "loopover-miner",
     "x-github-api-version": githubApiVersion,
   };
   if (githubToken) headers.authorization = `Bearer ${githubToken}`;

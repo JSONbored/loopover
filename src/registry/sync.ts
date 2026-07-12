@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../db/client";
 import { registrySnapshots, repositories, syncRuns } from "../db/schema";
+import { PRODUCT_USER_AGENT } from "../github/client";
 import type { RegistrySnapshot } from "../types";
 import { errorMessage, jsonString, nowIso, repoParts } from "../utils/json";
 import { normalizeRegistryPayload } from "./normalize";
@@ -35,7 +36,7 @@ export async function refreshRegistry(env: Env): Promise<RegistrySnapshot> {
         const response = await fetch(url, {
           headers: {
             accept: "application/json",
-            "user-agent": "gittensory/0.1",
+            "user-agent": PRODUCT_USER_AGENT,
           },
         });
         if (!response.ok) {

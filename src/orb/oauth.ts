@@ -13,7 +13,7 @@
 // (read back at token-exchange, never from a request). No request input is echoed into the markup (no injection
 // surface).
 import type { Context } from "hono";
-import { timeoutFetch } from "../github/client";
+import { PRODUCT_USER_AGENT, timeoutFetch } from "../github/client";
 import { GITTENSORY_SITE_URL } from "../github/footer";
 import { isOrbBrokerEnabled, issueOrbEnrollment } from "./broker";
 
@@ -36,7 +36,7 @@ export async function exchangeOrbOAuthCode(env: Env, code: string, fetchImpl: ty
 /** Identify the authenticated maintainer (GET /user with their token). Null on any non-OK / loginless response. */
 export async function fetchOrbOAuthUser(token: string, fetchImpl: typeof fetch = timeoutFetch): Promise<GitHubUser | null> {
   const res = await fetchImpl("https://api.github.com/user", {
-    headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": "gittensory/0.1" },
+    headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": PRODUCT_USER_AGENT },
   });
   const user = (await res.json().catch(() => ({}))) as GitHubUser;
   return res.ok && user.login ? user : null;
@@ -60,7 +60,7 @@ export async function verifyInstallationAdmin(
     return userId === accountId && userLogin.toLowerCase() === accountLogin.toLowerCase();
   }
   const res = await fetchImpl(`https://api.github.com/user/memberships/orgs/${encodeURIComponent(accountLogin)}`, {
-    headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": "gittensory/0.1" },
+    headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": PRODUCT_USER_AGENT },
   });
   if (!res.ok) return false;
   const body = (await res.json().catch(() => ({}))) as GitHubOrgMembership;

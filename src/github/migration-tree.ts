@@ -1,4 +1,4 @@
-import { timeoutFetch, type GitHubRateLimitAdmissionKey } from "./client";
+import { PRODUCT_USER_AGENT, timeoutFetch, type GitHubRateLimitAdmissionKey } from "./client";
 import { repoParts } from "../utils/json";
 
 const GITHUB_FETCH_TIMEOUT_MS = 10_000;
@@ -8,7 +8,7 @@ const MIGRATIONS_PREFIX = "migrations/";
 function ghHeaders(token: string | undefined): Record<string, string> {
   return {
     accept: "application/vnd.github+json",
-    "user-agent": "gittensory/0.1",
+    "user-agent": PRODUCT_USER_AGENT,
     "x-github-api-version": "2022-11-28",
     ...(token ? { authorization: `Bearer ${token}` } : {}),
   };

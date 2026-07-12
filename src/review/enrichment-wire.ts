@@ -77,7 +77,7 @@ async function fetchReesPingWithRetry(url: string, secret: string): Promise<Resp
     fetch(url, {
       method: "POST",
       headers: {
-        "user-agent": "gittensory-selfhost/1.0",
+        "user-agent": "loopover-selfhost/1.0",
         authorization: `Bearer ${secret}`,
       },
       signal: AbortSignal.timeout(5000),
@@ -447,7 +447,7 @@ export async function buildReviewEnrichment(
     const response = await fetch(`${base.replace(/\/+$/, "")}/v1/enrich`, {
       method: "POST",
       headers: {
-        "user-agent": "gittensory-selfhost/1.0",
+        "user-agent": "loopover-selfhost/1.0",
         accept: "application/json",
         "content-type": "application/json",
         "x-gittensory-request-id": requestId,

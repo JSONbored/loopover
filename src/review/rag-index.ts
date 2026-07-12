@@ -26,7 +26,7 @@
 // GitHub call, and does no adapter use — the deploy is byte-identical to today.
 
 import { createInstallationToken } from "../github/app";
-import { githubRateLimitAdmissionKeyForToken, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../github/client";
+import { githubRateLimitAdmissionKeyForToken, PRODUCT_USER_AGENT, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../github/client";
 import { incr } from "../selfhost/metrics";
 import { isConfigFile, isDependencyManifestFile } from "../signals/path-matchers";
 import { repoParts } from "../utils/json";
@@ -93,7 +93,7 @@ async function resolveReadToken(env: Env, installationId: number | null | undefi
 function ghHeaders(token: string | undefined, accept: string): Record<string, string> {
   return {
     accept,
-    "user-agent": "gittensory/0.1",
+    "user-agent": PRODUCT_USER_AGENT,
     "x-github-api-version": "2022-11-28",
     ...(token ? { authorization: `Bearer ${token}` } : {}),
   };

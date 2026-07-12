@@ -133,7 +133,7 @@ ${error}<form action="/setup" method="post">
 export async function exchangeManifestCode(code: string, fetchImpl: typeof fetch = timeoutFetch): Promise<AppCredentials> {
   const res = await fetchImpl(`https://api.github.com/app-manifests/${encodeURIComponent(code)}/conversions`, {
     method: "POST",
-    headers: { accept: "application/vnd.github+json", "user-agent": "gittensory-selfhost" },
+    headers: { accept: "application/vnd.github+json", "user-agent": "loopover-selfhost" },
   });
   if (!res.ok) throw new Error(`manifest_exchange_http_${res.status}`);
   return (await res.json()) as AppCredentials;

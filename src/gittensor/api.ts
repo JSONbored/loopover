@@ -1,4 +1,5 @@
 import type { ContributorRepoStatRecord } from "../types";
+import { PRODUCT_USER_AGENT } from "../github/client";
 import { errorMessage } from "../utils/json";
 
 const GITTENSOR_API_BASE = "https://api.gittensor.io";
@@ -282,7 +283,7 @@ async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, {
     headers: {
       accept: "application/json",
-      "user-agent": "gittensory/0.1",
+      "user-agent": PRODUCT_USER_AGENT,
     },
     signal: AbortSignal.timeout(GITTENSOR_FETCH_TIMEOUT_MS),
   });

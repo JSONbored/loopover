@@ -61,7 +61,7 @@ describe("verifyGithubToken", () => {
         url: "https://example.com/user",
         headers: {
           accept: "application/vnd.github+json",
-          "user-agent": "gittensory-miner",
+          "user-agent": "loopover-miner",
           "x-github-api-version": "2022-11-28",
         },
       },

@@ -114,7 +114,7 @@ function resolveCodexAuthPath(env = process.env) {
 function githubHeaders(githubToken) {
   const headers = {
     accept: "application/vnd.github+json",
-    "user-agent": "gittensory-miner",
+    "user-agent": "loopover-miner",
     "x-github-api-version": githubApiVersion,
   };
   const token = typeof githubToken === "string" ? githubToken.trim() : "";

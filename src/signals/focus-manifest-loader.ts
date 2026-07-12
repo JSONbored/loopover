@@ -77,7 +77,7 @@ export async function fetchRepoFocusManifestFile(repoFullName: string): Promise<
   for (const path of MANIFEST_FILE_CANDIDATES) {
     const url = `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/HEAD/${path}`;
     try {
-      const response = await fetch(url, { headers: { Accept: "application/json", "User-Agent": "gittensory" } });
+      const response = await fetch(url, { headers: { Accept: "application/json", "User-Agent": "loopover" } });
       if (response.ok) {
         const text = await readBoundedResponseText(response);
         if (text !== null) return text;

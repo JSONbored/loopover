@@ -1,4 +1,4 @@
-import { githubRateLimitAdmissionKeyForPublicToken, timeoutFetch, type GitHubRateLimitAdmissionKey } from "./client";
+import { githubRateLimitAdmissionKeyForPublicToken, PRODUCT_USER_AGENT, timeoutFetch, type GitHubRateLimitAdmissionKey } from "./client";
 
 export type PublicContributorProfile = {
   login: string;
@@ -66,7 +66,7 @@ export async function fetchPublicContributorProfile(login: string, env?: Pick<En
   const safeLogin = encodeURIComponent(login);
   const headers = {
     accept: "application/vnd.github+json",
-    "user-agent": "gittensory/0.1",
+    "user-agent": PRODUCT_USER_AGENT,
     "x-github-api-version": "2022-11-28",
     // Authenticated requests lift the 60/hr unauthenticated ceiling to 5000/hr so the 500-login evidence
     // loop doesn't exhaust it and silently degrade (mirrors fetchPublicRepoStats) (#790).
@@ -192,7 +192,7 @@ async function fetchRepoStatsFromGitHub(env: Pick<Env, "GITHUB_PUBLIC_TOKEN">, r
   const response = await timeoutFetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
     headers: {
       accept: "application/vnd.github+json",
-      "user-agent": "gittensory/0.1",
+      "user-agent": PRODUCT_USER_AGENT,
       "x-github-api-version": "2022-11-28",
       ...(env.GITHUB_PUBLIC_TOKEN ? { authorization: `Bearer ${env.GITHUB_PUBLIC_TOKEN}` } : {}),
     },

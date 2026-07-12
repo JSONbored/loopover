@@ -465,7 +465,7 @@ export async function forwardOrbEvent(
         "x-github-event": args.eventName,
         "x-github-delivery": args.deliveryId,
         "x-orb-signature-256": `sha256=${signature}`,
-        "user-agent": "gittensory-orb/0.1",
+        "user-agent": "loopover-orb/0.1",
       },
       body: args.rawBody,
       signal: AbortSignal.timeout(10_000),

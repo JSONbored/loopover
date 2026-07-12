@@ -86,7 +86,7 @@ export async function fetchSubnetRecord(
   try {
     const res = await fetchWithRetry(
       `${base}/subnets/${netuid}`,
-      { headers: { accept: "application/json", "user-agent": "gittensory-content-lane" } },
+      { headers: { accept: "application/json", "user-agent": "loopover-content-lane" } },
       fetchImpl,
     );
     if (res.status === 404) return { status: "missing", record: null };

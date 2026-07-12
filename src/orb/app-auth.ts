@@ -11,7 +11,7 @@ function orbHeaders(jwt: string): HeadersInit {
     accept: "application/vnd.github+json",
     authorization: `Bearer ${jwt}`,
     "content-type": "application/json",
-    "user-agent": "gittensory-orb/0.1",
+    "user-agent": "loopover-orb/0.1",
     "x-github-api-version": "2022-11-28",
   };
 }

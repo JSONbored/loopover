@@ -1,5 +1,6 @@
 import {
   GITHUB_RESPONSE_CACHE_REPLAY_HEADER,
+  PRODUCT_USER_AGENT,
   getGitHubResponseCache,
   timeoutFetch,
   type CachedGitHubResponse,
@@ -85,7 +86,7 @@ function graphQlFetchInit(query: string, token: string, admissionKey?: GitHubRat
     headers: {
       accept: "application/vnd.github+json",
       "content-type": "application/json",
-      "user-agent": "gittensory/0.1",
+      "user-agent": PRODUCT_USER_AGENT,
       authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ query }),

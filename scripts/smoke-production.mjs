@@ -106,7 +106,7 @@ async function fetchWithTimeout(url, init = {}) {
     return await fetch(url, {
       ...init,
       headers: {
-        "user-agent": "gittensory-production-smoke",
+        "user-agent": "loopover-production-smoke",
         ...(init.headers ?? {}),
       },
       signal: controller.signal,

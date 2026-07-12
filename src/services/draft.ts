@@ -352,7 +352,7 @@ class GitHubUserApiError extends Error {
 async function githubUserJson<T>(url: string, init: RequestInit & { token: string } = { token: "" }): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("accept", "application/vnd.github+json");
-  headers.set("user-agent", "gittensory-api");
+  headers.set("user-agent", "loopover-api");
   headers.set("x-github-api-version", GITHUB_API_VERSION);
   /* v8 ignore next -- token-absent arm is unreachable: every caller passes a decrypted user token; the { token: "" } default only guards the type. */
   if (init.token) headers.set("authorization", `Bearer ${init.token}`);

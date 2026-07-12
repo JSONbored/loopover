@@ -76,6 +76,7 @@ import {
   githubRateLimitAdmissionKeyForPublicToken,
   githubRateLimitAdmissionKeyForToken,
   isGitHubResponseCacheReplay,
+  PRODUCT_USER_AGENT,
   timeoutFetch,
   type GitHubRateLimitAdmissionKey,
 } from "./client";
@@ -4412,7 +4413,7 @@ function notModifiedResponse(response: Response): GitHubJsonNotModifiedResponse 
 function githubRestHeaders(token?: string, validators?: GitHubConditionalValidators): HeadersInit {
   return {
     accept: "application/vnd.github+json",
-    "user-agent": "gittensory/0.1",
+    "user-agent": PRODUCT_USER_AGENT,
     "x-github-api-version": "2022-11-28",
     ...(validators?.etag ? { "if-none-match": validators.etag } : {}),
     ...(validators?.lastModified ? { "if-modified-since": validators.lastModified } : {}),

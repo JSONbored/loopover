@@ -68,6 +68,26 @@ describe("buildMaintainerQualityDashboard", () => {
     expect(JSON.stringify(dashboard)).not.toMatch(/"burdenScore"/);
   });
 
+  it("aggregates the slop + duplicate signal and its rates, failing safe to null rates with no open PRs (#2202)", () => {
+    const flagged = buildMaintainerQualityDashboard({
+      repos: [input({ pullRequests: [pr(1), pr(2, { slopBand: "high" })] })],
+      generatedAt: "2026-06-14T00:00:00.000Z",
+    });
+    expect(flagged.slopDuplicate.openPullRequests).toBe(2);
+    expect(flagged.slopDuplicate.slopFlaggedPullRequests).toBe(1);
+    expect(flagged.slopDuplicate.slopRate).toBeCloseTo(0.5);
+    expect(flagged.slopDuplicate.duplicateRate).not.toBeNull();
+
+    // No open PRs → the rates divide-guard to null rather than 0/0.
+    const empty = buildMaintainerQualityDashboard({
+      repos: [input({ pullRequests: [] })],
+      generatedAt: "2026-06-14T00:00:00.000Z",
+    });
+    expect(empty.slopDuplicate.openPullRequests).toBe(0);
+    expect(empty.slopDuplicate.slopRate).toBeNull();
+    expect(empty.slopDuplicate.duplicateRate).toBeNull();
+  });
+
   it("counts PRs without a linked issue toward the missing-linked-issue signal", () => {
     const dashboard = buildMaintainerQualityDashboard({
       repos: [input({ pullRequests: [pr(1, { linkedIssues: [] }), pr(2, { linkedIssues: [5] })] })],

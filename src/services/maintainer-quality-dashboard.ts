@@ -58,6 +58,16 @@ export type MaintainerQualityDashboard = {
     ageBuckets: { under7Days: number; days7To30: number; over30Days: number };
     bandCounts: Record<QueueHealth["level"], number>;
   };
+  /** Aggregate slop + duplicate signal across the SHAPED repos' open PRs (#2202): how many open PRs carry an
+   *  elevated/high deterministic slop band, how many sit in a high-risk duplicate cluster, and each as a rate
+   *  of the open-PR total (null when there are no open PRs). Observable counts + rates, never raw scores. */
+  slopDuplicate: {
+    openPullRequests: number;
+    slopFlaggedPullRequests: number;
+    duplicateFlaggedPullRequests: number;
+    slopRate: number | null;
+    duplicateRate: number | null;
+  };
   summary: string;
 };
 
@@ -91,6 +101,7 @@ export function buildMaintainerQualityDashboard(args: { repos: MaintainerQuality
   let openPrs = 0;
   let duplicatePrRisk = 0;
   let missingLinkedIssue = 0;
+  let slopFlaggedPrs = 0;
   const queueHealthAggregate = {
     openPullRequests: 0,
     stalePullRequests: 0,
@@ -141,6 +152,8 @@ export function buildMaintainerQualityDashboard(args: { repos: MaintainerQuality
       const inHighRiskCluster = highRiskPrNumbers.has(pr.number);
       if (pr.linkedIssues.length === 0) missingLinkedIssue += 1;
       if (inHighRiskCluster) duplicatePrRisk += 1;
+      // #2202: an "elevated" or "high" deterministic slop band is the slop flag (null/absent = not assessed).
+      if (pr.slopBand === "elevated" || pr.slopBand === "high") slopFlaggedPrs += 1;
       const linkedToRealIssue = pr.linkedIssues.some((number) => realIssueNumbers.has(number));
       const author = pr.authorLogin ?? "unknown";
       const tally = contributorTotals.get(author) ?? { open: 0, clean: 0 };
@@ -171,6 +184,13 @@ export function buildMaintainerQualityDashboard(args: { repos: MaintainerQuality
     topContributors,
     qualitySignals: { openPrs, duplicatePrRisk, missingLinkedIssue },
     queueHealth: queueHealthAggregate,
+    slopDuplicate: {
+      openPullRequests: openPrs,
+      slopFlaggedPullRequests: slopFlaggedPrs,
+      duplicateFlaggedPullRequests: duplicatePrRisk,
+      slopRate: openPrs > 0 ? slopFlaggedPrs / openPrs : null,
+      duplicateRate: openPrs > 0 ? duplicatePrRisk / openPrs : null,
+    },
     summary,
   };
 }

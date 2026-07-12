@@ -40,6 +40,8 @@ describe("AmsPolicySpec parser (#5132)", () => {
       slopThreshold: "clean",
       capLimits: { budget: 10, turns: 40, elapsedMs: 3_600_000 },
       convergenceThresholds: { maxConsecutiveFailures: 5, maxReenqueues: 2 },
+      maxIterations: 5,
+      maxTurnsPerIteration: 10,
     });
     expect(parsed.present).toBe(true);
     expect(parsed.spec).toEqual({
@@ -47,8 +49,29 @@ describe("AmsPolicySpec parser (#5132)", () => {
       slopThreshold: "clean",
       capLimits: { budget: 10, turns: 40, elapsedMs: 3_600_000 },
       convergenceThresholds: { maxConsecutiveFailures: 5, maxReenqueues: 2 },
+      maxIterations: 5,
+      maxTurnsPerIteration: 10,
     });
     expect(parsed.warnings).toEqual([]);
+  });
+
+  it("maxIterations/maxTurnsPerIteration floor to whole counts, allow zero, and reject negative/non-numeric values", () => {
+    const floored = parseAmsPolicySpec({ maxIterations: 4.9, maxTurnsPerIteration: 8.2 });
+    expect(floored.spec.maxIterations).toBe(4);
+    expect(floored.spec.maxTurnsPerIteration).toBe(8);
+    expect(floored.warnings).toEqual([]);
+
+    expect(parseAmsPolicySpec({ maxIterations: 0, submissionMode: "enforce" }).spec.maxIterations).toBe(0);
+
+    const negative = parseAmsPolicySpec({ maxIterations: -1 });
+    expect(negative.spec.maxIterations).toBe(DEFAULT_AMS_POLICY_SPEC.maxIterations);
+    expect(negative.warnings.join(" ")).toMatch(/maxIterations/i);
+
+    const nonNumeric = parseAmsPolicySpec({ maxTurnsPerIteration: "many" });
+    expect(nonNumeric.spec.maxTurnsPerIteration).toBe(DEFAULT_AMS_POLICY_SPEC.maxTurnsPerIteration);
+    expect(nonNumeric.warnings.join(" ")).toMatch(/maxTurnsPerIteration/i);
+
+    expect(parseAmsPolicySpec({ maxIterations: undefined, submissionMode: "enforce" }).spec.maxIterations).toBe(DEFAULT_AMS_POLICY_SPEC.maxIterations);
   });
 
   it("reports absent-with-a-warning when every field matches the default (no recognized non-default fields)", () => {

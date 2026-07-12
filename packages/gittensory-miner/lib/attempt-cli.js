@@ -1,16 +1,16 @@
-// CLI dispatch for the real attempt pipeline (#5132, Wave 3.5). Wires bin/gittensory-miner.js's `attempt`
-// subcommand to real infrastructure: worktree allocation (worktree-allocator.js's first real, non-test
-// caller), the four ledgers (claim/event/attempt-log/governor), the real coding-agent driver (#5131) and
-// slop assessor (#5133), the fetchLiveIssueSnapshot/executeLocalWrite built alongside this file, and mode
-// resolution.
+// CLI dispatch for the real attempt pipeline (#5132, Wave 3.5 -- the final assembly). Wires bin/gittensory-miner.js's
+// `attempt` subcommand to real infrastructure end to end: worktree allocation + real git preparation
+// (worktree-allocator.js + attempt-worktree.js), the four ledgers (claim/event/attempt-log/governor), the
+// real coding-agent driver (#5131) and slop assessor (#5133), a live SelfReviewContext fetch (#5145), a real
+// coding-task spec (#5239), the operator's AmsPolicySpec execution policy (#5249), rejectionSignaled (#5241),
+// and finally a real runMinerAttempt call -- the first point in this epic where a real coding agent actually
+// runs, not just checks-and-reports-blocked.
 //
-// KNOWN, DELIBERATE GAP: runMinerAttempt requires `loopInput.reviewContext: SelfReviewContext` (issue/PR/
-// manifest data at live-gate fidelity, tracked by #5145) AND a full coding-task spec (title/instructions/
-// acceptanceCriteriaPath, derived from the target issue -- no builder for that exists anywhere in this
-// package either, a second gap discovered while building this file and noted on #5132). Rather than
-// fabricate placeholder data for either -- which would let a self-review pass "look real" while checking
-// nothing -- this command builds and verifies every OTHER real dependency, then reports the block clearly
-// instead of calling runMinerAttempt with an invalid or fabricated input.
+// KNOWN, DOCUMENTED GAPS (not fabricated -- see attempt-input-builder.js's own header for the full list):
+// governor.killSwitchRepoPaused only checks the GLOBAL env-var kill switch, not yet a real per-repo
+// `.gittensory-miner.yml` pause (the resolver exists, miner-goal-spec.js/#5255, not wired in HERE yet); and
+// governor.convergenceInput is an honest first-attempt-shaped literal, not a real per-issue attempt-history
+// query (attempt-log.js's schema has no repo+issue index, and reenqueue counts aren't tracked anywhere yet).
 
 import { resolveCodingAgentModeFromConfig } from "@jsonbored/gittensory-engine";
 import { constructProductionCodingAgentDriver } from "./coding-agent-construction.js";
@@ -24,6 +24,12 @@ import { initGovernorLedger } from "./governor-ledger.js";
 import { openWorktreeAllocator } from "./worktree-allocator.js";
 import { resolveRejectionSignaled } from "./rejection-signal.js";
 import { cleanupAttemptWorktree, prepareAttemptWorktree } from "./attempt-worktree.js";
+import { fetchSelfReviewContext } from "./self-review-context.js";
+import { buildCodingTaskSpec } from "./coding-task-spec.js";
+import { resolveAmsPolicy } from "./ams-policy.js";
+import { checkMinerKillSwitch } from "./governor-kill-switch.js";
+import { buildAttemptGovernorContext, buildAttemptLoopInput } from "./attempt-input-builder.js";
+import { runMinerAttempt } from "./attempt-runner.js";
 
 const ATTEMPT_USAGE = "Usage: gittensory-miner attempt <owner/repo> <issue#> --miner-login <login> [--base <branch>] [--live] [--json]";
 
@@ -120,11 +126,12 @@ export function buildAttemptDeps(env, ledgers) {
 }
 
 /**
- * Run the `attempt` CLI subcommand. Checks resolveRejectionSignaled first (before consuming a worktree
- * slot), acquires a concurrency slot (worktree-allocator.js), assembles real AttemptDeps, then prepares a
- * REAL git worktree (attempt-worktree.js: clone/fetch + `git worktree add`) -- then, since no SelfReviewContext
- * fetcher or coding-task-spec builder exists yet, reports the block instead of calling runMinerAttempt with
- * fabricated data, and cleans up the now-unused worktree. See this file's header for why.
+ * Run the `attempt` CLI subcommand end to end: resolveRejectionSignaled (before consuming a worktree slot) ->
+ * acquire a concurrency slot -> assemble real AttemptDeps -> prepare a REAL git worktree -> fetch a real
+ * SelfReviewContext -> build a real coding-task spec (blocks on an infeasible verdict) -> resolve the real
+ * AmsPolicySpec execution policy -> assemble the real IterateLoopInput + Governor context -> call
+ * runMinerAttempt for real. The worktree is cleaned up (or retained, per the real outcome) in `finally`.
+ * See this file's header for the documented gaps (per-repo kill-switch pause, real convergence history).
  */
 export async function runAttempt(args, options = {}) {
   const parsed = parseAttemptArgs(args);
@@ -205,9 +212,10 @@ export async function runAttempt(args, options = {}) {
 
     allocation = allocator.acquire(attemptId, parsed.repoFullName);
 
+    let deps;
     try {
       const buildDeps = options.buildAttemptDeps ?? buildAttemptDeps;
-      buildDeps(env, { claimLedger, eventLedger, attemptLog, governorLedger, nowMs });
+      deps = buildDeps(env, { claimLedger, eventLedger, attemptLog, governorLedger, nowMs });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       console.error(`Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: ${reason}`);
@@ -254,54 +262,151 @@ export async function runAttempt(args, options = {}) {
       return 6;
     }
 
-    const reason = "missing_self_review_context_and_task_spec";
-    const blockedResult = {
-      outcome: "blocked_missing_prerequisite",
-      reason,
-      trackingIssue: 5145,
+    // Real SelfReviewContext (#5145): issue/PR/manifest data at live-gate fidelity for the target repo.
+    const fetchReviewContext = options.fetchSelfReviewContext ?? fetchSelfReviewContext;
+    const reviewContext = await fetchReviewContext(parsed.repoFullName, {
+      githubToken: env.GITHUB_TOKEN,
+      contributorLogin: parsed.minerLogin,
+      linkedIssues: [parsed.issueNumber],
+    });
+
+    // The target issue's own real record, when present in the fetched context. When absent (e.g. already
+    // closed, or genuinely not found), buildCodingTaskSpec's own feasibility check reports target_not_found
+    // and this placeholder's empty title/body are never surfaced anywhere -- not fabricated content, just an
+    // inert shape for a verdict that immediately blocks.
+    const targetIssue = reviewContext.issues.find((candidate) => candidate.number === parsed.issueNumber) ?? {
+      number: parsed.issueNumber,
+      title: "",
+      body: null,
+      labels: [],
+    };
+
+    const buildTaskSpec = options.buildCodingTaskSpec ?? buildCodingTaskSpec;
+    const codingTaskSpec = buildTaskSpec({
+      repoFullName: parsed.repoFullName,
+      issue: targetIssue,
+      context: { issues: reviewContext.issues, pullRequests: reviewContext.pullRequests },
+      claimLedger,
+      workingDirectory: worktreeResult.worktreePath,
+    });
+
+    if (!codingTaskSpec.ready) {
+      const reason = `infeasible_${codingTaskSpec.verdict}`;
+      attemptLog.appendAttemptLogEvent({
+        eventType: "attempt_aborted",
+        attemptId,
+        actionClass: "open_pr",
+        mode,
+        reason,
+        payload: { repoFullName: parsed.repoFullName, issueNumber: parsed.issueNumber, feasibility: codingTaskSpec.feasibility },
+      });
+      eventLedger.appendEvent({
+        type: "attempt_blocked",
+        repoFullName: parsed.repoFullName,
+        payload: { issueNumber: parsed.issueNumber, reason },
+      });
+      const infeasibleResult = {
+        outcome: "blocked_infeasible",
+        reason,
+        verdict: codingTaskSpec.verdict,
+        avoidReasons: codingTaskSpec.feasibility.avoidReasons,
+        raiseReasons: codingTaskSpec.feasibility.raiseReasons,
+        repoFullName: parsed.repoFullName,
+        issueNumber: parsed.issueNumber,
+        minerLogin: parsed.minerLogin,
+        base: parsed.base,
+        mode,
+        attemptId,
+      };
+      if (parsed.json) {
+        console.log(JSON.stringify(infeasibleResult, null, 2));
+      } else {
+        console.error(
+          `Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: feasibility verdict "${codingTaskSpec.verdict}" (${[...codingTaskSpec.feasibility.avoidReasons, ...codingTaskSpec.feasibility.raiseReasons].join(", ")}).`,
+        );
+      }
+      return 4;
+    }
+
+    const amsPolicy = await (options.resolveAmsPolicy ?? resolveAmsPolicy)(parsed.repoFullName, { env });
+    const checkKillSwitch = options.checkMinerKillSwitch ?? checkMinerKillSwitch;
+    const killSwitchScope = checkKillSwitch({ env }).scope;
+
+    const loopInput = buildAttemptLoopInput({
+      codingTaskSpec,
+      reviewContext,
+      worktreePath: worktreeResult.worktreePath,
+      attemptId,
+      mode,
+      repoFullName: parsed.repoFullName,
+      minerLogin: parsed.minerLogin,
+      rejectionSignaled: false,
+      amsPolicySpec: amsPolicy.spec,
+      branchRef: worktreeResult.branchName,
+    });
+    const governor = buildAttemptGovernorContext(env, amsPolicy.spec);
+
+    const runAttemptPipeline = options.runMinerAttempt ?? runMinerAttempt;
+    const result = await runAttemptPipeline(
+      {
+        loopInput,
+        issueNumber: parsed.issueNumber,
+        minerLogin: parsed.minerLogin,
+        base: parsed.base,
+        killSwitchScope,
+        slopThreshold: amsPolicy.spec.slopThreshold,
+        submissionMode: amsPolicy.spec.submissionMode,
+        governor,
+      },
+      deps,
+    );
+
+    worktreeResult.attemptOk = result.outcome === "submitted";
+    const finalResult = {
+      outcome: `attempt_${result.outcome}`,
       repoFullName: parsed.repoFullName,
       issueNumber: parsed.issueNumber,
       minerLogin: parsed.minerLogin,
       base: parsed.base,
       mode,
       attemptId,
-      worktreePath: worktreeResult.worktreePath,
+      submissionMode: amsPolicy.spec.submissionMode,
+      ...("reason" in result ? { reason: result.reason } : {}),
+      ...("decision" in result ? { decision: result.decision } : {}),
+      ...("spec" in result ? { spec: result.spec } : {}),
     };
 
-    // "attempt_aborted" is the closest fit in ATTEMPT_LOG_EVENT_TYPES's fixed vocabulary
-    // (@jsonbored/gittensory-engine) for "never started because a hard prerequisite is missing".
-    attemptLog.appendAttemptLogEvent({
-      eventType: "attempt_aborted",
-      attemptId,
-      actionClass: "open_pr",
-      mode,
-      reason,
-      payload: { repoFullName: parsed.repoFullName, issueNumber: parsed.issueNumber, trackingIssue: 5145 },
-    });
-    eventLedger.appendEvent({
-      type: "attempt_blocked",
-      repoFullName: parsed.repoFullName,
-      payload: { issueNumber: parsed.issueNumber, reason, trackingIssue: 5145 },
-    });
-
     if (parsed.json) {
-      console.log(JSON.stringify(blockedResult, null, 2));
+      console.log(JSON.stringify(finalResult, null, 2));
     } else {
-      console.log(
-        `Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: no SelfReviewContext fetcher or coding-task-spec builder yet (tracked by #5145). Worktree, ledgers, driver, live-issue fetch, and local-write execution are wired and ready; runMinerAttempt was not invoked.`,
-      );
+      console.log(`Attempt for ${parsed.repoFullName}#${parsed.issueNumber} finished with outcome: ${result.outcome}.`);
     }
-    return 4;
+
+    switch (result.outcome) {
+      case "submitted":
+        return 0;
+      case "abandon":
+        return 7;
+      case "stale":
+        return 8;
+      case "blocked":
+        return 9;
+      case "governed":
+        return 10;
+      default:
+        return 2;
+    }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     return 2;
   } finally {
-    // No real attempt ever ran in this worktree (every path above stops before invoking runMinerAttempt) --
-    // there's nothing to postmortem, so it's always cleaned up (`attemptOk: true`), matching
-    // cleanupAttemptWorktree's own retention policy for a worktree with no failure to inspect.
+    // worktreeResult.attemptOk is set to the REAL runMinerAttempt outcome (submitted = true) once that call
+    // happens; every earlier blocked path (rejection/worktree-prep-failure/infeasible) never sets it, since
+    // nothing ran in the worktree to postmortem -- those default to `true` (nothing to retain), matching
+    // cleanupAttemptWorktree's own retention policy (a failed REAL attempt is what gets retained).
     if (worktreeResult?.ok) {
       const cleanupWorktree = options.cleanupAttemptWorktree ?? cleanupAttemptWorktree;
-      await cleanupWorktree(worktreeResult.repoPath, worktreeResult.worktreePath, true);
+      await cleanupWorktree(worktreeResult.repoPath, worktreeResult.worktreePath, worktreeResult.attemptOk ?? true);
     }
     if (allocation && allocator) allocator.release(attemptId);
     allocator?.close();

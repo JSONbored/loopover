@@ -38,6 +38,8 @@ test("parseAmsPolicySpec: valid raw config normalizes every field and keeps non-
     slopThreshold: "clean",
     capLimits: { budget: 10, turns: 40, elapsedMs: 3_600_000 },
     convergenceThresholds: { maxConsecutiveFailures: 5, maxReenqueues: 2 },
+    maxIterations: 5,
+    maxTurnsPerIteration: 10,
   });
 
   assert.equal(parsed.present, true);
@@ -46,8 +48,28 @@ test("parseAmsPolicySpec: valid raw config normalizes every field and keeps non-
     slopThreshold: "clean",
     capLimits: { budget: 10, turns: 40, elapsedMs: 3_600_000 },
     convergenceThresholds: { maxConsecutiveFailures: 5, maxReenqueues: 2 },
+    maxIterations: 5,
+    maxTurnsPerIteration: 10,
   });
   assert.deepEqual(parsed.warnings, []);
+});
+
+test("parseAmsPolicySpec: maxIterations/maxTurnsPerIteration floor to whole counts and reject negative/non-numeric values", () => {
+  const floored = parseAmsPolicySpec({ maxIterations: 4.9, maxTurnsPerIteration: 8.2 });
+  assert.equal(floored.spec.maxIterations, 4);
+  assert.equal(floored.spec.maxTurnsPerIteration, 8);
+  assert.deepEqual(floored.warnings, []);
+
+  const zero = parseAmsPolicySpec({ maxIterations: 0, submissionMode: "enforce" });
+  assert.equal(zero.spec.maxIterations, 0);
+
+  const negative = parseAmsPolicySpec({ maxIterations: -1 });
+  assert.equal(negative.spec.maxIterations, DEFAULT_AMS_POLICY_SPEC.maxIterations);
+  assert.match(negative.warnings.join(" "), /maxIterations/i);
+
+  const nonNumeric = parseAmsPolicySpec({ maxTurnsPerIteration: "many" });
+  assert.equal(nonNumeric.spec.maxTurnsPerIteration, DEFAULT_AMS_POLICY_SPEC.maxTurnsPerIteration);
+  assert.match(nonNumeric.warnings.join(" "), /maxTurnsPerIteration/i);
 });
 
 test("parseAmsPolicySpec: submissionMode rejects an unrecognized value", () => {

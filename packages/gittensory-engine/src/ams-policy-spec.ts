@@ -52,6 +52,11 @@ export type AmsPolicySpec = {
   capLimits: AmsCapLimits;
   /** Non-convergence detector thresholds. Default: {@link DEFAULT_PORTFOLIO_CONVERGENCE_THRESHOLDS}. */
   convergenceThresholds: PortfolioConvergenceThresholds;
+  /** Hard ceiling on the iterate loop's own iteration count (IterateLoopInput.maxIterations). Default: 3. */
+  maxIterations: number;
+  /** Per-iteration turn budget passed to the coding-agent driver (IterateLoopInput.maxTurnsPerIteration).
+   *  Default: 6. */
+  maxTurnsPerIteration: number;
 };
 
 /** The tolerant parser result for `.gittensory-ams.yml`. Mirrors `ParsedMinerGoalSpec`'s present/warnings shape. */
@@ -70,6 +75,8 @@ export const DEFAULT_AMS_POLICY_SPEC: Readonly<AmsPolicySpec> = Object.freeze({
   slopThreshold: "low",
   capLimits: Object.freeze({ budget: 5, turns: 20, elapsedMs: 1_800_000 }),
   convergenceThresholds: Object.freeze({ ...DEFAULT_PORTFOLIO_CONVERGENCE_THRESHOLDS }),
+  maxIterations: 3,
+  maxTurnsPerIteration: 6,
 });
 
 const MAX_AMS_POLICY_SPEC_BYTES = 8_192;
@@ -80,6 +87,8 @@ function cloneDefaultAmsPolicySpec(): AmsPolicySpec {
     slopThreshold: DEFAULT_AMS_POLICY_SPEC.slopThreshold,
     capLimits: { ...DEFAULT_AMS_POLICY_SPEC.capLimits },
     convergenceThresholds: { ...DEFAULT_AMS_POLICY_SPEC.convergenceThresholds },
+    maxIterations: DEFAULT_AMS_POLICY_SPEC.maxIterations,
+    maxTurnsPerIteration: DEFAULT_AMS_POLICY_SPEC.maxTurnsPerIteration,
   };
 }
 
@@ -108,6 +117,13 @@ function normalizePositiveNumber(value: unknown, field: string, fallback: number
     return fallback;
   }
   return value;
+}
+
+/** Like normalizePositiveNumber, but floors to a whole count -- for fields that are semantically integer
+ *  counts (an iteration/turn budget), matching MinerGoalSpec's own normalizePositiveInteger convention. */
+function normalizeNonNegativeInteger(value: unknown, field: string, fallback: number, warnings: string[]): number {
+  const normalized = normalizePositiveNumber(value, field, fallback, warnings);
+  return Math.floor(normalized);
 }
 
 function normalizeCapLimits(value: unknown, fallback: AmsCapLimits, warnings: string[]): AmsCapLimits {
@@ -154,7 +170,9 @@ function hasConfiguredPolicyFields(spec: AmsPolicySpec): boolean {
     spec.capLimits.turns !== DEFAULT_AMS_POLICY_SPEC.capLimits.turns ||
     spec.capLimits.elapsedMs !== DEFAULT_AMS_POLICY_SPEC.capLimits.elapsedMs ||
     spec.convergenceThresholds.maxConsecutiveFailures !== DEFAULT_AMS_POLICY_SPEC.convergenceThresholds.maxConsecutiveFailures ||
-    spec.convergenceThresholds.maxReenqueues !== DEFAULT_AMS_POLICY_SPEC.convergenceThresholds.maxReenqueues
+    spec.convergenceThresholds.maxReenqueues !== DEFAULT_AMS_POLICY_SPEC.convergenceThresholds.maxReenqueues ||
+    spec.maxIterations !== DEFAULT_AMS_POLICY_SPEC.maxIterations ||
+    spec.maxTurnsPerIteration !== DEFAULT_AMS_POLICY_SPEC.maxTurnsPerIteration
   );
 }
 
@@ -188,6 +206,13 @@ export function parseAmsPolicySpec(raw: unknown): ParsedAmsPolicySpec {
     convergenceThresholds: normalizeConvergenceThresholds(
       record.convergenceThresholds,
       DEFAULT_AMS_POLICY_SPEC.convergenceThresholds,
+      warnings,
+    ),
+    maxIterations: normalizeNonNegativeInteger(record.maxIterations, "maxIterations", DEFAULT_AMS_POLICY_SPEC.maxIterations, warnings),
+    maxTurnsPerIteration: normalizeNonNegativeInteger(
+      record.maxTurnsPerIteration,
+      "maxTurnsPerIteration",
+      DEFAULT_AMS_POLICY_SPEC.maxTurnsPerIteration,
       warnings,
     ),
   };

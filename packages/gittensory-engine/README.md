@@ -646,8 +646,8 @@ the existence check — so a caller reads the returned path and feeds its conten
 ## AmsPolicySpec
 
 `AmsPolicySpec` is the type surface for `.gittensory-ams.yml` — the OPERATOR's own execution-risk policy for
-their miner (`submissionMode`, `slopThreshold`, `capLimits`, `convergenceThresholds`), a deliberate structural
-sibling to `MinerGoalSpec` but answering a different question: `MinerGoalSpec` is what the target repo wants
+their miner (`submissionMode`, `slopThreshold`, `capLimits`, `convergenceThresholds`, `maxIterations`,
+`maxTurnsPerIteration`), a deliberate structural sibling to `MinerGoalSpec` but answering a different question: `MinerGoalSpec` is what the target repo wants
 from being mined; `AmsPolicySpec` is how aggressive the operator wants their own agent to be. No field on this
 type lets a target repo's own file loosen what an operator's agent is willing to do — see the type's own header
 comment for why that boundary is load-bearing. `DEFAULT_AMS_POLICY_SPEC` is deny-by-default: `"observe"`

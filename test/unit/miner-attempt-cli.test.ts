@@ -14,6 +14,7 @@ import { closeDefaultGovernorLedger, initGovernorLedger } from "../../packages/g
 import { closeDefaultWorktreeAllocator, openWorktreeAllocator } from "../../packages/gittensory-miner/lib/worktree-allocator.js";
 import { buildAttemptDeps, parseAttemptArgs, runAttempt } from "../../packages/gittensory-miner/lib/attempt-cli.js";
 import type { PrepareAttemptWorktreeResult } from "../../packages/gittensory-miner/lib/attempt-worktree.js";
+import { DEFAULT_AMS_POLICY_SPEC } from "../../packages/gittensory-engine/src/index";
 
 const roots: string[] = [];
 // Only ever holds ledgers a test itself must close -- runAttempt tests inject theirs via DI and runAttempt's
@@ -25,6 +26,45 @@ const closeables: Array<{ close(): void }> = [];
  *  that don't themselves care about real git plumbing (covered separately by miner-attempt-worktree.test.ts). */
 function fakeWorktreeResult(): Extract<PrepareAttemptWorktreeResult, { ok: true }> {
   return { ok: true, worktreePath: "/fake/repo/.gittensory-worktrees/fake", repoPath: "/fake/repo", branchName: "gittensory/attempt/fake" };
+}
+
+function fakeReviewContext() {
+  return {
+    manifest: { present: false, settings: {}, gate: {}, warnings: [] },
+    repo: { name: "widgets", fullName: "acme/widgets", private: false, htmlUrl: "https://github.com/acme/widgets", defaultBranch: "main", ownerLogin: "acme" },
+    issues: [{ repoFullName: "acme/widgets", number: 7, title: "Uploads should retry on 5xx", state: "open", labels: ["bug"], linkedPrs: [], body: "Uploads fail silently." }],
+    pullRequests: [],
+  };
+}
+
+/** A stubbed READY coding-task-spec result, matching buildCodingTaskSpec's own `ready: true` shape. */
+function fakeCodingTaskSpec() {
+  return {
+    ready: true as const,
+    verdict: "go" as const,
+    feasibility: { verdict: "go" as const, avoidReasons: [], raiseReasons: [], summary: "ready" },
+    acceptanceCriteriaPath: "/fake/repo/.gittensory-worktrees/fake/acceptance-criteria.json",
+    instructions: "Resolve issue #7",
+    title: "Uploads should retry on 5xx",
+    body: "Uploads fail silently.",
+    labels: ["bug"],
+    linkedIssues: [7],
+  };
+}
+
+/** The default set of injected options a test needs to reach past every real dependency and into (or
+ *  through) the final runMinerAttempt call, without doing any real network/git/subprocess work. */
+function readyPipelineOptions(overrides: Record<string, unknown> = {}) {
+  return {
+    resolveRejectionSignaled: async () => false,
+    prepareAttemptWorktree: async () => fakeWorktreeResult(),
+    cleanupAttemptWorktree: vi.fn().mockResolvedValue({ ok: true, removed: true }),
+    fetchSelfReviewContext: async () => fakeReviewContext(),
+    buildCodingTaskSpec: () => fakeCodingTaskSpec(),
+    resolveAmsPolicy: async () => ({ spec: DEFAULT_AMS_POLICY_SPEC, source: "default" as const, warnings: [] }),
+    checkMinerKillSwitch: () => ({ scope: "none" as const, active: false }),
+    ...overrides,
+  };
 }
 
 function tempLedgers() {
@@ -193,18 +233,18 @@ describe("runAttempt (#5132)", () => {
     expect(openWorktreeAllocatorSpy).not.toHaveBeenCalled();
   });
 
-  it("acquires and releases a real worktree slot, wires real deps, then reports the block instead of fabricating a run", async () => {
+  it("REGRESSION: runs the full real pipeline end to end and reports a real submitted outcome (exit 0)", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    // runAttempt closes every ledger/allocator it owns in its own `finally` block (correct for a real CLI
-    // invocation), so post-invocation state can't be read off these same instances -- spy on the calls
-    // instead, asserted before close() ever fires.
     const releaseSpy = vi.spyOn(allocator, "release");
-    const appendAttemptLogEventSpy = vi.spyOn(attemptLog, "appendAttemptLogEvent");
-    const appendEventSpy = vi.spyOn(eventLedger, "appendEvent");
     const worktreeResult = fakeWorktreeResult();
-    const prepareAttemptWorktreeSpy = vi.fn().mockResolvedValue(worktreeResult);
     const cleanupAttemptWorktreeSpy = vi.fn().mockResolvedValue({ ok: true, removed: true });
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({
+      outcome: "submitted",
+      spec: { command: "gh pr create", cwd: worktreeResult.worktreePath, timeoutMs: 1000 },
+      execResult: { code: 0 },
+      loopResult: { outcome: "handoff" },
+    });
 
     const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
       env: { MINER_CODING_AGENT_PROVIDER: "noop" },
@@ -215,39 +255,57 @@ describe("runAttempt (#5132)", () => {
       initEventLedger: () => eventLedger,
       initAttemptLog: () => attemptLog,
       initGovernorLedger: () => governorLedger,
-      resolveRejectionSignaled: async () => false,
-      prepareAttemptWorktree: prepareAttemptWorktreeSpy,
-      cleanupAttemptWorktree: cleanupAttemptWorktreeSpy,
+      ...readyPipelineOptions({ cleanupAttemptWorktree: cleanupAttemptWorktreeSpy, runMinerAttempt: runMinerAttemptSpy }),
     });
 
-    expect(exitCode).toBe(4);
+    expect(exitCode).toBe(0);
     const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
     expect(printed).toEqual({
-      outcome: "blocked_missing_prerequisite",
-      reason: "missing_self_review_context_and_task_spec",
-      trackingIssue: 5145,
+      outcome: "attempt_submitted",
       repoFullName: "acme/widgets",
       issueNumber: 7,
       minerLogin: "alice",
       base: "main",
       mode: "dry_run",
       attemptId: "fixed-attempt-id",
-      worktreePath: worktreeResult.worktreePath,
+      submissionMode: "observe",
+      spec: { command: "gh pr create", cwd: worktreeResult.worktreePath, timeoutMs: 1000 },
     });
 
     // The worktree slot was acquired for real and then released, not left dangling.
     expect(releaseSpy).toHaveBeenCalledWith("fixed-attempt-id");
-    // A real, persisted record of the block was written to both ledgers -- not just console output.
-    expect(appendAttemptLogEventSpy).toHaveBeenCalledWith(expect.objectContaining({ eventType: "attempt_aborted", attemptId: "fixed-attempt-id" }));
-    expect(appendEventSpy).toHaveBeenCalledWith(expect.objectContaining({ type: "attempt_blocked", repoFullName: "acme/widgets" }));
-    // A real git worktree was prepared for this attempt -- and cleaned up, since nothing ran in it.
-    expect(prepareAttemptWorktreeSpy).toHaveBeenCalledWith("acme/widgets", "fixed-attempt-id", { baseBranch: "main", env: { MINER_CODING_AGENT_PROVIDER: "noop" } });
+    // A submitted outcome removes the worktree (attemptOk: true) -- nothing left to postmortem.
     expect(cleanupAttemptWorktreeSpy).toHaveBeenCalledWith(worktreeResult.repoPath, worktreeResult.worktreePath, true);
+
+    // The real IterateLoopInput was assembled from the real coding-task-spec + review context, not fabricated.
+    expect(runMinerAttemptSpy).toHaveBeenCalledTimes(1);
+    const [input, deps] = runMinerAttemptSpy.mock.calls[0]!;
+    expect(input.loopInput).toMatchObject({
+      attemptId: "fixed-attempt-id",
+      workingDirectory: worktreeResult.worktreePath,
+      acceptanceCriteriaPath: fakeCodingTaskSpec().acceptanceCriteriaPath,
+      instructions: fakeCodingTaskSpec().instructions,
+      mode: "dry_run",
+      repoFullName: "acme/widgets",
+      contributorLogin: "alice",
+      title: fakeCodingTaskSpec().title,
+      rejectionSignaled: false,
+    });
+    expect(input.issueNumber).toBe(7);
+    expect(input.minerLogin).toBe("alice");
+    expect(input.base).toBe("main");
+    expect(input.killSwitchScope).toBe("none");
+    expect(input.slopThreshold).toBe(DEFAULT_AMS_POLICY_SPEC.slopThreshold);
+    expect(input.submissionMode).toBe(DEFAULT_AMS_POLICY_SPEC.submissionMode);
+    expect(input.governor.capLimits).toEqual(DEFAULT_AMS_POLICY_SPEC.capLimits);
+    expect(deps).toBeDefined();
+    expect(typeof deps.driver.run).toBe("function");
   });
 
-  it("resolves live mode only when --live is passed", async () => {
+  it("resolves live mode only when --live is passed, and threads it through to the real loopInput", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({ outcome: "abandon", loopResult: {} });
 
     const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--live", "--json"], {
       env: { MINER_CODING_AGENT_PROVIDER: "noop" },
@@ -256,13 +314,12 @@ describe("runAttempt (#5132)", () => {
       initEventLedger: () => eventLedger,
       initAttemptLog: () => attemptLog,
       initGovernorLedger: () => governorLedger,
-      resolveRejectionSignaled: async () => false,
-      prepareAttemptWorktree: async () => fakeWorktreeResult(),
-      cleanupAttemptWorktree: async () => ({ ok: true, removed: true }),
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
     });
 
-    expect(exitCode).toBe(4);
+    expect(exitCode).toBe(7);
     expect(JSON.parse(String(log.mock.calls[0]?.[0])).mode).toBe("live");
+    expect(runMinerAttemptSpy.mock.calls[0]![0].loopInput.mode).toBe("live");
   });
 
   it("prints a human-readable message (not JSON) by default", async () => {
@@ -276,14 +333,104 @@ describe("runAttempt (#5132)", () => {
       initEventLedger: () => eventLedger,
       initAttemptLog: () => attemptLog,
       initGovernorLedger: () => governorLedger,
-      resolveRejectionSignaled: async () => false,
-      prepareAttemptWorktree: async () => fakeWorktreeResult(),
-      cleanupAttemptWorktree: async () => ({ ok: true, removed: true }),
+      ...readyPipelineOptions({ runMinerAttempt: async () => ({ outcome: "abandon", loopResult: {} }) }),
+    });
+
+    expect(exitCode).toBe(7);
+    expect(String(log.mock.calls[0]?.[0])).toContain("finished with outcome: abandon");
+  });
+
+  it.each([
+    ["stale", 8, { outcome: "stale", reason: "expired", loopResult: {} }],
+    ["blocked", 9, { outcome: "blocked", decision: { allow: false }, loopResult: {} }],
+    ["governed", 10, { outcome: "governed", decision: { allowed: false }, loopResult: {} }],
+  ] as const)("reports a real %s outcome with exit code %i", async (_label, expectedExitCode, mockResult) => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: async () => mockResult }),
+    });
+
+    expect(exitCode).toBe(expectedExitCode);
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed.outcome).toBe(`attempt_${mockResult.outcome}`);
+  });
+
+  it("REGRESSION: a non-submitted outcome retains the worktree instead of cleaning it up", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const worktreeResult = fakeWorktreeResult();
+    const cleanupAttemptWorktreeSpy = vi.fn().mockResolvedValue({ ok: true, removed: false });
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        cleanupAttemptWorktree: cleanupAttemptWorktreeSpy,
+        runMinerAttempt: async () => ({ outcome: "governed", decision: { allowed: false }, loopResult: {} }),
+      }),
+    });
+
+    expect(cleanupAttemptWorktreeSpy).toHaveBeenCalledWith(worktreeResult.repoPath, worktreeResult.worktreePath, false);
+  });
+
+  it("REGRESSION: blocks with a real feasibility verdict when the coding-task-spec is infeasible, without ever calling runMinerAttempt", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const appendAttemptLogEventSpy = vi.spyOn(attemptLog, "appendAttemptLogEvent");
+    const runMinerAttemptSpy = vi.fn();
+    const cleanupAttemptWorktreeSpy = vi.fn().mockResolvedValue({ ok: true, removed: true });
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      attemptId: "infeasible-attempt",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        buildCodingTaskSpec: () => ({
+          ready: false,
+          verdict: "raise",
+          feasibility: { verdict: "raise", avoidReasons: [], raiseReasons: ["target_not_found"], summary: "issue not found" },
+        }),
+        runMinerAttempt: runMinerAttemptSpy,
+        cleanupAttemptWorktree: cleanupAttemptWorktreeSpy,
+      }),
     });
 
     expect(exitCode).toBe(4);
-    expect(String(log.mock.calls[0]?.[0])).toContain("is blocked");
-    expect(String(log.mock.calls[0]?.[0])).toContain("#5145");
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      outcome: "blocked_infeasible",
+      reason: "infeasible_raise",
+      verdict: "raise",
+      avoidReasons: [],
+      raiseReasons: ["target_not_found"],
+      repoFullName: "acme/widgets",
+      issueNumber: 7,
+      minerLogin: "alice",
+      base: "main",
+      mode: "dry_run",
+      attemptId: "infeasible-attempt",
+    });
+    expect(runMinerAttemptSpy).not.toHaveBeenCalled();
+    expect(appendAttemptLogEventSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "attempt_aborted", attemptId: "infeasible-attempt", reason: "infeasible_raise" }),
+    );
+    // Nothing ran against this worktree -- cleaned up like every other pre-execution block.
+    expect(cleanupAttemptWorktreeSpy).toHaveBeenCalledWith(expect.any(String), expect.any(String), true);
   });
 
   it("reports and cleans up when the coding-agent driver is unconfigured, still releasing the worktree slot", async () => {
@@ -403,10 +550,7 @@ describe("runAttempt (#5132)", () => {
       initEventLedger: () => eventLedger,
       initAttemptLog: () => attemptLog,
       initGovernorLedger: () => governorLedger,
-      resolveRejectionSignaled: resolveRejectionSignaledSpy,
-      fetchImpl,
-      prepareAttemptWorktree: async () => fakeWorktreeResult(),
-      cleanupAttemptWorktree: async () => ({ ok: true, removed: true }),
+      ...readyPipelineOptions({ resolveRejectionSignaled: resolveRejectionSignaledSpy, fetchImpl, runMinerAttempt: async () => ({ outcome: "abandon", loopResult: {} }) }),
     });
 
     expect(resolveRejectionSignaledSpy).toHaveBeenCalledWith("acme/widgets", { fetchImpl });
@@ -485,11 +629,31 @@ describe("runAttempt (#5132)", () => {
       initEventLedger: () => eventLedger,
       initAttemptLog: () => attemptLog,
       initGovernorLedger: () => governorLedger,
-      resolveRejectionSignaled: async () => false,
-      prepareAttemptWorktree: prepareAttemptWorktreeSpy,
-      cleanupAttemptWorktree: async () => ({ ok: true, removed: true }),
+      ...readyPipelineOptions({ prepareAttemptWorktree: prepareAttemptWorktreeSpy, runMinerAttempt: async () => ({ outcome: "abandon", loopResult: {} }) }),
     });
 
     expect(prepareAttemptWorktreeSpy).toHaveBeenCalledWith("acme/widgets", expect.any(String), expect.objectContaining({ baseBranch: "develop" }));
+  });
+
+  it("fetches SelfReviewContext with the real miner login and target issue number", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const fetchSelfReviewContextSpy = vi.fn().mockResolvedValue(fakeReviewContext());
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop", GITHUB_TOKEN: "ghp_test" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ fetchSelfReviewContext: fetchSelfReviewContextSpy, runMinerAttempt: async () => ({ outcome: "abandon", loopResult: {} }) }),
+    });
+
+    expect(fetchSelfReviewContextSpy).toHaveBeenCalledWith("acme/widgets", {
+      githubToken: "ghp_test",
+      contributorLogin: "alice",
+      linkedIssues: [7],
+    });
   });
 });

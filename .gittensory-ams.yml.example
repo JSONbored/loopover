@@ -58,3 +58,12 @@ capLimits:
 convergenceThresholds:
   maxConsecutiveFailures: 3
   maxReenqueues: 3
+
+# Hard ceiling on the iterate loop's own iteration count for one attempt.
+# A non-integer is floored; 0 abandons before the first driver invocation.
+# Default: 3.
+maxIterations: 3
+
+# Per-iteration turn budget passed to the coding-agent driver.
+# A non-integer is floored. Default: 6.
+maxTurnsPerIteration: 6

@@ -175,7 +175,15 @@ export async function triggerPagerDutyIncident(
 
   const cooldownMinutes = resolvePagerDutyCooldownMinutes(env, params.repoFullName);
   const cooldownSinceIso = new Date(Date.now() - cooldownMinutes * 60 * 1000).toISOString();
-  const recentPages = await countRecentAuditEventsForActorAndTarget(env, "loopover", "external_notification.pagerduty", params.dedupKey, cooldownSinceIso);
+  // Also count the pre-rebrand "gittensory" actor: a page recorded under the OLD actor value just before this
+  // rebrand deployed must still suppress a duplicate page after it, for as long as the configured cooldown
+  // window can reach back across the deploy boundary. Querying both actors costs one extra indexed count and
+  // removes the whole risk category rather than requiring a precisely-timed follow-up cleanup.
+  const [recentPagesNewActor, recentPagesLegacyActor] = await Promise.all([
+    countRecentAuditEventsForActorAndTarget(env, "loopover", "external_notification.pagerduty", params.dedupKey, cooldownSinceIso),
+    countRecentAuditEventsForActorAndTarget(env, "gittensory", "external_notification.pagerduty", params.dedupKey, cooldownSinceIso),
+  ]);
+  const recentPages = recentPagesNewActor + recentPagesLegacyActor;
   if (recentPages > 0) {
     await auditPagerDutyNotification(env, { repoFullName: params.repoFullName, dedupKey: params.dedupKey }, "denied", "cooldown_active", { cooldownMinutes });
     return;

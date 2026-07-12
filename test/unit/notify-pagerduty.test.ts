@@ -228,6 +228,25 @@ describe("triggerPagerDutyIncident — cooldown gate (alert fatigue control #2)"
     await trigger(env); // default cooldown is 60 minutes; the seeded row is 2 hours old
     expect(calls).toHaveLength(1);
   });
+
+  it("REGRESSION: a recent page recorded under the pre-rebrand 'gittensory' actor still suppresses a duplicate within the cooldown window", async () => {
+    const calls = stubFetch();
+    const env = enabledEnv();
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    await recordAuditEvent(env, {
+      eventType: "external_notification.pagerduty",
+      actor: "gittensory",
+      targetKey: "ops_anomaly:acme/widgets",
+      outcome: "completed",
+      detail: "triggered",
+      metadata: {},
+      createdAt: tenMinutesAgo,
+    });
+    await trigger(env); // default cooldown is 60 minutes; the legacy-actor row is only 10 minutes old
+    expect(calls).toHaveLength(0);
+    const rows = await pagerDutyAudit(env);
+    expect(rows[rows.length - 1]).toEqual(expect.objectContaining({ outcome: "denied", detail: "cooldown_active" }));
+  });
 });
 
 describe("triggerPagerDutyIncident — HTTP delivery", () => {

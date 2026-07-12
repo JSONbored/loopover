@@ -12,6 +12,9 @@ output/
 .env
 .env.*
 !.env.example
+# Operator-filled miner secrets for docker-compose fleet mode (#5177); the .example is committed.
+.gittensory-miner.env
+!.gittensory-miner.env.example
 !.env.selfhost.example
 # Docker Compose secret files: the actual secret VALUES an operator drops into
 # secrets/<name>.txt for the native `secrets:` mount (docker-compose.yml), read via the existing generic

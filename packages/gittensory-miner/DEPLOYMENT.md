@@ -2,13 +2,13 @@
 
 Two form factors for running `@jsonbored/gittensory-miner`: **laptop mode** (single machine, zero Docker) and **fleet mode** (containerized workers with a shared data volume). Both are 100% client-side for core operation — the miner never uploads source and never requires a hosted Gittensory callback to boot. Credentials (GitHub tokens, etc.) stay on the operator's machine or in their own secret store; nothing is baked into images.
 
-| | Laptop mode | Fleet mode |
-|---|---|---|
-| **Best for** | One contributor machine, local experimentation | Many parallel miner attempts on a host or small cluster |
-| **Dependencies** | Node.js `>=22.13.0` only | Docker (or compatible runtime) + Node image or custom image |
-| **State** | SQLite files under `~/.config/gittensory-miner/` (override with `GITTENSORY_MINER_CONFIG_DIR`) | Same SQLite layout on a mounted `/data` (or `GITTENSORY_MINER_CONFIG_DIR`) volume |
-| **Setup** | `npm install -g @jsonbored/gittensory-miner` or workspace build | `docker build` + `docker run` with env + volume (see below) |
-| **Footprint** | One Node process, local disk for ledgers/queues | One container per worker; scale horizontally by adding containers |
+|                  | Laptop mode                                                                                    | Fleet mode                                                                        |
+| ---------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| **Best for**     | One contributor machine, local experimentation                                                 | Many parallel miner attempts on a host or small cluster                           |
+| **Dependencies** | Node.js `>=22.13.0` only                                                                       | Docker (or compatible runtime) + Node image or custom image                       |
+| **State**        | SQLite files under `~/.config/gittensory-miner/` (override with `GITTENSORY_MINER_CONFIG_DIR`) | Same SQLite layout on a mounted `/data` (or `GITTENSORY_MINER_CONFIG_DIR`) volume |
+| **Setup**        | `npm install -g @jsonbored/gittensory-miner` or workspace build                                | `docker build` + `docker run` with env + volume (see below)                       |
+| **Footprint**    | One Node process, local disk for ledgers/queues                                                | One container per worker; scale horizontally by adding containers                 |
 
 ## Laptop mode walkthrough
 
@@ -68,6 +68,17 @@ The image entrypoint is `gittensory-miner`; pass subcommands after the image nam
 - **Scale** — launch additional containers with the same volume (or partitioned config dirs) for parallel attempts.
 
 The repo-root [`docker-compose.yml`](../../docker-compose.yml) documents the **self-hosted review stack** (the `gittensory` API/orb), not the miner CLI. Miners are clients of that stack (or of github.com directly) and do not require it to run locally.
+
+### Docker Compose (fleet mode)
+
+Instead of a hand-assembled `docker run`, [`docker-compose.miner.yml`](docker-compose.miner.yml) defines a long-lived `miner` service (built from this package's Dockerfile, `restart: unless-stopped`, state on a named `miner-data` volume). Credentials come from an env file, never inlined:
+
+```sh
+cp .gittensory-miner.env.example .gittensory-miner.env   # fill in GITHUB_TOKEN (+ optional provider keys)
+docker compose -f docker-compose.miner.yml up -d --build
+```
+
+**Scaling to N parallel workers.** `docker compose -f docker-compose.miner.yml up -d --scale miner=N` gives every replica the **same** `miner-data` volume — and the miner's SQLite ledgers are **not** safe for concurrent access, so N replicas on one volume will contend/corrupt. To run N **isolated** workers, give each its own state: run N separate compose projects (`docker compose -p miner-1 …`, `-p miner-2 …` — `-p` namespaces the volume) or point each at a distinct `GITTENSORY_MINER_CONFIG_DIR` on its own mount. For built-in isolated horizontal scaling, use the Kubernetes StatefulSet in [`k8s/`](../../k8s/) (per-pod volumes).
 
 ## Invariants
 

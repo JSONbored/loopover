@@ -1,0 +1,42 @@
+# docker-compose for gittensory-miner (AMS) fleet mode (#5177).
+#
+# Runs the miner as a long-lived CLI worker instead of a hand-assembled `docker run`. Build context is the
+# MONOREPO ROOT (../..) because the Dockerfile needs the full workspace on disk before `npm ci` — see the
+# comments in packages/gittensory-miner/Dockerfile.
+#
+# Usage:
+#   1. Create the env file (never commit real values): cp .gittensory-miner.env.example .gittensory-miner.env
+#   2. Start one worker:  docker compose -f docker-compose.miner.yml up -d --build
+#
+# Scaling to N parallel workers:
+#   docker compose -f docker-compose.miner.yml up -d --scale miner=N
+#   BUT: `--scale` gives every replica the SAME `miner-data` volume, and the miner's SQLite ledgers
+#   (claim-ledger.sqlite3, plan-store.sqlite3, …) are NOT safe for concurrent multi-process access — N replicas
+#   sharing one volume WILL corrupt/contend on those files. To run N ISOLATED workers, give each its own state:
+#     • run N separate compose projects, each with its own volume:
+#         docker compose -p miner-1 -f docker-compose.miner.yml up -d
+#         docker compose -p miner-2 -f docker-compose.miner.yml up -d   # …etc; -p namespaces the volume
+#     • or point each worker at a distinct GITTENSORY_MINER_CONFIG_DIR on its own mount.
+#   (A single-shared-volume `--scale` is only safe for one active worker; Kubernetes StatefulSet per-pod PVCs, see
+#   k8s/, are the built-in answer for isolated horizontal scaling.)
+services:
+  miner:
+    build:
+      context: ../..
+      dockerfile: packages/gittensory-miner/Dockerfile
+    image: gittensory-miner:latest
+    # ENTRYPOINT is `gittensory-miner`; `run` is the continuous fleet-worker loop.
+    command: ["run"]
+    restart: unless-stopped
+    # Operator-supplied secrets/config (GITHUB_TOKEN, optional provider keys). Copy the .example, fill it in,
+    # and NEVER commit the real file — env vars stay out of the compose file and out of `docker inspect` args.
+    env_file:
+      - .gittensory-miner.env
+    # The state dir is fixed at /data/miner — it is the Dockerfile's built-in GITTENSORY_MINER_CONFIG_DIR default
+    # AND the volume mount below. It is deliberately NOT set here (and NOT offered as an env-file override):
+    # Compose's `environment` would silently override an env-file value, and the mount is pinned to /data/miner,
+    # so exposing it as a knob would be a silently-ignored footgun. To relocate state, change the volume mount.
+    volumes:
+      - miner-data:/data/miner
+volumes:
+  miner-data:

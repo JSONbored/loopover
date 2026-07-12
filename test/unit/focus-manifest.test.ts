@@ -1177,11 +1177,11 @@ describe("parseFocusManifest gate config", () => {
   // comment, label, or close behavior. Caused two real incidents under this exact ambiguity.
   it("warns that gate.enabled is ambiguous when set without an explicit gate.checkMode, regardless of value (#5355)", () => {
     const enabledTrue = parseFocusManifest({ gate: { enabled: true } });
-    expect(enabledTrue.warnings.some((w) => /gate\.enabled.*only controls whether the Gittensory Orb Review Agent check-run publishes/.test(w))).toBe(true);
+    expect(enabledTrue.warnings.some((w) => /gate\.enabled.*only controls whether the LoopOver Orb Review Agent check-run publishes/.test(w))).toBe(true);
     // Unlike firstTimeContributorGrace, both true AND false are equally ambiguous here -- both map through
     // the same silent enabled -> reviewCheckMode alias, so an explicit false is just as worth flagging.
     const enabledFalse = parseFocusManifest({ gate: { enabled: false } });
-    expect(enabledFalse.warnings.some((w) => /gate\.enabled.*only controls whether the Gittensory Orb Review Agent check-run publishes/.test(w))).toBe(true);
+    expect(enabledFalse.warnings.some((w) => /gate\.enabled.*only controls whether the LoopOver Orb Review Agent check-run publishes/.test(w))).toBe(true);
   });
 
   it("does not warn about gate.enabled when checkMode is also set explicitly (the documented, encouraged pairing)", () => {

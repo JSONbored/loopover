@@ -1,16 +1,30 @@
 import type { ReviewCheckMode } from "../types";
 
-export const GITTENSORY_CONTEXT_CHECK_NAME = "Gittensory Context";
-export const GITTENSORY_GATE_CHECK_NAME = "Gittensory Orb Review Agent";
+export const LOOPOVER_CONTEXT_CHECK_NAME = "LoopOver Context";
+export const LOOPOVER_GATE_CHECK_NAME = "LoopOver Orb Review Agent";
 /** Pre-rename check-run name ("Gittensory Gate"). NOT dead code: any self-hosted repo that still has an
- *  old-named check-run stuck pending from before the rename (e.g. a self-hoster who upgrades mid-flight,
- *  or a check-run left open across a deploy) would otherwise show a permanently-pending, never-completed
- *  status on GitHub. `finalizeLegacyPendingCheckRuns` in src/github/app.ts uses this name to find and
- *  complete (neutral, "superseded") any such stale legacy-named run once the new-named one finishes. Keep
- *  this until self-hosters can no longer be upgrading across the rename boundary. */
+ *  old-named check-run stuck pending from before that EARLIER rename (e.g. a self-hoster who upgrades
+ *  mid-flight, or a check-run left open across a deploy) would otherwise show a permanently-pending,
+ *  never-completed status on GitHub. `finalizeLegacyPendingCheckRuns` in src/github/app.ts uses this name
+ *  to find and complete (neutral, "superseded") any such stale legacy-named run once the new-named one
+ *  finishes. Keep this until self-hosters can no longer be upgrading across that rename boundary. */
 export const GITTENSORY_LEGACY_GATE_CHECK_NAME = "Gittensory Gate";
+/** Pre-rebrand check-run name ("Gittensory Orb Review Agent"), retired by the LoopOver rebrand's hard
+ *  cutover (#5327 — no dual-emit window). Same NOT-dead-code reasoning as
+ *  {@link GITTENSORY_LEGACY_GATE_CHECK_NAME}: `finalizeLegacyPendingCheckRuns` also supersedes any run still
+ *  pending under THIS name so a self-hoster mid-flight across the rebrand deploy never sees a permanently-
+ *  pending status. */
+export const GITTENSORY_LEGACY_ORB_GATE_CHECK_NAME = "Gittensory Orb Review Agent";
+/** Pre-rebrand check-run name ("Gittensory Context"), retired by the LoopOver rebrand's hard cutover
+ *  (#5327). Unlike the two Gate-check legacy names above, this one is NOT fed into
+ *  `finalizeLegacyPendingCheckRuns` (the Context check was never given that supersede treatment, even
+ *  across the earlier "Gittensory Gate" rename) -- it exists solely so `BOT_OWNED_CHECK_NAMES`
+ *  (src/github/backfill.ts) still recognizes a still-pending pre-rebrand Context run as bot-owned and
+ *  excludes it from the CI-aggregate wait, avoiding the same self-deadlock class `BOT_OWNED_CHECK_NAMES`'s
+ *  own comment describes. */
+export const GITTENSORY_LEGACY_CONTEXT_CHECK_NAME = "Gittensory Context";
 
-/** Single point of truth for whether `reviewCheckMode` publishes the Gittensory Orb Review Agent check-run
+/** Single point of truth for whether `reviewCheckMode` publishes the LoopOver Orb Review Agent check-run
  *  (#2852). `required` and `visible` both publish -- they are identical on the API-call side; the distinction
  *  is purely about how the operator should configure GitHub branch protection (visible = never required). Only
  *  `disabled` skips the check-run create/update calls entirely. */

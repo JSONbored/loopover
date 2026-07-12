@@ -17,7 +17,7 @@ import {
 import { buildExtensionPrStatus, type ExtensionPrStatus } from "./extension-contributor-context";
 import { REQUIRED_INSTALLATION_PERMISSIONS } from "../github/backfill";
 import type { GittensoryFooterEnv } from "../github/footer";
-import { GITTENSORY_GATE_CHECK_NAME, shouldPublishReviewCheck } from "../review/check-names";
+import { LOOPOVER_GATE_CHECK_NAME, shouldPublishReviewCheck } from "../review/check-names";
 import { decideReviewEligibility } from "../review/review-eligibility";
 import { requiredAgentActionPermissions } from "../settings/agent-execution";
 
@@ -361,7 +361,7 @@ export function buildRepoSettingsPreview(args: {
     decision,
     previewComment,
     appliedLabel: decision.willLabel ? settings.gittensorLabel : null,
-    checkRun: decision.willCheckRun ? { willCreate: true, title: "Gittensory Context", detailLevel: settings.checkRunDetailLevel } : null,
+    checkRun: decision.willCheckRun ? { willCreate: true, title: "LoopOver Context", detailLevel: settings.checkRunDetailLevel } : null,
     checkRunReadiness: buildSampleCheckRunReadiness({
       repoFullName,
       repo,
@@ -583,12 +583,12 @@ function permissionSummary(installation: InstallationHealthSummary | null, missi
 }
 
 function publicOutputsFor(decision: PublicSurfaceDecision, appliedLabel: string | null, settings: RepositorySettings): string[] {
-  const gateOutput = shouldPublishReviewCheck(settings.reviewCheckMode) ? [`Opt-in ${GITTENSORY_GATE_CHECK_NAME} check run.`] : [];
+  const gateOutput = shouldPublishReviewCheck(settings.reviewCheckMode) ? [`Opt-in ${LOOPOVER_GATE_CHECK_NAME} check run.`] : [];
   if (decision.skipped) return [`No comment or label for this sample: ${decision.summary}`, ...gateOutput];
   const outputs = [
     ...(decision.willComment ? ["One sanitized sticky PR comment."] : []),
     ...(decision.willLabel ? [`Configured label "${appliedLabel ?? "gittensor"}".`] : []),
-    ...(decision.willCheckRun ? ["Non-blocking Gittensory Context check run."] : []),
+    ...(decision.willCheckRun ? ["Non-blocking LoopOver Context check run."] : []),
     ...gateOutput,
   ];
   return outputs.length > 0 ? outputs : ["No public comment, label, or check run for this sample."];

@@ -163,7 +163,7 @@ export type RepositorySettings = {
    *  Selection-time only — real-time webhook-driven review is not gated by this and can process any PR at
    *  any time regardless of the chosen order. */
   regateSweepOrderMode: "staleness" | "oldest-first";
-  /** The actual runtime authority for whether the "Gittensory Orb Review Agent" check-run publishes (#2852).
+  /** The actual runtime authority for whether the "LoopOver Orb Review Agent" check-run publishes (#2852).
    *  See {@link ReviewCheckMode}. */
   reviewCheckMode: ReviewCheckMode;
   /** Auto-project/milestone matching (#3183). See {@link ProjectMilestoneMatchMode}. Always populated by the DB

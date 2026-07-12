@@ -131,7 +131,7 @@ import {
   getInstallationId,
   getRepositoryCollaboratorPermission,
   githubErrorStatus,
-  GITTENSORY_GATE_CHECK_NAME,
+  LOOPOVER_GATE_CHECK_NAME,
   isGitHubRateLimitedError,
   isForeignAppInstallation,
 } from "../github/app";
@@ -1068,7 +1068,7 @@ async function surfaceRepairPriorityPullNumbers(
         );
         const currentGateCheck = checks.find(
           (check) =>
-            check.name === GITTENSORY_GATE_CHECK_NAME &&
+            check.name === LOOPOVER_GATE_CHECK_NAME &&
             check.headSha === pr.headSha &&
             check.status === "completed",
         );
@@ -3341,7 +3341,7 @@ async function prReadyForReview(
     }
     // Not authorized, staged, dry-run, or failed (conflict/transient) → fall through and review without mutating.
   }
-  // 2) wait for CI to finish before running the Gittensory review. Required contexts still define which failures
+  // 2) wait for CI to finish before running the LoopOver review. Required contexts still define which failures
   // block/close, but hasPending tracks any visible non-bot CI that is not settled yet.
   const ci = await cachedLiveCiAggregate(env, {
     repoFullName,
@@ -9304,7 +9304,7 @@ async function maybePublishPrPublicSurface(
       const existingChecks = await listCheckSummaries(env, repoFullName, pr.number).catch(() => []);
       const currentGateCheck = existingChecks.find(
         (check) =>
-          check.name === GITTENSORY_GATE_CHECK_NAME &&
+          check.name === LOOPOVER_GATE_CHECK_NAME &&
           check.headSha === advisory.headSha &&
           check.status === "completed",
       );
@@ -10074,7 +10074,7 @@ async function maybePublishPrPublicSurface(
             ? { customText: reviewConfig.footerText }
             : {}),
         }),
-        reRunLabel: `${PR_PANEL_RETRIGGER_MARKER} Re-run Gittensory review`,
+        reRunLabel: `${PR_PANEL_RETRIGGER_MARKER} Re-run LoopOver review`,
         // #4589: only rendered when there's an actual gap AND the checkbox would work for this repo -- same
         // condition testCoverageBody gates its own (informational) collapsible on, so the two always agree.
         ...(missingTestsFinding && e2eTestGenAvailable
@@ -10479,7 +10479,7 @@ async function maybeProcessGateOverrideCommand(
       AGENT_COMMAND_COMMENT_MARKER,
       "",
       "> [!NOTE]",
-      `> **${GITTENSORY_GATE_CHECK_NAME} overridden by @${actor}**`,
+      `> **${LOOPOVER_GATE_CHECK_NAME} overridden by @${actor}**`,
       "> The review-agent check was set to neutral for the current commit only. This does NOT permanently bypass the review; a new push re-evaluates it.",
       "",
       `- Reason: ${safeReason}`,

@@ -3,7 +3,7 @@
   "basis": "public_config",
   "pack": "gittensor",
   "conclusion": "failure",
-  "title": "Gittensory Orb Review Agent: No linked issue detected",
+  "title": "LoopOver Orb Review Agent: No linked issue detected",
   "summary": "No linked issue detected — If this PR is intended to solve an issue, link it explicitly in the PR body.",
   "readinessScore": 80,
   "blockers": [

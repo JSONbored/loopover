@@ -73,7 +73,7 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.conclusion).toBe("failure");
     expect(result.blockers.some((b) => b.code === "duplicate_pr_risk")).toBe(true);
     // Public-safe: blocker text carries a fix and no raw internal markers.
-    expect(result.title.toLowerCase()).toContain("gittensory orb review agent");
+    expect(result.title.toLowerCase()).toContain("loopover orb review agent");
   });
 
   it("does NOT raise duplicate_pr_risk for an open PR in a different repo sharing the same issue number (repo-scoped parity)", () => {

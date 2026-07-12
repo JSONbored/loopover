@@ -36,7 +36,7 @@
 //     maintainer-configured gate, and that explicit opt-in must still close a PR outright (see guard #1 for why a
 //     genuinely critical finding, or one of these other configured gates, still wins outright).
 import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckEvaluation, isAiJudgmentOnlyFailure, isDuplicateOnlyFailure } from "../rules/advisory";
-import { GITTENSORY_GATE_CHECK_NAME } from "./check-names";
+import { LOOPOVER_GATE_CHECK_NAME } from "./check-names";
 import { isContentLaneEnabled } from "./content-lane/flag";
 import { runSurfaceReview, type SurfaceReviewInput, type SurfaceReviewResult } from "./content-lane/orchestrator";
 import type { RegistryLaneSpec } from "./content-lane/registry-logic";
@@ -146,7 +146,7 @@ export function applySurfaceGate(
     return {
       ...surface,
       conclusion: "neutral",
-      title: `${GITTENSORY_GATE_CHECK_NAME} — held for review`,
+      title: `${LOOPOVER_GATE_CHECK_NAME} — held for review`,
       summary: heldReason,
       warnings: [...generic.blockers, ...generic.warnings, ...surface.warnings],
     };
@@ -293,8 +293,8 @@ export async function evaluateWithSurfaceLane(
     return {
       enabled: true,
       conclusion: "neutral",
-      title: `${GITTENSORY_GATE_CHECK_NAME} — held for human review`,
-      summary: "The repo's .gittensory.yml could not be read, so Gittensory cannot confirm whether a registry content-lane is configured for this repo. The gate is held for a human reviewer rather than silently skipping the registry check. It re-evaluates on the next update.",
+      title: `${LOOPOVER_GATE_CHECK_NAME} — held for human review`,
+      summary: "The repo's .gittensory.yml could not be read, so LoopOver cannot confirm whether a registry content-lane is configured for this repo. The gate is held for a human reviewer rather than silently skipping the registry check. It re-evaluates on the next update.",
       blockers: [],
       warnings: gateEvaluation?.warnings ?? [],
     };

@@ -160,7 +160,7 @@ export function aiReviewLockContendedResult(
   ];
   advisory.findings.push(...findings);
   return {
-    notes: "AI review is already running for this PR head in another Gittensory pass. Gittensory is holding this PR for manual review until that pass completes.",
+    notes: "AI review is already running for this PR head in another LoopOver pass. LoopOver is holding this PR for manual review until that pass completes.",
     reviewerCount: 0,
     inlineFindings: [],
     findings,
@@ -805,7 +805,7 @@ export async function runAiReviewForAdvisory(
       detail:
         "The configured AI reviewer returned no usable public assessment for this PR head.",
       action:
-        "Fix the configured AI provider, then re-run Gittensory review before relying on the result.",
+        "Fix the configured AI provider, then re-run LoopOver review before relying on the result.",
     };
     findings.push(unavailableFinding);
     args.advisory.findings.push(unavailableFinding);

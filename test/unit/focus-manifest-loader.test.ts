@@ -540,6 +540,6 @@ describe("focus-manifest loader — container-private config (self-host)", () =>
     const manifest = await loadRepoFocusManifest(env, "owner/private");
     expect(manifest.gate.enabled).toBe(true);
     expect(manifest.gate.checkMode).toBeNull();
-    expect(manifest.warnings.some((w) => /gate\.enabled.*only controls whether the Gittensory Orb Review Agent check-run publishes/.test(w))).toBe(true);
+    expect(manifest.warnings.some((w) => /gate\.enabled.*only controls whether the LoopOver Orb Review Agent check-run publishes/.test(w))).toBe(true);
   });
 });

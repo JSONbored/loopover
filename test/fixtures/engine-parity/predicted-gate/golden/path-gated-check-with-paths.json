@@ -3,7 +3,7 @@
   "basis": "public_config",
   "pack": "gittensor",
   "conclusion": "failure",
-  "title": "Gittensory Orb Review Agent: Pre-merge check not satisfied: Tests for src",
+  "title": "LoopOver Orb Review Agent: Pre-merge check not satisfied: Tests for src",
   "summary": "Pre-merge check not satisfied: Tests for src — Update the PR to satisfy the check, then re-run the gate.",
   "readinessScore": 95,
   "blockers": [

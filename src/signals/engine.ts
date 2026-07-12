@@ -34,7 +34,7 @@ import { isDuplicateClusterWinnerByClaim } from "./duplicate-winner";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
 import type { UnifiedCollapsible } from "../review/unified-comment";
 import { splitAiReviewNits } from "../review/ai-notes";
-import { GITTENSORY_GATE_CHECK_NAME, shouldPublishReviewCheck } from "../review/check-names";
+import { LOOPOVER_GATE_CHECK_NAME, shouldPublishReviewCheck } from "../review/check-names";
 import { isAgentConfigured } from "../settings/autonomy";
 import { diffFilePriority } from "../review/review-diff";
 import type { ImprovementBand, StructuralImprovementAssessment } from "./improvement";
@@ -4423,27 +4423,27 @@ export function buildPublicPrIntelligenceComment(args: {
         ? "WARNING"
         : "TIP";
   const panelTitle = aiReviewHasBlockers
-    ? "Gittensory review found blockers"
+    ? "LoopOver review found blockers"
     : args.aiReview && !gateBlocking && !gateHeld
-      ? "Gittensory review approved this PR"
+      ? "LoopOver review approved this PR"
       : gateHeld
-        ? "Gittensory review needs maintainer review"
+        ? "LoopOver review needs maintainer review"
       : gateBlocking
-        ? `${GITTENSORY_GATE_CHECK_NAME} is blocking merge`
+        ? `${LOOPOVER_GATE_CHECK_NAME} is blocking merge`
         : hasPublicWarnings || hasRelatedWork
-          ? "Gittensory found maintainer review notes"
-          : "Gittensory PR readiness looks good";
+          ? "LoopOver found maintainer review notes"
+          : "LoopOver PR readiness looks good";
   const panelSummary = gateBlocking
-    ? args.gate?.summary ?? (gateConclusion === "action_required" ? "Gittensory cannot evaluate the repo state closely enough for the enabled gate." : "A repo-configured hard blocker was found.")
+    ? args.gate?.summary ?? (gateConclusion === "action_required" ? "LoopOver cannot evaluate the repo state closely enough for the enabled gate." : "A repo-configured hard blocker was found.")
     : gateHeld
-      ? args.gate?.summary ?? "Gittensory is holding this PR for maintainer review."
+      ? args.gate?.summary ?? "LoopOver is holding this PR for maintainer review."
     : visibleLinkedDuplicatePrs.length > 0
       ? `Same-issue duplicate risk found against ${formatPrRefs(visibleLinkedDuplicatePrs)}. Maintainers should resolve the overlap before review continues.`
       : hasRelatedWork
         ? "Scoped related-work signals were found for this PR. They are advisory unless the gate reports a blocker."
     : genericOssMode
       ? "Public GitHub metadata was checked for review readiness. Gittensor-specific context appears only when confirmed."
-      : "Confirmed Gittensor contributor context was checked from public metadata and Gittensory cache.";
+      : "Confirmed Gittensor contributor context was checked from public metadata and LoopOver cache.";
   const readinessByKey = new Map(readiness.components.map((component) => [component.key, component]));
   const validationComponent = readinessByKey.get("validation")!;
   const changeScopeComponent = readinessByKey.get("change_scope")!;
@@ -4553,7 +4553,7 @@ export function buildPublicPrIntelligenceComment(args: {
     "",
     "</details>",
     "",
-    `- [ ] ${PR_PANEL_RETRIGGER_MARKER} Re-run Gittensory review`,
+    `- [ ] ${PR_PANEL_RETRIGGER_MARKER} Re-run LoopOver review`,
     "",
     "---",
     footer,

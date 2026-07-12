@@ -1,11 +1,11 @@
-// Unified-comment bridge (reviewbot→gittensory convergence, Stage D).
+// Unified-comment bridge (reviewbot→loopover convergence, Stage D).
 //
-// A PURE, testable mapping from gittensory's live PR-review data (the gate `GateCheckEvaluation`, the AI
+// A PURE, testable mapping from loopover's live PR-review data (the gate `GateCheckEvaluation`, the AI
 // `advisoryNotes` + consensus defect, the readiness signal rows + total, the footer) onto the ported
 // unified renderer (`renderUnifiedReviewComment`). Flag-gated and default-OFF in the processor; flag-OFF
 // keeps the legacy `buildPublicPrIntelligenceComment` path byte-identical.
 //
-// gittensory's GATE stays authoritative: we pass the gate-derived `decision` into `buildUnifiedReviewInput`
+// loopover's GATE stays authoritative: we pass the gate-derived `decision` into `buildUnifiedReviewInput`
 // so `deriveUnifiedStatus` lets it override the reviewer recommendations (the renderer already enforces
 // this). The output PREPENDS the exact panel marker the legacy body carries, so the existing in-place
 // upsert (`createOrUpdatePrIntelligenceComment`) updates the same comment instead of posting a duplicate.
@@ -28,7 +28,7 @@ import { VISUAL_REGRESSION_FINDING_CODE } from "./visual/visual-findings";
 // importers of `PR_PANEL_COMMENT_MARKER` from this module keep working. The unified body MUST prepend this
 // verbatim or `createOrUpdatePrIntelligenceComment` posts a DUPLICATE instead of updating in place.
 import { PR_PANEL_COMMENT_MARKER } from "../github/comments";
-import { GITTENSORY_GATE_CHECK_NAME } from "./check-names";
+import { LOOPOVER_GATE_CHECK_NAME } from "./check-names";
 import { classifyChangedFile, type ReviewFileClass } from "./changed-files-classify";
 import { githubPrFileDiffUrl } from "./changed-files-diff-link";
 import { classifyFindingCategory, FINDING_CATEGORIES, type FindingCategory } from "./finding-category-classify";
@@ -54,7 +54,7 @@ export { splitAiReviewNits } from "./ai-notes";
 // ── Public-safe defense-in-depth (privacy-critical) ──────────────────────────────────────────────
 //
 // Every field this bridge feeds into the renderer is ALREADY public-safe by construction on the live
-// gittensory inputs (verified at convergence issue #1):
+// loopover inputs (verified at convergence issue #1):
 //   • panel rows (result/evidence) — built by buildPublicPrPanelSignalRows' panel helpers (public-safe);
 //   • aiReview.notes — composed via composeAdvisoryNotes → toPublicSafe (drops anything unsafe);
 //   • the consensus-defect title/detail — produced via toPublicSafe in consensusDefectOf.
@@ -80,7 +80,7 @@ function publicSafeNit(line: string): string | null {
   return PRIVATE_DROP_TERMS.test(scrubbed) ? null : scrubbed;
 }
 
-/** Map gittensory's gate conclusion to the renderer's authoritative `Verdict`.
+/** Map loopover's gate conclusion to the renderer's authoritative `Verdict`.
  *  success → merge · failure → close · action_required/neutral → manual · skipped → comment. */
 export function gateConclusionToVerdict(conclusion: GateCheckConclusion): Verdict {
   switch (conclusion) {
@@ -125,7 +125,7 @@ function rowResultText(resultCell: string): string {
 }
 
 /** Map the legacy panel signal rows → the unified table's rows (label/state/result/evidence). The
- *  unified renderer adds its own "Code review" row first; these follow it (gittensory's gate row included). */
+ *  unified renderer adds its own "Code review" row first; these follow it (loopover's gate row included). */
 export function panelRowsToSignalRows(rows: PublicPrPanelSignalRow[]): UnifiedSignalRow[] {
   return rows.map((row) => {
     const [label, result, evidence] = row.cells;
@@ -182,7 +182,7 @@ export function isBoilerplateNit(finding: AdvisoryFinding): boolean {
   );
 }
 
-/** Build the single AI reviewer note from gittensory's AI output: the composed advisory write-up (minus its nits)
+/** Build the single AI reviewer note from loopover's AI output: the composed advisory write-up (minus its nits)
  *  becomes the assessment; a consensus defect (recovered from the advisory findings) becomes a blocker; the AI's own
  *  nits AND the gate's non-blocking warnings become the collapsible nits. Deterministic warnings alone must NOT
  *  manufacture a reviewer note: a final public comment may only claim an AI review when there is a real AI
@@ -267,7 +267,7 @@ export function buildDualReviewNotes(args: {
     blockers,
     nits,
   };
-  return [{ model: args.reviewerModel ?? "Gittensory AI review", notes }];
+  return [{ model: args.reviewerModel ?? "LoopOver AI review", notes }];
 }
 
 /** Recover a consensus defect (the dual-model agreement the gate already folded into its findings) from
@@ -308,7 +308,7 @@ function normalizeConcernLine(value: string): string {
 }
 
 export type UnifiedCommentBridgeArgs = {
-  /** gittensory's authoritative gate verdict (drives the unified status + the Gate row). */
+  /** loopover's authoritative gate verdict (drives the unified status + the Gate row). */
   gate: GateCheckEvaluation;
   /** The AI maintainer-review advisory notes (already public-safe), if any. */
   aiReview?: { notes: string } | undefined;
@@ -318,13 +318,13 @@ export type UnifiedCommentBridgeArgs = {
   panelRows: PublicPrPanelSignalRow[];
   /** Which rows the maintainer kept visible (`.gittensory.yml review.fields`); a key set to `false` is hidden. */
   reviewFields?: Partial<Record<PublicPrPanelSignalRow["key"], boolean>> | undefined;
-  /** The gittensory readiness total (0–100) → the readiness chip. */
+  /** The loopover readiness total (0–100) → the readiness chip. */
   readinessTotal: number;
   /** Number of changed files reviewed. */
   changedFiles: number;
   /** Number of independent AI reviewers synthesized (0 hides the reviewer chip/row evidence count). */
   reviewerCount?: number | undefined;
-  /** CI + merge-state readiness, when the caller resolved it (gittensory's panel omits it today). */
+  /** CI + merge-state readiness, when the caller resolved it (loopover's panel omits it today). */
   mergeReadiness?: MergeReadiness | undefined;
   /** Whether the PR was auto-merged (only changes the ready-state verdict wording). */
   merged?: boolean | undefined;
@@ -336,7 +336,7 @@ export type UnifiedCommentBridgeArgs = {
   generateTestsLabel?: string | undefined;
   /** Extra collapsed sections (e.g. signal definitions / contributor next steps). */
   extraCollapsibles?: UnifiedCollapsible[] | undefined;
-  /** Headline brand (default "Gittensory review"). */
+  /** Headline brand (default "LoopOver review"). */
   brand?: string | undefined;
   /** Visual before/after capture routes (visual-capture port). When present + non-empty, a "Visual preview"
    *  collapsible (a markdown table of <img> tags pointing at the public /gittensory/shot URLs) is appended.
@@ -715,7 +715,7 @@ export function buildFindingCategoryCollapsible(findings: FindingCategoryInput[]
 }
 
 /**
- * Build the unified PR-review comment body from gittensory's live data. Returns a string that STARTS with
+ * Build the unified PR-review comment body from loopover's live data. Returns a string that STARTS with
  * the panel marker (so the existing upsert updates in place) followed by the rendered unified comment.
  * The gate verdict is authoritative: it is passed as `decision` so the renderer's `deriveUnifiedStatus`
  * lets it override the reviewer recommendation.
@@ -836,7 +836,7 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
   const extraCollapsibles = scrollCollapsible !== null ? [...(withVisual ?? []), scrollCollapsible] : withVisual;
 
   const body = renderUnifiedReviewComment(input, {
-    brand: args.brand ?? "Gittensory review",
+    brand: args.brand ?? "LoopOver review",
     readinessScore: args.readinessTotal,
     signals,
     footerMarkdown: args.footerMarkdown,
@@ -869,7 +869,7 @@ export function buildClosedUnifiedCommentBody(args: { repoFullName: string; pull
   const skippedGate: GateCheckEvaluation = {
     enabled: true,
     conclusion: "skipped",
-    title: `${GITTENSORY_GATE_CHECK_NAME} skipped`,
+    title: `${LOOPOVER_GATE_CHECK_NAME} skipped`,
     summary: "PR closed before full evaluation. No late first comment was created.",
     blockers: [],
     warnings: [],

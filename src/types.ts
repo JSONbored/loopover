@@ -609,7 +609,7 @@ export type GateRuleMode = "off" | "advisory" | "block";
  *  value). See {@link RepositorySettings.copycatGateMode}'s doc comment for the currently-inert status. */
 export type CopycatGateMode = "off" | "warn" | "label" | "block";
 
-/** Review-check publish surface (#2852). Controls ONLY whether/how the "Gittensory Orb Review Agent" check-run
+/** Review-check publish surface (#2852). Controls ONLY whether/how the "LoopOver Orb Review Agent" check-run
  *  is created/updated -- never the underlying gate evaluation, disposition, comments, labels, audit, or
  *  autonomous merge/close, all of which run identically in every mode (the autonomous decision engine already
  *  excludes the bot's own check-runs from the live CI aggregate it merges/closes against, see
@@ -706,8 +706,8 @@ export type RepositorySettings = {
   commentMode: "off" | "detected_contributors_only" | "all_prs";
   publicAudienceMode: "oss_maintainer" | "gittensor_only";
   publicSignalLevel: "minimal" | "standard";
-  /** Publishes the SEPARATE, always-advisory "Gittensory Context" check-run (#2691) -- entirely independent
-   *  of {@link reviewCheckMode}, which governs the "Gittensory Orb Review Agent" gate check. Despite the
+  /** Publishes the SEPARATE, always-advisory "LoopOver Context" check-run (#2691) -- entirely independent
+   *  of {@link reviewCheckMode}, which governs the "LoopOver Orb Review Agent" gate check. Despite the
    *  similar name and shape, this is NOT a sibling/legacy-alias of reviewCheckMode; the two checks are
    *  different check-runs with different controlling fields (a mismatch already caused real doc drift --
    *  see the disambiguation in README's "Check-run and comment surfaces" section). */
@@ -723,7 +723,7 @@ export type RepositorySettings = {
    *  Selection-time only — real-time webhook-driven review is not gated by this and can process any PR at
    *  any time regardless of the chosen order. */
   regateSweepOrderMode: "staleness" | "oldest-first";
-  /** The actual runtime authority for whether the "Gittensory Orb Review Agent" check-run publishes (#2852).
+  /** The actual runtime authority for whether the "LoopOver Orb Review Agent" check-run publishes (#2852).
    *  See {@link ReviewCheckMode}. */
   reviewCheckMode: ReviewCheckMode;
   /** Auto-project/milestone matching (#3183). See {@link ProjectMilestoneMatchMode}. Always populated by the DB
@@ -950,8 +950,8 @@ export type RepositorySettings = {
    *  settings.advisoryAiRouting` in shared/global or per-repo config. Defaults all-false so every advisory
    *  capability stays on the shared frontier env.AI chain until an operator opts each one in. */
   advisoryAiRouting?: AdvisoryAiRoutingConfig | undefined;
-  /** Governs ONLY the PR comment and label -- never the "Gittensory Context" check ({@link checkRunMode})
-   *  or the "Gittensory Orb Review Agent" gate check ({@link reviewCheckMode}), which are independent axes
+  /** Governs ONLY the PR comment and label -- never the "LoopOver Context" check ({@link checkRunMode})
+   *  or the "LoopOver Orb Review Agent" gate check ({@link reviewCheckMode}), which are independent axes
    *  by design (#2852: the check-run must keep posting for branch-protection/auto-merge to keep working
    *  even when a maintainer wants full public silence). Setting this to `"off"` does NOT silence either
    *  check-run -- see README's "Check-run and comment surfaces, disambiguated" section. */

@@ -65,9 +65,11 @@ import type {
 import { errorMessage, nowIso, repoParts, strippedErrorMessage } from "../utils/json";
 import { createInstallationToken, getAppInstallation } from "./app";
 import {
-  GITTENSORY_CONTEXT_CHECK_NAME,
-  GITTENSORY_GATE_CHECK_NAME,
+  GITTENSORY_LEGACY_CONTEXT_CHECK_NAME,
   GITTENSORY_LEGACY_GATE_CHECK_NAME,
+  GITTENSORY_LEGACY_ORB_GATE_CHECK_NAME,
+  LOOPOVER_CONTEXT_CHECK_NAME,
+  LOOPOVER_GATE_CHECK_NAME,
   shouldPublishReviewCheck,
 } from "../review/check-names";
 import { buildReviewThreadBlocker, type ReviewThreadBlocker } from "../review/review-thread-findings";
@@ -2505,9 +2507,11 @@ const CI_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 // (#gate-self-deadlock — froze green-CI PRs as "CI still running". The Gate alone wasn't enough: the Context
 // check is posted the same way and re-created the deadlock, so exclude ALL bot-owned checks.)
 const BOT_OWNED_CHECK_NAMES = new Set<string>([
-  GITTENSORY_GATE_CHECK_NAME,
+  LOOPOVER_GATE_CHECK_NAME,
+  LOOPOVER_CONTEXT_CHECK_NAME,
   GITTENSORY_LEGACY_GATE_CHECK_NAME,
-  GITTENSORY_CONTEXT_CHECK_NAME,
+  GITTENSORY_LEGACY_ORB_GATE_CHECK_NAME,
+  GITTENSORY_LEGACY_CONTEXT_CHECK_NAME,
 ]);
 
 const GITHUB_ACTIONS_VALIDATE_AGGREGATE_CONTEXT = "validate";

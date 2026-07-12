@@ -10,6 +10,7 @@ vi.mock("@jsonbored/gittensory-engine", async () => {
 import { runMinerAttempt } from "../../packages/gittensory-miner/lib/attempt-runner.js";
 import { initEventLedger } from "../../packages/gittensory-miner/lib/event-ledger.js";
 import { initGovernorLedger } from "../../packages/gittensory-miner/lib/governor-ledger.js";
+import { openGovernorState } from "../../packages/gittensory-miner/lib/governor-state.js";
 import { parseFocusManifest, type CodingAgentDriver, type CodingAgentDriverResult } from "../../packages/gittensory-engine/src/index";
 
 const roots: string[] = [];
@@ -29,6 +30,16 @@ function tempGovernorLedger() {
   const ledger = initGovernorLedger(join(root, "governor-ledger.sqlite3"));
   closers.push(ledger);
   return ledger;
+}
+
+// Isolated per test: without this, evaluateGovernorChokepointGatePersisted's own default-store fallback
+// would open the REAL ~/.config/gittensory-miner/governor-state.sqlite3 on whatever machine runs these tests.
+function tempGovernorState() {
+  const root = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-runner-governor-state-"));
+  roots.push(root);
+  const state = openGovernorState(join(root, "governor-state.sqlite3"));
+  closers.push(state);
+  return state;
 }
 
 afterEach(() => {
@@ -105,6 +116,7 @@ function allowingGovernorContext(overrides: Record<string, unknown> = {}) {
 function baseDeps(overrides: Record<string, unknown> = {}) {
   const eventLedger = tempEventLedger();
   const governorLedger = tempGovernorLedger();
+  const governorState = tempGovernorState();
   return {
     driver: driverReturning(okDriverResult()),
     runSlopAssessment: () => noopSlop,
@@ -113,6 +125,7 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
     fetchLiveIssueSnapshot: async () => ({ state: "open" as const, referencingPrs: [] }),
     eventLedger,
     governorLedgerAppend: (event: unknown) => governorLedger.appendGovernorEvent(event as never),
+    governorState,
     nowMs: 10_000,
     executeLocalWrite: async () => ({ ranAt: 10_000 }),
     ...overrides,
@@ -216,6 +229,46 @@ describe("runMinerAttempt (#2337) — the real create->review->gate->submit pipe
 
     expect(result.outcome).toBe("submitted");
     vi.unstubAllEnvs();
+  });
+
+  it("falls back to the real default governor-state store when governorState is omitted", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-runner-default-governor-state-"));
+    roots.push(root);
+    vi.stubEnv("GITTENSORY_MINER_GOVERNOR_STATE_DB", join(root, "default-governor-state.sqlite3"));
+    const deps = baseDeps();
+    delete (deps as { governorState?: unknown }).governorState;
+
+    const result = await runMinerAttempt(baseAttemptInput(), deps);
+
+    expect(result.outcome).toBe("submitted");
+    vi.unstubAllEnvs();
+  });
+
+  it("REGRESSION (#5134/#5203): a rate limit consumed by one runMinerAttempt call is honored by the next, via the shared governor-state store -- this is what the missing wiring bug looked like", async () => {
+    const deps = baseDeps();
+    const policies = {
+      global: { open_pr: { limit: 1, windowMs: 60_000 } },
+      perRepo: { open_pr: { limit: 5, windowMs: 60_000 } },
+      backoffBaseMs: 100,
+    };
+    // rateLimitBuckets/rateLimitBackoffAttempts are DELIBERATELY omitted here (unlike allowingGovernorContext's
+    // own explicit empty defaults) -- an explicit value on the input always wins over persisted state, so
+    // omitting them is what actually exercises evaluateGovernorChokepointGatePersisted's auto-load/save path
+    // through the real runMinerAttempt entrypoint, not just the lower-level wrapper tested elsewhere.
+    const governorWithoutRateLimitState = allowingGovernorContext({ rateLimitPolicies: policies });
+    delete (governorWithoutRateLimitState as { rateLimitBuckets?: unknown }).rateLimitBuckets;
+    delete (governorWithoutRateLimitState as { rateLimitBackoffAttempts?: unknown }).rateLimitBackoffAttempts;
+
+    const first = await runMinerAttempt(baseAttemptInput({ governor: governorWithoutRateLimitState }), deps);
+    expect(first.outcome).toBe("submitted");
+
+    const second = await runMinerAttempt(
+      baseAttemptInput({ loopInput: passingLoopInput({ attemptId: "attempt-2" }), governor: governorWithoutRateLimitState }),
+      { ...deps, nowMs: deps.nowMs + 100 },
+    );
+    expect(second.outcome).toBe("governed");
+    if (second.outcome !== "governed") throw new Error("expected governed");
+    expect(second.decision.stage).toBe("rate_limit");
   });
 
   it("fails closed on malformed input", async () => {

@@ -1,7 +1,7 @@
 import { buildOpenPrSpec } from "@jsonbored/gittensory-engine";
 import { runIterateLoop } from "@jsonbored/gittensory-engine";
 import { checkSubmissionFreshness } from "./submission-freshness-check.js";
-import { evaluateGovernorChokepointGate } from "./governor-chokepoint.js";
+import { evaluateGovernorChokepointGatePersisted } from "./governor-chokepoint-persisted.js";
 import { prepareOpenPrSubmission } from "./harness-submission-trigger.js";
 
 // The real driving-loop entrypoint (#2337): the missing link between #2333's iterate-loop orchestrator and an
@@ -18,20 +18,23 @@ import { prepareOpenPrSubmission } from "./harness-submission-trigger.js";
 // (worktree-allocator.js, #4297) -- this module composes the create/review/gate/submit sequence #2337 is
 // actually about, not worktree allocation policy, which is a separate, already-solved concern.
 //
-// KNOWN, DELIBERATE GAPS (not silently papered over -- both were injected-but-unwired seams before this module
-// existed, and remain so here):
+// KNOWN, DELIBERATE GAP (not silently papered over -- was an injected-but-unwired seam before this module
+// existed, and remains so here):
 //   - `deps.runSlopAssessment` has no production implementation anywhere in this package. The real slop scorer
 //     (src/signals/slop.ts, 518 lines, 5 sibling src/signals/** dependencies) is far larger and more
 //     interconnected than local-write-tools.ts was, so extracting it is separate, substantial scope -- this
 //     function requires a real one be injected rather than silently stubbing a result that would either always
 //     pass (unsafe) or always fail (useless).
-//   - `input.governor`'s cross-attempt state (rate-limit buckets, budget-cap usage, convergence input,
-//     reputation history, self-plagiarism recent-submissions) has no persistence wiring anywhere in this
-//     package either -- every existing governor-*.js wrapper is a pure in/out transform over caller-supplied
-//     state (confirmed by reading governor-write-rate-limit.js: it returns an updated bucket store, but nothing
-//     persists it). A caller with no prior history should pass honest empty/zero defaults, not fabricated ones;
-//     durable cross-attempt tracking is portfolio-loop-level scope (the outer "process the queue" loop this
-//     issue does not build), not a single attempt's.
+//
+// `input.governor`'s cross-attempt state (rate-limit buckets, backoff attempts, budget-cap usage) DOES now
+// persist across separate process invocations (#5134, governor-state.js), via
+// evaluateGovernorChokepointGatePersisted -- callers no longer need to hand-thread honest empty/zero defaults
+// on every invocation; `capUsage` is loaded from that same store but its post-attempt save stays the caller's
+// job (see governor-chokepoint-persisted.js's own header for why: nothing computes "the next capUsage" from a
+// verdict, only the attempt's real outcome does). Reputation/self-plagiarism state also has real persistence
+// primitives (governor-state.js) but isn't auto-loaded here yet -- `input.governor.reputationHistory`/
+// `selfPlagiarismCandidate`/`selfPlagiarismRecentSubmissions` are still caller-supplied optional fields on
+// GovernorChokepointInput, same as before.
 
 /** True once the loop reaches handoff AND every downstream gate (freshness, submission, governor) allows. */
 export const ATTEMPT_OUTCOMES = Object.freeze(["abandon", "stale", "blocked", "governed", "submitted"]);
@@ -88,6 +91,8 @@ function assertInput(input) {
  *   claimLedger: object,
  *   fetchLiveIssueSnapshot: Function,
  *   eventLedger: object,
+ *   governorLedgerAppend?: Function,
+ *   governorState?: import("./governor-state.js").GovernorState,
  *   sessionStartMs?: number,
  *   nowMs: number,
  *   executeLocalWrite: (spec: import("@jsonbored/gittensory-engine").LocalWriteActionSpec) => Promise<unknown>,
@@ -136,7 +141,7 @@ export async function runMinerAttempt(input, deps) {
     return { outcome: "blocked", decision: submission.decision, loopResult };
   }
 
-  const governed = evaluateGovernorChokepointGate(
+  const governed = evaluateGovernorChokepointGatePersisted(
     {
       actionClass: "open_pr",
       repoFullName: input.loopInput.repoFullName,
@@ -144,7 +149,10 @@ export async function runMinerAttempt(input, deps) {
       wouldBeAction: submission.openPrInput,
       ...input.governor,
     },
-    deps.governorLedgerAppend ? { append: deps.governorLedgerAppend } : {},
+    {
+      ...(deps.governorLedgerAppend ? { append: deps.governorLedgerAppend } : {}),
+      ...(deps.governorState ? { governorState: deps.governorState } : {}),
+    },
   );
   if (!governed.decision.allowed) {
     return { outcome: "governed", decision: governed.decision, loopResult };

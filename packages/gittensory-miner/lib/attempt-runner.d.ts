@@ -1,6 +1,5 @@
 import type {
   CodingAgentDriver,
-  GovernorChokepointInput,
   GovernorDecision,
   IterateLoopInput,
   IterateLoopResult,
@@ -8,10 +7,16 @@ import type {
 } from "@jsonbored/gittensory-engine";
 import type { HarnessSubmissionDecision, HarnessSubmissionEventLedger } from "./harness-submission-trigger.js";
 import type { SubmissionFreshnessClaimLedger, LiveIssueSnapshot, FreshnessAbortReason } from "./submission-freshness-check.js";
+import type { GovernorChokepointInputPersisted } from "./governor-chokepoint-persisted.js";
+import type { GovernorState } from "./governor-state.js";
 
 export const ATTEMPT_OUTCOMES: readonly ["abandon", "stale", "blocked", "governed", "submitted"];
 
-export type AttemptGovernorContext = Omit<GovernorChokepointInput, "actionClass" | "repoFullName" | "nowMs" | "wouldBeAction">;
+// rateLimitBuckets/rateLimitBackoffAttempts/capUsage are optional here (via GovernorChokepointInputPersisted,
+// not the engine's own GovernorChokepointInput) so a caller can omit them and let evaluateGovernorChokepointGatePersisted
+// (#5134) auto-supply real persisted state -- forcing them required at this layer would make every caller
+// hand-thread honest-but-stale zero defaults on every invocation, silently defeating that persistence.
+export type AttemptGovernorContext = Omit<GovernorChokepointInputPersisted, "actionClass" | "repoFullName" | "nowMs" | "wouldBeAction">;
 
 export type AttemptInput = {
   loopInput: IterateLoopInput;
@@ -36,6 +41,9 @@ export type AttemptDeps = {
   /** Injected governor-ledger append (mirrors evaluateGovernorChokepointGate's own `options.append`); omitted
    *  falls back to that function's own default (the real default governor ledger). */
   governorLedgerAppend?: (event: unknown) => unknown;
+  /** Injected governor-state store (#5134); omitted falls back to evaluateGovernorChokepointGatePersisted's
+   *  own default (opens + closes the real default governor-state store for this one call). */
+  governorState?: GovernorState;
   sessionStartMs?: number;
   nowMs: number;
   executeLocalWrite: (spec: LocalWriteActionSpec) => Promise<unknown>;

@@ -134,10 +134,10 @@ describe("createAgentSdkCodingAgentDriver", () => {
     expect(result.changedFiles).toEqual(["packages/gittensory-engine/src/vulnerable.ts"]);
   });
 
-  it("fails closed when changed-file enumeration is unavailable", async () => {
+  it("fails closed when changed-file enumeration is unavailable, but still reports the real dollar cost", async () => {
     const driver = driverWith({
       query: queryYielding([
-        { type: "result", subtype: "success", is_error: false, num_turns: 2, result: "done" },
+        { type: "result", subtype: "success", is_error: false, num_turns: 2, result: "done", total_cost_usd: 0.0042 },
       ]),
       listChangedFiles: async () => {
         throw new Error("not a git worktree");
@@ -149,6 +149,9 @@ describe("createAgentSdkCodingAgentDriver", () => {
     expect(result.ok).toBe(false);
     expect(result.changedFiles).toEqual([]);
     expect(result.error).toContain("agent_sdk_changed_files_unavailable: not a git worktree");
+    // The SDK session ran and was billed before enumeration ever failed -- budgetSpent must not silently
+    // undercount this path just because the changed-files step failed afterward.
+    expect(result.costUsd).toBe(0.0042);
   });
 
   it("stringifies a non-Error changed-file enumeration failure", async () => {

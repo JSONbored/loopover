@@ -97,10 +97,10 @@ test("success derives changed files from the worktree after untracked mutating t
   assert.deepEqual(result.changedFiles, ["packages/gittensory-engine/src/vulnerable.ts"]);
 });
 
-test("success fails closed when changed-file enumeration is unavailable", async () => {
+test("success fails closed when changed-file enumeration is unavailable, but still reports the real dollar cost", async () => {
   const driver = driverWith({
     query: queryYielding([
-      { type: "result", subtype: "success", is_error: false, num_turns: 2, result: "done" },
+      { type: "result", subtype: "success", is_error: false, num_turns: 2, result: "done", total_cost_usd: 0.0042 },
     ]),
     listChangedFiles: async () => {
       throw new Error("not a git worktree");
@@ -112,6 +112,9 @@ test("success fails closed when changed-file enumeration is unavailable", async 
   assert.equal(result.ok, false);
   assert.deepEqual(result.changedFiles, []);
   assert.match(result.error!, /agent_sdk_changed_files_unavailable: not a git worktree/);
+  // The SDK session ran and was billed before enumeration ever failed -- budgetSpent must not silently
+  // undercount this path just because the changed-files step failed afterward.
+  assert.equal(result.costUsd, 0.0042);
 });
 
 test("success stringifies a non-Error changed-file enumeration failure", async () => {

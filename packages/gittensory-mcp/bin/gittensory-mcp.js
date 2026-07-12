@@ -201,7 +201,7 @@ const feasibilityGateShape = {
   duplicateClusterRisk: z.enum(["none", "low", "medium", "high"]),
   issueStatus: z.enum(["ready", "needs_proof", "hold", "do_not_use", "duplicate", "invalid", "missing"]),
   found: z.boolean().optional(),
-  // Optional: when both are supplied AND a local AMS install's claim ledger is present (#5157), claimStatus is
+  // Optional: when both are supplied AND a local gittensory-miner install's claim ledger is present (#5157), claimStatus is
   // read from that ledger instead of trusting this caller-supplied value. Omitting either falls back to
   // today's caller-supplied-string behavior unchanged.
   repoFullName: z.string().min(1).optional(),
@@ -211,21 +211,34 @@ const feasibilityGateShape = {
 /**
  * Read-only lookup of the caller's own claim status from a local gittensory-miner install's claim ledger
  * (#5157), so `gittensory_feasibility_gate` isn't purely trusting a caller-supplied `claimStatus` string.
- * Returns `null` (never throws) when there is nothing to look up: no repo/issue supplied, no local AMS
- * install detected (the ledger DB file doesn't exist -- checked via `existsSync` BEFORE opening anything, so
- * this never creates the ledger file/table as a side effect of an advisory-only tool), or the sibling
- * `@jsonbored/gittensory-miner` package isn't resolvable at all (a standalone gittensory-mcp install with no
- * miner alongside it). The caller falls back to its own supplied `claimStatus` in every `null` case. This
- * tool never calls recordClaim/releaseClaim/expireClaim -- read-only, and it never gains any ability to
- * block, cancel, or override a claim or attempt; real claim-conflict authority stays entirely with #4848's
- * maintainer-only path.
+ * Returns `null` (fall back to the caller-supplied value unchanged) only when there is genuinely nothing to
+ * look up: no repo/issue supplied, no local install detected (the ledger DB file doesn't exist -- checked
+ * via `existsSync` BEFORE opening anything, so this never creates the ledger file/table as a side effect of
+ * an advisory-only tool), or the sibling `@jsonbored/gittensory-miner` package isn't resolvable at all (a
+ * standalone gittensory-mcp install with no miner alongside it). When the ledger DB file DOES exist (a real
+ * local install IS present) but reading it fails -- corrupt, locked, permission denied -- this returns
+ * `"unknown"` rather than silently falling back to a caller-supplied string that ground-truth data (which we
+ * know exists but can't currently read) might contradict; `"unknown"` is an existing, honest claimStatus
+ * value the calculator already understands, not a guess. This tool never calls
+ * recordClaim/releaseClaim/expireClaim -- read-only, and it never gains any ability to block, cancel, or
+ * override a claim or attempt; real claim-conflict authority stays entirely with #4848's maintainer-only
+ * path.
  */
 async function resolveLedgerClaimStatus(repoFullName, issueNumber) {
   if (!repoFullName || !issueNumber) return null;
+  let claimLedgerModule;
   try {
-    const { resolveClaimLedgerDbPath, openClaimLedger } = await import("@jsonbored/gittensory-miner/lib/claim-ledger.js");
-    const dbPath = resolveClaimLedgerDbPath();
-    if (!existsSync(dbPath)) return null;
+    claimLedgerModule = await import("@jsonbored/gittensory-miner/lib/claim-ledger.js");
+  } catch {
+    /* v8 ignore next -- gittensory-miner genuinely unresolvable (not installed alongside gittensory-mcp); not
+       reproducible in this monorepo's workspace-hoisted test environment, where the sibling package always
+       resolves */
+    return null;
+  }
+  const { resolveClaimLedgerDbPath, openClaimLedger } = claimLedgerModule;
+  const dbPath = resolveClaimLedgerDbPath();
+  if (!existsSync(dbPath)) return null;
+  try {
     const ledger = openClaimLedger(dbPath);
     try {
       const activeClaims = ledger.listActiveClaims(repoFullName);
@@ -234,10 +247,10 @@ async function resolveLedgerClaimStatus(repoFullName, issueNumber) {
       ledger.close();
     }
   } catch {
-    /* v8 ignore next -- gittensory-miner genuinely unresolvable (not installed alongside gittensory-mcp); not
-       reproducible in this monorepo's workspace-hoisted test environment, where the sibling package always
-       resolves */
-    return null;
+    // The ledger DB file exists (a real local install IS present) but reading it failed -- corrupt, locked,
+    // or a permission error. Never silently trust a caller-supplied string that could contradict ground
+    // truth we know exists but can't currently read; "unknown" surfaces that honestly instead of guessing.
+    return "unknown";
   }
 }
 

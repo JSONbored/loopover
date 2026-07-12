@@ -220,6 +220,20 @@ describe("computeContributorCalibration — per-login calibration read (#2349)",
     expect(await computeContributorCalibration(env, "someone-else")).toEqual({ sampleSize: 1, agreementRate: 1 });
   });
 
+  it("canonicalizes GitHub login casing so case variants cannot bypass or infer calibration", async () => {
+    const env = createTestEnv();
+    await seedLedgerRow(env, { login: "OctoCat", pullNumber: 1, agreed: false });
+    await seedLedgerRow(env, { login: "octocat", pullNumber: 2, agreed: false });
+    await seedLedgerRow(env, { login: "OCTOCAT", pullNumber: 3, agreed: true });
+    await seedLedgerRow(env, { login: "someone-else", pullNumber: 1, agreed: true });
+
+    const expected = { sampleSize: 3, agreementRate: 1 / 3 };
+    expect(await computeContributorCalibration(env, "OctoCat")).toEqual(expected);
+    expect(await computeContributorCalibration(env, " octocat ")).toEqual(expected);
+    expect(await computeContributorCalibration(env, "OCTOCAT")).toEqual(expected);
+    expect(await computeContributorCalibration(env, "someone-else")).toEqual({ sampleSize: 1, agreementRate: 1 });
+  });
+
   it("aggregates across ALL of a login's history regardless of which repo each pairing came from", async () => {
     const env = createTestEnv();
     await seedLedgerRow(env, { login: "octocat", project: "owner/repo-a", pullNumber: 1, agreed: true });

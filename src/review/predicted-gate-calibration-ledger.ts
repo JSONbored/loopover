@@ -141,13 +141,14 @@ export async function recordPredictedGateCalibration(
 export async function computeContributorCalibration(env: PredictedGateCalibrationEnv, login: string | null | undefined): Promise<ContributorCalibrationSignal | null> {
   const trimmed = login?.trim();
   if (!trimmed) return null;
+  const normalizedLogin = trimmed.toLowerCase();
   try {
     const row = await env.DB.prepare(
       `SELECT COUNT(*) AS sampleSize, COALESCE(AVG(agreed), 0) AS agreementRate
          FROM predicted_gate_calibration_ledger
-        WHERE login = ?`,
+        WHERE lower(login) = ?`,
     )
-      .bind(trimmed)
+      .bind(normalizedLogin)
       .first<{ sampleSize: number; agreementRate: number }>();
     // COUNT(*)/AVG(...) with no GROUP BY always returns exactly one row, even over zero matches (COUNT: 0,
     // AVG: NULL -> COALESCE: 0) -- .first()'s nullable return type is a TypeScript-level formality here, not

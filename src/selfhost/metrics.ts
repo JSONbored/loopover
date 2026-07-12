@@ -166,6 +166,8 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["gittensory_review_memory_cache_hit_total", { help: "Review-memory cache hits.", type: "counter" }],
   ["gittensory_review_memory_cache_miss_total", { help: "Review-memory cache misses.", type: "counter" }],
   ["gittensory_review_memory_suppressed_total", { help: "Review-memory entries suppressed from surfacing, by repo.", type: "counter" }],
+  ["gittensory_rees_enrich_requests_total", { help: "REES /v1/enrich call outcomes, by status (ok/empty/http_error/timeout/exception/skipped_auth_rejected).", type: "counter" }],
+  ["gittensory_rees_enrich_request_duration_seconds", { help: "REES /v1/enrich call duration in seconds, for calls that were actually attempted (excludes the auth-rejected circuit-breaker skip).", type: "histogram" }],
 ];
 const metricMeta = new Map<string, MetricMeta>(DEFAULT_METRIC_META);
 

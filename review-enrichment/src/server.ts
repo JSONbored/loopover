@@ -11,6 +11,7 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { normalizeSharedSecret, verifyBearer } from "./auth.js";
 import { buildBrief } from "./brief.js";
+import { incr, observe, renderMetrics } from "./metrics.js";
 import {
   parseEnrichRequestBody,
   readEnrichRequestText,
@@ -45,6 +46,12 @@ app.get("/health", (c) =>
   c.json({ status: "ok", service: "review-enrichment" }),
 );
 app.get("/ready", (c) => c.json({ ready: true }));
+app.get("/metrics", (c) => c.text(renderMetrics()));
+
+function recordEnrichOutcome(status: string, startedAtMs: number): void {
+  incr("rees_enrich_requests_total", { status });
+  observe("rees_enrich_request_duration_seconds", (Date.now() - startedAtMs) / 1000);
+}
 
 app.onError((error, c) => {
   captureRouteError(error, { method: c.req.method, route: c.req.path });
@@ -62,22 +69,35 @@ app.post("/v1/ping", (c) => {
 });
 
 app.post("/v1/enrich", async (c) => {
+  const startedAtMs = Date.now();
   const secret = normalizeSharedSecret(process.env.REES_SHARED_SECRET);
   // No secret configured ⇒ the service is not ready to authenticate anything; fail closed.
-  if (!secret) return c.json({ error: "service_not_configured" }, 503);
-  if (!verifyBearer(c.req.header("authorization"), secret))
+  if (!secret) {
+    recordEnrichOutcome("service_not_configured", startedAtMs);
+    return c.json({ error: "service_not_configured" }, 503);
+  }
+  if (!verifyBearer(c.req.header("authorization"), secret)) {
+    recordEnrichOutcome("unauthorized", startedAtMs);
     return c.json({ error: "unauthorized" }, 401);
+  }
 
   const body = await readEnrichRequestText(c.req.raw);
-  if (!body.ok) return c.json({ error: body.error }, body.status);
+  if (!body.ok) {
+    recordEnrichOutcome("bad_request", startedAtMs);
+    return c.json({ error: body.error }, body.status);
+  }
 
   const parsed = parseEnrichRequestBody(body.raw);
-  if (!parsed.ok) return c.json({ error: parsed.error }, parsed.status);
+  if (!parsed.ok) {
+    recordEnrichOutcome("bad_request", startedAtMs);
+    return c.json({ error: parsed.error }, parsed.status);
+  }
 
   const brief = await buildBrief(parsed.payload, undefined, {
     requestId: c.req.header("x-gittensory-request-id") ?? c.req.header("x-request-id"),
     traceId: traceIdFromTraceparent(c.req.header("traceparent")),
   });
+  recordEnrichOutcome("ok", startedAtMs);
   return c.json(brief);
 });
 

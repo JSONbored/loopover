@@ -8,9 +8,20 @@
 // network / parse error, or an empty brief, returns undefined and the review proceeds on diff + grounding + RAG.
 import { extractLinkedIssueNumbers, getIssue } from "../db/repositories";
 import { sanitizePublicComment } from "../queue-intelligence";
+import { incr, observe } from "../selfhost/metrics";
 import { neutralizePromptInjection } from "./prompt-injection";
 import { REES_ANALYZER_NAMES, REES_ANALYZER_NAME_SET, type ReesAnalyzerName } from "./enrichment-analyzer-names";
 import type { PullRequestFileRecord } from "../types";
+
+const REES_ENRICH_REQUESTS_TOTAL = "gittensory_rees_enrich_requests_total";
+const REES_ENRICH_REQUEST_DURATION_SECONDS = "gittensory_rees_enrich_request_duration_seconds";
+
+/** Records the client-observable outcome of one /v1/enrich attempt. `elapsedMs` is omitted for the
+ *  skipped-before-any-network-attempt case (the auth-rejected circuit breaker), since no call was timed. */
+function recordReesEnrichOutcome(status: string, startedAtMs?: number): void {
+  incr(REES_ENRICH_REQUESTS_TOTAL, { status });
+  if (startedAtMs !== undefined) observe(REES_ENRICH_REQUEST_DURATION_SECONDS, (Date.now() - startedAtMs) / 1000);
+}
 
 export { REES_ANALYZER_NAMES, type ReesAnalyzerName } from "./enrichment-analyzer-names";
 
@@ -417,6 +428,7 @@ export async function buildReviewEnrichment(
         }),
       );
     }
+    recordReesEnrichOutcome("skipped_auth_rejected");
     return undefined;
   }
   const sharedSecret = normalizeSharedSecret(cfg.REES_SHARED_SECRET);
@@ -430,6 +442,7 @@ export async function buildReviewEnrichment(
   const analyzers = resolveEnrichmentAnalyzerSelection(resolveReesAnalyzers(env), input.enrichmentAnalyzers);
   const profile = resolveReesProfile(env);
   const requestId = newReesRequestId();
+  const requestStartedAtMs = Date.now();
   try {
     const response = await fetch(`${base.replace(/\/+$/, "")}/v1/enrich`, {
       method: "POST",
@@ -501,6 +514,7 @@ export async function buildReviewEnrichment(
               : `REES /v1/enrich returned ${response.status}`,
         }),
       );
+      recordReesEnrichOutcome("http_error", requestStartedAtMs);
       return undefined;
     }
     const brief = (await response.json()) as {
@@ -511,7 +525,11 @@ export async function buildReviewEnrichment(
       elapsedMs?: number;
     };
     const promptSection = sanitizeEnrichmentPromptSection(brief.promptSection);
-    if (!promptSection) return undefined; // no findings / unsafe brief ⇒ byte-identical prompt
+    if (!promptSection) {
+      recordReesEnrichOutcome("empty", requestStartedAtMs); // no findings / unsafe brief ⇒ byte-identical prompt
+      return undefined;
+    }
+    recordReesEnrichOutcome("ok", requestStartedAtMs);
     return {
       promptSection,
       // Never splice REES-provided instructions into the SYSTEM prompt. A fixed local suffix preserves the
@@ -522,6 +540,9 @@ export async function buildReviewEnrichment(
           : "",
     };
   } catch (error) {
+    // AbortSignal.timeout rejects with a TimeoutError; everything else is a network/parse exception.
+    const isTimeout = (error as { name?: string } | null)?.name === "TimeoutError";
+    recordReesEnrichOutcome(isTimeout ? "timeout" : "exception", requestStartedAtMs);
     // Surface the failure (#5 review observability): the REES enrichment call can fail (timeout / network / parse)
     // and the review then silently proceeds without the brief. ERROR level so the central Sentry forwarder captures
     // a broken/slow REES backend instead of it degrading invisibly.

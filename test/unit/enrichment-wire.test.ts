@@ -14,6 +14,7 @@ import {
 } from "../../src/review/enrichment-wire";
 import { createTestEnv } from "../helpers/d1";
 import { upsertIssueFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 
 const env = (o: Record<string, string>) => o as unknown as Env;
 const input = {
@@ -662,6 +663,98 @@ describe("buildReviewEnrichment", () => {
     expect(
       (calls[0]!.headers as Record<string, string>).authorization,
     ).toBeUndefined();
+  });
+});
+
+describe("buildReviewEnrichment metrics recording (#5367)", () => {
+  let realFetch: typeof fetch;
+  beforeEach(() => {
+    realFetch = globalThis.fetch;
+    resetMetrics();
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    resetReesAuthRejectedForTests();
+  });
+
+  it('records status="ok" with a duration observation on a usable brief', async () => {
+    globalThis.fetch = vi.fn(
+      async () => ({ ok: true, json: async () => ({ promptSection: "brief" }) }) as Response,
+    ) as unknown as typeof fetch;
+    await buildReviewEnrichment(env({ REES_URL: "https://r" }), input);
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_rees_enrich_requests_total{status="ok"} 1');
+    expect(metrics).toContain("gittensory_rees_enrich_request_duration_seconds_count 1");
+  });
+
+  it('records status="empty" when the response is 2xx but the brief has no usable promptSection', async () => {
+    globalThis.fetch = vi.fn(
+      async () => ({ ok: true, json: async () => ({ promptSection: "" }) }) as Response,
+    ) as unknown as typeof fetch;
+    await buildReviewEnrichment(env({ REES_URL: "https://r" }), input);
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_rees_enrich_requests_total{status="empty"} 1');
+    expect(metrics).toContain("gittensory_rees_enrich_request_duration_seconds_count 1");
+  });
+
+  it('records status="http_error" on a non-2xx response', async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    globalThis.fetch = vi.fn(
+      async () => ({ ok: false, status: 502, statusText: "Bad Gateway", text: async () => "" }) as Response,
+    ) as unknown as typeof fetch;
+    await buildReviewEnrichment(env({ REES_URL: "https://r" }), input);
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_rees_enrich_requests_total{status="http_error"} 1');
+    expect(metrics).toContain("gittensory_rees_enrich_request_duration_seconds_count 1");
+    errSpy.mockRestore();
+  });
+
+  it('records status="timeout" when the fetch rejects with a TimeoutError (AbortSignal.timeout)', async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    globalThis.fetch = vi.fn(async () => {
+      throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    }) as unknown as typeof fetch;
+    await buildReviewEnrichment(env({ REES_URL: "https://r" }), input);
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_rees_enrich_requests_total{status="timeout"} 1');
+    expect(metrics).not.toContain('status="exception"');
+    errSpy.mockRestore();
+  });
+
+  it('records status="exception" for a non-timeout fetch throw (network/parse error)', async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error("network down");
+    }) as unknown as typeof fetch;
+    await buildReviewEnrichment(env({ REES_URL: "https://r" }), input);
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_rees_enrich_requests_total{status="exception"} 1');
+    expect(metrics).not.toContain('status="timeout"');
+    errSpy.mockRestore();
+  });
+
+  it('records status="skipped_auth_rejected" WITHOUT a duration observation once the circuit breaker trips', async () => {
+    globalThis.fetch = vi.fn(async () => ({ ok: false, status: 401 }) as Response) as unknown as typeof fetch;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    probeReesSecretAtStartup(env({ REES_URL: "https://rees.example", REES_SHARED_SECRET: "s3cret" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resetMetrics(); // the startup probe itself doesn't call buildReviewEnrichment; isolate what follows
+
+    await buildReviewEnrichment(env({ REES_URL: "https://rees.example", REES_SHARED_SECRET: "s3cret" }), input);
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_rees_enrich_requests_total{status="skipped_auth_rejected"} 1');
+    // No network attempt was made, so no duration sample -- the histogram must not appear at all.
+    expect(metrics).not.toContain("gittensory_rees_enrich_request_duration_seconds");
+    warnSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  it("never records any outcome when REES_URL is unset (not a real attempt)", async () => {
+    await buildReviewEnrichment(env({}), input);
+    const metrics = await renderMetrics();
+    expect(metrics).not.toContain("gittensory_rees_enrich_requests_total");
+    expect(metrics).not.toContain("gittensory_rees_enrich_request_duration_seconds");
   });
 });
 

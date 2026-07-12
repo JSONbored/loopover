@@ -24,6 +24,7 @@ import {
   type AnalysisContext,
 } from "./analysis-context.js";
 import { ANALYZERS } from "./analyzers/registry.js";
+import { incr, observe } from "./metrics.js";
 import { renderBrief } from "./render.js";
 import {
   COST_ORDER,
@@ -199,6 +200,13 @@ function captureDegradation(
   });
 }
 
+/** Records one analyzer's outcome for the run. `elapsedMs` is omitted for a skip/cap that never actually
+ *  invoked the analyzer function (scheduling overhead isn't real analyzer execution time). */
+function recordAnalyzerOutcome(name: string, status: AnalyzerStatus, elapsedMs?: number): void {
+  incr("rees_analyzer_runs_total", { analyzer: name, status });
+  if (elapsedMs !== undefined) observe("rees_analyzer_duration_seconds", elapsedMs / 1000, { analyzer: name });
+}
+
 function attachAnalysisMetrics(
   diagnostics: AnalyzerDiagnostics,
   analysis: AnalysisContext,
@@ -242,6 +250,7 @@ export async function buildBrief(
       costClass: item.descriptor.cost,
       skipReason: item.skipReason,
     };
+    recordAnalyzerOutcome(item.name, "skipped");
   }
 
   async function runAnalyzer(item: AnalyzerPlanItem): Promise<void> {
@@ -263,6 +272,7 @@ export async function buildBrief(
       };
       partial = true;
       analysis.metrics.recordCappedWork("analyzer_budget", 1);
+      recordAnalyzerOutcome(name, "capped");
       // #2541: budget exhaustion, not a dependency-health signal -- if this call had claimed the circuit
       // breaker's half-open probe (isAnalyzerCircuitOpen), free it so a later request can still probe rather
       // than leaving the slot claimed forever with no outcome ever recorded.
@@ -288,6 +298,7 @@ export async function buildBrief(
       };
       partial = true;
       analysis.metrics.recordCappedWork(`analyzer_${item.descriptor.cost}`, 1);
+      recordAnalyzerOutcome(name, "capped");
       // #2541: same as above -- release a claimed half-open probe without recording an outcome.
       releaseAnalyzerCircuitProbe(name, req);
       return;
@@ -319,15 +330,17 @@ export async function buildBrief(
           status === "capped" ? "analyzer_capped" : "analyzer_partial",
         );
         analyzerStatus[name] = status;
+        const elapsedMs = Date.now() - analyzerStartedAt;
         analyzerTelemetry[name] = {
           status,
-          elapsedMs: Date.now() - analyzerStartedAt,
+          elapsedMs,
           timeoutMs,
           costClass: item.descriptor.cost,
           partialStatus: "partial",
           partialReason,
           capped: status === "capped" || diagnostics.capped,
         };
+        recordAnalyzerOutcome(name, status, elapsedMs);
         partial = true;
         diagnostics.partialStatus = "partial";
         diagnostics.partialReason = partialReason;
@@ -349,13 +362,15 @@ export async function buildBrief(
         }
       } else {
         analyzerStatus[name] = "ok";
+        const elapsedMs = Date.now() - analyzerStartedAt;
         analyzerTelemetry[name] = {
           status: "ok",
-          elapsedMs: Date.now() - analyzerStartedAt,
+          elapsedMs,
           timeoutMs,
           costClass: item.descriptor.cost,
           partialStatus: diagnostics.partialStatus,
         };
+        recordAnalyzerOutcome(name, "ok", elapsedMs);
       }
     } catch (error) {
       // #2541: a THROWN failure (including the analyzer_timeout rejection from runWithTimeout) is the signal
@@ -365,15 +380,17 @@ export async function buildBrief(
       const status = timeoutStatus(error, diagnostics);
       const partialReason = publicPartialReason(diagnostics.partialReason, "analyzer_error");
       analyzerStatus[name] = status;
+      const elapsedMs = Date.now() - analyzerStartedAt;
       analyzerTelemetry[name] = {
         status,
-        elapsedMs: Date.now() - analyzerStartedAt,
+        elapsedMs,
         timeoutMs,
         costClass: item.descriptor.cost,
         partialStatus: "partial",
         partialReason,
         capped: status === "capped" || diagnostics.capped,
       };
+      recordAnalyzerOutcome(name, status, elapsedMs);
       partial = true;
       diagnostics.partialStatus = "partial";
       diagnostics.partialReason = partialReason;
@@ -424,6 +441,7 @@ export async function buildBrief(
         elapsedMs: 0,
         skipReason: "not_requested",
       };
+      recordAnalyzerOutcome(name, "skipped");
     }
 
   const { promptSection, systemSuffix } = renderBrief(

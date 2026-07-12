@@ -99,3 +99,10 @@ runCodingAgentAttempt(options)
 
 The attempt log (JSONL) and the metering totals are the durable, provider-independent record of what happened —
 independent of whichever backend's own transcript, and the input to the miner's manage-phase and self-improve loops.
+
+## Related docs
+
+- [`observability.md`](observability.md) — point Grafana at the miner's local SQLite ledgers and load the usage dashboard ([#5190](https://github.com/JSONbored/gittensory/issues/5190)).
+- [`env-reference.md`](env-reference.md) — env vars including ledger path overrides.
+- [`../DEPLOYMENT.md`](../DEPLOYMENT.md) — laptop vs fleet deployment and state directory layout.
+- [`miner-goal-spec.md`](miner-goal-spec.md) — per-repo `.gittensory-miner.yml` targeting policy.

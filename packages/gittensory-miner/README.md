@@ -128,6 +128,16 @@ contract and provider behavior.
 | `MINER_CODING_AGENT_CODEX_MODEL` | Any Codex model string accepted by the local `codex` CLI | Unset means `codex-cli` uses the CLI's own default model. Ignored by `noop`, `claude-cli`, and `agent-sdk`. |
 | `MINER_CODING_AGENT_TIMEOUT_MS` | Positive integer milliseconds | Unset or invalid falls back to the CLI driver's default wall-clock timeout of `120000` ms. Ignored by `noop` and `agent-sdk`. |
 
+### Recognizing a stale or missing coding-agent credential
+
+When an attempt fails on a `claude-cli` / `codex-cli` provider, the CLI-subprocess driver folds the CLI's own output into a machine-readable `error` string on the attempt result. The credential/auth failure modes below map that exact string to a symptom and a concrete remediation — mirroring ORB's hosted-side [Recognizing a stale or missing credential](../../apps/gittensory-ui/src/routes/docs.self-hosting-ai-providers.tsx) table. Every string is emitted by [`cli-subprocess-driver.ts`](../gittensory-engine/src/miner/cli-subprocess-driver.ts); nothing here is speculative.
+
+| Error string / pattern | Symptom | Remediation |
+| --- | --- | --- |
+| `claude_code_error_<status>` | The `claude` CLI ran but its `--output-format json` envelope reported `is_error: true` (e.g. `claude_code_error_invalid_api_key`) — the OAuth token is missing, rejected, or expired. `gittensory-miner doctor` reports the same condition up front as `not authenticated: set CLAUDE_CODE_OAUTH_TOKEN`. | Regenerate a long-lived token with `claude setup-token` and set `CLAUDE_CODE_OAUTH_TOKEN`, then retry. |
+| `codex_no_auth` | `codex exec` exited non-zero with no structured error in its JSONL stdout and only the `Reading prompt from stdin...` banner on stderr — its `auth.json` credential is missing or expired. The driver appends its own remediation hint (`... auth.json missing or expired -- run codex auth to authenticate`). | Run `codex auth` to re-authenticate; the next attempt reads the refreshed `auth.json` with no further restart. |
+| `<command>_exit_<code>` | Generic non-zero-exit fallback when neither structured parser matched (e.g. `codex_exit_1: ...`, `claude_exit_1: ...`). The driver appends the redacted stderr slice — an auth failure that neither parser recognized still surfaces here. | Read the appended detail; if it points at authentication, re-run `claude setup-token` or `codex auth` for the failing provider, otherwise address the reported error directly. |
+
 ## Commands
 
 ```sh

@@ -141,7 +141,9 @@ It exposes these read-only tools:
 - `gittensory_miner_list_claims` (#5156) — lists the local claim ledger (repo, issue number, status, claimed-at, note) via `listClaims()`. Optional `repoFullName` / `status` filters pass through to the query. Read-only — exposes no claim/release mutation.
 - `gittensory_miner_get_audit_feed` (#5158) — read-only, metadata-only event-ledger audit feed (`eventType`, `repoFullName`, `outcome`, `actor`, `detail`, `createdAt`). Wraps `collectEventLedgerAuditFeed()` with the same filters as `gittensory-miner ledger list` (`--repo`, `--since`, `--type`). Never returns `payload_json` or other raw ledger columns.
 
-Further AMS-state-reading tools (status/doctor diagnostics, run-state, governor ledgers) land as follow-up PRs on top of this server.
+- `gittensory_miner_get_run_state` (#5160) — read-only per-repo run-state (`idle` / `discovering` / `planning` / `preparing`) via `getRunState` / `listRunStates`. Pass `repoFullName` for one repo (a null state means none recorded yet), or omit it to list all. The read-only analog of ORB's `gittensory_get_automation_state`; adds no state-set mutation.
+
+Further AMS-state-reading tools (status/doctor diagnostics, governor ledger, plan store) land as follow-up PRs on top of this server.
 
 ## Version check
 

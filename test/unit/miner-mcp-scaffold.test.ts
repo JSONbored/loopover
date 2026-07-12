@@ -93,6 +93,7 @@ describe("gittensory-miner MCP server (#5153 scaffold)", () => {
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "gittensory_miner_get_audit_feed",
       "gittensory_miner_get_portfolio_dashboard",
+      "gittensory_miner_get_run_state",
       "gittensory_miner_list_claims",
       "gittensory_miner_ping",
     ]);
@@ -198,5 +199,66 @@ describe("gittensory_miner_list_claims (#5156)", () => {
     for (const mutator of ["recordClaim", "claimIssue", "releaseClaim", "expireClaim"]) {
       expect(ledger.calls).not.toContain(mutator);
     }
+  });
+});
+
+const RUN_STATE_ROWS = [
+  { repoFullName: "acme/api", state: "discovering" },
+  { repoFullName: "acme/web", state: "idle" },
+];
+
+// Fake run-state store that records calls and throws from the mutator, so a test can assert the read tool
+// reaches only getRunState/listRunStates and never triggers a state transition.
+function fakeRunStateStore(rows: Array<{ repoFullName: string; state: string }>) {
+  const calls: string[] = [];
+  return {
+    calls,
+    getRunState(repoFullName: string): string | null {
+      calls.push("getRunState");
+      return rows.find((row) => row.repoFullName === repoFullName)?.state ?? null;
+    },
+    listRunStates(): Array<{ repoFullName: string; state: string }> {
+      calls.push("listRunStates");
+      return rows;
+    },
+    setRunState(): never {
+      calls.push("setRunState");
+      throw new Error("setRunState must not be reachable via the read tool");
+    },
+    close(): void {
+      calls.push("close");
+    },
+  };
+}
+
+describe("gittensory_miner_get_run_state (#5160)", () => {
+  function runStateClient(store: ReturnType<typeof fakeRunStateStore>): Promise<Client> {
+    return connectedClient({ initRunStateStore: () => store });
+  }
+  async function callRunState(client: Client, args: Record<string, unknown> = {}): Promise<unknown> {
+    const result = (await client.callTool({ name: "gittensory_miner_get_run_state", arguments: args })) as Content;
+    return JSON.parse(toolText(result));
+  }
+
+  it("returns a single repo's state when repoFullName is given", async () => {
+    const out = await callRunState(await runStateClient(fakeRunStateStore(RUN_STATE_ROWS)), { repoFullName: "acme/api" });
+    expect(out).toEqual({ repoFullName: "acme/api", state: "discovering" });
+  });
+
+  it("returns a null state for an unknown / no-state-yet repo without throwing", async () => {
+    const out = await callRunState(await runStateClient(fakeRunStateStore(RUN_STATE_ROWS)), { repoFullName: "acme/nope" });
+    expect(out).toEqual({ repoFullName: "acme/nope", state: null });
+  });
+
+  it("lists every repo's state when repoFullName is omitted", async () => {
+    const out = await callRunState(await runStateClient(fakeRunStateStore(RUN_STATE_ROWS)));
+    expect(out).toEqual({ states: RUN_STATE_ROWS });
+  });
+
+  it("only reads — never triggers a state transition (invariant: no setRunState)", async () => {
+    const store = fakeRunStateStore(RUN_STATE_ROWS);
+    await callRunState(await runStateClient(store), { repoFullName: "acme/api" });
+    expect(store.calls).toEqual(["getRunState"]);
+    expect(store.calls).not.toContain("setRunState");
   });
 });

@@ -22,11 +22,20 @@ export interface MinerMcpServerOptions {
   nowMs?: number;
   /** Override the event-ledger opener (defaults to initEventLedger); injection seam for tests. */
   initEventLedger?: () => EventLedger;
+  /**
+   * Override the run-state store opener (defaults to the real on-disk store); injection seam for tests. Typed to
+   * the minimal read surface the run-state tool uses (never setRunState).
+   */
+  initRunStateStore?: () => {
+    getRunState(repoFullName: string): unknown;
+    listRunStates(): unknown[];
+    close(): void;
+  };
 }
 
 /**
  * Build the miner MCP server with its tools registered (gittensory_miner_ping,
- * gittensory_miner_get_portfolio_dashboard, gittensory_miner_list_claims, gittensory_miner_get_audit_feed).
- * `options` supplies test injection seams; production callers pass nothing.
+ * gittensory_miner_get_portfolio_dashboard, gittensory_miner_list_claims, gittensory_miner_get_audit_feed,
+ * gittensory_miner_get_run_state). `options` supplies test injection seams; production callers pass nothing.
  */
 export function createMinerMcpServer(options?: MinerMcpServerOptions): McpServer;

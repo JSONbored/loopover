@@ -12,6 +12,7 @@ import {
 import { initEventLedger } from "../lib/event-ledger.js";
 import { collectPortfolioDashboard } from "../lib/portfolio-dashboard.js";
 import { initPortfolioQueueStore } from "../lib/portfolio-queue.js";
+import { initRunStateStore } from "../lib/run-state.js";
 
 // MCP stdio server for @jsonbored/gittensory-miner (scaffold #5153). Mirrors the packages/gittensory-mcp
 // harness (MCP SDK server + stdio transport). Tools:
@@ -22,7 +23,9 @@ import { initPortfolioQueueStore } from "../lib/portfolio-queue.js";
 //     filter passed through to listClaims); exposes no claim/release mutation.
 //   - gittensory_miner_get_audit_feed (#5158): read-only metadata-only event-ledger audit feed via
 //     collectEventLedgerAuditFeed() (same filters as `ledger list`; never returns payload_json).
-// Remaining AMS-state-reading tools (status/doctor, run-state, governor ledgers, etc.) land as follow-ups.
+//   - gittensory_miner_get_run_state (#5160): read-only per-repo run-state via run-state.js's getRunState/
+//     listRunStates (read-only analog of ORB's gittensory_get_automation_state; no state-set mutation).
+// Remaining AMS-state-reading tools (status/doctor, governor ledger, plan store, etc.) land as follow-ups.
 
 // Read the version from this package's own package.json (always shipped) rather than a hand-synced
 // literal, so a release bump never has a second place to forget -- same approach as the mcp harness.
@@ -40,9 +43,9 @@ export const MINER_PING_STATUS = { status: "ok", tool: "gittensory_miner_ping" }
 
 /**
  * Build the miner MCP server with its tools registered. `options.initPortfolioQueue`, `options.openClaimLedger`,
- * `options.initEventLedger`, and `options.nowMs` are injection seams for tests (default to the real stores and the
- * wall clock); the ping tool needs none. Each store-backed tool opens its store only when invoked and closes any
- * store it opened.
+ * `options.initEventLedger`, `options.initRunStateStore`, and `options.nowMs` are injection seams for tests
+ * (default to the real stores and the wall clock); the ping tool needs none. Each store-backed tool opens its
+ * store only when invoked and closes any store it opened.
  */
 export function createMinerMcpServer(options = {}) {
   const server = new McpServer({ name: "gittensory-miner", version: ownPackageJson.version });
@@ -132,6 +135,31 @@ export function createMinerMcpServer(options = {}) {
         };
       } finally {
         if (ownsLedger) eventLedger.close();
+      }
+    },
+  );
+  server.registerTool(
+    "gittensory_miner_get_run_state",
+    {
+      description:
+        "Read-only per-repo miner run-state (idle/discovering/planning/preparing). Pass repoFullName for a single " +
+        "repo (a null state means none has been recorded for it yet), or omit it to list every repo's state. The " +
+        "read-only analog of ORB's gittensory_get_automation_state; adds no state-set or mutation capability.",
+      inputSchema: {
+        repoFullName: z.string().min(1).optional(),
+      },
+    },
+    async ({ repoFullName }) => {
+      const ownsStore = options.initRunStateStore === undefined;
+      const store = (options.initRunStateStore ?? initRunStateStore)();
+      try {
+        const result =
+          repoFullName === undefined
+            ? { states: store.listRunStates() }
+            : { repoFullName, state: store.getRunState(repoFullName) };
+        return { content: [{ type: "text", text: JSON.stringify(result) }] };
+      } finally {
+        if (ownsStore) store.close();
       }
     },
   );

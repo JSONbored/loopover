@@ -123,6 +123,7 @@ describe("gittensory_miner_status (#5154)", () => {
         node: "v22.0.0",
         stateDir: "/tmp/missing-state",
         configFile: null,
+        driver: { provider: null, modelEnvVar: null, cliPresent: null },
         configValid: true,
         engineVersionSkew: { ok: false, detail: "installed 0.1.0 is behind expected 0.2.0" },
         presence: { docker: false, claudeCli: false, codexCli: false },

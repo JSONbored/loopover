@@ -274,7 +274,10 @@ export function collectMinerDiagnostics(env = process.env, cwd = process.cwd()) 
       codexCli: binaryPresentFromDoctorCheck(findDoctorCheck(checks, "codex-cli-present")),
     },
     doctor: { ok: failed.length === 0, checks },
+    driver: status.driver,
   };
+}
+
 function renderDriverLine(driver) {
   if (!driver.provider) return "driver: none configured";
   const cliText = driver.cliPresent === null ? "n/a" : driver.cliPresent ? "yes" : "no";

@@ -23,6 +23,7 @@ import { initAttemptLog } from "./attempt-log.js";
 import { initGovernorLedger } from "./governor-ledger.js";
 import { openWorktreeAllocator } from "./worktree-allocator.js";
 import { resolveRejectionSignaled } from "./rejection-signal.js";
+import { cleanupAttemptWorktree, prepareAttemptWorktree } from "./attempt-worktree.js";
 
 const ATTEMPT_USAGE = "Usage: gittensory-miner attempt <owner/repo> <issue#> --miner-login <login> [--base <branch>] [--live] [--json]";
 
@@ -120,9 +121,10 @@ export function buildAttemptDeps(env, ledgers) {
 
 /**
  * Run the `attempt` CLI subcommand. Checks resolveRejectionSignaled first (before consuming a worktree
- * slot), then acquires a real worktree slot (worktree-allocator.js's first production caller), assembles
- * real AttemptDeps, then -- since no SelfReviewContext fetcher or coding-task-spec builder exists yet --
- * reports the block instead of calling runMinerAttempt with fabricated data. See this file's header for why.
+ * slot), acquires a concurrency slot (worktree-allocator.js), assembles real AttemptDeps, then prepares a
+ * REAL git worktree (attempt-worktree.js: clone/fetch + `git worktree add`) -- then, since no SelfReviewContext
+ * fetcher or coding-task-spec builder exists yet, reports the block instead of calling runMinerAttempt with
+ * fabricated data, and cleans up the now-unused worktree. See this file's header for why.
  */
 export async function runAttempt(args, options = {}) {
   const parsed = parseAttemptArgs(args);
@@ -151,6 +153,7 @@ export async function runAttempt(args, options = {}) {
   let attemptLog = null;
   let governorLedger = null;
   let allocation = null;
+  let worktreeResult = null;
 
   try {
     allocator = (options.openWorktreeAllocator ?? openWorktreeAllocator)();
@@ -211,6 +214,46 @@ export async function runAttempt(args, options = {}) {
       return 3;
     }
 
+    // Real worktree preparation (repo-clone.js + attempt-worktree.js, #5237): the allocator above only
+    // reserves a concurrency SLOT (worktree-allocator.js's own `slot-N` placeholder dirs never receive real
+    // git content) -- this is the step that actually clones/fetches the target repo and creates a real
+    // `git worktree` for this attempt. Its own path, NOT the allocator's slot path, is the real
+    // workingDirectory a future runMinerAttempt call must use.
+    const prepareWorktree = options.prepareAttemptWorktree ?? prepareAttemptWorktree;
+    worktreeResult = await prepareWorktree(parsed.repoFullName, attemptId, { baseBranch: parsed.base, env });
+    if (!worktreeResult.ok) {
+      const reason = worktreeResult.error;
+      attemptLog.appendAttemptLogEvent({
+        eventType: "attempt_aborted",
+        attemptId,
+        actionClass: "open_pr",
+        mode,
+        reason,
+        payload: { repoFullName: parsed.repoFullName, issueNumber: parsed.issueNumber },
+      });
+      eventLedger.appendEvent({
+        type: "attempt_blocked",
+        repoFullName: parsed.repoFullName,
+        payload: { issueNumber: parsed.issueNumber, reason },
+      });
+      const worktreeFailureResult = {
+        outcome: "blocked_worktree_preparation_failed",
+        reason,
+        repoFullName: parsed.repoFullName,
+        issueNumber: parsed.issueNumber,
+        minerLogin: parsed.minerLogin,
+        base: parsed.base,
+        mode,
+        attemptId,
+      };
+      if (parsed.json) {
+        console.log(JSON.stringify(worktreeFailureResult, null, 2));
+      } else {
+        console.error(`Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: real worktree preparation failed: ${reason}`);
+      }
+      return 6;
+    }
+
     const reason = "missing_self_review_context_and_task_spec";
     const blockedResult = {
       outcome: "blocked_missing_prerequisite",
@@ -222,7 +265,7 @@ export async function runAttempt(args, options = {}) {
       base: parsed.base,
       mode,
       attemptId,
-      worktreePath: allocation.worktreePath,
+      worktreePath: worktreeResult.worktreePath,
     };
 
     // "attempt_aborted" is the closest fit in ATTEMPT_LOG_EVENT_TYPES's fixed vocabulary
@@ -253,6 +296,13 @@ export async function runAttempt(args, options = {}) {
     console.error(error instanceof Error ? error.message : String(error));
     return 2;
   } finally {
+    // No real attempt ever ran in this worktree (every path above stops before invoking runMinerAttempt) --
+    // there's nothing to postmortem, so it's always cleaned up (`attemptOk: true`), matching
+    // cleanupAttemptWorktree's own retention policy for a worktree with no failure to inspect.
+    if (worktreeResult?.ok) {
+      const cleanupWorktree = options.cleanupAttemptWorktree ?? cleanupAttemptWorktree;
+      await cleanupWorktree(worktreeResult.repoPath, worktreeResult.worktreePath, true);
+    }
     if (allocation && allocator) allocator.release(attemptId);
     allocator?.close();
     claimLedger?.close();

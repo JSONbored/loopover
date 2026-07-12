@@ -7,6 +7,7 @@ import type { GovernorLedger } from "./governor-ledger.js";
 import type { WorktreeAllocator } from "./worktree-allocator.js";
 import type { resolveRejectionSignaled } from "./rejection-signal.js";
 import type { SelfReviewContextFetch } from "./self-review-context.js";
+import type { cleanupAttemptWorktree, prepareAttemptWorktree } from "./attempt-worktree.js";
 
 export type ParsedAttemptArgs =
   | { error: string }
@@ -32,6 +33,8 @@ export type RunAttemptOptions = {
   buildAttemptDeps?: typeof buildAttemptDeps;
   resolveRejectionSignaled?: typeof resolveRejectionSignaled;
   fetchImpl?: SelfReviewContextFetch;
+  prepareAttemptWorktree?: typeof prepareAttemptWorktree;
+  cleanupAttemptWorktree?: typeof cleanupAttemptWorktree;
 };
 
 export function runAttempt(args: string[], options?: RunAttemptOptions): Promise<number>;

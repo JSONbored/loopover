@@ -13,12 +13,19 @@ import { closeDefaultAttemptLog, initAttemptLog } from "../../packages/gittensor
 import { closeDefaultGovernorLedger, initGovernorLedger } from "../../packages/gittensory-miner/lib/governor-ledger.js";
 import { closeDefaultWorktreeAllocator, openWorktreeAllocator } from "../../packages/gittensory-miner/lib/worktree-allocator.js";
 import { buildAttemptDeps, parseAttemptArgs, runAttempt } from "../../packages/gittensory-miner/lib/attempt-cli.js";
+import type { PrepareAttemptWorktreeResult } from "../../packages/gittensory-miner/lib/attempt-worktree.js";
 
 const roots: string[] = [];
 // Only ever holds ledgers a test itself must close -- runAttempt tests inject theirs via DI and runAttempt's
 // own `finally` block closes them, so registering the same objects here would double-close (the underlying
 // SQLite handle throws "database is not open" / "statement has been finalized" on a second close()).
 const closeables: Array<{ close(): void }> = [];
+
+/** A stubbed successful prepareAttemptWorktree, for tests exercising code paths past worktree preparation
+ *  that don't themselves care about real git plumbing (covered separately by miner-attempt-worktree.test.ts). */
+function fakeWorktreeResult(): Extract<PrepareAttemptWorktreeResult, { ok: true }> {
+  return { ok: true, worktreePath: "/fake/repo/.gittensory-worktrees/fake", repoPath: "/fake/repo", branchName: "gittensory/attempt/fake" };
+}
 
 function tempLedgers() {
   const root = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-cli-"));
@@ -195,6 +202,9 @@ describe("runAttempt (#5132)", () => {
     const releaseSpy = vi.spyOn(allocator, "release");
     const appendAttemptLogEventSpy = vi.spyOn(attemptLog, "appendAttemptLogEvent");
     const appendEventSpy = vi.spyOn(eventLedger, "appendEvent");
+    const worktreeResult = fakeWorktreeResult();
+    const prepareAttemptWorktreeSpy = vi.fn().mockResolvedValue(worktreeResult);
+    const cleanupAttemptWorktreeSpy = vi.fn().mockResolvedValue({ ok: true, removed: true });
 
     const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
       env: { MINER_CODING_AGENT_PROVIDER: "noop" },
@@ -206,6 +216,8 @@ describe("runAttempt (#5132)", () => {
       initAttemptLog: () => attemptLog,
       initGovernorLedger: () => governorLedger,
       resolveRejectionSignaled: async () => false,
+      prepareAttemptWorktree: prepareAttemptWorktreeSpy,
+      cleanupAttemptWorktree: cleanupAttemptWorktreeSpy,
     });
 
     expect(exitCode).toBe(4);
@@ -220,7 +232,7 @@ describe("runAttempt (#5132)", () => {
       base: "main",
       mode: "dry_run",
       attemptId: "fixed-attempt-id",
-      worktreePath: expect.any(String),
+      worktreePath: worktreeResult.worktreePath,
     });
 
     // The worktree slot was acquired for real and then released, not left dangling.
@@ -228,6 +240,9 @@ describe("runAttempt (#5132)", () => {
     // A real, persisted record of the block was written to both ledgers -- not just console output.
     expect(appendAttemptLogEventSpy).toHaveBeenCalledWith(expect.objectContaining({ eventType: "attempt_aborted", attemptId: "fixed-attempt-id" }));
     expect(appendEventSpy).toHaveBeenCalledWith(expect.objectContaining({ type: "attempt_blocked", repoFullName: "acme/widgets" }));
+    // A real git worktree was prepared for this attempt -- and cleaned up, since nothing ran in it.
+    expect(prepareAttemptWorktreeSpy).toHaveBeenCalledWith("acme/widgets", "fixed-attempt-id", { baseBranch: "main", env: { MINER_CODING_AGENT_PROVIDER: "noop" } });
+    expect(cleanupAttemptWorktreeSpy).toHaveBeenCalledWith(worktreeResult.repoPath, worktreeResult.worktreePath, true);
   });
 
   it("resolves live mode only when --live is passed", async () => {
@@ -242,6 +257,8 @@ describe("runAttempt (#5132)", () => {
       initAttemptLog: () => attemptLog,
       initGovernorLedger: () => governorLedger,
       resolveRejectionSignaled: async () => false,
+      prepareAttemptWorktree: async () => fakeWorktreeResult(),
+      cleanupAttemptWorktree: async () => ({ ok: true, removed: true }),
     });
 
     expect(exitCode).toBe(4);
@@ -260,6 +277,8 @@ describe("runAttempt (#5132)", () => {
       initAttemptLog: () => attemptLog,
       initGovernorLedger: () => governorLedger,
       resolveRejectionSignaled: async () => false,
+      prepareAttemptWorktree: async () => fakeWorktreeResult(),
+      cleanupAttemptWorktree: async () => ({ ok: true, removed: true }),
     });
 
     expect(exitCode).toBe(4);
@@ -386,9 +405,91 @@ describe("runAttempt (#5132)", () => {
       initGovernorLedger: () => governorLedger,
       resolveRejectionSignaled: resolveRejectionSignaledSpy,
       fetchImpl,
+      prepareAttemptWorktree: async () => fakeWorktreeResult(),
+      cleanupAttemptWorktree: async () => ({ ok: true, removed: true }),
     });
 
     expect(resolveRejectionSignaledSpy).toHaveBeenCalledWith("acme/widgets", { fetchImpl });
     expect(log).toHaveBeenCalled();
+  });
+
+  it("REGRESSION: reports a real block and releases the worktree slot when worktree preparation fails", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const releaseSpy = vi.spyOn(allocator, "release");
+    const appendAttemptLogEventSpy = vi.spyOn(attemptLog, "appendAttemptLogEvent");
+    const cleanupAttemptWorktreeSpy = vi.fn();
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      attemptId: "clone-failed-attempt",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      resolveRejectionSignaled: async () => false,
+      prepareAttemptWorktree: async () => ({ ok: false, error: "git_clone_failed" }),
+      cleanupAttemptWorktree: cleanupAttemptWorktreeSpy,
+    });
+
+    expect(exitCode).toBe(6);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      outcome: "blocked_worktree_preparation_failed",
+      reason: "git_clone_failed",
+      repoFullName: "acme/widgets",
+      issueNumber: 7,
+      minerLogin: "alice",
+      base: "main",
+      mode: "dry_run",
+      attemptId: "clone-failed-attempt",
+    });
+    // The worktree slot is still released even though preparation failed -- no leaked allocation.
+    expect(releaseSpy).toHaveBeenCalledWith("clone-failed-attempt");
+    expect(appendAttemptLogEventSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "attempt_aborted", attemptId: "clone-failed-attempt", reason: "git_clone_failed" }),
+    );
+    // Nothing to clean up -- preparation never produced a real worktree to remove.
+    expect(cleanupAttemptWorktreeSpy).not.toHaveBeenCalled();
+  });
+
+  it("reports a real block with a human-readable message when worktree preparation fails", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      resolveRejectionSignaled: async () => false,
+      prepareAttemptWorktree: async () => ({ ok: false, error: "git_fetch_failed" }),
+      cleanupAttemptWorktree: vi.fn(),
+    });
+
+    expect(exitCode).toBe(6);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("real worktree preparation failed: git_fetch_failed"));
+  });
+
+  it("passes parsed.base through as prepareAttemptWorktree's baseBranch", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const prepareAttemptWorktreeSpy = vi.fn().mockResolvedValue(fakeWorktreeResult());
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--base", "develop", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      resolveRejectionSignaled: async () => false,
+      prepareAttemptWorktree: prepareAttemptWorktreeSpy,
+      cleanupAttemptWorktree: async () => ({ ok: true, removed: true }),
+    });
+
+    expect(prepareAttemptWorktreeSpy).toHaveBeenCalledWith("acme/widgets", expect.any(String), expect.objectContaining({ baseBranch: "develop" }));
   });
 });

@@ -183,7 +183,9 @@ export async function verifyGithubToken(options = {}) {
   }
 
   const payload = await response.json().catch(() => null);
-  const scopes = parseScopesHeader(response.headers.get("x-oauth-scopes"));
+  const scopesHeader = response.headers.get("x-oauth-scopes");
+  const scopesHeaderPresent = response.headers.has("x-oauth-scopes");
+  const scopes = parseScopesHeader(scopesHeader);
   const login = payload && typeof payload === "object" && typeof payload.login === "string" ? payload.login.trim() : "";
 
   if (!response.ok) {
@@ -192,6 +194,15 @@ export async function verifyGithubToken(options = {}) {
       login: null,
       scopes,
       detail: `GITHUB_TOKEN verification failed: ${readGithubErrorMessage(payload, response.status)}`,
+    };
+  }
+
+  if (scopesHeaderPresent && scopes.length === 0) {
+    return {
+      ok: false,
+      login: login || null,
+      scopes,
+      detail: "GITHUB_TOKEN is valid, but GitHub returned an empty x-oauth-scopes header; reissue it with repo access for miner setup.",
     };
   }
 

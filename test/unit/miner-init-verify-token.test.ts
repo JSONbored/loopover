@@ -39,6 +39,35 @@ afterEach(() => {
 });
 
 describe("verifyGithubToken", () => {
+  it("trims the API base URL and omits Authorization when the token is blank", async () => {
+    const requests: Array<{ url: string; headers: Record<string, string> }> = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      requests.push({
+        url: String(input),
+        headers: Object.fromEntries(new Headers(init?.headers).entries()),
+      });
+      return mockJsonResponse({ login: "octocat" }, { headers: { "x-oauth-scopes": "repo" } });
+    };
+
+    const result = await verifyGithubToken({
+      githubToken: "   ",
+      apiBaseUrl: "https://example.com/",
+      fetchImpl,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(requests).toEqual([
+      {
+        url: "https://example.com/user",
+        headers: {
+          accept: "application/vnd.github+json",
+          "user-agent": "gittensory-miner",
+          "x-github-api-version": "2022-11-28",
+        },
+      },
+    ]);
+  });
+
   it("accepts a valid token, returning the reported scopes and login", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       mockJsonResponse({ login: "octocat" }, { headers: { "x-oauth-scopes": "repo, read:org" } }),
@@ -63,6 +92,19 @@ describe("verifyGithubToken", () => {
     expect(result.login).toBe("octocat");
     expect(result.scopes).toEqual([]);
     expect(result.detail).toContain("did not report classic OAuth scopes");
+  });
+
+  it("rejects an explicitly empty x-oauth-scopes header", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockJsonResponse({ login: "octocat" }, { headers: { "x-oauth-scopes": "" } }),
+    );
+
+    const result = await verifyGithubToken({ githubToken: "token-value" });
+
+    expect(result.ok).toBe(false);
+    expect(result.login).toBe("octocat");
+    expect(result.scopes).toEqual([]);
+    expect(result.detail).toContain("empty x-oauth-scopes header");
   });
 
   it("rejects a token when GitHub reports only non-repository scopes", async () => {
@@ -90,6 +132,16 @@ describe("verifyGithubToken", () => {
     expect(result.detail).toContain("Bad credentials");
   });
 
+  it("falls back to the HTTP status when GitHub returns an error without a message", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockJsonResponse({}, { status: 403 }));
+
+    const result = await verifyGithubToken({ githubToken: "token-value" });
+
+    expect(result.ok).toBe(false);
+    expect(result.login).toBeNull();
+    expect(result.detail).toContain("GitHub returned HTTP 403");
+  });
+
   it("surfaces network errors as a validation failure", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNRESET"));
 
@@ -98,6 +150,27 @@ describe("verifyGithubToken", () => {
     expect(result.ok).toBe(false);
     expect(result.login).toBeNull();
     expect(result.detail).toContain("ECONNRESET");
+  });
+
+  it("times out when the GitHub request never settles", async () => {
+    const fetchImpl: typeof fetch = async (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new Error("aborted")),
+          { once: true },
+        );
+      });
+
+    const result = await verifyGithubToken({
+      githubToken: "token-value",
+      fetchImpl,
+      timeoutMs: 1,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.login).toBeNull();
+    expect(result.detail).toContain("timed out after 1ms");
   });
 });
 

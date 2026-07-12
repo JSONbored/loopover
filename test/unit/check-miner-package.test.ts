@@ -35,6 +35,20 @@ describe("check-miner-package script", () => {
     expect(result.out).toContain("Unexpected file in miner package: scripts/extra.mjs");
   });
 
+  it("rejects an unexpected miner bin that matches the package name prefix", () => {
+    const result = runChecker({
+      CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
+        "package.json",
+        "bin/gittensory-miner.js",
+        "bin/gittensory-miner-backdoor.js",
+        "lib/cli.js",
+      ]),
+      CHECK_MINER_PACK_TEST_CONTENT: "console.log('not secret');",
+    });
+    expect(result.status).toBe(1);
+    expect(result.out).toContain("Unexpected file in miner package: bin/gittensory-miner-backdoor.js");
+  });
+
   it("REGRESSION (#3704 caused main to go red, fixed by flattening lib/ instead of widening this allowlist): rejects a lib module nested one level under a subdirectory", () => {
     const result = runChecker({
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify([

@@ -5,7 +5,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const ALLOWED = [
-  /^bin\/gittensory-miner(-[a-z0-9-]+)?\.(js|d\.ts)$/,
+  /^bin\/gittensory-miner\.js$/,
+  /^bin\/gittensory-miner-mcp\.(js|d\.ts)$/,
   /^lib\/[a-z0-9-]+\.(js|d\.ts)$/,
   /^package\.json$/,
   /^README\.md$/,

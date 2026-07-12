@@ -5,6 +5,8 @@ import { fetchWithRetry } from "./http-retry.js";
 const defaultApiBaseUrl = "https://api.github.com";
 const defaultConcurrency = 5;
 const defaultPerPage = 100;
+// Overall pagination cap per fetch path (maxPages × perPage results) to avoid a runaway follow loop (#4831).
+const defaultMaxPages = 10;
 const githubApiVersion = "2022-11-28";
 
 function normalizeLimit(value, fallback, min, max) {
@@ -116,6 +118,39 @@ async function githubGetJson(url, githubToken, summary, options) {
   return { response, payload };
 }
 
+/** Parse a GitHub `Link` header for the `rel="next"` page URL, or null when there is no next page. Pure. */
+export function nextPageUrl(linkHeader) {
+  if (typeof linkHeader !== "string") return null;
+  for (const part of linkHeader.split(",")) {
+    const match = part.match(/<([^>]+)>\s*;\s*rel="next"/);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+/**
+ * Fetch every page starting at `firstUrl`, following the `Link` header's `rel="next"` up to `maxPages` (a cap to
+ * avoid runaway fetches). `extractPage(payload)` pulls one page's item array out of its payload, or returns null
+ * for a malformed payload. Returns `{ items }` on full success, or `{ items, notOk }` / `{ items, badPayload }`
+ * when a page failed — `items` holds whatever was collected from the earlier pages so a later failure never
+ * discards the results already fetched. A thrown error propagates to the caller's try/catch.
+ */
+async function fetchAllPages(firstUrl, githubToken, summary, options, extractPage, maxPages) {
+  const items = [];
+  let url = firstUrl;
+  let pages = 0;
+  while (url && pages < maxPages) {
+    pages += 1;
+    const { response, payload } = await githubGetJson(url, githubToken, summary, options);
+    if (!response.ok) return { items, notOk: response };
+    const page = extractPage(payload);
+    if (page === null) return { items, badPayload: true };
+    items.push(...page);
+    url = nextPageUrl(response.headers.get("link"));
+  }
+  return { items };
+}
+
 function decodeContentPayload(payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
   if (typeof payload.content !== "string") return null;
@@ -217,16 +252,17 @@ async function fetchTargetIssues(target, githubToken, options, summary, warnings
     `?state=open&per_page=${options.perPage}`,
   );
   try {
-    const { response, payload } = await githubGetJson(url, githubToken, summary, options);
-    if (!response.ok) {
-      warnings.push(warning(target, "issues", `GitHub returned ${response.status}`));
-      return [];
-    }
-    if (!Array.isArray(payload)) {
-      warnings.push(warning(target, "issues", "GitHub returned a non-array issues payload"));
-      return [];
-    }
-    return payload
+    const { items, notOk, badPayload } = await fetchAllPages(
+      url,
+      githubToken,
+      summary,
+      options,
+      (payload) => (Array.isArray(payload) ? payload : null),
+      options.maxPages,
+    );
+    if (notOk) warnings.push(warning(target, "issues", `GitHub returned ${notOk.status}`));
+    else if (badPayload) warnings.push(warning(target, "issues", "GitHub returned a non-array issues payload"));
+    return items
       .map((issue) => normalizeIssue(target, issue, verdict.source))
       .filter((issue) => issue !== null);
   } catch (error) {
@@ -247,24 +283,20 @@ async function fetchSearchIssues(searchQuery, githubToken, options, summary, war
     `?q=${encodeURIComponent(qualifiedQuery)}&per_page=${options.perPage}`,
   );
   try {
-    const { response, payload } = await githubGetJson(url, githubToken, summary, options);
-    if (!response.ok) {
-      warnings.push({
-        repoFullName: "*",
-        stage: "search",
-        message: `GitHub returned ${response.status}`,
-      });
-      return [];
+    const { items, notOk, badPayload } = await fetchAllPages(
+      url,
+      githubToken,
+      summary,
+      options,
+      (payload) => (payload && typeof payload === "object" && Array.isArray(payload.items) ? payload.items : null),
+      options.maxPages,
+    );
+    if (notOk) {
+      warnings.push({ repoFullName: "*", stage: "search", message: `GitHub returned ${notOk.status}` });
+    } else if (badPayload) {
+      warnings.push({ repoFullName: "*", stage: "search", message: "GitHub returned a non-array search payload" });
     }
-    if (!payload || typeof payload !== "object" || !Array.isArray(payload.items)) {
-      warnings.push({
-        repoFullName: "*",
-        stage: "search",
-        message: "GitHub returned a non-array search payload",
-      });
-      return [];
-    }
-    return payload.items;
+    return items;
   } catch (error) {
     warnings.push({
       repoFullName: "*",
@@ -297,6 +329,7 @@ function normalizeOptions(options = {}) {
         : defaultApiBaseUrl,
     concurrency: normalizeLimit(options.concurrency, defaultConcurrency, 1, 10),
     perPage: normalizeLimit(options.perPage, defaultPerPage, 1, 100),
+    maxPages: normalizeLimit(options.maxPages, defaultMaxPages, 1, 50),
     // Passed through to the per-fetch retry so tests can inject an instant sleep; undefined uses the real backoff.
     sleepFn: typeof options.sleepFn === "function" ? options.sleepFn : undefined,
   };

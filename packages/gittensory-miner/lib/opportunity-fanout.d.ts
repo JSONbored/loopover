@@ -3,6 +3,8 @@ export type FanoutTarget = {
   repo: string;
 };
 
+export function nextPageUrl(linkHeader: unknown): string | null;
+
 export type RawCandidateIssue = {
   owner: string;
   repo: string;
@@ -38,6 +40,7 @@ export function fetchCandidateIssuesWithSummary(
     apiBaseUrl?: string;
     concurrency?: number;
     perPage?: number;
+    maxPages?: number;
     sleepFn?: (ms: number) => Promise<unknown>;
   },
 ): Promise<CandidateIssueSummary>;
@@ -49,6 +52,7 @@ export function fetchCandidateIssues(
     apiBaseUrl?: string;
     concurrency?: number;
     perPage?: number;
+    maxPages?: number;
     sleepFn?: (ms: number) => Promise<unknown>;
   },
 ): Promise<RawCandidateIssue[]>;
@@ -60,6 +64,7 @@ export function searchCandidateIssuesWithSummary(
     apiBaseUrl?: string;
     concurrency?: number;
     perPage?: number;
+    maxPages?: number;
     sleepFn?: (ms: number) => Promise<unknown>;
   },
 ): Promise<CandidateIssueSummary>;
@@ -71,6 +76,7 @@ export function searchCandidateIssues(
     apiBaseUrl?: string;
     concurrency?: number;
     perPage?: number;
+    maxPages?: number;
     sleepFn?: (ms: number) => Promise<unknown>;
   },
 ): Promise<RawCandidateIssue[]>;

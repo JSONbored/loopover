@@ -8,6 +8,7 @@ vi.mock("@jsonbored/gittensory-engine", async () => {
 import {
   fetchCandidateIssues,
   fetchCandidateIssuesWithSummary,
+  nextPageUrl,
   searchCandidateIssuesWithSummary,
 } from "../../packages/gittensory-miner/lib/opportunity-fanout.js";
 
@@ -332,5 +333,131 @@ describe("fetchCandidateIssues (#2307)", () => {
     expect(issuesAttempts).toBe(2); // the 503 was retried, then succeeded
     expect(result.issues.map((entry) => entry.issueNumber)).toEqual([7]); // results kept, not dropped
     expect(result.warnings).toEqual([]); // no warning — the transient blip recovered
+  });
+
+  it("follows Link-header pagination to fetch every page of a repo's issues (#4831)", async () => {
+    let issuesPage = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/contents/AI-USAGE.md")) return jsonResponse({}, { status: 404 });
+      if (url.endsWith("/contents/CONTRIBUTING.md")) return contentResponse("Contributions welcome.");
+      if (url.includes("/repos/acme/big/issues")) {
+        issuesPage += 1;
+        if (issuesPage === 1) {
+          return jsonResponse([issue(1)], {
+            headers: { link: `<${API}/repos/acme/big/issues?state=open&per_page=100&page=2>; rel="next"` },
+          });
+        }
+        return jsonResponse([issue(2)]); // final page, no Link header ⇒ stop
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+
+    const result = await fetchCandidateIssuesWithSummary([{ owner: "acme", repo: "big" }], "token", { apiBaseUrl: API });
+    expect(issuesPage).toBe(2);
+    expect(result.issues.map((entry) => entry.issueNumber)).toEqual([1, 2]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("follows Link-header pagination for search results (#4831)", async () => {
+    let searchPage = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (String(input).includes("/search/issues")) {
+        searchPage += 1;
+        if (searchPage === 1) {
+          return jsonResponse({ items: [issue(10)] }, {
+            headers: { link: `<${API}/search/issues?q=x&page=2>; rel="next"` },
+          });
+        }
+        return jsonResponse({ items: [issue(20)] });
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+
+    const result = await searchCandidateIssuesWithSummary("label:feature", "token", { apiBaseUrl: API });
+    expect(searchPage).toBe(2);
+    expect(result.issues.map((entry) => entry.issueNumber)).toEqual([10, 20]);
+  });
+
+  it("caps pagination at maxPages to avoid a runaway follow loop (#4831)", async () => {
+    let searchPage = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (String(input).includes("/search/issues")) {
+        searchPage += 1;
+        // Every page advertises a next page — only the maxPages cap stops the loop.
+        return jsonResponse({ items: [issue(searchPage)] }, {
+          headers: { link: `<${API}/search/issues?q=x&page=${searchPage + 1}>; rel="next"` },
+        });
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+
+    const result = await searchCandidateIssuesWithSummary("label:feature", "token", { apiBaseUrl: API, maxPages: 2 });
+    expect(searchPage).toBe(2); // stopped at the cap despite an ever-present next link
+    expect(result.issues.map((entry) => entry.issueNumber)).toEqual([1, 2]);
+  });
+
+  it("keeps earlier pages' issues when a later page fails mid-pagination (#4831)", async () => {
+    let issuesPage = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/contents/AI-USAGE.md")) return jsonResponse({}, { status: 404 });
+      if (url.endsWith("/contents/CONTRIBUTING.md")) return contentResponse("Contributions welcome.");
+      if (url.includes("/repos/acme/big/issues")) {
+        issuesPage += 1;
+        if (issuesPage === 1) {
+          return jsonResponse([issue(1)], {
+            headers: { link: `<${API}/repos/acme/big/issues?state=open&per_page=100&page=2>; rel="next"` },
+          });
+        }
+        return jsonResponse({ message: "server error" }, { status: 503 }); // page 2 fails
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+
+    const result = await fetchCandidateIssuesWithSummary([{ owner: "acme", repo: "big" }], "token", {
+      apiBaseUrl: API,
+      sleepFn: () => Promise.resolve(),
+    });
+    expect(result.issues.map((entry) => entry.issueNumber)).toEqual([1]); // page 1 kept, not discarded
+    expect(result.warnings).toEqual([{ repoFullName: "acme/big", stage: "issues", message: "GitHub returned 503" }]);
+  });
+
+  it("warns on a non-array issues payload", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/contents/AI-USAGE.md")) return jsonResponse({}, { status: 404 });
+      if (url.endsWith("/contents/CONTRIBUTING.md")) return contentResponse("Contributions welcome.");
+      if (url.includes("/repos/acme/big/issues")) return jsonResponse({ not: "an array" });
+      return jsonResponse({}, { status: 404 });
+    });
+    const result = await fetchCandidateIssuesWithSummary([{ owner: "acme", repo: "big" }], "token", { apiBaseUrl: API });
+    expect(result.issues).toEqual([]);
+    expect(result.warnings).toEqual([
+      { repoFullName: "acme/big", stage: "issues", message: "GitHub returned a non-array issues payload" },
+    ]);
+  });
+
+  it("warns on a non-array search payload", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (String(input).includes("/search/issues")) return jsonResponse({ not: "items" });
+      return jsonResponse({}, { status: 404 });
+    });
+    const result = await searchCandidateIssuesWithSummary("label:feature", "token", { apiBaseUrl: API });
+    expect(result.issues).toEqual([]);
+    expect(result.warnings).toEqual([
+      { repoFullName: "*", stage: "search", message: "GitHub returned a non-array search payload" },
+    ]);
+  });
+});
+
+describe("nextPageUrl (#4831)", () => {
+  it("extracts the rel=next URL, or null when absent or malformed", () => {
+    expect(
+      nextPageUrl('<https://api.test/x?page=2>; rel="next", <https://api.test/x?page=5>; rel="last"'),
+    ).toBe("https://api.test/x?page=2");
+    expect(nextPageUrl('<https://api.test/x?page=5>; rel="last"')).toBeNull();
+    expect(nextPageUrl(null)).toBeNull();
+    expect(nextPageUrl(undefined)).toBeNull();
   });
 });

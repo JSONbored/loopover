@@ -32,6 +32,7 @@ const DEFAULT_ITEMS: PaletteItem[] = [
   { label: "Beta onboarding", to: "/docs/beta-onboarding", group: "Docs" },
   { label: "Quickstart", to: "/docs/quickstart", group: "Docs" },
   { label: "MCP clients", to: "/docs/mcp-clients", group: "Docs" },
+  { label: "Coding-agent driver", to: "/docs/miner-coding-agent", group: "Docs" },
   { label: "Miner workflow", to: "/docs/miner-workflow", group: "Docs" },
   { label: "Maintainer workflow", to: "/docs/maintainer-workflow", group: "Docs" },
   { label: "Self-host reviews", to: "/docs/maintainer-self-hosting", group: "Docs" },

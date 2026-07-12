@@ -59,6 +59,7 @@ const AUDIENCES: Audience[] = [
     links: [
       { to: "/docs/quickstart", label: "Quickstart" },
       { to: "/docs/miner-quickstart", label: "Quickstart by lane" },
+      { to: "/docs/miner-coding-agent", label: "Coding-agent driver" },
       { to: "/docs/miner-workflow", label: "Miner workflow" },
       { to: "/docs/branch-analysis", label: "Branch analysis" },
       { to: "/docs/scoreability", label: "Scoreability" },

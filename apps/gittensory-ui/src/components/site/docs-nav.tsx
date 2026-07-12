@@ -22,7 +22,10 @@ export const docsNav: DocsGroup[] = [
   },
   {
     title: "Workflows",
-    items: [{ to: "/docs/miner-workflow", label: "Miner workflow" }],
+    items: [
+      { to: "/docs/miner-coding-agent", label: "Coding-agent driver" },
+      { to: "/docs/miner-workflow", label: "Miner workflow" },
+    ],
   },
   {
     title: "Maintainers",

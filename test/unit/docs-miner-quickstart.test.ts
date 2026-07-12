@@ -43,6 +43,11 @@ describe("docs miner quickstart page", () => {
     expect(source).toMatch(/Choose your lane/);
   });
 
+  it("cross-links to the miner coding-agent driver page for Claude Code / Codex setup", () => {
+    expect(source).toMatch(/Miner coding-agent driver/);
+    expect(source).toMatch(/\/docs\/miner-coding-agent/);
+  });
+
   it("maps lanes to the repo's configured participation lane from code", () => {
     // These must match ParticipationLane in src/signals/engine.ts so the doc reflects real config.
     expect(source).toMatch(/direct_pr/);
@@ -62,7 +67,9 @@ describe("docs miner quickstart page", () => {
     expect(source).toMatch(/GITTENSORY_UPLOAD_SOURCE=false/);
     expect(source).toMatch(/local absolute paths are redacted/i);
     expect(source).toMatch(/public-safe/i);
-    expect(normalizedSource).toMatch(/scrubbed of economic and identity signals/i);
+    expect(normalizedSource).toMatch(
+      /scrubbed of economic and identity signals/i,
+    );
   });
 
   it("documents validation expectations with the real --validation flag", () => {

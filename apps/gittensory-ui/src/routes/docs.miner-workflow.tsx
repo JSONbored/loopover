@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 
 import { DocsPage } from "@/components/site/docs-page";
 import { CodeBlock, Callout } from "@/components/site/primitives";
@@ -114,6 +115,10 @@ function MinerWorkflow() {
       title="Miner workflow"
       description="A deterministic four-step loop. Each step is pure metadata; each output is structured JSON your agent can consume."
     >
+      <p>
+        If the workflow will spawn Claude Code or Codex, configure that driver first in{" "}
+        <Link to="/docs/miner-coding-agent">Miner coding-agent driver</Link>.
+      </p>
       <h2>The mirrored loop</h2>
       <p>
         Each step on the left is what the contributor runs; the matching step on the right is what

@@ -43,6 +43,7 @@ import { Route as DocsScoreabilityRouteImport } from './routes/docs.scoreability
 import { Route as DocsQuickstartRouteImport } from './routes/docs.quickstart'
 import { Route as DocsPrivacySecurityRouteImport } from './routes/docs.privacy-security'
 import { Route as DocsOwnerChecklistRouteImport } from './routes/docs.owner-checklist'
+import { Route as DocsMinerCodingAgentRouteImport } from './routes/docs.miner-coding-agent'
 import { Route as DocsMinerWorkflowRouteImport } from './routes/docs.miner-workflow'
 import { Route as DocsMinerQuickstartRouteImport } from './routes/docs.miner-quickstart'
 import { Route as DocsMcpClientsRouteImport } from './routes/docs.mcp-clients'
@@ -251,6 +252,11 @@ const DocsOwnerChecklistRoute = DocsOwnerChecklistRouteImport.update({
   path: '/owner-checklist',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsMinerCodingAgentRoute = DocsMinerCodingAgentRouteImport.update({
+  id: '/miner-coding-agent',
+  path: '/miner-coding-agent',
+  getParentRoute: () => DocsRoute,
+} as any)
 const DocsMinerWorkflowRoute = DocsMinerWorkflowRouteImport.update({
   id: '/miner-workflow',
   path: '/miner-workflow',
@@ -424,6 +430,7 @@ export interface FileRoutesByFullPath {
   '/docs/maintainer-self-hosting': typeof DocsMaintainerSelfHostingRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
+  '/docs/miner-coding-agent': typeof DocsMinerCodingAgentRoute
   '/docs/miner-quickstart': typeof DocsMinerQuickstartRoute
   '/docs/miner-workflow': typeof DocsMinerWorkflowRoute
   '/docs/owner-checklist': typeof DocsOwnerChecklistRoute
@@ -484,6 +491,7 @@ export interface FileRoutesByTo {
   '/docs/maintainer-self-hosting': typeof DocsMaintainerSelfHostingRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
+  '/docs/miner-coding-agent': typeof DocsMinerCodingAgentRoute
   '/docs/miner-quickstart': typeof DocsMinerQuickstartRoute
   '/docs/miner-workflow': typeof DocsMinerWorkflowRoute
   '/docs/owner-checklist': typeof DocsOwnerChecklistRoute
@@ -613,6 +621,7 @@ export interface FileRouteTypes {
     | '/docs/maintainer-self-hosting'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
+    | '/docs/miner-coding-agent'
     | '/docs/miner-quickstart'
     | '/docs/miner-workflow'
     | '/docs/owner-checklist'
@@ -673,6 +682,7 @@ export interface FileRouteTypes {
     | '/docs/maintainer-self-hosting'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
+    | '/docs/miner-coding-agent'
     | '/docs/miner-quickstart'
     | '/docs/miner-workflow'
     | '/docs/owner-checklist'
@@ -1026,6 +1036,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsMinerWorkflowRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/miner-coding-agent': {
+      id: '/docs/miner-coding-agent'
+      path: '/miner-coding-agent'
+      fullPath: '/docs/miner-coding-agent'
+      preLoaderRoute: typeof DocsMinerCodingAgentRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/miner-quickstart': {
       id: '/docs/miner-quickstart'
       path: '/miner-quickstart'
@@ -1270,6 +1287,7 @@ interface DocsRouteChildren {
   DocsMaintainerSelfHostingRoute: typeof DocsMaintainerSelfHostingRoute
   DocsMaintainerWorkflowRoute: typeof DocsMaintainerWorkflowRoute
   DocsMcpClientsRoute: typeof DocsMcpClientsRoute
+  DocsMinerCodingAgentRoute: typeof DocsMinerCodingAgentRoute
   DocsMinerQuickstartRoute: typeof DocsMinerQuickstartRoute
   DocsMinerWorkflowRoute: typeof DocsMinerWorkflowRoute
   DocsOwnerChecklistRoute: typeof DocsOwnerChecklistRoute
@@ -1307,6 +1325,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsMaintainerSelfHostingRoute: DocsMaintainerSelfHostingRoute,
   DocsMaintainerWorkflowRoute: DocsMaintainerWorkflowRoute,
   DocsMcpClientsRoute: DocsMcpClientsRoute,
+  DocsMinerCodingAgentRoute: DocsMinerCodingAgentRoute,
   DocsMinerQuickstartRoute: DocsMinerQuickstartRoute,
   DocsMinerWorkflowRoute: DocsMinerWorkflowRoute,
   DocsOwnerChecklistRoute: DocsOwnerChecklistRoute,

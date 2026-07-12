@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { DocsPage } from "@/components/site/docs-page";
 import { CodeBlock, Callout } from "@/components/site/primitives";
+import { Link } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/docs/miner-quickstart")({
   head: () => ({
@@ -39,6 +40,11 @@ function MinerQuickstart() {
         <code>--json</code> for machine-readable output, and your source never leaves your machine —
         only branch metadata (changed file paths, commit messages) is sent to authenticated LoopOver
         MCP/API responses.
+      </p>
+      <p>
+        If you are setting up Claude Code or Codex as the miner's coding-agent driver, read{" "}
+        <Link to="/docs/miner-coding-agent">Miner coding-agent driver</Link> first so the env vars
+        match the provider you actually plan to run.
       </p>
 
       <h2>0. Install and sign in (every lane)</h2>

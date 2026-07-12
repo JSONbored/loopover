@@ -14,13 +14,13 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/extension")({
   head: () => ({
     meta: [
-      { title: "Browser extension — Gittensory" },
+      { title: "Browser extension — LoopOver" },
       {
         name: "description",
         content:
           "Private maintainer overlays on github.com. Never shown to PR authors or the public — reviewability context where you already work.",
       },
-      { property: "og:title", content: "Gittensory · maintainer browser extension" },
+      { property: "og:title", content: "LoopOver · maintainer browser extension" },
       {
         property: "og:description",
         content:
@@ -44,13 +44,13 @@ function ExtensionPage() {
               Maintainer overlays on the GitHub you already use.
             </h1>
             <p className="mt-4 max-w-xl text-token-base text-muted-foreground">
-              The Gittensory browser extension surfaces miner context, scoreability projections, and
+              The LoopOver browser extension surfaces miner context, scoreability projections, and
               reviewability hints on PR pages — visible only to the maintainer running it. Nothing
               is injected into the page or shown to the PR author.
             </p>
             <div className="mt-6 flex flex-wrap gap-2">
               <a
-                href="/downloads/gittensory-extension.zip"
+                href="/downloads/loopover-extension.zip"
                 className="inline-flex items-center gap-2 rounded-token border border-mint/40 bg-mint px-4 py-2 text-token-sm font-medium text-primary-foreground hover:brightness-110"
               >
                 <Download className="size-4" />
@@ -104,9 +104,9 @@ function ExtensionPage() {
       <Section className="pb-24">
         <Callout variant="safety">
           <strong>Privacy posture.</strong> The extension does not read the PR diff, post comments,
-          or open issues. It calls the same private Gittensory API endpoints you already use, then
+          or open issues. It calls the same private LoopOver API endpoints you already use, then
           renders the response in your local DOM. Its permission boundary is storage, GitHub PR
-          pages, and the configured Gittensory API origin. Extension tokens are scoped to pull
+          pages, and the configured LoopOver API origin. Extension tokens are scoped to pull
           context, stored in browser local storage rather than sync storage, and cleared on logout,
           expiry, or revoked-session responses. GitHub personal access tokens are rejected.
         </Callout>
@@ -230,7 +230,7 @@ function OverlayDemo() {
             </div>
           </div>
 
-          {/* gittensory overlay panel */}
+          {/* loopover overlay panel */}
           <motion.div
             initial={{ opacity: 0, x: 8 }}
             animate={{ opacity: 1, x: 0 }}
@@ -242,7 +242,7 @@ function OverlayDemo() {
                 <span className="inline-flex size-5 items-center justify-center rounded-token bg-mint text-token-2xs font-bold text-primary-foreground">
                   G
                 </span>
-                <span className="text-token-xs text-muted-foreground">gittensory overlay</span>
+                <span className="text-token-xs text-muted-foreground">loopover overlay</span>
               </div>
               <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
                 you only

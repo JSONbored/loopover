@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Gittensory Miner Opportunity",
+  "name": "LoopOver Miner Opportunity",
   "description": "Contributor-facing GitHub issue opportunity signals from a locally configured miner plane.",
   "version": "0.1.0",
   "permissions": ["storage"],
@@ -19,6 +19,6 @@
   ],
   "options_page": "options.html",
   "action": {
-    "default_title": "Gittensory Miner"
+    "default_title": "LoopOver Miner"
   }
 }

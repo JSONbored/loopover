@@ -1,6 +1,6 @@
-export const DEFAULT_API_ORIGIN = "https://gittensory-api.aethereal.dev";
-export const EXTENSION_SESSION_REQUIRED_MESSAGE = "Set an extension session token in Gittensory extension options.";
-export const EXTENSION_SESSION_EXPIRED_MESSAGE = "Extension session expired or revoked. Create a fresh extension token in Gittensory.";
+export const DEFAULT_API_ORIGIN = "https://api.loopover.ai";
+export const EXTENSION_SESSION_REQUIRED_MESSAGE = "Set an extension session token in LoopOver extension options.";
+export const EXTENSION_SESSION_EXPIRED_MESSAGE = "Extension session expired or revoked. Create a fresh extension token in LoopOver.";
 
 export const STORAGE_KEYS = {
   apiOrigin: "apiOrigin",
@@ -50,10 +50,10 @@ export function validateExtensionSessionToken(value) {
   const token = String(value ?? "").trim();
   if (!token) throw new Error(EXTENSION_SESSION_REQUIRED_MESSAGE);
   if (looksLikeGitHubPersonalAccessToken(token)) {
-    throw new Error("GitHub personal access tokens are not accepted. Create a Gittensory extension token instead.");
+    throw new Error("GitHub personal access tokens are not accepted. Create a LoopOver extension token instead.");
   }
   if (!GITTENSORY_SESSION_PATTERN.test(token)) {
-    throw new Error("Extension tokens must be Gittensory session tokens that start with gts_.");
+    throw new Error("Extension tokens must be LoopOver session tokens that start with gts_.");
   }
   return token;
 }

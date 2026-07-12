@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Gittensory Maintainer Overlay",
-  "description": "Private Gittensory pull request context on GitHub.",
+  "name": "LoopOver Maintainer Overlay",
+  "description": "Private LoopOver pull request context on GitHub.",
   "version": "0.1.0",
   "permissions": ["storage"],
-  "host_permissions": ["https://github.com/*", "https://gittensory-api.aethereal.dev/*"],
+  "host_permissions": ["https://github.com/*", "https://api.loopover.ai/*"],
   "background": {
     "service_worker": "background.js",
     "type": "module"
@@ -19,6 +19,6 @@
   ],
   "options_page": "options.html",
   "action": {
-    "default_title": "Gittensory"
+    "default_title": "LoopOver"
   }
 }

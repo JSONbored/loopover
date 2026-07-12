@@ -100,7 +100,7 @@ jobs:
           test -d client || { echo "::error::artifact missing client/ assets dir"; exit 1; }
           # 3) Allowlist file extensions — fail on anything that isn't a normal web/build output (blocks
           #    smuggled scripts/binaries). A few extensionless CF asset files are explicitly permitted.
-          #    `zip` covers the served downloads (e.g. /downloads/gittensory-extension.zip) — a passive
+          #    `zip` covers the served downloads (e.g. /downloads/loopover-extension.zip) — a passive
           #    static asset wrangler only uploads (never executes), so allowing it doesn't run fork code.
           unexpected="$(find . -regextype posix-extended -type f \
             -not -iregex '.*\.(mjs|js|cjs|map|json|css|html?|txt|svg|png|jpe?g|gif|webp|avif|ico|bmp|woff2?|ttf|otf|eot|wasm|xml|webmanifest|md|csv|zip|wgsl|glb|gltf)$' \

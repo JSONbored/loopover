@@ -944,6 +944,21 @@ describe("maybeAutoApplyProjectOrMilestoneMatch (#3185)", () => {
     expect(record.patchedMilestone).toBe(20);
   });
 
+  it("suppresses auto-applied milestone writes when the repo action mode is dry-run (regression: pause/dry-run bypass)", async () => {
+    const record: MilestoneAttachRecord = { patchCalled: false };
+    const context = ctx();
+    vi.stubGlobal("fetch", milestoneAttachFetch(record));
+    const result = await maybeAutoApplyProjectOrMilestoneMatch(context, 4, STRONG_TITLE, null, "github", PR_URL, DEFAULT_AUTO_APPLY_MIN_SCORE, "dry_run");
+    const audit = await context.env.DB.prepare("select outcome, metadata_json from audit_events where event_type = ? and target_key = ?")
+      .bind("github.write.suppressed", "/repos/{owner}/{repo}/issues/{issue_number}")
+      .first<{ outcome: string; metadata_json: string }>();
+
+    expect(result).toEqual({ attachedMilestone: true, attachedProject: false });
+    expect(record.patchCalled).toBe(false);
+    expect(audit?.outcome).toBe("completed");
+    expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({ method: "PATCH", mode: "dry_run" });
+  });
+
   it("attaches a matching Projects v2 item via GraphQL when it clears the threshold", async () => {
     let mutationVariables: unknown;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

@@ -5538,6 +5538,7 @@ async function handlePullRequestWebhookEvent(
       deliveryId,
       eventName,
       action: payload.action,
+      actionMode: await resolveRepoActionMode(env, settings),
     });
     // Review-evasion protection (#review-evasion-protection): a contributor closing their OWN PR while
     // gittensory has an ACTIVE review pass running is dodging the one-shot review, not making an ordinary

@@ -1,5 +1,6 @@
 import { createInstallationToken } from "../github/app";
 import { githubRateLimitAdmissionKeyForInstallation, makeInstallationOctokit } from "../github/client";
+import type { AgentActionMode } from "../settings/agent-execution";
 import { createIssueComment } from "../github/pr-actions";
 import { findLinearNativeLink, LinearAdapter } from "./linear-adapter";
 import { termOverlap, tokenize, type CollisionTerms } from "../signals/engine";
@@ -31,8 +32,8 @@ export type ProjectTrackerAttachResult = {
 export interface ProjectTrackerAdapter {
   listOpenProjects(ctx: ProjectTrackerContext): Promise<ProjectTrackerRef[]>;
   listOpenMilestones(ctx: ProjectTrackerContext): Promise<ProjectTrackerRef[]>;
-  attachToProject(ctx: ProjectTrackerContext, pullNumber: number, projectId: string): Promise<ProjectTrackerAttachResult>;
-  attachToMilestone(ctx: ProjectTrackerContext, pullNumber: number, milestoneId: string): Promise<ProjectTrackerAttachResult>;
+  attachToProject(ctx: ProjectTrackerContext, pullNumber: number, projectId: string, mode?: AgentActionMode): Promise<ProjectTrackerAttachResult>;
+  attachToMilestone(ctx: ProjectTrackerContext, pullNumber: number, milestoneId: string, mode?: AgentActionMode): Promise<ProjectTrackerAttachResult>;
 }
 
 function parseRepoFullName(repoFullName: string): { owner: string; repo: string } {
@@ -95,12 +96,12 @@ export class GitHubMilestonesAdapter implements ProjectTrackerAdapter {
     return { attached: false };
   }
 
-  async attachToMilestone(ctx: ProjectTrackerContext, pullNumber: number, milestoneId: string): Promise<ProjectTrackerAttachResult> {
+  async attachToMilestone(ctx: ProjectTrackerContext, pullNumber: number, milestoneId: string, mode: AgentActionMode = "live"): Promise<ProjectTrackerAttachResult> {
     const milestoneNumber = parsePositiveIntegerId(milestoneId);
     if (milestoneNumber === null) return { attached: false };
     const { owner, repo } = parseRepoFullName(ctx.repoFullName);
     const token = await createInstallationToken(ctx.env, ctx.installationId);
-    const octokit = makeInstallationOctokit(ctx.env, token, "live", githubRateLimitAdmissionKeyForInstallation(ctx.installationId));
+    const octokit = makeInstallationOctokit(ctx.env, token, mode, githubRateLimitAdmissionKeyForInstallation(ctx.installationId));
     await octokit.request("PATCH /repos/{owner}/{repo}/issues/{issue_number}", {
       owner,
       repo,
@@ -226,11 +227,11 @@ export class GitHubProjectsAdapter implements ProjectTrackerAdapter {
     return [];
   }
 
-  async attachToProject(ctx: ProjectTrackerContext, pullNumber: number, projectId: string): Promise<ProjectTrackerAttachResult> {
+  async attachToProject(ctx: ProjectTrackerContext, pullNumber: number, projectId: string, mode: AgentActionMode = "live"): Promise<ProjectTrackerAttachResult> {
     if (typeof projectId !== "string" || projectId.trim().length === 0) return { attached: false };
     const { owner, repo } = parseRepoFullName(ctx.repoFullName);
     const token = await createInstallationToken(ctx.env, ctx.installationId);
-    const octokit = makeInstallationOctokit(ctx.env, token, "live", githubRateLimitAdmissionKeyForInstallation(ctx.installationId));
+    const octokit = makeInstallationOctokit(ctx.env, token, mode, githubRateLimitAdmissionKeyForInstallation(ctx.installationId));
     const pr = await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", { owner, repo, pull_number: pullNumber });
     const contentId = (pr.data as PullRequestNodeIdResponse).node_id;
     const response = await octokit.graphql<AddProjectV2ItemGraphQlResponse>(
@@ -441,6 +442,7 @@ export async function maybeAutoApplyProjectOrMilestoneMatch(
   backend: ProjectMilestoneMatchBackendInput,
   prUrl: string,
   threshold: number = DEFAULT_AUTO_APPLY_MIN_SCORE,
+  actionMode: AgentActionMode = "live",
 ): Promise<ProjectMilestoneAutoApplyResult> {
   const matches = await resolveTrackerMatches(ctx, backend, prTitle, prBody, prUrl);
   const isLinear = backend === "linear";
@@ -449,10 +451,10 @@ export async function maybeAutoApplyProjectOrMilestoneMatch(
   let attachedMilestone = false;
   let attachedProject = false;
   if (matches.milestone && matches.milestone.score >= threshold) {
-    attachedMilestone = (await milestoneAdapter.attachToMilestone(ctx, pullNumber, matches.milestone.item.id)).attached;
+    attachedMilestone = (await milestoneAdapter.attachToMilestone(ctx, pullNumber, matches.milestone.item.id, actionMode)).attached;
   }
   if (matches.project && matches.project.score >= threshold) {
-    attachedProject = (await projectAdapter.attachToProject(ctx, pullNumber, matches.project.item.id)).attached;
+    attachedProject = (await projectAdapter.attachToProject(ctx, pullNumber, matches.project.item.id, actionMode)).attached;
   }
   return { attachedMilestone, attachedProject };
 }
@@ -479,6 +481,7 @@ export async function maybeSuggestMilestoneMatchForPr(args: {
   deliveryId: string;
   eventName: string;
   action: string | undefined;
+  actionMode?: AgentActionMode | undefined;
 }): Promise<void> {
   if (!shouldSuggestProjectTrackerForWebhook(args.eventName, args.action)) return;
   if (!args.installationId) return;
@@ -488,7 +491,7 @@ export async function maybeSuggestMilestoneMatchForPr(args: {
   if (args.mode === "auto") {
     // "auto": actually attach the high-confidence match(es) instead of only commenting (#3185). Best-effort --
     // an attach failure is logged and swallowed, never blocking the maintenance step, same as suggest mode.
-    await maybeAutoApplyProjectOrMilestoneMatch(ctx, args.pullNumber, args.prTitle, args.prBody, args.backend, args.prUrl ?? "").catch((error) => {
+    await maybeAutoApplyProjectOrMilestoneMatch(ctx, args.pullNumber, args.prTitle, args.prBody, args.backend, args.prUrl ?? "", DEFAULT_AUTO_APPLY_MIN_SCORE, args.actionMode ?? "live").catch((error) => {
       console.error(
         JSON.stringify({
           level: "warn",

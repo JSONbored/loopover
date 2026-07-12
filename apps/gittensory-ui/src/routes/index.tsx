@@ -78,16 +78,16 @@ function Hero() {
           </p>
           <div className="mt-7 flex flex-wrap items-center gap-2">
             <Link
-              to="/docs/maintainer-self-hosting"
-              className="inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-token bg-coral px-4 text-token-sm font-medium text-primary-foreground transition-[filter,transform] duration-150 hover:brightness-110 active:scale-[0.98] focus-ring motion-reduce:transition-none motion-reduce:active:scale-100"
-            >
-              Self-host reviews →
-            </Link>
-            <Link
               to="/docs/quickstart"
               className="inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-token bg-coral px-4 text-token-sm font-medium text-primary-foreground transition-[filter,transform] duration-150 hover:brightness-110 active:scale-[0.98] focus-ring motion-reduce:transition-none motion-reduce:active:scale-100"
             >
               Install MCP →
+            </Link>
+            <Link
+              to="/docs/maintainer-self-hosting"
+              className="inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-token border border-border bg-transparent px-4 text-token-sm font-medium text-foreground transition-colors duration-150 hover:bg-accent focus-ring motion-reduce:transition-none"
+            >
+              Self-host reviews →
             </Link>
             <Link
               to="/docs"
@@ -102,9 +102,6 @@ function Hero() {
           <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-token-xs">
             <Link to="/api" className="text-muted-foreground hover:text-foreground">
               Browse the API →
-            </Link>
-            <Link to="/agents" className="text-muted-foreground hover:text-foreground">
-              For coding agents →
             </Link>
           </div>
         </div>

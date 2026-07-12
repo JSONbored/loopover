@@ -34,7 +34,7 @@ const DEFAULT_SCENES: TerminalScene[] = [
     { "action": "preflight-branch", "priority": 0.74 },
     { "action": "link-issue",       "priority": 0.61 }
   ],
-  "ruleset_snapshot": "rs_2026_05_29_a1f3",
+  "ruleset_snapshot": "rs_a1f3c9e2",
   "signal_fidelity":  "ready"
 }`,
   },

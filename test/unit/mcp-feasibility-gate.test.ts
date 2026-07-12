@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -188,6 +188,33 @@ describe("gittensory_feasibility_gate: local claim-ledger sourcing (#5157)", () 
     const data = result.structuredContent as Record<string, unknown>;
     expect(data.verdict).toBe("avoid");
     expect(data.avoidReasons).toEqual(["claim_status_solved"]);
+  });
+
+  it("regression: reports claimStatus 'unknown' (never silently trusts the caller-supplied value) when the ledger DB file exists but is unreadable/corrupt", async () => {
+    // A real local install IS present (the DB file exists) but it isn't a valid SQLite file -- reading it
+    // must fail loudly into "unknown", not silently fall back to the caller's (unverifiable) claimStatus.
+    // Using a caller-supplied "solved" here is the discriminating case: if the old buggy behavior (silently
+    // falling back to the caller-supplied value on ANY read error) were still present, this would produce an
+    // "avoid" verdict (claim_status_solved). "unknown" triggers neither avoid nor raise on its own, so the
+    // fixed behavior produces "go" instead -- these two outcomes are distinguishable, unlike using
+    // "unclaimed" as the caller-supplied value (which would coincidentally also yield "go" either way).
+    writeFileSync(ledgerDbPath, "not a sqlite database");
+    await connectWithLedgerDb(ledgerDbPath);
+
+    const result = await ledgerClient.callTool({
+      name: "gittensory_feasibility_gate",
+      arguments: {
+        claimStatus: "solved",
+        duplicateClusterRisk: "none",
+        issueStatus: "ready",
+        repoFullName: "acme/widgets",
+        issueNumber: 42,
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.verdict).toBe("go");
+    expect(data.avoidReasons).toEqual([]);
   });
 
   it("falls back to the caller-supplied claimStatus unchanged when repoFullName/issueNumber are omitted", async () => {

@@ -262,12 +262,11 @@ describe("generateChatQaAnswer", () => {
     const run = vi.fn(async () => ({ response: "Public-safe readiness answer." }));
     const env = createTestEnv({ AI_ADVISORY: { run } as unknown as Ai, AI_DAILY_NEURON_BUDGET: "10000" });
     const result = await generateChatQaAnswer(env, {
+      // publicSafeSummary (unlike why/blockedBy, dropped from the grounding bundle entirely -- #5106) is the
+      // one action field that still reaches redactGroundingText, so it's the field this test must seed.
       bundle: bundleFixture(undefined, {
-        why: [
-          "owner/repo: Maintainer cut: 1.",
-          "owner/repo: split lane (direct PR 1, issue-discovery 1); both lanes are useful here.",
-          "owner/repo: direct PR lane share 1 with no hard personal blocker.",
-        ],
+        publicSafeSummary:
+          "owner/repo: Maintainer cut: 1. owner/repo: split lane (direct PR 1, issue-discovery 1); both lanes are useful here. owner/repo: direct PR lane share 1 with no hard personal blocker.",
       }),
       question: "what should I know?",
       advisoryAiRouting: ADVISORY_ON,

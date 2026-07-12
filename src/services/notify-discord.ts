@@ -103,7 +103,7 @@ async function auditExternalNotification(
 ): Promise<void> {
   await recordAuditEvent(env, {
     eventType: `external_notification.${provider}`,
-    actor: "gittensory",
+    actor: "loopover",
     targetKey: `${params.repoFullName}#${params.pullNumber}`,
     outcome,
     detail,
@@ -125,7 +125,7 @@ export async function notifyActionToDiscord(
   }
   const meta = OUTCOME_META[params.outcome];
   const body = {
-    username: "Gittensory",
+    username: "LoopOver",
     embeds: [
       {
         title: `${params.repoFullName}#${params.pullNumber} · ${meta.word}`,
@@ -137,7 +137,7 @@ export async function notifyActionToDiscord(
           { name: "PR", value: `#${params.pullNumber}`, inline: true },
           ...(params.submitter ? [{ name: "Submitter", value: `@${params.submitter}`, inline: true }] : []),
         ],
-        footer: { text: `Gittensory · ${params.repoFullName}` },
+        footer: { text: `LoopOver · ${params.repoFullName}` },
       },
     ],
   };
@@ -171,12 +171,12 @@ export async function deliverRecapToDiscord(
   const url = envString(env, "DISCORD_WEBHOOK_URL");
   if (!url || !isValidDiscordWebhook(url)) {
     const reason = url ? "invalid_global_webhook" : "missing_global_webhook";
-    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.discord", actor: "gittensory", targetKey, outcome: "denied", detail: reason, metadata: auditMeta });
+    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.discord", actor: "loopover", targetKey, outcome: "denied", detail: reason, metadata: auditMeta });
     return { sent: false, reason };
   }
   const description = (formattedBody ?? report.summary.join("\n")).slice(0, 1800);
   const body = {
-    username: "Gittensory",
+    username: "LoopOver",
     embeds: [
       {
         title: `Maintainer recap · ${report.repos.length} repo(s) · ${report.windowDays}d`,
@@ -190,18 +190,18 @@ export async function deliverRecapToDiscord(
           { name: "Overrides", value: `${report.totals.gateOverrides}`, inline: true },
           { name: "Reversals", value: `${report.totals.reversals}`, inline: true },
         ],
-        footer: { text: `Gittensory · generated ${report.generatedAt}` },
+        footer: { text: `LoopOver · generated ${report.generatedAt}` },
       },
     ],
   };
   try {
     await postWebhook(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) }, "discord");
-    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.discord", actor: "gittensory", targetKey, outcome: "completed", detail: "sent", metadata: auditMeta });
+    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.discord", actor: "loopover", targetKey, outcome: "completed", detail: "sent", metadata: auditMeta });
     return { sent: true };
   } catch (error) {
     const detail = errorMessage(error).slice(0, 160);
     console.warn(JSON.stringify({ event: "maintainer_recap_discord_failed", message: detail }));
-    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.discord", actor: "gittensory", targetKey, outcome: "error", detail, metadata: auditMeta });
+    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.discord", actor: "loopover", targetKey, outcome: "error", detail, metadata: auditMeta });
     return { sent: false, reason: detail };
   }
 }
@@ -221,7 +221,7 @@ export async function deliverRecapToSlack(
   const webhookUrl = envString(env, "SLACK_WEBHOOK_URL");
   if (!webhookUrl || !isValidSlackWebhook(webhookUrl)) {
     const reason = webhookUrl ? "invalid_webhook" : "missing_webhook";
-    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.slack", actor: "gittensory", targetKey, outcome: "denied", detail: reason, metadata: auditMeta });
+    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.slack", actor: "loopover", targetKey, outcome: "denied", detail: reason, metadata: auditMeta });
     return { sent: false, reason };
   }
   const body = {
@@ -230,12 +230,12 @@ export async function deliverRecapToSlack(
   };
   try {
     await postWebhook(webhookUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) }, "slack");
-    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.slack", actor: "gittensory", targetKey, outcome: "completed", detail: "sent", metadata: auditMeta });
+    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.slack", actor: "loopover", targetKey, outcome: "completed", detail: "sent", metadata: auditMeta });
     return { sent: true };
   } catch (error) {
     const detail = errorMessage(error).slice(0, 160);
     console.warn(JSON.stringify({ event: "maintainer_recap_slack_failed", message: detail }));
-    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.slack", actor: "gittensory", targetKey, outcome: "error", detail, metadata: auditMeta });
+    await recordAuditEvent(env, { eventType: "maintainer_recap_notification.slack", actor: "loopover", targetKey, outcome: "error", detail, metadata: auditMeta });
     return { sent: false, reason: detail };
   }
 }

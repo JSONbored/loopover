@@ -218,7 +218,7 @@ describe("triggerPagerDutyIncident — cooldown gate (alert fatigue control #2)"
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     await recordAuditEvent(env, {
       eventType: "external_notification.pagerduty",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: "ops_anomaly:acme/widgets",
       outcome: "completed",
       detail: "triggered",
@@ -241,7 +241,7 @@ describe("triggerPagerDutyIncident — HTTP delivery", () => {
       routing_key: VALID_KEY,
       event_action: "trigger",
       dedup_key: "ops_anomaly:acme/widgets",
-      payload: { summary: "review burst on acme/widgets", source: "gittensory", severity: "critical", component: "acme/widgets", custom_details: { anomalies: ["a", "b"] } },
+      payload: { summary: "review burst on acme/widgets", source: "loopover", severity: "critical", component: "acme/widgets", custom_details: { anomalies: ["a", "b"] } },
     });
     expect(await pagerDutyAudit(env)).toEqual([expect.objectContaining({ outcome: "completed", detail: "triggered" })]);
   });

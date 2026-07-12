@@ -107,7 +107,7 @@ describe("api routes", () => {
     expect(health.status).toBe(200);
     await expect(health.json()).resolves.toMatchObject({
       status: "ok",
-      service: "gittensory-api",
+      service: "loopover-api",
       minMcpVersion: "0.5.0",
       latestRecommendedMcpVersion: mcpPackageJson.version,
     });
@@ -117,7 +117,7 @@ describe("api routes", () => {
     const compatibilityPayload = await compatibility.json();
     expect(compatibilityPayload).toMatchObject({
       status: "ok",
-      service: "gittensory-api",
+      service: "loopover-api",
       apiVersion: "0.1.0",
       mcp: {
         packageName: "@jsonbored/gittensory-mcp",
@@ -289,13 +289,13 @@ describe("api routes", () => {
     expect(svg.headers.get("cache-control")).toContain("stale-while-revalidate");
     const svgBody = await svg.text();
     expect(svgBody.startsWith("<svg")).toBe(true);
-    expect(svgBody).toContain("gittensory");
+    expect(svgBody).toContain("loopover");
     expect(svgBody).toContain("% real");
     expect(svgBody).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
 
     const json = await app.request("/v1/public/repos/acme/badged/badge.json", {}, env);
     expect(json.status).toBe(200);
-    await expect(json.json()).resolves.toMatchObject({ schemaVersion: 1, label: "gittensory", message: expect.stringContaining("real") });
+    await expect(json.json()).resolves.toMatchObject({ schemaVersion: 1, label: "loopover", message: expect.stringContaining("real") });
 
     // Installed but NOT opted in → unavailable, no metrics.
     await upsertRepositoryFromGitHub(env, { name: "not-opted-in", full_name: "acme/not-opted-in", private: false, owner: { login: "acme" }, default_branch: "main" }, 556);

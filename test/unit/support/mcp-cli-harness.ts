@@ -140,7 +140,7 @@ export async function startFixtureServer(
       response.end(
         JSON.stringify({
           status: "ok",
-          service: "gittensory-api",
+          service: "loopover-api",
           apiVersion: "0.1.0",
           mcp: {
             packageName: "@jsonbored/gittensory-mcp",
@@ -159,7 +159,7 @@ export async function startFixtureServer(
       return;
     }
     if (request.url === "/health") {
-      response.end(JSON.stringify({ status: "ok", service: "gittensory-api", ...(options.minMcpVersion ? { minMcpVersion: options.minMcpVersion } : {}) }));
+      response.end(JSON.stringify({ status: "ok", service: "loopover-api", ...(options.minMcpVersion ? { minMcpVersion: options.minMcpVersion } : {}) }));
       return;
     }
     if (request.url === "/v1/auth/github/session" && request.method === "POST") {

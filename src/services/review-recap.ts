@@ -144,7 +144,7 @@ export async function sendReviewRecapToDiscord(env: Env, recap: ReviewRecap): Pr
   if (resolved.status !== "configured") {
     await recordAuditEvent(env, {
       eventType: "review_recap_notification.discord",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: `review-recap:${recap.repoFullName}:${recap.windowDays}`,
       outcome: "denied",
       detail: resolved.reason,
@@ -153,7 +153,7 @@ export async function sendReviewRecapToDiscord(env: Env, recap: ReviewRecap): Pr
     return { sent: false, reason: resolved.reason };
   }
   const body = {
-    username: "Gittensory",
+    username: "LoopOver",
     embeds: [
       {
         title: `${recap.repoFullName} · review recap (${recap.windowDays}d)`,
@@ -164,7 +164,7 @@ export async function sendReviewRecapToDiscord(env: Env, recap: ReviewRecap): Pr
           { name: "Closed", value: String(recap.closed), inline: true },
           { name: "Still open", value: String(recap.stillOpen), inline: true },
         ],
-        footer: { text: `Gittensory · ${recap.repoFullName}` },
+        footer: { text: `LoopOver · ${recap.repoFullName}` },
       },
     ],
   };
@@ -178,7 +178,7 @@ export async function sendReviewRecapToDiscord(env: Env, recap: ReviewRecap): Pr
     if (!response.ok) throw new Error(`discord_webhook_http_${response.status}`);
     await recordAuditEvent(env, {
       eventType: "review_recap_notification.discord",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: `review-recap:${recap.repoFullName}:${recap.windowDays}`,
       outcome: "completed",
       detail: "sent",
@@ -190,7 +190,7 @@ export async function sendReviewRecapToDiscord(env: Env, recap: ReviewRecap): Pr
     console.warn(JSON.stringify({ event: "review_recap_discord_failed", repo: recap.repoFullName, message: detail }));
     await recordAuditEvent(env, {
       eventType: "review_recap_notification.discord",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: `review-recap:${recap.repoFullName}:${recap.windowDays}`,
       outcome: "error",
       detail,
@@ -211,7 +211,7 @@ export async function deliverRecapToSlack(env: Env, recap: ReviewRecap): Promise
     const reason = typeof webhookUrl === "string" ? "invalid_webhook" : "missing_webhook";
     await recordAuditEvent(env, {
       eventType: "review_recap_notification.slack",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: `review-recap:${recap.repoFullName}:${recap.windowDays}`,
       outcome: "denied",
       detail: reason,
@@ -237,7 +237,7 @@ export async function deliverRecapToSlack(env: Env, recap: ReviewRecap): Promise
     if (!response.ok) throw new Error(`slack_webhook_http_${response.status}`);
     await recordAuditEvent(env, {
       eventType: "review_recap_notification.slack",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: `review-recap:${recap.repoFullName}:${recap.windowDays}`,
       outcome: "completed",
       detail: "sent",
@@ -249,7 +249,7 @@ export async function deliverRecapToSlack(env: Env, recap: ReviewRecap): Promise
     console.warn(JSON.stringify({ event: "review_recap_slack_failed", repo: recap.repoFullName, message: detail }));
     await recordAuditEvent(env, {
       eventType: "review_recap_notification.slack",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: `review-recap:${recap.repoFullName}:${recap.windowDays}`,
       outcome: "error",
       detail,

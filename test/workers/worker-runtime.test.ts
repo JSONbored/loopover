@@ -8,7 +8,7 @@ describe("worker runtime", () => {
     const health = await worker.fetch(new Request("https://gittensory.test/health"), {} as Env, ctx);
     await waitOnExecutionContext(ctx);
     expect(health.status).toBe(200);
-    await expect(health.json()).resolves.toMatchObject({ status: "ok", service: "gittensory-api" });
+    await expect(health.json()).resolves.toMatchObject({ status: "ok", service: "loopover-api" });
 
     const openApi = await worker.fetch(new Request("https://gittensory.test/openapi.json"), {} as Env, createExecutionContext());
     expect(openApi.status).toBe(200);

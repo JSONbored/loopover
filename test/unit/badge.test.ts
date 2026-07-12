@@ -63,7 +63,7 @@ describe("buildShieldsBadge", () => {
   it("emits a shields endpoint payload", () => {
     expect(buildShieldsBadge(quality(), 600)).toEqual({
       schemaVersion: 1,
-      label: "gittensory",
+      label: "loopover",
       message: "92% real · merge 30h · queue low",
       color: "#3fb950",
       cacheSeconds: 600,
@@ -75,7 +75,7 @@ describe("renderBadgeSvg", () => {
   it("renders a valid SVG carrying the label and message", () => {
     const svg = renderBadgeSvg(quality());
     expect(svg.startsWith("<svg")).toBe(true);
-    expect(svg).toContain("gittensory");
+    expect(svg).toContain("loopover");
     expect(svg).toContain("92% real");
     expect(svg).toContain('role="img"');
     expect(svg).not.toMatch(/wallet|hotkey|trust|reward|login/i);

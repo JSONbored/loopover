@@ -5,7 +5,7 @@ import type { PublicRepoQuality, QueueHealthLevel } from "../services/public-rep
 // before it reaches the SVG so the unauthenticated, embeddable surface cannot be turned into an injection
 // vector even if upstream values ever change shape.
 
-const LABEL = "gittensory";
+export const LABEL = "loopover";
 
 const QUEUE_COLORS: Record<QueueHealthLevel, string> = {
   low: "#3fb950",

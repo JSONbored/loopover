@@ -2720,7 +2720,7 @@ export const AgentRunBundleSchema = z
 export const HealthSchema = z
   .object({
     status: z.literal("ok"),
-    service: z.literal("gittensory-api"),
+    service: z.literal("loopover-api"),
     time: z.string(),
     minMcpVersion: z.string(),
     latestRecommendedMcpVersion: z.string(),
@@ -2730,7 +2730,7 @@ export const HealthSchema = z
 export const McpCompatibilitySchema = z
   .object({
     status: z.literal("ok"),
-    service: z.literal("gittensory-api"),
+    service: z.literal("loopover-api"),
     apiVersion: z.string(),
     mcp: z.object({
       packageName: z.string(),

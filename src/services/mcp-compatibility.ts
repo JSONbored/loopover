@@ -25,7 +25,7 @@ export type BreakingChangeNotice = {
 
 export type McpCompatibilityMetadata = {
   status: "ok";
-  service: "gittensory-api";
+  service: "loopover-api";
   apiVersion: string;
   mcp: {
     packageName: string;
@@ -44,7 +44,7 @@ export type McpCompatibilityMetadata = {
 export function buildMcpCompatibilityMetadata(generatedAt: string): McpCompatibilityMetadata {
   return {
     status: "ok",
-    service: "gittensory-api",
+    service: "loopover-api",
     apiVersion: GITTENSORY_API_VERSION,
     mcp: {
       packageName: GITTENSORY_MCP_PACKAGE_NAME,

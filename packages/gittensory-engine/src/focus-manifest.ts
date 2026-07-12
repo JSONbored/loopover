@@ -67,11 +67,11 @@ export type FocusManifestIssueDiscoveryPolicy = "encouraged" | "neutral" | "disc
  * field is `null` when the maintainer did not set it, so the resolver can layer the manifest OVER the
  * DB-backed RepositorySettings (manifest > DB > safe defaults) without clobbering unset values. All
  * of these flow through the SAME confirmed-contributor-gated `evaluateGateCheck` path — the manifest
- * only chooses which deterministic blockers are active, never who can be blocked. Turning the gate
- * itself on/off stays a repository setting (`gateCheckMode`); `.gittensory.yml gate:` refines the
- * blocker policy of an already-enabled gate. `checkMode` (#2852) is a separate, more expressive axis:
- * whether/how the "Gittensory Orb Review Agent" check-RUN publishes, independent of gate evaluation
- * itself (which always runs regardless of `checkMode`/`enabled`) — see {@link ReviewCheckMode}.
+ * only chooses which deterministic blockers are active, never who can be blocked. There is no single
+ * gate master switch: each per-dimension mode (`linkedIssue`, `duplicates`, `readinessMode`, etc.)
+ * independently controls whether that dimension evaluates. `checkMode`/`enabled` (#2852) is a separate
+ * axis entirely: whether/how the "Gittensory Orb Review Agent" check-RUN publishes, independent of gate
+ * evaluation itself (which always runs regardless of `checkMode`/`enabled`) — see {@link ReviewCheckMode}.
  */
 export type FocusManifestGateConfig = {
   present: boolean;
@@ -373,7 +373,6 @@ export type FocusManifestSettings = Partial<
     | "publicSignalLevel"
     | "checkRunMode"
     | "checkRunDetailLevel"
-    | "gateCheckMode"
     | "regateSweepOrderMode"
     | "reviewCheckMode"
     | "autoProjectMilestoneMatch"
@@ -1815,19 +1814,12 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[],
   if (checkRunMode !== null) out.checkRunMode = checkRunMode;
   const checkRunDetailLevel = normalizeOptionalEnum(r.checkRunDetailLevel, "settings.checkRunDetailLevel", ["minimal", "standard"] as const, warnings);
   if (checkRunDetailLevel !== null) out.checkRunDetailLevel = checkRunDetailLevel;
-  // #4618: gateCheckMode is deprecated (a computed read-back value everywhere else) but this yml key still
-  // parses for back-compat with existing `.gittensory.yml` files. A manifest setting ONLY gateCheckMode
-  // (never the more expressive reviewCheckMode) must keep its historical effect on the actual publish
-  // authority -- derive reviewCheckMode from it below when reviewCheckMode itself is unset.
-  const gateCheckMode = normalizeOptionalEnum(r.gateCheckMode, "settings.gateCheckMode", ["off", "enabled"] as const, warnings);
-  if (gateCheckMode !== null) out.gateCheckMode = gateCheckMode;
   const regateSweepOrderMode = normalizeOptionalEnum(r.regateSweepOrderMode, "settings.regateSweepOrderMode", ["staleness", "oldest-first"] as const, warnings);
   if (regateSweepOrderMode !== null) out.regateSweepOrderMode = regateSweepOrderMode;
   // Same tri-state field as gate.checkMode above (the friendly gate alias overlays onto it in
   // resolveEffectiveSettings, and wins when both are set).
   const reviewCheckMode = normalizeOptionalEnum(r.reviewCheckMode, "settings.reviewCheckMode", ["required", "visible", "disabled"] as const, warnings);
   if (reviewCheckMode !== null) out.reviewCheckMode = reviewCheckMode;
-  else if (gateCheckMode !== null) out.reviewCheckMode = gateCheckMode === "enabled" ? "required" : "disabled";
   const autoProjectMilestoneMatch = normalizeOptionalEnum(r.autoProjectMilestoneMatch, "settings.autoProjectMilestoneMatch", ["off", "suggest", "auto"] as const, warnings);
   if (autoProjectMilestoneMatch !== null) out.autoProjectMilestoneMatch = autoProjectMilestoneMatch;
   const autoProjectMilestoneMatchBackend = normalizeOptionalEnum(r.autoProjectMilestoneMatchBackend, "settings.autoProjectMilestoneMatchBackend", ["github", "linear"] as const, warnings);

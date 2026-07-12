@@ -293,7 +293,7 @@ describe(".gittensory.yml.example field-exhaustiveness (#1670)", () => {
   // Settings fields that are raw aliases of an already-documented `gate:` field (see the describe-block
   // comment above) -- intentionally NOT in SETTINGS_FIELD_TOKENS, so they must be listed here instead of
   // silently vanishing from the exhaustiveness check.
-  const SETTINGS_GATE_ALIASED_FIELDS = ["gateCheckMode", "linkedIssueGateMode", "duplicatePrGateMode", "selfAuthoredLinkedIssueGateMode", "qualityGateMode", "qualityGateMinScore", "aiReviewMode", "aiReviewByok", "aiReviewProvider", "aiReviewModel", "aiReviewAllAuthors"] as const;
+  const SETTINGS_GATE_ALIASED_FIELDS = ["linkedIssueGateMode", "duplicatePrGateMode", "selfAuthoredLinkedIssueGateMode", "qualityGateMode", "qualityGateMinScore", "aiReviewMode", "aiReviewByok", "aiReviewProvider", "aiReviewModel", "aiReviewAllAuthors"] as const;
 
   // Settings fields that are DELIBERATELY absent from `.gittensory.yml.example` (unlike the gate-aliased fields
   // above, these are never documented anywhere in the public template): agentGlobalFreezeOverride is an
@@ -1997,7 +1997,7 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
         publicSignalLevel: "minimal",
         checkRunMode: "enabled",
         checkRunDetailLevel: "standard",
-        gateCheckMode: "enabled",
+        reviewCheckMode: "required",
         linkedIssueGateMode: "block",
         duplicatePrGateMode: "off",
         qualityGateMode: "advisory",
@@ -2019,9 +2019,6 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
       publicSignalLevel: "minimal",
       checkRunMode: "enabled",
       checkRunDetailLevel: "standard",
-      gateCheckMode: "enabled",
-      // #4618: gateCheckMode is deprecated -- setting it alone (no explicit reviewCheckMode) still derives
-      // reviewCheckMode, so its historical effect on the actual publish authority is preserved.
       reviewCheckMode: "required",
       linkedIssueGateMode: "block",
       duplicatePrGateMode: "off",
@@ -2519,18 +2516,23 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     });
 
     // #4618/#5373: the RepositorySettings.gateCheckMode field (a computed read-back of reviewCheckMode) was
-    // removed entirely in #5373 -- resolveEffectiveSettings no longer derives or exposes it. The yml
-    // settings.gateCheckMode key still parses at the gittensory-engine layer (back-compat, tracked separately
-    // for removal), always resolving to reviewCheckMode rather than being trusted as its own source of truth.
-    describe("settings.gateCheckMode back-compat parsing (#4618)", () => {
-      it("settings.gateCheckMode alone (no reviewCheckMode) derives reviewCheckMode, keeping its historical effect", () => {
+    // removed entirely in #5373, including the gittensory-engine yml-parsing layer's settings.gateCheckMode
+    // back-compat key (#5373 stage 2.10) -- it is now a fully unrecognized settings key, parsed into nothing
+    // and deriving nothing. resolveEffectiveSettings no longer derives or exposes the field either.
+    describe("settings.gateCheckMode is a fully removed, inert key (#4618/#5373)", () => {
+      it("settings.gateCheckMode alone no longer derives reviewCheckMode (back-compat removed)", () => {
         const enabled = parseFocusManifest({ settings: { gateCheckMode: "enabled" } });
-        expect(enabled.settings.reviewCheckMode).toBe("required");
+        expect(enabled.settings.reviewCheckMode).toBeUndefined();
         const off = parseFocusManifest({ settings: { gateCheckMode: "off" } });
-        expect(off.settings.reviewCheckMode).toBe("disabled");
+        expect(off.settings.reviewCheckMode).toBeUndefined();
       });
 
-      it("an explicit settings.reviewCheckMode wins over settings.gateCheckMode when both are set", () => {
+      it("settings.gateCheckMode is not parsed into the output settings object at all", () => {
+        const m = parseFocusManifest({ settings: { gateCheckMode: "enabled" } });
+        expect(m.settings).not.toHaveProperty("gateCheckMode");
+      });
+
+      it("an explicit settings.reviewCheckMode is honored regardless of a settings.gateCheckMode also present", () => {
         const m = parseFocusManifest({ settings: { gateCheckMode: "off", reviewCheckMode: "visible" } });
         expect(m.settings.reviewCheckMode).toBe("visible");
       });

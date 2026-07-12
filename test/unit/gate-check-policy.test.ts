@@ -62,11 +62,11 @@ describe(".gittensory.yml settings override (resolveEffectiveSettings)", () => {
   it("overlays the generic settings: block over DB, and gate: wins for gate fields", () => {
     const eff = resolveEffectiveSettings(
       settings({ commentMode: "off", publicSurface: "off", reviewCheckMode: "disabled", linkedIssueGateMode: "off" }),
-      parseFocusManifest({ settings: { commentMode: "all_prs", publicSurface: "comment_only", gateCheckMode: "enabled", linkedIssueGateMode: "advisory" }, gate: { linkedIssue: "block" } }),
+      parseFocusManifest({ settings: { commentMode: "all_prs", publicSurface: "comment_only", reviewCheckMode: "required", linkedIssueGateMode: "advisory" }, gate: { linkedIssue: "block" } }),
     );
     expect(eff.commentMode).toBe("all_prs"); // settings: override
     expect(eff.publicSurface).toBe("comment_only"); // settings: override
-    expect(eff.reviewCheckMode).toBe("required"); // settings.gateCheckMode: enabled -> reviewCheckMode: required (engine-level back-compat parse, #5373 stage 2.10)
+    expect(eff.reviewCheckMode).toBe("required"); // settings: override
     expect(eff.linkedIssueGateMode).toBe("block"); // gate: wins over settings:
   });
 

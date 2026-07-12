@@ -213,13 +213,17 @@ describe("event-ledger audit-feed projection (#5158)", () => {
     expect(() => normalizeAuditFeedMcpFilter({ repoFullName: "bad" })).toThrow(
       "Repository must be in owner/repo form.",
     );
-    expect(() => normalizeAuditFeedMcpFilter(null)).toThrow("filter must be an object");
+    expect(() => normalizeAuditFeedMcpFilter(null as unknown as Parameters<typeof normalizeAuditFeedMcpFilter>[0])).toThrow(
+      "filter must be an object",
+    );
     expect(() => normalizeAuditFeedMcpFilter({ type: "  " })).toThrow("type must be a non-empty string.");
   });
 
   it("projectLedgerEventToAuditFeedEntry nulls blank metadata strings and ignores non-object payloads", () => {
     expect(
       projectLedgerEventToAuditFeedEntry({
+        id: 1,
+        seq: 2,
         type: "manage_pr_update",
         repoFullName: "acme/widgets",
         payload: { outcome: "  ", actor: 42, detail: null },
@@ -235,9 +239,11 @@ describe("event-ledger audit-feed projection (#5158)", () => {
     });
     expect(
       projectLedgerEventToAuditFeedEntry({
+        id: 3,
+        seq: 4,
         type: "discovered_issue",
         repoFullName: "acme/widgets",
-        payload: ["not-an-object"],
+        payload: ["not-an-object"] as unknown as Record<string, unknown>,
         createdAt: "2026-07-04T12:00:00.000Z",
       }),
     ).toEqual({

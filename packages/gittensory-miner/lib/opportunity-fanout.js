@@ -224,22 +224,38 @@ function searchQueryWithIssueQualifiers(searchQuery, forge) {
   return `${trimmed} ${forge.searchQualifiers}`;
 }
 
-// The URL of the next page from a GitHub Link header (`<url>; rel="next"`), or null when this is the last page.
-function nextPageUrl(response) {
+// The URL of the next page from a GitHub Link header (`<url>; rel="next"`), constrained to the current
+// token-bearing GitHub API endpoint so a forged Link header cannot redirect credentials off-origin.
+function nextPageUrl(response, apiBaseUrl, expectedPath) {
   const linkHeader = response.headers.get("link") ?? "";
   const match = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
-  return match !== null ? match[1] : null;
+  if (match === null) return null;
+
+  let nextUrl;
+  let expectedUrl;
+  try {
+    expectedUrl = new URL(apiUrl(apiBaseUrl, expectedPath));
+    nextUrl = new URL(match[1], expectedUrl);
+  } catch {
+    return null;
+  }
+
+  if (
+    nextUrl.protocol !== "https:" ||
+    nextUrl.origin !== expectedUrl.origin ||
+    nextUrl.pathname !== expectedUrl.pathname
+  ) {
+    return null;
+  }
+  return nextUrl.toString();
 }
 
 async function fetchTargetIssues(target, githubToken, options, summary, warnings) {
   const verdict = await resolveRepoAiPolicy(target, githubToken, options, summary, warnings);
   if (!verdict.allowed) return [];
 
-  let url = apiUrl(
-    options.apiBaseUrl,
-    repoPath(options.forge, target, "/issues"),
-    `?state=open&per_page=${options.perPage}`,
-  );
+  const issuesPath = repoPath(options.forge, target, "/issues");
+  let url = apiUrl(options.apiBaseUrl, issuesPath, `?state=open&per_page=${options.perPage}`);
   const issues = [];
   try {
     for (let page = 0; url !== null && page < options.maxPages; page += 1) {
@@ -256,7 +272,7 @@ async function fetchTargetIssues(target, githubToken, options, summary, warnings
         const normalized = normalizeIssue(target, issue, verdict.source);
         if (normalized !== null) issues.push(normalized);
       }
-      url = nextPageUrl(response);
+      url = nextPageUrl(response, options.apiBaseUrl, issuesPath);
     }
     return issues;
   } catch (error) {
@@ -271,9 +287,10 @@ async function fetchSearchIssues(searchQuery, githubToken, options, summary, war
   const qualifiedQuery = searchQueryWithIssueQualifiers(searchQuery, options.forge);
   if (!qualifiedQuery) return [];
 
+  const searchPath = options.forge.searchEndpoint;
   let url = apiUrl(
     options.apiBaseUrl,
-    options.forge.searchEndpoint,
+    searchPath,
     `?q=${encodeURIComponent(qualifiedQuery)}&per_page=${options.perPage}`,
   );
   const items = [];
@@ -297,7 +314,7 @@ async function fetchSearchIssues(searchQuery, githubToken, options, summary, war
         return items;
       }
       items.push(...payload.items);
-      url = nextPageUrl(response);
+      url = nextPageUrl(response, options.apiBaseUrl, searchPath);
     }
     return items;
   } catch (error) {

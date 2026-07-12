@@ -104,6 +104,43 @@ describe("discovery fanout Link-header pagination (#4831)", () => {
     expect(result.issues.map((entry) => entry.issueNumber)).toEqual([1, 2]);
   });
 
+  it("ignores target-issues Link headers that leave the configured API endpoint", async () => {
+    const requestedUrls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      expect((init?.headers as Record<string, string> | undefined)?.authorization).toBe("Bearer github-token");
+      if (url.includes("/contents/")) return jsonResponse({}, { status: 404 });
+      if (url.includes("/issues?")) {
+        return pagedResponse([issue(1)], "https://attacker.invalid/collect");
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    const result = await fetchCandidateIssuesWithSummary(TARGET, "github-token", discoverOptions());
+
+    expect(result.issues.map((entry) => entry.issueNumber)).toEqual([1]);
+    expect(requestedUrls).not.toContain("https://attacker.invalid/collect");
+  });
+
+  it("ignores target-issues Link headers that switch endpoint paths", async () => {
+    const requestedUrls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      if (url.includes("/contents/")) return jsonResponse({}, { status: 404 });
+      if (url.includes("/issues?")) {
+        return pagedResponse([issue(1)], `${API}/repos/acme/widgets/contents/AI-USAGE.md?page=2`);
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    const result = await fetchCandidateIssuesWithSummary(TARGET, "github-token", discoverOptions());
+
+    expect(result.issues.map((entry) => entry.issueNumber)).toEqual([1]);
+    expect(requestedUrls).not.toContain(`${API}/repos/acme/widgets/contents/AI-USAGE.md?page=2`);
+  });
+
   it("follows the search Link header across pages and returns every item", async () => {
     let searchFetches = 0;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -141,6 +178,43 @@ describe("discovery fanout Link-header pagination (#4831)", () => {
 
     expect(searchFetches).toBe(2);
     expect(result.issues.map((entry) => entry.issueNumber)).toEqual([1, 2]);
+  });
+
+  it("ignores search Link headers that leave the configured API endpoint", async () => {
+    const requestedUrls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      expect((init?.headers as Record<string, string> | undefined)?.authorization).toBe("Bearer github-token");
+      if (url.includes("/search/issues?")) {
+        return pagedResponse({ items: [searchItem(1)] }, "https://attacker.invalid/collect");
+      }
+      if (url.includes("/contents/")) return jsonResponse({}, { status: 404 });
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    const result = await searchCandidateIssuesWithSummary("x", "github-token", discoverOptions());
+
+    expect(result.issues.map((entry) => entry.issueNumber)).toEqual([1]);
+    expect(requestedUrls).not.toContain("https://attacker.invalid/collect");
+  });
+
+  it("ignores search Link headers that use a non-HTTPS URL", async () => {
+    const requestedUrls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      if (url.includes("/search/issues?")) {
+        return pagedResponse({ items: [searchItem(1)] }, "http://api.test/search/issues?page=2");
+      }
+      if (url.includes("/contents/")) return jsonResponse({}, { status: 404 });
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    const result = await searchCandidateIssuesWithSummary("x", "github-token", discoverOptions());
+
+    expect(result.issues.map((entry) => entry.issueNumber)).toEqual([1]);
+    expect(requestedUrls).not.toContain("http://api.test/search/issues?page=2");
   });
 
   it("warns and returns what it has when a target-issues page is not an array", async () => {

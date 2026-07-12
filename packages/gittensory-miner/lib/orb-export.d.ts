@@ -40,3 +40,15 @@ export function collectOrbExportBatch(options?: {
   eventLedger: PrOutcomeLedgerReader;
   enabled?: boolean;
 }): OrbExportRow[] | null;
+
+export type ParsedOrbExportArgs = { json: boolean; enable: boolean } | { error: string };
+
+export function parseOrbExportArgs(args: string[]): ParsedOrbExportArgs;
+
+export function runOrbExportCli(
+  args: string[],
+  options?: {
+    openOrbExportStore?: () => OrbExportStore;
+    initEventLedger?: () => PrOutcomeLedgerReader;
+  },
+): number;

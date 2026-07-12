@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createHmac, randomBytes } from "node:crypto";
 import { readPrOutcomes } from "./pr-outcome.js";
+import { initEventLedger } from "./event-ledger.js";
 
 // Optional anonymized Orb telemetry export (#4277). The self-host Orb collector (src/selfhost/orb-collector.ts,
 // #1255) is ALWAYS-ON for a maintainer's own instance; a miner runs on a third-party contributor's laptop with a
@@ -130,4 +131,59 @@ export function collectOrbExportBatch({ store, eventLedger, enabled = ORB_EXPORT
   if (!store || typeof store.getOrCreateAnonSecret !== "function") throw new Error("invalid_orb_export_store");
   const outcomes = readPrOutcomes(eventLedger);
   return buildAnonymizedOrbBatch(outcomes, store.getOrCreateAnonSecret());
+}
+
+const ORB_EXPORT_USAGE = "Usage: gittensory-miner orb export [--enable] [--json]";
+
+export function parseOrbExportArgs(args) {
+  const options = { json: false, enable: false };
+  for (const token of args) {
+    if (token === "--json") {
+      options.json = true;
+      continue;
+    }
+    if (token === "--enable") {
+      options.enable = true;
+      continue;
+    }
+    return { error: ORB_EXPORT_USAGE };
+  }
+  return options;
+}
+
+/** CLI entry for the anonymized Orb telemetry batch-builder (#4833 wires the previously caller-less exporter).
+ *  OPT-IN: prints nothing to export unless `--enable` is passed. Only builds the anonymized batch (repo/PR
+ *  identifiers HMAC-hashed) — never performs the network POST. */
+export function runOrbExportCli(args, options = {}) {
+  const parsed = parseOrbExportArgs(args);
+  if ("error" in parsed) {
+    console.error(parsed.error);
+    return 2;
+  }
+
+  // Open the stores INSIDE the try so a bad config path / SQLite open failure returns 2 instead of crashing the
+  // process; the finally guards each close with `?.` since either initializer may have thrown before assigning.
+  const ownsStore = options.openOrbExportStore === undefined;
+  const ownsLedger = options.initEventLedger === undefined;
+  let store;
+  let eventLedger;
+  try {
+    store = (options.openOrbExportStore ?? openOrbExportStore)();
+    eventLedger = (options.initEventLedger ?? initEventLedger)();
+    const batch = collectOrbExportBatch({ store, eventLedger, enabled: parsed.enable });
+    if (batch === null) {
+      if (parsed.json) console.log(JSON.stringify({ enabled: false, batch: null }, null, 2));
+      else console.log("orb export is opt-in and disabled — pass --enable to build an anonymized batch");
+      return 0;
+    }
+    if (parsed.json) console.log(JSON.stringify({ enabled: true, batch }, null, 2));
+    else console.log(`${batch.length} anonymized event(s)`);
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 2;
+  } finally {
+    if (ownsStore) store?.close();
+    if (ownsLedger) eventLedger?.close();
+  }
 }

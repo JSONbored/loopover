@@ -70,7 +70,7 @@ describe("gittensory-miner metrics export CLI (#4839)", () => {
       initEventLedger: () => fakeEventLedger([{ type: "discovered_issue" }]),
     });
     expect(code).toBe(0);
-    const out = String(log.mock.calls[0][0]);
+    const out = String(log.mock.calls[0]?.[0]);
     expect(out).toContain("gittensory_miner_build_info");
     expect(out).toContain("gittensory_miner_scrape_timestamp_seconds 1720000000");
     expect(out).toContain('gittensory_miner_predictions_total{conclusion="merge"}');
@@ -92,7 +92,7 @@ describe("gittensory-miner metrics export CLI (#4839)", () => {
     });
     expect(code).toBe(0);
     expect(writes).toHaveLength(1);
-    expect(writes[0][1]).toBe("/out/flag.prom");
+    expect(writes[0]?.[1]).toBe("/out/flag.prom");
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("wrote metrics exposition to /out/flag.prom"));
   });
 
@@ -187,7 +187,7 @@ describe("gittensory-miner metrics export CLI (#4839)", () => {
 
     const code = runMetricsExport(["--stdout"], { now: () => 0 });
     expect(code).toBe(0);
-    const out = String(log.mock.calls[0][0]);
+    const out = String(log.mock.calls[0]?.[0]);
     expect(out).toContain('gittensory_miner_predictions_total{conclusion="merge"}');
     expect(out).toContain('gittensory_miner_events_total{type="discovered_issue"}');
   });

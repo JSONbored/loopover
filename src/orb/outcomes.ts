@@ -42,12 +42,23 @@ export interface OrbGlobalStats {
  * only (registered = 1) — an install that hasn't been opted in never contributes to the public counter. SUM over
  * no matching rows is NULL, so each total is nullish-guarded to 0 (fail-safe on an empty/cold table).
  *
- * The NOT EXISTS anti-join skips any (repo, pr_number) that already has a `github_app.pr_public_surface_published`
- * audit event — i.e. a PR the own-ledger disposition query in public-stats.ts already counted. Without it, a PR
- * reviewed before the self-host cutover (own-ledger) that also has a terminal outcome recorded here (Orb) gets
- * counted twice. Quantified 2026-07-12: 243 PRs (173 merged + 70 closed), 96% in one repo, inflating the public
- * "PRs reviewed" counter. That event_type's target_key only ever references the own-ledger's own repos, so this
- * is a no-op for every other registered installation's outcomes.
+ * The LEFT JOIN ... WHERE ae.id IS NULL anti-join skips any (repo, pr_number) that already has a
+ * `github_app.pr_public_surface_published` audit event — i.e. a PR the own-ledger disposition query in
+ * public-stats.ts already counted. Without it, a PR reviewed before the self-host cutover (own-ledger) that
+ * also has a terminal outcome recorded here (Orb) gets counted twice. Quantified 2026-07-12: 243 PRs (173
+ * merged + 70 closed), 96% in one repo, inflating the public "PRs reviewed" counter. That event_type's
+ * target_key only ever references the own-ledger's own repos, so this is a no-op for every other registered
+ * installation's outcomes.
+ *
+ * PERFORMANCE (2026-07-12 incident): the first version of this used a correlated `NOT EXISTS` subquery with
+ * `LOWER(ae.target_key) = ...` — wrapping the indexed `target_key` column in a function defeats the index,
+ * forcing a full scan of `audit_events` (100K+ rows) for every one of `orb_pr_outcomes`' rows. That took
+ * `/v1/public/stats` down in production (D1 "exceeded its CPU time limit and was reset", 503s) within minutes
+ * of deploying. The LEFT JOIN below compares `target_key` directly (no function wrapping), so D1 can use the
+ * index for the join — verified live: ~60ms / ~31K rows read, vs. a timeout before. Both sides of the compared
+ * repo#pr key come from real GitHub API `full_name`/`target_key` values (same canonical casing), so no LOWER()
+ * is needed here for correctness — do not reintroduce a function-wrapped comparison on `target_key` without
+ * re-verifying the query plan against production-scale data first.
  */
 export async function getOrbGlobalStats(env: Env, opts: { excludeAccount?: string } = {}): Promise<OrbGlobalStats> {
   // excludeAccount de-dups an account already counted by another source. "" = include all.
@@ -59,12 +70,11 @@ export async function getOrbGlobalStats(env: Env, opts: { excludeAccount?: strin
        COUNT(*) AS total
      FROM orb_pr_outcomes o
      JOIN orb_github_installations i ON i.installation_id = o.installation_id AND i.registered = 1
+     LEFT JOIN audit_events ae
+       ON ae.target_key = o.repository_full_name || '#' || o.pr_number
+       AND ae.event_type = 'github_app.pr_public_surface_published'
      WHERE (? = '' OR LOWER(COALESCE(i.account_login, '')) <> ?)
-       AND NOT EXISTS (
-         SELECT 1 FROM audit_events ae
-         WHERE ae.event_type = 'github_app.pr_public_surface_published'
-           AND LOWER(ae.target_key) = LOWER(o.repository_full_name) || '#' || o.pr_number
-       )`,
+       AND ae.id IS NULL`,
   )
     .bind(exclude, exclude)
     .first<{ merged: number | null; closed: number | null; total: number | null }>();

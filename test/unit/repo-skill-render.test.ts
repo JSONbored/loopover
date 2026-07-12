@@ -4,7 +4,7 @@ import type { RepoProfile, RepoProfileContributionWorkflow } from "../../src/rev
 import { REPO_PROFILE_SCHEMA_VERSION } from "../../src/review/repo-profile";
 
 function contributionWorkflow(overrides: Partial<RepoProfileContributionWorkflow> = {}): RepoProfileContributionWorkflow {
-  return { gatePublishesCheck: false, linkedIssuePolicy: "optional", requireLinkedIssue: false, ciWorkflowFiles: [], ...overrides };
+  return { gatePublishesCheck: false, linkedIssuePolicy: "optional", requireLinkedIssue: false, linkedIssueGateMode: "advisory", ciWorkflowFiles: [], ...overrides };
 }
 
 function presentProfile(overrides: Partial<Extract<RepoProfile, { present: true }>> = {}): RepoProfile {
@@ -83,7 +83,7 @@ describe("renderRepoSkillContent (#3001)", () => {
   it("renders the marker, frontmatter, trigger reasons, and command/linked-issue sections when the trigger fires", () => {
     const profile = presentProfile({
       repoFullName: "owner/widgets",
-      contributionWorkflow: contributionWorkflow({ gatePublishesCheck: true, requireLinkedIssue: true, linkedIssuePolicy: "required", ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }),
+      contributionWorkflow: contributionWorkflow({ gatePublishesCheck: true, requireLinkedIssue: true, linkedIssuePolicy: "required", linkedIssueGateMode: "block", ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }),
     });
     const content = renderRepoSkillContent(profile);
     expect(content).not.toBeNull();
@@ -100,6 +100,24 @@ describe("renderRepoSkillContent (#3001)", () => {
     expect(content).toContain("Lint: `npm run lint`");
     expect(content).toContain("Policy: required");
     expect(content).toContain("Required: yes");
+  });
+
+  it("does not claim a linked issue is required when requireLinkedIssue is on but linkedIssueGateMode is the advisory default (#5287)", () => {
+    // requireLinkedIssue alone only surfaces an advisory finding -- it never blocks on its own, so the
+    // generated doc must not claim "Required: yes" unless linkedIssueGateMode is actually "block".
+    const profile = presentProfile({
+      contributionWorkflow: contributionWorkflow({
+        gatePublishesCheck: true,
+        requireLinkedIssue: true,
+        linkedIssuePolicy: "required",
+        linkedIssueGateMode: "advisory",
+        ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"],
+      }),
+    });
+    const content = renderRepoSkillContent(profile);
+    expect(content).not.toBeNull();
+    expect(content).toContain("Required: no");
+    expect(content).not.toContain("Required: yes");
   });
 
   it("omits the gate-check reason line when the trigger fires via linked-issue + multi-stage CI alone (no blocking gate)", () => {

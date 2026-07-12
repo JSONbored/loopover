@@ -59,8 +59,11 @@ export const repositorySettings = sqliteTable("repository_settings", {
   autoProjectMilestoneMatchBackend: text("auto_project_milestone_match_backend").notNull().default("github"),
   gatePack: text("gate_pack").notNull().default("gittensor"),
   // Missing a linked issue is advisory-only by default -- issues aren't always available, so it only
-  // blocks when a repo explicitly opts in (linkedIssueGateMode: "block" or the requireLinkedIssue toggle;
-  // see resolveEffectiveSettings in signals/focus-manifest.ts). This default was "block" until #selfhost-
+  // blocks when a repo explicitly sets linkedIssueGateMode: "block". The sibling requireLinkedIssue
+  // toggle does NOT block on its own: it only surfaces the missing_linked_issue advisory finding, and
+  // the one path where it promotes to a real block (resolveEffectiveSettings in
+  // signals/focus-manifest.ts) only fires when linkedIssueGateMode is explicitly "off" -- never at this
+  // "advisory" default. This default was "block" until #selfhost-
   // linked-issue-gate-drift, which also backfills any row an earlier migration (0023/0025) persisted as
   // "block" without an explicit opt-in (migrations/0102_fix_linked_issue_gate_mode_default.sql). The raw
   // SQLite column still has a DEFAULT 'block' from migration 0023 -- SQLite has no ALTER COLUMN SET DEFAULT,

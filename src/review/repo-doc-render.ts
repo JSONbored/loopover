@@ -103,7 +103,7 @@ ${renderCommandList("Lint", commands.lintCommands, commands.packageManager)}
 
 - CI publishes a required check: ${contributionWorkflow.gatePublishesCheck ? "yes" : "no"}
 - Linked-issue policy: ${contributionWorkflow.linkedIssuePolicy}
-- Requires a linked issue: ${contributionWorkflow.requireLinkedIssue ? "yes" : "no"}
+- Requires a linked issue: ${contributionWorkflow.linkedIssueGateMode === "block" ? "yes" : "no"}
 - CI workflow files:
 
 ${renderCiWorkflowFiles(contributionWorkflow.ciWorkflowFiles)}

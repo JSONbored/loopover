@@ -946,6 +946,12 @@ export type RepositorySettings = {
   advisoryAiRouting?: AdvisoryAiRoutingConfig | undefined;
   publicSurface: "off" | "comment_and_label" | "comment_only" | "label_only";
   includeMaintainerAuthors: boolean;
+  /** Surfaces the `missing_linked_issue` advisory finding in the review comment -- does NOT block a PR on
+   *  its own. The real blocking authority is {@link RepositorySettings.linkedIssueGateMode} `=== "block"`
+   *  (default `"advisory"`); the one place this flag alone promotes to a real block
+   *  (`resolveEffectiveSettings` in `src/signals/focus-manifest.ts`) only fires when `linkedIssueGateMode`
+   *  is explicitly `"off"`, so at the default it never does. A maintainer wanting a real linked-issue
+   *  requirement must set `linkedIssueGateMode: "block"`, not just this toggle. */
   requireLinkedIssue: boolean;
   backfillEnabled: boolean;
   /** Opt-in for the public, unauthenticated README status badge (#541). Always populated by the DB layer

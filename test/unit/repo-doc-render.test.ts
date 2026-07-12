@@ -13,7 +13,7 @@ function presentProfile(overrides: Partial<Extract<RepoProfile, { present: true 
     architecture: { indexedFileCount: 42, topLevelDirectories: [{ path: "src", fileCount: 30 }, { path: ".", fileCount: 12 }] },
     conventions: { fileNamingStyle: "kebab-case", testFileConvention: "dot-test-suffix" },
     commands: { packageManager: "npm", buildCommands: ["build"], testCommands: ["test"], lintCommands: ["lint"] },
-    contributionWorkflow: { gatePublishesCheck: true, linkedIssuePolicy: "preferred", requireLinkedIssue: false, ciWorkflowFiles: [".github/workflows/ci.yml"] },
+    contributionWorkflow: { gatePublishesCheck: true, linkedIssuePolicy: "preferred", requireLinkedIssue: false, linkedIssueGateMode: "advisory", ciWorkflowFiles: [".github/workflows/ci.yml"] },
     ...overrides,
   };
 }
@@ -111,15 +111,23 @@ describe("renderRepoDocContent (#3000)", () => {
   });
 
   it("renders 'none indexed' when no CI workflow files were found", () => {
-    const content = renderRepoDocContent(presentProfile({ contributionWorkflow: { gatePublishesCheck: false, linkedIssuePolicy: "optional", requireLinkedIssue: false, ciWorkflowFiles: [] } }), GITTENSORY_SITE_URL);
+    const content = renderRepoDocContent(presentProfile({ contributionWorkflow: { gatePublishesCheck: false, linkedIssuePolicy: "optional", requireLinkedIssue: false, linkedIssueGateMode: "advisory", ciWorkflowFiles: [] } }), GITTENSORY_SITE_URL);
     expect(content).toContain("CI publishes a required check: no");
     expect(content).toContain("Requires a linked issue: no");
     expect(content).toContain("- none indexed");
   });
 
-  it("renders 'yes' for requireLinkedIssue when the setting is on", () => {
-    const content = renderRepoDocContent(presentProfile({ contributionWorkflow: { gatePublishesCheck: true, linkedIssuePolicy: "required", requireLinkedIssue: true, ciWorkflowFiles: [] } }), GITTENSORY_SITE_URL);
+  it("renders 'yes' for requireLinkedIssue only when linkedIssueGateMode is 'block'", () => {
+    const content = renderRepoDocContent(presentProfile({ contributionWorkflow: { gatePublishesCheck: true, linkedIssuePolicy: "required", requireLinkedIssue: true, linkedIssueGateMode: "block", ciWorkflowFiles: [] } }), GITTENSORY_SITE_URL);
     expect(content).toContain("Requires a linked issue: yes");
+  });
+
+  it("does not claim a linked issue is required when requireLinkedIssue is on but linkedIssueGateMode is the advisory default (#5287)", () => {
+    // requireLinkedIssue alone only surfaces an advisory finding -- it never blocks on its own, so the
+    // generated doc must not claim "yes" unless linkedIssueGateMode is actually "block".
+    const content = renderRepoDocContent(presentProfile({ contributionWorkflow: { gatePublishesCheck: true, linkedIssuePolicy: "required", requireLinkedIssue: true, linkedIssueGateMode: "advisory", ciWorkflowFiles: [] } }), GITTENSORY_SITE_URL);
+    expect(content).toContain("Requires a linked issue: no");
+    expect(content).not.toContain("Requires a linked issue: yes");
   });
 
   const namingStyles: Array<[RepoProfileFileNamingStyle, string]> = [

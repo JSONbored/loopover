@@ -73,6 +73,7 @@ describe("extractRepoProfile (#2999)", () => {
       gatePublishesCheck: true,
       linkedIssuePolicy: "required",
       requireLinkedIssue: true,
+      linkedIssueGateMode: "advisory",
       ciWorkflowFiles: [".github/workflows/ci.yml"],
     });
   });

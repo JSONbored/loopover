@@ -18,7 +18,7 @@ function fixtureProfile(): RepoProfile {
     architecture: { indexedFileCount: 3, topLevelDirectories: [{ path: "src", fileCount: 3 }] },
     conventions: { fileNamingStyle: "kebab-case", testFileConvention: "dot-test-suffix" },
     commands: { packageManager: "npm", buildCommands: ["build"], testCommands: ["test"], lintCommands: [] },
-    contributionWorkflow: { gatePublishesCheck: true, linkedIssuePolicy: "preferred", requireLinkedIssue: false, ciWorkflowFiles: [] },
+    contributionWorkflow: { gatePublishesCheck: true, linkedIssuePolicy: "preferred", requireLinkedIssue: false, linkedIssueGateMode: "advisory", ciWorkflowFiles: [] },
   };
 }
 

@@ -22,6 +22,7 @@ import { countRepoChunks } from "./rag";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { nowIso } from "../utils/json";
+import type { GateRuleMode } from "../types";
 
 /** Bumped whenever the profile SHAPE changes (not on every content tweak) -- at least three separate features
  *  consume this profile and must be able to evolve independently of each other and of this extractor. */
@@ -62,6 +63,9 @@ export type RepoProfileContributionWorkflow = {
   gatePublishesCheck: boolean;
   linkedIssuePolicy: "required" | "preferred" | "optional";
   requireLinkedIssue: boolean;
+  /** The actual enforcement authority for whether a missing linked issue blocks a PR -- `requireLinkedIssue`
+   *  alone does not block (see its doc comment on {@link RepositorySettings}); only `"block"` does. */
+  linkedIssueGateMode: GateRuleMode;
   /** Indexed `.github/workflows/*.yml`/`*.yaml` paths -- describes CI structure without hard-coding assumptions
    *  about what workflows exist. Empty when the repo has no indexed workflow files (which may just mean RAG's
    *  code-only filter or a small chunk budget hasn't reached them yet, not that none exist). */
@@ -271,6 +275,7 @@ export async function extractRepoProfile(env: Env, repoFullName: string, options
       gatePublishesCheck: settings.reviewCheckMode !== "disabled",
       linkedIssuePolicy: manifest.linkedIssuePolicy,
       requireLinkedIssue: settings.requireLinkedIssue,
+      linkedIssueGateMode: settings.linkedIssueGateMode,
       ciWorkflowFiles: deriveCiWorkflowFiles(paths),
     },
   };

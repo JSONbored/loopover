@@ -118,7 +118,7 @@ ${renderTriggerReasons(contributionWorkflow)}
 ## Linked issues
 
 - Policy: ${contributionWorkflow.linkedIssuePolicy}
-- Required: ${contributionWorkflow.requireLinkedIssue ? "yes" : "no"}
+- Required: ${contributionWorkflow.linkedIssueGateMode === "block" ? "yes" : "no"}
 ${REPO_SKILL_MARKER_END}
 `;
 }

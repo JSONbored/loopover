@@ -57,11 +57,13 @@ const PRIVATE_DECISION_BLOCKER_PATTERN =
   /\b(?:open_pr_pressure|closed_pr_credibility|low_credibility|maintainer_lane|inactive_or_unknown_lane|issue_discovery_only|merged_pr_history_floor|issue_discovery_validity_floor)\b/gi;
 const PRIVATE_BOUNDARY_TERM_PATTERN =
   /\b(?:wallets?|hotkeys?|coldkeys?|seed phrases?|mnemonics?|raw trust scores?|trust scores?|scoreability|reviewability|payouts?|rewards?|reward estimates?|farming|rankings?)\b/gi;
+const PRIVATE_LANE_SIGNAL_PATTERN =
+  /\b(?:maintainer cut|direct PR lane share|direct PR share|direct PR|issue-discovery|split lane)(?:\s*[:(,;-]?\s*\d+(?:\.\d+)?%?)?/gi;
 
 // Public-safe forbidden-term guard on the MODEL's OWN output, mirroring ai-summaries' containsPublicForbiddenText:
 // near-miss phrasings the throwing word-list validator narrows (e.g. bare "estimated score") are also caught.
 const PUBLIC_FORBIDDEN_TEXT_PATTERN =
-  /\b(wallets?|hotkeys?|coldkeys?|seed phrases?|mnemonics?|raw trust scores?|trust scores?|estimated scores?|score estimates?|scoreability|score preview|public score estimates?|estimated rewards?|rewards?|reward estimates?|payouts?|farming|reviewability(?: internals?)?|private reviewability|private scoreability|private rankings?|rankings?|reward optimization)\b/i;
+  /\b(wallets?|hotkeys?|coldkeys?|seed phrases?|mnemonics?|raw trust scores?|trust scores?|estimated scores?|score estimates?|scoreability|score preview|public score estimates?|estimated rewards?|rewards?|reward estimates?|payouts?|farming|reviewability(?: internals?)?|private reviewability|private scoreability|private rankings?|rankings?|reward optimization|maintainer cut|direct PR lane share|direct PR share|issue-discovery|split lane)\b/i;
 
 type ChatGroundingAction = {
   actionType: string;
@@ -192,6 +194,7 @@ function redactGroundingText(value: string): string {
   return value
     .replace(/\blikely_duplicate\b/gi, "possible overlap with existing work")
     .replace(PRIVATE_DECISION_BLOCKER_PATTERN, "private readiness context")
+    .replace(PRIVATE_LANE_SIGNAL_PATTERN, "private readiness context")
     .replace(PRIVATE_BOUNDARY_TERM_PATTERN, "private context")
     .trim();
 }

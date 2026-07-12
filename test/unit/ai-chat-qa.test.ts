@@ -256,6 +256,29 @@ describe("generateChatQaAnswer", () => {
     expect(userMessage).not.toMatch(/\blikely_duplicate\b/);
   });
 
+  it("redacts private lane signals from cached rationale before prompting the provider", async () => {
+    const run = vi.fn(async () => ({ response: "Public-safe readiness answer." }));
+    const env = createTestEnv({ AI_ADVISORY: { run } as unknown as Ai, AI_DAILY_NEURON_BUDGET: "10000" });
+    const result = await generateChatQaAnswer(env, {
+      bundle: bundleFixture(undefined, {
+        why: [
+          "owner/repo: Maintainer cut: 1.",
+          "owner/repo: split lane (direct PR 1, issue-discovery 1); both lanes are useful here.",
+          "owner/repo: direct PR lane share 1 with no hard personal blocker.",
+        ],
+      }),
+      question: "what should I know?",
+      advisoryAiRouting: ADVISORY_ON,
+      repoFullName: "owner/repo",
+      issueNumber: 42,
+    });
+    expect(result).toMatchObject({ status: "ok" });
+    const call = run.mock.calls[0] as unknown as [string, { messages: Array<{ content: string }> }];
+    const userMessage = call[1].messages[1]?.content ?? "";
+    expect(userMessage).not.toMatch(/Maintainer cut|split lane|direct PR lane share|issue-discovery/i);
+    expect(userMessage).toContain("private readiness context");
+  });
+
   it("honors a custom model override and clamps output tokens", async () => {
     const run = vi.fn(async () => ({ response: "Custom-model answer." }));
     const env = createTestEnv({
@@ -279,6 +302,13 @@ describe("generateChatQaAnswer", () => {
 
   it("withholds an unsafe model answer instead of ever returning it", async () => {
     const run = vi.fn(async () => ({ response: "Mentions a wallet address directly." }));
+    const env = createTestEnv({ AI_ADVISORY: { run } as unknown as Ai, AI_DAILY_NEURON_BUDGET: "10000" });
+    const result = await generateChatQaAnswer(env, { bundle: bundleFixture(), question: "why?", advisoryAiRouting: ADVISORY_ON, repoFullName: "owner/repo", issueNumber: 1 });
+    expect(result).toMatchObject({ status: "unsafe" });
+  });
+
+  it("withholds private lane signals if the provider repeats them", async () => {
+    const run = vi.fn(async () => ({ response: "This mentions direct PR lane share and issue-discovery details." }));
     const env = createTestEnv({ AI_ADVISORY: { run } as unknown as Ai, AI_DAILY_NEURON_BUDGET: "10000" });
     const result = await generateChatQaAnswer(env, { bundle: bundleFixture(), question: "why?", advisoryAiRouting: ADVISORY_ON, repoFullName: "owner/repo", issueNumber: 1 });
     expect(result).toMatchObject({ status: "unsafe" });
@@ -317,6 +347,9 @@ describe("__chatQaInternals", () => {
     expect(redactGroundingText("blocked by open_pr_pressure")).toBe("blocked by private readiness context");
     expect(redactGroundingText("do not mention a wallet or hotkey")).toBe("do not mention a private context or private context");
     expect(redactGroundingText("likely_duplicate of #123")).toBe("possible overlap with existing work of #123");
+    expect(redactGroundingText("Maintainer cut: 1; direct PR lane share 1; issue-discovery 1")).toBe(
+      "private readiness context; private readiness context; private readiness context",
+    );
     expect(redactGroundingText("perfectly safe text")).toBe("perfectly safe text");
   });
 
@@ -342,6 +375,7 @@ describe("__chatQaInternals", () => {
 
   it("flags forbidden public terms via the shared sanitizer and the local near-miss pattern", () => {
     expect(containsPublicForbiddenText("mentions a wallet")).toBe(true);
+    expect(containsPublicForbiddenText("mentions direct PR lane share details")).toBe(true);
     expect(containsPublicForbiddenText("perfectly safe prose")).toBe(false);
   });
 

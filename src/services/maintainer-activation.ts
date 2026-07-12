@@ -103,9 +103,9 @@ export function buildMaintainerActivationPreview(args: {
 }
 
 function buildSummary(evaluated: number, withFindings: number, currentlyActive: boolean): string {
-  if (evaluated === 0) return "No recent pull requests are cached yet; Gittensory will start surfacing guidance as new PRs arrive.";
-  const base = `Gittensory reviewed your ${evaluated} most recent pull request(s) and would have surfaced guidance on ${withFindings} of them.`;
-  return currentlyActive ? `${base} The Gittensory gate is already enabled.` : `${base} Enable advisory mode to start surfacing this guidance automatically.`;
+  if (evaluated === 0) return "No recent pull requests are cached yet; LoopOver will start surfacing guidance as new PRs arrive.";
+  const base = `LoopOver reviewed your ${evaluated} most recent pull request(s) and would have surfaced guidance on ${withFindings} of them.`;
+  return currentlyActive ? `${base} The LoopOver gate is already enabled.` : `${base} Enable advisory mode to start surfacing this guidance automatically.`;
 }
 
 /**

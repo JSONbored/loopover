@@ -91,12 +91,12 @@ describe("buildE2eTestGenCommentBody", () => {
   // pointing at GITTENSORY_SITE_URL.
   it("#4613: honors env.PUBLIC_SITE_ORIGIN in the footer attribution link", () => {
     const selfHosted = buildE2eTestGenCommentBody({ env: { PUBLIC_SITE_ORIGIN: "https://gittensory.example.org" }, actor: "maintainer", testSource: "test('x', () => {});" });
-    expect(selfHosted).toContain("Checked by [Gittensory](https://gittensory.example.org)");
+    expect(selfHosted).toContain("Checked by [LoopOver](https://gittensory.example.org)");
     expect(selfHosted).not.toContain(GITTENSORY_SITE_URL);
   });
 
   it("#4613: falls back to GITTENSORY_SITE_URL when PUBLIC_SITE_ORIGIN is unset", () => {
     const defaultHosted = buildE2eTestGenCommentBody({ env: {}, actor: "maintainer", testSource: "test('x', () => {});" });
-    expect(defaultHosted).toContain(`Checked by [Gittensory](${GITTENSORY_SITE_URL})`);
+    expect(defaultHosted).toContain(`Checked by [LoopOver](${GITTENSORY_SITE_URL})`);
   });
 });

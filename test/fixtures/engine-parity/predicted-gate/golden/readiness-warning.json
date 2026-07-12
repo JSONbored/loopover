@@ -3,7 +3,7 @@
   "basis": "public_config",
   "pack": "gittensor",
   "conclusion": "success",
-  "title": "Gittensory Orb Review Agent passed",
+  "title": "LoopOver Orb Review Agent passed",
   "summary": "No configured hard blocker was found. Advisory findings, if any, stay advisory.",
   "readinessScore": 80,
   "blockers": [],

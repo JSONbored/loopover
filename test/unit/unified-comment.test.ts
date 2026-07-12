@@ -124,8 +124,8 @@ describe("renderUnifiedReviewComment", () => {
       { label: "Contributor", state: "ok", result: "Confirmed", evidence: "galuis116 · 168 PRs" },
     ],
     extraCollapsibles: [{ title: "Signal definitions", body: "Readiness signals describe public-metadata readiness." }],
-    reRunLabel: "Re-run Gittensory review",
-    footerMarkdown: "Checked by Gittensory.",
+    reRunLabel: "Re-run LoopOver review",
+    footerMarkdown: "Checked by LoopOver.",
   };
 
   it("renders the ready/auto-merged state in the gittensory shape", () => {
@@ -135,7 +135,7 @@ describe("renderUnifiedReviewComment", () => {
     );
     expect(md).toContain("> [!TIP]");
     expect(md).toContain("🟩");
-    expect(md).toContain("Gittensory review result - approve/merge recommended · auto-merged");
+    expect(md).toContain("LoopOver review result - approve/merge recommended · auto-merged");
     expect(md).toContain("Suggested Action - Approve/Merge");
     expect(md).toContain("- auto-merged");
     expect(md).toContain("`2 files`");
@@ -151,8 +151,8 @@ describe("renderUnifiedReviewComment", () => {
     expect(md.indexOf("**Review summary**")).toBeLessThan(md.indexOf("<details><summary><b>Nits</b>"));
     expect(md.indexOf("<details><summary><b>Nits</b>")).toBeLessThan(md.indexOf("| Signal | Result | Evidence |"));
     expect(md).toContain("<details><summary><b>Signal definitions</b></summary>");
-    expect(md).toContain("- [ ] Re-run Gittensory review");
-    expect(md).toContain("Checked by Gittensory.");
+    expect(md).toContain("- [ ] Re-run LoopOver review");
+    expect(md).toContain("Checked by LoopOver.");
   });
 
   it("does not describe a single reviewer as synthesized", () => {
@@ -165,7 +165,7 @@ describe("renderUnifiedReviewComment", () => {
   it("wraps the review body in the colored blockquote but renders the re-run checkbox OUTSIDE it (interactive)", () => {
     const md = renderUnifiedReviewComment({ ...base, decision: "merge" }, ctx);
     const lines = md.split("\n");
-    const checkboxLine = lines.find((l) => l.includes("Re-run Gittensory review"));
+    const checkboxLine = lines.find((l) => l.includes("Re-run LoopOver review"));
     expect(checkboxLine).toBeDefined();
     // GitHub disables task-list checkboxes inside a blockquote, so the re-run box must be at top level
     // (otherwise it can never be ticked → no issue_comment.edited → the on-demand re-run never fires).
@@ -183,7 +183,7 @@ describe("renderUnifiedReviewComment", () => {
       { ...ctx, generateTestsLabel: "Generate an AI Playwright test for this PR" },
     );
     const lines = md.split("\n");
-    const reRunLine = lines.find((l) => l.includes("Re-run Gittensory review"));
+    const reRunLine = lines.find((l) => l.includes("Re-run LoopOver review"));
     const generateTestsLine = lines.find((l) => l.includes("Generate an AI Playwright test for this PR"));
     expect(reRunLine).toBeDefined();
     expect(generateTestsLine).toBeDefined();
@@ -200,7 +200,7 @@ describe("renderUnifiedReviewComment", () => {
       { ...base, decision: "merge" },
       { ...ctxWithoutReRun, generateTestsLabel: "Generate an AI Playwright test for this PR" },
     );
-    expect(md).not.toContain("Re-run Gittensory review");
+    expect(md).not.toContain("Re-run LoopOver review");
     expect(md).toContain("- [ ] Generate an AI Playwright test for this PR");
   });
 
@@ -260,7 +260,7 @@ describe("renderUnifiedReviewComment", () => {
       { reviewedAt: "2026-06-29T08:05:59.852Z" },
     );
     expect(md).toContain("<sub>Review updated: 2026-06-29 08:05:59 UTC</sub>");
-    expect(md.indexOf("Gittensory review result")).toBeLessThan(md.indexOf("<sub>Review updated:"));
+    expect(md.indexOf("LoopOver review result")).toBeLessThan(md.indexOf("<sub>Review updated:"));
     expect(md.indexOf("<sub>Review updated:")).toBeLessThan(md.indexOf("`2 files`"));
     expect(renderUnifiedReviewComment({ ...base, decision: "merge" }, { reviewedAt: "not-a-date" })).not.toContain("Review updated:");
   });
@@ -290,7 +290,7 @@ describe("renderUnifiedReviewComment", () => {
   it("a blocked status from reviewer recs (no close decision) reads 'blocked', not 'closed'", () => {
     const md = renderUnifiedReviewComment({ ...base, recommendations: ["close"], blockers: ["Leaks a token."], consensusBlocker: true }, {});
     expect(md).toContain("> [!CAUTION]");
-    expect(md).toContain("Gittensory review result - fixes required"); // headlineLabel(): decision !== "close"
+    expect(md).toContain("LoopOver review result - fixes required"); // headlineLabel(): decision !== "close"
     expect(md).toContain("**🛑 Suggested Action - Fix Blockers**"); // verdictLine(): decision !== "close"
     expect(md).not.toContain("Suggested Action - Reject/Close");
   });
@@ -298,7 +298,7 @@ describe("renderUnifiedReviewComment", () => {
   it("renders CI-failing / CI-pending chips and the merge-state label", () => {
     const failing = renderUnifiedReviewComment({ ...base, readiness: { ciState: "failed", mergeStateLabel: "behind" } }, {});
     expect(failing).toContain("> [!CAUTION]");
-    expect(failing).toContain("Gittensory review result - fixes required");
+    expect(failing).toContain("LoopOver review result - fixes required");
     expect(failing).toContain("Suggested Action - Fix Blockers");
     expect(failing).toContain("`CI failing`");
     expect(failing).toContain("`behind`");
@@ -475,7 +475,7 @@ describe("renderUnifiedReviewComment", () => {
   it("renders non-closable failed-CI reviews as red manual-review actions, not reject/close", () => {
     const md = renderUnifiedReviewComment({ ...base, decision: "close", readiness: { ciState: "failed" } }, { neverClosed: true });
     expect(md).toContain("> [!CAUTION]");
-    expect(md).toContain("Gittensory review result - fixes required");
+    expect(md).toContain("LoopOver review result - fixes required");
     expect(md).toContain("Suggested Action - Manual Review");
     expect(md).toContain("`CI failing`");
     expect(md).not.toContain("Suggested Action - Reject/Close");
@@ -712,7 +712,7 @@ describe("renderReviewingPlaceholder", () => {
   });
 
   it("uses the default brand when none is provided", () => {
-    expect(renderReviewingPlaceholder()).toContain("Gittensory is reviewing");
+    expect(renderReviewingPlaceholder()).toContain("LoopOver is reviewing");
   });
 
   it("respects a custom brand override", () => {

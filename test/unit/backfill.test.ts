@@ -59,7 +59,6 @@ import {
   setGitHubResponseCache,
   type CachedGitHubResponse,
 } from "../../src/github/client";
-import { GITTENSORY_CONTEXT_CHECK_NAME, GITTENSORY_GATE_CHECK_NAME, GITTENSORY_LEGACY_GATE_CHECK_NAME } from "../../src/review/check-names";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
@@ -1022,8 +1021,8 @@ describe("GitHub backfill", () => {
   });
 
   it("REGRESSION (#5355): requires Checks write for a repo with only reviewCheckMode (the Orb Review Agent check) set, not checkRunMode", async () => {
-    // Before the fix, requiresChecks only looked at checkRunMode ("Gittensory Context" check) and missed
-    // the separate reviewCheckMode axis ("Gittensory Orb Review Agent" check) entirely -- so an installation
+    // Before the fix, requiresChecks only looked at checkRunMode ("LoopOver Context" check) and missed
+    // the separate reviewCheckMode axis ("LoopOver Orb Review Agent" check) entirely -- so an installation
     // whose repos only ever published the review-agent check (true for JSONbored's own 3 production repos,
     // none of which set checkRunMode) was never flagged as needing the Checks permission.
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });

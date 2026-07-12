@@ -656,11 +656,11 @@ submission mode (computes real decisions but never actually submits) and a `"low
 `parseAmsPolicySpec(raw)` / `parseAmsPolicySpecContent(content)` are the same tolerant-parser pair shape as
 `MinerGoalSpec`'s — never throw, return `{ present, spec, warnings }`.
 
-Unlike `MinerGoalSpec`, this package does not resolve `.gittensory-ams.yml`'s two-scope precedence itself (this
-package is IO-free) — `packages/gittensory-miner/lib/ams-policy.js`'s `resolveAmsPolicy` is the real caller,
-mirroring `.gittensory.yml`'s own established self-host precedent: the operator's own local file, when present,
-FULLY REPLACES the repo's proposed file (never a field-by-field merge) — the repo's file is only ever a fallback
-default for an operator who hasn't set their own local policy. See `.gittensory-ams.yml.example`.
+Unlike `MinerGoalSpec`, this package does not resolve `.gittensory-ams.yml` from the filesystem itself (this
+package is IO-free) — `packages/gittensory-miner/lib/ams-policy.js`'s `resolveAmsPolicy` is the real caller.
+That resolver reads only the operator's local policy and otherwise uses safe defaults; it intentionally does not
+fetch a target repo's checked-in AMS policy, because untrusted repo content must not loosen operator-side budget,
+turn, slop, or submission controls. See `.gittensory-ams.yml.example`.
 
 ## Repo map builder
 

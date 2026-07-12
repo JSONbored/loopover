@@ -10,24 +10,15 @@
 # field here ever lets a target repo loosen what an operator's agent is
 # willing to do -- see below for why.
 #
-# TWO SCOPES, mirroring `.gittensory.yml`'s own established self-host
-# precedent: a target repo MAY drop this file in as a proposed DEFAULT policy
-# for operators who haven't set their own (e.g. "please use a strict slop
-# threshold mining me"). But the OPERATOR's own local copy of this file (in
-# their gittensory-miner config dir, not this repo) -- when present -- FULLY
-# REPLACES whatever this repo's file says. Never a field-by-field merge. An
-# operator's explicit choice always wins; a repo's file can only ever propose
-# a fallback default for an unconfigured operator, never override an
-# operator's own decision.
+# OPERATOR-LOCAL ONLY: the miner reads this file from the operator's local
+# gittensory-miner config dir. It intentionally does not fetch a target repo's
+# checked-in AMS policy, because untrusted repo content must not loosen
+# operator-side budget, turn, slop, or submission controls.
 #
 # Every field is OPTIONAL and has a safe, deny-by-default default (shown as
 # "Default: X" below). The file is parsed tolerantly: an unknown key is
 # ignored, and a single malformed field falls back to its default with a
 # warning.
-#
-# Discovery order (first match wins):
-#   .gittensory-ams.yml -> .github/gittensory-ams.yml
-#   -> .gittensory-ams.json -> .github/gittensory-ams.json
 #
 # Copy to `.gittensory-ams.yml` and edit. YAML or JSON are both accepted.
 

@@ -28,15 +28,17 @@ import {
   type GateCheckPolicy,
 } from "../rules/advisory";
 import {
-  GITTENSORY_CONTEXT_CHECK_NAME,
-  GITTENSORY_GATE_CHECK_NAME,
   GITTENSORY_LEGACY_GATE_CHECK_NAME,
+  GITTENSORY_LEGACY_ORB_GATE_CHECK_NAME,
+  LOOPOVER_CONTEXT_CHECK_NAME,
+  LOOPOVER_GATE_CHECK_NAME,
 } from "../review/check-names";
 
 export {
-  GITTENSORY_CONTEXT_CHECK_NAME,
-  GITTENSORY_GATE_CHECK_NAME,
   GITTENSORY_LEGACY_GATE_CHECK_NAME,
+  GITTENSORY_LEGACY_ORB_GATE_CHECK_NAME,
+  LOOPOVER_CONTEXT_CHECK_NAME,
+  LOOPOVER_GATE_CHECK_NAME,
 } from "../review/check-names";
 export type { CachedGitHubResponse, GitHubResponseCache } from "./client";
 export {
@@ -714,7 +716,7 @@ export async function createOrUpdateCheckRun(
     repoFullName,
     advisory,
     {
-      name: GITTENSORY_CONTEXT_CHECK_NAME,
+      name: LOOPOVER_CONTEXT_CHECK_NAME,
       conclusion: advisory.conclusion,
       output: formatCheckRunOutput(advisory, detailLevel, annotationContext),
       mode,
@@ -745,12 +747,12 @@ export async function createOrUpdateGateCheckRun(
     repoFullName,
     advisory,
     {
-      name: GITTENSORY_GATE_CHECK_NAME,
+      name: LOOPOVER_GATE_CHECK_NAME,
       status: "completed",
       conclusion: gate.conclusion,
       output: formatGateCheckOutput(gate),
       checkRunId: options.checkRunId,
-      supersedeLegacyNames: [GITTENSORY_LEGACY_GATE_CHECK_NAME],
+      supersedeLegacyNames: [GITTENSORY_LEGACY_GATE_CHECK_NAME, GITTENSORY_LEGACY_ORB_GATE_CHECK_NAME],
       mode,
     },
   );
@@ -769,16 +771,16 @@ export async function createOrUpdatePendingGateCheckRun(
     repoFullName,
     advisory,
     {
-      name: GITTENSORY_GATE_CHECK_NAME,
+      name: LOOPOVER_GATE_CHECK_NAME,
       status: "in_progress",
       output: {
-        title: "Gittensory Orb Review Agent is evaluating",
+        title: "LoopOver Orb Review Agent is evaluating",
         summary:
-          "Gittensory is running deterministic public PR hygiene checks.",
+          "LoopOver is running deterministic public PR hygiene checks.",
         text: "The review agent blocks every author on the repo's configured hard blockers (duplicate PRs by default); on everything else, and while state is still syncing, it stays advisory.",
       },
       updateExisting: "in_progress_only",
-      supersedeLegacyNames: [GITTENSORY_LEGACY_GATE_CHECK_NAME],
+      supersedeLegacyNames: [GITTENSORY_LEGACY_GATE_CHECK_NAME, GITTENSORY_LEGACY_ORB_GATE_CHECK_NAME],
       mode,
     },
   );
@@ -799,16 +801,16 @@ export async function createOrUpdateSkippedGateCheckRun(
     repoFullName,
     advisory,
     {
-      name: GITTENSORY_GATE_CHECK_NAME,
+      name: LOOPOVER_GATE_CHECK_NAME,
       status: "completed",
       conclusion: "skipped",
       checkRunId: options.checkRunId,
       output: {
-        title: "Gittensory Orb Review Agent skipped",
+        title: "LoopOver Orb Review Agent skipped",
         summary: reason,
-        text: "Gittensory does not post late first comments on closed or merged pull requests.",
+        text: "LoopOver does not post late first comments on closed or merged pull requests.",
       },
-      supersedeLegacyNames: [GITTENSORY_LEGACY_GATE_CHECK_NAME],
+      supersedeLegacyNames: [GITTENSORY_LEGACY_GATE_CHECK_NAME, GITTENSORY_LEGACY_ORB_GATE_CHECK_NAME],
       mode,
     },
   );
@@ -817,7 +819,7 @@ export async function createOrUpdateSkippedGateCheckRun(
 /**
  * Finalize a previously-posted pending Gate check to a NEUTRAL (non-blocking) terminal state when the
  * evaluation could not finish (a transient error/timeout in the work between posting the pending check and
- * completing it). This guarantees the "Gittensory Orb Review Agent is evaluating" run never hangs in_progress forever;
+ * completing it). This guarantees the "LoopOver Orb Review Agent is evaluating" run never hangs in_progress forever;
  * it does not block the PR and re-runs on the next push. Targets the known pending check_run id so it
  * updates the SAME run rather than creating a second one.
  */
@@ -835,17 +837,17 @@ export async function createOrUpdateErroredGateCheckRun(
     repoFullName,
     advisory,
     {
-      name: GITTENSORY_GATE_CHECK_NAME,
+      name: LOOPOVER_GATE_CHECK_NAME,
       status: "completed",
       conclusion: "neutral",
       output: {
-        title: "Gittensory Orb Review Agent — could not finish evaluating",
+        title: "LoopOver Orb Review Agent — could not finish evaluating",
         summary:
           "A transient error interrupted gate evaluation. This does NOT block the PR and re-runs automatically on the next push.",
-        text: "Gittensory finalizes the review-agent check to a neutral, non-blocking state when evaluation is interrupted, so the check never hangs in_progress. Push a new commit or use the 'Re-run Gittensory review' checkbox to re-evaluate.",
+        text: "LoopOver finalizes the review-agent check to a neutral, non-blocking state when evaluation is interrupted, so the check never hangs in_progress. Push a new commit or use the 'Re-run LoopOver review' checkbox to re-evaluate.",
       },
       checkRunId: options.checkRunId,
-      supersedeLegacyNames: [GITTENSORY_LEGACY_GATE_CHECK_NAME],
+      supersedeLegacyNames: [GITTENSORY_LEGACY_GATE_CHECK_NAME, GITTENSORY_LEGACY_ORB_GATE_CHECK_NAME],
       mode,
     },
   );
@@ -871,17 +873,17 @@ export async function createOrUpdateOverriddenGateCheckRun(
     repoFullName,
     advisory,
     {
-      name: GITTENSORY_GATE_CHECK_NAME,
+      name: LOOPOVER_GATE_CHECK_NAME,
       status: "completed",
       conclusion: "neutral",
       output: {
-        title: `Gittensory Orb Review Agent — overridden by @${options.actor}`,
+        title: `LoopOver Orb Review Agent — overridden by @${options.actor}`,
         summary:
           "A maintainer set the review-agent check to neutral for THIS commit only. This does NOT permanently bypass the review agent; a new push re-evaluates it.",
         text: `Overridden by @${options.actor}: ${options.reason}`,
       },
       checkRunId: options.checkRunId,
-      supersedeLegacyNames: [GITTENSORY_LEGACY_GATE_CHECK_NAME],
+      supersedeLegacyNames: [GITTENSORY_LEGACY_GATE_CHECK_NAME, GITTENSORY_LEGACY_ORB_GATE_CHECK_NAME],
       mode,
     },
   );
@@ -914,7 +916,7 @@ async function createOrUpdateNamedCheckRun(
     // makeInstallationOctokit injects the shared per-request timeout (a stalled PATCH can never orphan the
     // in_progress check) AND suppresses the check-run writes under a non-live mode (dry-run / pause / freeze).
     const octokit = makeInstallationOctokit(env, token, check.mode, githubRateLimitAdmissionKeyForInstallation(installationId));
-    // Point the merge-box "Details" link at the repo's Gittensory maintainer panel instead of GitHub's generic
+    // Point the merge-box "Details" link at the repo's LoopOver maintainer panel instead of GitHub's generic
     // check page. Spread conditionally so a URL-construction failure (null) just omits it. (#audit-details-url)
     const detailsUrl = maintainerControlPanelUrl(env, repoFullName);
     const detailsUrlBody = detailsUrl ? { details_url: detailsUrl } : {};
@@ -1005,10 +1007,10 @@ async function createOrUpdateNamedCheckRun(
               status: "completed",
               conclusion: "neutral",
               output: outputForCheckRunUpdate({
-                title: `${GITTENSORY_GATE_CHECK_NAME} superseded this legacy check`,
+                title: `${LOOPOVER_GATE_CHECK_NAME} superseded this legacy check`,
                 summary:
                   "This legacy check name was completed after the review-agent check was renamed.",
-                text: `Use ${GITTENSORY_GATE_CHECK_NAME} for current Gittensory review results.`,
+                text: `Use ${LOOPOVER_GATE_CHECK_NAME} for current LoopOver review results.`,
               }),
               ...detailsUrlBody,
             },

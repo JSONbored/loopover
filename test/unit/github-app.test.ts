@@ -59,9 +59,9 @@ describe("GitHub check runs", () => {
             conclusion: string;
             output: { title: string; text: string };
           };
-          expect(body.name).toBe("Gittensory Context");
+          expect(body.name).toBe("LoopOver Context");
           expect(body.conclusion).toBe("neutral");
-          expect(body.output.title).toBe("Gittensory context posted");
+          expect(body.output.title).toBe("LoopOver context posted");
           expect(body.output.text).not.toMatch(
             /linked issue|reviewability|reward|farming|wallet|hotkey|trust score/i,
           );
@@ -84,7 +84,7 @@ describe("GitHub check runs", () => {
       headSha: "abc123",
       conclusion: "neutral",
       severity: "warning",
-      title: "Gittensory advisory available",
+      title: "LoopOver advisory available",
       summary: "1 advisory finding generated.",
       findings: [
         {
@@ -1064,9 +1064,9 @@ describe("GitHub check runs", () => {
             conclusion: string;
             output: { title: string; text: string };
           };
-          expect(body.name).toBe("Gittensory Context");
+          expect(body.name).toBe("LoopOver Context");
           expect(body.conclusion).toBe("success");
-          expect(body.output.title).toBe("Gittensory context checked");
+          expect(body.output.title).toBe("LoopOver context checked");
           expect(body.output.text).not.toMatch(
             /reviewability|reward|farming|wallet|hotkey|trust score/i,
           );
@@ -1089,7 +1089,7 @@ describe("GitHub check runs", () => {
       headSha: "abc123",
       conclusion: "success",
       severity: "info",
-      title: "Gittensory advisory passed",
+      title: "LoopOver advisory passed",
       summary: "Pull request advisory generated.",
       findings: [],
       generatedAt: "2026-05-22T00:00:00.000Z",
@@ -1136,7 +1136,7 @@ describe("GitHub check runs", () => {
       headSha: "def456",
       conclusion: "neutral",
       severity: "warning",
-      title: "Gittensory advisory available",
+      title: "LoopOver advisory available",
       summary: "1 advisory finding generated.",
       findings: [],
       generatedAt: "2026-05-22T00:00:00.000Z",
@@ -1209,7 +1209,7 @@ describe("GitHub check runs", () => {
       headSha: "crossapp123",
       conclusion: "neutral",
       severity: "info",
-      title: "Gittensory advisory",
+      title: "LoopOver advisory",
       summary: "ok",
       findings: [],
       generatedAt: "2026-05-22T00:00:00.000Z",
@@ -1252,7 +1252,7 @@ describe("GitHub check runs", () => {
     expect(isCrossAppCheckRunError(null)).toBe(false); // non-object
   });
 
-  it("creates a failing opt-in Gittensory Orb Review Agent check for merge blockers", async () => {
+  it("creates a failing opt-in LoopOver Orb Review Agent check for merge blockers", async () => {
     const privateKey = await generatePrivateKeyPem();
     let capturedBody: {
       name?: string;
@@ -1291,7 +1291,7 @@ describe("GitHub check runs", () => {
         headSha: "gate123",
         conclusion: "neutral",
         severity: "warning",
-        title: "Gittensory advisory available",
+        title: "LoopOver advisory available",
         summary: "1 advisory finding generated.",
         findings: [
           {
@@ -1309,9 +1309,9 @@ describe("GitHub check runs", () => {
 
     expect(result).toMatchObject({ kind: "published", id: 88 });
     expect(capturedBody).toMatchObject({
-      name: "Gittensory Orb Review Agent",
+      name: "LoopOver Orb Review Agent",
       conclusion: "failure",
-      output: { title: "Gittensory Orb Review Agent: No linked issue detected" },
+      output: { title: "LoopOver Orb Review Agent: No linked issue detected" },
     });
     expect(capturedBody.output?.text).toContain("Link the issue before merge.");
     expect(capturedBody.output?.text).not.toMatch(
@@ -1353,9 +1353,9 @@ describe("GitHub check runs", () => {
 
     expect(result).toMatchObject({ kind: "published", id: 89 });
     expect(capturedBody).toMatchObject({
-      name: "Gittensory Orb Review Agent",
+      name: "LoopOver Orb Review Agent",
       status: "in_progress",
-      output: { title: "Gittensory Orb Review Agent is evaluating" },
+      output: { title: "LoopOver Orb Review Agent is evaluating" },
     });
     expect(capturedBody).not.toHaveProperty("conclusion");
     // The Gate blocks every author the same on a configured blocker (confirmed status no longer gates the verdict).
@@ -1384,7 +1384,7 @@ describe("GitHub check runs", () => {
           return Response.json({ token: "installation-token" });
         if (url.includes("/commits/legacy-pending/check-runs")) {
           const checkName = new URL(url).searchParams.get("check_name");
-          if (checkName === "Gittensory Orb Review Agent")
+          if (checkName === "LoopOver Orb Review Agent")
             return Response.json({ total_count: 0, check_runs: [] });
           if (checkName === "Gittensory Gate")
             return Response.json({
@@ -1415,7 +1415,7 @@ describe("GitHub check runs", () => {
 
     expect(result).toMatchObject({ kind: "published", id: 89 });
     expect(newCheckBody).toMatchObject({
-      name: "Gittensory Orb Review Agent",
+      name: "LoopOver Orb Review Agent",
       status: "in_progress",
     });
     expect(newCheckBody).not.toHaveProperty("conclusion");
@@ -1425,11 +1425,11 @@ describe("GitHub check runs", () => {
       conclusion: "neutral",
       output: {
         title:
-          "Gittensory Orb Review Agent superseded this legacy check",
+          "LoopOver Orb Review Agent superseded this legacy check",
       },
     });
     expect(legacyPatchBody.output?.text).toContain(
-      "Use Gittensory Orb Review Agent",
+      "Use LoopOver Orb Review Agent",
     );
   });
 
@@ -1447,7 +1447,7 @@ describe("GitHub check runs", () => {
           return Response.json({ token: "installation-token" });
         if (url.includes("/commits/legacy-completed/check-runs")) {
           const checkName = new URL(url).searchParams.get("check_name");
-          if (checkName === "Gittensory Orb Review Agent")
+          if (checkName === "LoopOver Orb Review Agent")
             return Response.json({ total_count: 0, check_runs: [] });
           if (checkName === "Gittensory Gate")
             return Response.json({
@@ -1476,7 +1476,7 @@ describe("GitHub check runs", () => {
 
     expect(result).toMatchObject({ kind: "published", id: 91 });
     expect(newCheckBody).toMatchObject({
-      name: "Gittensory Orb Review Agent",
+      name: "LoopOver Orb Review Agent",
       status: "in_progress",
     });
     expect(calls.some((call) => call.includes("/check-runs/323"))).toBe(false);
@@ -1495,7 +1495,7 @@ describe("GitHub check runs", () => {
           return Response.json({ token: "installation-token" });
         if (url.includes("/commits/legacy-cleanup-fails/check-runs")) {
           const checkName = new URL(url).searchParams.get("check_name");
-          if (checkName === "Gittensory Orb Review Agent")
+          if (checkName === "LoopOver Orb Review Agent")
             return Response.json({ total_count: 0, check_runs: [] });
           if (checkName === "Gittensory Gate")
             return Response.json({
@@ -1525,7 +1525,7 @@ describe("GitHub check runs", () => {
 
       expect(result).toMatchObject({ kind: "published", id: 90 });
       expect(newCheckBody).toMatchObject({
-        name: "Gittensory Orb Review Agent",
+        name: "LoopOver Orb Review Agent",
         status: "in_progress",
       });
       expect(warn.mock.calls.some((call) => String(call[0]).includes("legacy_gate_check_finalize_failed"))).toBe(true);
@@ -1604,10 +1604,10 @@ describe("GitHub check runs", () => {
       calls.some((call) => call.includes("/commits/final123/check-runs")),
     ).toBe(false);
     expect(capturedBody).toMatchObject({
-      name: "Gittensory Orb Review Agent",
+      name: "LoopOver Orb Review Agent",
       status: "completed",
       conclusion: "success",
-      output: { title: "Gittensory Orb Review Agent passed" },
+      output: { title: "LoopOver Orb Review Agent passed" },
     });
   });
 
@@ -1677,7 +1677,7 @@ describe("GitHub check runs", () => {
         if (url.includes("/commits/pending-existing/check-runs")) {
           return Response.json({
             total_count: 1,
-            check_runs: [{ id: 333, name: "Gittensory Orb Review Agent", status: "in_progress" }],
+            check_runs: [{ id: 333, name: "LoopOver Orb Review Agent", status: "in_progress" }],
           });
         }
         if (url.includes("/check-runs/333")) {
@@ -1725,7 +1725,7 @@ describe("GitHub check runs", () => {
             check_runs: [
               {
                 id: 444,
-                name: "Gittensory Orb Review Agent",
+                name: "LoopOver Orb Review Agent",
                 status: "completed",
                 conclusion: "failure",
               },
@@ -1760,7 +1760,7 @@ describe("GitHub check runs", () => {
     expect(calls.some((call) => call.includes("/check-runs/444"))).toBe(false);
     expect(capturedBody).toMatchObject({
       status: "in_progress",
-      output: { title: "Gittensory Orb Review Agent is evaluating" },
+      output: { title: "LoopOver Orb Review Agent is evaluating" },
     });
     expect(capturedBody).not.toHaveProperty("conclusion");
   });
@@ -1804,7 +1804,7 @@ describe("GitHub check runs", () => {
       status: "completed",
       conclusion: "skipped",
       output: {
-        title: "Gittensory Orb Review Agent skipped",
+        title: "LoopOver Orb Review Agent skipped",
         summary: "Merged before Gittensory finished.",
       },
     });
@@ -1888,10 +1888,10 @@ describe("GitHub check runs", () => {
             name?: string;
             output?: { annotations?: Array<{ path: string; title: string }> };
           };
-          if (body.name === "Gittensory Context") contextBody = body;
-          if (body.name === "Gittensory Orb Review Agent") gateBody = body;
+          if (body.name === "LoopOver Context") contextBody = body;
+          if (body.name === "LoopOver Orb Review Agent") gateBody = body;
           return Response.json(
-            { id: body.name === "Gittensory Orb Review Agent" ? 90 : 77 },
+            { id: body.name === "LoopOver Orb Review Agent" ? 90 : 77 },
             { status: 201 },
           );
         }
@@ -1909,7 +1909,7 @@ describe("GitHub check runs", () => {
       headSha: "bbb999",
       conclusion: "neutral",
       severity: "warning",
-      title: "Gittensory advisory available",
+      title: "LoopOver advisory available",
       summary: "1 advisory finding generated.",
       findings: [],
       generatedAt: "2026-05-22T00:00:00.000Z",
@@ -1973,7 +1973,7 @@ describe("GitHub check runs", () => {
         if (url.includes("/commits/"))
           return Response.json({
             total_count: 1,
-            check_runs: [{ id: 77, name: "Gittensory Context" }],
+            check_runs: [{ id: 77, name: "LoopOver Context" }],
           });
         if (url.includes("/check-runs/77")) {
           patchedBody = JSON.parse(String(init?.body)) as {
@@ -1998,7 +1998,7 @@ describe("GitHub check runs", () => {
       headSha: "bbb999",
       conclusion: "neutral",
       severity: "warning",
-      title: "Gittensory advisory available",
+      title: "LoopOver advisory available",
       summary: "1 advisory finding generated.",
       findings: [],
       generatedAt: "2026-05-22T00:00:00.000Z",
@@ -2072,7 +2072,7 @@ describe("GitHub check runs", () => {
       headSha: "bbb999",
       conclusion: "neutral",
       severity: "warning",
-      title: "Gittensory advisory available",
+      title: "LoopOver advisory available",
       summary: "1 advisory finding generated.",
       findings: [
         {
@@ -2130,7 +2130,7 @@ describe("GitHub check runs", () => {
       headSha: "fff111",
       conclusion: "neutral",
       severity: "warning",
-      title: "Gittensory advisory available",
+      title: "LoopOver advisory available",
       summary: "1 advisory finding generated.",
       findings: [],
       generatedAt: "2026-05-22T00:00:00.000Z",
@@ -2168,7 +2168,7 @@ describe("GitHub check runs", () => {
       headSha: "aaa000",
       conclusion: "neutral",
       severity: "warning",
-      title: "Gittensory advisory available",
+      title: "LoopOver advisory available",
       summary: "1 advisory finding generated.",
       findings: [],
       generatedAt: "2026-05-22T00:00:00.000Z",
@@ -2201,7 +2201,7 @@ describe("GitHub check runs", () => {
       headSha: "string-error",
       conclusion: "neutral",
       severity: "warning",
-      title: "Gittensory advisory available",
+      title: "LoopOver advisory available",
       summary: "1 advisory finding generated.",
       findings: [],
       generatedAt: "2026-05-22T00:00:00.000Z",
@@ -2225,7 +2225,7 @@ describe("GitHub check runs", () => {
         pullNumber: 1,
         conclusion: "success",
         severity: "info",
-        title: "Gittensory advisory passed",
+        title: "LoopOver advisory passed",
         summary: "Pull request advisory generated.",
         findings: [],
         generatedAt: "2026-05-22T00:00:00.000Z",
@@ -2246,7 +2246,7 @@ describe("GitHub check runs", () => {
         headSha: "abc123",
         conclusion: "success",
         severity: "info",
-        title: "Gittensory advisory passed",
+        title: "LoopOver advisory passed",
         summary: "Pull request advisory generated.",
         findings: [],
         generatedAt: "2026-05-22T00:00:00.000Z",
@@ -2401,7 +2401,7 @@ function gateAdvisory(headSha: string): Advisory {
     headSha,
     conclusion: "success",
     severity: "info",
-    title: "Gittensory advisory passed",
+    title: "LoopOver advisory passed",
     summary: "Pull request advisory generated.",
     findings: [],
     generatedAt: "2026-05-22T00:00:00.000Z",

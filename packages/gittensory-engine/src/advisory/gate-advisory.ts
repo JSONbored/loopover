@@ -13,7 +13,7 @@ import type { CollisionReport } from "../types/predicted-gate-types.js";
 import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner.js";
 import type { GuardrailPathMatch } from "../signals/change-guardrail.js";
 import { nowIso } from "../utils/json.js";
-import { GITTENSORY_GATE_CHECK_NAME } from "../review/check-names.js";
+import { LOOPOVER_GATE_CHECK_NAME } from "../review/check-names.js";
 import { CLA_CHECK_UNRESOLVED_CODE, CLA_CONSENT_MISSING_CODE } from "../review/cla-check.js";
 import { REVIEW_THREAD_BLOCKER_CODE } from "../review/review-thread-findings.js";
 import { labelMatchesPattern } from "../scoring/label-match.js";
@@ -338,7 +338,7 @@ function advisory(
 ): Advisory {
   const severity = highestSeverity(findings);
   const conclusion = conclusionForSeverity(severity, findings);
-  const title = conclusion === "success" ? "Gittensory advisory passed" : "Gittensory advisory available";
+  const title = conclusion === "success" ? "LoopOver advisory passed" : "LoopOver advisory available";
   return {
     id: randomUUID(),
     targetType,
@@ -441,8 +441,8 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
     return {
       enabled: true,
       conclusion: "neutral",
-      title: `${GITTENSORY_GATE_CHECK_NAME} — not evaluated yet`,
-      summary: "Gittensory has not finished syncing this repo/PR. The gate stays advisory and re-evaluates automatically; no action is needed.",
+      title: `${LOOPOVER_GATE_CHECK_NAME} — not evaluated yet`,
+      summary: "LoopOver has not finished syncing this repo/PR. The gate stays advisory and re-evaluates automatically; no action is needed.",
       blockers: [],
       warnings,
     };
@@ -472,7 +472,7 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
       return {
         enabled: true,
         conclusion: "neutral",
-        title: `${GITTENSORY_GATE_CHECK_NAME} — held for human review`,
+        title: `${LOOPOVER_GATE_CHECK_NAME} — held for human review`,
         summary: "The AI review could not be completed for this change, so the gate is held for a human reviewer rather than passed automatically. It re-evaluates on the next update.",
         blockers: [],
         warnings: gateWarnings,
@@ -490,7 +490,7 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
       return {
         enabled: true,
         conclusion: "neutral",
-        title: `${GITTENSORY_GATE_CHECK_NAME} — held for manual review`,
+        title: `${LOOPOVER_GATE_CHECK_NAME} — held for manual review`,
         summary: holds.map((h) => sanitizeForCheckRun(h.title)).join("; "),
         blockers: [],
         warnings: [...gateWarnings, ...holds],
@@ -499,7 +499,7 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
     return {
       enabled: true,
       conclusion: "success",
-      title: `${GITTENSORY_GATE_CHECK_NAME} passed`,
+      title: `${LOOPOVER_GATE_CHECK_NAME} passed`,
       summary: "No configured hard blocker was found. Advisory findings, if any, stay advisory.",
       blockers,
       warnings: gateWarnings,
@@ -511,7 +511,7 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
   return {
     enabled: true,
     conclusion: "failure",
-    title: `${GITTENSORY_GATE_CHECK_NAME}: ${titleDetail}`,
+    title: `${LOOPOVER_GATE_CHECK_NAME}: ${titleDetail}`,
     summary: blockers
       .map((finding) => `${sanitizeForCheckRun(finding.title)}${finding.action ? ` — ${sanitizeForCheckRun(finding.action)}` : ""}`)
       .join("; "),

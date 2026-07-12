@@ -17,6 +17,7 @@ import { resolveAiPolicyVerdict } from "@jsonbored/gittensory-engine";
 // not assume a false result here means "no rejection signal of any kind."
 
 const DEFAULT_RAW_CONTENT_BASE_URL = "https://raw.githubusercontent.com";
+const MAX_POLICY_DOC_BYTES = 128 * 1024;
 
 function parseRepoFullName(repoFullName) {
   if (typeof repoFullName !== "string") return null;
@@ -33,13 +34,46 @@ function normalizeOptions(options = {}) {
   };
 }
 
+async function readBoundedPolicyDoc(response) {
+  const contentLength = response.headers?.get?.("content-length");
+  if (contentLength !== undefined && contentLength !== null) {
+    const parsedLength = Number.parseInt(contentLength, 10);
+    if (Number.isFinite(parsedLength) && parsedLength > MAX_POLICY_DOC_BYTES) return null;
+  }
+
+  if (!response.body?.getReader) {
+    const text = await response.text();
+    return typeof text === "string" && Buffer.byteLength(text, "utf8") <= MAX_POLICY_DOC_BYTES ? text : null;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_POLICY_DOC_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 async function fetchPolicyDoc(target, path, resolved) {
   const url = `${resolved.rawContentBaseUrl}/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/HEAD/${path}`;
   try {
     const response = await resolved.fetchImpl(url, { method: "GET", headers: { accept: "application/json", "user-agent": "loopover-miner" } });
     if (!response.ok) return null;
-    const text = await response.text();
-    return typeof text === "string" ? text : null;
+    return await readBoundedPolicyDoc(response);
   } catch {
     return null;
   }
@@ -59,10 +93,8 @@ export async function resolveRejectionSignaled(repoFullName, options = {}) {
   if (!target) return false;
   const resolved = normalizeOptions(options);
 
-  const [aiUsage, contributing] = await Promise.all([
-    fetchPolicyDoc(target, "AI-USAGE.md", resolved),
-    fetchPolicyDoc(target, "CONTRIBUTING.md", resolved),
-  ]);
+  const aiUsage = await fetchPolicyDoc(target, "AI-USAGE.md", resolved);
+  const contributing = aiUsage && aiUsage.trim() ? null : await fetchPolicyDoc(target, "CONTRIBUTING.md", resolved);
 
   const verdict = resolveAiPolicyVerdict({ aiUsage, contributing });
   return !verdict.allowed;

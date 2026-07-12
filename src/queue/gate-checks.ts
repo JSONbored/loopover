@@ -7,7 +7,7 @@
 // they group cleanly by concern here.
 
 import { recordAuditEvent, upsertCheckSummary } from "../db/repositories";
-import { GITTENSORY_GATE_CHECK_NAME } from "../github/app";
+import { LOOPOVER_GATE_CHECK_NAME } from "../github/app";
 import { guardrailPathMatches } from "../signals/change-guardrail";
 import type { RepositorySettings } from "../types";
 import { nowIso } from "../utils/json";
@@ -40,7 +40,7 @@ export async function recordPublishedGateCheckSummary(
     repoFullName: args.repoFullName,
     pullNumber: args.pullNumber,
     headSha: args.headSha,
-    name: GITTENSORY_GATE_CHECK_NAME,
+    name: LOOPOVER_GATE_CHECK_NAME,
     status: "completed",
     /* v8 ignore next -- Gate publication always supplies a conclusion; this keeps the DB value defensive. */
     conclusion: args.conclusion ?? null,

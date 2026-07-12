@@ -1,22 +1,22 @@
 // Unified PR review comment renderer (convergence — see docs/GITTENSORY_REVIEW_UNIFIED_COMMENT.md).
 //
-// Produces ONE in-place comment in the gittensory SHAPE (colored alert sidebar + readiness
+// Produces ONE in-place comment in the loopover SHAPE (colored alert sidebar + readiness
 // signal table + collapsibles + re-run + earning footer) with reviewbot's deep review folded
 // in (the verdict, the synthesized summary, a "Code review" signal row, nits/blockers), deduped.
 //
 // ADDITIVE + DORMANT: the live Worker keeps composeUnifiedReview() (advisory-render.ts). This
-// renderer is exposed via engine.ts for the host (the gittensory app) to call at cutover — it is
+// renderer is exposed via engine.ts for the host (the loopover app) to call at cutover — it is
 // a PURE function (no I/O, no redaction). The host applies its public-safe redaction AFTER, the
 // same way the runtime does today (makePublicRedactor / redactOutsideCodeFences).
 //
-// The host provides gittensory's readiness signals + footer + collapsibles in UnifiedCommentContext;
+// The host provides loopover's readiness signals + footer + collapsibles in UnifiedCommentContext;
 // reviewbot's review data comes in UnifiedReviewInput. The whole comment recolors by one unified
 // status so there is a single authoritative verdict, never two.
 //
-// SELF-CONTAINED NATIVE PORT (reviewbot→gittensory convergence): every type + helper this module
+// SELF-CONTAINED NATIVE PORT (reviewbot→loopover convergence): every type + helper this module
 // needs is defined HERE. No imports from reviewbot. The logic is byte-faithful to the reviewbot
 // source (src/core/unified-comment-render.ts + src/core/advisory-render.ts); the only deltas are
-// mechanical guards for gittensory's stricter tsconfig (noUncheckedIndexedAccess +
+// mechanical guards for loopover's stricter tsconfig (noUncheckedIndexedAccess +
 // exactOptionalPropertyTypes), which do not change behavior.
 
 // ── Inlined minimal types (ported from reviewbot src/core/{ai-review,types,checks-gate}.ts) ─────
@@ -195,7 +195,7 @@ export interface UnifiedReviewInput {
   inlineFindings?: ReadonlyArray<{ category?: UnifiedFindingCategory | undefined }>;
 }
 
-/** One row of the readiness signal table (gittensory side, host-provided; the engine adds Code review). */
+/** One row of the readiness signal table (loopover side, host-provided; the engine adds Code review). */
 export interface UnifiedSignalRow {
   label: string;
   state: "ok" | "warn" | "fail";
@@ -205,7 +205,7 @@ export interface UnifiedSignalRow {
   evidence?: string;
 }
 
-/** A collapsed section (gittensory side: signal definitions, contributor next steps, …). */
+/** A collapsed section (loopover side: signal definitions, contributor next steps, …). */
 export interface UnifiedCollapsible {
   title: string;
   body: string;
@@ -220,7 +220,7 @@ export interface UnifiedCollapsible {
 export interface AutoMergeSummarySignals {
   /** Every required CI check is green. */
   ciGreen: boolean;
-  /** The Gittensory gate is passing (no hard blocker). */
+  /** The LoopOver gate is passing (no hard blocker). */
   gatePassing: boolean;
   /** GitHub reports the branch mergeable / clean (no conflict, not behind). */
   mergeableClean: boolean;
@@ -250,17 +250,17 @@ export function buildAutoMergeSummaryCollapsible(signals: AutoMergeSummarySignal
   return { title: "Auto-merge readiness (read-only)", body };
 }
 
-/** The host (gittensory) side: brand, readiness score, signals, sections, re-run, footer. */
+/** The host (loopover) side: brand, readiness score, signals, sections, re-run, footer. */
 export interface UnifiedCommentContext {
-  /** Headline brand, default "Gittensory review". */
+  /** Headline brand, default "LoopOver review". */
   brand?: string;
-  /** gittensory readiness score 0–100 (omitted = no chip). */
+  /** loopover readiness score 0–100 (omitted = no chip). */
   readinessScore?: number;
-  /** gittensory readiness signal rows (rendered after the Code review row). */
+  /** loopover readiness signal rows (rendered after the Code review row). */
   signals?: UnifiedSignalRow[];
   /** Extra collapsed sections (rendered after Nits). */
   extraCollapsibles?: UnifiedCollapsible[];
-  /** Re-run checkbox label, e.g. "Re-run Gittensory review" (omitted = no checkbox). */
+  /** Re-run checkbox label, e.g. "Re-run LoopOver review" (omitted = no checkbox). */
   reRunLabel?: string;
   /** #4589: generate-tests checkbox label, e.g. "Generate an AI Playwright test for this PR" (omitted = no
    *  checkbox). Same top-level-outside-the-blockquote placement as reRunLabel, for the same reason (see
@@ -334,8 +334,8 @@ export function deriveUnifiedStatus(input: UnifiedReviewInput, ctx: UnifiedComme
   if (input.readiness?.ciState === "failed") {
     return "blocked";
   }
-  // Readiness is otherwise advisory for the Gittensory verdict. A PR is not "safe to merge" until CI is green,
-  // but pending/unverified CI should hold rather than create a red/blocked Gittensory decision by itself.
+  // Readiness is otherwise advisory for the LoopOver verdict. A PR is not "safe to merge" until CI is green,
+  // but pending/unverified CI should hold rather than create a red/blocked LoopOver decision by itself.
   if (status === "ready" && input.readiness && input.readiness.ciState !== "passed") {
     return "held";
   }
@@ -638,7 +638,7 @@ export function tallyFindingCategories(
 export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: UnifiedCommentContext = {}): string {
   const status = deriveUnifiedStatus(input, ctx);
   const meta = STATUS_META[status];
-  const brand = escapePublicHtmlAngles(ctx.brand ?? "Gittensory review");
+  const brand = escapePublicHtmlAngles(ctx.brand ?? "LoopOver review");
   const reviewTimestamp = formatReviewTimestamp(ctx.reviewedAt);
   // review.comment_verbosity (#2047): quiet drops every collapsible (Nits + extraCollapsibles) — blockers,
   // the gate result, and the signal table are never gated by verbosity, only decorative detail is. detailed
@@ -743,7 +743,7 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
 /**
  * Build the renderer's input from reviewbot's actual review output, reusing the shared extraction
  * (extractReviewSummary) so the converged comment surfaces exactly the blockers / nits / summary / consensus
- * reviewbot itself decided on — never a divergent second synthesis. The host then supplies its gittensory
+ * reviewbot itself decided on — never a divergent second synthesis. The host then supplies its loopover
  * signals/footer in UnifiedCommentContext and calls renderUnifiedReviewComment.
  */
 export function buildUnifiedReviewInput(opts: {
@@ -794,7 +794,7 @@ const REVIEWING_SQUARE = "🟪";
  *  before posting so the upsert updates the existing bot comment instead of creating a duplicate.
  *  Pure and public-safe-by-construction (brand is angle-escaped; no raw caller text embedded). */
 export function renderReviewingPlaceholder(ctx: { brand?: string } = {}): string {
-  const brand = escapePublicHtmlAngles(ctx.brand ?? "Gittensory");
+  const brand = escapePublicHtmlAngles(ctx.brand ?? "LoopOver");
   const inner = [
     REVIEWING_SQUARE.repeat(12),
     `### 🔍 ${brand} is reviewing…`,

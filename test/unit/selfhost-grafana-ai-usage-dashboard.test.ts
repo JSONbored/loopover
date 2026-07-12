@@ -22,7 +22,7 @@ type TemplateVar = {
   name: string;
   type: string;
   datasource?: { type?: string };
-  query?: { rawQueryText?: string; query?: string };
+  query?: { queryText?: string; rawQueryText?: string; query?: string };
   includeAll?: boolean;
   multi?: boolean;
   allValue?: string;
@@ -79,9 +79,17 @@ function expandGrafanaRange(query: string): string {
   return query
     .replaceAll(timeFrom, String(from))
     .replaceAll(timeTo, String(to))
-    .replaceAll("'$provider'", "'$__all'")
-    .replaceAll("'$feature'", "'$__all'")
-    .replaceAll("'$model'", "'$__all'");
+    .replaceAll("${provider:sqlstring}", "'$__all'")
+    .replaceAll("${feature:sqlstring}", "'$__all'")
+    .replaceAll("${model:sqlstring}", "'$__all'");
+}
+
+function sqlString(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function substituteSqlString(query: string, variable: "provider" | "feature" | "model", value: string): string {
+  return query.replaceAll(`\${${variable}:sqlstring}`, sqlString(value));
 }
 
 function tmpRoot(): string {
@@ -122,7 +130,9 @@ describe("Gittensory - AI usage dashboard (Phase B2 consolidation)", () => {
 
     expect(byName.model?.type).toBe("query");
     expect(byName.model?.query?.rawQueryText).toContain("SELECT DISTINCT model FROM ai_usage_events WHERE");
-    expect(byName.model?.query?.rawQueryText).toContain("'$provider'");
+    expect(byName.model?.query?.rawQueryText).toContain("${provider:sqlstring}");
+    expect(byName.model?.query?.queryText).toContain("SELECT DISTINCT model FROM ai_usage_events WHERE");
+    expect(byName.model?.query?.queryText).toContain("${provider:sqlstring}");
     expect(byName.model?.includeAll).toBe(true);
 
     expect(byName.claudeModel?.type).toBe("query");
@@ -133,9 +143,9 @@ describe("Gittensory - AI usage dashboard (Phase B2 consolidation)", () => {
     const targets = sqliteTargets();
     expect(targets.length).toBeGreaterThan(0);
     for (const target of targets) {
-      expect(target.queryText).toContain("('$provider' = '$__all' OR provider = '$provider')");
-      expect(target.queryText).toContain("('$feature' = '$__all' OR feature = '$feature')");
-      expect(target.queryText).toContain("('$model' = '$__all' OR model = '$model')");
+      expect(target.queryText).toContain("(${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring})");
+      expect(target.queryText).toContain("(${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring})");
+      expect(target.queryText).toContain("(${model:sqlstring} = '$__all' OR model = ${model:sqlstring})");
       expect(target.queryText).toContain("unixepoch(created_at) >=");
       expect(target.queryText).toContain("unixepoch(created_at) <");
     }
@@ -143,10 +153,27 @@ describe("Gittensory - AI usage dashboard (Phase B2 consolidation)", () => {
 
   it("scopes the 'events missing real usage' panel by Feature and time only, never by Provider/Model (those are exactly the columns it's trying to catch as absent)", () => {
     const target = targetForPanel(5);
-    expect(target.queryText).toContain("('$feature' = '$__all' OR feature = '$feature')");
-    expect(target.queryText).not.toContain("'$provider'");
-    expect(target.queryText).not.toContain("'$model'");
+    expect(target.queryText).toContain("(${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring})");
+    expect(target.queryText).not.toContain("${provider:sqlstring}");
+    expect(target.queryText).not.toContain("${model:sqlstring}");
     expect(target.queryText).toContain("provider IS NULL");
+  });
+
+  it("uses Grafana SQL-string formatting for durable-log template variables before embedding them in SQLite", () => {
+    const dashboard = readDashboard();
+    const sqlTargets = [
+      dashboard.templating.list.find((variable) => variable.name === "model")?.query,
+      ...dashboard.panels.flatMap((panel) => panel.targets ?? []),
+    ];
+
+    for (const target of sqlTargets) {
+      if (target?.queryText?.includes("ai_usage_events")) {
+        expect(target.queryText).not.toMatch(/'\$(provider|feature|model)'/);
+      }
+      if (target?.rawQueryText?.includes("ai_usage_events")) {
+        expect(target.rawQueryText).not.toMatch(/'\$(provider|feature|model)'/);
+      }
+    }
   });
 
   it("carries over the exact Prometheus expressions from the removed dashboards, byte-for-byte (no copy-paste drift)", () => {
@@ -208,9 +235,9 @@ describe("Gittensory - AI usage dashboard (Phase B2 consolidation)", () => {
 
     const totalEventsQuery = targetForPanel(2).queryText!;
     const allEvents = sqlite(db, expandGrafanaRange(totalEventsQuery));
-    const ollamaOnly = sqlite(db, expandGrafanaRange(totalEventsQuery.replaceAll("'$provider'", "'ollama'")));
-    const embeddingsOnly = sqlite(db, expandGrafanaRange(totalEventsQuery.replaceAll("'$feature'", "'embeddings'")));
-    const specificModel = sqlite(db, expandGrafanaRange(totalEventsQuery.replaceAll("'$model'", "'gpt-5.5'")));
+    const ollamaOnly = sqlite(db, expandGrafanaRange(substituteSqlString(totalEventsQuery, "provider", "ollama")));
+    const embeddingsOnly = sqlite(db, expandGrafanaRange(substituteSqlString(totalEventsQuery, "feature", "embeddings")));
+    const specificModel = sqlite(db, expandGrafanaRange(substituteSqlString(totalEventsQuery, "model", "gpt-5.5")));
 
     expect(allEvents).toBe("4");
     expect(ollamaOnly).toBe("2");
@@ -218,7 +245,40 @@ describe("Gittensory - AI usage dashboard (Phase B2 consolidation)", () => {
     expect(specificModel).toBe("1");
 
     const totalTokensQuery = targetForPanel(3).queryText!;
-    expect(sqlite(db, expandGrafanaRange(totalTokensQuery.replaceAll("'$provider'", "'ollama'")))).toBe("300");
+    expect(sqlite(db, expandGrafanaRange(substituteSqlString(totalTokensQuery, "provider", "ollama")))).toBe("300");
+  });
+
+  (sqliteCliAvailable ? it : it.skip)("keeps URL-controlled template values inside SQL string literals", () => {
+    const root = tmpRoot();
+    const db = join(root, "reporting.sqlite");
+    sqlite(
+      db,
+      `
+      CREATE TABLE ai_usage_events (
+        feature TEXT NOT NULL,
+        model TEXT NOT NULL,
+        provider TEXT,
+        effort TEXT,
+        status TEXT NOT NULL,
+        estimated_neurons INTEGER NOT NULL DEFAULT 0,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        total_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_usd REAL NOT NULL DEFAULT 0,
+        detail TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO ai_usage_events (feature, model, provider, status, total_tokens, cost_usd, created_at)
+      VALUES
+        ('embeddings', 'bge-m3:latest', 'ollama', 'ok', 100, 0, '2026-07-01T14:00:00Z'),
+        ('ai_review_pr', 'claude-sonnet-5', 'claude-code', 'ok', 1000, 0.5, '2026-07-01T15:00:00Z');
+    `,
+    );
+
+    const payload = "x' = '$__all' OR 1=1) --";
+    const totalEventsQuery = targetForPanel(2).queryText!;
+    expect(sqlite(db, expandGrafanaRange(substituteSqlString(totalEventsQuery, "provider", payload)))).toBe("0");
   });
 
   (sqliteCliAvailable ? it : it.skip)("finds rows missing real usage regardless of which provider/model they came from", () => {

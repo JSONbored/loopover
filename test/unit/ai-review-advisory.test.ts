@@ -740,7 +740,7 @@ describe("runAiReviewForAdvisory", () => {
       cacheable: false,
       findings: [expect.objectContaining({ code: "ai_review_inconclusive" })],
     });
-    expect(result?.notes).toContain("AI review is already running for this PR head in another Gittensory pass");
+    expect(result?.notes).toContain("AI review is already running for this PR head in another LoopOver pass");
     expect(adv.findings.map((f) => f.code)).toEqual(["ai_review_inconclusive"]);
   });
 

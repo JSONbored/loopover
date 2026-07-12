@@ -3,7 +3,7 @@
   "basis": "public_config",
   "pack": "gittensor",
   "conclusion": "failure",
-  "title": "Gittensory Orb Review Agent: PR author also opened the linked issue",
+  "title": "LoopOver Orb Review Agent: PR author also opened the linked issue",
   "summary": "PR author also opened the linked issue — Link an issue that was opened by a different contributor, or provide a rationale for why this self-authored issue represents genuine discovery work.",
   "readinessScore": 95,
   "blockers": [

@@ -15,13 +15,13 @@
         "label": "Scope",
         "type": "query",
         "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
-        "description": "Dynamic, never hardcoded: built from whichever repos are actually tracked in this self-hoster's own reporting DB. 'All repos' assumes a single-owner setup (the same assumption the dashboard's own GitHub-search-syntax scope always required, since GitHub search can't OR multiple repo: qualifiers in one query) — it widens to org:<owner> of the first tracked repo. A self-hoster tracking repos across multiple owners should pick a specific repo instead of 'All repos'.",
+        "description": "Dynamic, never hardcoded: built from the repositories tracked in this self-hoster's own reporting DB. Each option is an explicit repo:<owner>/<repo> GitHub search qualifier; the dashboard deliberately does not synthesize an org-wide \"All repos\" option because the GitHub datasource token may be able to read private repositories that are not tracked locally.",
         "query": {
           "queryType": "table",
-          "queryText": "SELECT * FROM (SELECT 0 AS ord, 'All repos' AS \"__text\", (SELECT 'org:' || substr(repo, 1, instr(repo, '/') - 1) FROM review_targets LIMIT 1) AS \"__value\" UNION ALL SELECT 1 AS ord, repo AS \"__text\", 'repo:' || repo AS \"__value\" FROM (SELECT DISTINCT repo FROM review_targets ORDER BY repo)) ORDER BY ord, \"__text\"",
-          "rawQueryText": "SELECT * FROM (SELECT 0 AS ord, 'All repos' AS \"__text\", (SELECT 'org:' || substr(repo, 1, instr(repo, '/') - 1) FROM review_targets LIMIT 1) AS \"__value\" UNION ALL SELECT 1 AS ord, repo AS \"__text\", 'repo:' || repo AS \"__value\" FROM (SELECT DISTINCT repo FROM review_targets ORDER BY repo)) ORDER BY ord, \"__text\""
+          "queryText": "SELECT 1 AS ord, repo AS \"__text\", 'repo:' || repo AS \"__value\" FROM (SELECT DISTINCT repo FROM review_targets ORDER BY repo)",
+          "rawQueryText": "SELECT 1 AS ord, repo AS \"__text\", 'repo:' || repo AS \"__value\" FROM (SELECT DISTINCT repo FROM review_targets ORDER BY repo)"
         },
-        "current": { "text": "All repos", "value": "org:JSONbored" },
+        "current": { "text": "JSONbored/gittensory", "value": "repo:JSONbored/gittensory" },
         "includeAll": false,
         "multi": false,
         "refresh": 2,

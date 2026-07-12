@@ -783,7 +783,7 @@ export const RepositorySettingsSchema = z
     publicSurface: z
       .enum(["off", "comment_and_label", "comment_only", "label_only"])
       .describe(
-        "Governs ONLY the PR comment and label -- never the Gittensory Context check (checkRunMode) or the Gittensory Orb Review Agent gate check (reviewCheckMode), which are independent axes by design (#2852). Setting this to \"off\" does NOT silence either check-run.",
+        "Governs ONLY the PR comment and label -- never the LoopOver Context check (checkRunMode) or the LoopOver Orb Review Agent gate check (reviewCheckMode), which are independent axes by design (#2852). Setting this to \"off\" does NOT silence either check-run.",
       ),
     includeMaintainerAuthors: z.boolean(),
     requireLinkedIssue: z.boolean(),
@@ -877,7 +877,7 @@ export const RepoSettingsPreviewSchema = z
       publicSurface: z
       .enum(["off", "comment_and_label", "comment_only", "label_only"])
       .describe(
-        "Governs ONLY the PR comment and label -- never the Gittensory Context check (checkRunMode) or the Gittensory Orb Review Agent gate check (reviewCheckMode), which are independent axes by design (#2852). Setting this to \"off\" does NOT silence either check-run.",
+        "Governs ONLY the PR comment and label -- never the LoopOver Context check (checkRunMode) or the LoopOver Orb Review Agent gate check (reviewCheckMode), which are independent axes by design (#2852). Setting this to \"off\" does NOT silence either check-run.",
       ),
       commentMode: z.enum(["off", "detected_contributors_only", "all_prs"]),
       publicAudienceMode: z.enum(["oss_maintainer", "gittensor_only"]),
@@ -1281,7 +1281,7 @@ export const InstallationRepairSchema = z
           publicSurface: z
       .enum(["off", "comment_and_label", "comment_only", "label_only"])
       .describe(
-        "Governs ONLY the PR comment and label -- never the Gittensory Context check (checkRunMode) or the Gittensory Orb Review Agent gate check (reviewCheckMode), which are independent axes by design (#2852). Setting this to \"off\" does NOT silence either check-run.",
+        "Governs ONLY the PR comment and label -- never the LoopOver Context check (checkRunMode) or the LoopOver Orb Review Agent gate check (reviewCheckMode), which are independent axes by design (#2852). Setting this to \"off\" does NOT silence either check-run.",
       ),
           commentMode: z.enum(["off", "detected_contributors_only", "all_prs"]),
           publicAudienceMode: z.enum(["oss_maintainer", "gittensor_only"]),
@@ -2199,7 +2199,7 @@ export const RegistrationReadinessSchema = z
       publicSurface: z
       .enum(["off", "comment_and_label", "comment_only", "label_only"])
       .describe(
-        "Governs ONLY the PR comment and label -- never the Gittensory Context check (checkRunMode) or the Gittensory Orb Review Agent gate check (reviewCheckMode), which are independent axes by design (#2852). Setting this to \"off\" does NOT silence either check-run.",
+        "Governs ONLY the PR comment and label -- never the LoopOver Context check (checkRunMode) or the LoopOver Orb Review Agent gate check (reviewCheckMode), which are independent axes by design (#2852). Setting this to \"off\" does NOT silence either check-run.",
       ),
       commentMode: z.enum(["off", "detected_contributors_only", "all_prs"]),
       publicAudienceMode: z.enum(["oss_maintainer", "gittensor_only"]),

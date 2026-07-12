@@ -76,7 +76,7 @@ describe("applySurfaceGate", () => {
     };
     const genericHold = gate({
       conclusion: "neutral",
-      title: "Gittensory Orb Review Agent — held for manual review",
+      title: "LoopOver Orb Review Agent — held for manual review",
       summary: "Large change — held for manual review",
       blockers: [],
       warnings: [oversized],

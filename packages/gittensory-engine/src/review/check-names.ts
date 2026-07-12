@@ -1,1 +1,1 @@
-export const GITTENSORY_GATE_CHECK_NAME = "Gittensory Orb Review Agent";
+export const LOOPOVER_GATE_CHECK_NAME = "LoopOver Orb Review Agent";

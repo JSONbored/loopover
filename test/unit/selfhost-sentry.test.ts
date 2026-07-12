@@ -621,6 +621,28 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(lastCapturedError().name).toBe("ai_review_failed");
   });
 
+  it("captureError/captureReviewFailure with an eventName never mutate caught errors that reject name writes", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+
+    const timeoutError = new DOMException("signal timed out", "TimeoutError");
+    captureError(timeoutError, { kind: "fetch_timeout" }, "github_fetch_failed");
+
+    expect(timeoutError.name).toBe("TimeoutError");
+    expect(lastCapturedError()).not.toBe(timeoutError);
+    expect(lastCapturedError().name).toBe("github_fetch_failed");
+    expect(lastCapturedError().message).toBe("signal timed out");
+    expect(lastCapturedError().cause).toBe(timeoutError);
+
+    const frozenError = Object.freeze(new Error("review failed"));
+    captureReviewFailure(frozenError, { repo: "o/r" }, "ai_review_failed");
+
+    expect(frozenError.name).toBe("Error");
+    expect(lastCapturedError()).not.toBe(frozenError);
+    expect(lastCapturedError().name).toBe("ai_review_failed");
+    expect(lastCapturedError().message).toBe("review failed");
+    expect(lastCapturedError().cause).toBe(frozenError);
+  });
+
   it("adds active OTEL trace ids to captured Sentry events", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     otelMocks.currentOtelTraceIds.mockReturnValue({

@@ -4695,7 +4695,7 @@ describe("queue processors", () => {
       ).resolves.toBeUndefined();
       expect(aiCalls).toBe(0);
       expect(gateConclusion).toBe("neutral");
-      expect(gateSummary).toContain("Gittensory public check output is intentionally minimal");
+      expect(gateSummary).toContain("LoopOver public check output is intentionally minimal");
       const summary = await env.DB.prepare("select conclusion from check_summaries where repo_full_name = ? and pull_number = ?")
         .bind("JSONbored/gittensory", 82)
         .first<{ conclusion: string }>();
@@ -5176,7 +5176,7 @@ describe("queue processors", () => {
         repoFullName: "JSONbored/gittensory",
         pullNumber: 62,
         headSha: "a62",
-        name: "Gittensory Orb Review Agent",
+        name: "LoopOver Orb Review Agent",
         status: "completed",
         conclusion: "success",
         payload: {},
@@ -5244,7 +5244,7 @@ describe("queue processors", () => {
           }),
         },
       });
-      await upsertCheckSummary(env, { id: "gate-72", repoFullName: "JSONbored/gittensory", pullNumber: 72, headSha: "a72", name: "Gittensory Orb Review Agent", status: "completed", conclusion: "success", payload: {} });
+      await upsertCheckSummary(env, { id: "gate-72", repoFullName: "JSONbored/gittensory", pullNumber: 72, headSha: "a72", name: "LoopOver Orb Review Agent", status: "completed", conclusion: "success", payload: {} });
       await repositoriesModule.markPullRequestSurfacePublished(env, "JSONbored/gittensory", 72, "a72");
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
@@ -5301,7 +5301,7 @@ describe("queue processors", () => {
           }),
         },
       });
-      await upsertCheckSummary(env, { id: "gate-73", repoFullName: "JSONbored/gittensory", pullNumber: 73, headSha: "a73", name: "Gittensory Orb Review Agent", status: "completed", conclusion: "success", payload: {} });
+      await upsertCheckSummary(env, { id: "gate-73", repoFullName: "JSONbored/gittensory", pullNumber: 73, headSha: "a73", name: "LoopOver Orb Review Agent", status: "completed", conclusion: "success", payload: {} });
       await repositoriesModule.markPullRequestSurfacePublished(env, "JSONbored/gittensory", 73, "a73");
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
@@ -5357,7 +5357,7 @@ describe("queue processors", () => {
           }),
         },
       });
-      await upsertCheckSummary(env, { id: "gate-74", repoFullName: "JSONbored/gittensory", pullNumber: 74, headSha: "a74", name: "Gittensory Orb Review Agent", status: "completed", conclusion: "success", payload: {} });
+      await upsertCheckSummary(env, { id: "gate-74", repoFullName: "JSONbored/gittensory", pullNumber: 74, headSha: "a74", name: "LoopOver Orb Review Agent", status: "completed", conclusion: "success", payload: {} });
       await repositoriesModule.markPullRequestSurfacePublished(env, "JSONbored/gittensory", 74, "a74");
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
@@ -5410,7 +5410,7 @@ describe("queue processors", () => {
           }),
         },
       });
-      await upsertCheckSummary(env, { id: "gate-70", repoFullName: "JSONbored/gittensory", pullNumber: 70, headSha: "a70", name: "Gittensory Orb Review Agent", status: "completed", conclusion: "success", payload: {} });
+      await upsertCheckSummary(env, { id: "gate-70", repoFullName: "JSONbored/gittensory", pullNumber: 70, headSha: "a70", name: "LoopOver Orb Review Agent", status: "completed", conclusion: "success", payload: {} });
       await repositoriesModule.markPullRequestSurfacePublished(env, "JSONbored/gittensory", 70, "a70");
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         const url = input.toString();
@@ -5511,7 +5511,7 @@ describe("queue processors", () => {
           }),
         },
       });
-      await upsertCheckSummary(env, { id: "gate-71", repoFullName: "JSONbored/gittensory", pullNumber: 71, headSha: "a71", name: "Gittensory Orb Review Agent", status: "completed", conclusion: "success", payload: {} });
+      await upsertCheckSummary(env, { id: "gate-71", repoFullName: "JSONbored/gittensory", pullNumber: 71, headSha: "a71", name: "LoopOver Orb Review Agent", status: "completed", conclusion: "success", payload: {} });
       await repositoriesModule.markPullRequestSurfacePublished(env, "JSONbored/gittensory", 71, "a71");
       let checkRunCreated = false;
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -6104,7 +6104,7 @@ describe("queue processors", () => {
       const checkedPanel = [
         "<!-- gittensory-pr-panel:v1 -->",
         "",
-        "- [x] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review",
+        "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review",
       ].join("\n");
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
@@ -6131,7 +6131,7 @@ describe("queue processors", () => {
       await processJob(env, { type: "agent-regate-pr", deliveryId: "repeat", repoFullName: "JSONbored/gittensory", prNumber: 90, installationId: 123 });
       expect(aiCalls).toBe(baselineCalls);
 
-      // Checking the panel's "Re-run Gittensory review" checkbox must force a FRESH AI opinion, not silently
+      // Checking the panel's "Re-run LoopOver review" checkbox must force a FRESH AI opinion, not silently
       // replay the cached one -- this is the exact #3702 bug: the checkbox did nothing without forceAiReview.
       await processJob(env, {
         type: "github-webhook",

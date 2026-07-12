@@ -70,14 +70,14 @@ export type FocusManifestIssueDiscoveryPolicy = "encouraged" | "neutral" | "disc
  * only chooses which deterministic blockers are active, never who can be blocked. There is no single
  * gate master switch: each per-dimension mode (`linkedIssue`, `duplicates`, `readinessMode`, etc.)
  * independently controls whether that dimension evaluates. `checkMode`/`enabled` (#2852) is a separate
- * axis entirely: whether/how the "Gittensory Orb Review Agent" check-RUN publishes, independent of gate
+ * axis entirely: whether/how the "LoopOver Orb Review Agent" check-RUN publishes, independent of gate
  * evaluation itself (which always runs regardless of `checkMode`/`enabled`) — see {@link ReviewCheckMode}.
  */
 export type FocusManifestGateConfig = {
   present: boolean;
   /** `gate.enabled` (legacy): a boolean shorthand for `checkMode` below -- `true` maps to `"required"`,
    *  `false` maps to `"disabled"` (see resolveEffectiveSettings/applyGateConfigOverrides). Despite the name,
-   *  this controls ONLY whether the "Gittensory Orb Review Agent" check-run publishes -- it has NO effect on
+   *  this controls ONLY whether the "LoopOver Orb Review Agent" check-run publishes -- it has NO effect on
    *  gate evaluation, disposition, comments, labels, audit, spend, or autonomous merge/close, all of which run
    *  identically regardless of this field. It also cannot express `checkMode`'s third state (`"visible"`), and
    *  is silently ignored once `checkMode` is set (see the parse-time warning a few lines below this type).
@@ -1373,7 +1373,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
   if (gate.firstTimeContributorGrace === true) {
     warnings.push(`Manifest field "gate.firstTimeContributorGrace" is currently reserved/inert — it does not soften a blocker outcome for first-time contributors.`);
   }
-  // gate.enabled only controls whether the "Gittensory Orb Review Agent" check-run publishes (the legacy
+  // gate.enabled only controls whether the "LoopOver Orb Review Agent" check-run publishes (the legacy
   // enabled -> reviewCheckMode alias in applyGateConfigOverrides) -- it does NOT gate spend, merge, comment,
   // label, or close behavior, and it cannot express checkMode's "visible" state. checkMode always wins when
   // both are set, so once an operator sets checkMode, a lingering enabled becomes pure inert noise they have
@@ -1383,7 +1383,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
   // side effect instead, twice).
   if (gate.enabled !== null && gate.checkMode === null) {
     warnings.push(
-      `Manifest field "gate.enabled" only controls whether the Gittensory Orb Review Agent check-run publishes — it does not gate spend, merge, comment, label, or close behavior, and it cannot express reviewCheckMode's "visible" state. Set "gate.checkMode" (required/visible/disabled) explicitly instead of "gate.enabled".`,
+      `Manifest field "gate.enabled" only controls whether the LoopOver Orb Review Agent check-run publishes — it does not gate spend, merge, comment, label, or close behavior, and it cannot express reviewCheckMode's "visible" state. Set "gate.checkMode" (required/visible/disabled) explicitly instead of "gate.enabled".`,
     );
   }
   gate.present =

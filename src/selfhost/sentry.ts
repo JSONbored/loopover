@@ -431,16 +431,21 @@ export async function buildSentryOpenTelemetryBridge(): Promise<OpenTelemetryBri
   };
 }
 
-/** Name a synthetic Error before capture so its Sentry issue title reads "eventName: message" instead of the
+/** Name a captured Error before capture so its Sentry issue title reads "eventName: message" instead of the
  *  generic "Error: message" (or a caught exception's own class name, e.g. "HttpError: ..."). Mirrors
- *  forwardStructuredLogToSentry's `errorEvent.name = event` below — same discipline, applied to the handful of
- *  call sites that construct their OWN `new Error(...)` purely to report a known condition, not to a genuinely
- *  caught exception (which keeps its real name/type — mislabeling those would hide what actually threw). Only
- *  renames when the caller opts in; every other captureError/captureReviewFailure call is unaffected. */
+ *  forwardStructuredLogToSentry's `errorEvent.name = event` below, but never mutates the caught value: some
+ *  runtime errors (notably DOMException from AbortSignal.timeout/fetch) expose a read-only `name` in strict mode. */
 function namedCaptureError(error: unknown, eventName?: string): Error {
   const err = error instanceof Error ? error : new Error(String(error));
-  if (eventName) err.name = eventName;
-  return err;
+  if (!eventName) return err;
+  const namedError = new Error(err.message, { cause: err });
+  namedError.name = eventName;
+  Object.defineProperty(namedError, "stack", {
+    value: err.stack,
+    configurable: true,
+    writable: true,
+  });
+  return namedError;
 }
 
 /** Capture an error with optional structured context. No-op when Sentry is off. `eventName`, when given, becomes

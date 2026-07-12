@@ -871,7 +871,7 @@ describe("signal coverage edge cases", () => {
     expect(gateRow.cells[3]).not.toBe("No action.");
 
     const comment = buildPublicPrIntelligenceComment(baseArgs);
-    expect(comment).toContain("Gittensory Orb Review Agent is blocking merge");
+    expect(comment).toContain("LoopOver Orb Review Agent is blocking merge");
     expect(comment).toContain("> [!CAUTION]");
 
     // Sanity check: the SAME disabled-check-run repo WITHOUT autonomy configured correctly stays advisory-only
@@ -1174,13 +1174,13 @@ describe("signal coverage edge cases", () => {
     // The comment builder must agree by construction: ON winner is NOT a blocking-merge panel; ON loser is.
     const winnerComment = buildPublicPrIntelligenceComment({ ...baseFor(winnerPr), duplicateWinnerEnabled: true });
     const loserComment = buildPublicPrIntelligenceComment({ ...baseFor(loserPr), duplicateWinnerEnabled: true });
-    expect(winnerComment).not.toContain("Gittensory Orb Review Agent is blocking merge");
+    expect(winnerComment).not.toContain("LoopOver Orb Review Agent is blocking merge");
     expect(winnerComment).not.toContain("#88");
     expect(buildPublicPrPanelSignalRows({ ...baseFor(winnerPr), duplicateWinnerEnabled: true }).rows.find((r) => r.key === "relatedWork")!.cells[1]).toContain("No active overlap");
-    expect(loserComment).toContain("Gittensory Orb Review Agent is blocking merge");
+    expect(loserComment).toContain("LoopOver Orb Review Agent is blocking merge");
     // Flag OFF on the winner is byte-identical to a blocking panel (today's behavior).
     const offWinnerComment = buildPublicPrIntelligenceComment(baseFor(winnerPr));
-    expect(offWinnerComment).toContain("Gittensory Orb Review Agent is blocking merge");
+    expect(offWinnerComment).toContain("LoopOver Orb Review Agent is blocking merge");
   });
 
   it("#dup-winner: hides duplicate-only same-issue evidence while preserving mixed scoped overlap context", () => {
@@ -1414,7 +1414,7 @@ describe("signal coverage edge cases", () => {
       aiReview: { notes: "The change is currently unsafe to merge.\n\n**Blockers**\n- `src/a.ts` has a syntax error.\n\n**Nits (1)**\n- Add a regression test." },
     });
     expect(aiBlockedComment).toContain("> [!CAUTION]");
-    expect(aiBlockedComment).toContain("Gittensory review found blockers");
+    expect(aiBlockedComment).toContain("LoopOver review found blockers");
     expect(aiBlockedComment).toContain("`src/a.ts` has a syntax error.");
     expect(aiBlockedComment.indexOf("**Review summary**")).toBeLessThan(aiBlockedComment.indexOf("**Readiness score:"));
 
@@ -1431,7 +1431,7 @@ describe("signal coverage edge cases", () => {
     });
     expect(aiExplicitNoBlockersComment).toContain("> [!TIP]");
     expect(aiExplicitNoBlockersComment).not.toContain(
-      "Gittensory review found blockers",
+      "LoopOver review found blockers",
     );
 
     const advisoryOnlyComment = buildPublicPrIntelligenceComment({env: {},
@@ -1454,7 +1454,7 @@ describe("signal coverage edge cases", () => {
     });
 
     expect(advisoryOnlyComment).toContain("> [!WARNING]");
-    expect(advisoryOnlyComment).toContain("Gittensory found maintainer review notes");
+    expect(advisoryOnlyComment).toContain("LoopOver found maintainer review notes");
     expect(advisoryOnlyComment).toContain("Validation note missing");
     expect(advisoryOnlyComment).toContain("> | Gate result | ⚠️ Advisory only | Advisory only. | No action. |");
 
@@ -1754,7 +1754,7 @@ describe("signal coverage edge cases", () => {
     expect(comment).toContain("[JSONbored](https://github.com/JSONbored)");
     expect(comment).toContain("[Gittensor profile](https://gittensor.io/miners/details?githubId=49853598)");
     expect(comment).toContain("Official Gittensor activity: 29 PR(s), 6 issue(s).");
-    expect(comment).toContain("- [ ] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review");
+    expect(comment).toContain("- [ ] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review");
     expect(comment).not.toContain("- [x] <!-- gittensory-rerun-review:v1 -->");
     expect(comment).not.toMatch(/wallet|hotkey|payout|trust score|private score/i);
   });
@@ -2106,7 +2106,7 @@ describe("signal coverage edge cases", () => {
       settings: { ...repoSettings(directRepo.fullName), linkedIssueGateMode: "off" },
     });
 
-    expect(comment).toContain("Gittensory PR readiness looks good");
+    expect(comment).toContain("LoopOver PR readiness looks good");
     expect(comment).toContain("- No public-safe advisory findings were generated from cached metadata.");
     expect(comment).toContain("- Keep the PR focused and include validation evidence before maintainer review.");
     expect(comment).not.toMatch(/No linked issue detected|reward|wallet/i);

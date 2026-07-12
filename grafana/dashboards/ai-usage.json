@@ -43,8 +43,8 @@
         "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
         "query": {
           "queryType": "table",
-          "queryText": "SELECT DISTINCT model FROM ai_usage_events WHERE ('$provider' = '$__all' OR provider = '$provider') ORDER BY model",
-          "rawQueryText": "SELECT DISTINCT model FROM ai_usage_events WHERE ('$provider' = '$__all' OR provider = '$provider') ORDER BY model"
+          "queryText": "SELECT DISTINCT model FROM ai_usage_events WHERE (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) ORDER BY model",
+          "rawQueryText": "SELECT DISTINCT model FROM ai_usage_events WHERE (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) ORDER BY model"
         },
         "includeAll": true,
         "allValue": "$__all",
@@ -92,8 +92,8 @@
         {
           "refId": "A",
           "queryType": "table",
-          "queryText": "SELECT count(*) AS events FROM ai_usage_events WHERE provider IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
-          "rawQueryText": "SELECT count(*) AS events FROM ai_usage_events WHERE provider IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
+          "queryText": "SELECT count(*) AS events FROM ai_usage_events WHERE provider IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT count(*) AS events FROM ai_usage_events WHERE provider IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
         }
       ]
     },
@@ -109,8 +109,8 @@
         {
           "refId": "A",
           "queryType": "table",
-          "queryText": "SELECT coalesce(sum(total_tokens), 0) AS total_tokens FROM ai_usage_events WHERE provider IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
-          "rawQueryText": "SELECT coalesce(sum(total_tokens), 0) AS total_tokens FROM ai_usage_events WHERE provider IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
+          "queryText": "SELECT coalesce(sum(total_tokens), 0) AS total_tokens FROM ai_usage_events WHERE provider IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT coalesce(sum(total_tokens), 0) AS total_tokens FROM ai_usage_events WHERE provider IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
         }
       ]
     },
@@ -126,8 +126,8 @@
         {
           "refId": "A",
           "queryType": "table",
-          "queryText": "SELECT coalesce(sum(cost_usd), 0) AS cost_usd FROM ai_usage_events WHERE provider IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
-          "rawQueryText": "SELECT coalesce(sum(cost_usd), 0) AS cost_usd FROM ai_usage_events WHERE provider IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
+          "queryText": "SELECT coalesce(sum(cost_usd), 0) AS cost_usd FROM ai_usage_events WHERE provider IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT coalesce(sum(cost_usd), 0) AS cost_usd FROM ai_usage_events WHERE provider IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
         }
       ]
     },
@@ -144,8 +144,8 @@
         {
           "refId": "A",
           "queryType": "table",
-          "queryText": "SELECT count(*) AS unattributed FROM ai_usage_events WHERE status = 'ok' AND feature <> 'ai_key_change' AND ('$feature' = '$__all' OR feature = '$feature') AND (provider IS NULL OR (input_tokens = 0 AND output_tokens = 0 AND total_tokens = 0 AND cost_usd = 0)) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
-          "rawQueryText": "SELECT count(*) AS unattributed FROM ai_usage_events WHERE status = 'ok' AND feature <> 'ai_key_change' AND ('$feature' = '$__all' OR feature = '$feature') AND (provider IS NULL OR (input_tokens = 0 AND output_tokens = 0 AND total_tokens = 0 AND cost_usd = 0)) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
+          "queryText": "SELECT count(*) AS unattributed FROM ai_usage_events WHERE status = 'ok' AND feature <> 'ai_key_change' AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (provider IS NULL OR (input_tokens = 0 AND output_tokens = 0 AND total_tokens = 0 AND cost_usd = 0)) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT count(*) AS unattributed FROM ai_usage_events WHERE status = 'ok' AND feature <> 'ai_key_change' AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (provider IS NULL OR (input_tokens = 0 AND output_tokens = 0 AND total_tokens = 0 AND cost_usd = 0)) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
         }
       ]
     },
@@ -170,8 +170,8 @@
           "queryType": "time series",
           "timeColumns": ["time"],
           "metricColumn": "feature",
-          "queryText": "SELECT date(created_at) AS time, feature, coalesce(sum(total_tokens), 0) AS tokens FROM ai_usage_events WHERE provider IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY date(created_at), feature ORDER BY time",
-          "rawQueryText": "SELECT date(created_at) AS time, feature, coalesce(sum(total_tokens), 0) AS tokens FROM ai_usage_events WHERE provider IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY date(created_at), feature ORDER BY time"
+          "queryText": "SELECT date(created_at) AS time, feature, coalesce(sum(total_tokens), 0) AS tokens FROM ai_usage_events WHERE provider IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY date(created_at), feature ORDER BY time",
+          "rawQueryText": "SELECT date(created_at) AS time, feature, coalesce(sum(total_tokens), 0) AS tokens FROM ai_usage_events WHERE provider IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY date(created_at), feature ORDER BY time"
         }
       ]
     },
@@ -187,8 +187,8 @@
         {
           "refId": "A",
           "queryType": "table",
-          "queryText": "SELECT feature, coalesce(sum(cost_usd), 0) AS cost_usd FROM ai_usage_events WHERE provider IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY feature ORDER BY cost_usd DESC",
-          "rawQueryText": "SELECT feature, coalesce(sum(cost_usd), 0) AS cost_usd FROM ai_usage_events WHERE provider IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY feature ORDER BY cost_usd DESC"
+          "queryText": "SELECT feature, coalesce(sum(cost_usd), 0) AS cost_usd FROM ai_usage_events WHERE provider IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY feature ORDER BY cost_usd DESC",
+          "rawQueryText": "SELECT feature, coalesce(sum(cost_usd), 0) AS cost_usd FROM ai_usage_events WHERE provider IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY feature ORDER BY cost_usd DESC"
         }
       ]
     },
@@ -204,8 +204,8 @@
         {
           "refId": "A",
           "queryType": "table",
-          "queryText": "SELECT provider, count(*) AS events FROM ai_usage_events WHERE provider IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY provider ORDER BY events DESC",
-          "rawQueryText": "SELECT provider, count(*) AS events FROM ai_usage_events WHERE provider IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY provider ORDER BY events DESC"
+          "queryText": "SELECT provider, count(*) AS events FROM ai_usage_events WHERE provider IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY provider ORDER BY events DESC",
+          "rawQueryText": "SELECT provider, count(*) AS events FROM ai_usage_events WHERE provider IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY provider ORDER BY events DESC"
         }
       ]
     },
@@ -221,8 +221,8 @@
         {
           "refId": "A",
           "queryType": "table",
-          "queryText": "SELECT provider, model, effort, count(*) AS events, coalesce(sum(total_tokens), 0) AS total_tokens, coalesce(sum(cost_usd), 0) AS cost_usd FROM ai_usage_events WHERE provider IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY provider, model, effort ORDER BY events DESC LIMIT 50",
-          "rawQueryText": "SELECT provider, model, effort, count(*) AS events, coalesce(sum(total_tokens), 0) AS total_tokens, coalesce(sum(cost_usd), 0) AS cost_usd FROM ai_usage_events WHERE provider IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY provider, model, effort ORDER BY events DESC LIMIT 50"
+          "queryText": "SELECT provider, model, effort, count(*) AS events, coalesce(sum(total_tokens), 0) AS total_tokens, coalesce(sum(cost_usd), 0) AS cost_usd FROM ai_usage_events WHERE provider IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY provider, model, effort ORDER BY events DESC LIMIT 50",
+          "rawQueryText": "SELECT provider, model, effort, count(*) AS events, coalesce(sum(total_tokens), 0) AS total_tokens, coalesce(sum(cost_usd), 0) AS cost_usd FROM ai_usage_events WHERE provider IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY provider, model, effort ORDER BY events DESC LIMIT 50"
         }
       ]
     },
@@ -244,8 +244,8 @@
         {
           "refId": "A",
           "queryType": "table",
-          "queryText": "SELECT json_extract(metadata_json, '$.repoFullName') AS repo, provider, count(*) AS events, coalesce(sum(total_tokens), 0) AS total_tokens, coalesce(sum(cost_usd), 0) AS cost_usd FROM ai_usage_events WHERE provider IS NOT NULL AND json_extract(metadata_json, '$.repoFullName') IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY repo, provider ORDER BY events DESC LIMIT 50",
-          "rawQueryText": "SELECT json_extract(metadata_json, '$.repoFullName') AS repo, provider, count(*) AS events, coalesce(sum(total_tokens), 0) AS total_tokens, coalesce(sum(cost_usd), 0) AS cost_usd FROM ai_usage_events WHERE provider IS NOT NULL AND json_extract(metadata_json, '$.repoFullName') IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY repo, provider ORDER BY events DESC LIMIT 50"
+          "queryText": "SELECT json_extract(metadata_json, '$.repoFullName') AS repo, provider, count(*) AS events, coalesce(sum(total_tokens), 0) AS total_tokens, coalesce(sum(cost_usd), 0) AS cost_usd FROM ai_usage_events WHERE provider IS NOT NULL AND json_extract(metadata_json, '$.repoFullName') IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY repo, provider ORDER BY events DESC LIMIT 50",
+          "rawQueryText": "SELECT json_extract(metadata_json, '$.repoFullName') AS repo, provider, count(*) AS events, coalesce(sum(total_tokens), 0) AS total_tokens, coalesce(sum(cost_usd), 0) AS cost_usd FROM ai_usage_events WHERE provider IS NOT NULL AND json_extract(metadata_json, '$.repoFullName') IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY repo, provider ORDER BY events DESC LIMIT 50"
         }
       ]
     },
@@ -261,8 +261,8 @@
         {
           "refId": "A",
           "queryType": "table",
-          "queryText": "SELECT created_at, feature, provider, model, effort, status, input_tokens, output_tokens, total_tokens, cost_usd, json_extract(metadata_json, '$.repoFullName') AS repo, json_extract(metadata_json, '$.pullNumber') AS pr FROM ai_usage_events WHERE provider IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} ORDER BY created_at DESC LIMIT 100",
-          "rawQueryText": "SELECT created_at, feature, provider, model, effort, status, input_tokens, output_tokens, total_tokens, cost_usd, json_extract(metadata_json, '$.repoFullName') AS repo, json_extract(metadata_json, '$.pullNumber') AS pr FROM ai_usage_events WHERE provider IS NOT NULL AND ('$provider' = '$__all' OR provider = '$provider') AND ('$feature' = '$__all' OR feature = '$feature') AND ('$model' = '$__all' OR model = '$model') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} ORDER BY created_at DESC LIMIT 100"
+          "queryText": "SELECT created_at, feature, provider, model, effort, status, input_tokens, output_tokens, total_tokens, cost_usd, json_extract(metadata_json, '$.repoFullName') AS repo, json_extract(metadata_json, '$.pullNumber') AS pr FROM ai_usage_events WHERE provider IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} ORDER BY created_at DESC LIMIT 100",
+          "rawQueryText": "SELECT created_at, feature, provider, model, effort, status, input_tokens, output_tokens, total_tokens, cost_usd, json_extract(metadata_json, '$.repoFullName') AS repo, json_extract(metadata_json, '$.pullNumber') AS pr FROM ai_usage_events WHERE provider IS NOT NULL AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND (${feature:sqlstring} = '$__all' OR feature = ${feature:sqlstring}) AND (${model:sqlstring} = '$__all' OR model = ${model:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} ORDER BY created_at DESC LIMIT 100"
         }
       ]
     },

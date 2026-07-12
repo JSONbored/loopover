@@ -12,16 +12,10 @@ import { DEFAULT_PORTFOLIO_CONVERGENCE_THRESHOLDS, type PortfolioConvergenceThre
 // its own risk tolerance against that exact repo. So this type is intentionally free of any field a target
 // repo could use to loosen what an operator's agent is willing to do.
 //
-// Two-scope resolution, mirroring `.gittensory.yml`'s own established self-host precedent (see
-// `src/selfhost/private-config.ts`'s `makeLocalManifestReader`, whose own doc comment is explicit: a
-// self-host operator's local file "takes priority over -- and fully REPLACES -- the public .gittensory.yml"):
-//   1. A repo-scoped `.gittensory-ams.yml` MAY exist in the target repo, proposing a DEFAULT execution policy
-//      for operators who haven't set their own (e.g. "please use a strict slop threshold mining me").
-//   2. The operator's own local `.gittensory-ams.yml` (in their `gittensory-miner` config dir), when present,
-//      FULLY REPLACES the repo's proposed file -- never a field-by-field merge. An operator's explicit choice
-//      always wins; the repo's file is only ever a fallback default for an unconfigured operator.
-// The actual two-scope fetch+resolve lives in packages/gittensory-miner/lib/ams-policy.js (this package is
-// IO-free, same discipline as miner-goal-spec.ts) -- this module is the type/parser surface only.
+// Resolution deliberately stays operator-local: packages/gittensory-miner/lib/ams-policy.js reads only the
+// operator's own local `.gittensory-ams.yml` (in their `gittensory-miner` config dir) and otherwise uses safe
+// defaults. It does not fetch a target repo's checked-in file, because that would let untrusted repo content
+// loosen operator-side budget, turn, slop, or submission controls.
 
 /** Whether a real attempt is allowed to actually submit (open a PR), or only compute + log its decision.
  *  Mirrors `src/settings/autonomy.ts`'s deny-by-default dial: "observe" still runs every real signal/decision,

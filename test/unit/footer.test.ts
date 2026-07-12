@@ -56,18 +56,18 @@ describe("gittensory public-comment footer", () => {
   // and the Gittensor register link (a separate, shared network) is never rebranded.
   it("#4613: uses PUBLIC_SITE_ORIGIN in the attribution link when configured", () => {
     const footer = gittensoryFooter({ PUBLIC_SITE_ORIGIN: "https://gittensory.example.org" });
-    expect(footer).toContain("Checked by [Gittensory](https://gittensory.example.org)");
+    expect(footer).toContain("Checked by [LoopOver](https://gittensory.example.org)");
     expect(footer).not.toContain(GITTENSORY_SITE_URL);
     expect(footer).toContain(GITTENSOR_HOME_URL); // the network link is never rebranded
   });
 
   it("#4613: falls back to GITTENSORY_SITE_URL when PUBLIC_SITE_ORIGIN is unset", () => {
-    expect(gittensoryFooter({})).toContain(`Checked by [Gittensory](${GITTENSORY_SITE_URL})`);
+    expect(gittensoryFooter({})).toContain(`Checked by [LoopOver](${GITTENSORY_SITE_URL})`);
   });
 
   it("#4613: uses PUBLIC_SITE_ORIGIN in the attribution link on the customText branch too", () => {
     const footer = gittensoryFooter({ PUBLIC_SITE_ORIGIN: "https://gittensory.example.org" }, { customText: "Thanks for contributing!" });
-    expect(footer).toContain("Checked by [Gittensory](https://gittensory.example.org)");
+    expect(footer).toContain("Checked by [LoopOver](https://gittensory.example.org)");
     expect(footer).not.toContain(GITTENSORY_SITE_URL);
   });
 });

@@ -2800,7 +2800,7 @@ describe("queue processors", () => {
       }
       if (url.includes("/commits/override-sha/check-runs") && method === "GET") {
         calls.checkGets += 1;
-        return Response.json({ total_count: 1, check_runs: [{ id: 555, name: "Gittensory Orb Review Agent" }] });
+        return Response.json({ total_count: 1, check_runs: [{ id: 555, name: "LoopOver Orb Review Agent" }] });
       }
       if (url.includes("/check-runs/555") && method === "PATCH") {
         calls.checkPatches += 1;
@@ -2839,9 +2839,9 @@ describe("queue processors", () => {
     const finalize = patchBodies[0];
     expect(finalize?.status).toBe("completed");
     expect(finalize?.conclusion).toBe("neutral");
-    expect(finalize?.output?.title).toBe("Gittensory Orb Review Agent — overridden by @maintainer");
+    expect(finalize?.output?.title).toBe("LoopOver Orb Review Agent — overridden by @maintainer");
     expect(finalize?.output?.text).toContain("Overridden by @maintainer: known flaky duplicate check, shipping");
-    expect(confirmationBody).toContain("Gittensory Orb Review Agent overridden by @maintainer");
+    expect(confirmationBody).toContain("LoopOver Orb Review Agent overridden by @maintainer");
     const audit = await env.DB.prepare("select event_type, actor, target_key, outcome, detail from audit_events where event_type = ?")
       .bind("github_app.gate_overridden")
       .first<{ event_type: string; actor: string; target_key: string; outcome: string; detail: string }>();
@@ -2885,7 +2885,7 @@ describe("queue processors", () => {
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
       if (url.includes("/commits/override-sha-telemetry/check-runs") && method === "GET") {
-        return Response.json({ total_count: 1, check_runs: [{ id: 559, name: "Gittensory Orb Review Agent" }] });
+        return Response.json({ total_count: 1, check_runs: [{ id: 559, name: "LoopOver Orb Review Agent" }] });
       }
       if (url.includes("/check-runs/559") && method === "PATCH") return Response.json({ id: 559 });
       if (url.includes("/issues/94/comments") && method === "GET") return Response.json([]);
@@ -2946,7 +2946,7 @@ describe("queue processors", () => {
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
       if (url.includes("/commits/paused-override-sha/check-runs") && method === "GET") {
-        return Response.json({ total_count: 1, check_runs: [{ id: 556, name: "Gittensory Orb Review Agent" }] });
+        return Response.json({ total_count: 1, check_runs: [{ id: 556, name: "LoopOver Orb Review Agent" }] });
       }
       if (url.includes("/check-runs/556") && method === "PATCH") {
         calls.checkPatches += 1;
@@ -3096,12 +3096,12 @@ describe("queue processors", () => {
       }
       if (url.includes("/commits/live-sha/check-runs") && method === "GET") {
         const checkName = new URL(url).searchParams.get("check_name");
-        if (checkName === "Gittensory Gate") {
+        if (checkName === "Gittensory Gate" || checkName === "Gittensory Orb Review Agent") {
           seen.liveLegacyCheckGets += 1;
           return Response.json({ total_count: 0, check_runs: [] });
         }
         seen.liveCheckGets += 1;
-        return Response.json({ total_count: 1, check_runs: [{ id: 556, name: "Gittensory Orb Review Agent" }] });
+        return Response.json({ total_count: 1, check_runs: [{ id: 556, name: "LoopOver Orb Review Agent" }] });
       }
       if (url.includes("/check-runs/556") && method === "PATCH") {
         patchBodies.push(JSON.parse(String(init?.body ?? "{}")) as { conclusion?: string });
@@ -3128,7 +3128,7 @@ describe("queue processors", () => {
 
     // The neutral PATCH targeted the LIVE head's Gate run (id 556), and the stale SHA was never touched.
     expect(seen.liveCheckGets).toBe(1);
-    expect(seen.liveLegacyCheckGets).toBe(1);
+    expect(seen.liveLegacyCheckGets).toBe(2); // both legacy names (Gittensory Gate + Gittensory Orb Review Agent) are checked
     expect(seen.staleCheckGets).toBe(0);
     expect(patchBodies[0]?.conclusion).toBe("neutral");
     const audit = await env.DB.prepare("select metadata_json from audit_events where event_type = ?")
@@ -3232,7 +3232,7 @@ describe("queue processors", () => {
       }
       if (url.includes("/check-runs")) {
         calls.checkRuns += 1;
-        return Response.json({ total_count: 1, check_runs: [{ id: 556, name: "Gittensory Orb Review Agent" }] });
+        return Response.json({ total_count: 1, check_runs: [{ id: 556, name: "LoopOver Orb Review Agent" }] });
       }
       if (url.includes("/comments")) {
         calls.comments += 1;
@@ -5399,7 +5399,7 @@ describe("queue processors", () => {
       const otherPanel = [
         "<!-- gittensory-pr-panel:v1 -->",
         "",
-        "- [x] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review",
+        "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review",
         "- [ ] <!-- gittensory-generate-tests:v1 --> Generate an AI Playwright test for this PR",
       ].join("\n");
 

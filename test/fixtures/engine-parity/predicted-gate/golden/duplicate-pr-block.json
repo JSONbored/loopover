@@ -3,7 +3,7 @@
   "basis": "public_config",
   "pack": "gittensor",
   "conclusion": "failure",
-  "title": "Gittensory Orb Review Agent: Linked issue overlaps another open PR",
+  "title": "LoopOver Orb Review Agent: Linked issue overlaps another open PR",
   "summary": "Linked issue overlaps another open PR — Review the related PRs before spending reviewer time on duplicate work.",
   "readinessScore": 69,
   "blockers": [

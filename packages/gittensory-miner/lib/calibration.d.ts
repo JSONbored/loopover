@@ -1,3 +1,9 @@
+import type {
+  CalibrationReport,
+  ObservedOutcomeRecord,
+  PredictedVerdictRecord,
+} from "./calibration-types.js";
+
 export type {
   CalibrationReport,
   CalibrationRow,
@@ -11,3 +17,8 @@ export {
   isObservedOutcomeRecord,
   isPredictedVerdictRecord,
 } from "./calibration-types.js";
+
+export function buildCalibrationReport(
+  predictions: PredictedVerdictRecord[],
+  outcomes: ObservedOutcomeRecord[],
+): CalibrationReport;

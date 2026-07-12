@@ -56,11 +56,11 @@ export type RepoProfileCommands = {
 };
 
 export type RepoProfileContributionWorkflow = {
-  /** Whether the review gate (the "Gittensory Orb Review Agent" check) publishes a check at all, derived
+  /** Whether the review gate (the "LoopOver Orb Review Agent" check) publishes a check at all, derived
    *  from `settings.reviewCheckMode` -- the actual runtime authority for that check's publication (#2852).
    *  A prior `gateCheckMode` field was a deprecated read-back of this same value; it was removed entirely
    *  (#5373). `checkRunMode` is NOT related -- it's a live, independent field that governs the SEPARATE
-   *  "Gittensory Context" check, unrelated to this one. Reuses the EXISTING settings resolver rather than
+   *  "LoopOver Context" check, unrelated to this one. Reuses the EXISTING settings resolver rather than
    *  re-deriving gate presence from raw repo files. */
   gatePublishesCheck: boolean;
   linkedIssuePolicy: "required" | "preferred" | "optional";

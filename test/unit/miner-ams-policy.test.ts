@@ -22,26 +22,6 @@ function tempRoot() {
   return root;
 }
 
-function textResponse(text: string | null, status = 200) {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async (): Promise<unknown> => {
-      throw new Error("textResponse: json() is unused by ams-policy's fetch path");
-    },
-    text: async () => text ?? "",
-  };
-}
-
-function routedFetch(routes: Record<string, () => ReturnType<typeof textResponse>>) {
-  return async (url: string) => {
-    for (const [substring, respond] of Object.entries(routes)) {
-      if (url.includes(substring)) return respond();
-    }
-    return textResponse(null, 404);
-  };
-}
-
 describe("resolveAmsPolicyConfigPath (#5132)", () => {
   it("resolves from explicit env, config dir, and XDG default, in precedence order", () => {
     expect(resolveAmsPolicyConfigPath({ GITTENSORY_MINER_AMS_POLICY_PATH: "/custom/policy.yml" })).toBe("/custom/policy.yml");
@@ -50,36 +30,32 @@ describe("resolveAmsPolicyConfigPath (#5132)", () => {
 });
 
 describe("resolveAmsPolicy (#5132)", () => {
-  it("returns the engine's safe defaults when neither a local file nor a repo file exists", async () => {
+  it("returns the engine's safe defaults when no local operator policy exists", async () => {
     const root = tempRoot();
-    const fetchImpl = routedFetch({});
-    const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { GITTENSORY_MINER_CONFIG_DIR: root } });
+    const result = await resolveAmsPolicy("acme/widgets", { env: { GITTENSORY_MINER_CONFIG_DIR: root } });
     expect(result).toEqual({ spec: DEFAULT_AMS_POLICY_SPEC, source: "default", warnings: [] });
   });
 
-  it("falls through to the repo's own .gittensory-ams.yml when no local file exists", async () => {
+  it("REGRESSION: ignores target-repo .gittensory-ams.yml so repos cannot loosen operator risk policy", async () => {
     const root = tempRoot();
-    const fetchImpl = routedFetch({
-      ".gittensory-ams.yml": () => textResponse("submissionMode: enforce\nslopThreshold: clean\n"),
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("target repo policy must not be fetched");
     });
     const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { GITTENSORY_MINER_CONFIG_DIR: root } });
-    expect(result.source).toBe("repo");
-    expect(result.spec.submissionMode).toBe("enforce");
-    expect(result.spec.slopThreshold).toBe("clean");
+    expect(result).toEqual({ spec: DEFAULT_AMS_POLICY_SPEC, source: "default", warnings: [] });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("REGRESSION: the operator's own local file fully REPLACES the repo's file, never merges", async () => {
+  it("the operator's own local file supplies the effective policy", async () => {
     const root = tempRoot();
-    writeFileSync(join(root, ".gittensory-ams.yml"), "submissionMode: observe\n");
-    // The repo's own file sets slopThreshold too -- if this leaked through via a merge, slopThreshold would
-    // read "clean" instead of the local file's own (unset -> default) "low".
-    const fetchImpl = vi.fn(routedFetch({
-      ".gittensory-ams.yml": () => textResponse("submissionMode: enforce\nslopThreshold: clean\n"),
-    }));
+    writeFileSync(join(root, ".gittensory-ams.yml"), "submissionMode: observe\nslopThreshold: clean\n");
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("target repo policy must not be fetched");
+    });
     const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { GITTENSORY_MINER_CONFIG_DIR: root } });
     expect(result.source).toBe("local");
     expect(result.spec.submissionMode).toBe("observe");
-    expect(result.spec.slopThreshold).toBe(DEFAULT_AMS_POLICY_SPEC.slopThreshold);
+    expect(result.spec.slopThreshold).toBe("clean");
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -89,7 +65,7 @@ describe("resolveAmsPolicy (#5132)", () => {
     let fetchCalls = 0;
     const fetchImpl = async () => {
       fetchCalls += 1;
-      return textResponse(null, 404);
+      throw new Error("target repo policy must not be fetched");
     };
     const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { GITTENSORY_MINER_CONFIG_DIR: root } });
     expect(result.source).toBe("local");
@@ -102,7 +78,7 @@ describe("resolveAmsPolicy (#5132)", () => {
     let fetchCalls = 0;
     const fetchImpl = async () => {
       fetchCalls += 1;
-      return textResponse(null, 404);
+      throw new Error("target repo policy must not be fetched");
     };
     const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { GITTENSORY_MINER_CONFIG_DIR: root } });
     expect(result.source).toBe("local");
@@ -111,30 +87,11 @@ describe("resolveAmsPolicy (#5132)", () => {
     expect(fetchCalls).toBe(0);
   });
 
-  it("returns defaults for a malformed repoFullName, without ever calling fetch", async () => {
+  it("returns defaults for any repoFullName, without ever calling fetch", async () => {
     const root = tempRoot();
     const fetchImpl = vi.fn();
     const result = await resolveAmsPolicy("not-a-repo", { fetchImpl, env: { GITTENSORY_MINER_CONFIG_DIR: root } });
     expect(result).toEqual({ spec: DEFAULT_AMS_POLICY_SPEC, source: "default", warnings: [] });
     expect(fetchImpl).not.toHaveBeenCalled();
-  });
-
-  it("returns defaults on a repo fetch network error", async () => {
-    const root = tempRoot();
-    const fetchImpl = async () => {
-      throw new Error("network unreachable");
-    };
-    const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { GITTENSORY_MINER_CONFIG_DIR: root } });
-    expect(result).toEqual({ spec: DEFAULT_AMS_POLICY_SPEC, source: "default", warnings: [] });
-  });
-
-  it("tries the .github/ and .json candidate paths when the root .yml 404s", async () => {
-    const root = tempRoot();
-    const fetchImpl = routedFetch({
-      ".github/gittensory-ams.yml": () => textResponse("submissionMode: enforce\n"),
-    });
-    const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { GITTENSORY_MINER_CONFIG_DIR: root } });
-    expect(result.source).toBe("repo");
-    expect(result.spec.submissionMode).toBe("enforce");
   });
 });

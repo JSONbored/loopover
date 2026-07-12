@@ -1297,7 +1297,7 @@ describe("queue processors", () => {
     expect(commentBodies.length).toBeGreaterThanOrEqual(2);
     expect(commentBodies[0]).toContain("is reviewing");
     const finalComment = commentBodies.find((body) => !body.includes("is reviewing"));
-    expect(finalComment).toContain("Gittensory review needs maintainer review");
+    expect(finalComment).toContain("LoopOver review needs maintainer review");
     expect(finalComment).toContain("AI review could not be completed for this PR head");
     expect(finalComment).not.toContain("The AI reviewer returned public review text but not the expected structured verdict");
     // #regate-churn: the "AI review could not be completed" outcome is now PERSISTED (so a repeated scheduled
@@ -1395,8 +1395,8 @@ describe("queue processors", () => {
     // The losing pass never called the AI a second time — it deferred to the lock instead of double-spending.
     expect(aiCalls).toBe(0);
     const finalComment = commentBodies.find((body) => !body.includes("is reviewing"));
-    expect(finalComment).toContain("Gittensory review needs maintainer review");
-    expect(finalComment).toContain("AI review is already running for this PR head in another Gittensory pass");
+    expect(finalComment).toContain("LoopOver review needs maintainer review");
+    expect(finalComment).toContain("AI review is already running for this PR head in another LoopOver pass");
     // A lock-contention placeholder must never be persisted at all (not even non-durably, #regate-churn) — the
     // concurrent pass it deferred to writes the REAL result within seconds, and replaying this placeholder for
     // the rest of a bounded-cooldown window would mask that real result long after the race resolved.
@@ -1563,7 +1563,7 @@ describe("queue processors", () => {
           repoFullName: "owner/agent-repo",
           pullNumber: number,
           headSha,
-          name: "Gittensory Orb Review Agent",
+          name: "LoopOver Orb Review Agent",
           status: "completed",
           conclusion: "success",
           payload: {},
@@ -1719,7 +1719,7 @@ describe("queue processors", () => {
         repoFullName: "owner/agent-repo",
         pullNumber: number,
         headSha,
-        name: "Gittensory Orb Review Agent",
+        name: "LoopOver Orb Review Agent",
         status: "completed",
         conclusion: "success",
         payload: {},
@@ -1751,7 +1751,7 @@ describe("queue processors", () => {
       repoFullName: "owner/agent-repo",
       pullNumber: 2,
       headSha: "ordinary-2",
-      name: "Gittensory Orb Review Agent",
+      name: "LoopOver Orb Review Agent",
       status: "completed",
       conclusion: "success",
       payload: {},
@@ -2283,7 +2283,7 @@ describe("queue processors", () => {
       repoFullName: "owner/agent-repo",
       pullNumber: 7,
       headSha: "a7",
-      name: "Gittensory Orb Review Agent",
+      name: "LoopOver Orb Review Agent",
       status: "completed",
       conclusion: "success",
       payload: {},
@@ -2749,7 +2749,7 @@ describe("queue processors", () => {
       repoFullName: "owner/agent-repo",
       pullNumber: 7,
       headSha: "a7",
-      name: "Gittensory Orb Review Agent",
+      name: "LoopOver Orb Review Agent",
       status: "completed",
       conclusion: "success",
       payload: {},
@@ -3190,7 +3190,7 @@ describe("queue processors", () => {
       if (url.includes("/commits/gate123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
       if (url.includes("/check-runs") && (init?.method ?? "GET") === "POST") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { name?: string; status?: string; conclusion?: string; output?: { title?: string } };
-        expect(body).toMatchObject({ name: "Gittensory Orb Review Agent", status: "in_progress", output: { title: "Gittensory Orb Review Agent is evaluating" } });
+        expect(body).toMatchObject({ name: "LoopOver Orb Review Agent", status: "in_progress", output: { title: "LoopOver Orb Review Agent is evaluating" } });
         expect(body.conclusion).toBeUndefined();
         calls.gateChecks += 1;
         return Response.json({ id: 900 }, { status: 201 });
@@ -3198,7 +3198,7 @@ describe("queue processors", () => {
       if (url.includes("/check-runs/900") && (init?.method ?? "GET") === "PATCH") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { name?: string; status?: string; conclusion?: string; output?: { title?: string } };
         // Non-confirmed author + linked-issue block + no issue → gated normally → failure (#gate-nonconfirmed).
-        expect(body).toMatchObject({ name: "Gittensory Orb Review Agent", status: "completed", conclusion: "failure", output: { title: "Gittensory Orb Review Agent: No linked issue detected" } });
+        expect(body).toMatchObject({ name: "LoopOver Orb Review Agent", status: "completed", conclusion: "failure", output: { title: "LoopOver Orb Review Agent: No linked issue detected" } });
         calls.gateChecks += 1;
         return Response.json({ id: 900, html_url: "https://github.com/checks/900" });
       }
@@ -3230,7 +3230,7 @@ describe("queue processors", () => {
       .bind("JSONbored/gittensory", 42, "gate123")
       .first<{ name: string; status: string; conclusion: string }>();
     expect(summary).toMatchObject({
-      name: "Gittensory Orb Review Agent",
+      name: "LoopOver Orb Review Agent",
       status: "completed",
       conclusion: "failure",
     });
@@ -3323,7 +3323,7 @@ describe("queue processors", () => {
       if (url.includes("/check-runs") && (init?.method ?? "GET") === "POST") return Response.json({ id: 902 }, { status: 201 });
       if (url.includes("/check-runs/902") && (init?.method ?? "GET") === "PATCH") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { conclusion?: string; output?: { title?: string } };
-        expect(body.output?.title).not.toBe("Gittensory Orb Review Agent: No linked issue detected");
+        expect(body.output?.title).not.toBe("LoopOver Orb Review Agent: No linked issue detected");
         return Response.json({ id: 902, html_url: "https://github.com/checks/902" });
       }
       return new Response("not found", { status: 404 });
@@ -4492,12 +4492,12 @@ describe("queue processors", () => {
     expect(livePullReads).toBe(0);
     expect(fetchPullRequestFreshness).toHaveBeenCalledWith(env, expect.objectContaining({ expectedHeadSha: "oldsha" }));
     expect(checkBodies).toHaveLength(2);
-    expect(checkBodies[0]).toMatchObject({ status: "in_progress", output: { title: "Gittensory Orb Review Agent is evaluating" } });
+    expect(checkBodies[0]).toMatchObject({ status: "in_progress", output: { title: "LoopOver Orb Review Agent is evaluating" } });
     expect(checkBodies[1]).toMatchObject({
       status: "completed",
       conclusion: "skipped",
       output: {
-        title: "Gittensory Orb Review Agent skipped",
+        title: "LoopOver Orb Review Agent skipped",
         summary: "PR head changed from oldsha to newsha",
       },
     });
@@ -4831,7 +4831,7 @@ describe("queue processors", () => {
     let gateConclusion: string | undefined;
     let gateText = "";
     const captureGate = (body: { name?: string; conclusion?: string; output?: { title?: string; summary?: string } }) => {
-      if ((body.name ?? "").includes("Gittensory Orb Review Agent") && body.conclusion) {
+      if ((body.name ?? "").includes("LoopOver Orb Review Agent") && body.conclusion) {
         gateConclusion = body.conclusion;
         gateText = `${body.output?.title ?? ""} ${body.output?.summary ?? ""}`;
       }
@@ -4909,7 +4909,7 @@ describe("queue processors", () => {
     let gateConclusion: string | undefined;
     let gateText = "";
     const captureGate = (body: { name?: string; conclusion?: string; output?: { title?: string; summary?: string } }) => {
-      if ((body.name ?? "").includes("Gittensory Orb Review Agent") && body.conclusion) {
+      if ((body.name ?? "").includes("LoopOver Orb Review Agent") && body.conclusion) {
         gateConclusion = body.conclusion;
         gateText = `${body.output?.title ?? ""} ${body.output?.summary ?? ""}`;
       }
@@ -4994,7 +4994,7 @@ describe("queue processors", () => {
       if (url.includes("/check-runs")) {
         if (init?.body) {
           const body = JSON.parse(init.body.toString()) as { name?: string; conclusion?: string };
-          if ((body.name ?? "").includes("Gittensory Orb Review Agent") && body.conclusion) gateConclusion = body.conclusion;
+          if ((body.name ?? "").includes("LoopOver Orb Review Agent") && body.conclusion) gateConclusion = body.conclusion;
         }
         return Response.json({ id: 902 }, { status: 201 });
       }
@@ -5067,7 +5067,7 @@ describe("queue processors", () => {
       if (url.includes("/check-runs")) {
         if (init?.body) {
           const body = JSON.parse(init.body.toString()) as { name?: string; conclusion?: string; output?: { title?: string; summary?: string } };
-          if ((body.name ?? "").includes("Gittensory Orb Review Agent") && body.conclusion) {
+          if ((body.name ?? "").includes("LoopOver Orb Review Agent") && body.conclusion) {
             gateConclusion = body.conclusion;
             gateText = `${body.output?.title ?? ""} ${body.output?.summary ?? ""}`;
           }
@@ -5147,7 +5147,7 @@ describe("queue processors", () => {
       if (url.includes("/check-runs")) {
         if (init?.body) {
           const body = JSON.parse(init.body.toString()) as { name?: string; conclusion?: string };
-          if ((body.name ?? "").includes("Gittensory Orb Review Agent") && body.conclusion) gateConclusion = body.conclusion;
+          if ((body.name ?? "").includes("LoopOver Orb Review Agent") && body.conclusion) gateConclusion = body.conclusion;
         }
         return Response.json({ id: 904 }, { status: 201 });
       }
@@ -5223,7 +5223,7 @@ describe("queue processors", () => {
       if (url.includes("/check-runs")) {
         if (init?.body) {
           const body = JSON.parse(init.body.toString()) as { name?: string; conclusion?: string; output?: { title?: string; summary?: string } };
-          if ((body.name ?? "").includes("Gittensory Orb Review Agent") && body.conclusion) {
+          if ((body.name ?? "").includes("LoopOver Orb Review Agent") && body.conclusion) {
             gateConclusion = body.conclusion;
             gateText = `${body.output?.title ?? ""} ${body.output?.summary ?? ""}`;
           }
@@ -5308,7 +5308,7 @@ describe("queue processors", () => {
       if (url.includes("/check-runs")) {
         if (init?.body) {
           const body = JSON.parse(init.body.toString()) as { name?: string; conclusion?: string; output?: { title?: string; summary?: string } };
-          if ((body.name ?? "").includes("Gittensory Orb Review Agent") && body.conclusion) {
+          if ((body.name ?? "").includes("LoopOver Orb Review Agent") && body.conclusion) {
             gateConclusion = body.conclusion;
             gateText = `${body.output?.title ?? ""} ${body.output?.summary ?? ""}`;
           }

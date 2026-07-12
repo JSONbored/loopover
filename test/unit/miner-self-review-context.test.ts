@@ -4,6 +4,7 @@ vi.mock("@jsonbored/gittensory-engine", async () => {
   return import("../../packages/gittensory-engine/src/index");
 });
 
+import { MAX_FOCUS_MANIFEST_BYTES } from "../../packages/gittensory-engine/src/index";
 import { fetchSelfReviewContext } from "../../packages/gittensory-miner/lib/self-review-context.js";
 
 function jsonResponse(body: unknown, status = 200) {
@@ -21,6 +22,40 @@ function textResponse(text: string, status = 200) {
     status,
     json: async () => JSON.parse(text),
     text: async () => text,
+  };
+}
+
+function oversizedContentLengthResponse() {
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers({ "content-length": String(MAX_FOCUS_MANIFEST_BYTES + 1) }),
+    json: async () => null,
+    text: async () => {
+      throw new Error("oversized manifest should not be materialized");
+    },
+  };
+}
+
+function chunkedManifestResponse(chunks: Uint8Array[], onCancel: () => void) {
+  let index = 0;
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers(),
+    body: {
+      getReader: () => ({
+        read: async () => (index < chunks.length ? { done: false, value: chunks[index++] } : { done: true, value: undefined }),
+        cancel: async () => {
+          onCancel();
+        },
+        releaseLock: () => {},
+      }),
+    },
+    json: async () => null,
+    text: async () => {
+      throw new Error("streaming manifest should not use response.text()");
+    },
   };
 }
 
@@ -281,6 +316,43 @@ describe("fetchSelfReviewContext (#5145)", () => {
       "https://raw.githubusercontent.com/acme/widgets/HEAD/.github/gittensory.json",
     ]);
     expect(result.manifest.gate).toBeDefined();
+  });
+
+  it("rejects oversized manifest responses from content-length before reading the body", async () => {
+    let manifestRequests = 0;
+    const fetchImpl = async (url: string) => {
+      if (url.includes("raw.githubusercontent.com")) {
+        manifestRequests += 1;
+        return oversizedContentLengthResponse();
+      }
+      if (url.includes("/repos/acme/widgets/issues")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets/pulls")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets")) return jsonResponse(REPO_PAYLOAD);
+      if (url.includes("api.gittensor.io/miners")) return jsonResponse([]);
+      return jsonResponse(null, 404);
+    };
+
+    const result = await fetchSelfReviewContext("acme/widgets", { fetchImpl: fetchImpl as never });
+    expect(manifestRequests).toBe(4);
+    expect(result.manifest.present).toBe(false);
+    expect(result.manifest.warnings).toEqual([]);
+  });
+
+  it("cancels chunked manifest responses once the byte cap is exceeded", async () => {
+    const chunks = [new Uint8Array(MAX_FOCUS_MANIFEST_BYTES), new Uint8Array([123])];
+    let cancelCount = 0;
+    const fetchImpl = async (url: string) => {
+      if (url.includes("raw.githubusercontent.com")) return chunkedManifestResponse(chunks, () => { cancelCount += 1; });
+      if (url.includes("/repos/acme/widgets/issues")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets/pulls")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets")) return jsonResponse(REPO_PAYLOAD);
+      if (url.includes("api.gittensor.io/miners")) return jsonResponse([]);
+      return jsonResponse(null, 404);
+    };
+
+    const result = await fetchSelfReviewContext("acme/widgets", { fetchImpl: fetchImpl as never });
+    expect(cancelCount).toBe(4);
+    expect(result.manifest.present).toBe(false);
   });
 
   it("stops at the first manifest candidate that resolves, skipping the rest", async () => {

@@ -58,7 +58,7 @@ import {
   setGitHubResponseCache,
   type CachedGitHubResponse,
 } from "../../src/github/client";
-import { GITTENSORY_CONTEXT_CHECK_NAME, GITTENSORY_GATE_CHECK_NAME, GITTENSORY_LEGACY_GATE_CHECK_NAME } from "../../src/review/check-names";
+import { GITTENSORY_LEGACY_GATE_CHECK_NAME, LOOPOVER_CONTEXT_CHECK_NAME, LOOPOVER_GATE_CHECK_NAME } from "../../src/review/check-names";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
@@ -562,9 +562,9 @@ describe("GitHub backfill", () => {
               { name: "test", status: "completed", conclusion: "success" },
               // BOTH bot-posted checks, still in_progress (posted but not yet concluded). Counting EITHER would
               // defer the very review that concludes it — the self-deadlock that froze green-CI PRs as "CI pending".
-              { name: "Gittensory Orb Review Agent", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
+              { name: "LoopOver Orb Review Agent", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
               { name: "Gittensory Gate", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
-              { name: "Gittensory Context", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
+              { name: "LoopOver Context", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
             ],
           });
         }
@@ -573,7 +573,7 @@ describe("GitHub backfill", () => {
       });
 
       // Both bot checks are excluded from the CI wait even if listed among the required contexts.
-      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/metagraphed", "headsha", "public-token", new Set(["test", "Gittensory Orb Review Agent", "Gittensory Gate", "Gittensory Context"]));
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/metagraphed", "headsha", "public-token", new Set(["test", "LoopOver Orb Review Agent", "Gittensory Gate", "LoopOver Context"]));
 
       expect(aggregate.ciState).toBe("passed"); // would be "pending" if either in_progress bot check were counted
       expect(aggregate.failingDetails).toEqual([]);
@@ -587,7 +587,7 @@ describe("GitHub backfill", () => {
           return Response.json({
             check_runs: [
               { name: "test", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
-              { name: "Gittensory Orb Review Agent", status: "completed", conclusion: "failure", output: { title: "External gate failed" }, app: { slug: "external-ci" } },
+              { name: "LoopOver Orb Review Agent", status: "completed", conclusion: "failure", output: { title: "External gate failed" }, app: { slug: "external-ci" } },
             ],
           });
         }
@@ -595,10 +595,10 @@ describe("GitHub backfill", () => {
         return new Response("not found", { status: 404 });
       });
 
-      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", new Set(["test", "Gittensory Orb Review Agent"]));
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", new Set(["test", "LoopOver Orb Review Agent"]));
 
       expect(aggregate.ciState).toBe("failed");
-      expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "Gittensory Orb Review Agent", summary: "External gate failed" })]);
+      expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "LoopOver Orb Review Agent", summary: "External gate failed" })]);
     });
 
     it("does not skip a same-slug bot-owned-named check-run when GITHUB_APP_SLUG is unset (no self-hoster crash)", async () => {
@@ -610,17 +610,17 @@ describe("GitHub backfill", () => {
         const url = input.toString();
         if (url.includes("/check-runs?")) {
           return Response.json({
-            check_runs: [{ name: "Gittensory Orb Review Agent", status: "completed", conclusion: "failure", output: { title: "Real gate failure" }, app: { slug: "gittensory" } }],
+            check_runs: [{ name: "LoopOver Orb Review Agent", status: "completed", conclusion: "failure", output: { title: "Real gate failure" }, app: { slug: "gittensory" } }],
           });
         }
         if (url.includes("/status?")) return Response.json({ statuses: [] });
         return new Response("not found", { status: 404 });
       });
 
-      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", new Set(["Gittensory Orb Review Agent"]));
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", new Set(["LoopOver Orb Review Agent"]));
 
       expect(aggregate.ciState).toBe("failed");
-      expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "Gittensory Orb Review Agent", summary: "Real gate failure" })]);
+      expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "LoopOver Orb Review Agent", summary: "Real gate failure" })]);
     });
 
     it("does not ignore classic statuses named like the Gate", async () => {
@@ -628,14 +628,14 @@ describe("GitHub backfill", () => {
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         const url = input.toString();
         if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "test", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
-        if (url.includes("/status?")) return Response.json({ statuses: [{ context: "Gittensory Orb Review Agent", state: "failure", description: "External status failed" }] });
+        if (url.includes("/status?")) return Response.json({ statuses: [{ context: "LoopOver Orb Review Agent", state: "failure", description: "External status failed" }] });
         return new Response("not found", { status: 404 });
       });
 
       const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
 
       expect(aggregate.ciState).toBe("failed");
-      expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "Gittensory Orb Review Agent", summary: "External status failed" })]);
+      expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "LoopOver Orb Review Agent", summary: "External status failed" })]);
     });
 
     it("treats a required context that never ran (absent from results) as pending, not passed", async () => {
@@ -675,7 +675,7 @@ describe("GitHub backfill", () => {
           return Response.json({
             check_runs: [
               { name: "validate", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
-              { name: "Gittensory Orb Review Agent", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
+              { name: "LoopOver Orb Review Agent", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
             ],
           });
         }
@@ -683,9 +683,9 @@ describe("GitHub backfill", () => {
         return new Response("not found", { status: 404 });
       });
 
-      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "sha", "tok", new Set(["validate", "Gittensory Orb Review Agent"]));
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "sha", "tok", new Set(["validate", "LoopOver Orb Review Agent"]));
 
-      // "Gittensory Orb Review Agent" is a bot check: present in results (so not absent), excluded from gate logic → passed
+      // "LoopOver Orb Review Agent" is a bot check: present in results (so not absent), excluded from gate logic → passed
       expect(aggregate.ciState).toBe("passed");
     });
 
@@ -1076,9 +1076,9 @@ describe("GitHub backfill", () => {
 
         const requiredContexts = mergeRequiredCiContexts(null, [
           "build",
-          GITTENSORY_GATE_CHECK_NAME,
+          LOOPOVER_GATE_CHECK_NAME,
           GITTENSORY_LEGACY_GATE_CHECK_NAME,
-          GITTENSORY_CONTEXT_CHECK_NAME,
+          LOOPOVER_CONTEXT_CHECK_NAME,
         ]);
         const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", requiredContexts);
 

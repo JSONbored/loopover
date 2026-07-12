@@ -606,7 +606,7 @@ describe("queue processors", () => {
       }
       if (url.includes("/check-runs") && method === "POST") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string; output?: { title?: string } };
-        expect(body).toMatchObject({ status: "in_progress", output: { title: "Gittensory Orb Review Agent is evaluating" } });
+        expect(body).toMatchObject({ status: "in_progress", output: { title: "LoopOver Orb Review Agent is evaluating" } });
         expect(body.conclusion).toBeUndefined();
         calls.gateChecks += 1;
         return Response.json({ id: 910 }, { status: 201 });
@@ -614,7 +614,7 @@ describe("queue processors", () => {
       if (url.includes("/check-runs/910") && method === "PATCH") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string; output?: { title?: string } };
         // The bot author is gated normally now (no confirmation gate); linked-issue block + no issue → failure (#gate-nonconfirmed).
-        expect(body).toMatchObject({ status: "completed", conclusion: "failure", output: { title: "Gittensory Orb Review Agent: No linked issue detected" } });
+        expect(body).toMatchObject({ status: "completed", conclusion: "failure", output: { title: "LoopOver Orb Review Agent: No linked issue detected" } });
         calls.gateChecks += 1;
         return Response.json({ id: 910 });
       }
@@ -677,7 +677,7 @@ describe("queue processors", () => {
       }
       if (url.includes("/check-runs") && method === "POST") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string; output?: { title?: string } };
-        expect(body).toMatchObject({ status: "in_progress", output: { title: "Gittensory Orb Review Agent is evaluating" } });
+        expect(body).toMatchObject({ status: "in_progress", output: { title: "LoopOver Orb Review Agent is evaluating" } });
         expect(body.conclusion).toBeUndefined();
         calls.gateChecks += 1;
         return Response.json({ id: 930 }, { status: 201 });
@@ -687,7 +687,7 @@ describe("queue processors", () => {
         expect(body).toMatchObject({
           status: "completed",
           conclusion: "failure",
-          output: { title: "Gittensory Orb Review Agent: No linked issue detected" },
+          output: { title: "LoopOver Orb Review Agent: No linked issue detected" },
         });
         calls.gateChecks += 1;
         return Response.json({ id: 930 });
@@ -854,7 +854,7 @@ describe("queue processors", () => {
       }
       if (url.includes("/check-runs") && method === "POST") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string; output?: { title?: string } };
-        expect(body).toMatchObject({ status: "in_progress", output: { title: "Gittensory Orb Review Agent is evaluating" } });
+        expect(body).toMatchObject({ status: "in_progress", output: { title: "LoopOver Orb Review Agent is evaluating" } });
         expect(body.conclusion).toBeUndefined();
         calls.gateChecks += 1;
         return Response.json({ id: 920 }, { status: 201 });
@@ -862,7 +862,7 @@ describe("queue processors", () => {
       if (url.includes("/check-runs/920") && method === "PATCH") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string; output?: { title?: string } };
         // The unconfirmed miner is gated normally now; linked-issue block + no issue → failure (#gate-nonconfirmed).
-        expect(body).toMatchObject({ status: "completed", conclusion: "failure", output: { title: "Gittensory Orb Review Agent: No linked issue detected" } });
+        expect(body).toMatchObject({ status: "completed", conclusion: "failure", output: { title: "LoopOver Orb Review Agent: No linked issue detected" } });
         calls.gateChecks += 1;
         return Response.json({ id: 920 });
       }
@@ -1026,7 +1026,7 @@ describe("queue processors", () => {
     expect(calls.minerList).toBe(1);
     expect(calls.gateChecks).toBe(2);
     expect(gatePatchBody.conclusion).toBe("failure");
-    expect(gatePatchBody.output?.title).toBe("Gittensory Orb Review Agent: No linked issue detected");
+    expect(gatePatchBody.output?.title).toBe("LoopOver Orb Review Agent: No linked issue detected");
   });
 
   it("hard-blocks a confirmed contributor on a dual-model AI consensus defect when aiReview: block is opted in", async () => {
@@ -1187,7 +1187,7 @@ describe("queue processors", () => {
     const finalize = patchBodies[1];
     expect(finalize?.status).toBe("completed");
     expect(finalize?.conclusion).toBe("neutral");
-    expect(finalize?.output?.title).toBe("Gittensory Orb Review Agent — could not finish evaluating");
+    expect(finalize?.output?.title).toBe("LoopOver Orb Review Agent — could not finish evaluating");
     const audit = await env.DB.prepare("select outcome from audit_events where event_type = ? and target_key = ?")
       .bind("github_app.gate_check_failed_nonfatal", "JSONbored/gittensory#80")
       .first<{ outcome: string }>();
@@ -1636,7 +1636,7 @@ describe("queue processors", () => {
       if (url.includes("/commits/closed123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
       if (url.includes("/check-runs") && method === "POST") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { name?: string; status?: string; conclusion?: string; output?: { title?: string } };
-        expect(body).toMatchObject({ name: "Gittensory Orb Review Agent", status: "completed", conclusion: "skipped", output: { title: "Gittensory Orb Review Agent skipped" } });
+        expect(body).toMatchObject({ name: "LoopOver Orb Review Agent", status: "completed", conclusion: "skipped", output: { title: "LoopOver Orb Review Agent skipped" } });
         calls.gateWrites += 1;
         return Response.json({ id: 901 }, { status: 201 });
       }
@@ -1753,7 +1753,7 @@ describe("queue processors", () => {
     const checkedPanel = [
       "<!-- gittensory-pr-panel:v1 -->",
       "",
-      "- [x] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review",
+      "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review",
     ].join("\n");
     const calls = { token: 0, permission: 0, minerList: 0, commentGets: 0, commentPatches: 0, checkRuns: 0 };
     let patchedBody = "";
@@ -1818,7 +1818,7 @@ describe("queue processors", () => {
     expect(calls).toEqual({ token: 1, permission: 1, minerList: 1, commentGets: 2, commentPatches: 2, checkRuns: 0 });
     expect(patchedBody).toContain("<!-- gittensory-pr-panel:v1 -->");
     expect(patchedBody).toContain("Readiness score:");
-    expect(patchedBody).toContain("- [ ] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review");
+    expect(patchedBody).toContain("- [ ] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review");
     expect(patchedBody).not.toContain("- [x] <!-- gittensory-rerun-review:v1 -->");
     const audit = await env.DB.prepare("select event_type, actor, target_key, outcome from audit_events where event_type = ?")
       .bind("github_app.pr_panel_retriggered")
@@ -1861,7 +1861,7 @@ describe("queue processors", () => {
     const checkedPanel = [
       "<!-- gittensory-pr-panel:v1 -->",
       "",
-      "- [x] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review",
+      "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review",
     ].join("\n");
     env.SELFHOST_TRANSIENT_CACHE = {
       get: async () => {
@@ -1947,7 +1947,7 @@ describe("queue processors", () => {
       labels: [],
       body: "Validation: npm test",
     });
-    const checkedPanel = ["<!-- gittensory-pr-panel:v1 -->", "", "- [x] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review"].join("\n");
+    const checkedPanel = ["<!-- gittensory-pr-panel:v1 -->", "", "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review"].join("\n");
     const calls = { pullsFiles: 0 };
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -2020,7 +2020,7 @@ describe("queue processors", () => {
       labels: [],
       body: "Validation: npm test",
     });
-    const checkedPanel = ["<!-- gittensory-pr-panel:v1 -->", "", "- [x] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review"].join("\n");
+    const checkedPanel = ["<!-- gittensory-pr-panel:v1 -->", "", "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review"].join("\n");
     const calls = { minerList: 0, permission: 0, commentPatches: 0 };
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -2089,7 +2089,7 @@ describe("queue processors", () => {
     const checkedPanel = [
       "<!-- gittensory-pr-panel:v1 -->",
       "",
-      "- [x] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review",
+      "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review",
     ].join("\n");
     const calls = { token: 0, permission: 0, commentGets: 0, commentPatches: 0 };
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -2166,7 +2166,7 @@ describe("queue processors", () => {
     const checkedPanel = [
       "<!-- gittensory-pr-panel:v1 -->",
       "",
-      "- [x] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review",
+      "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review",
     ].join("\n");
     const calls = { token: 0, permission: 0, minerList: 0, commentGets: 0, commentPatches: 0 };
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -2233,7 +2233,7 @@ describe("queue processors", () => {
     const checkedPanel = [
       "<!-- gittensory-pr-panel:v1 -->",
       "",
-      "- [x] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review",
+      "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review",
     ].join("\n");
     vi.stubGlobal("fetch", async () => new Response("unexpected fetch", { status: 500 }));
 
@@ -2265,7 +2265,7 @@ describe("queue processors", () => {
     const checkedPanel = [
       "<!-- gittensory-pr-panel:v1 -->",
       "",
-      "- [x] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review",
+      "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review",
     ].join("\n");
     const uncheckedPanel = checkedPanel.replace("- [x]", "- [ ]");
     let fetchCalls = 0;
@@ -2326,7 +2326,7 @@ describe("queue processors", () => {
       payload: {
         action: "edited",
         ...basePayload,
-        comment: { id: 806, body: "- [x] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review", user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 806, body: "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review", user: { login: "gittensory[bot]", type: "Bot" } },
         sender: { login: "maintainer", type: "User" },
       },
     });
@@ -2337,7 +2337,7 @@ describe("queue processors", () => {
       payload: {
         action: "edited",
         ...basePayload,
-        comment: { id: 807, body: "<!-- gittensory-pr-panel:v1 -->\n\n- [x] Re-run Gittensory review", user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 807, body: "<!-- gittensory-pr-panel:v1 -->\n\n- [x] Re-run LoopOver review", user: { login: "gittensory[bot]", type: "Bot" } },
         sender: { login: "maintainer", type: "User" },
       },
     });

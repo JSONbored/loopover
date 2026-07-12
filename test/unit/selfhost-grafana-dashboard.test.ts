@@ -536,9 +536,10 @@ describe("github-prs.json: $scope is dynamic, never a hardcoded repo list (2026-
     expect(scope?.datasource?.type).toBe("frser-sqlite-datasource");
     expect(scope?.query?.rawQueryText).toContain("review_targets");
     expect(scope?.query?.rawQueryText).not.toContain("JSONbored");
+    expect(scope?.query?.rawQueryText).not.toContain("org:");
   });
 
-  (sqliteCliAvailable ? it : it.skip)("builds 'All repos' as org:<owner> of the first tracked repo, plus one repo: option per distinct tracked repo", () => {
+  (sqliteCliAvailable ? it : it.skip)("builds only explicit repo-scoped options and never an org-wide All repos value", () => {
     const root = tmpRoot();
     const db = join(root, "reporting.sqlite");
     sqlite(
@@ -553,6 +554,8 @@ describe("github-prs.json: $scope is dynamic, never a hardcoded repo list (2026-
     if (!rawQueryText) throw new Error("missing $scope rawQueryText");
     const rows = sqlite(db, rawQueryText).split("\n");
 
-    expect(rows).toEqual(["0|All repos|org:acme", "1|acme/gadgets|repo:acme/gadgets", "1|acme/widgets|repo:acme/widgets"]);
+    expect(rows).toEqual(["1|acme/gadgets|repo:acme/gadgets", "1|acme/widgets|repo:acme/widgets"]);
+    expect(rows.join("\n")).not.toContain("org:acme");
+    expect(rows.join("\n")).not.toContain("All repos");
   });
 });

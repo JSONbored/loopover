@@ -1,4 +1,4 @@
-import { buildCollisionReport, parseFocusManifestContent } from "@jsonbored/gittensory-engine";
+import { buildCollisionReport, MAX_FOCUS_MANIFEST_BYTES, parseFocusManifestContent } from "@jsonbored/gittensory-engine";
 
 // Real SelfReviewContext fetcher (#5145, Wave 3.5). Builds the context object the miner's self-review pass
 // (packages/gittensory-engine/src/miner/self-review-adapter.ts) needs, at the SAME fidelity the live gate's
@@ -210,15 +210,49 @@ async function fetchOpenPullRequestRecords(target, resolved) {
   return payloads.map((pr) => toPullRequestRecord(`${target.owner}/${target.repo}`, pr));
 }
 
-// Mirrors src/signals/focus-manifest-loader.ts's fetchRepoFocusManifestFile exactly: unauthenticated GET
-// against raw.githubusercontent.com, first candidate path that resolves wins.
+// Mirrors src/signals/focus-manifest-loader.ts's raw-content lookup order and bounded body read:
+// first candidate path that resolves wins, but hostile manifests never exceed the parser byte cap in memory.
+async function readBoundedManifestResponseText(response) {
+  const contentLength = response.headers?.get?.("content-length") ?? null;
+  if (contentLength !== null) {
+    const parsedLength = Number.parseInt(contentLength, 10);
+    if (Number.isFinite(parsedLength) && parsedLength > MAX_FOCUS_MANIFEST_BYTES) return null;
+  }
+  if (!response.body?.getReader) {
+    const text = await response.text();
+    if (typeof text !== "string") return null;
+    return new TextEncoder().encode(text).byteLength > MAX_FOCUS_MANIFEST_BYTES ? null : text;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_FOCUS_MANIFEST_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 async function fetchManifestContent(target, resolved) {
   for (const path of MANIFEST_FILE_CANDIDATES) {
     const url = `${resolved.rawContentBaseUrl}/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/HEAD/${path}`;
     try {
       const response = await resolved.fetchImpl(url, { method: "GET", headers: { accept: "application/json", "user-agent": "gittensory-miner" } });
       if (response.ok) {
-        const text = await response.text();
+        const text = await readBoundedManifestResponseText(response);
         if (typeof text === "string") return text;
       }
     } catch {

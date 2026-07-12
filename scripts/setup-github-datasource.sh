@@ -20,10 +20,22 @@
 set -euo pipefail
 
 GRAFANA_URL="${GRAFANA_URL:-http://localhost:3000}"
-[ -f .env ] && { set -a; . ./.env; set +a; }
+[ -f .env ] && . ./.env
 : "${GITHUB_TOKEN:?Set GITHUB_TOKEN (a read-only fine-grained PAT) in the environment or .env}"
 : "${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in the environment or .env}"
-AUTH="admin:${GRAFANA_ADMIN_PASSWORD}"
+
+TMP_DIR="$(mktemp -d)"
+NETRC_FILE="$TMP_DIR/netrc"
+trap 'rm -rf "$TMP_DIR"' EXIT
+GRAFANA_HOSTPORT="${GRAFANA_URL#*://}"
+GRAFANA_HOSTPORT="${GRAFANA_HOSTPORT%%/*}"
+GRAFANA_HOST="${GRAFANA_HOSTPORT%%:*}"
+printf 'machine %s login %s password %s\n' "$GRAFANA_HOST" admin "$GRAFANA_ADMIN_PASSWORD" >"$NETRC_FILE"
+chmod 600 "$NETRC_FILE"
+
+grafana_curl() {
+  env -u GRAFANA_ADMIN_PASSWORD -u GITHUB_TOKEN curl -sf --netrc-file "$NETRC_FILE" "$@"
+}
 
 payload() {
   cat <<JSON
@@ -34,16 +46,16 @@ JSON
 }
 
 # Idempotent: update in place if a datasource with uid "github" already exists, else create it.
-if curl -sf -u "$AUTH" "$GRAFANA_URL/api/datasources/uid/github" >/dev/null 2>&1; then
+if grafana_curl "$GRAFANA_URL/api/datasources/uid/github" >/dev/null 2>&1; then
   echo "Updating existing GitHub data source…"
-  curl -sf -u "$AUTH" -H 'content-type: application/json' -X PUT \
-    "$GRAFANA_URL/api/datasources/uid/github" -d "$(payload)" >/dev/null
+  payload | grafana_curl -H 'content-type: application/json' -X PUT \
+    "$GRAFANA_URL/api/datasources/uid/github" --data-binary @- >/dev/null
 else
   echo "Creating GitHub data source…"
-  curl -sf -u "$AUTH" -H 'content-type: application/json' -X POST \
-    "$GRAFANA_URL/api/datasources" -d "$(payload)" >/dev/null
+  payload | grafana_curl -H 'content-type: application/json' -X POST \
+    "$GRAFANA_URL/api/datasources" --data-binary @- >/dev/null
 fi
 
 echo "Done. Verifying health…"
-curl -sf -u "$AUTH" -X POST "$GRAFANA_URL/api/datasources/uid/github/health" 2>/dev/null \
+grafana_curl -X POST "$GRAFANA_URL/api/datasources/uid/github/health" 2>/dev/null \
   | grep -q '"status":"OK"' && echo "✓ GitHub data source healthy" || echo "⚠ Added, but health check did not return OK — verify the token scopes."

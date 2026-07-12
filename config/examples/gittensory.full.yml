@@ -311,7 +311,9 @@ gate:
   # stricter verdict for AI-review blocker mode. It does not disable downstream
   # merge/close planning for failures from already-enforced gates. Bool.
   # Default: false. Config-as-code only — no DB column or dashboard toggle;
-  # this can only be set here.
+  # this can only be set here. Unrelated to settings.agentDryRun below despite
+  # the shared "dry run" name -- this only affects the check-run's display
+  # conclusion; it does NOT stop the agent action layer from real writes.
   dryRun: false
 
   # First-time-contributor grace. RESERVED / currently INERT: this value is
@@ -703,6 +705,7 @@ settings:
 
   # Dry-run / shadow mode: suppresses the terminal GitHub-side write only. AI/LLM review calls still
   # execute and still incur their normal provider cost -- this is NOT a cost-free preview.
+  # Independent of gate.dryRun above -- the two "dry run" fields gate entirely disjoint layers.
   # Bool. Default: false.
   agentDryRun: false
 

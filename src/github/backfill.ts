@@ -1193,7 +1193,12 @@ async function refreshInstallationHealthRecords(env: Env, installations: Install
     const installedRepos = repositories.filter((repo) => repo.installationId === currentInstallation.id && repo.isInstalled);
     const registeredInstalled = installedRepos.filter((repo) => repo.isRegistered);
     const installedSettings = await Promise.all(installedRepos.map((repo) => resolveRepositorySettings(env, repo.fullName)));
-    const requiresChecks = installedSettings.some((settings) => settings.checkRunMode === "enabled");
+    // #5355: also require Checks: write when the review-agent check-run (reviewCheckMode) publishes, not
+    // just when the separate context check (checkRunMode) is enabled -- buildInstallationRepairDiagnostics
+    // above already ORs both (checkRunRepoCount / gateCheckRepoCount); this persisted health record was
+    // missing the second arm, so an installation with only reviewCheckMode set never got flagged for the
+    // Checks permission it actually needs.
+    const requiresChecks = installedSettings.some((settings) => settings.checkRunMode === "enabled" || shouldPublishReviewCheck(settings.reviewCheckMode));
     const requiresPrWrite = installedSettings.some((settings) => agentRequiresPrWrite(settings.autonomy));
     const requiresContentsWrite = installedSettings.some((settings) => agentRequiresContentsWrite(settings.autonomy));
     const requiredPermissions = {

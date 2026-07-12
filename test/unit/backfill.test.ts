@@ -1020,6 +1020,55 @@ describe("GitHub backfill", () => {
     );
   });
 
+  it("REGRESSION (#5355): requires Checks write for a repo with only reviewCheckMode (the Orb Review Agent check) set, not checkRunMode", async () => {
+    // Before the fix, requiresChecks only looked at checkRunMode ("Gittensory Context" check) and missed
+    // the separate reviewCheckMode axis ("Gittensory Orb Review Agent" check) entirely -- so an installation
+    // whose repos only ever published the review-agent check (true for JSONbored's own 3 production repos,
+    // none of which set checkRunMode) was never flagged as needing the Checks permission.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedRegisteredRepo(env);
+    await upsertInstallation(env, {
+      installation: {
+        id: 123,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+        events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+      },
+    });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      reviewCheckMode: "required", // checkRunMode left at its default ("off")
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/app/installations/123")) {
+        return Response.json({
+          id: 123,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          repository_selection: "selected",
+          permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+          events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshInstallationHealth(env);
+
+    expect(refreshed.installations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          installationId: 123,
+          status: "needs_attention", // was falsely "healthy" before the fix
+          missingPermissions: ["checks"],
+          requiredPermissions: expect.objectContaining({ checks: "write" }),
+        }),
+      ]),
+    );
+  });
+
   it("REGRESSION (#audit-install-health): an acting autonomy requires pull_requests:write, so read-only is needs_attention not healthy", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedRegisteredRepo(env);

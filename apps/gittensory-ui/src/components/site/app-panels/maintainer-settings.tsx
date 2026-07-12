@@ -422,6 +422,7 @@ export function MaintainerSettings({ reviewability }: { reviewability: Array<{ p
             <div className="mt-2 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <ToggleControl
                 label="Auto-label PRs"
+                hint="Only the base context label below — type labels have their own toggle"
                 value={settings.autoLabelEnabled}
                 onChange={(v) => setField("autoLabelEnabled", v)}
               />

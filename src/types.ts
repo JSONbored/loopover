@@ -909,6 +909,10 @@ export type RepositorySettings = {
    *  PRs are exempt from auto-close (merge or manual-hold only). Per-repo configurable so maintainers choose
    *  rather than inheriting a hardwired opinion. */
   closeOwnerAuthors: boolean;
+  /** #label-decoupling: gates ONLY the base {@link gittensorLabel} context label (`shouldApplyPrLabel`/
+   *  `willLabel` in `signals/settings-preview.ts`) -- zero effect on TYPE/taxonomy labels
+   *  ({@link typeLabelsEnabled}), moderation/blacklist labels, or review-state labels. Four independent
+   *  label families exist; none of them gates or silently disables another. */
   autoLabelEnabled: boolean;
   gittensorLabel: string;
   createMissingLabel: boolean;

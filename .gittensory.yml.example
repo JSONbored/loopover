@@ -48,24 +48,21 @@
 # ----------------------------------------------------------------------------
 # 1. FOCUS / GUARDRAILS (focus manifest)
 # ----------------------------------------------------------------------------
-# Declares the repo's work areas and off-limits paths. wantedPaths/blockedPaths feed advisory-only
-# guidance findings; testExpectations/linkedIssuePolicy feed manifest_missing_tests and
-# manifest_linked_issue_required, which — when `gate.manifestPolicy: block` is set below — can become
-# enforceable blockers. Hard path HOLDS are a separate mechanism: settings.hardGuardrailGlobs, below.
+# Declares the repo's work areas. wantedPaths feeds advisory-only guidance findings;
+# testExpectations/linkedIssuePolicy feed manifest_missing_tests and manifest_linked_issue_required,
+# which — when `gate.manifestPolicy: block` is set below — can become enforceable blockers. Hard path
+# HOLDS are a separate mechanism: settings.hardGuardrailGlobs, below.
 
 # Work areas the maintainer wants. PRs touching these are preferred/encouraged.
 # Glob list. Default: [] (no preference).
 wantedPaths:
   - "src/**"
 
-# Paths off-limits to contributors — CONTRIBUTOR-FACING GUIDANCE ONLY. Touching one surfaces in
-# onboarding guidance and gittensory's own risk-reason commentary; it never blocks, holds, or produces
-# a gate finding, even under gate.manifestPolicy: block. The only mechanism that actually holds a PR
-# for a touched path is settings.hardGuardrailGlobs, below.
-# Glob list. Default: [] (nothing listed).
-blockedPaths:
-  - "vendor/**"
-  - ".github/workflows/**"
+# blockedPaths is LEGACY and fully retired (#2974, 2026-07-04): the FocusManifest parser no longer
+# reads this key at all, it produces zero findings, and it is not enforceable under any
+# gate.manifestPolicy mode. A key left over from an older config has no runtime effect other than a
+# migration warning from `npm run selfhost:config-lint`. Use settings.hardGuardrailGlobs below for
+# real, enforceable path-based holds.
 
 # Labels the maintainer prefers on incoming PRs; a missing preferred label is
 # surfaced (never blocks). String list. Default: [].
@@ -269,8 +266,8 @@ gate:
   mergeReadiness: off
 
   # Manifest-policy gate. When `block`, this repo's declared policy from
-  # section 1 (blockedPaths, required linked issue, testExpectations) becomes
-  # an enforceable blocker. Independent of mergeReadiness.
+  # section 1 (required linked issue, testExpectations) becomes an
+  # enforceable blocker. Independent of mergeReadiness.
   # off | advisory | block. Default: off.
   manifestPolicy: off
 

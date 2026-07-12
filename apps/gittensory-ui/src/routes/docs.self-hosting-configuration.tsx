@@ -605,15 +605,13 @@ features:
       </p>
       <p>
         <code>blockedPaths</code> (top-level, alongside <code>wantedPaths</code>) is{" "}
-        <strong>contributor-facing guidance only</strong> — it never blocks, holds, or produces a
-        gate finding. A touched path surfaces in contributor onboarding guidance and in
-        gittensory&apos;s own risk-reason commentary, but the gate itself never enforces it.{" "}
+        <strong>fully retired</strong> (#2974) — the FocusManifest parser no longer reads this key at
+        all, it produces zero findings, and it is not enforceable under any{" "}
+        <code>gate.manifestPolicy</code> mode. Setting it in a config produces only a migration
+        warning from <code>npm run selfhost:config-lint</code>, nothing else.{" "}
         <strong>The only mechanism that actually holds a PR for a touched path</strong> is{" "}
         <code>settings.hardGuardrailGlobs</code> (config-as-code only, described above) — a
-        would-merge PR that touches a configured guardrail glob is held for manual review regardless
-        of <code>blockedPaths</code>. A legacy top-level <code>blockedPaths</code> that once acted
-        as an enforcement mechanism is retired; setting it produces a migration warning pointing at{" "}
-        <code>settings.hardGuardrailGlobs</code>. Default <code>[]</code> (nothing listed).
+        would-merge PR that touches a configured guardrail glob is held for manual review.
       </p>
 
       <h3>settings anti-abuse block</h3>

@@ -3524,9 +3524,10 @@ describe("queue processors", () => {
   });
 
   // #4607 (maybeApplyManifestPolicyGate extraction): buildFocusManifestGuidance can produce findings whose
-  // code is NOT one of the three enforceable manifest-policy codes (manifest_blocked_path /
-  // manifest_linked_issue_required / manifest_missing_tests) -- e.g. manifest_off_focus, when wantedPaths is
-  // configured and no changed path matches it. Those non-enforceable findings must be filtered out before
+  // code is NOT one of the two enforceable manifest-policy codes (manifest_linked_issue_required /
+  // manifest_missing_tests -- manifest_blocked_path was retired #2974/removed from this Set #5294) -- e.g.
+  // manifest_off_focus, when wantedPaths is configured and no changed path matches it. Those non-enforceable
+  // findings must be filtered out before
   // ever reaching the advisory/gate, never published alongside an enforceable one from the same pass.
   it("filters out a non-enforceable manifest finding (manifest_off_focus) while still surfacing an enforceable one", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });

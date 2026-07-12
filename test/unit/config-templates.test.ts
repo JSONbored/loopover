@@ -9,6 +9,7 @@ import {
   resolveReviewPromptOverrides,
   reviewConfigToJson,
 } from "../../src/signals/focus-manifest";
+import { lintManifestText } from "../../src/selfhost/config-lint";
 
 // #1682: self-host operators need discoverable, copy-paste templates under config/examples/ that
 // parse cleanly, stay in sync with the canonical root files, and keep the minimal starter safe.
@@ -49,6 +50,18 @@ describe("config/examples review templates (#1682)", () => {
     expect(manifest.present).toBe(true);
     expect(manifest.gate.sizeMode).toBe("off");
     expect(manifest.features.rag).toBeNull();
+  });
+
+  // #5294 (drift-audit roadmap #5270): parseFocusManifestContent above is the LENIENT parser (never
+  // warns on an unrecognized/retired top-level field by design) -- it structurally cannot catch a
+  // retired field like the old `blockedPaths` example creeping back into these shipped templates.
+  // lintManifestText is the ONLY function with the retired-field check (config-lint.ts's
+  // RETIRED_FIELD_MIGRATION_WARNINGS); assert it separately so a retired field reintroduced here fails
+  // CI instead of only being caught by eye.
+  it("lints gittensory.full.yml with zero warnings, including no retired top-level fields", () => {
+    const result = lintManifestText(readConfigExample("gittensory.full.yml"));
+    expect(result.warnings).toEqual([]);
+    expect(result.ok).toBe(true);
   });
 
   it("documents every shipped review.auto_review eligibility knob in gittensory.full.yml (#2055)", () => {

@@ -33,7 +33,10 @@ describe("gittensory-miner package skeleton (#2287)", () => {
     expect(miner.name).toBe("@jsonbored/gittensory-miner");
     expect(miner.license).toBe("AGPL-3.0-only");
     expect(miner.type).toBe("module");
-    expect(miner.bin).toEqual({ "gittensory-miner": "bin/gittensory-miner.js" });
+    expect(miner.bin).toEqual({
+      "gittensory-miner": "bin/gittensory-miner.js",
+      "gittensory-miner-mcp": "bin/gittensory-miner-mcp.js",
+    });
     expect(miner.publishConfig).toEqual(mcp.publishConfig);
     expect(miner.dependencies["@jsonbored/gittensory-engine"]).toBeDefined();
     expect(miner.engines.node).toMatch(/^>=22(?:\.\d+){0,2}$/);

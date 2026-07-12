@@ -123,6 +123,19 @@ gittensory-miner manage status [--json]
 gittensory-miner manage poll <owner/repo> <pr#> [--branch <name>] [--json]
 ```
 
+## MCP server
+
+The package ships a second bin entry, `gittensory-miner-mcp`, a minimal [Model Context Protocol](https://modelcontextprotocol.io) stdio server that any MCP-compatible client can connect to:
+
+```sh
+gittensory-miner-mcp
+```
+
+It currently exposes a single tool, `gittensory_miner_ping` — a health check that returns a static
+`{ "status": "ok", "tool": "gittensory_miner_ping" }` object, reads no AMS state, and takes no arguments. This is a
+scaffold (#5153): real AMS-state-reading tools (status/doctor diagnostics, portfolio dashboard, claim-ledger
+listing) land as follow-up PRs on top of it.
+
 ## Version check
 
 On every invocation the CLI starts an async npm registry lookup (5s timeout). When the installed package is behind `@jsonbored/gittensory-miner@latest`, it prints a one-line upgrade command to stderr without blocking or failing the requested command. Set `GITTENSORY_NPM_REGISTRY_URL` to point at a mirror, same as `@jsonbored/gittensory-mcp`.

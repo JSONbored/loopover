@@ -15,10 +15,20 @@ function parseRankedCandidatesJson(text) {
   return parsed;
 }
 
+// #5343 dropped the discoveryIndexUrl UI field and stopped reading/writing it, but chrome.storage.sync.set
+// only merges keys -- it never deletes ones an earlier extension version already synced. Without an active
+// purge, a value synced before #5343 stays in the user's account indefinitely. Called from refreshSettings,
+// which runs on every options-page load and again at the end of every save, so it's cleared promptly
+// regardless of which path a given user hits first.
+async function removeLegacyDiscoveryIndexUrl() {
+  await chrome.storage.sync.remove("discoveryIndexUrl");
+}
+
 if (globalThis.__GITTENSORY_MINER_EXTENSION_TEST__) {
   globalThis.__gittensoryMinerOptionsInternals = {
     parseWatchedRepos,
     parseRankedCandidatesJson,
+    removeLegacyDiscoveryIndexUrl,
   };
 }
 
@@ -53,6 +63,7 @@ form.addEventListener("submit", async (event) => {
 
 async function refreshSettings() {
   const stored = await chrome.storage.sync.get({ watchedRepos: [] });
+  await removeLegacyDiscoveryIndexUrl();
   const local = await chrome.storage.local.get({ rankedCandidates: [] });
   const repos = Array.isArray(stored.watchedRepos) ? stored.watchedRepos : [];
   watchedRepos.value = repos.join("\n");

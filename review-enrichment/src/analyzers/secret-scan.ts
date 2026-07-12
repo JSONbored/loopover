@@ -1057,14 +1057,48 @@ const KNOWN_FIXTURE_SECRET_VALUES = new Set([
   "unsafe_install_or_secret",
 ]);
 
+// Closed set of grammatical FUNCTION words — articles, negations, prepositions, auxiliary verbs — chosen for
+// having near-zero information content per word. A human-authored placeholder that describes itself in prose
+// (e.g. "present-value-not-a-real-token", "test-value-should-never-appear-in-doctor-output" — both real
+// false-positive literals from gittensory PR #5346/#5341) naturally reaches for these; a deliberately
+// memorable human-CHOSEN passphrase like "correct-horse-battery-secret" is composed of high-entropy CONTENT
+// words (nouns/verbs/adjectives) specifically BECAUSE function words carry little entropy per word, so a
+// diceware-style passphrase essentially never contains one. Their presence is therefore a reliable structural
+// signal for "this is descriptive prose about the value", not "this is someone's chosen secret" — see
+// looksLikeDescriptivePlaceholderPhrase below. (Mirrors src/review/secret-patterns.ts — drift-checked, not
+// imported; see this file's header.)
+const ENGLISH_FUNCTION_WORDS = new Set([
+  "a", "an", "the", "is", "are", "was", "were", "be", "been", "not", "no", "and", "or", "to", "of",
+  "in", "on", "at", "for", "with", "should", "never", "always", "will", "would", "does", "did", "do",
+  "this", "that", "it", "as", "if", "then", "so", "but", "has", "have", "had", "can", "could",
+]);
+
+// A written-prose fixture description needs several words to say something (both PR #5346 literals split into
+// 6 and 8 segments respectively); a memorable diceware-style passphrase conventionally tops out around 4 words
+// for memorability. Requiring 5+ keeps this from colliding with a short, genuinely human-chosen passphrase.
+const MIN_DESCRIPTIVE_PHRASE_SEGMENTS = 5;
+
+/** True when `value` reads as a written sentence fragment (a fixture author's own prose description of the
+ *  value) rather than a credential or a chosen passphrase: split on `-`/`_` into 5+ segments, every segment
+ *  purely lowercase ASCII letters (a real token's mixed case/digits would fail this, correctly leaving it
+ *  flagged), with at least one segment a low-entropy English function word (see ENGLISH_FUNCTION_WORDS). */
+function looksLikeDescriptivePlaceholderPhrase(value: string): boolean {
+  const segments = value.split(/[-_]/);
+  if (segments.length < MIN_DESCRIPTIVE_PHRASE_SEGMENTS) return false;
+  if (!segments.every((segment) => /^[a-z]+$/.test(segment))) return false;
+  return segments.some((segment) => ENGLISH_FUNCTION_WORDS.has(segment));
+}
+
 /** True for an obvious non-secret filler value: a known placeholder phrase, a string built from at most 2
- *  distinct characters, a long monotonic character-code run, a lowercase hyphenated mock fixture name, or a
- *  known fixture/enum literal. */
+ *  distinct characters, a long monotonic character-code run, a lowercase hyphenated mock fixture name, a
+ *  known fixture/enum literal, or a descriptive multi-word prose phrase (see
+ *  looksLikeDescriptivePlaceholderPhrase). */
 function isPlaceholderSecretValue(value: string): boolean {
   if (PLACEHOLDER_VALUE_PATTERN.test(value)) return true;
   if (new Set(value.toLowerCase()).size <= 2) return true;
   if (LOWERCASE_HYPHENATED_MOCK_FIXTURE_PATTERN.test(value)) return true;
   if (KNOWN_FIXTURE_SECRET_VALUES.has(value)) return true;
+  if (looksLikeDescriptivePlaceholderPhrase(value)) return true;
   return hasLongSequentialRun(value);
 }
 

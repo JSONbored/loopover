@@ -214,15 +214,29 @@ describe("scanSubmissionContent", () => {
     expect(finding?.reasonCode).toBe("embedded_secret");
   });
 
-  it("hard-closes on each #2553-parity kind (google_api_key, jwt, generic_secret_assignment)", () => {
+  it("hard-closes on each #2553-parity CONCRETE kind (google_api_key, jwt)", () => {
     // Each must be a HARD_SECRET_KIND so scanSubmissionContent auto-closes, matching the PR-diff gate.
+    // generic_secret_assignment is deliberately excluded here (#5346) — see the dedicated test below.
     const jwt = "eyJhbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
-    for (const line of ["config: AIza" + "SyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456", `bearer ${jwt}`, `client_secret = "${GENERIC_VALUE}"`]) {
+    for (const line of ["config: AIza" + "SyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456", `bearer ${jwt}`]) {
       const finding = scanSubmissionContent({ content: `intro line\n${line}`, category: "skills" });
       expect(finding?.verdict, line).toBe("close");
       expect(finding?.reasonCode, line).toBe("embedded_secret");
       expect(finding?.summary, line).toContain("line 2");
     }
+  });
+
+  // #5346: generic_secret_assignment is a keyword-plus-quoted-value SHAPE heuristic, not a concrete format —
+  // it routes to MANUAL, never scanSubmissionContent's auto-close (this file's own header states the design
+  // principle: only a concrete credential is unambiguous enough to hard-close).
+  it("routes a generic_secret_assignment hit to MANUAL, never close (#5346)", () => {
+    const finding = scanSubmissionContent({
+      content: `intro line\nclient_secret = "${GENERIC_VALUE}"`,
+      category: "skills",
+    });
+    expect(finding?.verdict).toBe("manual");
+    expect(finding?.reasonCode).toBe("possible_secret_assignment");
+    expect(finding?.summary).toContain("line 2");
   });
 
   it("hard-closes on a Voyage or Firecrawl API key (#4604)", () => {
@@ -234,14 +248,15 @@ describe("scanSubmissionContent", () => {
     }
   });
 
-  it("hard-closes on a MULTILINE generic secret assignment whose value wraps to the next line (auto-close parity)", () => {
-    // generic_secret_assignment is the one HARD kind whose keyword-to-value span can wrap. scanForSecrets over the
-    // whole blob catches it; scanSubmissionContent must too, or a wrapped secret bypasses the auto-close gate the
-    // PR-diff gate (whole-blob) would block. Built from separate literals so this file embeds no contiguous secret.
+  it("routes a MULTILINE generic secret assignment whose value wraps to the next line to MANUAL (#5346)", () => {
+    // generic_secret_assignment's keyword-to-value span can wrap. scanForSecrets over the whole blob catches
+    // it; scanSubmissionContent must too, or a wrapped hit bypasses this signal entirely — but it still routes
+    // to MANUAL (never close), matching the single-line case above. Built from separate literals so this file
+    // embeds no contiguous secret.
     const content = `intro line\nclient_secret =\n"${GENERIC_VALUE}"`;
     const finding = scanSubmissionContent({ content, category: "guides" });
-    expect(finding?.verdict).toBe("close");
-    expect(finding?.reasonCode).toBe("embedded_secret");
+    expect(finding?.verdict).toBe("manual");
+    expect(finding?.reasonCode).toBe("possible_secret_assignment");
     expect(finding?.summary).toContain("line 3"); // cited where the wrapped match completes (the value line)
   });
 
@@ -258,6 +273,12 @@ describe("scanLinkedBodiesForSecrets", () => {
     const finding = scanLinkedBodiesForSecrets(["clean body", "leaked AKIA" + "ABCDEFGHIJKLMNOP"]);
     expect(finding?.verdict).toBe("manual");
     expect(finding?.reasonCode).toBe("embedded_secret");
+  });
+
+  it("flags a generic_secret_assignment-only hit in a LINKED body as MANUAL too (#5346)", () => {
+    const finding = scanLinkedBodiesForSecrets(["clean body", `client_secret = "${GENERIC_VALUE}"`]);
+    expect(finding?.verdict).toBe("manual");
+    expect(finding?.reasonCode).toBe("possible_secret_assignment");
   });
 
   it("returns null when no linked body leaks", () => {

@@ -154,6 +154,33 @@ test("scanPatch still flags a generic multi-segment lowercase passphrase that do
   assert.equal(findings[0].kind, "generic_secret_assignment");
 });
 
+// gittensory PR #5346/#5341: two inert test-fixture strings ("present-value-not-a-real-token",
+// "test-value-should-never-appear-in-doctor-output") matched the generic_secret_assignment SHAPE but neither
+// contained a PLACEHOLDER_VALUE_PATTERN keyword, so both auto-closed a legitimate contributor PR twice in a
+// row. looksLikeDescriptivePlaceholderPhrase (mirrors src/review/secret-patterns.ts) recognizes both as
+// written-prose fixture descriptions instead.
+test("scanPatch does NOT flag the two real false-positive fixture values from gittensory PR #5346/#5341 (regression)", () => {
+  const first = scanPatch("src/config.ts", hunk([`const token = "present-value-not-a-real-token";`]));
+  assert.equal(
+    first.some((f) => f.kind === "generic_secret_assignment"),
+    false,
+  );
+  const second = scanPatch(
+    "src/config.ts",
+    hunk([`const secretToken = "test-value-should-never-appear-in-doctor-output";`]),
+  );
+  assert.equal(
+    second.some((f) => f.kind === "generic_secret_assignment"),
+    false,
+  );
+});
+
+test("scanPatch still flags a 5+ all-lowercase-word passphrase with no function word (a genuine diceware-style secret)", () => {
+  const findings = scanPatch("src/config.ts", hunk([`const secret = "correct-horse-battery-staple-secret";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "generic_secret_assignment");
+});
+
 test("scanAddedLinesForSecrets applies the same self-naming-fixture exclusion as scanPatch (#4579-followup)", () => {
   const findings = scanAddedLinesForSecrets([{ file: "src/config.ts", line: 1, text: `const token = "default-session-token";` }]);
   assert.equal(

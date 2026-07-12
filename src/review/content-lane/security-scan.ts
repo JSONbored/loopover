@@ -67,24 +67,34 @@ function firstLineMatching(text: string, re: RegExp): { n: number; text: string 
 }
 
 function firstSecretLine(text: string): { n: number; kinds: string[] } | null {
-  // Per-line scan first — O(n): catches every LINE-CONTAINED hard kind (github_token, jwt, …) and cites its
+  // Per-line scan — O(n): catches every LINE-CONTAINED concrete kind (github_token, jwt, …) and cites its
   // exact line. lines[i] is defined for an in-range index (split never yields holes) — assert past
-  // noUncheckedIndexedAccess.
+  // noUncheckedIndexedAccess. HARD_SECRET_KINDS no longer includes generic_secret_assignment (see
+  // ../secret-patterns.ts's doc comment) — that kind is handled separately by
+  // firstGenericSecretAssignmentLine below and routes to MANUAL, not this function's auto-close caller.
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i += 1) {
     const hits = scanForSecrets(lines[i]!).kinds.filter((k) => HARD_SECRET_KINDS.has(k));
     if (hits.length) return { n: i + 1, kinds: hits };
   }
-  // The only HARD kind whose keyword-to-value span can WRAP across lines is generic_secret_assignment, so the
-  // per-line scan above can miss it (`client_secret =\n"…"`). Recover it with ONE whole-blob pass over just that
-  // detector — LINEAR, not the quadratic prefix-rescan — citing the line where the non-placeholder match
-  // COMPLETES, so scanSubmissionContent's auto-close stays in parity with the whole-blob PR-diff gate.
+  return null;
+}
+
+/**
+ * generic_secret_assignment is a keyword-plus-quoted-value SHAPE heuristic, not a concrete credential format
+ * (see ../secret-patterns.ts's HARD_SECRET_KINDS doc comment — split out post-gittensory-PR-#5346, which
+ * auto-closed a legitimate contributor PR over two inert test-fixture strings). Per this file's own header
+ * ("only ONE signal is unambiguous enough to hard-close... every other heuristic routes to MANUAL"), a hit
+ * here routes to MANUAL, never scanSubmissionContent's auto-close. Its keyword-to-value span can wrap across
+ * lines (`client_secret =\n"…"`), so this is a single whole-blob pass — LINEAR, not a quadratic prefix-rescan
+ * — citing the line where the non-placeholder match COMPLETES.
+ */
+function firstGenericSecretAssignmentLine(text: string): number | null {
   GENERIC_SECRET_ASSIGNMENT_PATTERN.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = GENERIC_SECRET_ASSIGNMENT_PATTERN.exec(text)) !== null) {
     if (!isPlaceholderSecretValue(match[1]!)) {
-      const n = text.slice(0, match.index + match[0].length).split(/\r?\n/).length;
-      return { n, kinds: ["generic_secret_assignment"] };
+      return text.slice(0, match.index + match[0].length).split(/\r?\n/).length;
     }
   }
   return null;
@@ -93,6 +103,8 @@ function firstSecretLine(text: string): { n: number; kinds: string[] } | null {
 /**
  * Deterministic security scan of the SUBMITTED content. Returns:
  *  - `close` (embedded_secret) on a concrete embedded credential — cited to a line; or
+ *  - `manual` (possible_secret_assignment) on a secret-shaped-but-not-concrete-format assignment — cited to
+ *    a line (see firstGenericSecretAssignmentLine's doc comment for why this is MANUAL, not close); or
  *  - `manual` (unsafe_install_pipeline) on a pipe-to-shell install in an executable category; or
  *  - null otherwise.
  * Prompt-injection / exfiltration prose is intentionally NOT matched here: it is indistinguishable
@@ -111,6 +123,15 @@ export function scanSubmissionContent(params: { content: string; category: strin
     };
   }
 
+  const genericLine = firstGenericSecretAssignmentLine(content);
+  if (genericLine !== null) {
+    return {
+      verdict: "manual",
+      reasonCode: "possible_secret_assignment",
+      summary: `Submission contains a secret-shaped assignment (generic_secret_assignment) at line ${genericLine} that doesn't match a concrete credential format — routing to maintainer review to verify it isn't a real secret.`,
+    };
+  }
+
   if (EXECUTABLE_CATEGORIES.has(category)) {
     const pipe = firstLineMatching(content, PIPED_INSTALL_RE);
     if (pipe) {
@@ -124,8 +145,9 @@ export function scanSubmissionContent(params: { content: string; category: strin
   return null;
 }
 
-/** A concrete credential exposed in a LINKED third-party body → manual (flag for a human; don't
- *  auto-close someone's submission over the linked artifact's own leak). */
+/** A concrete credential — or a secret-shaped-but-not-concrete-format assignment — exposed in a LINKED
+ *  third-party body → manual either way (flag for a human; don't auto-close someone's submission over the
+ *  linked artifact's own leak). */
 export function scanLinkedBodiesForSecrets(bodies: string[]): SecurityFinding | null {
   for (const body of bodies) {
     const hits = scanForSecrets(body).kinds.filter((k) => HARD_SECRET_KINDS.has(k));
@@ -134,6 +156,13 @@ export function scanLinkedBodiesForSecrets(bodies: string[]): SecurityFinding | 
         verdict: "manual",
         reasonCode: "embedded_secret",
         summary: `The linked source appears to expose a credential (${hits.join(", ")}) — routing to maintainer review.`,
+      };
+    }
+    if (hasGenericSecretAssignment(body)) {
+      return {
+        verdict: "manual",
+        reasonCode: "possible_secret_assignment",
+        summary: "The linked source contains a secret-shaped assignment (generic_secret_assignment) that doesn't match a concrete credential format — routing to maintainer review.",
       };
     }
   }

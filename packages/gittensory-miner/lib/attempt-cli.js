@@ -207,6 +207,7 @@ export async function runAttempt(args, options = {}) {
           `Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: this repo's AI-usage policy bans automated/AI-authored contributions.`,
         );
       }
+      options.onResult?.(rejectedResult);
       return 5;
     }
 
@@ -259,6 +260,7 @@ export async function runAttempt(args, options = {}) {
       } else {
         console.error(`Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: real worktree preparation failed: ${reason}`);
       }
+      options.onResult?.(worktreeFailureResult);
       return 6;
     }
 
@@ -325,6 +327,7 @@ export async function runAttempt(args, options = {}) {
           `Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: feasibility verdict "${codingTaskSpec.verdict}" (${[...codingTaskSpec.feasibility.avoidReasons, ...codingTaskSpec.feasibility.raiseReasons].join(", ")}).`,
         );
       }
+      options.onResult?.(infeasibleResult);
       return 4;
     }
 
@@ -371,9 +374,15 @@ export async function runAttempt(args, options = {}) {
       mode,
       attemptId,
       submissionMode: amsPolicy.spec.submissionMode,
+      // Every runMinerAttempt outcome carries a real loopResult (#5135's loop needs its genuine turn-usage to
+      // save real GovernorCapUsage via governor-state.js's saveCapUsage -- nothing else in the codebase calls
+      // it yet). Surfaced flat rather than the whole loopResult object, matching this result's own shallow shape.
+      totalTurnsUsed: result.loopResult.totalTurnsUsed,
+      iterationsUsed: result.loopResult.iterationsUsed,
       ...("reason" in result ? { reason: result.reason } : {}),
       ...("decision" in result ? { decision: result.decision } : {}),
       ...("spec" in result ? { spec: result.spec } : {}),
+      ...("execResult" in result ? { execResult: result.execResult } : {}),
     };
 
     if (parsed.json) {
@@ -381,6 +390,7 @@ export async function runAttempt(args, options = {}) {
     } else {
       console.log(`Attempt for ${parsed.repoFullName}#${parsed.issueNumber} finished with outcome: ${result.outcome}.`);
     }
+    options.onResult?.(finalResult);
 
     switch (result.outcome) {
       case "submitted":

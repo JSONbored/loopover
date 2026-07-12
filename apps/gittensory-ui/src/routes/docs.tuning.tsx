@@ -472,9 +472,10 @@ function Tuning() {
           <code>publicSignalLevel</code> — <code>minimal</code> / <code>standard</code> (default).
         </li>
         <li>
-          <code>checkRunMode</code> — check-run publishing: <code>off</code> (default) /{" "}
-          <code>enabled</code>. Pair with <code>checkRunDetailLevel</code> (<code>minimal</code>{" "}
-          (default) / <code>standard</code> / <code>deep</code>).
+          <code>checkRunMode</code> — publishes the <strong>Gittensory Context</strong> check (not
+          the <strong>Orb Review Agent</strong> gate check, which is <code>reviewCheckMode</code>):{" "}
+          <code>off</code> (default) / <code>enabled</code>. Pair with{" "}
+          <code>checkRunDetailLevel</code> (<code>minimal</code> (default) / <code>standard</code>).
         </li>
         <li>
           <code>publicSurface</code> — <code>off</code> / <code>comment_and_label</code> (default) /{" "}

@@ -75,6 +75,16 @@ describe("Codecov policy", () => {
     expect(testResultsUploadWith.fail_ci_if_error).toBe(false);
   });
 
+  it("measures miner lib changes for codecov patch coverage (#4864)", () => {
+    const vitestConfig = readFileSync("vitest.config.ts", "utf8");
+    expect(vitestConfig).toMatch(/packages\/gittensory-miner\/lib\/\*\*\/\*\.js/);
+
+    const config = readYaml("codecov.yml");
+    const ignore = config.ignore;
+    if (!Array.isArray(ignore)) throw new Error("codecov.yml ignore must be an array");
+    expect(ignore.some((entry) => typeof entry === "string" && entry.includes("gittensory-miner"))).toBe(false);
+  });
+
   it("uploads fork PR coverage tokenlessly instead of silently skipping it", () => {
     // Fork PRs cannot read secrets.CODECOV_TOKEN. Previously the token-gated upload steps simply
     // excluded forks with no replacement, so codecov/patch had no report to compare against and fell

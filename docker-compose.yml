@@ -625,6 +625,10 @@ services:
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
+    deploy:
+      resources:
+        limits:
+          memory: "${ALERTMANAGER_MEM_LIMIT:-256m}"
 
   grafana:
     image: grafana/grafana:13.1.0
@@ -766,6 +770,10 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks: [docker-proxy] # isolated — only Promtail joins this network
+    deploy:
+      resources:
+        limits:
+          memory: "${DOCKER_PROXY_MEM_LIMIT:-64m}"
 
   promtail:
     image: grafana/promtail:3.6.11
@@ -789,6 +797,10 @@ services:
     # the only service on `docker-proxy`, so the inspect endpoint (and the env it exposes) is unreachable
     # from any other container. No Docker-socket mount — discovery goes through the proxy's read-only API.
     networks: [default, docker-proxy]
+    deploy:
+      resources:
+        limits:
+          memory: "${PROMTAIL_MEM_LIMIT:-256m}"
 
   # ── OTEL collector (--profile observability) ──────────────────────────────
   # Receives OTLP metrics from the Claude Code review CLI and re-exposes them on :8889 for Prometheus to
@@ -805,6 +817,10 @@ services:
     # Mount our config at the image's default path so the stock entrypoint picks it up (no command override).
     volumes:
       - ./otel/otel-collector-config.yml:/etc/otelcol-contrib/config.yaml:ro
+    deploy:
+      resources:
+        limits:
+          memory: "${OTEL_COLLECTOR_MEM_LIMIT:-512m}"
 
   # ── Tempo (--profile observability) — trace store for Claude review spans ─────
   # Receives traces forwarded by the OTEL collector and serves them to Grafana (the Tempo data source).

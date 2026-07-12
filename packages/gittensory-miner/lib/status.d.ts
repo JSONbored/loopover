@@ -1,9 +1,16 @@
+export type MinerDriverStatus = {
+  provider: string | null;
+  modelEnvVar: string | null;
+  cliPresent: boolean | null;
+};
+
 export type MinerStatus = {
   package: { name: string; version: string | null };
   engine: { name: string; version: string | null };
   node: string;
   stateDir: string;
   configFile: string | null;
+  driver: MinerDriverStatus;
 };
 
 export type DoctorCheck = {

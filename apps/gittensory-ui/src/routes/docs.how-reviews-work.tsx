@@ -295,11 +295,12 @@ function HowReviewsWork() {
         </li>
       </ul>
       <p>
-        The check run can carry the same signals at adjustable depth: <code>checkRunMode</code> (
-        <code>off</code> / <code>enabled</code>) publishes the{" "}
-        <strong>Gittensory Orb Review Agent</strong> check, and <code>checkRunDetailLevel</code> (
-        <code>minimal</code> / <code>standard</code> / <code>deep</code>) sets how much the check
-        summary spells out.
+        The check run can carry the same signals at adjustable depth — but this is the{" "}
+        <strong>Gittensory Context</strong> check, not the Orb Review Agent gate check:{" "}
+        <code>checkRunMode</code> (<code>off</code> / <code>enabled</code>) publishes it, and{" "}
+        <code>checkRunDetailLevel</code> (<code>minimal</code> / <code>standard</code>) sets how
+        much the check summary spells out. <strong>Gittensory Orb Review Agent</strong> is published
+        separately, controlled by <code>reviewCheckMode</code> (see above).
       </p>
 
       <h2>Putting it together</h2>

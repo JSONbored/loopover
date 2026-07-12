@@ -25,6 +25,10 @@ describe("docker-compose.yml — per-service memory limits (#1828, #2495, #3893)
     tempo: "${TEMPO_MEM_LIMIT:-1g}",
     grafana: "${GRAFANA_MEM_LIMIT:-512m}",
     runner: "${RUNNER_MEM_LIMIT:-2g}",
+    alertmanager: "${ALERTMANAGER_MEM_LIMIT:-256m}",
+    "docker-proxy": "${DOCKER_PROXY_MEM_LIMIT:-64m}",
+    promtail: "${PROMTAIL_MEM_LIMIT:-256m}",
+    "otel-collector": "${OTEL_COLLECTOR_MEM_LIMIT:-512m}",
   };
 
   it("caps the core app and every heavyweight optional service with an operator-overridable memory limit", () => {
@@ -53,6 +57,10 @@ describe("docker-compose.yml — per-service memory limits (#1828, #2495, #3893)
       "TEMPO_MEM_LIMIT",
       "GRAFANA_MEM_LIMIT",
       "RUNNER_MEM_LIMIT",
+      "ALERTMANAGER_MEM_LIMIT",
+      "DOCKER_PROXY_MEM_LIMIT",
+      "PROMTAIL_MEM_LIMIT",
+      "OTEL_COLLECTOR_MEM_LIMIT",
     ]) {
       expect(env, key).toContain(key);
     }

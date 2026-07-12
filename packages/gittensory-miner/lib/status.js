@@ -2,7 +2,14 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { checkClaudeCliPresent, checkCodexCliPresent, checkDockerPresent, checkLaptopStateSqlite } from "./laptop-init.js";
+import { CODING_AGENT_DRIVER_CONFIG_ENV, resolveFirstConfiguredCodingAgentDriverName } from "@jsonbored/gittensory-engine";
+import {
+  checkClaudeCliPresent,
+  checkCodexCliPresent,
+  checkDockerPresent,
+  checkLaptopStateSqlite,
+  findExecutableOnPath,
+} from "./laptop-init.js";
 import { resolveMinerVersion } from "./version.js";
 
 // Slim laptop-mode CLI commands (#2288): `status` (what's installed + where local state lives) and `doctor` (is
@@ -193,6 +200,23 @@ function discoverConfigFile(cwd) {
   return null;
 }
 
+// CLI names driver-factory.ts's resolved provider values that actually spawn a local subprocess -- "noop" and
+// "agent-sdk" have no separate CLI binary to check presence for, so cliPresent is null (not applicable) for them.
+const PROVIDER_CLI_BINARY = Object.freeze({ "claude-cli": "claude", "codex-cli": "codex" });
+
+/** The `driver` section of `status`/`status --json` (#5164): which coding-agent provider is configured, the
+ *  NAME (never the value) of its model env var, and whether its CLI binary is on PATH. Reuses
+ *  `resolveFirstConfiguredCodingAgentDriverName`/`CODING_AGENT_DRIVER_CONFIG_ENV` (the same resolution
+ *  driver-factory.ts uses) and `findExecutableOnPath` (the same PATH scan the doctor CLI-presence checks use)
+ *  rather than duplicating either. Never reads or returns an env var's actual value. */
+function resolveDriverStatus(env) {
+  const provider = resolveFirstConfiguredCodingAgentDriverName(env) ?? null;
+  const modelEnvVar = provider ? (CODING_AGENT_DRIVER_CONFIG_ENV[provider]?.model ?? null) : null;
+  const cliBinary = provider ? (PROVIDER_CLI_BINARY[provider] ?? null) : null;
+  const cliPresent = cliBinary ? Boolean(findExecutableOnPath(cliBinary, env)) : null;
+  return { provider, modelEnvVar, cliPresent };
+}
+
 /** Gather the read-only status snapshot. Pure w.r.t. its (env, cwd) inputs — no writes, no network. */
 export function collectStatus(env = process.env, cwd = process.cwd()) {
   const stateDir = resolveMinerStateDir(env);
@@ -202,6 +226,7 @@ export function collectStatus(env = process.env, cwd = process.cwd()) {
     node: process.version,
     stateDir,
     configFile: discoverConfigFile(cwd),
+    driver: resolveDriverStatus(env),
   };
 }
 
@@ -250,6 +275,11 @@ export function collectMinerDiagnostics(env = process.env, cwd = process.cwd()) 
     },
     doctor: { ok: failed.length === 0, checks },
   };
+function renderDriverLine(driver) {
+  if (!driver.provider) return "driver: none configured";
+  const cliText = driver.cliPresent === null ? "n/a" : driver.cliPresent ? "yes" : "no";
+  const modelText = driver.modelEnvVar ? `, model env: ${driver.modelEnvVar}` : "";
+  return `driver: ${driver.provider} (CLI present: ${cliText}${modelText})`;
 }
 
 function renderStatusText(status) {
@@ -258,6 +288,7 @@ function renderStatusText(status) {
     `engine: ${status.engine.name} ${status.engine.version ?? "unresolved"}`,
     `state dir: ${status.stateDir}`,
     `config file: ${status.configFile ?? "none found"}`,
+    renderDriverLine(status.driver),
   ].join("\n");
 }
 

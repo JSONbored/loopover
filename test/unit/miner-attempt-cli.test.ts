@@ -243,7 +243,7 @@ describe("runAttempt (#5132)", () => {
       outcome: "submitted",
       spec: { command: "gh pr create", cwd: worktreeResult.worktreePath, timeoutMs: 1000 },
       execResult: { code: 0 },
-      loopResult: { outcome: "handoff" },
+      loopResult: { outcome: "handoff", totalTurnsUsed: 3, iterationsUsed: 2 },
     });
 
     const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
@@ -269,7 +269,10 @@ describe("runAttempt (#5132)", () => {
       mode: "dry_run",
       attemptId: "fixed-attempt-id",
       submissionMode: "observe",
+      totalTurnsUsed: 3,
+      iterationsUsed: 2,
       spec: { command: "gh pr create", cwd: worktreeResult.worktreePath, timeoutMs: 1000 },
+      execResult: { code: 0 },
     });
 
     // The worktree slot was acquired for real and then released, not left dangling.
@@ -655,5 +658,45 @@ describe("runAttempt (#5132)", () => {
       contributorLogin: "alice",
       linkedIssues: [7],
     });
+  });
+
+  it("REGRESSION: options.onResult is called with the real structured result at every return point, alongside the unchanged plain exit code", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const onResult = vi.fn();
+
+    // blocked_rejection_signaled path
+    const rejectedLedgers = tempLedgers();
+    const rejectedExit = await runAttempt(["acme/widgets", "7", "--miner-login", "alice"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => rejectedLedgers.allocator,
+      openClaimLedger: () => rejectedLedgers.claimLedger,
+      initEventLedger: () => rejectedLedgers.eventLedger,
+      initAttemptLog: () => rejectedLedgers.attemptLog,
+      initGovernorLedger: () => rejectedLedgers.governorLedger,
+      resolveRejectionSignaled: async () => true,
+      onResult,
+    });
+    expect(rejectedExit).toBe(5);
+    expect(onResult).toHaveBeenLastCalledWith(expect.objectContaining({ outcome: "blocked_rejection_signaled" }));
+
+    // attempt_submitted path (real final result) -- a separate set of real ledgers, since runAttempt closes
+    // whatever it's given in its own `finally` block.
+    onResult.mockClear();
+    const submittedLedgers = tempLedgers();
+    const submittedExit = await runAttempt(["acme/widgets", "7", "--miner-login", "alice"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => submittedLedgers.allocator,
+      openClaimLedger: () => submittedLedgers.claimLedger,
+      initEventLedger: () => submittedLedgers.eventLedger,
+      initAttemptLog: () => submittedLedgers.attemptLog,
+      initGovernorLedger: () => submittedLedgers.governorLedger,
+      ...readyPipelineOptions({
+        runMinerAttempt: async () => ({ outcome: "submitted", spec: { command: "gh pr create", cwd: "/fake", timeoutMs: 1 }, execResult: { code: 0 }, loopResult: {} }),
+      }),
+      onResult,
+    });
+    expect(submittedExit).toBe(0);
+    expect(onResult).toHaveBeenLastCalledWith(expect.objectContaining({ outcome: "attempt_submitted", spec: expect.objectContaining({ command: "gh pr create" }) }));
   });
 });

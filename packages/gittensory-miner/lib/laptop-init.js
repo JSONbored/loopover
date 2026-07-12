@@ -68,7 +68,9 @@ export function checkLaptopStateSqlite(env = process.env) {
   }
 }
 
-function findExecutableOnPath(name, env = process.env) {
+/** Exported so callers that only need a presence boolean (e.g. status.js's `driver` section, #5164) can reuse
+ *  this PATH scan directly instead of duplicating it or parsing a DoctorCheck's detail string. */
+export function findExecutableOnPath(name, env = process.env) {
   const pathValue = typeof env.PATH === "string" ? env.PATH : "";
   for (const pathEntry of pathValue.split(delimiter)) {
     if (!pathEntry) continue;

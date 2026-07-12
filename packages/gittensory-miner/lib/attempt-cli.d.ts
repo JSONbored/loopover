@@ -1,5 +1,5 @@
-import type { CodingAgentExecutionMode } from "@jsonbored/gittensory-engine";
-import type { AttemptDeps, runMinerAttempt } from "./attempt-runner.js";
+import type { CodingAgentExecutionMode, FeasibilityVerdict, LocalWriteActionSpec } from "@jsonbored/gittensory-engine";
+import type { AttemptDeps, AttemptResult as RunMinerAttemptResult, runMinerAttempt } from "./attempt-runner.js";
 import type { ClaimLedger } from "./claim-ledger.js";
 import type { EventLedger } from "./event-ledger.js";
 import type { AttemptLog } from "./attempt-log.js";
@@ -11,6 +11,39 @@ import type { cleanupAttemptWorktree, prepareAttemptWorktree } from "./attempt-w
 import type { buildCodingTaskSpec } from "./coding-task-spec.js";
 import type { resolveAmsPolicy } from "./ams-policy.js";
 import type { checkMinerKillSwitch } from "./governor-kill-switch.js";
+
+type CommonAttemptResultFields = {
+  repoFullName: string;
+  issueNumber: number;
+  minerLogin: string;
+  base: string;
+  mode: CodingAgentExecutionMode;
+  attemptId: string;
+};
+
+/** The result runAttempt reports at every real return point, threaded to `options.onResult` (in addition to
+ *  the plain exit-code return runAttempt itself still returns, unchanged, so bin/gittensory-miner.js's own
+ *  `process.exit(exitCode)` usage never breaks) -- the loop orchestrator's real caller for this data. */
+export type AttemptCliResult =
+  | (CommonAttemptResultFields & { outcome: "blocked_rejection_signaled"; reason: string })
+  | (CommonAttemptResultFields & { outcome: "blocked_worktree_preparation_failed"; reason: string })
+  | (CommonAttemptResultFields & {
+      outcome: "blocked_infeasible";
+      reason: string;
+      verdict: FeasibilityVerdict;
+      avoidReasons: string[];
+      raiseReasons: string[];
+    })
+  | (CommonAttemptResultFields & {
+      outcome: `attempt_${RunMinerAttemptResult["outcome"]}`;
+      submissionMode: "observe" | "enforce";
+      totalTurnsUsed: number;
+      iterationsUsed: number;
+      reason?: string;
+      decision?: unknown;
+      spec?: LocalWriteActionSpec;
+      execResult?: unknown;
+    });
 
 export type ParsedAttemptArgs =
   | { error: string }
@@ -43,6 +76,9 @@ export type RunAttemptOptions = {
   resolveAmsPolicy?: typeof resolveAmsPolicy;
   checkMinerKillSwitch?: typeof checkMinerKillSwitch;
   runMinerAttempt?: typeof runMinerAttempt;
+  /** Invoked with the real structured result at every return point, in addition to (never instead of) the
+   *  plain exit-code return -- the loop orchestrator's real hook into what actually happened. */
+  onResult?: (result: AttemptCliResult) => void;
 };
 
 export function runAttempt(args: string[], options?: RunAttemptOptions): Promise<number>;

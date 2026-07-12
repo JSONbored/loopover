@@ -33,7 +33,7 @@ const gauges = new Map<string, GaugeSample>();
 // force every reader (including renderMetrics' gauges loop) to branch on which shape a given entry holds.
 const gaugeVectors = new Map<string, GaugeVectorSample>();
 const histograms = new Map<string, HistogramState>();
-const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
+export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["gittensory_queue_pending", { help: "Current in-process queue depth.", type: "gauge" }],
   ["gittensory_queue_dead", { help: "Current in-process dead queue depth.", type: "gauge" }],
   ["gittensory_dlq_dead_lettered_recent", { help: "DLQ messages dead-lettered within the recent trailing window, sampled at scrape.", type: "gauge" }],
@@ -140,6 +140,32 @@ const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["gittensory_d1_table_row_count", { help: "Row count for a monitored D1 table, from the same probe as gittensory_d1_database_size_bytes, labeled by table.", type: "gauge" }],
   ["gittensory_signal_snapshots_rows_per_key", { help: "signal_snapshots row count divided by its distinct (signal_type, target_key) count, scoped to the latest-only-dedup signal types dedupeSignalSnapshots converges to ~1 row per key; -1 when the probe is disabled or has never completed a successful sample.", type: "gauge" }],
   ["gittensory_d1_probe_errors_total", { help: "D1 size/row-count Management API probe failures, by part (database_info/table_row_count).", type: "counter" }],
+  ["gittensory_agent_action_permission_denied_total", { help: "Agent actions denied for missing a required GitHub App write permission, by action class.", type: "counter" }],
+  ["gittensory_agent_action_permission_denied_suppressed_total", { help: "Repeat permission denials suppressed within the cooldown window (still counted here, but not re-audited), by action class.", type: "counter" }],
+  ["gittensory_ai_review_frozen_reuse_total", { help: "AI review passes that reused a frozen (maintainer-gated) prior verdict instead of re-running.", type: "counter" }],
+  ["gittensory_ai_review_one_shot_reuse_total", { help: "AI review passes that reused a one-shot prior verdict instead of re-running.", type: "counter" }],
+  ["gittensory_ai_review_paused_reuse_total", { help: "AI review passes that reused a prior verdict because the repo is paused.", type: "counter" }],
+  ["gittensory_ai_review_tiebreak_order_unstable_total", { help: "Dual-reviewer tiebreak passes where reviewer order was not stable, by combine mode.", type: "counter" }],
+  ["gittensory_grounding_cache_hit_total", { help: "Review grounding-context cache hits.", type: "counter" }],
+  ["gittensory_grounding_cache_miss_total", { help: "Review grounding-context cache misses.", type: "counter" }],
+  ["gittensory_impact_map_cache_hit_total", { help: "Impact-map cache hits.", type: "counter" }],
+  ["gittensory_impact_map_cache_miss_total", { help: "Impact-map cache misses.", type: "counter" }],
+  ["gittensory_installation_health_broker_probe_total", { help: "Installation-health broker probes, by result (ok/failed/mismatched_installation).", type: "counter" }],
+  ["gittensory_jobs_maintenance_admission_granted_under_pressure_total", { help: "Maintenance jobs admitted despite backpressure via the trickle-admission allowance.", type: "counter" }],
+  ["gittensory_jobs_maintenance_trickle_admitted_by_type_total", { help: "Maintenance jobs admitted via trickle admission, by job type.", type: "counter" }],
+  ["gittensory_linked_issue_satisfaction_cache_hit_total", { help: "Linked-issue satisfaction assessment cache hits.", type: "counter" }],
+  ["gittensory_linked_issue_satisfaction_cache_miss_total", { help: "Linked-issue satisfaction assessment cache misses.", type: "counter" }],
+  ["gittensory_linked_issue_satisfaction_cache_write_error_total", { help: "Linked-issue satisfaction assessment cache write errors.", type: "counter" }],
+  ["gittensory_open_pr_reconciliation_missing_total", { help: "Open PRs found missing from local tracking during reconciliation, by repo.", type: "counter" }],
+  ["gittensory_orb_relay_malformed_events_total", { help: "Orb relay batch entries dropped for missing/mistyped required fields (deliveryId/eventName/rawBody).", type: "counter" }],
+  ["gittensory_orb_relay_register_total", { help: "Orb relay registration attempts, by mode and result (registered/recovered/failed).", type: "counter" }],
+  ["gittensory_pr_outcomes_total", { help: "Recorded PR gate outcomes, by decision.", type: "counter" }],
+  ["gittensory_public_origin_acknowledged", { help: "1 when the configured public origin is acknowledged as reachable; 0 otherwise.", type: "gauge" }],
+  ["gittensory_repo_culture_profile_cache_hit_total", { help: "Repo-culture-profile cache hits.", type: "counter" }],
+  ["gittensory_repo_culture_profile_cache_miss_total", { help: "Repo-culture-profile cache misses.", type: "counter" }],
+  ["gittensory_review_memory_cache_hit_total", { help: "Review-memory cache hits.", type: "counter" }],
+  ["gittensory_review_memory_cache_miss_total", { help: "Review-memory cache misses.", type: "counter" }],
+  ["gittensory_review_memory_suppressed_total", { help: "Review-memory entries suppressed from surfacing, by repo.", type: "counter" }],
 ];
 const metricMeta = new Map<string, MetricMeta>(DEFAULT_METRIC_META);
 

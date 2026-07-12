@@ -6,6 +6,7 @@ import { runDiscover } from "../lib/discover-cli.js";
 import { runFeasibilityCli } from "../lib/feasibility-cli.js";
 import { runGovernorCli } from "../lib/governor-ledger-cli.js";
 import { runLedgerCli } from "../lib/event-ledger-cli.js";
+import { runLoop } from "../lib/loop-cli.js";
 import { runManagePoll } from "../lib/manage-poll.js";
 import { runManageStatus } from "../lib/manage-status.js";
 import { runPlanCli } from "../lib/plan-store-cli.js";
@@ -129,6 +130,12 @@ if (cliArgs[0] === "discover") {
 
 if (cliArgs[0] === "attempt") {
   const exitCode = await runAttempt(cliArgs.slice(1));
+  await awaitOpportunisticUpdateCheck(updateCheck);
+  process.exit(exitCode);
+}
+
+if (cliArgs[0] === "loop") {
+  const exitCode = await runLoop(cliArgs.slice(1));
   await awaitOpportunisticUpdateCheck(updateCheck);
   process.exit(exitCode);
 }

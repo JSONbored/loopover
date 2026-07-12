@@ -145,11 +145,14 @@ GET /v1/installations/:id/repair`}
       <h2>Checks</h2>
       <p>
         The gittensory app publishes its review as check runs.{" "}
-        <strong>Gittensory Orb Review Agent</strong> is the gate result;{" "}
-        <strong>Gittensory Context</strong> is the advisory companion. Both are controlled per repo
-        by <code>checkRunMode</code> (<code>off</code> / <code>enabled</code>), with{" "}
-        <code>checkRunDetailLevel</code> choosing <code>minimal</code>, <code>standard</code>, or{" "}
-        <code>deep</code> output.
+        <strong>Gittensory Orb Review Agent</strong> is the gate result, controlled by{" "}
+        <code>reviewCheckMode</code> (<code>required</code> / <code>visible</code> /{" "}
+        <code>disabled</code>). <strong>Gittensory Context</strong> is the separate advisory
+        companion, controlled by its own <code>checkRunMode</code> (<code>off</code> /{" "}
+        <code>enabled</code>) — these two switches are independent axes, not one setting for both
+        checks. <code>checkRunDetailLevel</code> (<code>minimal</code> / <code>standard</code>) only
+        affects <strong>Gittensory Context</strong>'s output depth; it has no effect on the Orb
+        Review Agent check.
       </p>
       <p>
         <strong>Gittensory Context</strong> is advisory and should not be required in branch

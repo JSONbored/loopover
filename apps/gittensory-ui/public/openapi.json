@@ -3837,7 +3837,8 @@
                   "comment_and_label",
                   "comment_only",
                   "label_only"
-                ]
+                ],
+                "description": "Governs ONLY the PR comment and label -- never the Gittensory Context check (checkRunMode) or the Gittensory Orb Review Agent gate check (reviewCheckMode), which are independent axes by design (#2852). Setting this to \"off\" does NOT silence either check-run."
               },
               "commentMode": {
                 "type": "string",
@@ -9211,7 +9212,8 @@
               "comment_and_label",
               "comment_only",
               "label_only"
-            ]
+            ],
+            "description": "Governs ONLY the PR comment and label -- never the Gittensory Context check (checkRunMode) or the Gittensory Orb Review Agent gate check (reviewCheckMode), which are independent axes by design (#2852). Setting this to \"off\" does NOT silence either check-run."
           },
           "includeMaintainerAuthors": {
             "type": "boolean"
@@ -9714,7 +9716,8 @@
                         "comment_and_label",
                         "comment_only",
                         "label_only"
-                      ]
+                      ],
+                      "description": "Governs ONLY the PR comment and label -- never the Gittensory Context check (checkRunMode) or the Gittensory Orb Review Agent gate check (reviewCheckMode), which are independent axes by design (#2852). Setting this to \"off\" does NOT silence either check-run."
                     },
                     "commentMode": {
                       "type": "string",
@@ -10128,7 +10131,8 @@
                   "comment_and_label",
                   "comment_only",
                   "label_only"
-                ]
+                ],
+                "description": "Governs ONLY the PR comment and label -- never the Gittensory Context check (checkRunMode) or the Gittensory Orb Review Agent gate check (reviewCheckMode), which are independent axes by design (#2852). Setting this to \"off\" does NOT silence either check-run."
               },
               "commentMode": {
                 "type": "string",

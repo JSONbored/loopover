@@ -16,6 +16,7 @@
 #   gittensory.full.yml     — this file — every gate:/settings:/review:/features: field documented
 #   global.gittensory.yml   — private fleet global default (illustrative placeholders only)
 #   repo-override.gittensory.yml — private per-repo overlay example
+#   shared.gittensory.yml   — private cross-repo house policy, lowest-priority layer (#1959)
 #
 # ============================================================================
 # .gittensory.yml — per-repo configuration for gittensory CI & gittensory review

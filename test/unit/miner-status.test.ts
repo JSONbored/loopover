@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -31,6 +31,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
+
+/** Creates an executable file `name` in a fresh bin dir and returns that dir (usable directly as PATH). */
+function fakeBinDir(name: string): string {
+  const dir = tempRoot();
+  writeFileSync(join(dir, name), "#!/bin/sh\n");
+  chmodSync(join(dir, name), 0o755);
+  return dir;
+}
 
 describe("gittensory-miner status/doctor (#2288)", () => {
   it("resolves the state dir from the config-dir override, XDG, then the home default", () => {
@@ -224,5 +232,115 @@ describe("gittensory-miner status/doctor (#2288)", () => {
     runStatus(["--json"], env, tempRoot());
     runDoctor([], env);
     expect(fetchStub).not.toHaveBeenCalled();
+  });
+
+  describe("driver section of status/status --json (#5164)", () => {
+    it("reports provider: null, modelEnvVar: null, cliPresent: null when no provider is configured", () => {
+      const status = collectStatus({ GITTENSORY_MINER_CONFIG_DIR: "/s", PATH: "" }, tempRoot());
+      expect(status.driver).toEqual({ provider: null, modelEnvVar: null, cliPresent: null });
+    });
+
+    it("reports the noop provider with no model env var and no CLI to check (cliPresent: null)", () => {
+      const status = collectStatus(
+        { GITTENSORY_MINER_CONFIG_DIR: "/s", PATH: "", MINER_CODING_AGENT_PROVIDER: "noop" },
+        tempRoot(),
+      );
+      expect(status.driver).toEqual({ provider: "noop", modelEnvVar: null, cliPresent: null });
+    });
+
+    it("reports the agent-sdk provider with no model env var and no CLI to check (cliPresent: null)", () => {
+      const status = collectStatus(
+        { GITTENSORY_MINER_CONFIG_DIR: "/s", PATH: "", MINER_CODING_AGENT_PROVIDER: "agent-sdk" },
+        tempRoot(),
+      );
+      expect(status.driver).toEqual({ provider: "agent-sdk", modelEnvVar: null, cliPresent: null });
+    });
+
+    it("claude-cli configured + CLI present on PATH: reports the model env-var name and cliPresent: true", () => {
+      const status = collectStatus(
+        {
+          GITTENSORY_MINER_CONFIG_DIR: "/s",
+          MINER_CODING_AGENT_PROVIDER: "claude-cli",
+          PATH: fakeBinDir("claude"),
+        },
+        tempRoot(),
+      );
+      expect(status.driver).toEqual({
+        provider: "claude-cli",
+        modelEnvVar: "MINER_CODING_AGENT_CLAUDE_MODEL",
+        cliPresent: true,
+      });
+    });
+
+    it("claude-cli configured + CLI absent from PATH: cliPresent: false", () => {
+      const status = collectStatus(
+        { GITTENSORY_MINER_CONFIG_DIR: "/s", MINER_CODING_AGENT_PROVIDER: "claude-cli", PATH: tempRoot() },
+        tempRoot(),
+      );
+      expect(status.driver.cliPresent).toBe(false);
+    });
+
+    it("codex-cli configured + CLI present on PATH: reports the model env-var name and cliPresent: true", () => {
+      const status = collectStatus(
+        {
+          GITTENSORY_MINER_CONFIG_DIR: "/s",
+          MINER_CODING_AGENT_PROVIDER: "codex-cli",
+          PATH: fakeBinDir("codex"),
+        },
+        tempRoot(),
+      );
+      expect(status.driver).toEqual({
+        provider: "codex-cli",
+        modelEnvVar: "MINER_CODING_AGENT_CODEX_MODEL",
+        cliPresent: true,
+      });
+    });
+
+    it("codex-cli configured + CLI absent from PATH: cliPresent: false", () => {
+      const status = collectStatus(
+        { GITTENSORY_MINER_CONFIG_DIR: "/s", MINER_CODING_AGENT_PROVIDER: "codex-cli", PATH: tempRoot() },
+        tempRoot(),
+      );
+      expect(status.driver.cliPresent).toBe(false);
+    });
+
+    it("human-readable status text renders the driver line for both configured and unconfigured cases", () => {
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      runStatus([], { GITTENSORY_MINER_CONFIG_DIR: "/s", PATH: "" }, tempRoot());
+      expect(String(log.mock.calls[0]?.[0])).toContain("driver: none configured");
+      log.mockClear();
+      runStatus(
+        [],
+        { GITTENSORY_MINER_CONFIG_DIR: "/s", MINER_CODING_AGENT_PROVIDER: "codex-cli", PATH: fakeBinDir("codex") },
+        tempRoot(),
+      );
+      expect(String(log.mock.calls[0]?.[0])).toContain(
+        "driver: codex-cli (CLI present: yes, model env: MINER_CODING_AGENT_CODEX_MODEL)",
+      );
+    });
+
+    it("invariant: no env-var VALUE or secret-shaped string ever appears in status --json output across provider permutations", () => {
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const secretModelValue = "sk-ant-should-never-appear-in-output";
+      const providers = [undefined, "noop", "claude-cli", "codex-cli", "agent-sdk"];
+      for (const provider of providers) {
+        log.mockClear();
+        runStatus(
+          ["--json"],
+          {
+            GITTENSORY_MINER_CONFIG_DIR: "/s",
+            ...(provider ? { MINER_CODING_AGENT_PROVIDER: provider } : {}),
+            MINER_CODING_AGENT_CLAUDE_MODEL: secretModelValue,
+            MINER_CODING_AGENT_CODEX_MODEL: secretModelValue,
+            PATH: fakeBinDir("claude"),
+          },
+          tempRoot(),
+        );
+        const output = String(log.mock.calls[0]?.[0]);
+        expect(output).not.toContain(secretModelValue);
+        const parsed = JSON.parse(output);
+        expect(typeof parsed.driver.cliPresent === "boolean" || parsed.driver.cliPresent === null).toBe(true);
+      }
+    });
   });
 });

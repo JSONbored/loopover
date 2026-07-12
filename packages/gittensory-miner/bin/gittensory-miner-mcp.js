@@ -29,9 +29,9 @@ const ownPackageJson = JSON.parse(readFileSync(new URL("../package.json", import
 export const MINER_PING_STATUS = { status: "ok", tool: "gittensory_miner_ping" };
 
 /**
- * Build the miner MCP server with its tools registered. `options.initPortfolioQueue` / `options.nowMs` are
- * injection seams for tests (default to the real portfolio-queue store and the wall clock); the ping tool needs
- * neither. The portfolio-dashboard tool opens the queue only when invoked and closes any store it opened.
+ * Build the miner MCP server with its tools registered. `options.initPortfolioQueue`, `options.openClaimLedger`,
+ * and `options.nowMs` are injection seams for tests (default to the real stores and the wall clock); the ping tool
+ * needs none. Each store-backed tool opens its store only when invoked and closes any store it opened.
  * `options.collectMinerDiagnostics` / `options.diagnosticsEnv` / `options.diagnosticsCwd` inject the status tool.
  */
 export function createMinerMcpServer(options = {}) {
@@ -63,6 +63,31 @@ export function createMinerMcpServer(options = {}) {
         return { content: [{ type: "text", text: JSON.stringify(summary) }] };
       } finally {
         if (ownsQueue) portfolioQueue.close();
+      }
+    },
+  );
+  server.registerTool(
+    "gittensory_miner_list_claims",
+    {
+      description:
+        "Read-only listing of the local claim ledger: which issues this miner has claimed (repo, issue number, " +
+        "status, claimed-at, note). Optional repoFullName/status filters pass through to the existing listClaims " +
+        "query. Exposes no claim/release mutation and no conflict-resolution logic.",
+      inputSchema: {
+        repoFullName: z.string().optional(),
+        status: z.enum(CLAIM_STATUSES).optional(),
+      },
+    },
+    async ({ repoFullName, status }) => {
+      const ownsLedger = options.openClaimLedger === undefined;
+      const ledger = (options.openClaimLedger ?? openClaimLedger)();
+      try {
+        const filter = {};
+        if (repoFullName !== undefined) filter.repoFullName = repoFullName;
+        if (status !== undefined) filter.status = status;
+        return { content: [{ type: "text", text: JSON.stringify(ledger.listClaims(filter)) }] };
+      } finally {
+        if (ownsLedger) ledger.close();
       }
     },
   );

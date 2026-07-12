@@ -30,7 +30,7 @@ export interface MinerMcpServerOptions {
 
 /**
  * Build the miner MCP server with its tools registered (gittensory_miner_ping,
- * gittensory_miner_get_portfolio_dashboard, gittensory_miner_status).
+ * gittensory_miner_get_portfolio_dashboard, gittensory_miner_list_claims, gittensory_miner_status).
  * `options` supplies test injection seams; production callers pass nothing.
  */
 export function createMinerMcpServer(options?: MinerMcpServerOptions): McpServer;

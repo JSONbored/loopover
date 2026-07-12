@@ -339,7 +339,7 @@ export function runDoctorChecks(env = process.env) {
     checkEngineVersionSkew(),
     checkStateDirWritable(resolveMinerStateDir(env)),
     checkLaptopStateSqlite(env),
-    checkDockerPresent(),
+    checkDockerPresent({ env }),
     checkClaudeCliPresent({ env }),
     checkCodexCliPresent({ env }),
   ];

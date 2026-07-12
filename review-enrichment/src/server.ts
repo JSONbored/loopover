@@ -70,35 +70,42 @@ app.post("/v1/ping", (c) => {
 
 app.post("/v1/enrich", async (c) => {
   const startedAtMs = Date.now();
-  const secret = normalizeSharedSecret(process.env.REES_SHARED_SECRET);
-  // No secret configured ⇒ the service is not ready to authenticate anything; fail closed.
-  if (!secret) {
-    recordEnrichOutcome("service_not_configured", startedAtMs);
-    return c.json({ error: "service_not_configured" }, 503);
-  }
-  if (!verifyBearer(c.req.header("authorization"), secret)) {
-    recordEnrichOutcome("unauthorized", startedAtMs);
-    return c.json({ error: "unauthorized" }, 401);
-  }
+  try {
+    const secret = normalizeSharedSecret(process.env.REES_SHARED_SECRET);
+    // No secret configured ⇒ the service is not ready to authenticate anything; fail closed.
+    if (!secret) {
+      recordEnrichOutcome("service_not_configured", startedAtMs);
+      return c.json({ error: "service_not_configured" }, 503);
+    }
+    if (!verifyBearer(c.req.header("authorization"), secret)) {
+      recordEnrichOutcome("unauthorized", startedAtMs);
+      return c.json({ error: "unauthorized" }, 401);
+    }
 
-  const body = await readEnrichRequestText(c.req.raw);
-  if (!body.ok) {
-    recordEnrichOutcome("bad_request", startedAtMs);
-    return c.json({ error: body.error }, body.status);
-  }
+    const body = await readEnrichRequestText(c.req.raw);
+    if (!body.ok) {
+      recordEnrichOutcome("bad_request", startedAtMs);
+      return c.json({ error: body.error }, body.status);
+    }
 
-  const parsed = parseEnrichRequestBody(body.raw);
-  if (!parsed.ok) {
-    recordEnrichOutcome("bad_request", startedAtMs);
-    return c.json({ error: parsed.error }, parsed.status);
-  }
+    const parsed = parseEnrichRequestBody(body.raw);
+    if (!parsed.ok) {
+      recordEnrichOutcome("bad_request", startedAtMs);
+      return c.json({ error: parsed.error }, parsed.status);
+    }
 
-  const brief = await buildBrief(parsed.payload, undefined, {
-    requestId: c.req.header("x-gittensory-request-id") ?? c.req.header("x-request-id"),
-    traceId: traceIdFromTraceparent(c.req.header("traceparent")),
-  });
-  recordEnrichOutcome("ok", startedAtMs);
-  return c.json(brief);
+    const brief = await buildBrief(parsed.payload, undefined, {
+      requestId: c.req.header("x-gittensory-request-id") ?? c.req.header("x-request-id"),
+      traceId: traceIdFromTraceparent(c.req.header("traceparent")),
+    });
+    recordEnrichOutcome("ok", startedAtMs);
+    return c.json(brief);
+  } catch (error) {
+    // Rethrow to app.onError below, which still owns the 500 response + Sentry capture -- this catch exists
+    // only to record the outcome with the duration/startedAtMs this route handler has and onError doesn't.
+    recordEnrichOutcome("error", startedAtMs);
+    throw error;
+  }
 });
 
 const port = Number(process.env.PORT ?? "8080");

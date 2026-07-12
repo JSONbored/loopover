@@ -37,6 +37,14 @@ export function resolveClaimLedgerDbPath(env?: Record<string, string | undefined
 
 export function openClaimLedger(dbPath?: string): ClaimLedger;
 
+export type ReadOnlyClaimLedger = {
+  dbPath: string;
+  listActiveClaims(repoFullName: string): ClaimEntry[];
+  close(): void;
+};
+
+export function openClaimLedgerReadOnly(dbPath: string): ReadOnlyClaimLedger;
+
 export function recordClaim(claim: RecordClaimInput): ClaimEntry;
 
 export function releaseClaim(repoFullName: string, issueNumber: number): ClaimEntry | null;

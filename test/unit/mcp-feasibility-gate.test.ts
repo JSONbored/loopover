@@ -3,6 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openClaimLedger } from "../../packages/gittensory-miner/lib/claim-ledger.js";
 
@@ -215,6 +216,37 @@ describe("gittensory_feasibility_gate: local claim-ledger sourcing (#5157)", () 
     const data = result.structuredContent as Record<string, unknown>;
     expect(data.verdict).toBe("go");
     expect(data.avoidReasons).toEqual([]);
+  });
+
+  it("regression: never schema-initializes an existing-but-empty SQLite file (genuinely read-only, not just by convention)", async () => {
+    // A valid, but EMPTY, SQLite file (no miner_claims table) -- created directly via node:sqlite, never
+    // through openClaimLedger, so no schema/version-stamp write has ever happened here. If this tool
+    // accidentally used the writable openClaimLedger (which always runs CREATE TABLE IF NOT EXISTS + a
+    // schema-version stamp on open) instead of the read-only opener, this empty file would gain a
+    // miner_claims table as an undocumented side effect of an advisory-only lookup.
+    const db = new DatabaseSync(ledgerDbPath);
+    db.close();
+    await connectWithLedgerDb(ledgerDbPath);
+
+    const result = await ledgerClient.callTool({
+      name: "gittensory_feasibility_gate",
+      arguments: {
+        claimStatus: "unclaimed",
+        duplicateClusterRisk: "none",
+        issueStatus: "ready",
+        repoFullName: "acme/widgets",
+        issueNumber: 42,
+      },
+    });
+    expect(result.isError).toBeFalsy();
+
+    const inspect = new DatabaseSync(ledgerDbPath, { readOnly: true });
+    const tables = inspect
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all()
+      .map((row) => row.name);
+    inspect.close();
+    expect(tables).toEqual([]);
   });
 
   it("falls back to the caller-supplied claimStatus unchanged when repoFullName/issueNumber are omitted", async () => {

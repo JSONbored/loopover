@@ -213,16 +213,19 @@ const feasibilityGateShape = {
  * (#5157), so `gittensory_feasibility_gate` isn't purely trusting a caller-supplied `claimStatus` string.
  * Returns `null` (fall back to the caller-supplied value unchanged) only when there is genuinely nothing to
  * look up: no repo/issue supplied, no local install detected (the ledger DB file doesn't exist -- checked
- * via `existsSync` BEFORE opening anything, so this never creates the ledger file/table as a side effect of
- * an advisory-only tool), or the sibling `@jsonbored/gittensory-miner` package isn't resolvable at all (a
- * standalone gittensory-mcp install with no miner alongside it). When the ledger DB file DOES exist (a real
- * local install IS present) but reading it fails -- corrupt, locked, permission denied -- this returns
- * `"unknown"` rather than silently falling back to a caller-supplied string that ground-truth data (which we
- * know exists but can't currently read) might contradict; `"unknown"` is an existing, honest claimStatus
- * value the calculator already understands, not a guess. This tool never calls
- * recordClaim/releaseClaim/expireClaim -- read-only, and it never gains any ability to block, cancel, or
- * override a claim or attempt; real claim-conflict authority stays entirely with #4848's maintainer-only
- * path.
+ * via `existsSync` BEFORE opening anything), or the sibling `@jsonbored/gittensory-miner` package isn't
+ * resolvable at all (a standalone gittensory-mcp install with no miner alongside it). When the ledger DB
+ * file DOES exist (a real local install IS present) but reading it fails -- corrupt, locked, permission
+ * denied -- this returns `"unknown"` rather than silently falling back to a caller-supplied string that
+ * ground-truth data (which we know exists but can't currently read) might contradict; `"unknown"` is an
+ * existing, honest claimStatus value the calculator already understands, not a guess.
+ *
+ * Uses `openClaimLedgerReadOnly` (not `openClaimLedger`), which opens the DB file in SQLite's own `readonly`
+ * mode -- a DRIVER-ENFORCED guarantee, not just a by-convention one. `openClaimLedger` always runs
+ * `CREATE TABLE IF NOT EXISTS` plus a schema-version stamp on open, which IS a write even against a file
+ * that merely exists but is empty/uninitialized; this tool never calls that, `recordClaim`,
+ * `releaseClaim`, or `expireClaim` -- it never gains any ability to block, cancel, or override a claim or
+ * attempt; real claim-conflict authority stays entirely with #4848's maintainer-only path.
  */
 async function resolveLedgerClaimStatus(repoFullName, issueNumber) {
   if (!repoFullName || !issueNumber) return null;
@@ -235,11 +238,11 @@ async function resolveLedgerClaimStatus(repoFullName, issueNumber) {
        resolves */
     return null;
   }
-  const { resolveClaimLedgerDbPath, openClaimLedger } = claimLedgerModule;
+  const { resolveClaimLedgerDbPath, openClaimLedgerReadOnly } = claimLedgerModule;
   const dbPath = resolveClaimLedgerDbPath();
   if (!existsSync(dbPath)) return null;
   try {
-    const ledger = openClaimLedger(dbPath);
+    const ledger = openClaimLedgerReadOnly(dbPath);
     try {
       const activeClaims = ledger.listActiveClaims(repoFullName);
       return activeClaims.some((claim) => claim.issueNumber === issueNumber) ? "claimed" : "unclaimed";
@@ -248,8 +251,9 @@ async function resolveLedgerClaimStatus(repoFullName, issueNumber) {
     }
   } catch {
     // The ledger DB file exists (a real local install IS present) but reading it failed -- corrupt, locked,
-    // or a permission error. Never silently trust a caller-supplied string that could contradict ground
-    // truth we know exists but can't currently read; "unknown" surfaces that honestly instead of guessing.
+    // a permission error, or not actually a claim-ledger database. Never silently trust a caller-supplied
+    // string that could contradict ground truth we know exists but can't currently read; "unknown" surfaces
+    // that honestly instead of guessing.
     return "unknown";
   }
 }

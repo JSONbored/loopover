@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
 
@@ -173,6 +174,37 @@ export function openClaimLedger(dbPath = resolveClaimLedgerDbPath()) {
     },
   };
   return ledger;
+}
+
+/**
+ * Strictly read-only ledger access for advisory-only callers (#5157) that must never write anything --
+ * not even the schema-creation DDL and schema-version stamp {@link openClaimLedger} always runs on open.
+ * Opens the DB file in SQLite's own `readonly` mode (driver-enforced: an attempted write throws, this isn't
+ * just a by-convention guarantee) and touches the filesystem in no other way -- no `mkdirSync`/`chmodSync`,
+ * no `CREATE TABLE IF NOT EXISTS`, no migrations. The caller MUST only call this against a path it has
+ * already confirmed exists (e.g. via `existsSync`); a read-only connection to a nonexistent file throws.
+ * Throws if the expected table is missing too (a file exists at this path but isn't a real claim ledger) --
+ * callers should treat that identically to any other open/query failure.
+ */
+export function openClaimLedgerReadOnly(dbPath) {
+  const resolvedPath = normalizeDbPath(dbPath);
+  // `readOnly` (camelCase) -- node:sqlite silently IGNORES `readonly` (lowercase) as an unrecognized option
+  // and opens read-write anyway, defeating the entire point of this function. Verified empirically: a write
+  // via a `{ readonly: true }` connection succeeds with no error.
+  const db = new DatabaseSync(resolvedPath, { readOnly: true });
+  const listActiveStatement = db.prepare(
+    "SELECT * FROM miner_claims WHERE repo_full_name = ? AND status = 'active' ORDER BY id ASC",
+  );
+  return {
+    dbPath: resolvedPath,
+    listActiveClaims(repoFullName) {
+      const normalizedRepo = normalizeRepoFullName(repoFullName);
+      return listActiveStatement.all(normalizedRepo).map(rowToClaim);
+    },
+    close() {
+      db.close();
+    },
+  };
 }
 
 function getDefaultClaimLedger() {

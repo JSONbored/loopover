@@ -3911,7 +3911,6 @@
               "commentMode",
               "publicAudienceMode",
               "checkRunMode",
-              "gateCheckMode",
               "reviewCheckMode",
               "quietByDefault",
               "behavior",
@@ -9659,7 +9658,6 @@
           "publicSignalLevel",
           "checkRunMode",
           "checkRunDetailLevel",
-          "gateCheckMode",
           "regateSweepOrderMode",
           "reviewCheckMode",
           "gatePack",
@@ -9783,7 +9781,6 @@
                     "commentMode",
                     "publicAudienceMode",
                     "checkRunMode",
-                    "gateCheckMode",
                     "reviewCheckMode",
                     "autoLabelEnabled"
                   ]
@@ -10398,7 +10395,6 @@
               "publicSignalLevel",
               "checkRunMode",
               "checkRunDetailLevel",
-              "gateCheckMode",
               "regateSweepOrderMode",
               "reviewCheckMode",
               "gatePack",

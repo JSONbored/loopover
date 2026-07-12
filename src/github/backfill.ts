@@ -1168,7 +1168,6 @@ function summarizeRepairSettings(settings: RepositorySettings) {
     commentMode: settings.commentMode,
     publicAudienceMode: settings.publicAudienceMode,
     checkRunMode: settings.checkRunMode,
-    gateCheckMode: settings.gateCheckMode,
     reviewCheckMode: settings.reviewCheckMode,
     autoLabelEnabled: settings.autoLabelEnabled,
   };

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,7 +14,7 @@ import { closeDefaultGovernorLedger, initGovernorLedger } from "../../packages/g
 import { closeDefaultWorktreeAllocator, openWorktreeAllocator } from "../../packages/gittensory-miner/lib/worktree-allocator.js";
 import { buildAttemptDeps, parseAttemptArgs, runAttempt } from "../../packages/gittensory-miner/lib/attempt-cli.js";
 import type { PrepareAttemptWorktreeResult } from "../../packages/gittensory-miner/lib/attempt-worktree.js";
-import { DEFAULT_AMS_POLICY_SPEC, parseFocusManifest } from "../../packages/gittensory-engine/src/index";
+import { DEFAULT_AMS_POLICY_SPEC, DEFAULT_MINER_GOAL_SPEC, parseFocusManifest } from "../../packages/gittensory-engine/src/index";
 
 const roots: string[] = [];
 // Only ever holds ledgers a test itself must close -- runAttempt tests inject theirs via DI and runAttempt's
@@ -63,6 +63,7 @@ function readyPipelineOptions(overrides: Record<string, unknown> = {}) {
     buildCodingTaskSpec: () => fakeCodingTaskSpec(),
     resolveAmsPolicy: async () => ({ spec: DEFAULT_AMS_POLICY_SPEC, source: "default" as const, warnings: [] }),
     checkMinerKillSwitch: () => ({ scope: "none" as const, active: false }),
+    resolveMinerGoalSpec: () => ({ present: false, spec: DEFAULT_MINER_GOAL_SPEC, warnings: [] }),
     ...overrides,
   };
 }
@@ -699,5 +700,211 @@ describe("runAttempt (#5132)", () => {
     });
     expect(submittedExit).toBe(0);
     expect(onResult).toHaveBeenLastCalledWith(expect.objectContaining({ outcome: "attempt_submitted", spec: expect.objectContaining({ command: "gh pr create" }) }));
+  });
+});
+
+describe("runAttempt: real per-repo kill switch (#5392)", () => {
+  it("resolves the real MinerGoalSpec from the worktree's repoPath and threads killSwitch.paused through to checkMinerKillSwitch and the governor context", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const worktreeResult = fakeWorktreeResult();
+    const resolveMinerGoalSpecSpy = vi.fn().mockReturnValue({ present: true, spec: { ...DEFAULT_MINER_GOAL_SPEC, killSwitch: { paused: true } }, warnings: [] });
+    const checkMinerKillSwitchSpy = vi.fn().mockReturnValue({ scope: "repo" as const, active: true });
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({ outcome: "governed", decision: { allowed: false }, loopResult: {} });
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        resolveMinerGoalSpec: resolveMinerGoalSpecSpy,
+        checkMinerKillSwitch: checkMinerKillSwitchSpy,
+        runMinerAttempt: runMinerAttemptSpy,
+      }),
+    });
+
+    expect(resolveMinerGoalSpecSpy).toHaveBeenCalledWith(worktreeResult.repoPath);
+    expect(checkMinerKillSwitchSpy).toHaveBeenCalledWith({ env: { MINER_CODING_AGENT_PROVIDER: "noop" }, repoPaused: true });
+    const [input] = runMinerAttemptSpy.mock.calls[0]!;
+    expect(input.killSwitchScope).toBe("repo");
+    expect(input.governor.killSwitchRepoPaused).toBe(true);
+  });
+
+  it("REGRESSION: reads a real .gittensory-miner.yml killSwitch.paused:true from the worktree's real repoPath, end to end", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const repoRoot = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-cli-repo-"));
+    roots.push(repoRoot);
+    writeFileSync(join(repoRoot, ".gittensory-miner.yml"), "killSwitch:\n  paused: true\n");
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({ outcome: "governed", decision: { allowed: false }, loopResult: {} });
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        resolveMinerGoalSpec: undefined, // use the real, non-injected resolver against the real repoRoot below
+        checkMinerKillSwitch: undefined, // use the real resolver too, so it actually reacts to repoPaused
+        prepareAttemptWorktree: async () => ({ ok: true, worktreePath: repoRoot, repoPath: repoRoot, branchName: "gittensory/attempt/real" }),
+        runMinerAttempt: runMinerAttemptSpy,
+      }),
+    });
+
+    const [input] = runMinerAttemptSpy.mock.calls[0]!;
+    expect(input.killSwitchScope).toBe("repo");
+    expect(input.governor.killSwitchRepoPaused).toBe(true);
+  });
+
+  it("does not gate on a repo pause when no .gittensory-miner.yml exists (real resolver, real empty dir)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const repoRoot = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-cli-repo-"));
+    roots.push(repoRoot);
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({ outcome: "abandon", loopResult: {} });
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        resolveMinerGoalSpec: undefined,
+        checkMinerKillSwitch: undefined,
+        prepareAttemptWorktree: async () => ({ ok: true, worktreePath: repoRoot, repoPath: repoRoot, branchName: "gittensory/attempt/real" }),
+        runMinerAttempt: runMinerAttemptSpy,
+      }),
+    });
+
+    const [input] = runMinerAttemptSpy.mock.calls[0]!;
+    expect(input.killSwitchScope).toBe("none");
+    expect(input.governor.killSwitchRepoPaused).toBe(false);
+  });
+});
+
+describe("runAttempt: real claim-ledger wiring (#5393)", () => {
+  it("REGRESSION: claims the real issue before invoking runMinerAttempt, and releases it once the attempt finishes", async () => {
+    // claimLedger is closed in runAttempt's own `finally` block once it returns (matching the file's own
+    // "runAttempt tests inject theirs via DI" convention above) -- so the released-after state is asserted via
+    // a spy recorded DURING the call, not by re-querying the ledger once it's already closed.
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const releaseClaimSpy = vi.spyOn(claimLedger, "releaseClaim");
+    let activeClaimsDuringAttempt: unknown[] = [];
+    const runMinerAttemptSpy = vi.fn().mockImplementation(async () => {
+      activeClaimsDuringAttempt = claimLedger.listActiveClaims("acme/widgets");
+      return {
+        outcome: "submitted",
+        spec: { command: "gh pr create", cwd: "/fake", timeoutMs: 1 },
+        execResult: { code: 0 },
+        loopResult: {},
+      };
+    });
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+    });
+
+    // Active (visible to a sibling miner process) while the real attempt was running...
+    expect(activeClaimsDuringAttempt).toHaveLength(1);
+    expect(activeClaimsDuringAttempt[0]).toMatchObject({ repoFullName: "acme/widgets", issueNumber: 7, status: "active" });
+    // ...and released once the attempt concluded.
+    expect(releaseClaimSpy).toHaveBeenCalledWith("acme/widgets", 7);
+  });
+
+  it("releases the real claim even on a non-submitted terminal outcome", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const releaseClaimSpy = vi.spyOn(claimLedger, "releaseClaim");
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: async () => ({ outcome: "abandon", loopResult: {} }) }),
+    });
+
+    expect(releaseClaimSpy).toHaveBeenCalledWith("acme/widgets", 7);
+  });
+
+  it("REGRESSION: releases the real claim even when runMinerAttempt throws unexpectedly", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const releaseClaimSpy = vi.spyOn(claimLedger, "releaseClaim");
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        runMinerAttempt: async () => {
+          throw new Error("boom");
+        },
+      }),
+    });
+
+    expect(exitCode).toBe(2);
+    expect(releaseClaimSpy).toHaveBeenCalledWith("acme/widgets", 7);
+  });
+
+  it("never claims when the attempt is blocked before feasibility is even checked (rejection-signaled)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const claimIssueSpy = vi.spyOn(claimLedger, "claimIssue");
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      resolveRejectionSignaled: async () => true,
+    });
+
+    expect(claimIssueSpy).not.toHaveBeenCalled();
+  });
+
+  it("never claims when the coding-task-spec is infeasible", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const claimIssueSpy = vi.spyOn(claimLedger, "claimIssue");
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        buildCodingTaskSpec: () => ({
+          ready: false,
+          verdict: "avoid",
+          feasibility: { verdict: "avoid", avoidReasons: ["already_claimed"], raiseReasons: [], summary: "not feasible" },
+        }),
+      }),
+    });
+
+    expect(claimIssueSpy).not.toHaveBeenCalled();
   });
 });

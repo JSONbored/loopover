@@ -48,7 +48,12 @@ describe("buildAttemptGovernorContext (#5132)", () => {
     expect(ctx.liveModeGlobalOptIn).toBe(false);
   });
 
-  it("REGRESSION: killSwitchRepoPaused is omitted (documented gap, not fabricated as false)", () => {
+  it("REGRESSION: killSwitchRepoPaused threads the caller's real per-repo pause value through (#5392)", () => {
+    const ctx = buildAttemptGovernorContext({}, DEFAULT_AMS_POLICY_SPEC, true);
+    expect(ctx.killSwitchRepoPaused).toBe(true);
+  });
+
+  it("killSwitchRepoPaused defaults to undefined when the caller omits it", () => {
     const ctx = buildAttemptGovernorContext({}, DEFAULT_AMS_POLICY_SPEC);
     expect(ctx.killSwitchRepoPaused).toBeUndefined();
   });

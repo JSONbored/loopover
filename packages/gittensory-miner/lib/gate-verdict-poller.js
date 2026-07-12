@@ -10,6 +10,19 @@
 // gate verdict are two different signals a caller can record independently.
 //
 // Fully testable via injected `fetchFn`/`sleepFn` (mirrors `ci-poller.js`) — no real network in tests.
+//
+// UNWIRED (#5394 investigation): no production caller exists anywhere in this package, and the endpoint this
+// module was built to poll doesn't have a real match today. The only real route serving a contributor their
+// own open-PR state is GET /v1/contributors/:login/open-pr-monitor (src/api/routes.ts, backed by
+// buildContributorOpenPrMonitor, src/signals/contributor-open-pr-monitor.ts) — but its response shape is a
+// LIST of `{ repoFullName, number, classification: OpenPrWorkClassification, ... }` packets across every open
+// PR for that login, not the single decided `{ disposition | gateDisposition | verdict }` field this module's
+// own `readGateDisposition` expects for ONE targeted PR. `loop-cli.js`'s real CI/gate-status observation
+// (#5394) uses `ci-poller.js`'s real GitHub check-run polling instead — the documented fallback for exactly
+// this case. Wiring this module for real needs either a new single-PR gate-decision route or a rewrite of
+// `readGateDisposition`/`mapGateDisposition` against `open-pr-monitor`'s real `classification` vocabulary —
+// deliberately left as a separate follow-up rather than guessed at here.
+
 import { fetchWithRetry } from "./http-retry.js";
 
 /** The typed gate verdicts, decided ones first, `pending` (not-yet-decided) last. */

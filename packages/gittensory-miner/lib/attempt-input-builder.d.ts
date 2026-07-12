@@ -5,6 +5,7 @@ import type { CodingTaskSpecResult } from "./coding-task-spec.js";
 export function buildAttemptGovernorContext(
   env: Record<string, string | undefined>,
   amsPolicySpec: AmsPolicySpec,
+  repoPaused?: boolean,
 ): AttemptGovernorContext;
 
 export type BuildAttemptLoopInputInput = {

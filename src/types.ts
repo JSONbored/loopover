@@ -715,11 +715,13 @@ export type RepositorySettings = {
   // #4620: "deep" removed -- it was never wired to any different behavior than "standard" (formatCheckRunOutput
   // and buildCheckRunAnnotations in rules/advisory.ts both branch only on `=== "minimal"` vs not).
   checkRunDetailLevel: "minimal" | "standard";
-  /** @deprecated (#4618, tracked for removal in #5373) Legacy shadow of {@link reviewCheckMode} (#2852): a
+  /** @deprecated (#4618, being removed per #5373) Legacy shadow of {@link reviewCheckMode} (#2852): a
    *  computed read-back value only, for API/dashboard back-compat display. `"enabled"` when
    *  `reviewCheckMode !== "disabled"`, else `"off"` -- see getRepositorySettings/upsertRepositorySettings in
-   *  db/repositories.ts. No write path accepts this field anymore; set {@link reviewCheckMode} directly instead. */
-  gateCheckMode: "off" | "enabled";
+   *  db/repositories.ts. No write path accepts this field anymore; set {@link reviewCheckMode} directly
+   *  instead. Optional (widened ahead of full removal) so callers building a partial RepositorySettings no
+   *  longer need to supply it; production code (repositories.ts) still always populates it on every read. */
+  gateCheckMode?: "off" | "enabled" | undefined;
   /** Scheduled re-gate sweep candidate ordering (#3815). `staleness` (default) picks whichever open PR the
    *  sweep has gone longest WITHOUT re-gating (see selectRegateCandidates), which is what gives the sweep its
    *  documented full-coverage-in-ceil(open/max)-ticks convergence guarantee even under dry-run/pause (when

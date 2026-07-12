@@ -99,6 +99,7 @@ describe("gittensory-miner MCP server (#5153 scaffold)", () => {
       "gittensory_miner_list_claims",
       "gittensory_miner_list_plans",
       "gittensory_miner_ping",
+      "gittensory_miner_status",
     ]);
   });
 
@@ -337,5 +338,48 @@ describe("gittensory_miner_list_plans / get_plan (#5161)", () => {
     await callTool(client, "gittensory_miner_get_plan", { planId: "p1" });
     expect(store.calls).toEqual(["listPlans", "loadPlan"]);
     expect(store.calls).not.toContain("savePlan");
+  });
+});
+
+const FAKE_STATUS = {
+  package: { name: "@jsonbored/gittensory-miner", version: "0.1.0" },
+  engine: { name: "@jsonbored/gittensory-engine", version: "1.0.0" },
+  node: "v22.13.0",
+  stateDir: "/home/miner/.config/gittensory-miner",
+  configFile: null,
+  driver: { provider: "claude-code", modelEnvVar: "MINER_CODING_AGENT_CLAUDE_MODEL", cliPresent: true },
+};
+const FAKE_DOCTOR = [
+  { name: "Node", ok: true, detail: "v22.13.0" },
+  { name: "Docker", ok: false, detail: "not installed" },
+  { name: "Claude CLI", ok: true, detail: "present" },
+];
+
+describe("gittensory_miner_status (#5154)", () => {
+  function statusClient(): Promise<Client> {
+    return connectedClient({ collectStatus: () => FAKE_STATUS, runDoctorChecks: () => FAKE_DOCTOR });
+  }
+  async function callStatus(client: Client): Promise<Record<string, unknown>> {
+    const result = (await client.callTool({ name: "gittensory_miner_status", arguments: {} })) as Content;
+    return JSON.parse(toolText(result)) as Record<string, unknown>;
+  }
+
+  it("returns { status, doctor } from the reused collectStatus / runDoctorChecks readers", async () => {
+    const out = await callStatus(await statusClient());
+    expect(out).toEqual({ status: FAKE_STATUS, doctor: FAKE_DOCTOR });
+  });
+
+  it("surfaces the driver's model ENV-VAR NAME and CLI-present boolean, never a secret value", async () => {
+    const out = await callStatus(await statusClient());
+    expect((out.status as { driver: unknown }).driver).toEqual({
+      provider: "claude-code",
+      modelEnvVar: "MINER_CODING_AGENT_CLAUDE_MODEL",
+      cliPresent: true,
+    });
+    // Only names / booleans / paths — no token/key-shaped secret anywhere in the serialized response.
+    const serialized = JSON.stringify(out);
+    for (const secretish of ["ghp_", "gho_", "github_pat_", "-----BEGIN"]) {
+      expect(serialized).not.toContain(secretish);
+    }
   });
 });

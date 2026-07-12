@@ -48,12 +48,17 @@ export interface MinerMcpServerOptions {
     readGovernorDecisions(filter?: { repoFullName?: string | null }): unknown[];
     close(): void;
   };
+  /** Override the status reader (defaults to status.js's collectStatus); injection seam for tests. */
+  collectStatus?: () => unknown;
+  /** Override the doctor-checks reader (defaults to status.js's runDoctorChecks); injection seam for tests. */
+  runDoctorChecks?: () => unknown[];
 }
 
 /**
  * Build the miner MCP server with its tools registered (gittensory_miner_ping,
  * gittensory_miner_get_portfolio_dashboard, gittensory_miner_list_claims, gittensory_miner_get_audit_feed,
  * gittensory_miner_get_run_state, gittensory_miner_list_plans, gittensory_miner_get_plan,
- * gittensory_miner_get_governor_decisions). `options` supplies test injection seams; production callers pass nothing.
+ * gittensory_miner_get_governor_decisions, gittensory_miner_status). `options` supplies test injection seams;
+ * production callers pass nothing.
  */
 export function createMinerMcpServer(options?: MinerMcpServerOptions): McpServer;

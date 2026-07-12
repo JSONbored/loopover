@@ -15,6 +15,7 @@ import { initPortfolioQueueStore } from "../lib/portfolio-queue.js";
 import { initRunStateStore } from "../lib/run-state.js";
 import { PLAN_STATUSES, openPlanStore } from "../lib/plan-store.js";
 import { initGovernorLedger } from "../lib/governor-ledger.js";
+import { collectStatus, runDoctorChecks } from "../lib/status.js";
 
 // MCP stdio server for @jsonbored/gittensory-miner (scaffold #5153). Mirrors the packages/gittensory-mcp
 // harness (MCP SDK server + stdio transport). Tools:
@@ -31,7 +32,8 @@ import { initGovernorLedger } from "../lib/governor-ledger.js";
 //     plan store via plan-store.js's listPlans/loadPlan (distinct from ORB's stateless gittensory_plan_status).
 //   - gittensory_miner_get_governor_decisions (#5159): read-only governor decision-log projection via
 //     governor-ledger.js's readGovernorDecisions -- an explicit named-column read that excludes payload_json.
-// Remaining AMS-state-reading tools (status/doctor, etc.) land as follow-ups.
+//   - gittensory_miner_status (#5154): read-only status + doctor diagnostics via status.js's collectStatus/
+//     runDoctorChecks (names/booleans/paths only -- never any env-var value, token, key, or credential).
 
 // Read the version from this package's own package.json (always shipped) rather than a hand-synced
 // literal, so a release bump never has a second place to forget -- same approach as the mcp harness.
@@ -50,8 +52,9 @@ export const MINER_PING_STATUS = { status: "ok", tool: "gittensory_miner_ping" }
 /**
  * Build the miner MCP server with its tools registered. `options.initPortfolioQueue`, `options.openClaimLedger`,
  * `options.initEventLedger`, `options.initRunStateStore`, `options.openPlanStore`, `options.initGovernorLedger`,
- * and `options.nowMs` are injection seams for tests (default to the real stores and the wall clock); the ping
- * tool needs none. Each store-backed tool opens its store only when invoked and closes any store it opened.
+ * `options.collectStatus`, `options.runDoctorChecks`, and `options.nowMs` are injection seams for tests (default
+ * to the real stores/readers and the wall clock); the ping tool needs none. Each store-backed tool opens its
+ * store only when invoked and closes any store it opened.
  */
 export function createMinerMcpServer(options = {}) {
   const server = new McpServer({ name: "gittensory-miner", version: ownPackageJson.version });
@@ -240,6 +243,24 @@ export function createMinerMcpServer(options = {}) {
       } finally {
         if (ownsLedger) ledger.close();
       }
+    },
+  );
+  server.registerTool(
+    "gittensory_miner_status",
+    {
+      description:
+        "Read-only miner status + doctor diagnostics. Returns { status, doctor }: status = package/engine versions " +
+        "(+ skew), node version, state-dir path, config-file path, and the resolved coding-agent driver (provider " +
+        "name, the model ENV-VAR NAME -- never its value -- and a CLI-present boolean); doctor = the same checks " +
+        "`gittensory-miner doctor` runs (Docker/CLI presence, config validity, ...) as { name, ok, detail }. Reuses " +
+        "collectStatus/runDoctorChecks so it can never drift from the CLI. Only names / booleans / paths -- never " +
+        "any env-var value, token, key, or credential. Read-only; no writes or state changes.",
+      inputSchema: {},
+    },
+    async () => {
+      const status = (options.collectStatus ?? collectStatus)();
+      const doctor = (options.runDoctorChecks ?? runDoctorChecks)();
+      return { content: [{ type: "text", text: JSON.stringify({ status, doctor }) }] };
     },
   );
   return server;

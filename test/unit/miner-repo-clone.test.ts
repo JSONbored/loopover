@@ -45,6 +45,19 @@ describe("resolveRepoCloneBaseDir / resolveRepoCloneDir (#5132)", () => {
   it("rejects a malformed repoFullName", () => {
     expect(() => resolveRepoCloneDir("not-a-repo")).toThrow("invalid_repo_full_name");
   });
+
+  it("REGRESSION: rejects '.'/'..' path-traversal segments in owner or repo, in either position", () => {
+    expect(() => resolveRepoCloneDir("../foo")).toThrow("invalid_repo_full_name");
+    expect(() => resolveRepoCloneDir("foo/..")).toThrow("invalid_repo_full_name");
+    expect(() => resolveRepoCloneDir("./foo")).toThrow("invalid_repo_full_name");
+    expect(() => resolveRepoCloneDir("foo/.")).toThrow("invalid_repo_full_name");
+    expect(() => resolveRepoCloneDir("../..")).toThrow("invalid_repo_full_name");
+  });
+
+  it("rejects an owner or repo segment with characters outside GitHub's allowed set", () => {
+    expect(() => resolveRepoCloneDir("acme/wid gets")).toThrow("invalid_repo_full_name");
+    expect(() => resolveRepoCloneDir("ac me/widgets")).toThrow("invalid_repo_full_name");
+  });
 });
 
 describe("ensureRepoCloned (#5132)", () => {

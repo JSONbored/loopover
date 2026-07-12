@@ -28,10 +28,21 @@ export function resolveRepoCloneBaseDir(env = process.env) {
   return join(configHome, "gittensory-miner", DEFAULT_CLONE_DIR_NAME);
 }
 
+// GitHub owner/repo names are restricted to alphanumerics, hyphens, underscores, and periods, and are never
+// exactly "." or ".." -- both are rejected here so a value like "../foo" can't make resolveRepoCloneDir's
+// join(cloneBaseDir, owner, repo) escape the intended clone directory (a real path-traversal finding).
+const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+function isPathTraversalSegment(segment) {
+  return segment === "." || segment === "..";
+}
+
 function normalizeRepoFullName(repoFullName) {
   if (typeof repoFullName !== "string") throw new Error("invalid_repo_full_name");
   const [owner, repo, extra] = repoFullName.trim().split("/");
   if (!owner || !repo || extra !== undefined) throw new Error("invalid_repo_full_name");
+  if (!REPO_SEGMENT_PATTERN.test(owner) || !REPO_SEGMENT_PATTERN.test(repo)) throw new Error("invalid_repo_full_name");
+  if (isPathTraversalSegment(owner) || isPathTraversalSegment(repo)) throw new Error("invalid_repo_full_name");
   return { owner, repo, repoFullName: `${owner}/${repo}` };
 }
 

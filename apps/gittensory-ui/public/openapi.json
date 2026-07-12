@@ -8918,7 +8918,8 @@
             ]
           },
           "firstTimeContributorGrace": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Reserved (#2266) -- the gate evaluator never reads this field. Currently has no effect on gate decisions."
           },
           "slopGateMinScore": {
             "type": "number",
@@ -10279,7 +10280,8 @@
                 ]
               },
               "firstTimeContributorGrace": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "Reserved (#2266) -- the gate evaluator never reads this field. Currently has no effect on gate decisions."
               },
               "slopGateMinScore": {
                 "type": "number",

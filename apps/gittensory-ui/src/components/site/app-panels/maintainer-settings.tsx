@@ -123,6 +123,10 @@ type ToggleFieldDef = {
   label: string;
   kind: "toggle";
   hint?: string;
+  // Renders greyed-out and non-interactive with the hint as the disclosure -- for a field that is real
+  // and DB-backed but currently wired to nothing (e.g. firstTimeContributorGrace, #2266/#2411), so a
+  // maintainer can't be misled into thinking the toggle has an effect.
+  disabled?: boolean;
 };
 type NumberFieldDef = {
   key: keyof MaintainerSettings;
@@ -184,7 +188,8 @@ const GATE_FIELDS: FieldDef[] = [
     key: "firstTimeContributorGrace",
     label: "First-time-contributor grace",
     kind: "toggle",
-    hint: "Soften a newcomer's block to advisory",
+    hint: "Reserved — currently has no effect on gate decisions (#2266)",
+    disabled: true,
   },
 ];
 
@@ -623,6 +628,7 @@ function FieldGroup({
                 key={field.key}
                 label={field.label}
                 hint={field.hint}
+                disabled={field.disabled}
                 value={settings[field.key] as boolean}
                 onChange={(value) =>
                   setField(field.key, value as MaintainerSettings[typeof field.key])
@@ -682,17 +688,20 @@ function ToggleControl({
   hint,
   value,
   onChange,
+  disabled,
 }: {
   label: string;
   hint?: string;
   value: boolean;
   onChange: (value: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
-    <label className="flex items-start gap-2 text-token-sm">
+    <label className={`flex items-start gap-2 text-token-sm ${disabled ? "opacity-60" : ""}`}>
       <input
         type="checkbox"
         checked={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
         className="mt-0.5 size-4 accent-mint"
       />

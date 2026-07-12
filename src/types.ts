@@ -944,6 +944,11 @@ export type RepositorySettings = {
    *  settings.advisoryAiRouting` in shared/global or per-repo config. Defaults all-false so every advisory
    *  capability stays on the shared frontier env.AI chain until an operator opts each one in. */
   advisoryAiRouting?: AdvisoryAiRoutingConfig | undefined;
+  /** Governs ONLY the PR comment and label -- never the "Gittensory Context" check ({@link checkRunMode})
+   *  or the "Gittensory Orb Review Agent" gate check ({@link reviewCheckMode}), which are independent axes
+   *  by design (#2852: the check-run must keep posting for branch-protection/auto-merge to keep working
+   *  even when a maintainer wants full public silence). Setting this to `"off"` does NOT silence either
+   *  check-run -- see README's "Check-run and comment surfaces, disambiguated" section. */
   publicSurface: "off" | "comment_and_label" | "comment_only" | "label_only";
   includeMaintainerAuthors: boolean;
   /** Surfaces the `missing_linked_issue` advisory finding in the review comment -- does NOT block a PR on

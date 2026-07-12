@@ -16,6 +16,15 @@ type DiscoverOptions = {
   apiBaseUrl?: string;
   perPage?: number;
   maxPages?: number;
+  forge?: Record<string, string>;
+};
+
+// A non-default forge (mirrors miner-opportunity-fanout-forge.test.ts's CUSTOM_FORGE): proves the pagination
+// validation is forge-AWARE, not hardcoded to github.com's default repo/search paths (#4784).
+const CUSTOM_FORGE = {
+  apiBaseUrl: "https://ghe.example.com/api/v3",
+  repoPathPrefix: "/repositories",
+  searchEndpoint: "/search/tickets",
 };
 
 // checkJs infers a structurally narrow options type for the fan-out .js module, so pass a typed, non-fresh
@@ -123,6 +132,27 @@ describe("discovery fanout Link-header pagination (#4831)", () => {
     expect(requestedUrls).not.toContain("https://attacker.invalid/collect");
   });
 
+  it("ignores a target-issues Link header whose URL fails to parse, without throwing", async () => {
+    let issuesFetches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/contents/")) return jsonResponse({}, { status: 404 });
+      if (url.includes("/issues?")) {
+        issuesFetches += 1;
+        // An unterminated IPv6 host literal is one of the few strings the WHATWG URL parser rejects even when
+        // resolved against a valid base (most relative references parse fine) -- exercises nextPageUrl's
+        // `catch { return null }` malformed-URL path, not just the origin/path-mismatch rejection.
+        return pagedResponse([issue(1)], "http://[::1");
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    const result = await fetchCandidateIssuesWithSummary(TARGET, "", discoverOptions());
+
+    expect(issuesFetches).toBe(1);
+    expect(result.issues.map((entry) => entry.issueNumber)).toEqual([1]);
+  });
+
   it("ignores target-issues Link headers that switch endpoint paths", async () => {
     const requestedUrls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -139,6 +169,48 @@ describe("discovery fanout Link-header pagination (#4831)", () => {
 
     expect(result.issues.map((entry) => entry.issueNumber)).toEqual([1]);
     expect(requestedUrls).not.toContain(`${API}/repos/acme/widgets/contents/AI-USAGE.md?page=2`);
+  });
+
+  it("follows a same-origin, same-custom-path Link header for a non-default forge (#4784)", async () => {
+    let issuesFetches = 0;
+    const nextUrl = `${CUSTOM_FORGE.apiBaseUrl}/repositories/acme/widgets/issues?state=open&per_page=100&page=2`;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/contents/")) return jsonResponse({}, { status: 404 });
+      if (url.includes("/repositories/acme/widgets/issues?")) {
+        issuesFetches += 1;
+        if (pageParam(url) === 2) return jsonResponse([issue(2)]);
+        return pagedResponse([issue(1)], nextUrl);
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    const result = await fetchCandidateIssuesWithSummary(TARGET, "", discoverOptions({ apiBaseUrl: CUSTOM_FORGE.apiBaseUrl, forge: CUSTOM_FORGE }));
+
+    expect(issuesFetches).toBe(2);
+    expect(result.issues.map((entry) => entry.issueNumber)).toEqual([1, 2]);
+  });
+
+  it("ignores a Link header pointing at github.com's default repo path when the tenant is configured for a custom forge (#4784)", async () => {
+    const requestedUrls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      if (url.includes("/contents/")) return jsonResponse({}, { status: 404 });
+      if (url.includes("/repositories/acme/widgets/issues?")) {
+        // A crafted (or misconfigured) Link header pointing at the DEFAULT github.com /repos path -- same
+        // origin scheme as the custom forge's own apiBaseUrl would be if it were github.com, but this
+        // tenant's forge is configured with repoPathPrefix "/repositories", so the /repos/... path must
+        // never match `expectedUrl.pathname` and must be rejected, not silently followed.
+        return pagedResponse([issue(1)], `${CUSTOM_FORGE.apiBaseUrl}/repos/acme/widgets/issues?page=2`);
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    const result = await fetchCandidateIssuesWithSummary(TARGET, "", discoverOptions({ apiBaseUrl: CUSTOM_FORGE.apiBaseUrl, forge: CUSTOM_FORGE }));
+
+    expect(result.issues.map((entry) => entry.issueNumber)).toEqual([1]);
+    expect(requestedUrls).not.toContain(`${CUSTOM_FORGE.apiBaseUrl}/repos/acme/widgets/issues?page=2`);
   });
 
   it("follows the search Link header across pages and returns every item", async () => {

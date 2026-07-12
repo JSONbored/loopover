@@ -4,8 +4,8 @@ import { closeIssue, closePullRequest, createIssueComment, createPullRequestRevi
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import { createTestEnv } from "../helpers/d1";
 
-function envWithKey() {
-  return createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+function envWithKey(overrides: Partial<Env> = {}) {
+  return createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), ...overrides });
 }
 
 describe("GitHub PR action primitives (#778)", () => {
@@ -526,6 +526,48 @@ describe("GitHub PR action primitives (#778)", () => {
     expect(result).toEqual({ dismissed: true });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.body).toMatchObject({ message: "stale approval retracted", event: "DISMISS" });
+  });
+
+  it("REGRESSION (#security): falls back to the public Orb bot when GITHUB_APP_SLUG is unset", async () => {
+    const env = envWithKey();
+    delete (env as Partial<Env>).GITHUB_APP_SLUG;
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/pulls/12/reviews") && !url.includes("/dismissals") && method === "GET") {
+        return Response.json([{ id: 12, state: "APPROVED", user: { login: "gittensory-orb[bot]" } }]);
+      }
+      if (url.includes("/pulls/12/reviews/12/dismissals") && method === "PUT") {
+        calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : {} });
+        return Response.json({ id: 12, state: "DISMISSED" });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    await expect(dismissLatestBotApproval(env, 123, "owner/repo", 12, "retract")).resolves.toEqual({ dismissed: true });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("falls back to the public Orb bot when GITHUB_APP_SLUG is blank", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/pulls/13/reviews") && !url.includes("/dismissals") && method === "GET") {
+        return Response.json([{ id: 13, state: "APPROVED", user: { login: "gittensory-orb[bot]" } }]);
+      }
+      if (url.includes("/pulls/13/reviews/13/dismissals") && method === "PUT") {
+        calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : {} });
+        return Response.json({ id: 13, state: "DISMISSED" });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    await expect(dismissLatestBotApproval(envWithKey({ GITHUB_APP_SLUG: "   " }), 123, "owner/repo", 13, "retract")).resolves.toEqual({ dismissed: true });
+    expect(calls).toHaveLength(1);
   });
 
   it("is a no-op when the bot never approved this PR", async () => {

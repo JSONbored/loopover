@@ -10,6 +10,7 @@ const ISSUE_EVENTS_RECENT_PAGE_LIMIT = 10;
 // earliest reviews on a PR with a long review history and could dismiss (or miss) the wrong one.
 const REVIEW_PAGE_SIZE = 100;
 const REVIEW_PAGE_LIMIT = 10;
+const PUBLIC_GITHUB_APP_SLUG = "gittensory-orb";
 
 // The GitHub write primitives the maintainer auto-maintain layer (#778) uses to act on a PR's STATE — never
 // its source. Thin wrappers over the installation-scoped REST API, mirroring labels.ts / comments.ts. Each
@@ -128,7 +129,8 @@ export async function dismissLatestBotApproval(env: Env, installationId: number,
     const { owner, repo } = splitRepo(repoFullName);
     return await withInstallationTokenRetry(env, installationId, async (token) => {
       const octokit = makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));
-      const botLogin = `${env.GITHUB_APP_SLUG}[bot]`;
+      const botSlug = env.GITHUB_APP_SLUG?.trim() || PUBLIC_GITHUB_APP_SLUG;
+      const botLogin = `${botSlug}[bot]`;
       // Reviews are returned oldest-first; the LAST matching entry across ALL pages is the bot's most recent
       // APPROVE. Stopping at page 1 would find (or miss) the wrong review on a PR with >100 total reviews.
       let latestApprovalId: number | undefined;

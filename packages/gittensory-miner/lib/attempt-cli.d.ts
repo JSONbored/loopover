@@ -11,6 +11,7 @@ import type { cleanupAttemptWorktree, prepareAttemptWorktree } from "./attempt-w
 import type { buildCodingTaskSpec } from "./coding-task-spec.js";
 import type { resolveAmsPolicy } from "./ams-policy.js";
 import type { checkMinerKillSwitch } from "./governor-kill-switch.js";
+import type { resolveMinerGoalSpec } from "./miner-goal-spec.js";
 
 type CommonAttemptResultFields = {
   repoFullName: string;
@@ -76,6 +77,7 @@ export type RunAttemptOptions = {
   buildCodingTaskSpec?: typeof buildCodingTaskSpec;
   resolveAmsPolicy?: typeof resolveAmsPolicy;
   checkMinerKillSwitch?: typeof checkMinerKillSwitch;
+  resolveMinerGoalSpec?: typeof resolveMinerGoalSpec;
   runMinerAttempt?: typeof runMinerAttempt;
   /** Invoked with the real structured result at every return point, in addition to (never instead of) the
    *  plain exit-code return -- the loop orchestrator's real hook into what actually happened. */

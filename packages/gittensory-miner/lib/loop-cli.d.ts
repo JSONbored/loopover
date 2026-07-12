@@ -5,6 +5,7 @@ import type { EventLedger } from "./event-ledger.js";
 import type { GovernorLedger } from "./governor-ledger.js";
 import type { RunStateStore } from "./run-state.js";
 import type { PollPrDispositionOptions } from "./pr-disposition-poller.js";
+import type { CheckRunConclusion, PollCheckRunsOptions } from "./ci-poller.js";
 
 export type ParsedLoopArgs =
   | { error: string }
@@ -30,6 +31,7 @@ export type LoopCycleSummary = {
   attemptOutcome?: AttemptCliResult["outcome"] | "attempt_error";
   reentryOutcome?: "merged" | "disengaged" | "other";
   prNumber?: number | null;
+  ciConclusion?: CheckRunConclusion | null;
   reentered?: boolean;
   reasons?: string[];
 };
@@ -51,11 +53,13 @@ export type RunLoopOptions = {
   checkMinerKillSwitch?: (input?: { env?: Record<string, string | undefined>; repoPaused?: boolean }) => { scope: "global" | "repo" | "none"; active: boolean };
   evaluateRunLoopBoundaryGate?: (input: unknown, options?: unknown) => { verdict: { reason: string }; canClaimNext: boolean };
   pollPrDisposition?: (repoFullName: string, prNumber: number, options?: PollPrDispositionOptions) => Promise<{ state: "open" | "closed"; merged: boolean; closedAt: string | null; attempts: number }>;
+  pollCheckRuns?: (repoFullName: string, prNumber: number, options?: PollCheckRunsOptions) => Promise<{ conclusion: CheckRunConclusion; checks: unknown[]; headSha: string; attempts: number }>;
   recordPrOutcomeSnapshot?: (input: unknown, options?: unknown) => unknown;
   buildLoopClosureSummary?: (sources: unknown, options?: unknown) => { sinceSeq: number | null; lastSeq: number };
   attemptLoopReentry?: (candidate: unknown, deps: unknown) => { decision: { reenter: boolean; reasons: string[] }; dequeued: { repoFullName: string; identifier: string; priority: number; status: string; enqueuedAt: string } | null };
   attemptOptions?: Record<string, unknown>;
   prDispositionOptions?: PollPrDispositionOptions;
+  ciPollOptions?: PollCheckRunsOptions;
 };
 
 export function runLoop(args: string[], options?: RunLoopOptions): Promise<number>;

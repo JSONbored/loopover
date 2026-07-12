@@ -4,8 +4,9 @@
 // existed; this is the first caller that actually chains them into a real repeat-until-halted run.
 //
 // STRUCTURE (one cycle): kill-switch check -> real-per-repo-policy-aware run-loop boundary gate (before
-// claiming) -> real runAttempt -> real PR-disposition poll (pr-disposition-poller.js, on a submitted outcome)
-// -> real loop-closure summary -> real attemptLoopReentry decision. `attemptLoopReentry`'s own dequeue is the
+// claiming) -> real runAttempt -> real CI-status poll (ci-poller.js, #5394) + real PR-disposition poll
+// (pr-disposition-poller.js, on a submitted outcome) -> real loop-closure summary -> real attemptLoopReentry
+// decision. `attemptLoopReentry`'s own dequeue is the
 // AUTHORITATIVE claim for every cycle after the first (its own doc: "if allowed -- dequeues the next
 // candidate") -- this loop does not ALSO call portfolioQueue.dequeueNext() on a successful reentry, which
 // would silently double-claim (the reentry's own claim would then leak as a permanently 'in_progress', never-
@@ -35,6 +36,7 @@ import { runDiscover } from "./discover-cli.js";
 import { runAttempt } from "./attempt-cli.js";
 import { resolveAmsPolicy } from "./ams-policy.js";
 import { pollPrDisposition, classifyPrDisposition } from "./pr-disposition-poller.js";
+import { pollCheckRuns } from "./ci-poller.js";
 import { recordPrOutcomeSnapshot } from "./pr-outcome.js";
 import { buildLoopClosureSummary } from "./loop-closure.js";
 import { attemptLoopReentry } from "./loop-reentry.js";
@@ -193,11 +195,13 @@ function zeroConvergence() {
  *   checkMinerKillSwitch?: typeof checkMinerKillSwitch,
  *   evaluateRunLoopBoundaryGate?: typeof evaluateRunLoopBoundaryGate,
  *   pollPrDisposition?: typeof pollPrDisposition,
+ *   pollCheckRuns?: typeof pollCheckRuns,
  *   recordPrOutcomeSnapshot?: typeof recordPrOutcomeSnapshot,
  *   buildLoopClosureSummary?: typeof buildLoopClosureSummary,
  *   attemptLoopReentry?: typeof attemptLoopReentry,
  *   attemptOptions?: Record<string, unknown>,
  *   prDispositionOptions?: Record<string, unknown>,
+ *   ciPollOptions?: Record<string, unknown>,
  * }} [options]
  * @returns {Promise<number>}
  */
@@ -234,6 +238,7 @@ export async function runLoop(args, options = {}) {
   const checkKillSwitchFn = options.checkMinerKillSwitch ?? checkMinerKillSwitch;
   const evaluateBoundaryGateFn = options.evaluateRunLoopBoundaryGate ?? evaluateRunLoopBoundaryGate;
   const pollPrDispositionFn = options.pollPrDisposition ?? pollPrDisposition;
+  const pollCheckRunsFn = options.pollCheckRuns ?? pollCheckRuns;
   const recordPrOutcomeSnapshotFn = options.recordPrOutcomeSnapshot ?? recordPrOutcomeSnapshot;
   const buildLoopClosureSummaryFn = options.buildLoopClosureSummary ?? buildLoopClosureSummary;
   const attemptLoopReentryFn = options.attemptLoopReentry ?? attemptLoopReentry;
@@ -385,9 +390,27 @@ export async function runLoop(args, options = {}) {
       let reentryOutcome = "other";
       let prNumber = null;
       let prDisposition = null;
+      let ciConclusion = null;
       if (submitted) {
         prNumber = parsePrNumberFromExecResult(lastResult?.execResult, claimed.repoFullName);
         if (prNumber !== null) {
+          // Real CI-status observation (#5394): recorded BEFORE the disposition poll below, so a submitted
+          // PR's check-run state is captured even while it's still open, not just at its eventual merge/close.
+          // gate-verdict-poller.js (#4273) was the originally preferred source for this signal but has no real
+          // caller-reachable endpoint today (see its own header) -- ci-poller.js's real GitHub check-run
+          // polling is the documented fallback for exactly this case.
+          const ciStatus = await pollCheckRunsFn(claimed.repoFullName, prNumber, {
+            githubToken,
+            apiBaseUrl: options.apiBaseUrl,
+            ...(options.ciPollOptions ?? {}),
+          });
+          ciConclusion = ciStatus.conclusion;
+          eventLedger.appendEvent({
+            type: "ci_status_observed",
+            repoFullName: claimed.repoFullName,
+            payload: { prNumber, conclusion: ciStatus.conclusion, checkCount: ciStatus.checks.length, source: "ci-poller" },
+          });
+
           prDisposition = await pollPrDispositionFn(claimed.repoFullName, prNumber, {
             githubToken,
             apiBaseUrl: options.apiBaseUrl,
@@ -427,6 +450,7 @@ export async function runLoop(args, options = {}) {
         attemptOutcome,
         reentryOutcome,
         prNumber,
+        ciConclusion,
         reentered: reentry.decision.reenter,
         reasons: reentry.decision.reasons,
       });

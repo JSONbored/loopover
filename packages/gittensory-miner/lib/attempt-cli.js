@@ -7,8 +7,6 @@
 // runs, not just checks-and-reports-blocked.
 //
 // KNOWN, DOCUMENTED GAPS (not fabricated -- see attempt-input-builder.js's own header for the full list):
-// governor.killSwitchRepoPaused only checks the GLOBAL env-var kill switch, not yet a real per-repo
-// `.gittensory-miner.yml` pause (the resolver exists, miner-goal-spec.js/#5255, not wired in HERE yet); and
 // governor.convergenceInput is an honest first-attempt-shaped literal, not a real per-issue attempt-history
 // query (attempt-log.js's schema has no repo+issue index, and reenqueue counts aren't tracked anywhere yet).
 
@@ -18,6 +16,7 @@ import { runSlopAssessment } from "./slop-assessment.js";
 import { fetchLiveIssueSnapshot } from "./live-issue-snapshot.js";
 import { executeLocalWrite } from "./execute-local-write.js";
 import { openClaimLedger } from "./claim-ledger.js";
+import { resolveMinerGoalSpec } from "./miner-goal-spec.js";
 import { initEventLedger } from "./event-ledger.js";
 import { initAttemptLog } from "./attempt-log.js";
 import { initGovernorLedger } from "./governor-ledger.js";
@@ -131,7 +130,7 @@ export function buildAttemptDeps(env, ledgers) {
  * SelfReviewContext -> build a real coding-task spec (blocks on an infeasible verdict) -> resolve the real
  * AmsPolicySpec execution policy -> assemble the real IterateLoopInput + Governor context -> call
  * runMinerAttempt for real. The worktree is cleaned up (or retained, per the real outcome) in `finally`.
- * See this file's header for the documented gaps (per-repo kill-switch pause, real convergence history).
+ * See this file's header for the documented gaps (real convergence history).
  */
 export async function runAttempt(args, options = {}) {
   const parsed = parseAttemptArgs(args);
@@ -161,6 +160,7 @@ export async function runAttempt(args, options = {}) {
   let governorLedger = null;
   let allocation = null;
   let worktreeResult = null;
+  let claimedIssue = false;
 
   try {
     allocator = (options.openWorktreeAllocator ?? openWorktreeAllocator)();
@@ -332,8 +332,18 @@ export async function runAttempt(args, options = {}) {
     }
 
     const amsPolicy = await (options.resolveAmsPolicy ?? resolveAmsPolicy)(parsed.repoFullName, { env });
+
+    // Real per-repo pause (#5392): read straight from the already-cloned worktree's own .gittensory-miner.yml
+    // (resolveMinerGoalSpec never throws -- a missing/malformed file degrades to killSwitch.paused: false, so
+    // this can't fail this attempt on its own). Threaded into BOTH checkMinerKillSwitch (killSwitchScope, used
+    // by the freshness/submission gate) and the governor context (killSwitchRepoPaused, used by the Governor
+    // chokepoint) -- the same two places the GLOBAL kill switch already reaches.
+    const resolveGoalSpec = options.resolveMinerGoalSpec ?? resolveMinerGoalSpec;
+    const minerGoalSpec = resolveGoalSpec(worktreeResult.repoPath);
+    const repoPaused = minerGoalSpec.spec.killSwitch.paused;
+
     const checkKillSwitch = options.checkMinerKillSwitch ?? checkMinerKillSwitch;
-    const killSwitchScope = checkKillSwitch({ env }).scope;
+    const killSwitchScope = checkKillSwitch({ env, repoPaused }).scope;
 
     const loopInput = buildAttemptLoopInput({
       codingTaskSpec,
@@ -347,7 +357,14 @@ export async function runAttempt(args, options = {}) {
       amsPolicySpec: amsPolicy.spec,
       branchRef: worktreeResult.branchName,
     });
-    const governor = buildAttemptGovernorContext(env, amsPolicy.spec);
+    const governor = buildAttemptGovernorContext(env, amsPolicy.spec, repoPaused);
+
+    // Real soft-claim (#5393): recorded once we've committed to a real attempt (past feasibility), so a
+    // sibling miner process on this machine sees it via claimLedger.listClaims/listActiveClaims while this
+    // attempt is in flight. Released in `finally` on every terminal outcome -- mirrors the worktree
+    // allocation slot's own acquire-then-always-release pattern below.
+    claimLedger.claimIssue(parsed.repoFullName, parsed.issueNumber, `attempt:${attemptId}`);
+    claimedIssue = true;
 
     const runAttemptPipeline = options.runMinerAttempt ?? runMinerAttempt;
     const result = await runAttemptPipeline(
@@ -422,6 +439,10 @@ export async function runAttempt(args, options = {}) {
       const cleanupWorktree = options.cleanupAttemptWorktree ?? cleanupAttemptWorktree;
       await cleanupWorktree(worktreeResult.repoPath, worktreeResult.worktreePath, worktreeResult.attemptOk ?? true);
     }
+    // Every terminal outcome past the claim point (submitted/abandon/stale/blocked/governed, or an
+    // unexpected throw) releases the soft-claim -- a claim that outlives its own attempt process would
+    // wrongly tell a sibling miner this issue is still in flight.
+    if (claimedIssue && claimLedger) claimLedger.releaseClaim(parsed.repoFullName, parsed.issueNumber);
     if (allocation && allocator) allocator.release(attemptId);
     allocator?.close();
     claimLedger?.close();

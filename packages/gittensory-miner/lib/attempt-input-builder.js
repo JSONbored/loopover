@@ -6,11 +6,6 @@ import { isGlobalMinerKillSwitch, isGlobalMinerLiveModeOptIn } from "@jsonbored/
 // same discipline as coding-task-spec.js's own composers.
 //
 // KNOWN, DOCUMENTED GAPS (not fabricated -- explicitly left as real, narrow follow-ups):
-//   - governor.killSwitchRepoPaused is omitted (undefined). The real resolver exists (miner-goal-spec.js's
-//     resolveMinerGoalSpec, #5255) but isn't wired in HERE yet -- this composer only takes `env`, not a
-//     `repoPath` to read a real .gittensory-miner.yml from. Only the GLOBAL kill switch (env var) is checked
-//     until that follow-up lands; a per-repo pause silently can't be detected yet (fails open on that one
-//     axis only, matching checkMinerKillSwitch's own documented fallback for an omitted repoPaused).
 //   - governor.convergenceInput is a first-attempt-shaped literal ({ attempts: 0, consecutiveFailures: 0,
 //     reenqueues: 0, reachedDone: false }), not a real per-issue query. attempt-log.js's schema has no
 //     repo+issue index (attemptId embeds a timestamp, so it's not a stable group key), and reenqueue counts
@@ -27,14 +22,19 @@ import { isGlobalMinerKillSwitch, isGlobalMinerLiveModeOptIn } from "@jsonbored/
  * capUsage are deliberately omitted -- evaluateGovernorChokepointGatePersisted (#5134) auto-loads them from
  * the persisted governor-state store when absent.
  *
+ * `repoPaused` (#5392) is the caller's own resolved `MinerGoalSpec.killSwitch.paused` for the target repo
+ * (miner-goal-spec.js's resolveMinerGoalSpec) -- this composer stays pure and just threads whatever the
+ * caller already resolved through; passing nothing keeps the prior fails-open-on-that-axis-only behavior.
+ *
  * @param {Record<string, string | undefined>} env
  * @param {import("@jsonbored/gittensory-engine").AmsPolicySpec} amsPolicySpec
+ * @param {boolean} [repoPaused]
  * @returns {import("./attempt-runner.js").AttemptGovernorContext}
  */
-export function buildAttemptGovernorContext(env, amsPolicySpec) {
+export function buildAttemptGovernorContext(env, amsPolicySpec, repoPaused) {
   return {
     killSwitchGlobal: isGlobalMinerKillSwitch(env),
-    killSwitchRepoPaused: undefined,
+    killSwitchRepoPaused: repoPaused,
     liveModeGlobalOptIn: isGlobalMinerLiveModeOptIn(env),
     capLimits: amsPolicySpec.capLimits,
     convergenceInput: { attempts: 0, consecutiveFailures: 0, reenqueues: 0, reachedDone: false },

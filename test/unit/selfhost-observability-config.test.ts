@@ -253,4 +253,22 @@ describe("self-host observability trace config", () => {
     // forwarded Claude Code OTLP data) -- both are scraped, but they carry structurally different metrics.
     expect(record(collector.exporters).prometheus.endpoint).toBe("0.0.0.0:8889");
   });
+
+  it("scrapes REES's own /metrics, gated on the optional rees profile (#5367)", () => {
+    const compose = record(readYaml("docker-compose.yml"));
+    const rees = record(record(compose.services).rees);
+    const prometheus = record(readYaml("prometheus/prometheus.yml"));
+    const scrapeConfigs = prometheus.scrape_configs as Array<Record<string, any>>;
+
+    expect(rees.profiles).toEqual(["rees"]);
+    expect(rees.expose).toEqual(["8080"]);
+    expect(scrapeConfigs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          job_name: "rees",
+          static_configs: [{ targets: ["rees:8080"] }],
+        }),
+      ]),
+    );
+  });
 });

@@ -83,6 +83,13 @@ scrape_configs:
       - targets: ["qdrant:6333"]
     scrape_interval: 30s
 
+  # REES (review-enrichment service) request + per-analyzer metrics (--profile rees, #5367). Absent/down
+  # unless the optional REES analyzer service is active — same "other profile" gating as postgres/gpu/qdrant.
+  - job_name: rees
+    static_configs:
+      - targets: ["rees:8080"]
+    scrape_interval: 15s
+
   # Self-monitoring: the observability stack watching itself (--profile observability, #5366). Every
   # component here ships its own native Prometheus /metrics — previously scraped by nothing, so a stack
   # component silently degrading (e.g. Loki dropping ingested lines, Alertmanager failing to notify) had

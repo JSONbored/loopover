@@ -1,0 +1,101 @@
+{
+  "__inputs": [],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" }
+  ],
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "description": "REES (review-enrichment service, --profile rees, #5367) request outcomes and per-analyzer health — request rate/latency by outcome status, plus which of the 53 registered analyzers are actually running, timing out, or degrading. Absent/empty unless the optional rees profile is active.",
+  "panels": [
+    { "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "id": 1, "title": "Request outcomes (/v1/enrich)", "type": "row" },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 }, "unit": "reqps" } },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "id": 2,
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "title": "Request rate by outcome status",
+      "description": "status ∈ ok/empty/http_error/unauthorized/service_not_configured/bad_request.",
+      "type": "timeseries",
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum by (status) (rate(rees_enrich_requests_total[5m]))", "legendFormat": "{{status}}", "refId": "A" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 }, "unit": "s" } },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "id": 3,
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "title": "Request latency (p50 / p95 / p99)",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.50, sum by (le) (rate(rees_enrich_request_duration_seconds_bucket[5m])))", "legendFormat": "p50", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.95, sum by (le) (rate(rees_enrich_request_duration_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.99, sum by (le) (rate(rees_enrich_request_duration_seconds_bucket[5m])))", "legendFormat": "p99", "refId": "C" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 }, "unit": "reqps" } },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "id": 4,
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "title": "Non-ok outcome rate by status",
+      "description": "Excludes the healthy 'ok' status -- a non-zero, sustained rate here means enrichment is silently degrading (the engine still proceeds without a brief; see enrichment-wire.ts's fail-safe design).",
+      "type": "timeseries",
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum by (status) (rate(rees_enrich_requests_total{status!=\"ok\"}[5m]))", "legendFormat": "{{status}}", "refId": "A" }]
+    },
+
+    { "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }, "id": 10, "title": "Analyzer health (53 registered analyzers)", "type": "row" },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 }, "unit": "reqps" } },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 10 },
+      "id": 11,
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "title": "Top analyzers by run rate",
+      "type": "timeseries",
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "topk(10, sum by (analyzer) (rate(rees_analyzer_runs_total[5m])))", "legendFormat": "{{analyzer}}", "refId": "A" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 }, "unit": "reqps" } },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
+      "id": 12,
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "title": "Analyzer outcomes by status",
+      "description": "status ∈ ok/degraded/timeout/capped/skipped, summed across every analyzer.",
+      "type": "timeseries",
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum by (status) (rate(rees_analyzer_runs_total[5m]))", "legendFormat": "{{status}}", "refId": "A" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 }, "unit": "s" } },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 10 },
+      "id": 13,
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "title": "Slowest analyzers (p95 duration)",
+      "description": "Only analyzers that actually ran (ok/degraded/timeout) contribute a duration sample -- a skipped/capped analyzer never invoked the analyzer function.",
+      "type": "timeseries",
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "topk(10, histogram_quantile(0.95, sum by (le, analyzer) (rate(rees_analyzer_duration_seconds_bucket[5m]))))", "legendFormat": "{{analyzer}}", "refId": "A" }]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["gittensory", "rees", "observability"],
+  "templating": {
+    "list": [
+      { "current": {}, "hide": 0, "includeAll": false, "name": "DS_PROMETHEUS", "options": [], "query": "prometheus", "refresh": 1, "type": "datasource" }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Gittensory — REES (review-enrichment)",
+  "uid": "gittensory-rees",
+  "version": 1
+}

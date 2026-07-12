@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildEngineVersionSkewCheck,
+  collectMinerDiagnostics,
   collectStatus,
   compareInstalledEngineVersion,
   readExpectedEnginePackageVersion,
@@ -58,6 +59,35 @@ describe("gittensory-miner status/doctor (#2288)", () => {
       tempRoot(),
     );
     expect(status.package.version).toBe("gittensory-miner-fleet@deadbeef");
+  });
+
+  it("collectMinerDiagnostics merges status and doctor checks without drift (#5154)", () => {
+    const root = tempRoot();
+    writeFileSync(join(root, ".gittensory-miner.yml"), "minerEnabled: true\n");
+    const env = { GITTENSORY_MINER_CONFIG_DIR: join(root, "state"), PATH: "" };
+    initLaptopState(env);
+    const diagnostics = collectMinerDiagnostics(env, root);
+    expect(diagnostics.stateDir).toBe(join(root, "state"));
+    expect(diagnostics.configFile).toBe(join(root, ".gittensory-miner.yml"));
+    expect(diagnostics.configValid).toBe(true);
+    expect(diagnostics.presence).toEqual({ docker: false, claudeCli: false, codexCli: false });
+    expect(diagnostics.doctor.checks).toEqual(runDoctorChecks(env));
+    expect(diagnostics.engineVersionSkew).toEqual({
+      ok: runDoctorChecks(env).find((check) => check.name === "engine-version-skew")!.ok,
+      detail: runDoctorChecks(env).find((check) => check.name === "engine-version-skew")!.detail,
+    });
+  });
+
+  it("collectMinerDiagnostics treats a missing config file as valid defaults", () => {
+    const env = { GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state"), PATH: "" };
+    expect(collectMinerDiagnostics(env, tempRoot()).configValid).toBe(true);
+  });
+
+  it("collectMinerDiagnostics marks configValid false when the config path is unreadable", () => {
+    const root = tempRoot();
+    mkdirSync(join(root, ".gittensory-miner.yml"));
+    const env = { GITTENSORY_MINER_CONFIG_DIR: join(root, "state"), PATH: "" };
+    expect(collectMinerDiagnostics(env, root).configValid).toBe(false);
   });
 
   it("runStatus prints human-readable text (0) and machine JSON with --json", () => {

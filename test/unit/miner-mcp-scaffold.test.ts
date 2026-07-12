@@ -48,6 +48,7 @@ describe("gittensory-miner MCP server (#5153 scaffold)", () => {
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "gittensory_miner_get_portfolio_dashboard",
       "gittensory_miner_ping",
+      "gittensory_miner_status",
     ]);
   });
 

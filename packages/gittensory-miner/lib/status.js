@@ -205,6 +205,53 @@ export function collectStatus(env = process.env, cwd = process.cwd()) {
   };
 }
 
+function findDoctorCheck(checks, name) {
+  return checks.find((check) => check.name === name);
+}
+
+/** True when a docker/cli presence check found its binary on PATH (independent of doctor pass/fail). */
+function binaryPresentFromDoctorCheck(check) {
+  return typeof check?.detail === "string" && check.detail.startsWith("found at");
+}
+
+/** Whether an optional on-disk config file exists and is readable. Full schema validation lands in #4873. */
+function assessConfigValidity(configPath) {
+  if (!configPath) return true;
+  try {
+    readFileSync(configPath, "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Read-only diagnostics snapshot shared by the CLI and the MCP status tool (#5154). */
+export function collectMinerDiagnostics(env = process.env, cwd = process.cwd()) {
+  const status = collectStatus(env, cwd);
+  const checks = runDoctorChecks(env);
+  const failed = checks.filter((check) => !check.ok);
+  const engineVersionSkew = findDoctorCheck(checks, "engine-version-skew") ?? {
+    name: "engine-version-skew",
+    ok: true,
+    detail: "engine-version-skew check missing",
+  };
+  return {
+    package: status.package,
+    engine: status.engine,
+    node: status.node,
+    stateDir: status.stateDir,
+    configFile: status.configFile,
+    configValid: assessConfigValidity(status.configFile),
+    engineVersionSkew: { ok: engineVersionSkew.ok, detail: engineVersionSkew.detail },
+    presence: {
+      docker: binaryPresentFromDoctorCheck(findDoctorCheck(checks, "docker-present")),
+      claudeCli: binaryPresentFromDoctorCheck(findDoctorCheck(checks, "claude-cli-present")),
+      codexCli: binaryPresentFromDoctorCheck(findDoctorCheck(checks, "codex-cli-present")),
+    },
+    doctor: { ok: failed.length === 0, checks },
+  };
+}
+
 function renderStatusText(status) {
   return [
     `${status.package.name} ${status.package.version ?? "unknown"} (node ${status.node})`,

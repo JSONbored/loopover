@@ -16,6 +16,18 @@ export function resolveMinerStateDir(env?: Record<string, string | undefined>): 
 
 export function collectStatus(env?: Record<string, string | undefined>, cwd?: string): MinerStatus;
 
+export type MinerDiagnostics = MinerStatus & {
+  configValid: boolean;
+  engineVersionSkew: { ok: boolean; detail: string };
+  presence: { docker: boolean; claudeCli: boolean; codexCli: boolean };
+  doctor: { ok: boolean; checks: DoctorCheck[] };
+};
+
+export function collectMinerDiagnostics(
+  env?: Record<string, string | undefined>,
+  cwd?: string,
+): MinerDiagnostics;
+
 export function runStatus(args?: string[], env?: Record<string, string | undefined>, cwd?: string): number;
 
 export function runDoctorChecks(env?: Record<string, string | undefined>): DoctorCheck[];

@@ -138,8 +138,9 @@ It exposes these read-only tools:
 
 - `gittensory_miner_ping` (#5153) — a health check returning a static `{ "status": "ok", "tool": "gittensory_miner_ping" }` object. Reads no AMS state, takes no arguments.
 - `gittensory_miner_get_portfolio_dashboard` (#5155) — the per-repo portfolio-queue backlog dashboard: status counts (queued / in_progress / done), totals, and the oldest-queued age. Wraps `collectPortfolioDashboard()` (no new logic) — the same data `gittensory-miner queue dashboard --json` prints locally. Read-only, takes no arguments.
+- `gittensory_miner_status` (#5154) — read-only status/doctor diagnostics: state-dir path, engine-version skew, Docker/Claude/Codex CLI presence booleans, config validity, and the full doctor check list. Wraps `collectMinerDiagnostics()` (no new logic) — the same fields `gittensory-miner status --json` and `doctor --json` expose locally. Returns env-var names and booleans only, never secret values. Read-only, takes no arguments.
 
-Further AMS-state-reading tools (status/doctor diagnostics, claim-ledger listing, run-state, event/governor ledgers) land as follow-up PRs on top of this server.
+Further AMS-state-reading tools (claim-ledger listing, run-state, event/governor ledgers) land as follow-up PRs on top of this server. The resolved coding-agent driver section (`MINER_CODING_AGENT_PROVIDER`, model-env-var name, provider CLI presence) lands in #5164 and will be included here once that ships.
 
 ## Version check
 

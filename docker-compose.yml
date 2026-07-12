@@ -254,6 +254,27 @@ services:
       interval: 10s
       retries: 5
 
+  # Redis has no native Prometheus endpoint (unlike Postgres/Qdrant) -- the official sidecar exporter is the
+  # standard way to get visibility into an always-on, required backend that otherwise has zero metrics today.
+  # Gated on --profile observability (not its own profile): Redis itself always runs, but nothing needs its
+  # metrics unless the observability stack is up.
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.79.0
+    restart: unless-stopped
+    <<: *default-logging
+    profiles: ["observability"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    expose:
+      - "9121"
+    deploy:
+      resources:
+        limits:
+          memory: "${REDIS_EXPORTER_MEM_LIMIT:-64m}"
+
   # ── Postgres (--profile postgres | --profile pgbouncer) ───────────────────
   postgres:
     image: pgvector/pgvector:pg16
@@ -433,6 +454,58 @@ services:
               capabilities: [gpu]
     expose:
       - "9835"
+
+  # ── Host + container resource metrics (--profile observability) ────────────
+  # node-exporter: host-level CPU/memory/disk/network -- previously invisible in Grafana (docker stats-only).
+  # Read-only bind mounts of the HOST's own /proc, /sys, / -- the standard, widely-used node-exporter Docker
+  # recipe. Deliberately NOT network_mode: host or privileged: true (this repo's established posture favors
+  # isolated bridge networking over broader host access; a bind-mounted host /proc/net/dev already reflects
+  # the real host network interfaces without needing host networking).
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    restart: unless-stopped
+    <<: *default-logging
+    profiles: ["observability"]
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    expose:
+      - "9100"
+    deploy:
+      resources:
+        limits:
+          memory: "${NODE_EXPORTER_MEM_LIMIT:-128m}"
+
+  # cAdvisor: per-container CPU/memory/network/disk-io -- which container is actually using the resources it's
+  # been given. Deliberately does NOT mount /var/run/docker.sock: this repo's own docker-proxy service exists
+  # specifically because even a READ-ONLY docker.sock bind mount doesn't limit what Docker API calls a
+  # container can make (the read-only flag only applies to the socket's filesystem entry, not the API surface
+  # behind it) -- see the docker-proxy service's own comment below for the same reasoning. Running cAdvisor
+  # on cgroupfs/rootfs alone (no Docker API access) gives real per-container resource metrics at the cost of
+  # friendlier labels (containers show by cgroup path/id rather than their docker-compose service name). A
+  # self-hoster who wants richer labels can add a docker.sock mount via their own docker-compose.override.yml.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.2
+    restart: unless-stopped
+    <<: *default-logging
+    profiles: ["observability"]
+    volumes:
+      - /:/rootfs:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    expose:
+      - "8080"
+    deploy:
+      resources:
+        limits:
+          memory: "${CADVISOR_MEM_LIMIT:-256m}"
 
   # ── Browserless / visual review (--profile visual-review) ──────────────────
   # Headless Chromium for automated before/after PR screenshot capture (src/review/visual/**).

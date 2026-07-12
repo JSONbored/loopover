@@ -53,3 +53,48 @@ scrape_configs:
     static_configs:
       - targets: ["otel-collector:8889"]
     scrape_interval: 15s
+
+  # Host-level CPU/memory/disk/network from node-exporter (--profile observability, #5366). Bind-mounts
+  # the HOST's own /proc, /sys, / read-only — no Docker API access needed for host-level stats.
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+    scrape_interval: 15s
+
+  # Per-container CPU/memory/network/disk-io from cAdvisor (--profile observability, #5366). Runs without
+  # Docker socket access (see the cadvisor service's own comment in docker-compose.yml) — containers are
+  # labeled by cgroup path/id rather than docker-compose service name.
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+    scrape_interval: 15s
+
+  # Redis health (connected clients, memory, ops/sec, hit ratio) from the official sidecar exporter
+  # (--profile observability, #5366). Redis itself is required and always-on; this just adds visibility.
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+    scrape_interval: 15s
+
+  # Qdrant's own native /metrics (--profile qdrant, #5366). Absent/down unless the Qdrant vector-store
+  # profile is active — same "other profile" gating already used by postgres/gpu above.
+  - job_name: qdrant
+    static_configs:
+      - targets: ["qdrant:6333"]
+    scrape_interval: 30s
+
+  # Self-monitoring: the observability stack watching itself (--profile observability, #5366). Every
+  # component here ships its own native Prometheus /metrics — previously scraped by nothing, so a stack
+  # component silently degrading (e.g. Loki dropping ingested lines, Alertmanager failing to notify) had
+  # zero visibility. otel-collector's own internal telemetry (distinct from :8889's re-exported Claude
+  # Code metrics above) needs service.telemetry.metrics enabled in otel/otel-collector-config.yml.
+  - job_name: observability-stack
+    static_configs:
+      - targets:
+          - "prometheus:9090"
+          - "alertmanager:9093"
+          - "loki:3100"
+          - "tempo:3200"
+          - "grafana:3000"
+          - "otel-collector:8888"
+    scrape_interval: 30s

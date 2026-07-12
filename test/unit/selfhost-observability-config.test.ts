@@ -155,4 +155,102 @@ describe("self-host observability trace config", () => {
       ]),
     );
   });
+
+  it("wires host/container/Redis metrics and stack self-monitoring without Docker socket access (#5366)", () => {
+    const compose = record(readYaml("docker-compose.yml"));
+    const services = record(compose.services);
+    const prometheus = record(readYaml("prometheus/prometheus.yml"));
+    const scrapeConfigs = prometheus.scrape_configs as Array<Record<string, any>>;
+
+    const nodeExporter = record(services["node-exporter"]);
+    expect(nodeExporter.image).toBe("prom/node-exporter:v1.9.1");
+    expect(nodeExporter.profiles).toEqual(["observability"]);
+    expect(nodeExporter.volumes).toEqual(
+      expect.arrayContaining(["/proc:/host/proc:ro", "/sys:/host/sys:ro", "/:/rootfs:ro"]),
+    );
+    expect(nodeExporter.command).toEqual(
+      expect.arrayContaining([
+        "--path.procfs=/host/proc",
+        "--path.sysfs=/host/sys",
+        "--path.rootfs=/rootfs",
+      ]),
+    );
+    expect(nodeExporter.expose).toEqual(["9100"]);
+    // Neither host networking nor a privileged container: read-only host-directory bind mounts alone.
+    expect(nodeExporter.network_mode).toBeUndefined();
+    expect(nodeExporter.privileged).toBeUndefined();
+
+    const cadvisor = record(services.cadvisor);
+    expect(cadvisor.image).toBe("gcr.io/cadvisor/cadvisor:v0.49.2");
+    expect(cadvisor.profiles).toEqual(["observability"]);
+    expect(cadvisor.volumes).toEqual(
+      expect.arrayContaining([
+        "/:/rootfs:ro",
+        "/sys:/sys:ro",
+        "/var/lib/docker/:/var/lib/docker:ro",
+        "/dev/disk/:/dev/disk:ro",
+      ]),
+    );
+    expect(cadvisor.expose).toEqual(["8080"]);
+    // Deliberate: no Docker socket mount, matching this repo's own docker-proxy security posture (a
+    // read-only socket bind mount does not limit the Docker API surface behind it).
+    expect(JSON.stringify(cadvisor)).not.toContain("docker.sock");
+
+    const redisExporter = record(services["redis-exporter"]);
+    expect(redisExporter.image).toBe("oliver006/redis_exporter:v1.79.0");
+    expect(redisExporter.profiles).toEqual(["observability"]);
+    expect(redisExporter.depends_on?.redis).toEqual({ condition: "service_healthy" });
+    expect(redisExporter.environment?.REDIS_ADDR).toBe("redis://redis:6379");
+    expect(redisExporter.expose).toEqual(["9121"]);
+
+    expect(scrapeConfigs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          job_name: "node-exporter",
+          static_configs: [{ targets: ["node-exporter:9100"] }],
+        }),
+        expect.objectContaining({
+          job_name: "cadvisor",
+          static_configs: [{ targets: ["cadvisor:8080"] }],
+        }),
+        expect.objectContaining({
+          job_name: "redis",
+          static_configs: [{ targets: ["redis-exporter:9121"] }],
+        }),
+        expect.objectContaining({
+          job_name: "qdrant",
+          static_configs: [{ targets: ["qdrant:6333"] }],
+        }),
+        expect.objectContaining({
+          job_name: "observability-stack",
+          static_configs: [
+            {
+              targets: [
+                "prometheus:9090",
+                "alertmanager:9093",
+                "loki:3100",
+                "tempo:3200",
+                "grafana:3000",
+                "otel-collector:8888",
+              ],
+            },
+          ],
+        }),
+      ]),
+    );
+  });
+
+  it("exposes the OTEL collector's own internal telemetry on a port distinct from the re-exported Claude Code metrics (#5366)", () => {
+    const collector = record(readYaml("otel/otel-collector-config.yml"));
+    const readers = record(collector.service).telemetry?.metrics?.readers;
+
+    expect(Array.isArray(readers)).toBe(true);
+    expect(readers[0].pull.exporter.prometheus).toEqual({
+      host: "0.0.0.0",
+      port: 8888,
+    });
+    // 8888 (internal telemetry) must never collide with 8889 (the `prometheus` exporter re-exposing
+    // forwarded Claude Code OTLP data) -- both are scraped, but they carry structurally different metrics.
+    expect(record(collector.exporters).prometheus.endpoint).toBe("0.0.0.0:8889");
+  });
 });

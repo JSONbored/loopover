@@ -40,6 +40,16 @@ service:
   telemetry:
     logs:
       level: warn
+    # Self-monitoring (#5366): the collector's own internal metrics (spans/metrics received, dropped,
+    # queue size, memory_limiter refusals), exposed on :8888 for prometheus.yml's observability-stack job.
+    # Distinct from the `prometheus` exporter above, which re-exposes forwarded Claude Code data on :8889.
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
   pipelines:
     metrics:
       receivers: [otlp]

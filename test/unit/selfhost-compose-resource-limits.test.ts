@@ -29,6 +29,9 @@ describe("docker-compose.yml — per-service memory limits (#1828, #2495, #3893)
     "docker-proxy": "${DOCKER_PROXY_MEM_LIMIT:-64m}",
     promtail: "${PROMTAIL_MEM_LIMIT:-256m}",
     "otel-collector": "${OTEL_COLLECTOR_MEM_LIMIT:-512m}",
+    "node-exporter": "${NODE_EXPORTER_MEM_LIMIT:-128m}",
+    cadvisor: "${CADVISOR_MEM_LIMIT:-256m}",
+    "redis-exporter": "${REDIS_EXPORTER_MEM_LIMIT:-64m}",
   };
 
   it("caps the core app and every heavyweight optional service with an operator-overridable memory limit", () => {
@@ -61,6 +64,9 @@ describe("docker-compose.yml — per-service memory limits (#1828, #2495, #3893)
       "DOCKER_PROXY_MEM_LIMIT",
       "PROMTAIL_MEM_LIMIT",
       "OTEL_COLLECTOR_MEM_LIMIT",
+      "NODE_EXPORTER_MEM_LIMIT",
+      "CADVISOR_MEM_LIMIT",
+      "REDIS_EXPORTER_MEM_LIMIT",
     ]) {
       expect(env, key).toContain(key);
     }

@@ -13,6 +13,9 @@ Current scope is intentionally small:
 - `--help` and `version` commands
 - startup npm version nudge (override with `--no-update-check` or `GITTENSORY_MINER_NO_UPDATE_CHECK=1`)
 
+Environment variables read by the miner are documented in [`docs/env-reference.md`](docs/env-reference.md).
+Regenerate that file with `npm run miner:env-reference` from the repo root after adding or removing env reads.
+
 Real miner commands land in follow-up issues.
 
 The package also includes the first metadata-only discovery primitive: `fetchCandidateIssues` lists open issue

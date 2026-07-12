@@ -79,6 +79,9 @@ function collectEnvReads(source, fileName) {
       addRead(node.arguments[1].text);
     } else if (ts.isCallExpression(node) && isProcessEnvNameHelperCall(node)) {
       addRead(node.arguments[0].text);
+    } else if (ts.isCallExpression(node) && isEnvNameLiteralArgHelperCall(node)) {
+      const argIndex = ENV_NAME_LITERAL_ARG_HELPERS.get(node.expression.text);
+      addRead(node.arguments[argIndex].text);
     }
     ts.forEachChild(node, visit);
   };
@@ -101,6 +104,7 @@ function isStaticEnvHelperCall(node) {
 // isStaticEnvHelperCall above (envString) because these take the var NAME as arg[0], not arg[1] after a
 // container.
 const PROCESS_ENV_NAME_HELPERS = new Set(["parsePositiveIntEnv"]);
+const ENV_NAME_LITERAL_ARG_HELPERS = new Map([["resolveLocalStoreDbPath", 1]]);
 
 function isProcessEnvNameHelperCall(node) {
   return (
@@ -108,6 +112,16 @@ function isProcessEnvNameHelperCall(node) {
     PROCESS_ENV_NAME_HELPERS.has(node.expression.text) &&
     node.arguments.length >= 1 &&
     ts.isStringLiteralLike(node.arguments[0])
+  );
+}
+
+function isEnvNameLiteralArgHelperCall(node) {
+  if (!ts.isIdentifier(node.expression)) return false;
+  const argIndex = ENV_NAME_LITERAL_ARG_HELPERS.get(node.expression.text);
+  return (
+    argIndex !== undefined &&
+    node.arguments.length > argIndex &&
+    ts.isStringLiteralLike(node.arguments[argIndex])
   );
 }
 

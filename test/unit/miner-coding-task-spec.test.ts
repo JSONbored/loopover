@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -170,6 +170,29 @@ describe("writeAcceptanceCriteriaFile (#5132)", () => {
 
     const result = writeAcceptanceCriteriaFile(dir, doc);
     expect(result).toEqual({ written: false, path: null });
+  });
+
+  it("REGRESSION: refuses to follow a pre-existing acceptance-criteria symlink", () => {
+    const dir = tempDir();
+    const outside = join(tempDir(), "victim-config.txt");
+    writeFileSync(outside, "keep-me", "utf8");
+    symlinkSync(outside, join(dir, "acceptance-criteria.json"));
+    const feasibility = buildCodingTaskFeasibility("acme/widgets", issue(), { issues: [issue()], pullRequests: [] }, claimLedger());
+    const doc = buildCodingTaskAcceptanceCriteria(issue(), feasibility);
+
+    expect(() => writeAcceptanceCriteriaFile(dir, doc)).toThrow();
+    expect(readFileSync(outside, "utf8")).toBe("keep-me");
+  });
+
+  it("refuses to overwrite a pre-existing acceptance-criteria file", () => {
+    const dir = tempDir();
+    const path = join(dir, "acceptance-criteria.json");
+    writeFileSync(path, "keep-me", "utf8");
+    const feasibility = buildCodingTaskFeasibility("acme/widgets", issue(), { issues: [issue()], pullRequests: [] }, claimLedger());
+    const doc = buildCodingTaskAcceptanceCriteria(issue(), feasibility);
+
+    expect(() => writeAcceptanceCriteriaFile(dir, doc)).toThrow();
+    expect(readFileSync(path, "utf8")).toBe("keep-me");
   });
 });
 

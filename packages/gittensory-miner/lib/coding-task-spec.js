@@ -1,5 +1,5 @@
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, constants as fsConstants, openSync, realpathSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, relative } from "node:path";
 import {
   ACCEPTANCE_CRITERIA_FILENAME,
   buildAcceptanceCriteria,
@@ -108,10 +108,26 @@ export function buildCodingTaskAcceptanceCriteria(issue, feasibility) {
  * @param {import("@jsonbored/gittensory-engine").AcceptanceCriteria} acceptanceCriteria
  * @returns {{ written: boolean, path: string | null }}
  */
+function assertContainedPath(root, path) {
+  const relativePath = relative(root, path);
+  if (relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath))) return;
+  throw new Error(`Refusing to write acceptance criteria outside the worktree: ${path}`);
+}
+
 export function writeAcceptanceCriteriaFile(workingDirectory, acceptanceCriteria) {
   if (!shouldWriteAcceptanceCriteria(acceptanceCriteria.verdict)) return { written: false, path: null };
-  const path = join(workingDirectory, ACCEPTANCE_CRITERIA_FILENAME);
-  writeFileSync(path, serializeAcceptanceCriteria(acceptanceCriteria), "utf8");
+  const root = realpathSync(workingDirectory);
+  const path = join(root, ACCEPTANCE_CRITERIA_FILENAME);
+  assertContainedPath(root, path);
+
+  let fd;
+  try {
+    fd = openSync(path, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW, 0o600);
+    writeFileSync(fd, serializeAcceptanceCriteria(acceptanceCriteria), "utf8");
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+
   return { written: true, path };
 }
 

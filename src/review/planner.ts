@@ -10,7 +10,7 @@
 //     legacy Workers-AI pair); the output is public-safe-sanitized before posting; any model/error degrades to
 //     a no-plan no-op.
 
-import { type AiReviewActualUsage, BEST_REVIEW_MODELS, clampNumber, coerceAiText, coerceAiUsage, estimateNeurons, RELIABLE_FALLBACK_MODELS, utcDayStartIso } from "../services/ai-review";
+import { type AiReviewActualUsage, BEST_REVIEW_MODELS, clampNumber, coerceAiText, coerceAiUsage, estimateNeurons, isRateLimitError, RELIABLE_FALLBACK_MODELS, utcDayStartIso } from "../services/ai-review";
 import { recordAiUsageEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
 import { sanitizePublicComment } from "../github/commands";
 import { AGENT_COMMAND_COMMENT_MARKER } from "../github/comments";
@@ -123,8 +123,11 @@ async function runPlannerModel(env: Env, system: string, user: string): Promise<
         const result = await ai.run(model, { max_tokens: PLANNER_MAX_TOKENS, temperature: 0.2, messages: [{ role: "system", content: system }, { role: "user", content: user }], finalAttempt: attempt === 1 && modelIndex === models.length - 1 }, extra);
         const text = coerceAiText(result).trim();
         if (text) return { text, usage: coerceAiUsage(result) };
-      } catch {
-        /* retry, then fall through to the fallback model */
+      } catch (error) {
+        // #5385-sentry (GITTENSORY-K/8): a 429 will not have cleared by the next attempt a few hundred ms
+        // later, so retrying THIS model burns the remaining budget for zero additional chance of success --
+        // move straight to the fallback model instead (same guard as runWorkersOpinion in ai-review.ts).
+        if (isRateLimitError(error)) break;
       }
     }
   }

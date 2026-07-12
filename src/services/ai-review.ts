@@ -1007,6 +1007,19 @@ function isSubscriptionCliTimeout(error: unknown): boolean {
   return error instanceof Error && error.message === "subscription_cli_timeout";
 }
 
+/** True for a provider's own HTTP-429 signal (`src/selfhost/ai.ts`'s `claude_code_error_429` /
+ *  `ai_http_429` / `anthropic_http_429`, and the generic Workers-AI equivalent). #5385-sentry
+ *  (GITTENSORY-K/8): an immediate same-model retry against a rate limit that is still in its window has
+ *  near-zero chance of success -- unlike a transient network blip, a 429 will not clear in the handful of
+ *  milliseconds between attempts. Mirrors {@link isSubscriptionCliTimeout}'s identical non-transient-error
+ *  short-circuit: stop burning the remaining per-model retry budget and move straight to the fallback model
+ *  (which may be a different provider/account entirely, and so isn't necessarily still rate-limited).
+ *  Exported so every independent AI-calling retry loop (ai-slop.ts, planner.ts) can share this one
+ *  definition instead of each re-deriving its own copy of the error-shape regex. */
+export function isRateLimitError(error: unknown): boolean {
+  return error instanceof Error && /_(?:http|error)_429$/.test(error.message);
+}
+
 /** Cap on the diagnostic prefix logged for an unparseable model response (#observability-unparseable) -- long
  *  enough to tell a markdown-fenced/truncated-mid-JSON/plain-prose response apart, short enough to never dump
  *  a large chunk of model output into Sentry/audit context. */
@@ -1131,7 +1144,11 @@ async function runWorkersOpinion(
         // budget, since a different model/config may not share the same timeout) instead of burning up to 3x
         // the full effort-timeout in subprocess time for zero additional chance of success (#gaming-tactic-draft-cycle
         // audit finding: this inner retry count is distinct from c7073949's outer cross-sweep-tick cap).
-        if (isSubscriptionCliTimeout(error)) break;
+        // A 429 is the same story (#5385-sentry, GITTENSORY-K/8): the rate-limit window that just rejected
+        // this attempt will not have cleared by the next attempt a few hundred ms later, so an immediate
+        // same-model retry burns the remaining budget for zero additional chance of success -- move straight
+        // to the fallback model instead, which may be on a different account/provider entirely.
+        if (isSubscriptionCliTimeout(error) || isRateLimitError(error)) break;
       }
     }
   }
@@ -1842,8 +1859,8 @@ async function runDualAiTieBreakJudgeCall(
           status: "provider_error",
           error: errorMessage(error),
         });
-        // See runWorkersOpinion's identical guard: a CLI timeout will not resolve by retrying the same model.
-        if (isSubscriptionCliTimeout(error)) break;
+        // See runWorkersOpinion's identical guard: a CLI timeout or 429 will not resolve by retrying the same model.
+        if (isSubscriptionCliTimeout(error) || isRateLimitError(error)) break;
       }
     }
   }

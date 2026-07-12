@@ -76,6 +76,16 @@ describe("generateIssuePlan (#issue-coding-plan)", () => {
       throw new Error("ai down");
     });
     expect(await generateIssuePlan(createTestEnv({ AI: { run: throwRun } as unknown as Ai }), { title: "T", body: "B" })).toBeNull();
+    expect(throwRun).toHaveBeenCalledTimes(4); // 2 models x 2 attempts each -- a non-429 error burns the full budget.
+  });
+
+  it("REGRESSION (#5385-sentry, GITTENSORY-K/8): stops retrying a model after ONE 429 rate-limit error instead of burning its full attempt budget", async () => {
+    const throwRun = vi.fn(async () => {
+      throw new Error("claude_code_error_429");
+    });
+    const env = createTestEnv({ AI: { run: throwRun } as unknown as Ai });
+    expect(await generateIssuePlan(env, { title: "T", body: "B" })).toBeNull();
+    expect(throwRun).toHaveBeenCalledTimes(2); // 1 attempt per model (2 models), not the full 4-call budget.
   });
 });
 

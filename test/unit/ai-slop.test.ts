@@ -271,6 +271,20 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
     expect(run).toHaveBeenCalled(); // it tried (3× primary + fallback) and gave up cleanly
   });
 
+  it("REGRESSION (#5385-sentry, GITTENSORY-K/8): stops retrying a model after ONE 429 rate-limit error instead of burning all 3 attempts, unlike a genuinely transient error", async () => {
+    const run = vi.fn(async () => {
+      throw new Error("claude_code_error_429");
+    });
+    const result = await runGittensoryAiSlopAdvisory(enabledEnv(run), baseInput);
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("unreachable");
+    expect(result.finding).toBeNull();
+    // 1 attempt per model (2 models), NOT the full 6-call budget a non-429 error would burn (see the
+    // "is fail-safe: a throwing model" test above, which uses toHaveBeenCalled() precisely because it burns
+    // the whole budget) -- the 429 short-circuits each model's remaining retries.
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
   it("falls back to the reliable model when the primary keeps returning garbage", async () => {
     const run = vi.fn(async (model: string) => ({ response: model.includes("gpt-oss") ? "not json" : slopJson({ band: "low" }) }));
     const result = await runGittensoryAiSlopAdvisory(enabledEnv(run), baseInput);

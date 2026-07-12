@@ -32,6 +32,7 @@ import {
   coerceAiUsage,
   estimateNeurons,
   isEnabled,
+  isRateLimitError,
   toPublicSafe,
   utcDayStartIso,
 } from "./ai-review";
@@ -165,8 +166,11 @@ async function runWorkersSlopOpinion(env: Env, system: string, user: string, max
         );
         const parsed = parseSlopOpinion(coerceAiText(result));
         if (parsed) return { opinion: parsed, usage: coerceAiUsage(result) };
-      } catch {
-        /* retry / fall through to fallback */
+      } catch (error) {
+        // #5385-sentry (GITTENSORY-K/8): a 429 will not have cleared by the next attempt a few hundred ms
+        // later, so retrying THIS model burns the remaining budget for zero additional chance of success --
+        // move straight to the fallback model instead (same guard as runWorkersOpinion in ai-review.ts).
+        if (isRateLimitError(error)) break;
       }
     }
   }

@@ -60,14 +60,22 @@ function flagTruthy(v: string | null | undefined): boolean {
 
 /** Is auto-merge disabled (would-merge → hold) for this project (or globally)? Fail-OPEN (false) on a DB error.
  *  This is the read the merge path consults to downgrade a would-MERGE into a HOLD. */
-export async function isHoldOnly(env: Env, project: string): Promise<boolean> {
+export async function isHoldOnly(
+  env: Env,
+  project: string,
+  minerAuthored = false,
+): Promise<boolean> {
   try {
     const res = await env.DB.prepare(
       "SELECT key, value FROM system_flags",
     ).all<{ key: string; value: string }>();
     const set = new Set<string>();
     for (const r of res.results ?? []) if (flagTruthy(r.value)) set.add(r.key);
-    return set.has("holdonly:global") || set.has(`holdonly:${project}`);
+    return (
+      set.has("holdonly:global") ||
+      set.has(`holdonly:${project}`) ||
+      (minerAuthored && set.has(`holdonly:${minerBreakerScope(project)}`))
+    );
   } catch (error) {
     console.warn(
       JSON.stringify({
@@ -86,6 +94,7 @@ export async function isHoldOnly(env: Env, project: string): Promise<boolean> {
 export async function isCloseHoldOnly(
   env: Env,
   project: string,
+  minerAuthored = false,
 ): Promise<boolean> {
   try {
     const res = await env.DB.prepare(
@@ -93,7 +102,11 @@ export async function isCloseHoldOnly(
     ).all<{ key: string; value: string }>();
     const set = new Set<string>();
     for (const r of res.results ?? []) if (flagTruthy(r.value)) set.add(r.key);
-    return set.has("closehold:global") || set.has(`closehold:${project}`);
+    return (
+      set.has("closehold:global") ||
+      set.has(`closehold:${project}`) ||
+      (minerAuthored && set.has(`closehold:${minerBreakerScope(project)}`))
+    );
   } catch (error) {
     console.warn(
       JSON.stringify({

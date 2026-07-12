@@ -526,6 +526,17 @@ describe("isHoldOnly + createFlagStore (system_flags, migration 0054)", () => {
     expect(await isHoldOnly(env, "any/repo")).toBe(true);
   });
 
+  it("enforces a miner-scoped holdonly flag only for confirmed miner-authored PRs", async () => {
+    const env = createTestEnv();
+    const flags = createFlagStore(env);
+    await flags.setFlag("holdonly:owner/repo:miner", true);
+
+    expect(await isHoldOnly(env, "owner/repo")).toBe(false);
+    expect(await isHoldOnly(env, "owner/repo", false)).toBe(false);
+    expect(await isHoldOnly(env, "owner/repo", true)).toBe(true);
+    expect(await isHoldOnly(env, "owner/other", true)).toBe(false);
+  });
+
   it("flagSetAt round-trips the updated_at and is null when unset", async () => {
     const env = createTestEnv();
     const flags = createFlagStore(env);
@@ -550,6 +561,17 @@ describe("isCloseHoldOnly + createFlagStore.isCloseHoldOnly (closehold:<scope>, 
     // global close breaker applies to every project.
     await flags.setFlag("closehold:global", true);
     expect(await isCloseHoldOnly(env, "any/repo")).toBe(true);
+  });
+
+  it("enforces a miner-scoped closehold flag only for confirmed miner-authored PRs", async () => {
+    const env = createTestEnv();
+    const flags = createFlagStore(env);
+    await flags.setFlag("closehold:owner/repo:miner", true);
+
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(false);
+    expect(await isCloseHoldOnly(env, "owner/repo", false)).toBe(false);
+    expect(await isCloseHoldOnly(env, "owner/repo", true)).toBe(true);
+    expect(await isCloseHoldOnly(env, "owner/other", true)).toBe(false);
   });
 
   it("createFlagStore.isCloseHoldOnly reads the per-project closehold key (not the global one)", async () => {

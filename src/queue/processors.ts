@@ -2796,10 +2796,18 @@ async function runAgentMaintenancePlanAndExecute(
   // Each read is independent and fail-open (isHoldOnly / isCloseHoldOnly read false until a breaker actually
   // engages), so the common path is byte-identical (both downgrades return the plan unchanged). The chaining is
   // extracted into the pure applyPrecisionBreakers below so it is unit-tested directly.
+  const breakerMinerAuthored = pr.authorLogin
+    ? (
+        await getCachedOfficialMinerDetection(env, pr.authorLogin, {
+          targetKey: `${repoFullName}#${pr.number}`,
+          deliveryId,
+        })
+      ).status === "confirmed"
+    : false;
   const breakerOnPlan = applyPrecisionBreakers(
     planned,
-    await isHoldOnly(env, repoFullName),
-    await isCloseHoldOnly(env, repoFullName),
+    await isHoldOnly(env, repoFullName, breakerMinerAuthored),
+    await isCloseHoldOnly(env, repoFullName, breakerMinerAuthored),
     {
       manualReviewLabel: settings.manualReviewLabel,
       readyToMergeLabel: settings.readyToMergeLabel,
@@ -2846,6 +2854,10 @@ async function runAgentMaintenancePlanAndExecute(
     conclusion: gate.conclusion,
     action: disposition.actionClass,
     reasonCode: disposition.blockerClass === "none" ? gate.conclusion : disposition.blockerClass,
+    // #2352: this row is the ACTUAL autonomous disposition that the precision breaker evaluates, so preserve
+    // the same miner-authored scope as the gate-check audit row below. Omitting it defaults to non-miner and can
+    // erase a prior miner-authored prediction for the same head.
+    minerAuthored: breakerMinerAuthored,
   });
   // #2349 (PR 1): additive per-contributor calibration data, gated identically to recordNativeGateDecision
   // above -- see src/review/contributor-calibration.ts's doc comment. Currently write-only; nothing reads

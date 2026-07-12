@@ -95,6 +95,8 @@ sudo systemctl enable --now gittensory-miner.service
 
 Because `loop` is a **long-running daemon that schedules its own cycles**, it is a persistent `Type=simple` service (with `Restart=on-failure`) — **not** a oneshot unit driven by a `.timer`, unlike the periodic `gittensory-docker-prune.*.example` hygiene job in [`systemd/`](../../systemd/). Keep `GITHUB_TOKEN` (and any coding-agent credentials) in a root-owned `0600` `EnvironmentFile`, never in the unit file. Follow the loop with `journalctl -u gittensory-miner -f`; `systemctl stop` sends SIGTERM, which the loop handles cleanly at its next kill-switch check.
 
+Set the coding-agent provider/model/timeout in that same `EnvironmentFile` — see [README.md § Coding-agent driver configuration](README.md#coding-agent-driver-configuration) for the full `MINER_CODING_AGENT_*` env var reference (accepted provider names, per-provider model vars, the shared CLI timeout).
+
 ## Invariants
 
 - Core miner bookkeeping (claims, plans, queues, ledgers) works offline after install.

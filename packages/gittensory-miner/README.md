@@ -128,6 +128,19 @@ gittensory-miner manage status [--json]
 gittensory-miner manage poll <owner/repo> <pr#> [--branch <name>] [--json]
 ```
 
+## Coding-agent driver configuration
+
+The real coding-agent driver `gittensory-miner attempt`/`loop` runs (#4289) is selected and tuned entirely through env vars:
+
+| Env var | Purpose | Accepted values / default |
+| --- | --- | --- |
+| `MINER_CODING_AGENT_PROVIDER` | Comma-separated provider list; the first *known* name wins (deny-by-default on an unrecognized name). | `noop`, `claude-cli`, `codex-cli`, `agent-sdk`. Default: unset — no provider resolves, so a real attempt fails closed instead of silently picking one. |
+| `MINER_CODING_AGENT_CLAUDE_MODEL` | Model passed to the `claude-cli` provider's `--model` flag. Ignored by every other provider. | Default: unset — the `claude` CLI's own default model. |
+| `MINER_CODING_AGENT_CODEX_MODEL` | Model passed to the `codex-cli` provider's `-m`/`--model` flag (inserted after the `exec` subcommand). Ignored by every other provider. | Default: unset — the `codex` CLI's own default model. |
+| `MINER_CODING_AGENT_TIMEOUT_MS` | Wall-clock kill timeout shared by both CLI providers (`claude-cli`/`codex-cli`); ignored by `noop`/`agent-sdk`. Must be a positive integer or it's ignored. | Default: `120000` (2 minutes). |
+
+See [`docs/coding-agent-driver.md`](docs/coding-agent-driver.md) for how the driver seam itself works (the `CodingAgentDriver` interface, dry-run/paused semantics, the attempt lifecycle) — this section is only the operator-facing "how do I configure it" reference.
+
 ## MCP server
 
 The package ships a second bin entry, `gittensory-miner-mcp`, a minimal [Model Context Protocol](https://modelcontextprotocol.io) stdio server that any MCP-compatible client can connect to:

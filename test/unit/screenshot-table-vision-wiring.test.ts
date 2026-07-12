@@ -318,6 +318,54 @@ describe("runScreenshotTableVisionForAdvisory (#4366)", () => {
     ]);
   });
 
+  it("records the self-host call under `screenshot_table_vision` with the REAL reported provider/model (2026-07 fix)", async () => {
+    const runMock = vi.fn(async () => ({
+      response: findingsResponse([{ pairIndex: 1, body: "Looks like a different app entirely." }]),
+      usage: { provider: "ollama", model: "qwen3-vl:8b" },
+    }));
+    const env = byokEnv();
+    (env as unknown as { AI_VISION: unknown }).AI_VISION = { run: runMock };
+    stubShotsAndProvider(null);
+    const adv = findingsHolder();
+    await runScreenshotTableVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr,
+      prBody: tableBody(BEFORE_URL, AFTER_URL),
+      prTitle: "Redesign the nav bar",
+      author: "alice",
+      confirmedContributor: true,
+      settings: gateEnabledSettings({ aiReviewByok: false }),
+      advisory: adv,
+    });
+    const row = await env.DB.prepare("select feature, model, provider, status from ai_usage_events where feature = ? order by rowid desc limit 1")
+      .bind("screenshot_table_vision")
+      .first<{ feature: string; model: string; provider: string | null; status: string }>();
+    expect(row).toMatchObject({ feature: "screenshot_table_vision", model: "qwen3-vl:8b", provider: "ollama", status: "ok" });
+  });
+
+  it("records a self-host call with no usable output under the fallback model label when the provider reports no usage", async () => {
+    const env = byokEnv();
+    (env as unknown as { AI_VISION: unknown }).AI_VISION = { run: vi.fn(async () => ({ response: "   " })) };
+    stubShotsAndProvider(null);
+    const adv = findingsHolder();
+    await runScreenshotTableVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr,
+      prBody: tableBody(BEFORE_URL, AFTER_URL),
+      prTitle: "Redesign the nav bar",
+      author: "alice",
+      confirmedContributor: true,
+      settings: gateEnabledSettings({ aiReviewByok: false }),
+      advisory: adv,
+    });
+    const row = await env.DB.prepare("select feature, model, provider, status, detail from ai_usage_events where feature = ? order by rowid desc limit 1")
+      .bind("screenshot_table_vision")
+      .first<{ feature: string; model: string; provider: string | null; status: string; detail: string | null }>();
+    expect(row).toMatchObject({ feature: "screenshot_table_vision", model: "ollama:visual-vision", provider: null, status: "ok", detail: "no usable output" });
+  });
+
   it("does not let an unconfirmed contributor spend self-host vision resources unless all-authors is enabled", async () => {
     const runMock = vi.fn(async () => ({ response: findingsResponse([{ pairIndex: 1, body: "should not run" }]) }));
     const env = byokEnv();

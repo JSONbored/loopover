@@ -164,7 +164,7 @@ async function record(
     feature: "linked_issue_satisfaction",
     actor: input.actor ?? null,
     route: "github_app.linked_issue_satisfaction",
-    model: input.providerKey ? `byok:${input.providerKey.provider}` : LINKED_ISSUE_SATISFACTION_MODELS.join("+"),
+    model: input.providerKey ? `byok:${input.providerKey.provider}` : (usage?.model ?? LINKED_ISSUE_SATISFACTION_MODELS.join("+")),
     status,
     estimatedNeurons,
     provider: usage?.provider,

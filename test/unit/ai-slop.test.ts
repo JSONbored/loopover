@@ -7,6 +7,7 @@ import {
 } from "../../src/services/ai-slop";
 import { evaluateGateCheck } from "../../src/rules/advisory";
 import { buildAiReviewDiff, runAiSlopForAdvisory } from "../../src/queue/processors";
+import { BEST_REVIEW_MODELS, RELIABLE_FALLBACK_MODELS } from "../../src/services/ai-review";
 import { getCachedAiSlopAdvisory, putCachedAiSlopAdvisory, recordAiUsageEvent, upsertRepositoryAiKey } from "../../src/db/repositories";
 import { aiSlopCacheInputFingerprint } from "../../src/review/ai-slop-cache-input";
 import type { Advisory, PullRequestFileRecord, RepositorySettings } from "../../src/types";
@@ -224,6 +225,30 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.band).toBe("elevated");
     expect(result.finding).toMatchObject({ code: AI_SLOP_FINDING_CODE, severity: "warning" });
+  });
+
+  it("records the REAL reported model, not the hardcoded fallback label, when the provider reports one (2026-07 fix)", async () => {
+    const run = vi.fn(async () => ({ response: slopJson({ band: "elevated" }), usage: { provider: "ollama", model: "qwen3:8b" } }));
+    const env = enabledEnv(run);
+    const result = await runGittensoryAiSlopAdvisory(env, baseInput);
+    expect(result.status).toBe("ok");
+
+    const row = await env.DB.prepare("select model, provider from ai_usage_events where feature = ? order by rowid desc limit 1")
+      .bind("ai_slop_pr")
+      .first<{ model: string; provider: string | null }>();
+    expect(row).toMatchObject({ model: "qwen3:8b", provider: "ollama" });
+  });
+
+  it("falls back to the hardcoded model label when the provider reports no usage/model at all", async () => {
+    const run = vi.fn(async () => ({ response: slopJson({ band: "elevated" }) }));
+    const env = enabledEnv(run);
+    const result = await runGittensoryAiSlopAdvisory(env, baseInput);
+    expect(result.status).toBe("ok");
+
+    const row = await env.DB.prepare("select model from ai_usage_events where feature = ? order by rowid desc limit 1")
+      .bind("ai_slop_pr")
+      .first<{ model: string }>();
+    expect(row?.model).toBe([BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0]].join("+"));
   });
 
   it("returns no finding when the model judges the change clean", async () => {

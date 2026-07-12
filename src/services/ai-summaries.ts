@@ -73,29 +73,33 @@ export async function summarizeAgentBundleWithAi(env: Env, bundle: AgentRunBundl
     });
     const rawText = extractAiText(response);
     const usage = coerceAiUsage(response);
+    // Prefer the real model the (possibly advisory-routed) provider actually reported over the static
+    // configured label, so ai_usage_events attributes advisory-routed calls to the real serving model
+    // instead of always recording the empty-string/legacy fallback (2026-07 fix).
+    const resolvedModel = usage?.model ?? model;
     if (!rawText) throw new Error("empty_ai_summary");
     if (visibility === "public" && containsPublicForbiddenText(rawText)) {
       await recordAi(env, bundle, {
         feature: `agent_${visibility}_summary`,
-        model,
+        model: resolvedModel,
         status: "unsafe",
         estimatedNeurons,
         detail: "public summary failed sanitizer",
         usage,
       });
-      return { status: "unsafe", model, estimatedNeurons, reason: "public summary failed sanitizer" };
+      return { status: "unsafe", model: resolvedModel, estimatedNeurons, reason: "public summary failed sanitizer" };
     }
     const text = sanitizeAiText(rawText, visibility);
     await recordAi(env, bundle, {
       feature: `agent_${visibility}_summary`,
-      model,
+      model: resolvedModel,
       status: "ok",
       estimatedNeurons,
       detail: "summary generated",
       metadata: { visibility },
       usage,
     });
-    return { status: "ok", model, estimatedNeurons, text };
+    return { status: "ok", model: resolvedModel, estimatedNeurons, text };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "ai_summary_failed";
     await recordAi(env, bundle, {
@@ -329,14 +333,18 @@ export async function rewriteSignalBundleWithAi(env: Env, req: AiRewriteRequest)
     });
     const rawText = extractAiText(response);
     const usage = coerceAiUsage(response);
+    // Prefer the real model the (possibly advisory-routed) provider actually reported over the static
+    // configured label, so ai_usage_events attributes advisory-routed calls to the real serving model
+    // instead of always recording the empty-string/legacy fallback (2026-07 fix).
+    const resolvedModel = usage?.model ?? model;
     if (!rawText) throw new Error("empty_ai_summary");
     if (req.visibility === "public" && containsPublicForbiddenText(rawText)) {
-      await recordGenericAi(env, req, { model, status: "unsafe", estimatedNeurons, detail: "public summary failed sanitizer", usage });
-      return { status: "unsafe", text: req.fallbackText, model, estimatedNeurons, reason: "public summary failed sanitizer" };
+      await recordGenericAi(env, req, { model: resolvedModel, status: "unsafe", estimatedNeurons, detail: "public summary failed sanitizer", usage });
+      return { status: "unsafe", text: req.fallbackText, model: resolvedModel, estimatedNeurons, reason: "public summary failed sanitizer" };
     }
     const text = sanitizeAiText(rawText, req.visibility);
-    await recordGenericAi(env, req, { model, status: "ok", estimatedNeurons, detail: "summary generated", metadata: { visibility: req.visibility }, usage });
-    return { status: "ok", text, model, estimatedNeurons };
+    await recordGenericAi(env, req, { model: resolvedModel, status: "ok", estimatedNeurons, detail: "summary generated", metadata: { visibility: req.visibility }, usage });
+    return { status: "ok", text, model: resolvedModel, estimatedNeurons };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "ai_summary_failed";
     await recordGenericAi(env, req, { model, status: "error", estimatedNeurons: 0, detail: reason });

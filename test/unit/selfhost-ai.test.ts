@@ -137,6 +137,17 @@ describe("createOpenAiCompatibleAi (#979)", () => {
     expect(first?.body.model).toBe("llama3.1");
   });
 
+  it("attributes usage.provider from its own configured providerName (#ai-usage-provider-attribution) since an HTTP chat-completions response never reports one itself", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 }),
+    ));
+    const withProvider = await createOpenAiCompatibleAi({ baseUrl: "http://o/v1", providerName: "ollama" }).run("m", { prompt: "x" });
+    expect(withProvider.usage).toMatchObject({ provider: "ollama" });
+    const withoutProvider = await createOpenAiCompatibleAi({ baseUrl: "http://o/v1" }).run("m", { prompt: "x" });
+    expect(withoutProvider.usage?.provider).toBeUndefined();
+    expect("provider" in (withoutProvider.usage ?? {})).toBe(false);
+  });
+
   it("only sends an Authorization header when this OpenAI-compatible provider has its own apiKey", async () => {
     const authHeaders: Array<string | null> = [];
     vi.stubGlobal("fetch", vi.fn(async (_u: string, init?: RequestInit) => {
@@ -177,15 +188,31 @@ describe("createOpenAiCompatibleAi (#979)", () => {
     await expect(createOpenAiCompatibleAi({ baseUrl: "http://x/v1" }).run("m", { prompt: "p" })).rejects.toThrow(/ai_http_500/);
   });
 
-  it("routes an embedding request ({ text }) to /embeddings and returns { data }", async () => {
+  it("routes an embedding request ({ text }) to /embeddings and returns { data } plus a model/provider usage tag (no token counts, since this response has no usage object)", async () => {
     let url = "";
     vi.stubGlobal("fetch", vi.fn(async (u: string) => {
       url = u;
       return new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2] }, { embedding: [0.3, 0.4] }] }), { status: 200 });
     }));
-    const out = await createOpenAiCompatibleAi({ baseUrl: "http://o/v1", embedModel: "bge-m3" }).run("@cf/baai/bge-m3", { text: ["a", "b"] });
+    const out = await createOpenAiCompatibleAi({ baseUrl: "http://o/v1", embedModel: "bge-m3", providerName: "ollama" }).run("@cf/baai/bge-m3", { text: ["a", "b"] });
     expect(url).toBe("http://o/v1/embeddings");
-    expect(out).toEqual({ data: [[0.1, 0.2], [0.3, 0.4]] });
+    expect(out).toEqual({ data: [[0.1, 0.2], [0.3, 0.4]], usage: { provider: "ollama", model: "bge-m3" } });
+  });
+
+  it("surfaces real token usage from an /embeddings response that reports one (#ai-usage-embeddings)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(JSON.stringify({ data: [{ embedding: [0.1] }], usage: { prompt_tokens: 42, total_tokens: 42 } }), { status: 200 }),
+    ));
+    const out = await createOpenAiCompatibleAi({ baseUrl: "http://o/v1", embedModel: "bge-m3", providerName: "ollama" }).run("m", { text: ["hello"] });
+    expect(out).toEqual({ data: [[0.1]], usage: { provider: "ollama", model: "bge-m3", inputTokens: 42, totalTokens: 42 } });
+  });
+
+  it("falls back to prompt_tokens for totalTokens when an /embeddings response reports no total_tokens", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(JSON.stringify({ data: [{ embedding: [0.1] }], usage: { prompt_tokens: 7 } }), { status: 200 }),
+    ));
+    const out = await createOpenAiCompatibleAi({ baseUrl: "http://o/v1", embedModel: "bge-m3" }).run("m", { text: ["hello"] });
+    expect(out).toEqual({ data: [[0.1]], usage: { model: "bge-m3", inputTokens: 7, totalTokens: 7 } });
   });
 
   it("throws on a non-OK embeddings response, including the response body detail (#4996: previously thrown away)", async () => {
@@ -214,11 +241,11 @@ describe("createOpenAiCompatibleAi (#979)", () => {
     expect(error).toBe(`ai_embed_http_400: ${"x".repeat(300)}`);
   });
 
-  it("empty text array returns { data: [] } without a fetch", async () => {
+  it("empty text array returns { data: [] } (plus a zero-token usage tag) without a fetch", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const result = await createOpenAiCompatibleAi({ baseUrl: "http://o/v1" }).run("m", { text: [] });
-    expect(result).toEqual({ data: [] });
+    const result = await createOpenAiCompatibleAi({ baseUrl: "http://o/v1", embedModel: "bge-m3", providerName: "ollama" }).run("m", { text: [] });
+    expect(result).toEqual({ data: [], usage: { provider: "ollama", model: "bge-m3", inputTokens: 0, totalTokens: 0 } });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

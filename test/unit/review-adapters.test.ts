@@ -5,6 +5,7 @@ import {
   reviewStorageAdapter,
   reviewVectorAdapter,
 } from "../../src/review/adapters";
+import { createTestEnv } from "../helpers/d1";
 
 // ── Minimal Env stubs ─────────────────────────────────────────────────────────────────────────────
 // Only the bindings the factory touches (DB / VECTORIZE / AI) are stubbed; the factory is given an
@@ -168,9 +169,56 @@ describe("reviewVectorAdapter: delegates to env.VECTORIZE", () => {
 describe("reviewInferenceAdapter: delegates to env.AI", () => {
   it("forwards run(model, options) to the AI binding and returns its result", async () => {
     const ai = aiStub();
-    const adapter = reviewInferenceAdapter(ai as unknown as Ai);
+    const env = createTestEnv({ AI: ai as unknown as Ai });
+    const adapter = reviewInferenceAdapter(env, ai as unknown as Ai);
     const out = await adapter.run("@cf/baai/bge-m3", { text: ["hello"] });
     expect(ai.run).toHaveBeenCalledWith("@cf/baai/bge-m3", { text: ["hello"] });
     expect(out).toEqual({ data: [[0.1, 0.2]] });
+  });
+
+  it("records the embedding call under the `embeddings` feature, using the real reported provider/model (2026-07 fix)", async () => {
+    const ai = { run: vi.fn(async () => ({ data: [[0.1, 0.2]], usage: { provider: "ollama", model: "bge-m3" } })) };
+    const env = createTestEnv({ AI: ai as unknown as Ai });
+    const adapter = reviewInferenceAdapter(env, ai as unknown as Ai);
+    await adapter.run("@cf/baai/bge-m3", { text: ["hello"] });
+    const row = await env.DB.prepare("select feature, model, provider, status from ai_usage_events order by rowid desc limit 1").first<{
+      feature: string;
+      model: string;
+      provider: string | null;
+      status: string;
+    }>();
+    expect(row).toMatchObject({ feature: "embeddings", model: "bge-m3", provider: "ollama", status: "ok" });
+  });
+
+  it("falls back to the requested model label when the provider reports no usage at all (e.g. the Workers AI binding)", async () => {
+    const ai = aiStub();
+    const env = createTestEnv({ AI: ai as unknown as Ai });
+    const adapter = reviewInferenceAdapter(env, ai as unknown as Ai);
+    await adapter.run("@cf/baai/bge-m3", { text: ["hello"] });
+    const row = await env.DB.prepare("select feature, model, provider, status from ai_usage_events order by rowid desc limit 1").first<{
+      feature: string;
+      model: string;
+      provider: string | null;
+      status: string;
+    }>();
+    expect(row).toMatchObject({ feature: "embeddings", model: "@cf/baai/bge-m3", provider: null, status: "ok" });
+  });
+
+  it("records a failed embedding call and RETHROWS (the caller's own fail-safe still sees the error)", async () => {
+    const ai = {
+      run: vi.fn(async () => {
+        throw new Error("embed_provider_unreachable");
+      }),
+    };
+    const env = createTestEnv({ AI: ai as unknown as Ai });
+    const adapter = reviewInferenceAdapter(env, ai as unknown as Ai);
+    await expect(adapter.run("@cf/baai/bge-m3", { text: ["hello"] })).rejects.toThrow("embed_provider_unreachable");
+    const row = await env.DB.prepare("select feature, model, status, detail from ai_usage_events order by rowid desc limit 1").first<{
+      feature: string;
+      model: string;
+      status: string;
+      detail: string | null;
+    }>();
+    expect(row).toMatchObject({ feature: "embeddings", model: "@cf/baai/bge-m3", status: "error", detail: "embed_provider_unreachable" });
   });
 });

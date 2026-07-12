@@ -70,6 +70,23 @@ describe("Workers AI summaries", () => {
     );
   });
 
+  it("records the REAL reported model, not the empty-string configured fallback, when the provider reports one (2026-07 fix)", async () => {
+    const run = vi.fn(async () => ({ response: "Advisory-routed summary.", usage: { provider: "ollama", model: "qwen3:8b" } }));
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "10000",
+    });
+
+    const result = await summarizeAgentBundleWithAi(env, bundleFixture(), "private");
+
+    expect(result).toMatchObject({ status: "ok", model: "qwen3:8b" });
+    const row = await env.DB.prepare("select model, provider from ai_usage_events where feature = ? order by rowid desc limit 1")
+      .bind("agent_private_summary")
+      .first<{ model: string; provider: string | null }>();
+    expect(row).toMatchObject({ model: "qwen3:8b", provider: "ollama" });
+  });
+
   it("applies the default daily neuron budget when AI_DAILY_NEURON_BUDGET is unset", async () => {
     const run = vi.fn(async () => ({ response: "Summary within default budget." }));
     const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true" });
@@ -330,6 +347,17 @@ describe("optional deterministic-summary rewrite layer", () => {
     const result = await rewriteSignalBundleWithAi(publicEnv(), rewriteReq());
     expect(result).toMatchObject({ status: "ok", text: "Clear, friendly summary." });
     expect(result.text).not.toBe(DETERMINISTIC_BODY);
+  });
+
+  it("records the REAL reported model, not the empty-string configured fallback, when the provider reports one (2026-07 fix)", async () => {
+    const run = vi.fn(async () => ({ response: "Advisory-routed rewrite.", usage: { provider: "ollama", model: "qwen3:8b" } }));
+    const env = publicEnv({}, run);
+    const result = await rewriteSignalBundleWithAi(env, rewriteReq());
+    expect(result).toMatchObject({ status: "ok", model: "qwen3:8b" });
+    const row = await env.DB.prepare("select model, provider from ai_usage_events where feature = ? order by rowid desc limit 1")
+      .bind("pr_intelligence_comment")
+      .first<{ model: string; provider: string | null }>();
+    expect(row).toMatchObject({ model: "qwen3:8b", provider: "ollama" });
   });
 
   it("applies default model, output-token, and daily-budget configuration when env vars are unset", async () => {

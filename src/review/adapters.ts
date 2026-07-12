@@ -13,6 +13,8 @@
 // fail-safe on a missing vector/inference adapter ("no vector index → no RAG", "no AI → no context"), so the
 // modules NEVER throw — they degrade to no-context. Storage (D1 `DB`) is always present (the Worker cannot run
 // without it); its wrapper is a thin pass-through with the prepare→bind→all/first/run + batch surface RAG uses.
+import { recordAiUsageEvent } from "../db/repositories";
+import { coerceAiUsage } from "../services/ai-review";
 import { ragDimensionsFromEnv, ragEmbedBatchFromEnv, type InferenceAdapter, type RagInfra, type StorageAdapter, type VectorAdapter } from "./rag";
 
 // ── Storage (D1 → StorageAdapter). Always present. A thin pass-through over `env.DB` — structurally the
@@ -54,9 +56,47 @@ export function reviewVectorAdapter(vectorize: Vectorize): VectorAdapter {
 
 // ── Inference (the Ai-shaped adapter → InferenceAdapter). Feature-gated. Mirrors `ai.run(model, options)`;
 //    the cast bridges the overloaded `run` signature to the portable single-signature shape. `ai` is
-//    Workers AI historically, and on self-host is the generic provider router (src/selfhost/ai.ts). ──
-export function reviewInferenceAdapter(ai: Ai): InferenceAdapter {
-  return { run: (model, options) => (ai as unknown as { run(m: string, o: Record<string, unknown>): Promise<unknown> }).run(model, options) };
+//    Workers AI historically, and on self-host is the generic provider router (src/selfhost/ai.ts).
+//
+//    Also records every embedding call under the `embeddings` feature (2026-07 fix — previously
+//    RAG/embedding calls were never recorded in `ai_usage_events` at all). Self-host's `createOpenAiCompatibleAi`
+//    returns real `usage` (provider/model/tokens) for embeddings, so this is recorded for free via
+//    `coerceAiUsage`; Workers AI's binding has no such `usage` field, so the call is still recorded (feature +
+//    the model actually requested), just without token/cost detail. ──
+export function reviewInferenceAdapter(env: Env, ai: Ai): InferenceAdapter {
+  const runner = ai as unknown as { run(m: string, o: Record<string, unknown>): Promise<unknown> };
+  return {
+    run: async (model, options) => {
+      try {
+        const result = await runner.run(model, options);
+        const usage = coerceAiUsage(result);
+        await recordAiUsageEvent(env, {
+          feature: "embeddings",
+          route: "review.embeddings",
+          model: usage?.model ?? model,
+          provider: usage?.provider,
+          effort: usage?.effort,
+          status: "ok",
+          estimatedNeurons: 0,
+          inputTokens: usage?.inputTokens,
+          outputTokens: usage?.outputTokens,
+          totalTokens: usage?.totalTokens,
+          costUsd: usage?.costUsd,
+        });
+        return result;
+      } catch (error) {
+        await recordAiUsageEvent(env, {
+          feature: "embeddings",
+          route: "review.embeddings",
+          model,
+          status: "error",
+          estimatedNeurons: 0,
+          detail: error instanceof Error ? error.message : "embedding_failed",
+        });
+        throw error;
+      }
+    },
+  };
 }
 
 /** The infra bundle the ported review modules accept (`RagInfra`). Built from `Env`:
@@ -75,6 +115,6 @@ export function createReviewAdapters(env: Env): RagInfra {
   // Embeddings use the DEDICATED embed provider (env.AI_EMBED) when configured — keeping the review chat chain
   // frontier-only — and fall back to env.AI otherwise (byte-identical to before).
   const embedAi = env.AI_EMBED ?? env.AI;
-  if (embedAi) infra.inference = reviewInferenceAdapter(embedAi);
+  if (embedAi) infra.inference = reviewInferenceAdapter(env, embedAi);
   return infra;
 }

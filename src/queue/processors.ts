@@ -503,6 +503,7 @@ import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import {
   callAiProvider,
   clampNumber,
+  coerceAiUsage,
   DEFAULT_BYOK_DAILY_REPO_LIMIT,
   hasPublicReviewAssessment,
   utcDayStartIso,
@@ -6827,11 +6828,21 @@ type SelfHostVisionRunner = { run?: (model: string, options: Record<string, unkn
  *  (AI_VISION_MODEL) over whatever string is passed here (see `resolveModel` in `selfhost/ai.ts`). Fail-safe
  *  on every path, exactly like `callAiProvider`'s BYOK sibling: no binding / no `.run` / a thrown error / an
  *  unparseable response all degrade to `null`, never a thrown error reaching the caller. */
-async function runSelfHostVisualVision(env: Env, system: string, user: string, images: readonly AiContentBlock[]): Promise<string | null> {
+/** Label recorded for a self-host vision call when the provider reports no usage/model at all (e.g. a
+ *  malformed/non-JSON response) -- mirrors the same static-fallback convention as the other advisory AI
+ *  features (WORKERS_SLOP_MODELS et al.), since there is no per-repo config field for this binding's model. */
+const SELF_HOST_VISION_MODEL_FALLBACK = "ollama:visual-vision";
+
+async function runSelfHostVisualVision(
+  env: Env,
+  system: string,
+  user: string,
+  images: readonly AiContentBlock[],
+): Promise<{ text: string | null; usage?: AiReviewActualUsage | undefined }> {
   const ai = env.AI_VISION as unknown as SelfHostVisionRunner | undefined;
-  if (!ai || typeof ai.run !== "function") return null;
+  if (!ai || typeof ai.run !== "function") return { text: null };
   try {
-    const result = (await ai.run("visual-vision", {
+    const result = await ai.run("visual-vision", {
       messages: [
         { role: "system", content: system },
         { role: "user", content: [{ type: "text", text: user }, ...images] },
@@ -6842,10 +6853,11 @@ async function runSelfHostVisualVision(env: Env, system: string, user: string, i
       // concurrent load faster than the embed model does, degrading to latency collapse rather than a clean
       // OOM. Ignored by every non-Ollama provider (embeddings, subscription CLIs, Anthropic).
       providerOptions: { num_ctx: 4096 },
-    })) as { response?: string } | null;
-    return result?.response?.trim() || null;
+    });
+    const text = (result as { response?: string } | null)?.response?.trim() || null;
+    return { text, usage: coerceAiUsage(result) };
   } catch {
-    return null;
+    return { text: null };
   }
 }
 
@@ -6976,22 +6988,25 @@ export async function runVisualVisionForAdvisory(
         return;
       }
     } else {
-      visionText = await runSelfHostVisualVision(env, VISUAL_VISION_SYSTEM_PROMPT, buildVisualVisionUserPrompt(visionGate.routes), images);
+      const selfHostResult = await runSelfHostVisualVision(env, VISUAL_VISION_SYSTEM_PROMPT, buildVisualVisionUserPrompt(visionGate.routes), images);
+      visionText = selfHostResult.text;
+      visionUsage = selfHostResult.usage;
+      if (!visionText) {
+        await recordVisualVisionUsage(env, args, null, "ok", "no usable output", visionUsage);
+        return;
+      }
     }
-    if (!visionText) return;
     const visionFindings = parseVisualVisionResponse(visionText);
     const findings = buildVisualRegressionFindings(visionFindings);
     args.advisory.findings.push(...findings);
-    if (visionProviderKey) {
-      await recordVisualVisionUsage(
-        env,
-        args,
-        visionProviderKey,
-        "ok",
-        findings.length > 0 ? `advisory findings (${findings.length})` : "no usable output",
-        visionUsage,
-      );
-    }
+    await recordVisualVisionUsage(
+      env,
+      args,
+      visionProviderKey,
+      "ok",
+      findings.length > 0 ? `advisory findings (${findings.length})` : "no usable output",
+      visionUsage,
+    );
   } catch (error) {
     console.log(
       JSON.stringify({
@@ -7007,7 +7022,7 @@ export async function runVisualVisionForAdvisory(
 async function recordVisualVisionUsage(
   env: Env,
   args: { repoFullName: string; pr: { number: number }; author: string | null },
-  providerKey: { provider: string },
+  providerKey: { provider: string } | null,
   status: string,
   detail: string,
   usage?: AiReviewActualUsage | undefined,
@@ -7016,7 +7031,7 @@ async function recordVisualVisionUsage(
     feature: "visual_vision",
     actor: args.author ?? null,
     route: "github_app.visual_vision",
-    model: `byok:${providerKey.provider}`,
+    model: providerKey ? `byok:${providerKey.provider}` : (usage?.model ?? SELF_HOST_VISION_MODEL_FALLBACK),
     status,
     estimatedNeurons: 0,
     provider: usage?.provider,
@@ -7033,7 +7048,7 @@ async function recordVisualVisionUsage(
 async function recordScreenshotTableVisionUsage(
   env: Env,
   args: { repoFullName: string; pr: { number: number }; author: string | null },
-  providerKey: { provider: string },
+  providerKey: { provider: string } | null,
   status: string,
   detail: string,
   usage?: AiReviewActualUsage | undefined,
@@ -7042,7 +7057,7 @@ async function recordScreenshotTableVisionUsage(
     feature: "screenshot_table_vision",
     actor: args.author ?? null,
     route: "github_app.screenshot_table_vision",
-    model: `byok:${providerKey.provider}`,
+    model: providerKey ? `byok:${providerKey.provider}` : (usage?.model ?? SELF_HOST_VISION_MODEL_FALLBACK),
     status,
     estimatedNeurons: 0,
     provider: usage?.provider,
@@ -7149,7 +7164,17 @@ export async function runScreenshotTableVisionForAdvisory(
             visionUsage,
           );
         } else {
-          visionText = await runSelfHostVisualVision(env, SCREENSHOT_TABLE_VISION_SYSTEM_PROMPT, userPrompt, images);
+          const selfHostResult = await runSelfHostVisualVision(env, SCREENSHOT_TABLE_VISION_SYSTEM_PROMPT, userPrompt, images);
+          visionText = selfHostResult.text;
+          visionUsage = selfHostResult.usage;
+          await recordScreenshotTableVisionUsage(
+            env,
+            args,
+            null,
+            "ok",
+            visionText ? `advisory findings check (${gate.pairCount} pairs)` : "no usable output",
+            visionUsage,
+          );
         }
         if (visionText) {
           const parsed = parseScreenshotTableVisionResponse(visionText, gate.pairCount);

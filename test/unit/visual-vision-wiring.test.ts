@@ -697,6 +697,52 @@ describe("runVisualVisionForAdvisory: self-host local vision provider (#4335)", 
     expect(adv.findings).toEqual([]);
   });
 
+  it("records the self-host call under `visual_vision` with the REAL reported provider/model, not silently dropped (2026-07 fix)", async () => {
+    const env = byokEnv();
+    const runMock = vi.fn(async () => ({
+      response: findingsResponse([{ path: "/app", body: "Nav bar overlaps the logo." }]),
+      usage: { provider: "ollama", model: "qwen3-vl:8b" },
+    }));
+    (env as unknown as { AI_VISION: unknown }).AI_VISION = { run: runMock };
+    stubShots();
+    const adv = findingsHolder();
+    await runVisualVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      settings: byokSettings({ aiReviewByok: false }),
+      advisory: adv,
+      routes: selfHostVisionRoutes(),
+    });
+    const row = await env.DB.prepare("select feature, model, provider, status from ai_usage_events where feature = ? order by rowid desc limit 1")
+      .bind("visual_vision")
+      .first<{ feature: string; model: string; provider: string | null; status: string }>();
+    expect(row).toMatchObject({ feature: "visual_vision", model: "qwen3-vl:8b", provider: "ollama", status: "ok" });
+  });
+
+  it("records a self-host call with no usable output under the fallback model label when the provider reports no usage", async () => {
+    const env = byokEnv();
+    (env as unknown as { AI_VISION: unknown }).AI_VISION = { run: vi.fn(async () => ({ response: "   " })) };
+    stubShots();
+    const adv = findingsHolder();
+    await runVisualVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      settings: byokSettings({ aiReviewByok: false }),
+      advisory: adv,
+      routes: selfHostVisionRoutes(),
+    });
+    const row = await env.DB.prepare("select feature, model, provider, status, detail from ai_usage_events where feature = ? order by rowid desc limit 1")
+      .bind("visual_vision")
+      .first<{ feature: string; model: string; provider: string | null; status: string; detail: string | null }>();
+    expect(row).toMatchObject({ feature: "visual_vision", model: "ollama:visual-vision", provider: null, status: "ok", detail: "no usable output" });
+  });
+
   it("adds no finding when env.AI_VISION is present but has no callable .run (a malformed binding)", async () => {
     const env = byokEnv();
     (env as unknown as { AI_VISION: unknown }).AI_VISION = {};

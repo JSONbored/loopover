@@ -8,6 +8,7 @@ import {
   runGittensoryE2eTestGeneration,
   type E2eTestGenInput,
 } from "../../src/services/ai-e2e-test-gen";
+import { BEST_REVIEW_MODELS, RELIABLE_FALLBACK_MODELS } from "../../src/services/ai-review";
 import { recordAiUsageEvent } from "../../src/db/repositories";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import type { FocusManifestReviewConfig } from "../../src/signals/focus-manifest";
@@ -319,6 +320,32 @@ describe("runGittensoryE2eTestGeneration — gating + fail-safe", () => {
     expect(row?.model).not.toMatch(/^byok:/);
     if (result.status !== "ok") throw new Error("unreachable");
     expect(row?.estimated_neurons).toBe(result.estimatedNeurons);
+  });
+
+  it("records the REAL reported model, not the hardcoded fallback label, when the provider reports one (2026-07 fix)", async () => {
+    const run = vi.fn(async () => ({ response: fenced(VALID_TEST_SOURCE), usage: { provider: "ollama", model: "qwen3:8b" } }));
+    const env = enabledEnv(run);
+    await cacheEmptyManifest(env);
+    const result = await runGittensoryE2eTestGeneration(env, baseInput);
+    expect(result).toMatchObject({ status: "ok" });
+
+    const row = await env.DB.prepare("select model, provider from ai_usage_events where feature = ? order by rowid desc limit 1")
+      .bind("ai_e2e_test_gen")
+      .first<{ model: string; provider: string | null }>();
+    expect(row).toMatchObject({ model: "qwen3:8b", provider: "ollama" });
+  });
+
+  it("falls back to the hardcoded model label when the provider reports no usage/model at all", async () => {
+    const run = vi.fn(async () => ({ response: fenced(VALID_TEST_SOURCE) }));
+    const env = enabledEnv(run);
+    await cacheEmptyManifest(env);
+    const result = await runGittensoryE2eTestGeneration(env, baseInput);
+    expect(result).toMatchObject({ status: "ok" });
+
+    const row = await env.DB.prepare("select model from ai_usage_events where feature = ? order by rowid desc limit 1")
+      .bind("ai_e2e_test_gen")
+      .first<{ model: string }>();
+    expect(row?.model).toBe([BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0]].join("+"));
   });
 
   it("passes the AI_GATEWAY_ID through to the default-reviewer call when configured", async () => {

@@ -257,7 +257,10 @@ async function record(
     actor: input.actor ?? null,
     route: "github_app.ai_slop",
     // `byok:<provider>` so countByokAiEventsForRepoSince (model LIKE 'byok:%') counts it toward the cap.
-    model: input.providerKey ? `byok:${input.providerKey.provider}` : WORKERS_SLOP_MODELS.join("+"),
+    // Non-BYOK: prefer the REAL model the provider reported (usage.model, populated for self-host CLI/HTTP
+    // providers including advisory-routed Ollama calls) over the hardcoded fallback label, which otherwise
+    // misrepresented every advisory-routed call as a legacy Workers-AI model id it never actually ran on.
+    model: input.providerKey ? `byok:${input.providerKey.provider}` : (usage?.model ?? WORKERS_SLOP_MODELS.join("+")),
     status,
     estimatedNeurons,
     provider: usage?.provider,

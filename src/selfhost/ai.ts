@@ -295,11 +295,12 @@ export function createOpenAiCompatibleAi(opts: {
     async run(model, options) {
       // Embedding request — the core's embedTexts passes { text: string[] }; route to /embeddings (for RAG).
       if (Array.isArray(options.text)) {
-        if (options.text.length === 0) return { data: [] };
+        const embedModel = opts.embedModel ?? "bge-m3";
+        if (options.text.length === 0) return { data: [], usage: buildAiUsage({ provider: opts.providerName, model: embedModel, inputTokens: 0, totalTokens: 0 }) };
         const res = await fetch(`${base}/embeddings`, {
           method: "POST",
           headers: headers(),
-          body: JSON.stringify({ model: opts.embedModel ?? "bge-m3", input: options.text }),
+          body: JSON.stringify({ model: embedModel, input: options.text }),
           signal: AbortSignal.timeout(120_000),
         });
         // #4996: the error previously carried only the status code, with no detail from the response body --
@@ -311,8 +312,20 @@ export function createOpenAiCompatibleAi(opts: {
           const detail = await res.text().then((t) => t.slice(0, 300)).catch(() => "");
           throw new Error(detail ? `ai_embed_http_${res.status}: ${detail}` : `ai_embed_http_${res.status}`);
         }
-        const json = (await res.json()) as { data?: Array<{ embedding: number[] }> };
-        return { data: (json.data ?? []).map((d) => d.embedding) };
+        // #ai-usage-embeddings: an OpenAI-compatible /embeddings response can carry a `usage` object
+        // (Ollama does); surface it so the RAG inference adapter (src/review/adapters.ts) can record real
+        // embedding usage instead of never tracking embeddings at all. Absent on providers that don't
+        // report it — inputTokens/totalTokens simply stay undefined, same fail-open shape as the chat path.
+        const json = (await res.json()) as { data?: Array<{ embedding: number[] }>; usage?: { prompt_tokens?: number; total_tokens?: number } };
+        return {
+          data: (json.data ?? []).map((d) => d.embedding),
+          usage: buildAiUsage({
+            provider: opts.providerName,
+            model: embedModel,
+            inputTokens: json.usage?.prompt_tokens,
+            totalTokens: json.usage?.total_tokens ?? json.usage?.prompt_tokens,
+          }),
+        };
       }
       const repoOverride = opts.providerName ? resolveOpenAiCompatibleRepoOverride(opts.providerName, options) : undefined;
       const resolvedModel = resolveModel(firstConfigured(repoOverride, opts.model), model, opts.defaultModel ?? DEFAULT_OPENAI_COMPATIBLE_CHAT_MODEL);
@@ -331,7 +344,11 @@ export function createOpenAiCompatibleAi(opts: {
       if (!res.ok) throw new Error(`ai_http_${res.status}`);
       const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
       const usage = extractCliUsage(JSON.stringify(data));
-      return { response: data.choices?.[0]?.message?.content ?? "", usage: { ...usage, model: usage.model ?? resolvedModel } };
+      // #ai-usage-provider-attribution: extractCliUsage parses CLI-subprocess-style stdout markers, which an
+      // HTTP JSON chat-completions response never contains, so this path never has a real provider to read --
+      // populate it from this adapter's own configured providerName (e.g. "ollama"), which every caller routed
+      // through env.AI_ADVISORY/AI_EMBED/AI_VISION previously had no way to attribute at all.
+      return { response: data.choices?.[0]?.message?.content ?? "", usage: buildAiUsage({ ...usage, model: usage.model ?? resolvedModel, provider: opts.providerName }) };
     },
   };
 }
@@ -568,6 +585,29 @@ export type AiUsage = CliUsage & {
   provider?: string;
   effort?: string;
 };
+
+/** Build an `AiUsage` object, omitting any field whose value is `undefined` -- `exactOptionalPropertyTypes`
+ *  forbids assigning `undefined` to an optional property explicitly, it must simply be absent (mirrors the
+ *  same pattern in src/review/adapters.ts's own `createReviewAdapters`). */
+function buildAiUsage(fields: {
+  provider?: string | undefined;
+  model?: string | undefined;
+  inputTokens?: number | undefined;
+  outputTokens?: number | undefined;
+  totalTokens?: number | undefined;
+  costUsd?: number | undefined;
+  effort?: string | undefined;
+}): AiUsage {
+  const usage: AiUsage = {};
+  if (fields.provider !== undefined) usage.provider = fields.provider;
+  if (fields.model !== undefined) usage.model = fields.model;
+  if (fields.inputTokens !== undefined) usage.inputTokens = fields.inputTokens;
+  if (fields.outputTokens !== undefined) usage.outputTokens = fields.outputTokens;
+  if (fields.totalTokens !== undefined) usage.totalTokens = fields.totalTokens;
+  if (fields.costUsd !== undefined) usage.costUsd = fields.costUsd;
+  if (fields.effort !== undefined) usage.effort = fields.effort;
+  return usage;
+}
 
 const INPUT_TOKEN_KEYS = ["input_tokens", "inputTokens", "prompt_tokens", "promptTokens"] as const;
 const OUTPUT_TOKEN_KEYS = ["output_tokens", "outputTokens", "completion_tokens", "completionTokens"] as const;

@@ -56,9 +56,12 @@ export type IterateLoopInput = {
   maxTurnsPerIteration: number;
   /** Optional cumulative budget ceiling(s), evaluated every iteration against the real running totals
    *  (attempt-metering.ts's `AttemptMeterTotals`, #5395). Omitted means no additional ceiling beyond what
-   *  `maxIterations * maxTurnsPerIteration` already implies. Any breached axis (turns/costUsd/wallClockMs --
-   *  tokens is never real-tracked today) abandons via the SAME `costCeilingReached` policy signal
-   *  iterate-policy.ts already exposes; that policy has no notion of which axis, only "cost ceiling reached". */
+   *  `maxIterations * maxTurnsPerIteration` already implies. A breach on any axis (turns/costUsd/wallClockMs
+   *  -- tokens is never real-tracked today) is a HARD, unconditional stop: checked and abandoned on BEFORE
+   *  self-review even runs, so a same-iteration pass can never bypass the ceiling (this is deliberately NOT
+   *  routed through iterate-policy.ts's `costCeilingReached` field, whose own precedence checks a self-review
+   *  pass first -- see the loop body's own comment at the check site for why that ordering doesn't fit a hard
+   *  budget ceiling). */
   budget?: AttemptBudget | undefined;
 
   // Self-review identity fields -- mirror `AttemptDiffState`'s own identity fields (self-review-adapter.ts).
@@ -214,9 +217,9 @@ function logDecision(
       iterationNumber,
       action: decision.action,
       ...(decision.abandonReason !== undefined ? { abandonReason: decision.abandonReason } : {}),
-      // Which real axis (or axes) breached, when this decision was a budget-driven abandon (#5395) -- the
-      // policy's own `costCeilingReached` is a single boolean with no notion of which axis, so this is the
-      // only place that detail survives for an operator reading the attempt log back.
+      // Which real axis (or axes) breached, on the hard-budget-ceiling abandon path (#5395, checked directly
+      // in the loop body before self-review even runs -- see that check site's own comment) -- an operator
+      // reading the attempt log back otherwise has no way to see which axis actually tripped.
       ...(budgetBreaches.length > 0 ? { budgetBreaches } : {}),
     },
   });
@@ -336,18 +339,33 @@ async function runIterateLoopCore(input: IterateLoopInput, deps: IterateLoopDeps
     const budgetVerdict = input.budget !== undefined ? evaluateAttemptBudget(tracker.totals, input.budget) : undefined;
     tracker.breaches = budgetVerdict?.breaches ?? [];
 
+    // A reached budget ceiling is a HARD, unconditional stop -- checked and, if breached, acted on BEFORE
+    // self-review even runs, so a same-iteration pass can never bypass it. The spend/turns/time on this
+    // iteration are sunk either way (the driver already ran), but handing off anyway would let a single
+    // over-budget iteration silently defeat the entire point of wiring a ceiling in (#5395's own mid-attempt
+    // abort goal) -- so this abandons regardless of what this iteration's own result looks like.
+    if (budgetVerdict !== undefined && !budgetVerdict.withinBudget) {
+      const decision: IterateLoopDecision = {
+        action: "abandon",
+        abandonReason: "cost_ceiling_reached",
+        reason: `Reached the attempt's budget ceiling (${tracker.breaches.join(", ")}) on iteration ${iterationNumber}; abandoning regardless of this iteration's own result.`,
+      };
+      logDecision(input, deps, iterationNumber, decision, tracker.breaches);
+      iterations.push({ iterationNumber, driverResult, decision });
+      return { outcome: "abandon", finalDecision: decision, iterationsUsed: iterationNumber, totalTurnsUsed, totalCostUsd, iterations };
+    }
+
     const { outcome: selfReview, verdict } = evaluateSelfReviewOutcome(input, driverResult, deps);
 
     const state: IterationState = {
       iterationNumber,
       maxIterations,
-      costCeilingReached: budgetVerdict !== undefined && !budgetVerdict.withinBudget,
       selfReview,
       previousBlockerCodes,
       rejectionSignaled: input.rejectionSignaled,
     };
     const decision = decideNextActionWithReason(state);
-    logDecision(input, deps, iterationNumber, decision, decision.abandonReason === "cost_ceiling_reached" ? tracker.breaches : []);
+    logDecision(input, deps, iterationNumber, decision, []);
     iterations.push({ iterationNumber, driverResult, decision });
 
     if (decision.action === "handoff") {

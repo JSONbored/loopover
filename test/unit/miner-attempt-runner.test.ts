@@ -182,6 +182,22 @@ describe("runMinerAttempt (#2337) — the real create->review->gate->submit pipe
     expect(claimLedgerListClaims).not.toHaveBeenCalled();
   });
 
+  it("REGRESSION (#5395, gittensory review #5437): a real hard budget-ceiling breach abandons through the full real runMinerAttempt pipeline, even though the driver's own result would otherwise pass self-review", async () => {
+    const claimLedgerListClaims = vi.fn();
+    const deps = baseDeps({ claimLedger: { listClaims: claimLedgerListClaims } });
+    // okDriverResult()'s default turnsUsed (5) immediately breaches this maxTurns:1 ceiling on iteration 1,
+    // even though the SAME driver result is exactly what the happy-path test above uses to reach a real
+    // "submitted" outcome -- proving the ceiling wins over a same-iteration pass, not just in isolation.
+    const result = await runMinerAttempt(baseAttemptInput({ loopInput: passingLoopInput({ budget: { maxTurns: 1 } }) }), deps);
+
+    expect(result.outcome).toBe("abandon");
+    expect(result.loopResult.finalDecision.abandonReason).toBe("cost_ceiling_reached");
+    expect(result.loopResult.budgetBreaches).toEqual(["turns"]);
+    expect(result.loopResult.iterationsUsed).toBe(1);
+    // No downstream gate consulted -- the same real short-circuit as the maxIterations:0 case above.
+    expect(claimLedgerListClaims).not.toHaveBeenCalled();
+  });
+
   it("abandon mid-loop: a real iteration ran (and was billed) before the ceiling forced abandon", async () => {
     // maxIterations: 1 with a driver that never produces a passing self-review runs ONE real iteration, then
     // decideNextActionWithReason's own iterationNumber>=maxIterations check abandons -- a genuinely different

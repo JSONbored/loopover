@@ -239,10 +239,9 @@ test("a fractional maxIterations truncates toward the lower integer, not silentl
   assert.equal(result.iterationsUsed, 1);
 });
 
-test("abandon (cost_ceiling_reached): a maxTurns budget breach stops the loop even with iterations still available", async () => {
-  const pullRequests: PullRequestRecord[] = [openPr(42, "Retry uploads on 5xx responses", [7])];
+test("abandon (cost_ceiling_reached): a maxTurns budget breach stops the loop even with iterations still available AND a driver result that would otherwise pass self-review", async () => {
   const { deps } = collectingDeps({ driver: driverReturning(okResult(["src/upload.ts"], 50)) });
-  const input = passingInput({ maxIterations: 10, budget: { maxTurns: 20 }, reviewContext: baseReviewContext({ pullRequests }) });
+  const input = passingInput({ maxIterations: 10, budget: { maxTurns: 20 } });
   const result = await runIterateLoop(input, deps);
 
   assert.equal(result.outcome, "abandon");
@@ -253,9 +252,8 @@ test("abandon (cost_ceiling_reached): a maxTurns budget breach stops the loop ev
 });
 
 test("abandon (cost_ceiling_reached): a maxCostUsd budget breach reports costUsd as the breached axis", async () => {
-  const pullRequests: PullRequestRecord[] = [openPr(42, "Retry uploads on 5xx responses", [7])];
   const { deps } = collectingDeps({ driver: driverReturning({ ok: true, changedFiles: ["src/upload.ts"], summary: "x", turnsUsed: 1, costUsd: 6 }) });
-  const input = passingInput({ maxIterations: 10, budget: { maxCostUsd: 5 }, reviewContext: baseReviewContext({ pullRequests }) });
+  const input = passingInput({ maxIterations: 10, budget: { maxCostUsd: 5 } });
   const result = await runIterateLoop(input, deps);
 
   assert.equal(result.outcome, "abandon");
@@ -265,11 +263,10 @@ test("abandon (cost_ceiling_reached): a maxCostUsd budget breach reports costUsd
 });
 
 test("abandon (cost_ceiling_reached): a maxWallClockMs budget breach uses the real injected clock, not a fabricated duration", async () => {
-  const pullRequests: PullRequestRecord[] = [openPr(42, "Retry uploads on 5xx responses", [7])];
   let call = 0;
   const timestamps = [1_000, 1_000 + 90_000]; // 90s elapsed on the one iteration
   const { deps } = collectingDeps({ driver: driverReturning(okResult(["src/upload.ts"], 1)) });
-  const input = passingInput({ maxIterations: 10, budget: { maxWallClockMs: 60_000 }, reviewContext: baseReviewContext({ pullRequests }) });
+  const input = passingInput({ maxIterations: 10, budget: { maxWallClockMs: 60_000 } });
   const result = await runIterateLoop(input, {
     ...deps,
     nowMs: () => timestamps[call++] ?? timestamps[timestamps.length - 1]!,
@@ -301,10 +298,22 @@ test("immediate abandon: finalMeterTotals/budgetBreaches are the honest zero/emp
   assert.deepEqual(result.budgetBreaches, []);
 });
 
-test("REGRESSION: a passing self-review on the same iteration that breaches budget still hands off (pass wins the precedence ladder)", async () => {
-  const { deps } = collectingDeps({ driver: driverReturning(okResult(["src/upload.ts"], 999)) });
-  const result = await runIterateLoop(passingInput({ maxIterations: 1, budget: { maxTurns: 1 } }), deps);
-  assert.equal(result.outcome, "handoff");
+test("REGRESSION: a hard budget ceiling abandons even on the same iteration a passing self-review would have produced (ceiling wins, not pass) -- gittensory review #5437", async () => {
+  let selfReviewRan = false;
+  const { deps } = collectingDeps({
+    driver: driverReturning(okResult(["src/upload.ts"], 999)),
+    runSlopAssessment: () => {
+      selfReviewRan = true;
+      return noopSlop;
+    },
+  });
+  const result = await runIterateLoop(passingInput({ maxIterations: 5, budget: { maxTurns: 1 } }), deps);
+  assert.equal(result.outcome, "abandon");
+  assert.equal(result.finalDecision.abandonReason, "cost_ceiling_reached");
+  assert.deepEqual(result.budgetBreaches, ["turns"]);
+  // Self-review is skipped entirely once the ceiling is breached -- its verdict can never change an
+  // already-decided outcome, so there's no reason to spend the (cheap, local) computation.
+  assert.equal(selfReviewRan, false);
 });
 
 test("abandon (rejection_signaled): wins even over a self-review that would otherwise cleanly pass", async () => {

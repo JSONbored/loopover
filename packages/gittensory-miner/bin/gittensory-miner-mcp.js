@@ -3,12 +3,15 @@ import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { collectPortfolioDashboard } from "../lib/portfolio-dashboard.js";
+import { initPortfolioQueueStore } from "../lib/portfolio-queue.js";
 
-// Minimal MCP stdio-server scaffold for @jsonbored/gittensory-miner (#5153). Mirrors the
-// packages/gittensory-mcp harness (MCP SDK server + stdio transport) but ships exactly ONE trivial
-// health-check tool -- gittensory_miner_ping -- returning a static status object. It reads NO AMS
-// state and takes no arguments. Future AMS-state-reading tools (status/doctor, portfolio dashboard,
-// claim-ledger listing) land as follow-up PRs on top of this scaffold.
+// MCP stdio server for @jsonbored/gittensory-miner (scaffold #5153). Mirrors the packages/gittensory-mcp
+// harness (MCP SDK server + stdio transport). Tools:
+//   - gittensory_miner_ping (#5153): trivial static health check, reads no AMS state.
+//   - gittensory_miner_get_portfolio_dashboard (#5155): read-only per-repo backlog dashboard, wrapping the
+//     existing collectPortfolioDashboard aggregator (no new logic; same data as `queue dashboard --json`).
+// Remaining AMS-state-reading tools (status/doctor, claim-ledger listing, run-state, etc.) land as follow-ups.
 
 // Read the version from this package's own package.json (always shipped) rather than a hand-synced
 // literal, so a release bump never has a second place to forget -- same approach as the mcp harness.
@@ -18,11 +21,11 @@ const ownPackageJson = JSON.parse(readFileSync(new URL("../package.json", import
 export const MINER_PING_STATUS = { status: "ok", tool: "gittensory_miner_ping" };
 
 /**
- * Build the miner MCP server with its single health-check tool registered. No I/O and no AMS-state
- * reads, so a test can drive it over an in-memory transport without spawning a process or requiring
- * any on-disk state to exist.
+ * Build the miner MCP server with its tools registered. `options.initPortfolioQueue` / `options.nowMs` are
+ * injection seams for tests (default to the real portfolio-queue store and the wall clock); the ping tool needs
+ * neither. The portfolio-dashboard tool opens the queue only when invoked and closes any store it opened.
  */
-export function createMinerMcpServer() {
+export function createMinerMcpServer(options = {}) {
   const server = new McpServer({ name: "gittensory-miner", version: ownPackageJson.version });
   server.registerTool(
     "gittensory_miner_ping",
@@ -33,6 +36,26 @@ export function createMinerMcpServer() {
       inputSchema: {},
     },
     async () => ({ content: [{ type: "text", text: JSON.stringify(MINER_PING_STATUS) }] }),
+  );
+  server.registerTool(
+    "gittensory_miner_get_portfolio_dashboard",
+    {
+      description:
+        "Read-only per-repo portfolio-queue backlog dashboard: status counts (queued/in_progress/done), totals, " +
+        "and the oldest-queued age in ms. Wraps the existing collectPortfolioDashboard aggregator (no new logic) " +
+        "-- the same data `gittensory-miner queue dashboard --json` prints locally. Takes no arguments; mutates nothing.",
+      inputSchema: {},
+    },
+    async () => {
+      const ownsQueue = options.initPortfolioQueue === undefined;
+      const portfolioQueue = (options.initPortfolioQueue ?? initPortfolioQueueStore)();
+      try {
+        const summary = collectPortfolioDashboard({ portfolioQueue }, { nowMs: options.nowMs ?? Date.now() });
+        return { content: [{ type: "text", text: JSON.stringify(summary) }] };
+      } finally {
+        if (ownsQueue) portfolioQueue.close();
+      }
+    },
   );
   return server;
 }

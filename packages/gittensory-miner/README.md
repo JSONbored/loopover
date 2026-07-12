@@ -131,10 +131,12 @@ The package ships a second bin entry, `gittensory-miner-mcp`, a minimal [Model C
 gittensory-miner-mcp
 ```
 
-It currently exposes a single tool, `gittensory_miner_ping` — a health check that returns a static
-`{ "status": "ok", "tool": "gittensory_miner_ping" }` object, reads no AMS state, and takes no arguments. This is a
-scaffold (#5153): real AMS-state-reading tools (status/doctor diagnostics, portfolio dashboard, claim-ledger
-listing) land as follow-up PRs on top of it.
+It exposes these read-only tools:
+
+- `gittensory_miner_ping` (#5153) — a health check returning a static `{ "status": "ok", "tool": "gittensory_miner_ping" }` object. Reads no AMS state, takes no arguments.
+- `gittensory_miner_get_portfolio_dashboard` (#5155) — the per-repo portfolio-queue backlog dashboard: status counts (queued / in_progress / done), totals, and the oldest-queued age. Wraps `collectPortfolioDashboard()` (no new logic) — the same data `gittensory-miner queue dashboard --json` prints locally. Read-only, takes no arguments.
+
+Further AMS-state-reading tools (status/doctor diagnostics, claim-ledger listing, run-state, event/governor ledgers) land as follow-up PRs on top of this server.
 
 ## Version check
 

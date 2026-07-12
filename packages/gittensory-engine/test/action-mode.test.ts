@@ -52,16 +52,23 @@ test("resolveMinerActionMode: malformed/partial opt-in values fail closed to dry
   }
 });
 
-test("resolveMinerActionMode: the exact repo-side opt-in flips to live", () => {
+test("resolveMinerActionMode: the exact repo-side opt-in alone stays dry_run without operator opt-in", () => {
   assert.equal(
     resolveMinerActionMode({ killSwitchScope: "none", repoLiveModeOptIn: "live", globalLiveModeOptIn: false }),
-    "live",
+    "dry_run",
   );
 });
 
-test("resolveMinerActionMode: the global operator opt-in alone also flips to live", () => {
+test("resolveMinerActionMode: the global operator opt-in alone also stays dry_run without repo opt-in", () => {
   assert.equal(
     resolveMinerActionMode({ killSwitchScope: "none", repoLiveModeOptIn: undefined, globalLiveModeOptIn: true }),
+    "dry_run",
+  );
+});
+
+test("resolveMinerActionMode: both repo and operator opt-ins are required for live", () => {
+  assert.equal(
+    resolveMinerActionMode({ killSwitchScope: "none", repoLiveModeOptIn: "live", globalLiveModeOptIn: true }),
     "live",
   );
 });

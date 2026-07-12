@@ -44,7 +44,7 @@ function baseInput(overrides: Record<string, unknown> = {}) {
     killSwitchGlobal: false,
     killSwitchRepoPaused: false,
     liveModeGlobalOptIn: true,
-    liveModeRepoOptIn: undefined,
+    liveModeRepoOptIn: "live",
     capLimits: { budget: 100, turns: 100, elapsedMs: 1_000_000 },
     convergenceInput: { attempts: 0, consecutiveFailures: 0, reenqueues: 0, reachedDone: false },
     ...overrides,

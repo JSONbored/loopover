@@ -26,16 +26,26 @@ describe("resolveMinerActionModeGate (#2342)", () => {
     });
   });
 
-  it("the repo's exact opt-in flips to live", () => {
+  it("the repo's exact opt-in alone stays dry_run without operator opt-in", () => {
     expect(resolveMinerActionModeGate({ killSwitchScope: "none", repoLiveModeOptIn: "live", env: {} })).toEqual({
-      mode: "live",
-      executes: true,
+      mode: "dry_run",
+      executes: false,
     });
   });
 
-  it("the operator's global env opt-in alone also flips to live", () => {
+  it("the operator's global env opt-in alone also stays dry_run without repo opt-in", () => {
     expect(
       resolveMinerActionModeGate({ killSwitchScope: "none", env: { GITTENSORY_MINER_LIVE_MODE: "live" } }),
+    ).toEqual({ mode: "dry_run", executes: false });
+  });
+
+  it("requires both repo and operator opt-ins for live execution", () => {
+    expect(
+      resolveMinerActionModeGate({
+        killSwitchScope: "none",
+        repoLiveModeOptIn: "live",
+        env: { GITTENSORY_MINER_LIVE_MODE: "live" },
+      }),
     ).toEqual({ mode: "live", executes: true });
   });
 
@@ -55,7 +65,10 @@ describe("resolveMinerActionModeGate (#2342)", () => {
     const original = process.env.GITTENSORY_MINER_LIVE_MODE;
     try {
       process.env.GITTENSORY_MINER_LIVE_MODE = "live";
-      expect(resolveMinerActionModeGate({ killSwitchScope: "none" })).toEqual({ mode: "live", executes: true });
+      expect(resolveMinerActionModeGate({ killSwitchScope: "none", repoLiveModeOptIn: "live" })).toEqual({
+        mode: "live",
+        executes: true,
+      });
     } finally {
       if (original === undefined) delete process.env.GITTENSORY_MINER_LIVE_MODE;
       else process.env.GITTENSORY_MINER_LIVE_MODE = original;

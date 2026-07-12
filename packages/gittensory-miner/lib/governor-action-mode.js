@@ -1,6 +1,6 @@
 // Governor dry-run-by-default gate (#2342). Resolves the miner's overall action mode (paused > dry_run > live,
 // "safest wins") and records dry-run SHADOW actions to the append-only governor ledger. A freshly-configured
-// miner defaults to dry_run -- live execution requires an explicit, hard-to-fat-finger opt-in.
+// miner defaults to dry_run -- live execution requires explicit, hard-to-fat-finger operator and repo opt-ins.
 
 import {
   buildMinerDryRunGovernorLedgerEvent,
@@ -13,7 +13,7 @@ import { appendGovernorEvent } from "./governor-ledger.js";
 /**
  * Resolve the miner's overall action mode from the kill-switch scope (see `checkMinerKillSwitch` in
  * `./governor-kill-switch.js`), the repo's own `.gittensory-miner.yml` opt-in, and the operator's global env
- * opt-in.
+ * opt-in. Both sides must opt in before real writes execute; repo config alone only preserves dry-run.
  *
  * @param {object} input
  * @param {import("@jsonbored/gittensory-engine").MinerKillSwitchScope} input.killSwitchScope

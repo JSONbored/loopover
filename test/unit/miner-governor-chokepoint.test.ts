@@ -22,7 +22,7 @@ function baseInput(overrides: Record<string, unknown> = {}) {
     killSwitchGlobal: false,
     killSwitchRepoPaused: false,
     liveModeGlobalOptIn: true,
-    liveModeRepoOptIn: undefined,
+    liveModeRepoOptIn: "live",
     rateLimitBuckets: { global: {}, perRepo: {} },
     rateLimitBackoffAttempts: {},
     capUsage: { budgetSpent: 0, turnsTaken: 0, elapsedMs: 0 },

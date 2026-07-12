@@ -23,7 +23,7 @@ export type MinerActionMode = "paused" | "dry_run" | "live";
 export const MINER_LIVE_MODE_OPT_IN = "live";
 
 /** Env var an operator sets (to exactly {@link MINER_LIVE_MODE_OPT_IN}) to opt their own miner instance into
- *  live write execution, independent of any per-repo `.gittensory-miner.yml` opt-in. */
+ *  live write execution. Repo-side opt-in alone is never enough to execute writes. */
 export const MINER_LIVE_MODE_ENV_VAR = "GITTENSORY_MINER_LIVE_MODE";
 
 /** True only when `value` is EXACTLY the {@link MINER_LIVE_MODE_OPT_IN} string -- no truthy coercion, no case
@@ -40,14 +40,16 @@ export function isGlobalMinerLiveModeOptIn(env: Record<string, string | undefine
 /**
  * Resolve the miner's overall action mode. Precedence (safest wins, mirroring `resolveAgentActionMode`):
  * 1. Kill-switch active (either scope, #2341) -> `"paused"` -- always wins, regardless of any live-mode opt-in.
- * 2. An explicit live-mode opt-in from EITHER the operator's global env config OR the target repo's own
- *    `.gittensory-miner.yml` (`MinerGoalSpec.execution.liveModeOptIn`) -> `"live"`.
- * 3. Otherwise -> `"dry_run"`. No config anywhere, or a malformed/partial config that fails to normalize to the
- *    exact opt-in literal, both fall through to this branch -- absence or ambiguity always means dry-run.
+ * 2. BOTH the operator's global env config AND the target repo's own `.gittensory-miner.yml`
+ *    (`MinerGoalSpec.execution.liveModeOptIn`) explicitly opt in -> `"live"`. The repo field is a repo-side
+ *    allowance, not an operator-authored authorization to execute writes under the miner's credentials.
+ * 3. Otherwise -> `"dry_run"`. No config anywhere, either side omitted, or a malformed/partial config that fails
+ *    to normalize to the exact opt-in literal, all fall through to this branch -- absence or ambiguity always
+ *    means dry-run.
  *
  * A target repo that wants to guarantee it never receives live automated writes -- even from an operator whose
- * own miner instance is globally live -- sets its OWN kill-switch (`killSwitch.paused: true`, #2341), which
- * takes precedence over any live-mode opt-in per step 1 above; this module does not duplicate that mechanism.
+ * own miner instance is globally live -- can omit its repo opt-in or set its OWN kill-switch (`killSwitch.paused:
+ * true`, #2341), which takes precedence over any live-mode opt-in per step 1 above.
  */
 export function resolveMinerActionMode(input: {
   killSwitchScope: MinerKillSwitchScope;
@@ -55,7 +57,7 @@ export function resolveMinerActionMode(input: {
   globalLiveModeOptIn: boolean;
 }): MinerActionMode {
   if (isMinerKillSwitchActive(input.killSwitchScope)) return "paused";
-  if (input.globalLiveModeOptIn || isExplicitMinerLiveModeOptIn(input.repoLiveModeOptIn)) return "live";
+  if (input.globalLiveModeOptIn && isExplicitMinerLiveModeOptIn(input.repoLiveModeOptIn)) return "live";
   return "dry_run";
 }
 

@@ -12,7 +12,7 @@ function baseInput(overrides: Partial<GovernorChokepointInput> = {}): GovernorCh
     killSwitchGlobal: false,
     killSwitchRepoPaused: false,
     liveModeGlobalOptIn: true,
-    liveModeRepoOptIn: undefined,
+    liveModeRepoOptIn: "live",
     rateLimitBuckets: { global: {}, perRepo: {} },
     rateLimitBackoffAttempts: {},
     capUsage: { budgetSpent: 0, turnsTaken: 0, elapsedMs: 0 },
@@ -195,8 +195,15 @@ test("fail-closed: a self-plagiarism calculator error denies rather than silentl
   assert.match(decision.reason, /self_plagiarism_calculator_error/);
 });
 
-test("the repo-side live opt-in alone (no global env opt-in) is sufficient to reach the resource stages", () => {
+test("the repo-side live opt-in alone (no global env opt-in) stays dry_run before resource stages", () => {
   const decision = evaluateGovernorChokepoint(baseInput({ liveModeGlobalOptIn: false, liveModeRepoOptIn: "live" }));
+  assert.equal(decision.mode, "dry_run");
+  assert.equal(decision.stage, "dry_run");
+  assert.equal(decision.allowed, false);
+});
+
+test("both repo-side and global live opt-ins are required to reach the resource stages", () => {
+  const decision = evaluateGovernorChokepoint(baseInput({ liveModeGlobalOptIn: true, liveModeRepoOptIn: "live" }));
   assert.equal(decision.mode, "live");
   assert.equal(decision.allowed, true);
 });

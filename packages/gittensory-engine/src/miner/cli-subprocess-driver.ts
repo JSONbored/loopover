@@ -24,8 +24,20 @@ export type CliSubprocessSpawnFn = (
     cwd: string;
     env: Record<string, string | undefined>;
     timeoutMs: number;
+    // Optional fast-fail deadline, mirrors src/selfhost/ai.ts's SpawnFn (#4994/#5053): a real spawn implementation
+    // starts this timer at process start and clears it the instant any stdout data arrives, so it only fires when
+    // the CLI has produced ZERO stdout by this deadline — a distinct, earlier signal than the full `timeoutMs`.
+    firstOutputTimeoutMs?: number;
   },
-) => Promise<{ stdout: string; code: number | null; stderr?: string; timedOut?: boolean }>;
+) => Promise<{
+  stdout: string;
+  code: number | null;
+  stderr?: string;
+  timedOut?: boolean;
+  // Set alongside `timedOut` only when the kill was the first-output deadline, not the full `timeoutMs` — lets the
+  // driver report a distinct "stalled" error instead of conflating it with a genuine full timeout.
+  stalledNoOutput?: boolean;
+}>;
 
 export type CliSubprocessDriverOptions = {
   /** The coding-agent CLI to spawn (e.g. "claude" or "codex"). */
@@ -34,6 +46,12 @@ export type CliSubprocessDriverOptions = {
   spawn: CliSubprocessSpawnFn;
   /** Per-run wall-clock budget handed to the spawn. Default: 120000ms. */
   timeoutMs?: number;
+  /** Optional fast-fail deadline (#4994/#5053): killed early and reported distinctly ("stalled", not a generic
+   *  timeout) if the subprocess produces zero stdout before this elapses. Mirrors src/selfhost/ai.ts's
+   *  `firstOutputTimeoutMs`/`resolveClaudeFirstOutputTimeoutMs` pattern, built after a naive single-timeout design
+   *  caused a real production outage against these same claude/codex binaries. Opt-in and backward compatible:
+   *  omitting it leaves behavior exactly as it was before this option existed. */
+  firstOutputTimeoutMs?: number;
   /** Parent env to allowlist from. Default: `{}` (a real caller passes `process.env`; the default stays pure). */
   parentEnv?: Record<string, string | undefined>;
   /** Extra env overlaid on the allowlisted parent (e.g. an auth value the CLI reads). */
@@ -98,9 +116,25 @@ export function createCliSubprocessCodingAgentDriver(options: CliSubprocessDrive
         cwd: task.workingDirectory,
         env,
         timeoutMs,
+        ...(options.firstOutputTimeoutMs !== undefined
+          ? { firstOutputTimeoutMs: options.firstOutputTimeoutMs }
+          : {}),
       });
       const transcript = redactSecrets(spawned.stdout, knownSecrets).slice(0, MAX_TRANSCRIPT_CHARS);
 
+      if (spawned.timedOut && spawned.stalledNoOutput) {
+        // Fast-fail path (#4994/#5053): killed at firstOutputTimeoutMs, well before the full timeoutMs, because
+        // stdout produced no bytes at all. A distinct error (never reusing `${command}_timeout_...`) so this
+        // stall is separately countable in logs/Sentry from a genuine full timeout where the process was at
+        // least emitting output before it was killed.
+        return {
+          ok: false,
+          changedFiles: [],
+          summary: `${options.command} stalled with no stdout within ${options.firstOutputTimeoutMs}ms`,
+          transcript,
+          error: `${options.command}_stalled_no_output`,
+        };
+      }
       if (spawned.timedOut) {
         return {
           ok: false,

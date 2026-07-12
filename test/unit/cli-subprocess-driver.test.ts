@@ -115,4 +115,59 @@ describe("createCliSubprocessCodingAgentDriver (#4266)", () => {
     expect(result.transcript).toBe("used [redacted] to auth");
     expect(calls[0]?.args).toEqual(["run", "attempt-1"]);
   });
+
+  describe("two-tier stalled-output fast-fail timeout (#4994/#5053)", () => {
+    it("reports a distinct stalled error when the subprocess produces zero stdout within firstOutputTimeoutMs", async () => {
+      const { spawn, calls } = fakeSpawn({ stdout: "", code: null, timedOut: true, stalledNoOutput: true });
+      const driver = createCliSubprocessCodingAgentDriver({
+        command: "claude",
+        spawn,
+        timeoutMs: 120_000,
+        firstOutputTimeoutMs: 5000,
+      });
+      const result = await driver.run(TASK);
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("claude_stalled_no_output");
+      expect(result.summary).toBe("claude stalled with no stdout within 5000ms");
+      expect(calls[0]?.opts.firstOutputTimeoutMs).toBe(5000);
+    });
+
+    it("is NOT killed early by the first-output timer when the subprocess produces output before firstOutputTimeoutMs (invariant: live output is never mistaken for a stall)", async () => {
+      const { spawn } = fakeSpawn({ stdout: "produced some output then finished", code: 0 });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn, firstOutputTimeoutMs: 1000 });
+      const result = await driver.run(TASK);
+      expect(result.ok).toBe(true);
+      expect(result.summary).toBe("claude completed for attempt-1");
+    });
+
+    it("preserves the existing full-timeout behavior unchanged when output arrived but the process never exited (#4994/#5053 regression guard)", async () => {
+      // stalledNoOutput is absent -- stdout arrived, so only the full timeoutMs governs, same as before this
+      // feature existed.
+      const { spawn } = fakeSpawn({ stdout: "partial", code: null, timedOut: true });
+      const driver = createCliSubprocessCodingAgentDriver({
+        command: "codex",
+        spawn,
+        timeoutMs: 5000,
+        firstOutputTimeoutMs: 1000,
+      });
+      const result = await driver.run(TASK);
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("codex_timeout_5000ms");
+      expect(result.summary).toBe("codex timed out after 5000ms");
+    });
+
+    it("does not forward firstOutputTimeoutMs to spawn when omitted (opt-in, backward compatible)", async () => {
+      const { spawn, calls } = fakeSpawn({ stdout: "done", code: 0 });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });
+      await driver.run(TASK);
+      expect("firstOutputTimeoutMs" in (calls[0]?.opts ?? {})).toBe(false);
+    });
+
+    it("invariant: the driver's result never carries any field beyond the CodingAgentDriverResult contract (no attempt/governor state)", async () => {
+      const { spawn } = fakeSpawn({ stdout: "", code: null, timedOut: true, stalledNoOutput: true });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn, firstOutputTimeoutMs: 500 });
+      const result = await driver.run(TASK);
+      expect(Object.keys(result).sort()).toEqual(["changedFiles", "error", "ok", "summary", "transcript"]);
+    });
+  });
 });

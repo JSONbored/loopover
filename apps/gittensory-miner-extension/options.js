@@ -15,10 +15,15 @@ function parseRankedCandidatesJson(text) {
   return parsed;
 }
 
+async function removeLegacyDiscoveryIndexUrl() {
+  await chrome.storage.sync.remove("discoveryIndexUrl");
+}
+
 if (globalThis.__GITTENSORY_MINER_EXTENSION_TEST__) {
   globalThis.__gittensoryMinerOptionsInternals = {
     parseWatchedRepos,
     parseRankedCandidatesJson,
+    removeLegacyDiscoveryIndexUrl,
   };
 }
 
@@ -38,6 +43,7 @@ form.addEventListener("submit", async (event) => {
     const repos = parseWatchedRepos(watchedRepos.value);
     const rankedCandidates = parseRankedCandidatesJson(rankedCandidatesJson.value);
     await chrome.storage.sync.set({ watchedRepos: repos });
+    await removeLegacyDiscoveryIndexUrl();
     await chrome.storage.local.set({ rankedCandidates });
     await refreshSettings();
     showStatus(
@@ -53,6 +59,7 @@ form.addEventListener("submit", async (event) => {
 
 async function refreshSettings() {
   const stored = await chrome.storage.sync.get({ watchedRepos: [] });
+  await removeLegacyDiscoveryIndexUrl();
   const local = await chrome.storage.local.get({ rankedCandidates: [] });
   const repos = Array.isArray(stored.watchedRepos) ? stored.watchedRepos : [];
   watchedRepos.value = repos.join("\n");

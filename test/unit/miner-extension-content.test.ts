@@ -148,15 +148,18 @@ describe("miner extension opportunity badge", () => {
     expect(() => internals.parseRankedCandidatesJson('{"not":"array"}')).toThrow();
   });
 
-  it("REGRESSION (dead-field removal): no discoveryIndexUrl config field remains anywhere in the extension", () => {
+  it("REGRESSION (dead-field removal): no discoveryIndexUrl config field remains in UI or background reads", () => {
     expect(optionsHtml).not.toMatch(/discoveryIndexUrl/);
-    expect(optionsScript).not.toMatch(/discoveryIndexUrl/);
     expect(backgroundScript).not.toMatch(/discoveryIndexUrl/);
   });
 
-  it("saves and restores settings without ever writing or reading discoveryIndexUrl", async () => {
-    const synced: Record<string, unknown> = { watchedRepos: [] };
+  it("removes stale discoveryIndexUrl values from synced options storage", async () => {
+    const synced: Record<string, unknown> = {
+      watchedRepos: [],
+      discoveryIndexUrl: "https://private.example.test/index.json",
+    };
     const setCalls: Array<Record<string, unknown>> = [];
+    const removeCalls: string[] = [];
     const elements = {
       "#settings": createFormMock(),
       "#status": { textContent: "" },
@@ -174,6 +177,10 @@ describe("miner extension opportunity badge", () => {
               setCalls.push(value);
               Object.assign(synced, value);
             },
+            remove: async (key: string) => {
+              removeCalls.push(key);
+              delete synced[key];
+            },
           },
           local: { get: async () => ({ rankedCandidates: [] }), set: async () => {} },
         },
@@ -184,11 +191,17 @@ describe("miner extension opportunity badge", () => {
     const vmContext = createContext(context);
     new Script(optionsScript).runInContext(vmContext);
 
+    await flushPromises();
+    expect(removeCalls).toEqual(["discoveryIndexUrl"]);
+    expect("discoveryIndexUrl" in synced).toBe(false);
+
+    synced.discoveryIndexUrl = "https://private.example.test/index.json";
     elements["#watchedRepos"].value = "JSONbored/gittensory";
     await elements["#settings"].dispatchSubmit();
 
     expect(setCalls).toHaveLength(1);
     expect(setCalls[0]).toEqual({ watchedRepos: ["JSONbored/gittensory"] });
+    expect(removeCalls).toEqual(["discoveryIndexUrl", "discoveryIndexUrl", "discoveryIndexUrl"]);
     expect("discoveryIndexUrl" in synced).toBe(false);
   });
 });
@@ -203,6 +216,10 @@ function createFormMock() {
       await submitHandler?.({ preventDefault: () => {} });
     },
   };
+}
+
+function flushPromises() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function createMockContainer() {

@@ -1,0 +1,29 @@
+# AMS (gittensory-miner) local SQLite ledger datasources (#5184).
+#
+# The miner keeps append-only SQLite ledgers under GITTENSORY_MINER_CONFIG_DIR (default ~/.config/gittensory-miner
+# on a laptop, or /data/miner in the fleet Docker image). This wires two scrape-free `frser-sqlite-datasource`
+# entries so a follow-on AMS usage dashboard can query them read-only — mirroring the maintainer `GittensoryDB`
+# entry in sqlite.yml. This file is purely additive (it touches no existing datasource) and provisions NO
+# dashboards or queries — that is the follow-on dashboard issue's scope.
+#
+# PATH — the absolute path varies per install, so `path:` below is a documented placeholder. Mount your miner's
+# ledger directory (GITTENSORY_MINER_CONFIG_DIR) into the Grafana container at /ams-ledgers, e.g.:
+#   volumes: [ "${GITTENSORY_MINER_CONFIG_DIR:-~/.config/gittensory-miner}:/ams-ledgers:ro" ]
+# then Grafana reads the files below. The `:ro` mount + this read-only query plugin mean Grafana can never write
+# to the live ledgers. Adjust the two `path:` values if you mount elsewhere.
+apiVersion: 1
+datasources:
+  - name: AMS Attempt Log
+    type: frser-sqlite-datasource
+    uid: ams-attempt-log
+    access: proxy
+    editable: false
+    jsonData:
+      path: /ams-ledgers/attempt-log.sqlite3
+  - name: AMS Prediction Ledger
+    type: frser-sqlite-datasource
+    uid: ams-prediction-ledger
+    access: proxy
+    editable: false
+    jsonData:
+      path: /ams-ledgers/prediction-ledger.sqlite3

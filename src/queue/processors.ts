@@ -7317,7 +7317,6 @@ async function maybeApplyManifestPolicyGate(
       hasNoIssueRationale: hasClearNoIssueRationale(args.pr),
     });
     const policyCodes = new Set([
-      "manifest_blocked_path",
       "manifest_linked_issue_required",
       "manifest_missing_tests",
     ]);

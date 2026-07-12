@@ -799,7 +799,9 @@ export type RepositorySettings = {
   expectedCiContexts?: ReadonlyArray<string> | null | undefined;
   /** Dry-run disposition (#gate-dryrun). When true, the gate renders the would-be merge/close/manual verdict (every
    *  advisory sub-gate promoted to block) WITHOUT enforcing — the posted check stays non-blocking. Lets advisory mode
-   *  preview exactly what it would do before the maintainer flips to real enforcement. Default off. */
+   *  preview exactly what it would do before the maintainer flips to real enforcement. Default off.
+   *  Unrelated to {@link agentDryRun} despite the shared "dry run" name -- this only affects the check-run's
+   *  DISPLAY conclusion; it does NOT stop the agent action layer from performing real merges/closes/comments. */
   gateDryRun?: boolean | undefined;
   /** Live premerge migrations/** collision recheck (#2550). When true, an agent-driven merge of a PR that
    *  touches migrations/** is preceded by a fresh GitHub Trees-API read of the base branch's CURRENT migration
@@ -1112,7 +1114,8 @@ export type RepositorySettings = {
    *  performing any GitHub mutation -- but this is NOT a cost-free preview: AI/LLM review calls still
    *  execute and still incur their normal provider cost (deliberate design tagged `#token-bleed-spend-gate`
    *  in `ai-review-orchestration.ts`/`agent-orchestrator.ts`/`processors.ts`; every spend gate checks only
-   *  `agentPaused`, never this field). Default false. */
+   *  `agentPaused`, never this field). Default false. Independent of the gate check's own {@link gateDryRun}
+   *  preview -- the two "dry run" fields gate entirely disjoint layers with no shared code path. */
   agentDryRun?: boolean | undefined;
   /** Per-repo override of the global DB-backed agent freeze (#4372): when true, this repo's actions execute
    *  even while `global_agent_controls.frozen` is set, so an operator can re-activate one repo at a time

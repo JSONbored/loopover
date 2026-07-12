@@ -737,7 +737,9 @@ const maintainerSettingsSchema = z
     selfAuthoredLinkedIssueGateMode: z.enum(["off", "advisory", "block"]),
     linkedIssueSatisfactionGateMode: z.enum(["off", "advisory", "block"]),
     mergeTrainMode: z.enum(["off", "audit", "enforce"]),
-    firstTimeContributorGrace: z.boolean(),
+    firstTimeContributorGrace: z
+      .boolean()
+      .describe("Reserved (#2266) -- the gate evaluator never reads this field. Currently has no effect on gate decisions."),
     slopGateMode: z.enum(["off", "advisory", "block"]),
     slopGateMinScore: z.number().int().min(0).max(100).nullable(),
     slopAiAdvisory: z.boolean(),

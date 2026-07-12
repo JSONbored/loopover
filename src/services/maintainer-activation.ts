@@ -18,10 +18,10 @@ export type MaintainerActivationSample = {
 export type MaintainerActivationPreview = {
   repoFullName: string;
   generatedAt: string;
-  // What's on today, so the UI can show the current state next to the one-click ramp.
-  /** @deprecated (#4618, tracked for removal in #5373) sourced from the computed read-back
-   *  `RepositorySettings["gateCheckMode"]` -- kept only for API/dashboard back-compat display. */
-  currentGateMode: RepositorySettings["gateCheckMode"];
+  // What's on today, so the UI can show the current state next to the one-click ramp. Sourced from
+  // reviewCheckMode (#2852), the real publish authority -- not the deprecated gateCheckMode read-back
+  // (#5373), which never carried more information than reviewCheckMode already does.
+  currentReviewCheckMode: RepositorySettings["reviewCheckMode"];
   aiReviewConfigured: boolean;
   evaluatedCount: number;
   withFindingsCount: number;
@@ -91,7 +91,7 @@ export function buildMaintainerActivationPreview(args: {
   return {
     repoFullName: args.repoFullName,
     generatedAt: args.generatedAt,
-    currentGateMode: args.settings.gateCheckMode,
+    currentReviewCheckMode: args.settings.reviewCheckMode,
     aiReviewConfigured: args.settings.aiReviewMode !== "off",
     evaluatedCount: samples.length,
     withFindingsCount,

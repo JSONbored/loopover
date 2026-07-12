@@ -85,7 +85,7 @@ describe("buildMaintainerActivationPreview", () => {
     expect(preview.withFindingsCount).toBe(1);
     expect(preview.recommendedAction).toBe("enable_advisory");
     expect(preview.aiReviewConfigured).toBe(false);
-    expect(preview.currentGateMode).toBe("off");
+    expect(preview.currentReviewCheckMode).toBe("disabled");
     expect(preview.findingCodeCounts).toContainEqual({ code: "missing_linked_issue", count: 1 });
 
     const flagged = preview.samples.find((sample) => sample.number === 1)!;
@@ -116,29 +116,29 @@ describe("buildMaintainerActivationPreview", () => {
     const preview = buildMaintainerActivationPreview({
       repoFullName: repo.fullName,
       repo,
-      settings: settings({ gateCheckMode: "enabled", reviewCheckMode: "required", aiReviewMode: "advisory" }),
+      settings: settings({ reviewCheckMode: "required", aiReviewMode: "advisory" }),
       pullRequests: [pr(1, { linkedIssues: [] })],
       generatedAt: "2026-06-14T00:00:00.000Z",
     });
     expect(preview.recommendedAction).toBeNull();
     expect(preview.aiReviewConfigured).toBe(true);
-    expect(preview.currentGateMode).toBe("enabled");
+    expect(preview.currentReviewCheckMode).toBe("required");
     expect(preview.summary).toContain("already enabled");
   });
 
-  it("still recommends activation when gateCheckMode is enabled but reviewCheckMode is disabled (#2852 legacy-yml mismatch)", () => {
-    // Reachable via .gittensory.yml's independent settings.gateCheckMode/settings.reviewCheckMode keys (or any
-    // caller that sets one without the other) -- currentGateMode echoes the legacy field for display, but
-    // recommendedAction/currentlyActive must follow reviewCheckMode, the actual check-run publish authority,
-    // not the legacy field, since the check genuinely is not publishing in this state.
+  it("recommendedAction/currentlyActive follow only reviewCheckMode (#2852), regardless of any other settings (#5373)", () => {
+    // reviewCheckMode is the sole publish authority; the legacy gateCheckMode echo this test used to guard
+    // against (a maintainer-activation display that could diverge from the real activation decision) was
+    // removed in #5373 -- currentReviewCheckMode IS reviewCheckMode now, so there is no separate field left
+    // to drift. Kept as a plain reviewCheckMode invariant check.
     const preview = buildMaintainerActivationPreview({
       repoFullName: repo.fullName,
       repo,
-      settings: settings({ gateCheckMode: "enabled", reviewCheckMode: "disabled" }),
+      settings: settings({ reviewCheckMode: "disabled" }),
       pullRequests: [pr(1, { linkedIssues: [] })],
       generatedAt: "2026-06-14T00:00:00.000Z",
     });
-    expect(preview.currentGateMode).toBe("enabled");
+    expect(preview.currentReviewCheckMode).toBe("disabled");
     expect(preview.recommendedAction).toBe("enable_advisory");
     expect(preview.summary).not.toContain("already enabled");
   });

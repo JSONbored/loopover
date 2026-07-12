@@ -2551,7 +2551,6 @@ export function createApp() {
     const updated = await upsertRepositorySettings(c.env, { ...current, ...recommendedAdvisoryActivationSettings() });
     return c.json({
       repoFullName: fullName,
-      gateCheckMode: updated.gateCheckMode,
       reviewCheckMode: updated.reviewCheckMode,
       checkRunMode: updated.checkRunMode,
       linkedIssueGateMode: updated.linkedIssueGateMode,

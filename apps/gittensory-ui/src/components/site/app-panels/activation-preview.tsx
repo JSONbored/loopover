@@ -22,7 +22,7 @@ type ActivationSample = {
 type ActivationPreviewResponse = {
   repoFullName: string;
   generatedAt: string;
-  currentGateMode: "off" | "enabled";
+  currentReviewCheckMode: "required" | "visible" | "disabled";
   aiReviewConfigured: boolean;
   evaluatedCount: number;
   withFindingsCount: number;
@@ -140,7 +140,7 @@ export function ActivationPreview({ reviewability }: { reviewability: Array<{ pr
         </div>
         {preview ? (
           <StatusPill status={preview.recommendedAction === null ? "ready" : "info"}>
-            gate {preview.currentGateMode}
+            gate {preview.currentReviewCheckMode}
           </StatusPill>
         ) : null}
       </div>

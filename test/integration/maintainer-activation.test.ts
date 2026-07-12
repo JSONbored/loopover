@@ -41,21 +41,21 @@ describe("maintainer activation routes", () => {
 
     const preview = await app.request(PATH_PREVIEW, { headers }, env);
     expect(preview.status).toBe(200);
-    const previewBody = (await preview.json()) as { repoFullName: string; recommendedAction: string | null; currentGateMode: string; evaluatedCount: number };
-    expect(previewBody).toMatchObject({ repoFullName: FULL_NAME, recommendedAction: "enable_advisory", currentGateMode: "off", evaluatedCount: 0 });
+    const previewBody = (await preview.json()) as { repoFullName: string; recommendedAction: string | null; currentReviewCheckMode: string; evaluatedCount: number };
+    expect(previewBody).toMatchObject({ repoFullName: FULL_NAME, recommendedAction: "enable_advisory", currentReviewCheckMode: "disabled", evaluatedCount: 0 });
 
     const activate = await app.request(PATH_ACTIVATE, { method: "POST", headers, body: "{}" }, env);
     expect(activate.status).toBe(200);
     expect(await activate.json()).toMatchObject({
       repoFullName: FULL_NAME,
-      gateCheckMode: "enabled",
+      reviewCheckMode: "required",
       linkedIssueGateMode: "advisory",
       duplicatePrGateMode: "advisory",
       qualityGateMode: "advisory",
     });
 
     // The flip persisted, and the preview now reports nothing left to enable.
-    expect((await getRepositorySettings(env, FULL_NAME)).gateCheckMode).toBe("enabled");
+    expect((await getRepositorySettings(env, FULL_NAME)).reviewCheckMode).toBe("required");
     const afterPreview = await app.request(PATH_PREVIEW, { headers }, env);
     expect((await afterPreview.json() as { recommendedAction: string | null }).recommendedAction).toBeNull();
   });
@@ -86,7 +86,7 @@ describe("maintainer activation routes", () => {
     const activate = await app.request(PATH_ACTIVATE, { method: "POST", headers, body: "{}" }, env);
     expect(activate.status).toBe(403);
     expect(await activate.json()).toMatchObject({ error: "insufficient_repo_permission" });
-    expect((await getRepositorySettings(env, FULL_NAME)).gateCheckMode).toBe("off");
+    expect((await getRepositorySettings(env, FULL_NAME)).reviewCheckMode).toBe("disabled");
   });
 
   it("allows a session with GitHub write permission to activate advisory checks", async () => {
@@ -98,7 +98,7 @@ describe("maintainer activation routes", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "owner", id: 201 });
     const response = await app.request(PATH_ACTIVATE, { method: "POST", headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" }, body: "{}" }, env);
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ repoFullName: FULL_NAME, gateCheckMode: "enabled" });
+    expect(await response.json()).toMatchObject({ repoFullName: FULL_NAME, reviewCheckMode: "required" });
   });
 
   it("forbids read-only repo collaborators from writing agent settings", async () => {

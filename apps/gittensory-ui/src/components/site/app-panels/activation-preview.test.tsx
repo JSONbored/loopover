@@ -13,7 +13,7 @@ const REVIEWABILITY = [{ pr: "acme/widgets#1" }];
 const BASE_PREVIEW = {
   repoFullName: "acme/widgets",
   generatedAt: "2026-07-05T00:00:00.000Z",
-  currentGateMode: "off" as const,
+  currentReviewCheckMode: "disabled" as const,
   aiReviewConfigured: false,
   evaluatedCount: 3,
   withFindingsCount: 2,
@@ -106,7 +106,7 @@ describe("ActivationPreview", () => {
     // Reload after activation reports the gate is now on — the button should disappear.
     apiFetch.mockResolvedValueOnce({
       ok: true,
-      data: { ...BASE_PREVIEW, currentGateMode: "enabled", recommendedAction: null },
+      data: { ...BASE_PREVIEW, currentReviewCheckMode: "required", recommendedAction: null },
     });
 
     fireEvent.click(activateButton);

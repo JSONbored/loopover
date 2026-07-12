@@ -59,8 +59,8 @@ export type CliSubprocessDriverOptions = {
   /** Known secret values (e.g. an injected auth token) to strip from any surfaced output, on top of the well-known
    *  token-shape patterns. */
   knownSecrets?: readonly string[];
-  /** Build the CLI argv from a task. Default is a generic max-turns / acceptance-criteria / instructions argv that a
-   *  caller overrides to match the real CLI's flags. */
+  /** Build the CLI argv from a task. Defaults to `defaultClaudeCliArgs`/`defaultCodexCliArgs` based on
+   *  `command` -- a caller overrides this to point at a different real CLI's own flags. */
   buildArgs?: (task: CodingAgentDriverTask) => readonly string[];
 };
 
@@ -84,8 +84,88 @@ const CODING_AGENT_ENV_ALLOWLIST = [
   "no_proxy",
 ] as const;
 
-function defaultBuildArgs(task: CodingAgentDriverTask): string[] {
-  return defaultCliSubprocessArgs(task);
+/** Real, verified `claude -p` non-interactive argv (confirmed against `claude --help` and a live invocation,
+ *  #5135 follow-up -- the previous default argv here used `--max-turns`/`--acceptance-criteria`, neither of
+ *  which is a real `claude` CLI flag, and never passed `-p`/`--print` at all, meaning a spawned `claude`
+ *  process would start an INTERACTIVE session against a subprocess whose stdin is closed).
+ *  - `-p`/`--print` is REQUIRED for non-interactive use; without it `claude` starts an interactive session.
+ *  - `--output-format json` produces a single parseable JSON result on stdout, matching `claudeErrorStatus`'s
+ *    own `JSON.parse(stdout.trim())` assumption (which was already written for this shape, just never
+ *    actually triggered because this flag was never passed).
+ *  - `--permission-mode acceptEdits` is the same edit-permission scope the Agent-SDK driver already uses
+ *    (#4267) -- file edits run unattended inside the scoped worktree, nothing broader.
+ *  There is no turn-budget flag on the real CLI (verified via `claude --help`) and no acceptance-criteria
+ *  flag either -- the coding agent discovers `task.acceptanceCriteriaPath` itself via its own Read tool
+ *  inside the scoped working directory, exactly like the Agent-SDK driver already does (agent-sdk-driver.ts
+ *  never passes it as a distinct option either; only `task.instructions` is forwarded as the prompt there
+ *  too). The wall-clock `timeoutMs` (already implemented) is this provider's only real turn/cost ceiling. */
+export function defaultClaudeCliArgs(task: CodingAgentDriverTask): string[] {
+  return ["--print", "--output-format", "json", "--permission-mode", "acceptEdits", task.instructions];
+}
+
+/** Real, verified `codex exec` non-interactive argv (confirmed against `codex exec --help`, #5135
+ *  follow-up). `exec` is a REQUIRED subcommand -- without it `codex` starts an interactive session, the same
+ *  class of bug the missing `-p` had for claude. `--json` emits the JSONL event stream
+ *  `codexErrorFromStdout` already parses line-by-line. `--sandbox workspace-write` is codex's own equivalent
+ *  of claude's `acceptEdits` -- the model may write within the workspace, nothing broader. Same "no
+ *  turn-budget flag" and "no acceptance-criteria flag" gaps as claude apply here too. */
+export function defaultCodexCliArgs(task: CodingAgentDriverTask): string[] {
+  return ["exec", "--json", "--sandbox", "workspace-write", task.instructions];
+}
+
+/** Resolve the default argv builder for a known production command; throws for anything else so an
+ *  unrecognized `command` fails at driver-construction time (never silently invokes a binary with no known
+ *  real argv shape) unless the caller supplies an explicit `options.buildArgs` override. */
+function resolveDefaultBuildArgs(command: string): (task: CodingAgentDriverTask) => readonly string[] {
+  if (command === "claude") return defaultClaudeCliArgs;
+  if (command === "codex") return defaultCodexCliArgs;
+  throw new Error(`unsupported_cli_subprocess_command:${command}`);
+}
+
+/** Best-effort real dollar-cost extraction from a CLI's own stdout. Mirrors src/selfhost/ai.ts's
+ *  `extractCliUsage`/`COST_KEYS` (redeclared here, not imported, per this file's own no-src-import
+ *  convention) but narrowed to just the cost field this driver's `CodingAgentDriverResult` surfaces -- tokens
+ *  and model aren't part of that shape. Tries the whole trimmed stdout as one JSON object first (claude's
+ *  `--output-format json` shape, empirically confirmed to carry `total_cost_usd`, the exact same field name
+ *  the Agent-SDK's own result message carries), then scans line by line (codex's `--json` JSONL stream,
+ *  "still evolving" per src/selfhost/ai.ts's own comment, so multiple real key spellings are tolerated). A
+ *  missing/malformed field means "no cost signal", never an error -- never fabricated. */
+const COST_KEYS = ["total_cost_usd", "totalCostUsd", "cost_usd", "costUsd"] as const;
+
+function finiteNonNegativeNumber(value: unknown): number | undefined {
+  const n = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+function costUsdFromRecord(record: Record<string, unknown>): number | undefined {
+  let best: number | undefined;
+  for (const key of COST_KEYS) {
+    const n = finiteNonNegativeNumber(record[key]);
+    if (n !== undefined) best = Math.max(best ?? 0, n);
+  }
+  return best;
+}
+
+function extractCostUsd(stdout: string): number | undefined {
+  const trimmed = stdout.trim();
+  if (!trimmed) return undefined;
+  let best: number | undefined;
+  const tryLine = (text: string): void => {
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const n = costUsdFromRecord(parsed as Record<string, unknown>);
+        if (n !== undefined) best = Math.max(best ?? 0, n);
+      }
+    } catch {
+      /* not JSON -- best-effort only */
+    }
+  };
+  tryLine(trimmed);
+  for (const line of trimmed.split(/\r?\n/)) {
+    if (line.trim()) tryLine(line);
+  }
+  return best;
 }
 
 /** Claude Code's `--output-format json` sometimes exits non-zero while still emitting a structured
@@ -131,18 +211,6 @@ function codexErrorFromStdout(stdout: string): string | null {
   return null;
 }
 
-/** The default argv contract, exported so the factory (#4289) can PREFIX provider config (e.g. a configured
- *  model flag) without re-inventing — and silently drifting from — this baseline argv shape. */
-export function defaultCliSubprocessArgs(task: CodingAgentDriverTask): string[] {
-  return [
-    "--max-turns",
-    String(task.maxTurns),
-    "--acceptance-criteria",
-    task.acceptanceCriteriaPath,
-    task.instructions,
-  ];
-}
-
 /**
  * Create a {@link CodingAgentDriver} that runs the coding agent as a CLI subprocess. A non-zero or absent exit
  * code, or a timeout, yields `ok: false` with a redacted error; exit `0` yields `ok: true`. Any subprocess output
@@ -150,7 +218,7 @@ export function defaultCliSubprocessArgs(task: CodingAgentDriverTask): string[] 
  */
 export function createCliSubprocessCodingAgentDriver(options: CliSubprocessDriverOptions): CodingAgentDriver {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const buildArgs = options.buildArgs ?? defaultBuildArgs;
+  const buildArgs = options.buildArgs ?? resolveDefaultBuildArgs(options.command);
   const knownSecrets = options.knownSecrets ?? [];
   return {
     async run(task: CodingAgentDriverTask): Promise<CodingAgentDriverResult> {
@@ -241,11 +309,32 @@ export function createCliSubprocessCodingAgentDriver(options: CliSubprocessDrive
           error: `${options.command}_exit_${spawned.code}: ${detail}`,
         };
       }
+      // Claude Code's own documented behavior: `--output-format json` "sometimes exits non-zero", implying
+      // it can ALSO exit 0 while still reporting `is_error: true` in its structured JSON envelope (confirmed
+      // empirically: a live `claude -p --output-format json` invocation returns a real `is_error`/`subtype`
+      // field on every result, success or not). claudeErrorStatus was already written to detect exactly this
+      // shape but, before this fix, was only ever checked on the `code !== 0` branch above -- a code-0 error
+      // envelope silently read as `ok: true`. Checked here, not folded into that branch, since it's a
+      // genuinely different condition (exit code 0).
+      if (options.command === "claude") {
+        const errStatus = claudeErrorStatus(spawned.stdout);
+        if (errStatus) {
+          return {
+            ok: false,
+            changedFiles: [],
+            summary: `${options.command} exited 0 but reported an error envelope`,
+            transcript,
+            error: redactSecrets(`claude_code_error_${errStatus}`, knownSecrets),
+          };
+        }
+      }
+      const costUsd = extractCostUsd(spawned.stdout);
       return {
         ok: true,
         changedFiles: [],
         summary: `${options.command} completed for ${task.attemptId}`,
         transcript,
+        ...(costUsd !== undefined ? { costUsd } : {}),
       };
     },
   };

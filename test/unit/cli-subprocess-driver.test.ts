@@ -36,12 +36,37 @@ describe("createCliSubprocessCodingAgentDriver (#4266)", () => {
     expect(calls[0]?.opts.cwd).toBe("/work/attempt-1");
     expect(calls[0]?.opts.timeoutMs).toBe(120_000);
     expect(calls[0]?.args).toEqual([
-      "--max-turns",
-      "6",
-      "--acceptance-criteria",
-      "/work/attempt-1/acceptance-criteria.json",
+      "--print",
+      "--output-format",
+      "json",
+      "--permission-mode",
+      "acceptEdits",
       "Fix the pagination bug.",
     ]);
+  });
+
+  it("uses codex's own real default argv (the exec subcommand, not claude's flags)", async () => {
+    const { spawn, calls } = fakeSpawn({ stdout: "done", code: 0 });
+    const driver = createCliSubprocessCodingAgentDriver({ command: "codex", spawn });
+    const result = await driver.run(TASK);
+    expect(result.ok).toBe(true);
+    expect(calls[0]?.cmd).toBe("codex");
+    expect(calls[0]?.args).toEqual(["exec", "--json", "--sandbox", "workspace-write", "Fix the pagination bug."]);
+  });
+
+  it("fails closed at construction time for an unrecognized command with no explicit buildArgs override", () => {
+    const { spawn } = fakeSpawn({ stdout: "", code: 0 });
+    expect(() => createCliSubprocessCodingAgentDriver({ command: "some-other-cli", spawn })).toThrow(
+      "unsupported_cli_subprocess_command:some-other-cli",
+    );
+  });
+
+  it("an explicit buildArgs override still works for an unrecognized command (the fail-closed default is bypassable on purpose)", async () => {
+    const { spawn, calls } = fakeSpawn({ stdout: "done", code: 0 });
+    const driver = createCliSubprocessCodingAgentDriver({ command: "some-other-cli", spawn, buildArgs: () => ["--custom"] });
+    const result = await driver.run(TASK);
+    expect(result.ok).toBe(true);
+    expect(calls[0]?.args).toEqual(["--custom"]);
   });
 
   it("returns a redacted error on a non-zero exit code", async () => {
@@ -330,6 +355,122 @@ describe("createCliSubprocessCodingAgentDriver (#4266)", () => {
       const result = await driver.run(TASK);
       expect(result.error).not.toContain("my-injected-longkey-leaked");
       expect(result.error).toContain("[redacted]");
+    });
+  });
+
+  describe("REGRESSION: claude exits 0 while still reporting an error envelope (#5135 follow-up)", () => {
+    it("reports ok:false when --output-format json's envelope carries is_error:true even on exit code 0", async () => {
+      const { spawn } = fakeSpawn({
+        stdout: JSON.stringify({ type: "result", subtype: "success", is_error: true, api_error_status: "invalid_api_key", total_cost_usd: 0 }),
+        code: 0,
+      });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });
+      const result = await driver.run(TASK);
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("claude_code_error_invalid_api_key");
+    });
+
+    it("still reports ok:true on a genuine exit-0 success envelope with is_error:false", async () => {
+      const { spawn } = fakeSpawn({
+        stdout: JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done", total_cost_usd: 0.02 }),
+        code: 0,
+      });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });
+      const result = await driver.run(TASK);
+      expect(result.ok).toBe(true);
+    });
+
+    it("never inspects the envelope for a non-claude command on exit 0 either", async () => {
+      const { spawn } = fakeSpawn({
+        stdout: JSON.stringify({ is_error: true, api_error_status: "invalid_api_key" }),
+        code: 0,
+      });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "codex", spawn });
+      const result = await driver.run(TASK);
+      expect(result.ok).toBe(true);
+    });
+  });
+
+  describe("REGRESSION: real dollar-cost extraction (#5135 follow-up)", () => {
+    it("extracts claude's real total_cost_usd from its single JSON result on success", async () => {
+      const { spawn } = fakeSpawn({
+        stdout: JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done", total_cost_usd: 0.1234 }),
+        code: 0,
+      });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });
+      const result = await driver.run(TASK);
+      expect(result.costUsd).toBe(0.1234);
+    });
+
+    it("extracts codex's real cost from its JSONL event stream, tolerating either key spelling", async () => {
+      const { spawn } = fakeSpawn({
+        stdout: '{"type":"start"}\n{"type":"turn","total_cost_usd":0.05}\n{"type":"end"}',
+        code: 0,
+      });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "codex", spawn });
+      const result = await driver.run(TASK);
+      expect(result.costUsd).toBe(0.05);
+    });
+
+    it("stays undefined (never fabricated) when stdout carries no cost field at all", async () => {
+      const { spawn } = fakeSpawn({ stdout: "plain text output, no JSON", code: 0 });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });
+      const result = await driver.run(TASK);
+      expect(result.ok).toBe(true);
+      expect(result.costUsd).toBeUndefined();
+    });
+
+    it("takes the largest cost value seen across a multi-event codex stream (cumulative, matches src/selfhost/ai.ts's own convention)", async () => {
+      const { spawn } = fakeSpawn({
+        stdout: '{"total_cost_usd":0.01}\n{"total_cost_usd":0.07}\n{"total_cost_usd":0.03}',
+        code: 0,
+      });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "codex", spawn });
+      const result = await driver.run(TASK);
+      expect(result.costUsd).toBe(0.07);
+    });
+
+    it("ignores a non-numeric cost field value instead of throwing or fabricating a number", async () => {
+      const { spawn } = fakeSpawn({
+        stdout: JSON.stringify({ total_cost_usd: "not-a-number" }),
+        code: 0,
+      });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });
+      const result = await driver.run(TASK);
+      expect(result.ok).toBe(true);
+      expect(result.costUsd).toBeUndefined();
+    });
+
+    it("ignores a negative cost value (a real number, but not a valid cost) instead of surfacing it", async () => {
+      const { spawn } = fakeSpawn({
+        stdout: JSON.stringify({ total_cost_usd: -1 }),
+        code: 0,
+      });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });
+      const result = await driver.run(TASK);
+      expect(result.costUsd).toBeUndefined();
+    });
+
+    it("ignores a JSONL line that parses to a non-object (array or primitive) instead of throwing", async () => {
+      const { spawn } = fakeSpawn({
+        stdout: '[1,2,3]\n"just a string"\n{"total_cost_usd":0.09}',
+        code: 0,
+      });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "codex", spawn });
+      const result = await driver.run(TASK);
+      expect(result.ok).toBe(true);
+      expect(result.costUsd).toBe(0.09);
+    });
+
+    it("skips a blank interior line in the JSONL stream rather than treating it as malformed JSON", async () => {
+      const { spawn } = fakeSpawn({
+        stdout: '{"total_cost_usd":0.06}\n\n{"type":"end"}',
+        code: 0,
+      });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "codex", spawn });
+      const result = await driver.run(TASK);
+      expect(result.ok).toBe(true);
+      expect(result.costUsd).toBe(0.06);
     });
   });
 });

@@ -277,7 +277,8 @@ export {
 } from "./miner/coding-agent-driver.js";
 export {
   createCliSubprocessCodingAgentDriver,
-  defaultCliSubprocessArgs,
+  defaultClaudeCliArgs,
+  defaultCodexCliArgs,
   type CliSubprocessDriverOptions,
   type CliSubprocessSpawnFn,
 } from "./miner/cli-subprocess-driver.js";

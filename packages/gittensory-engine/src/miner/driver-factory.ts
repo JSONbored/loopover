@@ -20,7 +20,8 @@ import type { CodingAgentDriverResult, CodingAgentDriverTask } from "./coding-ag
 import { guardCodingAgentDriverResult, type LintGuardOptions, type LintGuardResult } from "./lint-guard.js";
 import {
   createCliSubprocessCodingAgentDriver,
-  defaultCliSubprocessArgs,
+  defaultClaudeCliArgs,
+  defaultCodexCliArgs,
   type CliSubprocessSpawnFn,
 } from "./cli-subprocess-driver.js";
 import {
@@ -119,12 +120,24 @@ export type CreateCodingAgentDriverOptions = {
   knownSecrets?: readonly string[] | undefined;
 };
 
-/** Build a CLI provider's argv: the driver's own default argv contract, prefixed with the CONFIGURED model
- *  flag when the provider's `CODING_AGENT_DRIVER_CONFIG_ENV` model key is set — this is where that declared
- *  config is actually consumed. */
-function buildCliArgsWithConfiguredModel(model: string | undefined): ((task: CodingAgentDriverTask) => readonly string[]) | undefined {
+/** Build a CLI provider's argv: the driver's own real default argv contract, with the CONFIGURED model
+ *  flag inserted at the RIGHT position for that command — this is where that declared config is actually
+ *  consumed. claude's `--model` is a top-level flag (prefixed before everything else is fine); codex's
+ *  `-m`/`--model` is scoped to the `exec` subcommand (per `codex exec --help`) and must be inserted AFTER
+ *  the leading `"exec"` token, not before it — a single shared prefix-everything scheme would silently
+ *  misparse for codex. */
+function buildCliArgsWithConfiguredModel(
+  command: "claude" | "codex",
+  model: string | undefined,
+): ((task: CodingAgentDriverTask) => readonly string[]) | undefined {
   if (model === undefined) return undefined;
-  return (task) => ["--model", model, ...defaultCliSubprocessArgs(task)];
+  if (command === "claude") {
+    return (task) => ["--model", model, ...defaultClaudeCliArgs(task)];
+  }
+  return (task) => {
+    const [subcommand, ...rest] = defaultCodexCliArgs(task);
+    return [subcommand!, "--model", model, ...rest];
+  };
 }
 
 function createCliProvider(
@@ -146,7 +159,7 @@ function createCliProvider(
   }
   const model = firstConfiguredEnvValue(env[modelEnvKey]);
   const timeoutMs = configuredTimeoutMs(env);
-  const buildArgs = buildCliArgsWithConfiguredModel(model);
+  const buildArgs = buildCliArgsWithConfiguredModel(command, model);
   return createCliSubprocessCodingAgentDriver({
     command,
     spawn: options.spawn,

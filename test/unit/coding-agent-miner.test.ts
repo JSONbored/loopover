@@ -442,7 +442,8 @@ describe("createCodingAgentDriver provider resolution (#4289)", () => {
     expect(result.ok).toBe(true);
     expect(calls[0]!.cmd).toBe("claude");
     expect(calls[0]!.args).not.toContain("--model");
-    expect(calls[0]!.args).toContain("--max-turns");
+    expect(calls[0]!.args).toContain("--print");
+    expect(calls[0]!.args).toContain("--output-format");
     expect(calls[0]!.opts.cwd).toBe(cliTask.workingDirectory);
   });
 
@@ -456,10 +457,10 @@ describe("createCodingAgentDriver provider resolution (#4289)", () => {
     await driver.run(cliTask);
     const args = [...calls[0]!.args];
     expect(args.slice(0, 2)).toEqual(["--model", "claude-sonnet-5"]);
-    expect(args).toContain("--max-turns");
+    expect(args).toContain("--print");
   });
 
-  it("codex-cli reads ITS OWN model key and ignores claude's", async () => {
+  it("codex-cli reads ITS OWN model key and ignores claude's, placing --model AFTER the exec subcommand", async () => {
     const { spawn, calls } = recordingSpawn();
     const driver = createCodingAgentDriver({
       providerName: "codex-cli",
@@ -468,7 +469,9 @@ describe("createCodingAgentDriver provider resolution (#4289)", () => {
     });
     await driver.run(cliTask);
     expect(calls[0]!.cmd).toBe("codex");
-    expect([...calls[0]!.args].slice(0, 2)).toEqual(["--model", "gpt-5.1-codex"]);
+    // codex's own --model/-m flag is scoped to the `exec` subcommand (codex exec --help), not a top-level
+    // flag the way claude's is -- it must land AFTER "exec", never prefixed before everything.
+    expect([...calls[0]!.args].slice(0, 3)).toEqual(["exec", "--model", "gpt-5.1-codex"]);
   });
 
   it("CONSUMES the declared timeout env key when it is a positive integer, else defers to the driver default", async () => {

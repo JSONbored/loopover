@@ -19,7 +19,10 @@ function makeTempEnv() {
   };
 }
 
-function mockJsonResponse(body, init = {}) {
+function mockJsonResponse(
+  body: unknown,
+  init: { status?: number; headers?: Record<string, string> } = {},
+) {
   return new Response(JSON.stringify(body), {
     status: init.status ?? 200,
     headers: {
@@ -72,7 +75,7 @@ describe("verifyGithubToken", () => {
     expect(result.ok).toBe(false);
     expect(result.login).toBe("octocat");
     expect(result.scopes).toEqual(["read:org"]);
-    expect(result.detail).toContain("missing repository access");
+    expect(result.detail).toContain("reissue it with repo access");
   });
 
   it("surfaces a rejected token as a clear GitHub error", async () => {
@@ -108,6 +111,9 @@ describe("runInit", () => {
 
     expect(exitCode).toBe(0);
     expect(fetchSpy).not.toHaveBeenCalled();
+    const firstLog = logSpy.mock.calls[0];
+    const secondLog = logSpy.mock.calls[1];
+    if (!firstLog || !secondLog) throw new Error("expected two init log lines");
     expect(logSpy.mock.calls.map(([line]) => line)).toEqual([
       `initialized ${configDir}`,
       `sqlite: ${dbPath}`,
@@ -124,7 +130,9 @@ describe("runInit", () => {
     expect(exitCode).toBe(0);
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+    const jsonLog = logSpy.mock.calls[0];
+    if (!jsonLog) throw new Error("expected one JSON init log line");
+    expect(JSON.parse(String(jsonLog[0]))).toEqual({
       stateDir: configDir,
       dbPath,
       created: true,
@@ -143,6 +151,10 @@ describe("runInit", () => {
     expect(exitCode).toBe(0);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(String(fetchSpy.mock.calls[0][0])).toBe("https://api.github.com/user");
+    const firstInitLog = logSpy.mock.calls[0];
+    const secondInitLog = logSpy.mock.calls[1];
+    const tokenLog = logSpy.mock.calls[2];
+    if (!firstInitLog || !secondInitLog || !tokenLog) throw new Error("expected three init log lines");
     expect(logSpy.mock.calls.map(([line]) => line)).toEqual([
       `initialized ${configDir}`,
       `sqlite: ${dbPath}`,
@@ -161,7 +173,9 @@ describe("runInit", () => {
 
     expect(exitCode).toBe(0);
     expect(logSpy).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+    const jsonLog = logSpy.mock.calls[0];
+    if (!jsonLog) throw new Error("expected one JSON init log line");
+    expect(JSON.parse(String(jsonLog[0]))).toEqual({
       stateDir: configDir,
       dbPath,
       created: true,

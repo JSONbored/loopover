@@ -553,18 +553,27 @@ describe("'Copy for AI agents' block", () => {
     expect(md).toContain("> 2. Second issue.");
   });
 
-  it("uses the FULL blocker set, not the display-truncated one, when maxFindingsCaps.blockers is set", () => {
+  it("keeps the AI copy block within maxFindingsCaps.blockers", () => {
     const md = renderUnifiedReviewComment(
       { ...base, decision: "close", blockers: ["Alpha", "Beta", "Gamma"], maxFindingsCaps: { blockers: 1, nits: null } },
       {},
     );
-    // Human-facing bullets are capped at 1 (plus a "+N more" footer)...
     expect(md).toMatch(/Alpha[\s\S]*_\+2 more_/);
-    // ...but the AI-context block still gets every blocker, since an agent benefits from full context.
     const aiSection = md.split("📋 Copy for AI agents")[1]!;
     expect(aiSection).toContain("Alpha");
-    expect(aiSection).toContain("Beta");
-    expect(aiSection).toContain("Gamma");
+    expect(aiSection).not.toContain("Beta");
+    expect(aiSection).not.toContain("Gamma");
+  });
+
+  it("omits the AI copy block when maxFindingsCaps.blockers is zero", () => {
+    const md = renderUnifiedReviewComment(
+      { ...base, decision: "close", blockers: ["Alpha", "Beta"], maxFindingsCaps: { blockers: 0, nits: null } },
+      {},
+    );
+    expect(md).toContain("_+2 more_");
+    expect(md).not.toContain("Copy for AI agents");
+    expect(md).not.toContain("Alpha");
+    expect(md).not.toContain("Beta");
   });
 
   it("is NOT dropped by comment_verbosity: quiet (it extends the never-gated blockers, not decorative detail)", () => {
@@ -745,6 +754,8 @@ describe("review.max_findings display caps (#2049)", () => {
     });
     expect(capped).toContain("- alpha blocker");
     expect(capped).not.toContain("- beta blocker");
+    expect(capped).not.toContain("2. beta blocker");
+    expect(capped).not.toContain("gamma blocker");
     expect(capped).toContain("+2 more");
     expect(capped).toContain("`3 blockers`");
     expect(capped).toContain("+1 more");

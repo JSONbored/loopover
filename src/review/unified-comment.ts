@@ -673,10 +673,9 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
       ? appendMoreFooter(bullets(blockersTrunc.shown), blockersTrunc.hiddenCount)
       : `_+${blockersTrunc.hiddenCount} more_`;
     blocks.push(`**${heading}**\n${blockersBody}`);
-    // The FULL (pre-display-truncation) blocker set, not blockersTrunc.shown -- an AI agent benefits from
-    // every blocker, not just the human-scannable capped subset shown above. Never gated by verbosity: this
-    // is an extension of the blockers themselves (never gated), not decorative detail like Nits.
-    blocks.push(buildAiContextBlock(blockersAll, collapsiblesOpen));
+    // Keep the copyable AI prompt inside the same public display cap as the human blocker list: hidden
+    // blockers must remain represented only by the shared "+N more" footer, not re-expanded in a collapsible.
+    if (blockersTrunc.shown.length) blocks.push(buildAiContextBlock(blockersTrunc.shown, collapsiblesOpen));
   }
 
   // Category breakdown (#2150): a compact, deterministic one-liner of the finding mix (e.g. "2 correctness ·

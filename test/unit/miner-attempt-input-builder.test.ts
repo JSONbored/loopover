@@ -5,7 +5,7 @@ vi.mock("@jsonbored/gittensory-engine", async () => {
 });
 
 import { buildAttemptGovernorContext, buildAttemptLoopInput } from "../../packages/gittensory-miner/lib/attempt-input-builder.js";
-import { DEFAULT_AMS_POLICY_SPEC } from "../../packages/gittensory-engine/src/index";
+import { DEFAULT_AMS_POLICY_SPEC, parseFocusManifest } from "../../packages/gittensory-engine/src/index";
 
 function codingTaskSpec(overrides: Record<string, unknown> = {}) {
   return {
@@ -24,7 +24,7 @@ function codingTaskSpec(overrides: Record<string, unknown> = {}) {
 
 function reviewContext() {
   return {
-    manifest: { present: false, settings: {}, gate: {}, warnings: [] },
+    manifest: parseFocusManifest(undefined),
     repo: { name: "widgets", fullName: "acme/widgets", private: false, htmlUrl: "https://github.com/acme/widgets", defaultBranch: "main", ownerLogin: "acme" },
     issues: [],
     pullRequests: [],
@@ -70,7 +70,7 @@ describe("buildAttemptLoopInput (#5132)", () => {
   it("assembles a real IterateLoopInput from every already-computed dependency", () => {
     const loopInput = buildAttemptLoopInput({
       codingTaskSpec: codingTaskSpec(),
-      reviewContext: reviewContext() as never,
+      reviewContext: reviewContext(),
       worktreePath: "/fake/repo/.gittensory-worktrees/fake",
       attemptId: "acme_widgets-7-12345",
       mode: "dry_run",
@@ -103,7 +103,7 @@ describe("buildAttemptLoopInput (#5132)", () => {
   it("threads a real rejectionSignaled:true through unchanged", () => {
     const loopInput = buildAttemptLoopInput({
       codingTaskSpec: codingTaskSpec(),
-      reviewContext: reviewContext() as never,
+      reviewContext: reviewContext(),
       worktreePath: "/fake",
       attemptId: "a1",
       mode: "live",
@@ -119,7 +119,7 @@ describe("buildAttemptLoopInput (#5132)", () => {
   it("uses AmsPolicySpec's real maxIterations/maxTurnsPerIteration, not hardcoded literals", () => {
     const loopInput = buildAttemptLoopInput({
       codingTaskSpec: codingTaskSpec(),
-      reviewContext: reviewContext() as never,
+      reviewContext: reviewContext(),
       worktreePath: "/fake",
       attemptId: "a1",
       mode: "dry_run",
@@ -135,7 +135,7 @@ describe("buildAttemptLoopInput (#5132)", () => {
   it("passes an explicit branchRef through when provided", () => {
     const loopInput = buildAttemptLoopInput({
       codingTaskSpec: codingTaskSpec(),
-      reviewContext: reviewContext() as never,
+      reviewContext: reviewContext(),
       worktreePath: "/fake",
       attemptId: "a1",
       mode: "dry_run",
@@ -151,7 +151,7 @@ describe("buildAttemptLoopInput (#5132)", () => {
   it("omits body/labels/linkedIssues when the coding-task-spec itself omits them", () => {
     const loopInput = buildAttemptLoopInput({
       codingTaskSpec: codingTaskSpec({ body: undefined, labels: undefined, linkedIssues: [] }),
-      reviewContext: reviewContext() as never,
+      reviewContext: reviewContext(),
       worktreePath: "/fake",
       attemptId: "a1",
       mode: "dry_run",

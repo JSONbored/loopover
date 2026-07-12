@@ -14,7 +14,7 @@ import { closeDefaultGovernorLedger, initGovernorLedger } from "../../packages/g
 import { closeDefaultWorktreeAllocator, openWorktreeAllocator } from "../../packages/gittensory-miner/lib/worktree-allocator.js";
 import { buildAttemptDeps, parseAttemptArgs, runAttempt } from "../../packages/gittensory-miner/lib/attempt-cli.js";
 import type { PrepareAttemptWorktreeResult } from "../../packages/gittensory-miner/lib/attempt-worktree.js";
-import { DEFAULT_AMS_POLICY_SPEC } from "../../packages/gittensory-engine/src/index";
+import { DEFAULT_AMS_POLICY_SPEC, parseFocusManifest } from "../../packages/gittensory-engine/src/index";
 
 const roots: string[] = [];
 // Only ever holds ledgers a test itself must close -- runAttempt tests inject theirs via DI and runAttempt's
@@ -30,7 +30,7 @@ function fakeWorktreeResult(): Extract<PrepareAttemptWorktreeResult, { ok: true 
 
 function fakeReviewContext() {
   return {
-    manifest: { present: false, settings: {}, gate: {}, warnings: [] },
+    manifest: parseFocusManifest(undefined),
     repo: { name: "widgets", fullName: "acme/widgets", private: false, htmlUrl: "https://github.com/acme/widgets", defaultBranch: "main", ownerLogin: "acme" },
     issues: [{ repoFullName: "acme/widgets", number: 7, title: "Uploads should retry on 5xx", state: "open", labels: ["bug"], linkedPrs: [], body: "Uploads fail silently." }],
     pullRequests: [],

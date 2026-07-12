@@ -15,10 +15,12 @@
 // precedence then abandons rather than optimistically continuing or handing off. The loop never fabricates a
 // "pass" from anything other than a genuinely successful `runSelfReview` call.
 //
-// BOUNDED INSIDE THE LOOP: both the iteration ceiling (`input.maxIterations`) and the optional cumulative-cost
-// ceiling (`input.maxTotalTurns`, summing every iteration's `turnsUsed`) are enforced here every iteration --
-// not left to an external caller to remember. A `maxIterations <= 0` input abandons immediately, before ever
-// invoking the driver.
+// BOUNDED INSIDE THE LOOP: both the iteration ceiling (`input.maxIterations`) and the optional cumulative
+// budget (`input.budget`, evaluated every iteration via attempt-metering.ts's `accumulateAttemptUsage`/
+// `evaluateAttemptBudget` against real per-iteration turns/costUsd/wallClockMs -- tokens stays an honest 0,
+// no driver reports a real token count today, #5395) are enforced here every iteration -- not left to an
+// external caller to remember, and not just capped after the fact between loop cycles (loop-cli.js's own
+// governor cap usage). A `maxIterations <= 0` input abandons immediately, before ever invoking the driver.
 //
 // AUDITABLE: every iteration's decision (continue / handoff / abandon) is recorded via the injected
 // `appendAttemptLogEvent` dependency (attempt-log.ts's normalized event shape) before this function returns
@@ -32,6 +34,7 @@ import { invokeCodingAgentDriver } from "./coding-agent-invoke.js";
 import type { AttemptLogEvent, AttemptLogEventType } from "./attempt-log.js";
 import { runSelfReview, type AttemptDiffState, type SelfReviewAdapterDeps, type SelfReviewContext, type SelfReviewVerdict } from "./self-review-adapter.js";
 import { decideNextActionWithReason, deriveSelfReviewOutcome, type IterateLoopDecision, type HandoffPacket, type IterationState, type SelfReviewOutcome } from "./iterate-policy.js";
+import { accumulateAttemptUsage, evaluateAttemptBudget, type AttemptBudget, type AttemptBudgetAxis, type AttemptMeterTotals } from "./attempt-metering.js";
 
 /** Everything one call to {@link runIterateLoop} needs, aside from the injected {@link IterateLoopDeps}.
  *  Identity/context fields mirror self-review-adapter.ts's `AttemptDiffState`/`SelfReviewContext` exactly --
@@ -51,10 +54,12 @@ export type IterateLoopInput = {
   maxIterations: number;
   /** Per-iteration turn budget, passed through to each `CodingAgentDriverTask`. */
   maxTurnsPerIteration: number;
-  /** Optional hard ceiling on CUMULATIVE turns spent across every iteration of this attempt so far (summed
-   *  from each iteration's `CodingAgentDriverResult.turnsUsed`). Omitted means no additional cost ceiling
-   *  beyond what `maxIterations * maxTurnsPerIteration` already implies. */
-  maxTotalTurns?: number | undefined;
+  /** Optional cumulative budget ceiling(s), evaluated every iteration against the real running totals
+   *  (attempt-metering.ts's `AttemptMeterTotals`, #5395). Omitted means no additional ceiling beyond what
+   *  `maxIterations * maxTurnsPerIteration` already implies. Any breached axis (turns/costUsd/wallClockMs --
+   *  tokens is never real-tracked today) abandons via the SAME `costCeilingReached` policy signal
+   *  iterate-policy.ts already exposes; that policy has no notion of which axis, only "cost ceiling reached". */
+  budget?: AttemptBudget | undefined;
 
   // Self-review identity fields -- mirror `AttemptDiffState`'s own identity fields (self-review-adapter.ts).
   repoFullName: string;
@@ -82,6 +87,10 @@ export type IterateLoopDeps = {
   driver: CodingAgentDriver;
   runSlopAssessment: SelfReviewAdapterDeps["runSlopAssessment"];
   appendAttemptLogEvent: (event: AttemptLogEvent) => void;
+  /** Injected clock for real per-iteration wall-clock measurement (#5395), mirroring this package's own
+   *  injected-dependency discipline elsewhere (never a hardcoded `Date.now()` a test can't control). Defaults
+   *  to the real `Date.now` when omitted. */
+  nowMs?: (() => number) | undefined;
 };
 
 /** The terminal outcomes a full loop run can end in -- never `"continue"`, which is only ever a per-iteration,
@@ -106,6 +115,14 @@ export type IterateLoopResult = {
    *  `CodingAgentDriverResult.costUsd`. Only the `agent-sdk` provider reports this today (the CLI-subprocess
    *  providers report no cost signal) -- always `0` for a provider that never reports one, never fabricated. */
   totalCostUsd: number;
+  /** The real accumulated {@link AttemptMeterTotals} across every iteration that ran (attempt-metering.ts,
+   *  #5395) -- a superset of `totalTurnsUsed`/`totalCostUsd` above that also carries `wallClockMs` (real,
+   *  measured around each driver invocation) and `tokens` (always 0 today -- no driver reports a real token
+   *  count, an honest absence rather than a fabricated number). */
+  finalMeterTotals: AttemptMeterTotals;
+  /** The budget axes breached at the point this attempt abandoned, when `input.budget` was set and at least
+   *  one axis was at/over its ceiling -- empty when no budget was configured or none breached. */
+  budgetBreaches: AttemptBudgetAxis[];
   iterations: readonly IterateLoopIterationRecord[];
   /** Populated only when `outcome === "handoff"`. */
   handoffPacket?: HandoffPacket | undefined;
@@ -180,7 +197,13 @@ function safeAppendAttemptLogEvent(deps: IterateLoopDeps, event: AttemptLogEvent
   }
 }
 
-function logDecision(input: IterateLoopInput, deps: IterateLoopDeps, iterationNumber: number, decision: IterateLoopDecision): void {
+function logDecision(
+  input: IterateLoopInput,
+  deps: IterateLoopDeps,
+  iterationNumber: number,
+  decision: IterateLoopDecision,
+  budgetBreaches: readonly AttemptBudgetAxis[],
+): void {
   safeAppendAttemptLogEvent(deps, {
     eventType: attemptLogEventTypeForDecision(decision),
     attemptId: input.attemptId,
@@ -191,6 +214,10 @@ function logDecision(input: IterateLoopInput, deps: IterateLoopDeps, iterationNu
       iterationNumber,
       action: decision.action,
       ...(decision.abandonReason !== undefined ? { abandonReason: decision.abandonReason } : {}),
+      // Which real axis (or axes) breached, when this decision was a budget-driven abandon (#5395) -- the
+      // policy's own `costCeilingReached` is a single boolean with no notion of which axis, so this is the
+      // only place that detail survives for an operator reading the attempt log back.
+      ...(budgetBreaches.length > 0 ? { budgetBreaches } : {}),
     },
   });
 }
@@ -218,7 +245,23 @@ function buildHandoffPacket(input: IterateLoopInput, verdict: SelfReviewVerdict,
   };
 }
 
-function immediateAbandonNoIterationsPermitted(input: IterateLoopInput, deps: IterateLoopDeps): IterateLoopResult {
+const ZERO_METER_TOTALS: AttemptMeterTotals = { tokens: 0, turns: 0, wallClockMs: 0, costUsd: 0 };
+
+/** The result shape {@link runIterateLoopCore} itself returns -- everything BUT the meter fields, which the
+ *  thin {@link runIterateLoop} wrapper attaches once, from `tracker`, at its own single always-reached return
+ *  point (#5395). Keeps the core's own internal return statements -- including the `/* v8 ignore *\/`-guarded
+ *  unreachable fallback -- byte-identical to their pre-#5395 shape, so that genuinely unreachable branch never
+ *  needs new fields threaded onto it (v8's ignore-comment suppresses vitest's OWN text-reporter percentage,
+ *  but NOT the raw lcov Codecov reads -- a new field on that branch would show as a real uncovered patch line
+ *  with no way to actually exercise it). */
+type IterateLoopCoreResult = Omit<IterateLoopResult, "finalMeterTotals" | "budgetBreaches">;
+
+/** Mutable accumulator threaded into {@link runIterateLoopCore} so the wrapper can read the real running
+ *  totals/breaches after the core returns, without the core itself needing to carry them on every return
+ *  statement. */
+type MeterTracker = { totals: AttemptMeterTotals; breaches: AttemptBudgetAxis[] };
+
+function immediateAbandonNoIterationsPermitted(input: IterateLoopInput, deps: IterateLoopDeps): IterateLoopCoreResult {
   const decision: IterateLoopDecision = {
     action: "abandon",
     abandonReason: "max_iterations_reached",
@@ -242,9 +285,10 @@ function immediateAbandonNoIterationsPermitted(input: IterateLoopInput, deps: It
  * Every iteration: invoke the driver, self-review the resulting diff (never fabricating a pass from a failed
  * or errored driver/self-review run), consult the policy with the running iteration/cost/no-progress state,
  * and record the decision via the attempt-log. `"continue"` decisions loop again; `"handoff"`/`"abandon"`
- * return immediately.
+ * return immediately. See {@link IterateLoopCoreResult}'s own doc comment for why this doesn't carry
+ * `finalMeterTotals`/`budgetBreaches` itself -- {@link runIterateLoop} attaches those.
  */
-export async function runIterateLoop(input: IterateLoopInput, deps: IterateLoopDeps): Promise<IterateLoopResult> {
+async function runIterateLoopCore(input: IterateLoopInput, deps: IterateLoopDeps, tracker: MeterTracker): Promise<IterateLoopCoreResult> {
   // Truncated toward zero rather than used as-is: a fractional maxIterations (a caller bug -- "how many times
   // to run a coding agent" has no fractional meaning) would otherwise let this loop's own `for` bound and
   // iterate-policy.ts's `iterationNumber >= maxIterations` ceiling check disagree by less than one iteration
@@ -263,12 +307,14 @@ export async function runIterateLoop(input: IterateLoopInput, deps: IterateLoopD
     payload: { maxIterations, maxTurnsPerIteration: input.maxTurnsPerIteration },
   });
 
+  const nowMs = deps.nowMs ?? Date.now;
   const iterations: IterateLoopIterationRecord[] = [];
   let previousBlockerCodes: readonly string[] | null = null;
   let totalTurnsUsed = 0;
   let totalCostUsd = 0;
 
   for (let iterationNumber = 1; iterationNumber <= maxIterations; iterationNumber += 1) {
+    const iterationStartMs = nowMs();
     const driverResult = await runDriverSafely(input, deps, {
       attemptId: input.attemptId,
       workingDirectory: input.workingDirectory,
@@ -276,21 +322,32 @@ export async function runIterateLoop(input: IterateLoopInput, deps: IterateLoopD
       instructions: input.instructions,
       maxTurns: input.maxTurnsPerIteration,
     });
+    const iterationElapsedMs = Math.max(0, nowMs() - iterationStartMs);
     totalTurnsUsed += driverResult.turnsUsed ?? 0;
     totalCostUsd += driverResult.costUsd ?? 0;
+    // tokens stays an honest 0: no CodingAgentDriver reports a real per-iteration token count today (#5395) --
+    // an absence, never a fabricated number, matching this package's costUsd discipline elsewhere.
+    tracker.totals = accumulateAttemptUsage(tracker.totals, {
+      tokens: 0,
+      turns: driverResult.turnsUsed ?? 0,
+      wallClockMs: iterationElapsedMs,
+      costUsd: driverResult.costUsd ?? 0,
+    });
+    const budgetVerdict = input.budget !== undefined ? evaluateAttemptBudget(tracker.totals, input.budget) : undefined;
+    tracker.breaches = budgetVerdict?.breaches ?? [];
 
     const { outcome: selfReview, verdict } = evaluateSelfReviewOutcome(input, driverResult, deps);
 
     const state: IterationState = {
       iterationNumber,
       maxIterations,
-      costCeilingReached: input.maxTotalTurns !== undefined && totalTurnsUsed >= input.maxTotalTurns,
+      costCeilingReached: budgetVerdict !== undefined && !budgetVerdict.withinBudget,
       selfReview,
       previousBlockerCodes,
       rejectionSignaled: input.rejectionSignaled,
     };
     const decision = decideNextActionWithReason(state);
-    logDecision(input, deps, iterationNumber, decision);
+    logDecision(input, deps, iterationNumber, decision, decision.abandonReason === "cost_ceiling_reached" ? tracker.breaches : []);
     iterations.push({ iterationNumber, driverResult, decision });
 
     if (decision.action === "handoff") {
@@ -321,4 +378,15 @@ export async function runIterateLoop(input: IterateLoopInput, deps: IterateLoopD
    * guarantee. */
   const fallbackDecision: IterateLoopDecision = { action: "abandon", abandonReason: "max_iterations_reached", reason: "Iterate loop exhausted its iteration budget." };
   return { outcome: "abandon", finalDecision: fallbackDecision, iterationsUsed: maxIterations, totalTurnsUsed, totalCostUsd, iterations };
+}
+
+/**
+ * Thin wrapper over {@link runIterateLoopCore} that attaches the real accumulated
+ * {@link AttemptMeterTotals}/breached axes (#5395) once, at this single always-reached return point -- see
+ * {@link IterateLoopCoreResult}'s own doc comment for why the core itself doesn't carry these fields.
+ */
+export async function runIterateLoop(input: IterateLoopInput, deps: IterateLoopDeps): Promise<IterateLoopResult> {
+  const tracker: MeterTracker = { totals: ZERO_METER_TOTALS, breaches: [] };
+  const core = await runIterateLoopCore(input, deps, tracker);
+  return { ...core, finalMeterTotals: tracker.totals, budgetBreaches: tracker.breaches };
 }

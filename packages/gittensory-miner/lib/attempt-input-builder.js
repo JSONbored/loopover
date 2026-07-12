@@ -68,6 +68,16 @@ export function buildAttemptLoopInput(input) {
     mode: input.mode,
     maxIterations: input.amsPolicySpec.maxIterations,
     maxTurnsPerIteration: input.amsPolicySpec.maxTurnsPerIteration,
+    // Real mid-attempt budget (#5395): the SAME Governor cap ceilings that already bound cross-cycle spend
+    // (loop-cli.js's after-the-fact governorState.saveCapUsage) now also bound this ONE attempt in progress,
+    // via the engine's real accumulateAttemptUsage/evaluateAttemptBudget -- a runaway attempt can no longer
+    // burn through the entire cross-cycle budget before anything reacts. No maxTokens: no driver reports a
+    // real per-iteration token count today, so that axis has no real ceiling to set (never fabricated).
+    budget: {
+      maxTurns: input.amsPolicySpec.capLimits.turns,
+      maxWallClockMs: input.amsPolicySpec.capLimits.elapsedMs,
+      maxCostUsd: input.amsPolicySpec.capLimits.budget,
+    },
     repoFullName: input.repoFullName,
     contributorLogin: input.minerLogin,
     title: input.codingTaskSpec.title,

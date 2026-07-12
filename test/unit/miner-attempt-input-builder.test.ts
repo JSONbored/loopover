@@ -93,6 +93,11 @@ describe("buildAttemptLoopInput (#5132)", () => {
       mode: "dry_run",
       maxIterations: DEFAULT_AMS_POLICY_SPEC.maxIterations,
       maxTurnsPerIteration: DEFAULT_AMS_POLICY_SPEC.maxTurnsPerIteration,
+      budget: {
+        maxTurns: DEFAULT_AMS_POLICY_SPEC.capLimits.turns,
+        maxWallClockMs: DEFAULT_AMS_POLICY_SPEC.capLimits.elapsedMs,
+        maxCostUsd: DEFAULT_AMS_POLICY_SPEC.capLimits.budget,
+      },
       repoFullName: "acme/widgets",
       contributorLogin: "alice",
       title: "Uploads should retry on 5xx",
@@ -103,6 +108,21 @@ describe("buildAttemptLoopInput (#5132)", () => {
       reviewContext: reviewContext(),
       rejectionSignaled: false,
     });
+  });
+
+  it("REGRESSION (#5395): budget mirrors AmsPolicySpec's real capLimits, not hardcoded literals", () => {
+    const loopInput = buildAttemptLoopInput({
+      codingTaskSpec: codingTaskSpec(),
+      reviewContext: reviewContext(),
+      worktreePath: "/fake",
+      attemptId: "a1",
+      mode: "dry_run",
+      repoFullName: "acme/widgets",
+      minerLogin: "alice",
+      rejectionSignaled: false,
+      amsPolicySpec: { ...DEFAULT_AMS_POLICY_SPEC, capLimits: { budget: 9, turns: 8, elapsedMs: 7 } },
+    });
+    expect(loopInput.budget).toEqual({ maxTurns: 8, maxWallClockMs: 7, maxCostUsd: 9 });
   });
 
   it("threads a real rejectionSignaled:true through unchanged", () => {

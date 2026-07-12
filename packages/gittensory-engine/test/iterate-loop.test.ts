@@ -239,20 +239,71 @@ test("a fractional maxIterations truncates toward the lower integer, not silentl
   assert.equal(result.iterationsUsed, 1);
 });
 
-test("abandon (cost_ceiling_reached): the cumulative-turns ceiling stops the loop even with iterations still available", async () => {
+test("abandon (cost_ceiling_reached): a maxTurns budget breach stops the loop even with iterations still available", async () => {
   const pullRequests: PullRequestRecord[] = [openPr(42, "Retry uploads on 5xx responses", [7])];
   const { deps } = collectingDeps({ driver: driverReturning(okResult(["src/upload.ts"], 50)) });
-  const input = passingInput({ maxIterations: 10, maxTotalTurns: 20, reviewContext: baseReviewContext({ pullRequests }) });
+  const input = passingInput({ maxIterations: 10, budget: { maxTurns: 20 }, reviewContext: baseReviewContext({ pullRequests }) });
   const result = await runIterateLoop(input, deps);
 
   assert.equal(result.outcome, "abandon");
   assert.equal(result.finalDecision.abandonReason, "cost_ceiling_reached");
   assert.equal(result.iterationsUsed, 1);
+  assert.deepEqual(result.budgetBreaches, ["turns"]);
+  assert.equal(result.finalMeterTotals.turns, 50);
 });
 
-test("continue: maxTotalTurns omitted never trips the cost ceiling, regardless of turns spent", async () => {
-  const { deps } = collectingDeps({ driver: driverReturning(okResult(["src/upload.ts"], 1_000_000)) });
-  const result = await runIterateLoop(passingInput({ maxTotalTurns: undefined }), deps);
+test("abandon (cost_ceiling_reached): a maxCostUsd budget breach reports costUsd as the breached axis", async () => {
+  const pullRequests: PullRequestRecord[] = [openPr(42, "Retry uploads on 5xx responses", [7])];
+  const { deps } = collectingDeps({ driver: driverReturning({ ok: true, changedFiles: ["src/upload.ts"], summary: "x", turnsUsed: 1, costUsd: 6 }) });
+  const input = passingInput({ maxIterations: 10, budget: { maxCostUsd: 5 }, reviewContext: baseReviewContext({ pullRequests }) });
+  const result = await runIterateLoop(input, deps);
+
+  assert.equal(result.outcome, "abandon");
+  assert.equal(result.finalDecision.abandonReason, "cost_ceiling_reached");
+  assert.deepEqual(result.budgetBreaches, ["costUsd"]);
+  assert.equal(result.finalMeterTotals.costUsd, 6);
+});
+
+test("abandon (cost_ceiling_reached): a maxWallClockMs budget breach uses the real injected clock, not a fabricated duration", async () => {
+  const pullRequests: PullRequestRecord[] = [openPr(42, "Retry uploads on 5xx responses", [7])];
+  let call = 0;
+  const timestamps = [1_000, 1_000 + 90_000]; // 90s elapsed on the one iteration
+  const { deps } = collectingDeps({ driver: driverReturning(okResult(["src/upload.ts"], 1)) });
+  const input = passingInput({ maxIterations: 10, budget: { maxWallClockMs: 60_000 }, reviewContext: baseReviewContext({ pullRequests }) });
+  const result = await runIterateLoop(input, {
+    ...deps,
+    nowMs: () => timestamps[call++] ?? timestamps[timestamps.length - 1]!,
+  });
+
+  assert.equal(result.outcome, "abandon");
+  assert.equal(result.finalDecision.abandonReason, "cost_ceiling_reached");
+  assert.deepEqual(result.budgetBreaches, ["wallClockMs"]);
+  assert.equal(result.finalMeterTotals.wallClockMs, 90_000);
+});
+
+test("continue: budget omitted never trips the cost ceiling, regardless of turns/cost spent", async () => {
+  const { deps } = collectingDeps({ driver: driverReturning({ ok: true, changedFiles: ["src/upload.ts"], summary: "x", turnsUsed: 1_000_000, costUsd: 999 }) });
+  const result = await runIterateLoop(passingInput({ budget: undefined }), deps);
+  assert.equal(result.outcome, "handoff");
+  assert.deepEqual(result.budgetBreaches, []);
+});
+
+test("finalMeterTotals.tokens is always an honest 0 -- no driver reports a real token count", async () => {
+  const { deps } = collectingDeps({ driver: driverReturning(okResult()) });
+  const result = await runIterateLoop(passingInput(), deps);
+  assert.equal(result.finalMeterTotals.tokens, 0);
+});
+
+test("immediate abandon: finalMeterTotals/budgetBreaches are the honest zero/empty shape when the driver never ran", async () => {
+  const { deps } = collectingDeps();
+  const result = await runIterateLoop(baseInput({ maxIterations: 0 }), deps);
+  assert.deepEqual(result.finalMeterTotals, { tokens: 0, turns: 0, wallClockMs: 0, costUsd: 0 });
+  assert.deepEqual(result.budgetBreaches, []);
+});
+
+test("REGRESSION: a passing self-review on the same iteration that breaches budget still hands off (pass wins the precedence ladder)", async () => {
+  const { deps } = collectingDeps({ driver: driverReturning(okResult(["src/upload.ts"], 999)) });
+  const result = await runIterateLoop(passingInput({ maxIterations: 1, budget: { maxTurns: 1 } }), deps);
   assert.equal(result.outcome, "handoff");
 });
 

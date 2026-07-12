@@ -117,14 +117,19 @@ path with house-rule enforcement built in by default -- no such caller exists in
 real house-rule enforcement for the live `agent-sdk` provider happens via `buildHouseRulesAgentSdkHooks`,
 attached directly in `constructProductionCodingAgentDriver`.
 
-**Metering:** `attempt-metering.ts`'s `accumulateAttemptUsage`/`meterAttemptUsage`/`evaluateAttemptBudget`
-(tokens/turns/wallClockMs/costUsd, with mid-attempt budget-abort) have **zero production callers** as of this
-writing -- see [#5395](https://github.com/JSONbored/gittensory/issues/5395) for the tracked decision on
-whether to wire them in for real or remove them. What IS real today: `iterate-loop.ts` sums each iteration's
-real `driverResult.turnsUsed`/`costUsd` into `IterateLoopResult.totalTurnsUsed`/`totalCostUsd`, which
-`packages/gittensory-miner/lib/loop-cli.js` uses to increment the governor's persisted `GovernorCapUsage`
-between loop cycles -- an after-the-fact, cross-cycle total, not the per-iteration mid-attempt abort
-`attempt-metering.ts` was designed to provide.
+**Metering:** `attempt-metering.ts`'s `accumulateAttemptUsage`/`evaluateAttemptBudget` are wired into
+`iterate-loop.ts` for real ([#5395](https://github.com/JSONbored/gittensory/issues/5395)) -- every iteration
+accumulates real `turns`/`costUsd`/`wallClockMs` (`tokens` stays an honest 0; no driver reports a real
+per-iteration token count today) into a running `AttemptMeterTotals`, and `runIterateLoop`'s optional
+`input.budget: AttemptBudget` is evaluated against it each iteration via the SAME `costCeilingReached` signal
+`iterate-policy.ts` already exposed for the (now-removed) turns-only `maxTotalTurns` ceiling -- a genuine
+mid-attempt abort, not just a between-cycle cap. `packages/gittensory-miner/lib/attempt-input-builder.js`'s
+`buildAttemptLoopInput` sets `budget` from the SAME `AmsPolicySpec.capLimits` the Governor's cross-cycle
+`GovernorCapUsage` already uses (`packages/gittensory-miner/lib/loop-cli.js`'s `governorState.saveCapUsage`
+between loop cycles) -- one attempt can no longer burn through the entire cross-cycle budget before anything
+reacts. `wallClockMs` uses a real injected clock (`IterateLoopDeps.nowMs`, defaulting to `Date.now`) measured
+around each iteration's driver invocation. The result's `finalMeterTotals`/`budgetBreaches` fields surface
+which axis (if any) triggered an abandon, for an operator reading the attempt log back.
 
 ## Related docs
 

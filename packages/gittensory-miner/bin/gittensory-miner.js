@@ -22,6 +22,12 @@ import {
   startUpdateCheck,
 } from "../lib/update-check.js";
 import { resolveMinerVersion } from "../lib/version.js";
+import { loadMinerFileCredentials } from "../lib/load-file-credentials.js";
+
+// Resolve `<NAME>_FILE` secret-file indirection (#5178) BEFORE any command reads GITHUB_TOKEN or a coding-agent
+// credential, so a fleet operator can mount them as Docker/Swarm/Kubernetes secrets instead of passing plaintext
+// env vars visible via `docker inspect`. A no-op when no `_FILE` companion is set (the common case).
+loadMinerFileCredentials();
 
 const cliArgs = process.argv.slice(2);
 

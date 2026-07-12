@@ -67,6 +67,48 @@ The image entrypoint is `gittensory-miner`; pass subcommands after the image nam
 - **`GITHUB_TOKEN`** — supplied by the operator at run time; the image contains no credentials.
 - **Scale** — launch additional containers with the same volume (or partitioned config dirs) for parallel attempts.
 
+### Secrets-file indirection (`<NAME>_FILE`)
+
+For Docker Swarm or Kubernetes (or any secret store that materializes secrets as files), pass a companion
+`<NAME>_FILE` variable pointing at the mounted secret file instead of the plaintext value — `GITHUB_TOKEN_FILE`
+and, for whichever coding-agent provider you enable, `ANTHROPIC_API_KEY_FILE` / `OPENAI_API_KEY_FILE`. The miner
+reads the file at startup, so the secret never lands in the container environment or in `docker inspect`:
+
+```sh
+# Docker Swarm: `docker secret create github_token ./github_token.txt`, then in the service definition:
+docker service create --name miner \
+  --secret github_token \
+  -e GITTENSORY_MINER_CONFIG_DIR=/data/miner \
+  -e GITHUB_TOKEN_FILE=/run/secrets/github_token \
+  --mount type=volume,source=miner-data,target=/data/miner \
+  gittensory-miner:latest run
+```
+
+- **Precedence** — if both the plain `GITHUB_TOKEN` and `GITHUB_TOKEN_FILE` are set, the plain value wins and the
+  file is ignored (identical precedence to `src/selfhost/load-file-secrets.ts`).
+- **Fail-closed** — a `<NAME>_FILE` whose file is missing, unreadable, or empty aborts startup with an error
+  naming the file, rather than running with an empty credential. Only the resolution source (env vs file) is ever
+  logged — never the secret value.
+
+
+### Secrets-file indirection (`<NAME>_FILE`)
+
+For Docker Swarm or Kubernetes (or any secret store that materializes secrets as files), pass a companion
+`<NAME>_FILE` variable pointing at the mounted secret file instead of the plaintext value — `GITHUB_TOKEN_FILE`
+and, for whichever coding-agent provider you enable, `ANTHROPIC_API_KEY_FILE` / `OPENAI_API_KEY_FILE`. The miner
+reads the file at startup, so the secret never lands in the container environment or in `docker inspect`:
+
+```sh
+# Docker Swarm: `docker secret create github_token ./github_token.txt`, then in the service definition:
+docker service create --name miner \n  --secret github_token \n  -e GITTENSORY_MINER_CONFIG_DIR=/data/miner \n  -e GITHUB_TOKEN_FILE=/run/secrets/github_token \n  --mount type=volume,source=miner-data,target=/data/miner \n  gittensory-miner:latest run
+```
+
+- **Precedence** — if both the plain `GITHUB_TOKEN` and `GITHUB_TOKEN_FILE` are set, the plain value wins and the
+  file is ignored (identical precedence to `src/selfhost/load-file-secrets.ts`).
+- **Fail-closed** — a `<NAME>_FILE` whose file is missing, unreadable, or empty aborts startup with an error
+  naming the file, rather than running with an empty credential. Only the resolution source (env vs file) is ever
+  logged — never the secret value.
+
 The repo-root [`docker-compose.yml`](../../docker-compose.yml) documents the **self-hosted review stack** (the `gittensory` API/orb), not the miner CLI. Miners are clients of that stack (or of github.com directly) and do not require it to run locally.
 
 ### Docker Compose (fleet mode)

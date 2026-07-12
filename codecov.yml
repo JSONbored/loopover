@@ -29,8 +29,9 @@ comment:
   layout: "condensed_header, diff, flags, files"
   require_changes: false
 
-# Coverage is collected by vitest (v8) over src/**; mirror its exclusions so the
-# Codecov total matches the local report.
+# Coverage is collected by vitest (v8) over src/**, packages/gittensory-engine/src/**,
+# and packages/gittensory-miner/lib/**; mirror its exclusions so the Codecov total
+# matches the local report.
 ignore:
   - "src/env.d.ts"
   - "apps/**"

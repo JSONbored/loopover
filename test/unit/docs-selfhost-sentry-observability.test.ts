@@ -45,4 +45,13 @@ describe("self-host Sentry observability docs (#1824)", () => {
     expect(operations).toContain("selfhost_backup_advisory");
     expect(operations).toContain("scheduled-loop");
   });
+
+  it("documents the in-Grafana Sentry data source (#5369) as a separate credential from SENTRY_DSN", () => {
+    expect(operations).toContain("Grafana Sentry data source");
+    expect(operations).toContain("SENTRY_API_TOKEN");
+    expect(operations).toContain("SENTRY_ORG_SLUG");
+    expect(operations).toContain("setup-sentry-datasource.sh");
+    expect(operations).toContain("Internal Integration");
+    expect(operations).toMatch(/SENTRY_DSN.*NOT reusable|not reusable.*SENTRY_DSN/i);
+  });
 });

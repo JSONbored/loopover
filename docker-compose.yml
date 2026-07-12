@@ -762,7 +762,9 @@ services:
       # check lives in entrypoint below. Runtime still fails closed unless the operator sets GRAFANA_ADMIN_PASSWORD.
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-${GRAFANA_LOCAL_SMOKE_PASSWORD:-}}
       GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_INSTALL_PLUGINS: frser-sqlite-datasource,grafana-github-datasource
+      # grafana-sentry-datasource (#5369): first-party Grafana Labs plugin, confirmed Grafana-signed and
+      # installs cleanly on this pinned Grafana version (verified live, not assumed).
+      GF_INSTALL_PLUGINS: frser-sqlite-datasource,grafana-github-datasource,grafana-sentry-datasource
       # Read-only fine-grained PAT for the GitHub data source provisioning ($GITHUB_TOKEN expansion). From .env.
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
     deploy:

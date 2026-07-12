@@ -790,6 +790,50 @@ SENTRY_RELEASE=gittensory-selfhost@2026.07.05
         same subsystem.
       </p>
 
+      <h2>Grafana Sentry data source (in-Grafana issue visualization)</h2>
+      <p>
+        Query recent Sentry issues, top issues by event count, and error-volume trend directly in
+        Grafana — no more switching tabs to check Sentry, and errors line up in time with the rest
+        of the stack&apos;s metrics/logs/traces. This is read-only visualization; alert routing to
+        Sentry/Discord/Slack is a separate, unrelated concern covered above.
+      </p>
+      <Callout variant="warn" title="SENTRY_DSN is NOT reusable here">
+        The <code>SENTRY_DSN</code> above authenticates event <strong>ingestion</strong> (sending
+        errors to Sentry), not the read/query API this data source needs. You need a separate{" "}
+        <strong>Sentry Internal Integration token</strong>: Sentry → Settings → Developer Settings →
+        Custom Integrations → New Internal Integration (requires an Admin/Manager/Owner role in
+        Sentry), with <strong>Read</strong> access on the <strong>Project</strong>,{" "}
+        <strong>Issue &amp; Event</strong>, and <strong>Organization</strong> resource scopes.
+      </Callout>
+      <p>
+        The{" "}
+        <a
+          href="https://grafana.com/grafana/plugins/grafana-sentry-datasource/"
+          target="_blank"
+          rel="noreferrer"
+        >
+          grafana-sentry-datasource
+        </a>{" "}
+        plugin installs automatically (<code>GF_INSTALL_PLUGINS</code>, same mechanism as the GitHub
+        data source below). Add the data source itself after Grafana is up — a backend datasource
+        whose token isn&apos;t ready at Grafana&apos;s own boot time would crash file-based
+        provisioning, so this one is added over the API instead, exactly like the GitHub data
+        source:
+      </p>
+      <CodeBlock
+        filename=".env"
+        code={`SENTRY_API_TOKEN=<your-sentry-internal-integration-token>
+SENTRY_ORG_SLUG=<your-sentry-org-slug>
+# SENTRY_API_URL=https://sentry.io   # override only for a self-hosted Sentry instance`}
+      />
+      <CodeBlock lang="bash" code={`./scripts/setup-sentry-datasource.sh`} />
+      <p>
+        The script is idempotent — safe to re-run after rotating the token. Open the{" "}
+        <strong>Sentry issues</strong> dashboard once it succeeds. Same trade-off as the GitHub data
+        source: this one is API-managed, so it stays editable via the Grafana UI rather than locked
+        read-only like the file-provisioned data sources.
+      </p>
+
       <h2>Re-gate sweeps (agent-regate-sweep)</h2>
       <p>
         Live PR review is webhook-driven, but open PRs still need periodic re-evaluation — the base

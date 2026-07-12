@@ -1,4 +1,5 @@
 import { Outlet, createRootRoute, Link } from "@tanstack/react-router";
+import { GrafanaFooterLink } from "@/components/grafana-footer-link";
 
 export const Route = createRootRoute({
   component: RootLayout,
@@ -29,6 +30,7 @@ function RootLayout() {
       <main className="mx-auto max-w-5xl px-6 py-8">
         <Outlet />
       </main>
+      <GrafanaFooterLink />
     </div>
   );
 }

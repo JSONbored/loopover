@@ -59,13 +59,11 @@ async function loadIssueOpportunityContext(message) {
 }
 
 async function loadMinerExtensionSettings() {
-  const stored = await chrome.storage.sync.get({ watchedRepos: [], discoveryIndexUrl: "" });
+  const stored = await chrome.storage.sync.get({ watchedRepos: [] });
   const watchedRepos = Array.isArray(stored.watchedRepos)
     ? stored.watchedRepos.map((value) => String(value).trim()).filter(Boolean)
     : [];
-  const discoveryIndexUrl =
-    typeof stored.discoveryIndexUrl === "string" ? stored.discoveryIndexUrl.trim() : "";
-  return { watchedRepos, discoveryIndexUrl };
+  return { watchedRepos };
 }
 
 async function loadRankedCandidates() {

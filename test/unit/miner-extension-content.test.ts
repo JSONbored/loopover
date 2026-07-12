@@ -7,6 +7,7 @@ const contentScript = readFileSync("apps/gittensory-miner-extension/content.js",
 const backgroundScript = readFileSync("apps/gittensory-miner-extension/background.js", "utf8");
 const badgeScript = readFileSync("apps/gittensory-miner-extension/opportunity-badge.js", "utf8");
 const optionsScript = readFileSync("apps/gittensory-miner-extension/options.js", "utf8");
+const optionsHtml = readFileSync("apps/gittensory-miner-extension/options.html", "utf8");
 const manifest = JSON.parse(readFileSync("apps/gittensory-miner-extension/manifest.json", "utf8"));
 
 const NOW = Date.parse("2026-07-03T12:00:00.000Z");
@@ -146,7 +147,63 @@ describe("miner extension opportunity badge", () => {
     expect(() => internals.parseRankedCandidatesJson("{")).toThrow();
     expect(() => internals.parseRankedCandidatesJson('{"not":"array"}')).toThrow();
   });
+
+  it("REGRESSION (dead-field removal): no discoveryIndexUrl config field remains anywhere in the extension", () => {
+    expect(optionsHtml).not.toMatch(/discoveryIndexUrl/);
+    expect(optionsScript).not.toMatch(/discoveryIndexUrl/);
+    expect(backgroundScript).not.toMatch(/discoveryIndexUrl/);
+  });
+
+  it("saves and restores settings without ever writing or reading discoveryIndexUrl", async () => {
+    const synced: Record<string, unknown> = { watchedRepos: [] };
+    const setCalls: Array<Record<string, unknown>> = [];
+    const elements = {
+      "#settings": createFormMock(),
+      "#status": { textContent: "" },
+      "#watchedRepos": { value: "" },
+      "#rankedCandidatesJson": { value: "" },
+    };
+    const context: Record<string, unknown> = {
+      __GITTENSORY_MINER_EXTENSION_TEST__: true,
+      document: { querySelector: (selector: string) => elements[selector as keyof typeof elements] ?? null },
+      chrome: {
+        storage: {
+          sync: {
+            get: async (defaults: Record<string, unknown>) => ({ ...defaults, ...synced }),
+            set: async (value: Record<string, unknown>) => {
+              setCalls.push(value);
+              Object.assign(synced, value);
+            },
+          },
+          local: { get: async () => ({ rankedCandidates: [] }), set: async () => {} },
+        },
+      },
+      window: { setTimeout: () => 0 },
+    };
+    context.globalThis = context;
+    const vmContext = createContext(context);
+    new Script(optionsScript).runInContext(vmContext);
+
+    elements["#watchedRepos"].value = "JSONbored/gittensory";
+    await elements["#settings"].dispatchSubmit();
+
+    expect(setCalls).toHaveLength(1);
+    expect(setCalls[0]).toEqual({ watchedRepos: ["JSONbored/gittensory"] });
+    expect("discoveryIndexUrl" in synced).toBe(false);
+  });
 });
+
+function createFormMock() {
+  let submitHandler: ((event: { preventDefault: () => void }) => unknown) | null = null;
+  return {
+    addEventListener: (type: string, handler: typeof submitHandler) => {
+      if (type === "submit") submitHandler = handler;
+    },
+    dispatchSubmit: async () => {
+      await submitHandler?.({ preventDefault: () => {} });
+    },
+  };
+}
 
 function createMockContainer() {
   const container = {
@@ -207,7 +264,7 @@ function loadBackgroundInternals({
     chrome: {
       storage: {
         sync: {
-          get: async () => ({ watchedRepos, discoveryIndexUrl: "" }),
+          get: async () => ({ watchedRepos }),
         },
         local: {
           get: async () => ({ rankedCandidates }),
@@ -239,7 +296,7 @@ function loadOptionsInternals() {
     document: { querySelector: () => null },
     chrome: {
       storage: {
-        sync: { get: async () => ({ watchedRepos: [], discoveryIndexUrl: "" }), set: async () => {} },
+        sync: { get: async () => ({ watchedRepos: [] }), set: async () => {} },
         local: { get: async () => ({ rankedCandidates: [] }), set: async () => {} },
       },
     },

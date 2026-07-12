@@ -6657,7 +6657,8 @@ describe("api routes", () => {
   });
 });
 
-async function signWebhook(body: string, secret: string): Promise<string> {
+async function signWebhook(body: string, secret: string | undefined): Promise<string> {
+  if (!secret) throw new Error("signWebhook requires a real test secret — createTestEnv() should always set one.");
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, [
     "sign",
   ]);

@@ -3,7 +3,7 @@ export async function sha256Hex(input: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export async function verifyGitHubSignature(rawBody: string, signatureHeader: string | null, secret: string): Promise<boolean> {
+export async function verifyGitHubSignature(rawBody: string, signatureHeader: string | null, secret: string | undefined): Promise<boolean> {
   if (!signatureHeader?.startsWith("sha256=")) return false;
   if (!secret) return false;
 

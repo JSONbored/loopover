@@ -2514,7 +2514,9 @@ const GITHUB_ACTIONS_VALIDATE_AGGREGATE_PREREQUISITES = new Set([
 
 function isOwnGitHubAppCheckRun(env: Env, run: { name: string; app?: { slug?: string | null } | null }): boolean {
   const appSlug = typeof run.app?.slug === "string" ? run.app.slug.trim().toLowerCase() : "";
-  const ownSlug = env.GITHUB_APP_SLUG.trim().toLowerCase();
+  // GITHUB_APP_SLUG is optional (the retired review App was deleted; a self-hoster's own App name may be unset
+  // too) — never throw on a missing/blank value, just fail the match like an empty appSlug already would.
+  const ownSlug = (env.GITHUB_APP_SLUG ?? "").trim().toLowerCase();
   return ownSlug.length > 0 && appSlug === ownSlug && BOT_OWNED_CHECK_NAMES.has(run.name);
 }
 
@@ -3936,7 +3938,9 @@ function isTrustedScannerReviewThreadAuthor(env: Env, login: string | null | und
 // other "is this our own bot" check in the codebase already does this (self-authored.ts, pr-actions.ts,
 // comments.ts, processors.ts) -- so a self-hoster who renamed their App still recognizes its own comments.
 export function isOwnReviewThreadAuthor(env: Env, login: string | null | undefined): boolean {
-  const slug = env.GITHUB_APP_SLUG.trim().toLowerCase();
+  // GITHUB_APP_SLUG is optional (see isOwnGitHubAppCheckRun above) — an unset value just means "no own-app
+  // login recognized," never a thrown error.
+  const slug = (env.GITHUB_APP_SLUG ?? "").trim().toLowerCase();
   if (!slug) return false;
   const escapedSlug = escapeRegExpForOwnAuthorSlug(slug);
   return new RegExp(`^${escapedSlug}[-\\w]*\\[bot\\]$`, "i").test(login ?? "") || new RegExp(`^(${escapedSlug}|${escapedSlug}-orb)$`, "i").test(login ?? "");

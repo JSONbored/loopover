@@ -23,8 +23,10 @@
     },
   },
   "vars": {
-    "GITHUB_APP_ID": "3824093",
-    "GITHUB_APP_SLUG": "gittensory",
+    // GITHUB_APP_ID / GITHUB_APP_SLUG (the retired review App's identity) removed 2026-07-12: that App has
+    // been fully deleted. Cloud no longer holds its credentials either (GITHUB_APP_PRIVATE_KEY/
+    // GITHUB_WEBHOOK_SECRET Worker secrets removed in the same change) -- review execution is self-host-only,
+    // brokered through the separate Orb App (ORB_GITHUB_APP_ID, a Worker secret).
     "GITHUB_OAUTH_CLIENT_ID": "Ov23lixYxDzyUKE070sm",
     "GITHUB_WEBHOOK_MAX_BODY_BYTES": "1048576",
     "GITTENSOR_UPSTREAM_REPO": "entrius/gittensor",

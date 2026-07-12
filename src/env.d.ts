@@ -146,7 +146,11 @@ declare global {
      *  hasn't explicitly configured its own value. Unset/blank/anything else = off (the existing behavior). A
      *  repo's own `contributorCapCancelCi` (DB or `.gittensory.yml`) always takes precedence over this. */
     CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT?: string;
-    GITHUB_WEBHOOK_SECRET: string;
+    /** The retired review App's webhook secret. Optional: that App has been fully deleted (its installation was
+     *  suspended, then removed); GitHub can no longer deliver to POST /v1/github/webhook for it either way — the
+     *  route already fails closed on a missing/invalid secret. Kept only so a self-hoster running their OWN App
+     *  under this same name still works without code changes. */
+    GITHUB_WEBHOOK_SECRET?: string;
     GITHUB_WEBHOOK_MAX_BODY_BYTES?: string;
     /** Webhook secret for the central Gittensory Orb GitHub App (#1255) — distinct from the review app's
      *  GITHUB_WEBHOOK_SECRET. Verifies inbound POST /v1/orb/webhook deliveries. Inject as a wrangler secret. */
@@ -168,9 +172,13 @@ declare global {
     /** Override the Orb broker base URL the self-host client calls (default https://gittensory-api.aethereal.dev);
      *  point at a private gittensory deployment if you self-host the broker too. */
     ORB_BROKER_URL?: string;
-    GITHUB_APP_PRIVATE_KEY: string;
-    GITHUB_APP_ID: string;
-    GITHUB_APP_SLUG: string;
+    /** The retired review App's own credentials. Optional: that App has been fully deleted — cloud no longer
+     *  mints tokens or verifies check-run ownership with it (review execution is self-host-only now, brokered
+     *  through the Orb App above). Kept optional (not removed) so a self-hoster running their OWN App under
+     *  these same names still works without code changes. */
+    GITHUB_APP_PRIVATE_KEY?: string;
+    GITHUB_APP_ID?: string;
+    GITHUB_APP_SLUG?: string;
     GITHUB_OAUTH_CLIENT_ID?: string;
     GITHUB_OAUTH_CLIENT_SECRET?: string;
     GITTENSOR_UPSTREAM_REPO?: string;

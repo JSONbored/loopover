@@ -949,7 +949,7 @@ export function createApp() {
   app.get("/v1/public/subnet-interface", (c) => {
     const origin = c.env.PUBLIC_API_ORIGIN ?? new URL(c.req.url).origin;
     c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
-    return c.json(buildSubnetInterfaceDescriptor({ origin, generatedAt: nowIso(), appSlug: c.env.GITHUB_APP_SLUG, upstreamRepo: c.env.GITTENSOR_UPSTREAM_REPO }));
+    return c.json(buildSubnetInterfaceDescriptor({ origin, generatedAt: nowIso(), upstreamRepo: c.env.GITTENSOR_UPSTREAM_REPO }));
   });
 
   // Proof of Power (#1059): unauthenticated homepage stats counter — lifetime PRs handled / merged / closed,

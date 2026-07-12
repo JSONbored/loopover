@@ -6,7 +6,6 @@ describe("buildSubnetInterfaceDescriptor", () => {
     const descriptor = buildSubnetInterfaceDescriptor({
       origin: "https://gittensory-api.aethereal.dev/",
       generatedAt: "2026-06-14T00:00:00.000Z",
-      appSlug: "gittensory",
       upstreamRepo: "entrius/gittensor",
     });
 
@@ -16,7 +15,9 @@ describe("buildSubnetInterfaceDescriptor", () => {
     // Trailing slash on origin is normalized before appending /mcp.
     expect(descriptor.interfaces.mcp.endpoint).toBe("https://gittensory-api.aethereal.dev/mcp");
     expect(descriptor.interfaces.mcp.transport).toBe("http");
-    expect(descriptor.interfaces.githubApp.installUrl).toBe("https://github.com/apps/gittensory");
+    // The publicly installable App slug is a stable hardcoded product identity, not derived from any Worker
+    // var (the old review App's GITHUB_APP_SLUG was removed; gittensory-orb is the real, current, installable App).
+    expect(descriptor.interfaces.githubApp).toMatchObject({ kind: "github_app", slug: "gittensory-orb", installUrl: "https://github.com/apps/gittensory-orb" });
 
     const toolNames = descriptor.interfaces.mcp.tools.map((tool) => tool.name);
     expect(toolNames).toContain("gittensory_get_decision_pack");
@@ -26,7 +27,7 @@ describe("buildSubnetInterfaceDescriptor", () => {
   });
 
   it("defaults the upstream repo when not provided and contains no private/reward wording", () => {
-    const descriptor = buildSubnetInterfaceDescriptor({ origin: "https://x.dev", generatedAt: "2026-06-14T00:00:00.000Z", appSlug: "gittensory" });
+    const descriptor = buildSubnetInterfaceDescriptor({ origin: "https://x.dev", generatedAt: "2026-06-14T00:00:00.000Z" });
     expect(descriptor.subnet.upstreamRepo).toBe("entrius/gittensor");
     expect(JSON.stringify(descriptor)).not.toMatch(/wallet|hotkey|reward|payout|earn|scoring|multiplier|trust score|scoreability|rank(?:ing)?/i);
   });

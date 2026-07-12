@@ -286,6 +286,11 @@ async function mintInstallationToken(
     }
   }
   const jwt = await createAppJwt(env);
+  // createAppJwt(env) above already threw if GITHUB_APP_ID were missing, so it's always set here — this const
+  // only exists to narrow the type for expireCachedAppJwt below (TS can't infer that guarantee across the call).
+  const appId = env.GITHUB_APP_ID;
+  /* v8 ignore next -- unreachable: createAppJwt(env) just succeeded, which requires GITHUB_APP_ID to be set. */
+  if (!appId) throw new Error("GitHub App credentials are not configured.");
   let response = await requestInstallationTokenWithJwt(jwt, installationId);
   if (response.status === 401) {
     // The cached App JWT itself was rejected (a transient GitHub-side validation hiccup, a clock-skew edge case,
@@ -298,11 +303,11 @@ async function mintInstallationToken(
       JSON.stringify({
         level: "warn",
         event: "github_app_jwt_rejected",
-        appId: env.GITHUB_APP_ID,
+        appId,
         status: response.status,
       }),
     );
-    expireCachedAppJwt(env.GITHUB_APP_ID);
+    expireCachedAppJwt(appId);
     const freshJwt = await createAppJwt(env);
     response = await requestInstallationTokenWithJwt(freshJwt, installationId);
     if (response.status === 401) {
@@ -312,7 +317,7 @@ async function mintInstallationToken(
       // (flagged by the gate's own review of #2453). Evict again; the throw below still surfaces this failure to
       // the caller, but the NEXT mint attempt (this one or any other installation's) gets a fresh JWT instead of
       // replaying the poisoned one.
-      expireCachedAppJwt(env.GITHUB_APP_ID);
+      expireCachedAppJwt(appId);
     }
   }
   if (!response.ok) {
@@ -667,25 +672,27 @@ function expireCachedAppJwt(appId: string): void {
  *  has since revoked (only a real API call would), but it catches the common "unset/invalid key" failure mode
  *  that otherwise leaves /ready reporting 200 while the review pipeline is completely dead. */
 export async function createAppJwt(env: Env): Promise<string> {
-  if (!env.GITHUB_APP_PRIVATE_KEY) {
+  if (!env.GITHUB_APP_PRIVATE_KEY || !env.GITHUB_APP_ID) {
     throw new Error("GitHub App credentials are not configured.");
   }
+  const appId = env.GITHUB_APP_ID;
+  const privateKey = env.GITHUB_APP_PRIVATE_KEY;
   const nowMs = Date.now();
-  const cached = appJwtCache.get(env.GITHUB_APP_ID);
-  if (cached && cached.privateKey === env.GITHUB_APP_PRIVATE_KEY && cached.expiresAtMs > nowMs) {
+  const cached = appJwtCache.get(appId);
+  if (cached && cached.privateKey === privateKey && cached.expiresAtMs > nowMs) {
     return cached.jwt;
   }
   const now = Math.floor(nowMs / 1000);
   const jwt = await signRs256Jwt(
     {
-      iss: env.GITHUB_APP_ID,
+      iss: appId,
       iat: now - 60,
       exp: now + 540,
     },
-    env.GITHUB_APP_PRIVATE_KEY,
+    privateKey,
   );
-  appJwtCache.set(env.GITHUB_APP_ID, {
-    privateKey: env.GITHUB_APP_PRIVATE_KEY,
+  appJwtCache.set(appId, {
+    privateKey,
     jwt,
     expiresAtMs: nowMs + APP_JWT_REUSE_MS,
   });

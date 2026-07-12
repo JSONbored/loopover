@@ -5,6 +5,11 @@ import { GITTENSORY_MCP_PACKAGE_NAME, LATEST_RECOMMENDED_MCP_VERSION, MINIMUM_SU
 export const GITTENSOR_NETUID = 74;
 const DEFAULT_GITTENSOR_UPSTREAM_REPO = "entrius/gittensor";
 const SUBNET_INTERFACE_SCHEMA_VERSION = "1.0";
+// The publicly installable GitHub App maintainers add to a gittensor-registered repo (#695's onboarding step
+// below). Hardcoded like the other product-identity constants in this file (not env-driven): it's the same
+// stable, real app across every deployment of this descriptor, independent of which credentials any one
+// Worker instance happens to hold for its own operational purposes.
+const PUBLIC_GITHUB_APP_SLUG = "gittensory-orb";
 
 // Curated, contribution-relevant MCP tools surfaced to agents/devs who discover gittensor via metagraphed.
 // Names mirror src/mcp/server.ts registrations; the list is intentionally a miner-facing subset (not all 33).
@@ -51,7 +56,7 @@ export type SubnetInterfaceDescriptor = {
  * metagraphed (and any agent) can route discovery → contribution (#695). Pure product metadata (URLs, tool
  * names) — no private/reward/score wording, so it never needs sanitization. Public + unauthenticated.
  */
-export function buildSubnetInterfaceDescriptor(args: { origin: string; generatedAt: string; appSlug: string; upstreamRepo?: string | undefined }): SubnetInterfaceDescriptor {
+export function buildSubnetInterfaceDescriptor(args: { origin: string; generatedAt: string; upstreamRepo?: string | undefined }): SubnetInterfaceDescriptor {
   const origin = args.origin.replace(/\/+$/, "");
   return {
     schemaVersion: SUBNET_INTERFACE_SCHEMA_VERSION,
@@ -80,8 +85,8 @@ export function buildSubnetInterfaceDescriptor(args: { origin: string; generated
       },
       githubApp: {
         kind: "github_app",
-        slug: args.appSlug,
-        installUrl: `https://github.com/apps/${args.appSlug}`,
+        slug: PUBLIC_GITHUB_APP_SLUG,
+        installUrl: `https://github.com/apps/${PUBLIC_GITHUB_APP_SLUG}`,
       },
     },
     onboarding: {

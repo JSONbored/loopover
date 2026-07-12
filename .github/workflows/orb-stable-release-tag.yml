@@ -27,12 +27,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout
+      - name: Checkout the merged release PR commit
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify checkout is the merged release PR commit
+        env:
+          MERGE_COMMIT_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          set -euo pipefail
+          checkout_sha="$(git rev-parse HEAD)"
+          if [ "$checkout_sha" != "$MERGE_COMMIT_SHA" ]; then
+            echo "::error::Checked out $checkout_sha, expected merged release PR commit $MERGE_COMMIT_SHA."
+            exit 1
+          fi
 
       - name: Read the released version
         id: version

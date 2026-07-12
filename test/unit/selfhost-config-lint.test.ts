@@ -72,6 +72,19 @@ reviewRecap:
     expect(result.recognizedFields).toEqual(["repoDocGeneration"]);
   });
 
+  it("REGRESSION: recognizes a standalone experimental: block instead of flagging it as unknown (#5281)", () => {
+    // experimental is a fully real, actively-parsed top-level manifest field (#5030, the gittensor subnet
+    // plugin) that was missing from this linter's TOP_LEVEL_FIELDS allowlist -- #5030 touched
+    // focus-manifest.ts/index.ts/env.d.ts/gittensor-wire.ts/focus-manifest-loader.ts and the example YAML, but
+    // not this file, so a self-host operator using it got a false "unknown top-level field" warning even
+    // though the field works correctly. Confirmed live: all 3 production self-host repo configs declare it.
+    const result = lintManifestText("experimental:\n  gittensor: true\n");
+
+    expect(result.ok).toBe(true);
+    expect(result.warnings).toEqual([]);
+    expect(result.recognizedFields).toEqual(["experimental"]);
+  });
+
   it("recognizes a standalone reviewRecap: block instead of flagging it as unknown (#1963)", () => {
     const result = lintManifestText("reviewRecap:\n  enabled: true\n  cadenceDays: 14\n");
 

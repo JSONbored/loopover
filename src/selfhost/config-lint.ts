@@ -14,6 +14,7 @@ const TOP_LEVEL_FIELDS = [
   "settings",
   "review",
   "features",
+  "experimental",
   "contentLane",
   "repoDocGeneration",
   "reviewRecap",

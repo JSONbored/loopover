@@ -11,18 +11,17 @@ Putting a real secret's *value* directly in `.env` means it's readable via `dock
 Mounting it as a **file** instead keeps the value out of both — the container only ever sees a
 path, and the app reads the file's contents itself at startup.
 
-**Tradeoff, stated plainly:** these files are `chmod 644` (world-readable on the host), not `600`.
-Standalone Docker Compose's `secrets:` is a plain bind mount under the hood — it cannot remap
-in-container ownership the way Swarm secrets can, and the container reads the file as its own uid
-(the image's `node` user), which is essentially never the uid of whoever deployed it. `600` would
-just make the file unreadable to the app itself (confirmed against a real deploy — this is exactly
-what happened the first time this shipped: every secret read failed with
-`selfhost_secret_file_unreadable`). `644` is the minimum that works without requiring your host to
-have a matching uid/group. In exchange you get: not visible via `docker inspect` / `docker compose
-config` / a full container env dump, at the cost of: readable by any OTHER local user with a shell
-on this host, not just the deploying account — a genuinely wider bar than `.env` itself (typically
-`600`, owner-only). If that tradeoff is unacceptable for your threat model (a shared/multi-tenant
-host), keep using inline `.env` values instead — this feature is entirely optional, see below.
+Use owner-only placeholder files by default, then install populated secret files with ownership
+that matches the container user (`1000:1000` for the published image) and a non-world-readable
+mode such as `0400`. Standalone Docker Compose's `secrets:` is a plain bind mount under the
+hood — it cannot remap in-container ownership the way Swarm secrets can, and the container
+reads the file as its own uid (the image's `node` user). That means an owner-only file owned by
+the deploying host account is unreadable to the app, but making the same file `0644` would expose
+the real secret to every local host user that can traverse the checkout. Prefer setting the file's
+numeric owner for the container user instead of widening host permissions.
+
+If you cannot change file ownership on the host, keep using inline `.env` values instead of
+secret files on shared or multi-user machines. This feature is entirely optional, see below.
 
 ## How it works
 
@@ -37,20 +36,25 @@ migrate one secret at a time, or never migrate at all.
 To use a secret file instead of an inline `.env` value:
 
 1. Remove (or leave commented) the plain `<NAME>=...` line in `.env`.
-2. Write the raw secret value into the matching file below, with no surrounding quotes and no
-   trailing newline requirement (the loader trims whitespace):
+2. Install the raw secret value into the matching file with container-readable ownership and
+   owner-only permissions. The loader trims surrounding whitespace, so a trailing newline is OK:
    ```sh
-   printf '%s' 'your-real-secret-value' > secrets/github_webhook_secret.txt
+   tmp=$(mktemp)
+   printf '%s' 'your-real-secret-value' > "$tmp"
+   sudo install -o 1000 -g 1000 -m 0400 "$tmp" secrets/github_webhook_secret.txt
+   rm -f "$tmp"
    ```
-   For the GitHub App private key specifically, write the full PEM file as-is:
+   For the GitHub App private key specifically, install the full PEM file as-is:
    ```sh
-   cp /path/to/your-downloaded-key.pem secrets/github_app_private_key.pem
+   sudo install -o 1000 -g 1000 -m 0400 /path/to/your-downloaded-key.pem secrets/github_app_private_key.pem
    ```
 3. Restart the `gittensory` service (`docker compose up -d --no-deps gittensory`, or run
    `./scripts/selfhost-update.sh`).
 
-Leave each file at the `644` the init script (`scripts/selfhost-init-secrets.sh`) sets by default —
-see the tradeoff explained above for why `600` breaks the app's own ability to read it back.
+Do not populate these files with `>` redirection or plain `cp` into an existing placeholder: those
+patterns preserve the placeholder's host ownership/mode, which either makes the file unreadable to
+the container or tempts `0644` world-readable secrets. Keep populated files non-world-readable and
+owned by the container uid/gid (`1000:1000`) unless you build the image with a different user.
 
 ## Files
 
@@ -77,7 +81,7 @@ of those too; add a matching `secrets:` entry in `docker-compose.yml` (or a
 ## Never commit real files here
 
 Everything in this directory except this README is gitignored. `scripts/selfhost-init-secrets.sh`
-only ever creates **empty** placeholder files (so `docker compose build`/`up` never fails on a
+only ever creates **empty**, owner-only placeholder files (so `docker compose build`/`up` never fails on a
 missing file) and only ever touches the *permissions* of a file that is still empty, never its
 content — the moment you write a real value into one, both the content and whatever mode you set
 are left alone on every future run. Always safe to re-run.

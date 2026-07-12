@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FINDING_CATEGORIES } from "../../src/review/finding-category-classify";
-import { parseInlineFindingCategory } from "../../src/review/inline-finding-category-parse";
+import { parseInlineFindingCategory } from "../../src/review/inline-finding-category-parse-mvtest";
 
 describe("inline-finding-category-parse", () => {
   it("keeps every fixed enum literal verbatim", () => {

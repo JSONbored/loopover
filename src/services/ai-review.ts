@@ -34,7 +34,7 @@ import type { ReviewProfile } from "../signals/focus-manifest";
 import { isCodeFile } from "../signals/local-branch";
 import { isTestPath } from "../signals/test-evidence";
 import { type FindingCategory } from "../review/finding-category-classify";
-import { parseInlineFindingCategory } from "../review/inline-finding-category-parse";
+import { parseInlineFindingCategory } from "../review/inline-finding-category-parse-mvtest";
 import type { AiContentBlock, CombineStrategy, OnMerge } from "../types";
 
 /**

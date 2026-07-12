@@ -1446,3 +1446,5 @@ export function resolveAiReviewerPlan(
 export function withAdvisoryAiEnv(env: Env, useAdvisory: boolean): Env {
   return useAdvisory && env.AI_ADVISORY ? { ...env, AI: env.AI_ADVISORY } : env;
 }
+
+export const __selfHostAiInternals = { buildAiUsage };

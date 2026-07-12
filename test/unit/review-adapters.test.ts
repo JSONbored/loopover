@@ -221,4 +221,22 @@ describe("reviewInferenceAdapter: delegates to env.AI", () => {
     }>();
     expect(row).toMatchObject({ feature: "embeddings", model: "@cf/baai/bge-m3", status: "error", detail: "embed_provider_unreachable" });
   });
+
+  it("records a failed embedding call with the literal fallback detail when the provider throws a non-Error value", async () => {
+    const ai = {
+      run: vi.fn(async () => {
+        throw "not an Error instance";
+      }),
+    };
+    const env = createTestEnv({ AI: ai as unknown as Ai });
+    const adapter = reviewInferenceAdapter(env, ai as unknown as Ai);
+    await expect(adapter.run("@cf/baai/bge-m3", { text: ["hello"] })).rejects.toBe("not an Error instance");
+    const row = await env.DB.prepare("select feature, model, status, detail from ai_usage_events order by rowid desc limit 1").first<{
+      feature: string;
+      model: string;
+      status: string;
+      detail: string | null;
+    }>();
+    expect(row).toMatchObject({ feature: "embeddings", model: "@cf/baai/bge-m3", status: "error", detail: "embedding_failed" });
+  });
 });

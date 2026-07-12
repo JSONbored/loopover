@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveClaudeFirstOutputTimeoutMs, resolveCodexAuthPath, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveCodexFirstOutputTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, subscriptionCliEnv, withAdvisoryAiEnv } from "../../src/selfhost/ai";
+import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveClaudeFirstOutputTimeoutMs, resolveCodexAuthPath, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveCodexFirstOutputTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, subscriptionCliEnv, withAdvisoryAiEnv, __selfHostAiInternals } from "../../src/selfhost/ai";
 import { labelSelfHostReviewerModel, labelSelfHostReviewerModels } from "../../src/selfhost/ai-config";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 
@@ -213,6 +213,14 @@ describe("createOpenAiCompatibleAi (#979)", () => {
     ));
     const out = await createOpenAiCompatibleAi({ baseUrl: "http://o/v1", embedModel: "bge-m3" }).run("m", { text: ["hello"] });
     expect(out).toEqual({ data: [[0.1]], usage: { model: "bge-m3", inputTokens: 7, totalTokens: 7 } });
+  });
+
+  it("buildAiUsage omits every undefined field and includes every defined one (direct unit test — costUsd/effort/an-undefined-model are never both exercised through the 3 real call sites)", () => {
+    const { buildAiUsage } = __selfHostAiInternals;
+    expect(buildAiUsage({})).toEqual({});
+    expect(
+      buildAiUsage({ provider: "ollama", model: "m", inputTokens: 1, outputTokens: 2, totalTokens: 3, costUsd: 0.5, effort: "medium" }),
+    ).toEqual({ provider: "ollama", model: "m", inputTokens: 1, outputTokens: 2, totalTokens: 3, costUsd: 0.5, effort: "medium" });
   });
 
   it("throws on a non-OK embeddings response, including the response body detail (#4996: previously thrown away)", async () => {

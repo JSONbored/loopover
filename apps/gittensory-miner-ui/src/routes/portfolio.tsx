@@ -2,6 +2,14 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
 import { Card, CardContent, CardHeader } from "@jsonbored/gittensory-ui-kit/components/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@jsonbored/gittensory-ui-kit/components/table";
 
 import { fetchPortfolioQueue, type PortfolioQueueResult, type QueueStatus } from "../lib/portfolio-queue";
 
@@ -9,8 +17,11 @@ export const Route = createFileRoute("/portfolio")({
   component: PortfolioPage,
 });
 
-// Portfolio/queue summary cards (#4306): read-only counts by status over the local `miner_portfolio_queue`
-// store. Same 4-state pattern as the run-history view (loading / error / fresh-install empty / populated).
+// Portfolio/queue summary cards + per-repo table (#4306, reunified with the CLI's own richer `queue dashboard`
+// by #4846): read-only counts by status over the local `miner_portfolio_queue` store, now broken out per repo
+// exactly as `gittensory-miner queue dashboard` already shows -- the miner-ui no longer maintains a narrower,
+// global-only aggregation. Same 4-state pattern as the run-history view (loading / error / fresh-install empty
+// / populated).
 
 const STATUS_LABELS: Record<QueueStatus, string> = {
   queued: "Queued",
@@ -46,18 +57,42 @@ export function PortfolioQueueView({ result }: { result: PortfolioQueueResult | 
     );
   }
   return (
-    <dl className="grid gap-4 sm:grid-cols-3">
-      {(Object.keys(STATUS_LABELS) as QueueStatus[]).map((status) => (
-        <Card key={status}>
-          <CardContent className="p-4">
-            <dt className="text-token-2xs uppercase tracking-wider text-muted-foreground">{STATUS_LABELS[status]}</dt>
-            <dd className={`mt-1 text-token-3xl font-display font-semibold ${STATUS_TONE[status]}`}>
-              {summary.counts[status]}
-            </dd>
-          </CardContent>
-        </Card>
-      ))}
-    </dl>
+    <div className="grid gap-6">
+      <dl className="grid gap-4 sm:grid-cols-3">
+        {(Object.keys(STATUS_LABELS) as QueueStatus[]).map((status) => (
+          <Card key={status}>
+            <CardContent className="p-4">
+              <dt className="text-token-2xs uppercase tracking-wider text-muted-foreground">{STATUS_LABELS[status]}</dt>
+              <dd className={`mt-1 text-token-3xl font-display font-semibold ${STATUS_TONE[status]}`}>
+                {summary.byStatus[status]}
+              </dd>
+            </CardContent>
+          </Card>
+        ))}
+      </dl>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Repository</TableHead>
+            <TableHead>Queued</TableHead>
+            <TableHead>In progress</TableHead>
+            <TableHead>Done</TableHead>
+            <TableHead>Total</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {summary.repos.map((repo) => (
+            <TableRow key={repo.repoFullName}>
+              <TableCell className="font-mono text-foreground">{repo.repoFullName}</TableCell>
+              <TableCell>{repo.byStatus.queued}</TableCell>
+              <TableCell>{repo.byStatus.in_progress}</TableCell>
+              <TableCell>{repo.byStatus.done}</TableCell>
+              <TableCell>{repo.total}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 

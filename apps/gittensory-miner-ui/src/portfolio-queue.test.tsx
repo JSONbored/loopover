@@ -5,15 +5,20 @@ import {
   emptyPortfolioQueueSummary,
   fetchPortfolioQueue,
   PORTFOLIO_QUEUE_API_PATH,
-  summarizePortfolioQueueStatuses,
   type PortfolioQueueResult,
+  type PortfolioQueueSummary,
 } from "./lib/portfolio-queue";
 import { PortfolioPage, PortfolioQueueView } from "./routes/portfolio";
 import { handlePortfolioQueueRequest, type PortfolioQueueApiDeps } from "../vite-portfolio-queue-api";
 
-const fixtureSummary = {
+const fixtureSummary: PortfolioQueueSummary = {
   total: 4,
-  counts: { queued: 2, in_progress: 1, done: 1 },
+  byStatus: { queued: 2, in_progress: 1, done: 1 },
+  repos: [
+    { repoFullName: "acme/another-repo", byStatus: { queued: 1, in_progress: 0, done: 1 }, total: 2 },
+    { repoFullName: "acme/secret-repo", byStatus: { queued: 1, in_progress: 1, done: 0 }, total: 2 },
+  ],
+  oldestQueuedAgeMs: 5_400_000,
 };
 
 const rawQueueRows = [
@@ -47,30 +52,39 @@ const rawQueueRows = [
   },
 ];
 
-describe("summarizePortfolioQueueStatuses (#4306)", () => {
-  it("counts queue statuses without retaining row identifiers", () => {
-    expect(summarizePortfolioQueueStatuses(["queued", "in_progress", "done", "queued"])).toEqual(fixtureSummary);
-  });
-
-  it("summarizes an empty queue to zeros", () => {
+describe("emptyPortfolioQueueSummary (#4306)", () => {
+  it("summarizes an empty queue to zeros with no repos", () => {
     expect(emptyPortfolioQueueSummary()).toEqual({
       total: 0,
-      counts: { queued: 0, in_progress: 0, done: 0 },
+      byStatus: { queued: 0, in_progress: 0, done: 0 },
+      repos: [],
+      oldestQueuedAgeMs: null,
     });
   });
 });
 
-describe("PortfolioQueueView (#4306)", () => {
-  it("renders one card per status with the aggregated counts", () => {
+describe("PortfolioQueueView (#4306, per-repo detail added by #4846)", () => {
+  it("renders one card per status with the aggregated global counts", () => {
     render(<PortfolioQueueView result={{ ok: true, summary: fixtureSummary }} />);
-    expect(screen.getByText("Queued").nextSibling?.textContent).toBe("2");
-    expect(screen.getByText("In progress").nextSibling?.textContent).toBe("1");
-    expect(screen.getByText("Done").nextSibling?.textContent).toBe("1");
+    // Scoped to <dt> since the per-repo table below also has "Queued"/"In progress"/"Done" column headers.
+    expect(screen.getByText("Queued", { selector: "dt" }).nextSibling?.textContent).toBe("2");
+    expect(screen.getByText("In progress", { selector: "dt" }).nextSibling?.textContent).toBe("1");
+    expect(screen.getByText("Done", { selector: "dt" }).nextSibling?.textContent).toBe("1");
+  });
+
+  it("renders one table row per repo with its own status breakdown and total", () => {
+    render(<PortfolioQueueView result={{ ok: true, summary: fixtureSummary }} />);
+    expect(screen.getByRole("columnheader", { name: "Repository" })).toBeTruthy();
+    expect(screen.getByText("acme/another-repo")).toBeTruthy();
+    expect(screen.getByText("acme/secret-repo")).toBeTruthy();
+    // header + 2 repo rows
+    expect(screen.getAllByRole("row")).toHaveLength(3);
   });
 
   it("renders the fresh-install empty state without erroring", () => {
     render(<PortfolioQueueView result={{ ok: true, summary: emptyPortfolioQueueSummary() }} />);
     expect(screen.getByText(/No queued work yet/i)).toBeTruthy();
+    expect(screen.queryByRole("table")).toBeNull();
   });
 
   it("renders an error message when the local API is unreachable", () => {
@@ -89,7 +103,7 @@ describe("PortfolioPage (#4306)", () => {
     const loadPortfolioQueue = async (): Promise<PortfolioQueueResult> => ({ ok: true, summary: fixtureSummary });
     render(<PortfolioPage loadPortfolioQueue={loadPortfolioQueue} />);
     expect(screen.getByRole("heading", { name: "Portfolio queue" })).toBeTruthy();
-    await waitFor(() => expect(screen.getByText("Queued").nextSibling?.textContent).toBe("2"));
+    await waitFor(() => expect(screen.getByText("Queued", { selector: "dt" }).nextSibling?.textContent).toBe("2"));
   });
 });
 
@@ -116,7 +130,19 @@ describe("fetchPortfolioQueue (#4306)", () => {
       ok: false,
     });
     expect(
-      await fetchPortfolioQueue(async () => jsonResponse(200, { summary: { total: 1, counts: { queued: "1" } } })),
+      await fetchPortfolioQueue(async () => jsonResponse(200, { summary: { total: 1, byStatus: { queued: "1" } } })),
+    ).toMatchObject({ ok: false });
+    expect(
+      await fetchPortfolioQueue(async () =>
+        jsonResponse(200, {
+          summary: {
+            total: 1,
+            byStatus: { queued: 1, in_progress: 0, done: 0 },
+            repos: "nope",
+            oldestQueuedAgeMs: null,
+          },
+        }),
+      ),
     ).toMatchObject({ ok: false });
     expect(
       await fetchPortfolioQueue(async () => {
@@ -126,23 +152,88 @@ describe("fetchPortfolioQueue (#4306)", () => {
   });
 });
 
-describe("handlePortfolioQueueRequest (#4306)", () => {
+// Test-local re-implementation of collectPortfolioDashboard's aggregation, used only as the fake behind
+// loadPortfolioDashboardModule below. The API handler tests here exercise WIRING (does the handler call
+// listQueue and pass the right sources/nowMs into the dashboard aggregator, and does it serialize whatever
+// comes back without leaking raw rows) -- the aggregation algorithm's own correctness (sorting, per-repo
+// grouping, oldest-queued-age math, edge cases) is exhaustively covered by
+// test/unit/miner-portfolio-dashboard.test.ts. The real portfolio-dashboard.js module cannot be imported
+// directly here: it transitively pulls in `node:sqlite` via portfolio-queue.js, which this app's Vite
+// client/test environment cannot bundle (the same reason the real handler loads it dynamically).
+function fakeCollectPortfolioDashboard(
+  sources: { portfolioQueue: { listQueue: () => Array<{ repoFullName: string; status: string; enqueuedAt: string }> } },
+  options: { nowMs: number },
+): PortfolioQueueSummary {
+  const byStatus = { queued: 0, in_progress: 0, done: 0 };
+  const perRepo = new Map<string, { repoFullName: string; byStatus: typeof byStatus; total: number }>();
+  let total = 0;
+  let oldestQueuedMs: number | null = null;
+  for (const entry of sources.portfolioQueue.listQueue()) {
+    const status = entry.status as "queued" | "in_progress" | "done";
+    total += 1;
+    byStatus[status] += 1;
+    let repo = perRepo.get(entry.repoFullName);
+    if (!repo) {
+      repo = { repoFullName: entry.repoFullName, byStatus: { queued: 0, in_progress: 0, done: 0 }, total: 0 };
+      perRepo.set(entry.repoFullName, repo);
+    }
+    repo.byStatus[status] += 1;
+    repo.total += 1;
+    if (status === "queued") {
+      const ms = Date.parse(entry.enqueuedAt);
+      if (oldestQueuedMs === null || ms < oldestQueuedMs) oldestQueuedMs = ms;
+    }
+  }
+  const repos = [...perRepo.values()].sort((a, b) => a.repoFullName.localeCompare(b.repoFullName));
+  return {
+    total,
+    byStatus,
+    repos,
+    oldestQueuedAgeMs: oldestQueuedMs === null ? null : options.nowMs - oldestQueuedMs,
+  };
+}
+
+describe("handlePortfolioQueueRequest (#4306, reunified with the CLI's queue dashboard by #4846)", () => {
   const rows = rawQueueRows;
+  const NOW_MS = Date.parse("2026-07-10T07:00:00.000Z");
+
   function deps(overrides: Partial<PortfolioQueueApiDeps> = {}): PortfolioQueueApiDeps {
     return {
       loadPortfolioQueueModule: async () => ({
         resolvePortfolioQueueDbPath: () => "/home/miner/.config/gittensory-miner/portfolio-queue.sqlite3",
         listQueue: () => rows,
       }),
+      loadPortfolioDashboardModule: async () => ({ collectPortfolioDashboard: fakeCollectPortfolioDashboard }),
       fileExists: () => true,
+      now: () => NOW_MS,
       ...overrides,
     };
   }
 
-  it("serves only aggregate counts and omits raw queue metadata", async () => {
+  it("serves the same per-repo dashboard shape the CLI's queue dashboard computes, with repo names but no raw identifiers or priorities", async () => {
     const handled = await handlePortfolioQueueRequest("GET", "/api/portfolio-queue", deps());
-    expect(handled).toEqual({ status: 200, body: JSON.stringify({ summary: fixtureSummary }) });
-    expect(handled?.body).not.toContain("private-org/secret-repo");
+    expect(handled?.status).toBe(200);
+    const body = JSON.parse(handled?.body ?? "{}") as { summary: PortfolioQueueSummary };
+    expect(body.summary).toEqual({
+      total: 4,
+      byStatus: { queued: 2, in_progress: 1, done: 1 },
+      repos: [
+        {
+          repoFullName: "private-org/another-repo",
+          byStatus: { queued: 1, in_progress: 0, done: 1 },
+          total: 2,
+        },
+        {
+          repoFullName: "private-org/secret-repo",
+          byStatus: { queued: 1, in_progress: 1, done: 0 },
+          total: 2,
+        },
+      ],
+      oldestQueuedAgeMs: 5_400_000,
+    });
+    // Repo names ARE exposed (matching the CLI's own dashboard, which already prints them locally), but
+    // per-item identifiers and rank-derived priorities never cross the wire.
+    expect(handled?.body).toContain("private-org/secret-repo");
     expect(handled?.body).not.toContain("issue:12");
     expect(handled?.body).not.toContain("priority");
   });
@@ -183,5 +274,20 @@ describe("handlePortfolioQueueRequest (#4306)", () => {
       }),
     );
     expect(handled).toEqual({ status: 500, body: JSON.stringify({ error: "sqlite locked" }) });
+  });
+
+  it("returns null oldestQueuedAgeMs when nothing is queued (only in_progress/done items present)", async () => {
+    const handled = await handlePortfolioQueueRequest(
+      "GET",
+      "/api/portfolio-queue",
+      deps({
+        loadPortfolioQueueModule: async () => ({
+          resolvePortfolioQueueDbPath: () => "/home/miner/.config/gittensory-miner/portfolio-queue.sqlite3",
+          listQueue: () => [rows[1]!, rows[2]!], // in_progress + done only, no queued row
+        }),
+      }),
+    );
+    const body = JSON.parse(handled?.body ?? "{}") as { summary: PortfolioQueueSummary };
+    expect(body.summary.oldestQueuedAgeMs).toBeNull();
   });
 });

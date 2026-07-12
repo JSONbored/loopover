@@ -4,53 +4,57 @@ import type { Plugin } from "vite";
 // Local read-only portfolio-queue API (#4306) — the sibling of `vite-run-state-api.ts` (#4305), same shape for
 // the same reason: the dashboard is a browser app while the queue store is a `node:sqlite` file on disk, so the
 // dev server bridges the two by calling into `packages/gittensory-miner/lib/portfolio-queue.js`'s EXISTING
-// exports (`resolvePortfolioQueueDbPath`/`listQueue`). It aggregates server-side so the HTTP surface never
-// republishes raw queue identifiers or rank-derived priorities.
+// exports (`resolvePortfolioQueueDbPath`/`listQueue`).
+//
+// Reunified with the CLI's own richer dashboard (#4846): the aggregation is now
+// `packages/gittensory-miner/lib/portfolio-dashboard.js`'s `collectPortfolioDashboard` -- the SAME pure
+// aggregator `gittensory-miner queue dashboard` and the read-only MCP tool already use -- instead of a
+// narrower global-only re-implementation, so the miner-ui and the CLI share one data path. It still aggregates
+// server-side so the HTTP surface never republishes raw queue identifiers or rank-derived priorities; only
+// status counts, grouped globally and per repo, cross the wire.
 //
 // Same read-only fresh-install rule as the run-state endpoint: `listQueue()` lazily initializes the default
 // store, which would CREATE the SQLite file — so the handler probes the resolved DB path first and serves an
 // empty summary without ever touching the store when no DB exists yet.
 
+import type { PortfolioDashboardSummary } from "../../packages/gittensory-miner/lib/portfolio-dashboard.js";
+
 type PortfolioQueueModule = {
   resolvePortfolioQueueDbPath: () => string;
-  listQueue: () => Array<{ status: string }>;
+  listQueue: (repoFullName?: string | null) => Array<{ repoFullName: string; status: string; enqueuedAt: string }>;
+};
+
+type PortfolioDashboardModule = {
+  collectPortfolioDashboard: (
+    sources: { portfolioQueue: { listQueue: PortfolioQueueModule["listQueue"] } },
+    options: { nowMs: number },
+  ) => PortfolioDashboardSummary;
 };
 
 export type PortfolioQueueApiDeps = {
   /** Import of `packages/gittensory-miner/lib/portfolio-queue.js` — injectable so tests never touch a real store. */
   loadPortfolioQueueModule: () => Promise<PortfolioQueueModule>;
+  /** Import of `packages/gittensory-miner/lib/portfolio-dashboard.js` — dynamic for the same reason as
+   *  `loadPortfolioQueueModule` (it transitively pulls in `node:sqlite` via portfolio-queue.js, which the UI's
+   *  client-side test/build environment cannot bundle) and injectable so tests never touch a real store. */
+  loadPortfolioDashboardModule: () => Promise<PortfolioDashboardModule>;
   /** File-existence probe for the fresh-install fast path. */
   fileExists: (path: string) => boolean;
+  /** Clock for `oldestQueuedAgeMs` — injectable so tests get deterministic ages. */
+  now: () => number;
 };
 
-type QueueStatus = "queued" | "in_progress" | "done";
-type QueueStatusCounts = Record<QueueStatus, number>;
-type PortfolioQueueSummary = { total: number; counts: QueueStatusCounts };
-
-const QUEUE_STATUSES = ["queued", "in_progress", "done"] as const;
-
-function emptyPortfolioQueueSummary(): PortfolioQueueSummary {
-  return { total: 0, counts: { queued: 0, in_progress: 0, done: 0 } };
-}
-
-function isQueueStatus(value: string): value is QueueStatus {
-  return (QUEUE_STATUSES as readonly string[]).includes(value);
-}
-
-function summarizePortfolioQueueRows(rows: Array<{ status: string }>): PortfolioQueueSummary {
-  const summary = emptyPortfolioQueueSummary();
-  for (const row of rows) {
-    if (!isQueueStatus(row.status)) continue;
-    summary.total += 1;
-    summary.counts[row.status] += 1;
-  }
-  return summary;
+function emptyPortfolioQueueSummary(): PortfolioDashboardSummary {
+  return { total: 0, byStatus: { queued: 0, in_progress: 0, done: 0 }, repos: [], oldestQueuedAgeMs: null };
 }
 
 const defaultDeps: PortfolioQueueApiDeps = {
   loadPortfolioQueueModule: () =>
     import("../../packages/gittensory-miner/lib/portfolio-queue.js") as Promise<PortfolioQueueModule>,
+  loadPortfolioDashboardModule: () =>
+    import("../../packages/gittensory-miner/lib/portfolio-dashboard.js") as Promise<PortfolioDashboardModule>,
   fileExists: existsSync,
+  now: () => Date.now(),
 };
 
 /** Request handler factored out of the Vite plugin shape so tests drive it directly (mirrors the run-state API). */
@@ -65,7 +69,12 @@ export async function handlePortfolioQueueRequest(
     if (!deps.fileExists(queue.resolvePortfolioQueueDbPath())) {
       return { status: 200, body: JSON.stringify({ summary: emptyPortfolioQueueSummary() }) };
     }
-    return { status: 200, body: JSON.stringify({ summary: summarizePortfolioQueueRows(queue.listQueue()) }) };
+    const { collectPortfolioDashboard } = await deps.loadPortfolioDashboardModule();
+    const summary = collectPortfolioDashboard(
+      { portfolioQueue: { listQueue: queue.listQueue } },
+      { nowMs: deps.now() },
+    );
+    return { status: 200, body: JSON.stringify({ summary }) };
   } catch (error) {
     const message = error instanceof Error ? error.message : "failed to read local portfolio queue";
     return { status: 500, body: JSON.stringify({ error: message }) };

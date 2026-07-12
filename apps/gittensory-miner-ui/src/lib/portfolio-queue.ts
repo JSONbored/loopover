@@ -1,5 +1,8 @@
-// Read-only client for the local portfolio-queue API (#4306). The view only needs summary cards, so the
-// middleware returns pre-aggregated counts and never republishes raw queue identifiers or priority metadata.
+// Read-only client for the local portfolio-queue API (#4306, richer per-repo detail added by #4846). The
+// middleware now serves the SAME per-repo dashboard shape the CLI's `queue dashboard` command computes
+// (packages/gittensory-miner/lib/portfolio-dashboard.js's collectPortfolioDashboard) instead of a narrower
+// global-only aggregate, so the miner-ui and the CLI share one data path rather than maintaining two. It still
+// never republishes raw queue identifiers or rank-derived priorities — only status counts, grouped by repo.
 
 export const PORTFOLIO_QUEUE_API_PATH = "/api/portfolio-queue";
 
@@ -9,9 +12,17 @@ export type QueueStatus = (typeof QUEUE_STATUSES)[number];
 
 export type QueueStatusCounts = Record<QueueStatus, number>;
 
+export type PortfolioRepoSummary = {
+  repoFullName: string;
+  byStatus: QueueStatusCounts;
+  total: number;
+};
+
 export type PortfolioQueueSummary = {
   total: number;
-  counts: QueueStatusCounts;
+  byStatus: QueueStatusCounts;
+  repos: PortfolioRepoSummary[];
+  oldestQueuedAgeMs: number | null;
 };
 
 export type PortfolioQueueResult = { ok: true; summary: PortfolioQueueSummary } | { ok: false; error: string };
@@ -22,25 +33,30 @@ function isQueueStatusCounts(value: unknown): value is QueueStatusCounts {
   return QUEUE_STATUSES.every((status) => typeof counts[status] === "number");
 }
 
+function isPortfolioRepoSummary(value: unknown): value is PortfolioRepoSummary {
+  if (typeof value !== "object" || value === null) return false;
+  const repo = value as Record<string, unknown>;
+  return typeof repo.repoFullName === "string" && isQueueStatusCounts(repo.byStatus) && typeof repo.total === "number";
+}
+
 function isPortfolioQueueSummary(value: unknown): value is PortfolioQueueSummary {
   if (typeof value !== "object" || value === null) return false;
   const summary = value as Record<string, unknown>;
-  return typeof summary.total === "number" && isQueueStatusCounts(summary.counts);
+  return (
+    typeof summary.total === "number" &&
+    isQueueStatusCounts(summary.byStatus) &&
+    Array.isArray(summary.repos) &&
+    summary.repos.every(isPortfolioRepoSummary) &&
+    (summary.oldestQueuedAgeMs === null || typeof summary.oldestQueuedAgeMs === "number")
+  );
 }
 
 export const emptyPortfolioQueueSummary = (): PortfolioQueueSummary => ({
   total: 0,
-  counts: { queued: 0, in_progress: 0, done: 0 },
+  byStatus: { queued: 0, in_progress: 0, done: 0 },
+  repos: [],
+  oldestQueuedAgeMs: null,
 });
-
-export function summarizePortfolioQueueStatuses(statuses: QueueStatus[]): PortfolioQueueSummary {
-  const summary = emptyPortfolioQueueSummary();
-  for (const status of statuses) {
-    summary.total += 1;
-    summary.counts[status] += 1;
-  }
-  return summary;
-}
 
 /** Fetch the local queue summary; failures surface as a typed error result the view renders, never a crash. */
 export async function fetchPortfolioQueue(fetchImpl: typeof fetch = fetch): Promise<PortfolioQueueResult> {

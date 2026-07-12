@@ -1131,9 +1131,14 @@ export type RepositorySettings = {
   skipAutomationBotAuthors?: "inherit" | "off" | "enabled" | undefined;
   /** Review-evasion protection (#review-evasion-protection): a contributor closing or converting their OWN
    *  PR to draft while gittensory has an ACTIVE review pass running against it is dodging the one-shot
-   *  review process. `"off"` (the default) disables detection entirely; `"close"` reopens (if needed) and
-   *  re-closes as the App -- a close the contributor cannot themselves reopen (#one-shot-reopen) -- applies
-   *  the configured label/comment, and records a `review_evasion` moderation strike. */
+   *  review process. The effective default is `"close"` as of #4011 (see `normalizeReviewEvasionProtection`
+   *  in `db/repositories.ts`) -- `"off"` is now an explicit opt-out, not the default. `"close"` reopens (if
+   *  needed) and re-closes as the App -- a close the contributor cannot themselves reopen (#one-shot-reopen)
+   *  -- applies the configured label/comment, and records a `review_evasion` moderation strike. Note:
+   *  `"off"` only suppresses this ENFORCEMENT -- the ready&harr;draft cycling COUNTER (`processors.ts`'s
+   *  `converted_to_draft` handler, `bumpPullRequestDraftConversionCount`) keeps incrementing regardless, so a
+   *  repo re-enabling `"close"` (or removing an `"off"` override, which now also resolves to `"close"`) can
+   *  immediately treat a historical off-period cycle as "repeated" on the very next legitimate conversion. */
   reviewEvasionProtection?: "off" | "close" | undefined;
   /** Merge-train FIFO gate (#selfhost-merge-train): without this, a PR merges the instant its OWN gate
    *  clears, with zero awareness of an older sibling PR still open in the same repo -- proven live to cause

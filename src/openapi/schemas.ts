@@ -833,7 +833,12 @@ export const RepositorySettingsSchema = z
     moderationWarningLabel: z.string().optional(),
     moderationBannedLabel: z.string().optional(),
     skipAutomationBotAuthors: z.enum(["inherit", "off", "enabled"]).optional(),
-    reviewEvasionProtection: z.enum(["off", "close"]).optional(),
+    reviewEvasionProtection: z
+      .enum(["off", "close"])
+      .optional()
+      .describe(
+        "Effective default is \"close\" as of #4011 -- \"off\" is an explicit opt-out, not the default. \"off\" only suppresses the enforcement close; the ready<->draft cycling counter keeps incrementing regardless, so re-enabling can immediately treat a historical off-period cycle as \"repeated.\"",
+      ),
     reviewEvasionLabel: z.string().nullable().optional(),
     reviewEvasionComment: z.boolean().optional(),
     mergeTrainMode: z.enum(["off", "audit", "enforce"]).optional(),

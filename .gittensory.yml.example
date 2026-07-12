@@ -841,8 +841,11 @@ settings:
   # one-shot review process, not making an ordinary close. When enabled, gittensory reopens (if needed) and
   # re-closes the PR as the App -- a close the contributor cannot themselves reopen (#one-shot-reopen) --
   # posts an explanation comment, applies the configured label, and records a `review_evasion` moderation
-  # strike (subject to moderationRules above including it). Off by default.
-  # reviewEvasionProtection: off       # off | close. Default: off.
+  # strike (subject to moderationRules above including it). CLOSE BY DEFAULT as of #4011 -- "off" is an
+  # explicit opt-out, not the default. Note: "off" only suppresses the enforcement close -- the
+  # ready<->draft cycling counter keeps incrementing regardless, so re-enabling can immediately treat a
+  # historical off-period cycle as "repeated."
+  # reviewEvasionProtection: close     # off | close. Default: close.
   # reviewEvasionLabel: review-evasion # Label applied alongside the enforcement close. Gated on autonomy.close
   #                                     # (#label-scoping); set to explicit `null` to close without any label.
   #                                     # Default: review-evasion.

@@ -9568,7 +9568,8 @@
             "enum": [
               "off",
               "close"
-            ]
+            ],
+            "description": "Effective default is \"close\" as of #4011 -- \"off\" is an explicit opt-out, not the default. \"off\" only suppresses the enforcement close; the ready<->draft cycling counter keeps incrementing regardless, so re-enabling can immediately treat a historical off-period cycle as \"repeated.\""
           },
           "reviewEvasionLabel": {
             "type": "string",

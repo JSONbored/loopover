@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { runAttempt } from "../lib/attempt-cli.js";
 import { printHelp, printVersion, runCli } from "../lib/cli.js";
 import { runDenyCheck } from "../lib/deny-check.js";
 import { runDiscover } from "../lib/discover-cli.js";
@@ -117,6 +118,12 @@ if (cliArgs[0] === "manage" && cliArgs[1] === "poll") {
 
 if (cliArgs[0] === "discover") {
   const exitCode = await runDiscover(cliArgs.slice(1));
+  await awaitOpportunisticUpdateCheck(updateCheck);
+  process.exit(exitCode);
+}
+
+if (cliArgs[0] === "attempt") {
+  const exitCode = await runAttempt(cliArgs.slice(1));
   await awaitOpportunisticUpdateCheck(updateCheck);
   process.exit(exitCode);
 }

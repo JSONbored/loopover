@@ -21,6 +21,7 @@ export function printHelp(input) {
       "  gittensory-miner manage poll <owner/repo> <pr#> [--branch <name>] [--json]",
       "  gittensory-miner discover <owner/repo> [<owner/repo>...] [--json]",
       "  gittensory-miner discover --search <query> [--json]           Fan out, rank, and enqueue candidates",
+      "  gittensory-miner attempt <owner/repo> <issue#> --miner-login <login> [--base <branch>] [--live] [--json]",
       "  gittensory-miner queue list [--repo <owner/repo>] [--json]    List portfolio backlog rows",
       "  gittensory-miner queue next [--json]                          Claim the highest-priority queued item",
       "  gittensory-miner queue done <owner/repo> <identifier> [--json]",

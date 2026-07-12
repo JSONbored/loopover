@@ -217,6 +217,7 @@ describe("runLoop (#5135)", () => {
     const pollPrDispositionSpy = vi.fn().mockResolvedValue({ state: "closed", merged: true, closedAt: "2026-07-12T00:00:00Z", attempts: 1 });
 
     const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--max-cycles", "2", "--json"], {
+      env: { GITHUB_TOKEN: "ghp_loop_test" },
       openGovernorState: () => governorState,
       initEventLedger: () => eventLedger,
       initGovernorLedger: () => governorLedger,
@@ -233,7 +234,10 @@ describe("runLoop (#5135)", () => {
     const [attemptArgv] = runAttemptSpy.mock.calls[0]!;
     expect(attemptArgv).toEqual(["acme/widgets", "7", "--miner-login", "alice", "--base", "main"]);
 
-    expect(pollPrDispositionSpy).toHaveBeenCalledWith("acme/widgets", 123, expect.anything());
+    // REGRESSION: the real githubToken (resolved from env.GITHUB_TOKEN, same as runDiscover's own call) must
+    // reach the poller -- an unauthenticated poll would silently hit GitHub's much lower rate limit or fail
+    // outright against a private repo.
+    expect(pollPrDispositionSpy).toHaveBeenCalledWith("acme/widgets", 123, expect.objectContaining({ githubToken: "ghp_loop_test" }));
 
     const after = reopenAfterRun(paths);
 

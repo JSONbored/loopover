@@ -238,10 +238,17 @@ export async function runLoop(args, options = {}) {
   const buildLoopClosureSummaryFn = options.buildLoopClosureSummary ?? buildLoopClosureSummary;
   const attemptLoopReentryFn = options.attemptLoopReentry ?? attemptLoopReentry;
 
+  // Resolved ONCE, at the CLI-entrypoint layer, mirroring manage-poll.js's own runManagePoll (its
+  // recordManagePollSnapshot callee has no env fallback of its own either -- the top-level CLI function is
+  // where `process.env.GITHUB_TOKEN` gets read, then threaded down explicitly to every real GitHub caller).
+  // pollPrDisposition (unlike runDiscover, which falls back to process.env.GITHUB_TOKEN internally) has NO
+  // such fallback -- an unresolved githubToken here would silently poll unauthenticated.
+  const githubToken = options.githubToken ?? env.GITHUB_TOKEN ?? "";
+
   async function runDiscoveryOnce() {
     await runDiscoverFn(discoverArgv(parsed), {
       initPortfolioQueue: () => portfolioQueue,
-      githubToken: options.githubToken,
+      githubToken,
       apiBaseUrl: options.apiBaseUrl,
       nowMs: nowMsFn(),
     });
@@ -377,7 +384,11 @@ export async function runLoop(args, options = {}) {
       if (submitted) {
         prNumber = parsePrNumberFromExecResult(lastResult?.execResult, claimed.repoFullName);
         if (prNumber !== null) {
-          prDisposition = await pollPrDispositionFn(claimed.repoFullName, prNumber, options.prDispositionOptions ?? {});
+          prDisposition = await pollPrDispositionFn(claimed.repoFullName, prNumber, {
+            githubToken,
+            apiBaseUrl: options.apiBaseUrl,
+            ...(options.prDispositionOptions ?? {}),
+          });
           if (prDisposition.state === "closed") {
             recordPrOutcomeSnapshotFn(
               {

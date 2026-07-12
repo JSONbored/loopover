@@ -261,6 +261,116 @@ describe("runLoop (#5135)", () => {
     expect(printed.cycles[0]).toMatchObject({ outcome: "attempted", attemptOutcome: "attempt_submitted", reentryOutcome: "merged", prNumber: 123 });
   });
 
+  it("REGRESSION: halts re-entry while a submitted PR is still unresolved", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState, paths } = tempStores();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:7" });
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:8" });
+    const runDiscoverSpy = vi.fn().mockResolvedValue(0);
+    const runAttemptSpy = vi.fn(async (_args: string[], options?: Record<string, unknown>) => {
+      (options?.onResult as ((result: unknown) => void) | undefined)?.({
+        outcome: "attempt_submitted",
+        repoFullName: "acme/widgets",
+        issueNumber: 7,
+        minerLogin: "alice",
+        base: "main",
+        mode: "dry_run",
+        attemptId: "loop-attempt-open-pr",
+        submissionMode: "observe",
+        totalTurnsUsed: 2,
+        iterationsUsed: 1,
+        execResult: { action: "open_pr", stdout: "https://github.com/acme/widgets/pull/321\n", stderr: "", code: 0, timedOut: false },
+      });
+      return 0;
+    });
+    const pollPrDispositionSpy = vi.fn().mockResolvedValue({ state: "open", merged: false, closedAt: null, attempts: 1 });
+    const attemptLoopReentrySpy = vi.fn();
+
+    const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--max-cycles", "2", "--json"], {
+      openGovernorState: () => governorState,
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: runDiscoverSpy,
+      runAttempt: runAttemptSpy,
+      pollPrDisposition: pollPrDispositionSpy,
+      attemptLoopReentry: attemptLoopReentrySpy,
+      ...readyLoopOptions(),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(runAttemptSpy).toHaveBeenCalledTimes(1);
+    expect(pollPrDispositionSpy).toHaveBeenCalledWith("acme/widgets", 321, expect.any(Object));
+    expect(attemptLoopReentrySpy).not.toHaveBeenCalled();
+    expect(reopenAfterRun(paths).portfolioQueue.listQueue()).toEqual([
+      expect.objectContaining({ identifier: "issue:7", status: "done" }),
+      expect.objectContaining({ identifier: "issue:8", status: "queued" }),
+    ]);
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed).toMatchObject({
+      haltReason: "reentry_declined:submitted_pr_disposition_unresolved",
+      cycles: [
+        {
+          outcome: "attempted",
+          attemptOutcome: "attempt_submitted",
+          reentryOutcome: "other",
+          prNumber: 321,
+          reentered: false,
+          reasons: ["submitted_pr_disposition_unresolved"],
+        },
+      ],
+    });
+  });
+
+  it("halts re-entry when a submitted attempt does not expose a parseable PR number", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState } = tempStores();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const item = { repoFullName: "acme/widgets", identifier: "issue:12" };
+    const runDiscoverSpy = primeOnceDiscover(portfolioQueue, item);
+    const runAttemptSpy = vi.fn(async (_args: string[], options?: Record<string, unknown>) => {
+      (options?.onResult as ((result: unknown) => void) | undefined)?.({
+        outcome: "attempt_submitted",
+        repoFullName: "acme/widgets",
+        issueNumber: 12,
+        minerLogin: "alice",
+        base: "main",
+        mode: "dry_run",
+        attemptId: "loop-attempt-no-pr-number",
+        submissionMode: "observe",
+        totalTurnsUsed: 1,
+        iterationsUsed: 1,
+        execResult: { action: "open_pr", stdout: "submitted without link\n", stderr: "", code: 0, timedOut: false },
+      });
+      return 0;
+    });
+    const pollPrDispositionSpy = vi.fn();
+    const attemptLoopReentrySpy = vi.fn();
+
+    const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--max-cycles", "2", "--json"], {
+      openGovernorState: () => governorState,
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: runDiscoverSpy,
+      runAttempt: runAttemptSpy,
+      pollPrDisposition: pollPrDispositionSpy,
+      attemptLoopReentry: attemptLoopReentrySpy,
+      ...readyLoopOptions(),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(pollPrDispositionSpy).not.toHaveBeenCalled();
+    expect(attemptLoopReentrySpy).not.toHaveBeenCalled();
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed.cycles[0]).toMatchObject({
+      prNumber: null,
+      reentered: false,
+      reasons: ["submitted_pr_number_unresolved"],
+    });
+  });
+
   it("REGRESSION: a repeatedly-blocked (non-permanent) outcome requeues the item and eventually halts on real non-convergence, not forever", async () => {
     const { eventLedger, governorLedger, portfolioQueue, runState, governorState, paths } = tempStores();
     vi.spyOn(console, "log").mockImplementation(() => undefined);

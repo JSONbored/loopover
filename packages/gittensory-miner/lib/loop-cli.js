@@ -410,6 +410,23 @@ export async function runLoop(args, options = {}) {
       );
       sinceSeq = loopSummary.lastSeq;
 
+      if (submitted && prDisposition?.state !== "closed") {
+        const reason = prNumber === null ? "submitted_pr_number_unresolved" : "submitted_pr_disposition_unresolved";
+        cycles.push({
+          cycle: cycleIndex,
+          outcome: "attempted",
+          repoFullName: claimed.repoFullName,
+          identifier: claimed.identifier,
+          attemptOutcome,
+          reentryOutcome,
+          prNumber,
+          reentered: false,
+          reasons: [reason],
+        });
+        haltReason = `reentry_declined:${reason}`;
+        break;
+      }
+
       const reentry = attemptLoopReentryFn(
         { killSwitchScope: killSwitch.scope, repoFullName: claimed.repoFullName, outcome: reentryOutcome },
         { eventLedger, portfolioQueue, runState, nowMs: nowMsFn(), sessionStartMs, loopSummary },

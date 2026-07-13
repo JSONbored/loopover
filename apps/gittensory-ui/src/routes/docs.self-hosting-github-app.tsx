@@ -217,7 +217,7 @@ GITHUB_WEBHOOK_SECRET=<same-secret-configured-on-the-app>`}
       <CodeBlock
         filename=".env"
         code={`ORB_ENROLLMENT_SECRET=<issued-once-by-orb>
-ORB_BROKER_URL=https://gittensory-api.aethereal.dev
+ORB_BROKER_URL=https://api.loopover.ai
 ORB_RELAY_MODE=pull  # or omit for push (the default) -- see "Choosing a relay mode" below`}
       />
       <p>

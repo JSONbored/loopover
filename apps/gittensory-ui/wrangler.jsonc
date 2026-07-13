@@ -20,7 +20,7 @@
     },
   },
   "vars": {
-    "VITE_GITTENSORY_API_ORIGIN": "https://gittensory-api.aethereal.dev",
+    "VITE_GITTENSORY_API_ORIGIN": "https://api.loopover.ai",
   },
   "routes": [
     {

@@ -154,8 +154,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         children: JSON.stringify({
           "@context": "https://schema.org",
           "@type": "Organization",
-          name: "Gittensory",
-          url: "https://gittensory.aethereal.dev",
+          name: "LoopOver",
+          url: "https://loopover.ai",
           description: "Deterministic base-agent layer for Gittensor OSS contribution mining.",
         }),
       },

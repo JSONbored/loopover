@@ -33,7 +33,7 @@ describe("fetchBrokeredInstallationToken", () => {
     const { fetchImpl, calls } = captureFetch(Response.json({ token: "ghs_x", installationId: 42, expiresAt: "2026-06-25T09:00:00Z", permissions: { contents: "write" } }));
     const out = await fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "orbsec_x" }, fetchImpl);
     expect(out).toEqual({ token: "ghs_x", installationId: 42, expiresAtMs: Date.parse("2026-06-25T09:00:00Z"), permissions: { contents: "write" } });
-    expect(calls[0]?.url).toBe("https://gittensory-api.aethereal.dev/v1/orb/token");
+    expect(calls[0]?.url).toBe("https://api.loopover.ai/v1/orb/token");
     expect((calls[0]?.init?.headers as Record<string, string>).authorization).toBe("Bearer orbsec_x");
     expect(calls[0]?.init?.method).toBe("POST");
     expect(calls[0]?.init?.body).toBeUndefined();
@@ -131,7 +131,7 @@ describe("registerOrbRelayTarget", () => {
   it("uses the default broker base when ORB_BROKER_URL is unset", async () => {
     const { fetchImpl, calls } = captureFetch(new Response("ok"));
     await registerOrbRelayTarget({ ORB_ENROLLMENT_SECRET: "s", PUBLIC_API_ORIGIN: "https://me.example" }, fetchImpl);
-    expect(calls[0]?.url).toBe("https://gittensory-api.aethereal.dev/v1/orb/relay/register");
+    expect(calls[0]?.url).toBe("https://api.loopover.ai/v1/orb/relay/register");
   });
 
   it("fails closed without registering when the broker URL is unsafe", async () => {
@@ -380,7 +380,7 @@ describe("drainOrbRelay (pull-mode drain)", () => {
       { deliveryId: "d1", eventName: "pull_request", rawBody: "{\"a\":1}" },
       { deliveryId: "d2", eventName: "check_suite", rawBody: "{}" },
     ]);
-    expect(calls[0]?.url).toBe("https://gittensory-api.aethereal.dev/v1/orb/relay/pull");
+    expect(calls[0]?.url).toBe("https://api.loopover.ai/v1/orb/relay/pull");
     expect((calls[0]?.init?.headers as Record<string, string>).authorization).toBe("Bearer s");
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ ack: ["prev-1"] });
     expect(counterValue("loopover_orb_relay_malformed_events_total")).toBe(1);

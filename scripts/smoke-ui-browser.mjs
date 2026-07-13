@@ -1,4 +1,4 @@
-const siteOrigin = new URL(process.env.GITTENSORY_SITE_ORIGIN ?? "https://gittensory.aethereal.dev").origin;
+const siteOrigin = new URL(process.env.GITTENSORY_SITE_ORIGIN ?? "https://loopover.ai").origin;
 const routes = ["/", "/app", "/app/workbench", "/app/repos", "/app/runs", "/app/analytics", "/app/operator", "/app/commands", "/app/digest", "/api", "/roadmap", "/changelog", "/extension", "/docs"];
 
 const playwright = await import("playwright").catch(() => null);

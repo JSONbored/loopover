@@ -229,7 +229,7 @@ describe("GitHub mention commands", () => {
 
   it("helpSections links to the public command reference doc (#2171)", () => {
     const body = githubCommandsInternals.helpSections({}).join("\n");
-    expect(body).toContain("https://gittensory.aethereal.dev/docs/gittensory-commands");
+    expect(body).toContain("https://loopover.ai/docs/gittensory-commands");
     expect(body).toContain("Full command reference");
   });
 
@@ -241,7 +241,7 @@ describe("GitHub mention commands", () => {
 
   it("commandReferenceUrl falls back to the default site when PUBLIC_SITE_ORIGIN is malformed", () => {
     expect(githubCommandsInternals.commandReferenceUrl({ PUBLIC_SITE_ORIGIN: "not a url" })).toBe(
-      "https://gittensory.aethereal.dev/docs/gittensory-commands",
+      "https://loopover.ai/docs/gittensory-commands",
     );
   });
 

@@ -236,12 +236,12 @@ function githubOAuthCallbackUrl(env: Env, requestUrl: string): string {
 }
 
 function normalizeReturnTo(env: Env, value: string | undefined): string {
-  const siteOrigin = env.PUBLIC_SITE_ORIGIN ?? "https://gittensory.aethereal.dev";
+  const siteOrigin = env.PUBLIC_SITE_ORIGIN ?? "https://loopover.ai";
   const fallback = `${siteOrigin.replace(/\/$/, "")}/app`;
   if (!value) return fallback;
   try {
     const url = new URL(value, siteOrigin);
-    // siteOrigin already IS "https://gittensory.aethereal.dev" when PUBLIC_SITE_ORIGIN is unset (the fallback
+    // siteOrigin already IS "https://loopover.ai" when PUBLIC_SITE_ORIGIN is unset (the fallback
     // two lines up), so a separate hardcoded entry here was dead weight once a self-hoster sets their own
     // PUBLIC_SITE_ORIGIN -- it kept accepting the cloud origin as a valid redirect target even for a self-host
     // instance that never uses it (#4615). Rely solely on siteOrigin.

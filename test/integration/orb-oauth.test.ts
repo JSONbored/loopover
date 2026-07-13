@@ -14,7 +14,7 @@ describe("GET /v1/orb/oauth/callback (post-install landing)", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("Gittensory Orb connected");
-    expect(html).toContain("gittensory.aethereal.dev");
+    expect(html).toContain("loopover.ai");
   });
 
   it("returns the updated page on a repo-selection update", async () => {
@@ -50,7 +50,7 @@ describe("GET /v1/orb/oauth/callback (post-install landing)", () => {
     const env = createTestEnv();
     delete (env as Partial<Env>).PUBLIC_SITE_ORIGIN;
     const res = await app.request("/v1/orb/oauth/callback", {}, env);
-    expect(await res.text()).toContain('href="https://gittensory.aethereal.dev"');
+    expect(await res.text()).toContain('href="https://loopover.ai"');
   });
 });
 

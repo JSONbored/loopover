@@ -1,5 +1,5 @@
-const siteOrigin = normalizeOrigin(process.env.GITTENSORY_SITE_ORIGIN ?? "https://gittensory.aethereal.dev");
-const apiOrigin = normalizeOrigin(process.env.GITTENSORY_API_ORIGIN ?? "https://gittensory-api.aethereal.dev");
+const siteOrigin = normalizeOrigin(process.env.GITTENSORY_SITE_ORIGIN ?? "https://loopover.ai");
+const apiOrigin = normalizeOrigin(process.env.GITTENSORY_API_ORIGIN ?? "https://api.loopover.ai");
 
 const siteRoutes = [
   "/",
@@ -27,7 +27,7 @@ async function main() {
   for (const route of siteRoutes) checks.push(checkStatus(`${siteOrigin}${route}`, 200, `UI ${route}`));
   checks.push(checkStatus(`${siteOrigin}/openapi.json`, 200, "UI OpenAPI artifact", { contentType: /application\/json/i }));
   checks.push(checkStatus(`${siteOrigin}/downloads/loopover-extension.zip`, 200, "extension zip", { contentType: /application\/zip/i }));
-  checks.push(checkText(`${siteOrigin}/robots.txt`, "Sitemap: https://gittensory.aethereal.dev/sitemap.xml", "robots sitemap directive"));
+  checks.push(checkText(`${siteOrigin}/robots.txt`, "Sitemap: https://loopover.ai/sitemap.xml", "robots sitemap directive"));
   checks.push(checkStatus(`${siteOrigin}/sitemap.xml`, 200, "sitemap", { contentType: /application\/xml/i }));
   checks.push(checkStatus(`${siteOrigin}/CNAME`, 404, "retired GitHub Pages CNAME"));
 

@@ -4211,7 +4211,7 @@ const APP_COMMANDS = [
 ] as const;
 
 function authRedirectWithError(env: Env, reason: string): string {
-  const siteOrigin = env.PUBLIC_SITE_ORIGIN ?? "https://gittensory.aethereal.dev";
+  const siteOrigin = env.PUBLIC_SITE_ORIGIN ?? "https://loopover.ai";
   const url = new URL("/app", siteOrigin);
   url.searchParams.set("auth", "error");
   url.searchParams.set("reason", reason);
@@ -5700,6 +5700,7 @@ function requiresApiToken(path: string): boolean {
 }
 
 const DEFAULT_CORS_ORIGINS = [
+  "https://loopover.ai",
   "https://gittensory.aethereal.dev",
   "http://localhost:3000",
   "http://localhost:4173",

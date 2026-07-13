@@ -169,7 +169,7 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
   // instance's DEDICATED anonymization secret (a 256-bit random key generated once and persisted in
   // system_flags — see getOrCreateAnonSecret), single-purpose and never the App key, so the collector
   // (which never holds it) can never de-anonymize them.
-  const collectorUrl = process.env.ORB_COLLECTOR_URL ?? "https://gittensory-api.aethereal.dev/v1/orb/ingest";
+  const collectorUrl = process.env.ORB_COLLECTOR_URL ?? "https://api.loopover.ai/v1/orb/ingest";
   const secret = await getOrCreateAnonSecret(db);
   const anonymize = (process.env.ORB_ANONYMIZE ?? "true").toLowerCase() !== "false";
   const instance = instanceId(secret);

@@ -178,7 +178,7 @@ declare global {
      *  engine sources GitHub installation tokens from the central Orb (POST /v1/orb/token) instead of a local App
      *  key. Cloud never sets it ⇒ inert there. See src/orb/broker-client. (A secret — never commit a real value.) */
     ORB_ENROLLMENT_SECRET?: string;
-    /** Override the Orb broker base URL the self-host client calls (default https://gittensory-api.aethereal.dev);
+    /** Override the Orb broker base URL the self-host client calls (default https://api.loopover.ai);
      *  point at a private gittensory deployment if you self-host the broker too. */
     ORB_BROKER_URL?: string;
     /** The retired review App's own credentials. Optional: that App has been fully deleted — cloud no longer

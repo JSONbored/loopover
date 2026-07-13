@@ -23,6 +23,7 @@ import { ContributorQualityTable } from "@/components/site/app-panels/contributo
 import type { MaintainerTopContributor } from "@/components/site/app-panels/contributor-quality-table-model";
 import { GateOutcomeCard } from "@/components/site/app-panels/gate-outcome-card";
 import type { GateOutcomeCardData } from "@/components/site/app-panels/gate-outcome-card-model";
+import { GateRampControl } from "@/components/site/app-panels/gate-ramp-control";
 import {
   QueueHealthCard,
   type MaintainerQueueHealth,
@@ -391,6 +392,8 @@ function MaintainerDashboardView({
           <ContributorQualityTable topContributors={data.qualityDashboard.topContributors} />
 
           <ActivationPreview reviewability={data.reviewability} />
+
+          <GateRampControl reviewability={data.reviewability} />
 
           <SurfacePreview
             reviewability={data.reviewability}

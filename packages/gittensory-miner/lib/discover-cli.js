@@ -7,6 +7,7 @@ import {
 } from "./opportunity-fanout.js";
 import { rankCandidateIssuesWithSummary } from "./opportunity-ranker.js";
 import { initPolicyDocCacheStore } from "./policy-doc-cache.js";
+import { initPolicyVerdictCacheStore } from "./policy-verdict-cache.js";
 import { enqueueRankedDiscovery } from "./portfolio-discovery.js";
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
 
@@ -173,7 +174,20 @@ export async function runDiscover(args, options = {}) {
     policyDocCache = null;
     ownsPolicyDocCache = false;
   }
-  const fanOutOptions = { apiBaseUrl, forge: options.forge, policyDocCache };
+
+  // Persisted cache of resolved policy verdicts (#4843), same "own try/catch, degrade to null" discipline as the
+  // doc cache above and for the same reason: purely a performance optimization the feature is inert without, so a
+  // corrupt/unwritable cache DB must never abort a run.
+  let policyVerdictCache = null;
+  let ownsPolicyVerdictCache = false;
+  try {
+    ownsPolicyVerdictCache = options.initPolicyVerdictCache === undefined;
+    policyVerdictCache = (options.initPolicyVerdictCache ?? initPolicyVerdictCacheStore)();
+  } catch {
+    policyVerdictCache = null;
+    ownsPolicyVerdictCache = false;
+  }
+  const fanOutOptions = { apiBaseUrl, forge: options.forge, policyDocCache, policyVerdictCache };
 
   try {
     const fanOut =
@@ -213,5 +227,6 @@ export async function runDiscover(args, options = {}) {
   } finally {
     if (ownsPortfolioQueue) portfolioQueue.close();
     if (ownsPolicyDocCache && policyDocCache) policyDocCache.close();
+    if (ownsPolicyVerdictCache && policyVerdictCache) policyVerdictCache.close();
   }
 }

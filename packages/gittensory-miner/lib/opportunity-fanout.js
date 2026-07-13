@@ -159,17 +159,44 @@ function readCachedPolicyDoc(cache, url) {
   }
 }
 
+function readEtagHeader(response) {
+  const etag = response.headers.get("etag");
+  return typeof etag === "string" && etag.trim() ? etag : null;
+}
+
 // Persist the fresh ETag + body so the NEXT discover run can revalidate instead of re-downloading. Only a real
 // ETag paired with decoded content is stored, and a write that throws must never fail discovery (same stale-safe
 // rule) — it degrades to "not cached", so the next run simply refetches in full.
-function writeCachedPolicyDoc(cache, url, response, content) {
-  if (!cache || content === null) return;
-  const etag = response.headers.get("etag");
-  if (typeof etag !== "string" || !etag.trim()) return;
+function writeCachedPolicyDoc(cache, url, etag, content) {
+  if (!cache || content === null || etag === null) return;
   try {
     cache.put(url, etag, content);
   } catch {
     // Leave this URL uncached; the next run refetches fully rather than serving anything stale.
+  }
+}
+
+// Read a repo's previously-resolved verdict for the SAME decisive doc + ETag (#4843). A cache that is absent, or
+// whose read throws (corrupt/locked file), is treated as a plain miss — the caller resolves the verdict fresh,
+// per the same "never risk a stale policy" rule as the doc cache above.
+function readCachedPolicyVerdict(cache, repoFullName) {
+  if (!cache) return null;
+  try {
+    return cache.get(repoFullName);
+  } catch {
+    return null;
+  }
+}
+
+// Persist the freshly-resolved verdict against the ETag of the doc that decided it, so the next run can reuse it
+// outright once that ETag is confirmed unchanged. Only ever called with a real ETag; a write that throws must
+// never fail discovery — it degrades to "not cached", so the next run just resolves the verdict again.
+function writeCachedPolicyVerdict(cache, repoFullName, decisiveDoc, etag, verdict) {
+  if (!cache || etag === null) return;
+  try {
+    cache.put(repoFullName, decisiveDoc, etag, verdict);
+  } catch {
+    // Leave this repo uncached; the next run just resolves the verdict fresh again.
   }
 }
 
@@ -184,33 +211,56 @@ async function fetchRepoDoc(target, path, githubToken, options, summary, warning
     const { response, payload } = await githubGetJson(url, githubToken, summary, options, conditionalHeaders);
     // A 304 only ever follows the If-None-Match we send above, which we only send when `cached` exists — so the
     // cached body is the GitHub-confirmed current content, served with no extra rate-limit spend.
-    if (response.status === 304) return cached.content;
-    if (response.status === 404) return null;
+    if (response.status === 304) return { content: cached.content, etag: cached.etag };
+    if (response.status === 404) return { content: null, etag: null };
     if (!response.ok) {
       warnings.push(warning(target, `policy:${path}`, `GitHub returned ${response.status}`));
-      return null;
+      return { content: null, etag: null };
     }
     const content = decodeContentPayload(payload);
-    writeCachedPolicyDoc(options.policyDocCache, url, response, content);
-    return content;
+    const etag = readEtagHeader(response);
+    writeCachedPolicyDoc(options.policyDocCache, url, etag, content);
+    return { content, etag };
   } catch (error) {
     warnings.push(
       warning(target, `policy:${path}`, error instanceof Error ? error.message : "policy fetch failed"),
     );
-    return null;
+    return { content: null, etag: null };
   }
 }
 
+// Resolve a repo's AI-usage-policy verdict, reusing a cached one when the deciding doc's ETag hasn't moved since
+// it was last resolved (#4843). Only ever consulted with an ETag that a same-run conditional-GET just confirmed
+// is current, so a cache hit is exactly as correct as recomputing — it just skips the (cheap, but not free) parse.
+function resolveOrCacheVerdict(cache, repoFullName, decisiveDoc, etag, computeVerdict) {
+  if (etag !== null) {
+    const cached = readCachedPolicyVerdict(cache, repoFullName);
+    if (cached && cached.decisiveDoc === decisiveDoc && cached.etag === etag) return cached.verdict;
+  }
+  const verdict = computeVerdict();
+  writeCachedPolicyVerdict(cache, repoFullName, decisiveDoc, etag, verdict);
+  return verdict;
+}
+
 async function resolveRepoAiPolicy(target, githubToken, options, summary, warnings) {
-  const aiUsage = await fetchRepoDoc(target, "AI-USAGE.md", githubToken, options, summary, warnings);
+  const { content: aiUsage, etag: aiUsageEtag } = await fetchRepoDoc(
+    target,
+    "AI-USAGE.md",
+    githubToken,
+    options,
+    summary,
+    warnings,
+  );
   // Short-circuit only on AI-USAGE.md that has real content. A present-but-blank AI-USAGE.md must still fall
   // through to CONTRIBUTING.md — otherwise a stub AI-USAGE.md silently fails open and swallows a ban declared in
   // CONTRIBUTING.md (the exact case resolveAiPolicyVerdict was fixed to handle in #2900, which can only fire if
   // both docs reach it).
   if (aiUsage !== null && aiUsage.trim().length > 0) {
-    return resolveAiPolicyVerdict({ aiUsage, contributing: null });
+    return resolveOrCacheVerdict(options.policyVerdictCache, target.repoFullName, "AI-USAGE.md", aiUsageEtag, () =>
+      resolveAiPolicyVerdict({ aiUsage, contributing: null }),
+    );
   }
-  const contributing = await fetchRepoDoc(
+  const { content: contributing, etag: contributingEtag } = await fetchRepoDoc(
     target,
     "CONTRIBUTING.md",
     githubToken,
@@ -218,7 +268,13 @@ async function resolveRepoAiPolicy(target, githubToken, options, summary, warnin
     summary,
     warnings,
   );
-  return resolveAiPolicyVerdict({ aiUsage: null, contributing });
+  return resolveOrCacheVerdict(
+    options.policyVerdictCache,
+    target.repoFullName,
+    "CONTRIBUTING.md",
+    contributingEtag,
+    () => resolveAiPolicyVerdict({ aiUsage: null, contributing }),
+  );
 }
 
 function labelNames(labels) {
@@ -442,6 +498,9 @@ function normalizeOptions(options = {}) {
     // Optional local ETag cache for policy-doc revalidation (#4842). Absent (null) => every policy doc is fetched
     // in full, exactly as before; discover-cli.js supplies the real on-disk store for a live run.
     policyDocCache: options.policyDocCache ?? null,
+    // Optional local cache of resolved policy verdicts (#4843). Absent (null) => every verdict is resolved fresh,
+    // exactly as before; discover-cli.js supplies the real on-disk store for a live run.
+    policyVerdictCache: options.policyVerdictCache ?? null,
   };
 }
 

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { initPolicyDocCacheStore } from "../../packages/gittensory-miner/lib/policy-doc-cache.js";
+import { initPolicyVerdictCacheStore } from "../../packages/gittensory-miner/lib/policy-verdict-cache.js";
 import {
   closeDefaultPortfolioQueueStore,
   initPortfolioQueueStore,
@@ -35,6 +36,15 @@ function tempPolicyDocCacheStore() {
   const root = mkdtempSync(join(tmpdir(), "gittensory-miner-discover-cli-pdc-"));
   roots.push(root);
   const store = initPolicyDocCacheStore(join(root, "policy-doc-cache.sqlite3"));
+  stores.push(store);
+  return store;
+}
+
+// Same reasoning as tempPolicyDocCacheStore above, for the policy-verdict cache (#4843).
+function tempPolicyVerdictCacheStore() {
+  const root = mkdtempSync(join(tmpdir(), "gittensory-miner-discover-cli-pvc-"));
+  roots.push(root);
+  const store = initPolicyVerdictCacheStore(join(root, "policy-verdict-cache.sqlite3"));
   stores.push(store);
   return store;
 }
@@ -301,6 +311,7 @@ describe("runDiscover (#4247)", () => {
       nowMs: NOW,
       initPortfolioQueue: () => portfolioQueue,
       initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
       fetchCandidateIssuesWithSummary,
       searchCandidateIssuesWithSummary,
     });
@@ -342,6 +353,7 @@ describe("runDiscover (#4247)", () => {
       nowMs: NOW,
       initPortfolioQueue: () => portfolioQueue,
       initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
       fetchCandidateIssuesWithSummary,
       searchCandidateIssuesWithSummary,
     });
@@ -366,6 +378,7 @@ describe("runDiscover (#4247)", () => {
       nowMs: NOW,
       initPortfolioQueue: () => portfolioQueue,
       initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
       fetchCandidateIssuesWithSummary,
     });
 
@@ -398,6 +411,7 @@ describe("runDiscover (#4247)", () => {
     const exitCode = await runDiscover(["acme/widgets"], {
       initPortfolioQueue: () => portfolioQueue,
       initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
       fetchCandidateIssuesWithSummary,
     });
 
@@ -424,6 +438,7 @@ describe("runDiscover (#4247)", () => {
         nowMs: NOW,
         fetchCandidateIssuesWithSummary,
         initPolicyDocCache: () => tempPolicyDocCacheStore(),
+        initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
       });
       expect(exitCode).toBe(0);
 
@@ -457,6 +472,7 @@ describe("runDiscover (#4247)", () => {
           nowMs: NOW,
           initPortfolioQueue: () => portfolioQueue,
           initPolicyDocCache: () => tempPolicyDocCacheStore(),
+          initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
           fetchCandidateIssuesWithSummary,
         },
       );
@@ -490,6 +506,7 @@ describe("runDiscover (#4247)", () => {
         nowMs: NOW,
         initPortfolioQueue: () => portfolioQueue,
         initPolicyDocCache: () => tempPolicyDocCacheStore(),
+        initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
         fetchCandidateIssuesWithSummary,
         forge: { tokenEnvVar: "FORGE_PAT" },
       });
@@ -520,6 +537,7 @@ describe("runDiscover (#4247)", () => {
       nowMs: NOW,
       initPortfolioQueue: () => portfolioQueue,
       initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
       fetchCandidateIssuesWithSummary,
       githubToken: "explicit-token",
       apiBaseUrl: "https://programmatic.example.com",
@@ -565,6 +583,7 @@ describe("runDiscover (#4247)", () => {
       nowMs: NOW,
       initPortfolioQueue: () => portfolioQueue,
       initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
       fetchCandidateIssuesWithSummary,
       rankCandidateIssuesWithSummary,
       goalSpecContentByRepo,
@@ -601,6 +620,7 @@ describe("runDiscover (#4247)", () => {
         nowMs: NOW,
         fetchCandidateIssuesWithSummary,
         initPortfolioQueue: () => portfolioQueue,
+        initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
       });
       expect(exitCode).toBe(0);
       expect(existsSync(cacheDbPath)).toBe(true);
@@ -631,6 +651,7 @@ describe("runDiscover (#4247)", () => {
       nowMs: NOW,
       initPortfolioQueue: () => portfolioQueue,
       initPolicyDocCache,
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
       fetchCandidateIssuesWithSummary,
     });
 
@@ -642,6 +663,74 @@ describe("runDiscover (#4247)", () => {
       [{ owner: "acme", repo: "widgets" }],
       "",
       expect.objectContaining({ policyDocCache: null }),
+    );
+  });
+
+  it("opens and closes the default on-disk policy-verdict cache when no override is supplied", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gittensory-miner-discover-cli-pvc-default-"));
+    roots.push(root);
+    const cacheDbPath = join(root, "policy-verdict-cache.sqlite3");
+    const previousCacheDbPath = process.env.GITTENSORY_MINER_POLICY_VERDICT_CACHE_DB;
+    process.env.GITTENSORY_MINER_POLICY_VERDICT_CACHE_DB = cacheDbPath;
+    try {
+      const portfolioQueue = tempQueueStore();
+      const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+        issues: [fanOutIssue()],
+        warnings: [],
+        rateLimitRemaining: null,
+        rateLimitResetAt: null,
+      }));
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      // No initPolicyVerdictCache override: runDiscover opens the default on-disk cache at the env path and closes
+      // it in its finally block. Reopening the same file confirms the default code path created a usable store.
+      const exitCode = await runDiscover(["acme/widgets"], {
+        nowMs: NOW,
+        fetchCandidateIssuesWithSummary,
+        initPortfolioQueue: () => portfolioQueue,
+        initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      });
+      expect(exitCode).toBe(0);
+      expect(existsSync(cacheDbPath)).toBe(true);
+
+      const reopened = initPolicyVerdictCacheStore(cacheDbPath);
+      stores.push(reopened);
+      expect(reopened.get("acme/widgets")).toBeNull();
+    } finally {
+      if (previousCacheDbPath === undefined) delete process.env.GITTENSORY_MINER_POLICY_VERDICT_CACHE_DB;
+      else process.env.GITTENSORY_MINER_POLICY_VERDICT_CACHE_DB = previousCacheDbPath;
+    }
+  });
+
+  it("REGRESSION: a corrupt/unopenable policy-verdict cache degrades to no cache instead of failing discovery", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue()],
+      warnings: [],
+      rateLimitRemaining: null,
+      rateLimitResetAt: null,
+    }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const initPolicyVerdictCache = vi.fn(() => {
+      throw new Error("disk full");
+    });
+
+    const exitCode = await runDiscover(["acme/widgets"], {
+      nowMs: NOW,
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache,
+      fetchCandidateIssuesWithSummary,
+    });
+
+    // Same discipline as the policy-doc cache above: a pure performance optimization, so an open failure must
+    // never abort discovery.
+    expect(exitCode).toBe(0);
+    expect(initPolicyVerdictCache).toHaveBeenCalledTimes(1);
+    expect(fetchCandidateIssuesWithSummary).toHaveBeenCalledWith(
+      [{ owner: "acme", repo: "widgets" }],
+      "",
+      expect.objectContaining({ policyVerdictCache: null }),
     );
   });
 });

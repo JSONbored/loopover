@@ -107,12 +107,16 @@ See [`docs/env-reference.md`](docs/env-reference.md) for the full `GITTENSORY_MI
 | Worktree allocator | `worktree-allocator.sqlite3` | `worktree_slots` | `worktree-allocator.js` | `GITTENSORY_MINER_WORKTREE_ALLOCATOR_DB` |
 | Orb export | `orb-export.sqlite3` | `orb_export_meta` | `orb-export.js` | `GITTENSORY_MINER_ORB_EXPORT_DB` |
 | Policy-doc cache | `policy-doc-cache.sqlite3` | `policy_doc_cache` | `policy-doc-cache.js` | `GITTENSORY_MINER_POLICY_DOC_CACHE_DB` |
+| Policy-verdict cache | `policy-verdict-cache.sqlite3` | `policy_verdict_cache` | `policy-verdict-cache.js` | `GITTENSORY_MINER_POLICY_VERDICT_CACHE_DB` |
 
-The policy-doc cache is the only store above that holds no miner state of its own: it caches the last-known ETag +
-body of each target repo's fetched policy docs (AI-USAGE.md/CONTRIBUTING.md) so a repeated `discover` revalidates
-them with a conditional GET (`If-None-Match`) instead of re-downloading static content, spending no extra
-rate-limit budget when GitHub answers `304 Not Modified`. It is pure optimization — deleting the file only forces
-the next run to refetch in full (#4842).
+The policy-doc and policy-verdict caches are the only stores above that hold no miner state of their own — both are
+pure optimization, and deleting either file only forces the next run to redo the work it would have skipped. The
+policy-doc cache caches the last-known ETag + body of each target repo's fetched policy docs
+(AI-USAGE.md/CONTRIBUTING.md) so a repeated `discover` revalidates them with a conditional GET (`If-None-Match`)
+instead of re-downloading static content, spending no extra rate-limit budget when GitHub answers
+`304 Not Modified` (#4842). The policy-verdict cache goes one step further: once a repo's deciding doc's ETag is
+confirmed unchanged, it reuses the already-resolved AI-usage-policy verdict instead of re-resolving it from the
+(identical) doc text (#4843).
 
 Every store resolves its file the same way: the store-specific env var above, else `GITTENSORY_MINER_CONFIG_DIR`,
 else `XDG_CONFIG_HOME` (falling back to `~/.config`), joined with `gittensory-miner/<file>`. Every store also opens

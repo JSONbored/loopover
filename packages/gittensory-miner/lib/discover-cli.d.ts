@@ -11,6 +11,7 @@ import type {
   RankedCandidateSummary,
 } from "./opportunity-ranker.js";
 import type { PolicyDocCacheStore } from "./policy-doc-cache.js";
+import type { PolicyVerdictCacheStore } from "./policy-verdict-cache.js";
 import type { EnqueueRankedDiscoverySummary } from "./portfolio-discovery.js";
 import type { PortfolioQueueStore } from "./portfolio-queue.js";
 
@@ -62,6 +63,7 @@ export type RunDiscoverOptions = {
   goalSpecContentByRepo?: RankCandidateIssuesOptions["goalSpecContentByRepo"];
   initPortfolioQueue?: () => PortfolioQueueStore;
   initPolicyDocCache?: () => PolicyDocCacheStore;
+  initPolicyVerdictCache?: () => PolicyVerdictCacheStore;
   fetchCandidateIssuesWithSummary?: (
     targets: FanoutTarget[],
     githubToken: string,

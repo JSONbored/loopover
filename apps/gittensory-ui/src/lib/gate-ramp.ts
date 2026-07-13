@@ -4,7 +4,9 @@
  * fields to `block` via the existing PUT /settings merge path (maintainer-settings.tsx).
  */
 
-export type GateMode = "off" | "advisory" | "block";
+import type { GateMode } from "@/lib/maintainer-settings-editable";
+
+export type { GateMode };
 
 /** The three deterministic sub-gates flipped together during the ramp. */
 export const RAMP_DETERMINISTIC_GATE_KEYS = [

@@ -1,5 +1,5 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   emptyLedgersSummary,
@@ -8,6 +8,7 @@ import {
   type LedgersResult,
   type LedgersSummary,
 } from "./lib/ledgers";
+import { defaultGovernorPauseState, type GovernorPauseState, type GovernorPauseStateResult } from "./lib/governor";
 import { LedgersPage, LedgersView } from "./routes/ledgers";
 import { handleLedgersRequest, type LedgersApiDeps } from "../vite-ledgers-api";
 
@@ -112,11 +113,104 @@ describe("LedgersView (#4855)", () => {
 });
 
 describe("LedgersPage (#4855)", () => {
+  const loadGovernorPauseStateDefault = async (): Promise<GovernorPauseStateResult> => ({
+    ok: true,
+    pauseState: defaultGovernorPauseState(),
+  });
+
   it("loads the summary through the injected loader and renders it", async () => {
     const loadLedgers = async (): Promise<LedgersResult> => ({ ok: true, summary: fixtureSummary });
-    render(<LedgersPage loadLedgers={loadLedgers} />);
+    render(<LedgersPage loadLedgers={loadLedgers} loadGovernorPauseState={loadGovernorPauseStateDefault} />);
     expect(screen.getByRole("heading", { name: "Ledgers" })).toBeTruthy();
     await waitFor(() => expect(screen.getByText("Active", { selector: "dt" }).nextSibling?.textContent).toBe("2"));
+  });
+
+  describe("governor control (#4857)", () => {
+    const loadLedgersEmpty = async (): Promise<LedgersResult> => ({ ok: true, summary: emptyLedgersSummary() });
+
+    it("loads the governor pause state through the injected loader on mount", async () => {
+      const loadGovernorPauseState = async (): Promise<GovernorPauseStateResult> => ({
+        ok: true,
+        pauseState: { paused: true, reason: "bad PR", pausedAt: "2026-07-13T12:00:00.000Z" },
+      });
+      render(<LedgersPage loadLedgers={loadLedgersEmpty} loadGovernorPauseState={loadGovernorPauseState} />);
+      await waitFor(() => expect(screen.getByText(/Paused since 2026-07-13T12:00:00.000Z \(bad PR\)/)).toBeTruthy());
+    });
+
+    it("clicking Pause governor calls the injected pause action and updates the displayed state from its result", async () => {
+      const pausedResult: GovernorPauseStateResult = {
+        ok: true,
+        pauseState: { paused: true, reason: null, pausedAt: "2026-07-13T12:30:00.000Z" },
+      };
+      const pauseGovernorAction = vi.fn(async (): Promise<GovernorPauseStateResult> => pausedResult);
+      render(
+        <LedgersPage
+          loadLedgers={loadLedgersEmpty}
+          loadGovernorPauseState={loadGovernorPauseStateDefault}
+          pauseGovernorAction={pauseGovernorAction}
+        />,
+      );
+      await waitFor(() => expect(screen.getByText("Not paused")).toBeTruthy());
+      fireEvent.click(screen.getByRole("button", { name: "Pause governor" }));
+      expect(pauseGovernorAction).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(screen.getByRole("button", { name: "Resume governor" })).toBeTruthy());
+    });
+
+    it("clicking Resume governor calls the injected resume action and updates the displayed state from its result", async () => {
+      const initiallyPaused: GovernorPauseState = { paused: true, reason: null, pausedAt: "2026-07-13T12:00:00.000Z" };
+      const resumeGovernorAction = vi.fn(async (): Promise<GovernorPauseStateResult> => ({
+        ok: true,
+        pauseState: defaultGovernorPauseState(),
+      }));
+      render(
+        <LedgersPage
+          loadLedgers={loadLedgersEmpty}
+          loadGovernorPauseState={async () => ({ ok: true, pauseState: initiallyPaused })}
+          resumeGovernorAction={resumeGovernorAction}
+        />,
+      );
+      await waitFor(() => expect(screen.getByRole("button", { name: "Resume governor" })).toBeTruthy());
+      fireEvent.click(screen.getByRole("button", { name: "Resume governor" }));
+      expect(resumeGovernorAction).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(screen.getByText("Not paused")).toBeTruthy());
+    });
+
+    it("disables the action button while the pause action is in flight, and re-enables it once it resolves", async () => {
+      let resolveAction: (value: GovernorPauseStateResult) => void = () => undefined;
+      const pauseGovernorAction = vi.fn(
+        () =>
+          new Promise<GovernorPauseStateResult>((resolve) => {
+            resolveAction = resolve;
+          }),
+      );
+      render(
+        <LedgersPage
+          loadLedgers={loadLedgersEmpty}
+          loadGovernorPauseState={loadGovernorPauseStateDefault}
+          pauseGovernorAction={pauseGovernorAction}
+        />,
+      );
+      await waitFor(() => expect(screen.getByRole("button", { name: "Pause governor" })).toBeTruthy());
+      fireEvent.click(screen.getByRole("button", { name: "Pause governor" }));
+      await waitFor(() =>
+        expect((screen.getByRole("button", { name: "Pause governor" }) as HTMLButtonElement).disabled).toBe(true),
+      );
+      resolveAction({ ok: true, pauseState: { paused: true, reason: null, pausedAt: "2026-07-13T12:30:00.000Z" } });
+      await waitFor(() =>
+        expect((screen.getByRole("button", { name: "Resume governor" }) as HTMLButtonElement).disabled).toBe(false),
+      );
+    });
+
+    it("renders an error message when the pause-state load fails, without breaking the ledgers section", async () => {
+      render(
+        <LedgersPage
+          loadLedgers={loadLedgersEmpty}
+          loadGovernorPauseState={async () => ({ ok: false, error: "connection refused" })}
+        />,
+      );
+      await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("connection refused"));
+      expect(screen.getByText(/No ledger activity yet/i)).toBeTruthy();
+    });
   });
 });
 

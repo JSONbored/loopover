@@ -472,8 +472,8 @@ const validateFocusManifestSchema = z.object({
   source: z.enum(["repo_file", "api_record", "none"]).optional(),
 });
 
-// Pure local-metadata slop self-checks (no repo data, no secrets) — mirror the gittensory_check_slop_risk /
-// gittensory_check_issue_slop MCP tools so the npm package can offer the same agent-native self-check.
+// Pure local-metadata slop self-checks (no repo data, no secrets) — mirror the loopover_check_slop_risk /
+// loopover_check_issue_slop MCP tools so the npm package can offer the same agent-native self-check.
 const slopRiskSchema = z.object({
   changedFiles: z
     .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))

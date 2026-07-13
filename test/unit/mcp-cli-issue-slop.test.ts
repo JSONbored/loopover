@@ -95,7 +95,7 @@ describe("gittensory-mcp CLI — issue-slop", () => {
     await expect(runAsync(["issue-slop", "--body-file", "/tmp/missing-gittensory-issue-body.md"], e)).rejects.toThrow(/Body file not found/);
     const help = run(["issue-slop", "--help"]);
     expect(help).toMatch(/Usage: gittensory-mcp issue-slop/);
-    expect(help).toMatch(/gittensory_check_issue_slop/);
+    expect(help).toMatch(/loopover_check_issue_slop/);
     expect(help).toMatch(/--body-file/);
   });
 

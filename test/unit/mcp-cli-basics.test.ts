@@ -54,7 +54,7 @@ describe("gittensory-mcp CLI — basics", () => {
       id: "miner-planner",
       title: "Miner planner",
       recommendedPrompts: expect.arrayContaining(["gittensory_miner_select_issue", "gittensory_miner_branch_preflight", "gittensory_miner_draft_pr_packet"]),
-      recommendedTools: expect.arrayContaining(["gittensory_agent_plan_next_work", "gittensory_agent_prepare_pr_packet"]),
+      recommendedTools: expect.arrayContaining(["loopover_agent_plan_next_work", "loopover_agent_prepare_pr_packet"]),
     });
     expect(payload.agentProfile.boundaries.join("\n")).toMatch(/do not open PRs|do not.*post comments|do not.*tokens|local source contents/i);
     expect(payload.notes.join("\n")).toMatch(/human-approved/i);
@@ -91,7 +91,7 @@ describe("gittensory-mcp CLI — basics", () => {
     expect(payload.agentProfile.id).toBe("miner-auto-dev");
     // the new Phase-2 tools are wired in
     expect(payload.agentProfile.recommendedTools).toEqual(
-      expect.arrayContaining(["gittensory_run_local_scorer", "gittensory_build_plan", "gittensory_record_step_result", "gittensory_open_pr", "gittensory_check_slop_risk"]),
+      expect.arrayContaining(["gittensory_run_local_scorer", "gittensory_build_plan", "gittensory_record_step_result", "gittensory_open_pr", "loopover_check_slop_risk"]),
     );
     // the driving loop is present and gate-throttled, with a local-execution push step
     expect(payload.agentProfile.drivingLoop.length).toBeGreaterThanOrEqual(4);

@@ -102,7 +102,7 @@ describe("gittensory-mcp CLI — lint-pr-text", () => {
     await expect(runAsync(["lint-pr-text", "--body-file", "/tmp/missing-gittensory-pr-body.md"], e)).rejects.toThrow(/Body file not found/);
     const help = run(["lint-pr-text", "--help"]);
     expect(help).toMatch(/Usage: gittensory-mcp lint-pr-text/);
-    expect(help).toMatch(/gittensory_lint_pr_text/);
+    expect(help).toMatch(/loopover_lint_pr_text/);
     expect(help).toMatch(/--body-file/);
   });
 

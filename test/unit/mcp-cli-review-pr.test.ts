@@ -396,7 +396,7 @@ describe("gittensory-mcp CLI — review-pr", () => {
   it("prints help", () => {
     const help = run(["review-pr", "--help"]);
     expect(help).toMatch(/Usage: gittensory-mcp review-pr/);
-    expect(help).toMatch(/gittensory_review_pr_before_push/);
+    expect(help).toMatch(/loopover_review_pr_before_push/);
     expect(help).toMatch(/preflight \+ slop-risk \+ PR-text-lint/);
   });
 

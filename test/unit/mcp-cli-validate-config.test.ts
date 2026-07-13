@@ -58,7 +58,7 @@ describe("gittensory-mcp CLI — validate-config", () => {
     const e = await env();
     const help = run(["validate-config", "--help"]);
     expect(help).toMatch(/Usage: gittensory-mcp validate-config/);
-    expect(help).toMatch(/gittensory_validate_config/);
+    expect(help).toMatch(/loopover_validate_config/);
 
     const manifestPath = join(tempDir!, "missing.yml");
     await expect(runAsync(["validate-config", "--file", manifestPath], e)).rejects.toThrow(/Manifest file not found/);

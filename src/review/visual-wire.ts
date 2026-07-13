@@ -5,7 +5,7 @@
 // convention (`/^(1|true|yes|on)$/i`, same as isSafetyEnabled / isUnifiedReviewCommentEnabled).
 //
 // `screenshots` is a `ConvergedFeatureKey` (#4616): per-repo activation — the global flag here AND (a per-repo
-// `.gittensory.yml` `features.screenshots` override OR the `LOOPOVER_REVIEW_REPOS` cutover allowlist
+// `.loopover.yml` `features.screenshots` override OR the `LOOPOVER_REVIEW_REPOS` cutover allowlist
 // default) — is resolved by `resolveConvergedFeature` / `convergedFeatureActive` in `./feature-activation`,
 // the SAME shared resolver every other converged feature goes through; this file only owns the flag itself
 // (`FEATURE_GLOBAL_FLAG`'s `screenshots` entry). Before #4616 this file also exported a hand-rolled

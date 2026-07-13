@@ -119,7 +119,7 @@ describe("gittensory-mcp CLI — slop-risk", () => {
     await expect(runAsync(["slop-risk", "--description-file", "/tmp/missing-gittensory-slop-description.md"], e)).rejects.toThrow(/Description file not found/);
     const help = run(["slop-risk", "--help"]);
     expect(help).toMatch(/Usage: gittensory-mcp slop-risk/);
-    expect(help).toMatch(/gittensory_check_slop_risk/);
+    expect(help).toMatch(/loopover_check_slop_risk/);
     expect(help).toMatch(/--changed-file/);
   });
 

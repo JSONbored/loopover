@@ -92,6 +92,20 @@ The image entrypoint is `gittensory-miner`; pass subcommands after the image nam
 - **`GITHUB_TOKEN`** — supplied by the operator at run time; the image contains no credentials.
 - **Scale** — launch additional containers with the same volume (or partitioned config dirs) for parallel attempts.
 
+**Secret files (`GITHUB_TOKEN_FILE`).** Passing `-e GITHUB_TOKEN` leaves the token in plaintext, visible via `docker inspect` on the host. In Docker Swarm / Kubernetes (or any setup that mounts secrets as files), set `GITHUB_TOKEN_FILE` to a mounted secret path instead — the miner reads the file at startup, trims trailing whitespace/newlines, and uses its contents as `GITHUB_TOKEN`:
+
+```sh
+docker run --rm -it \
+  -e GITTENSORY_MINER_CONFIG_DIR=/data/miner \
+  -e GITHUB_TOKEN_FILE=/run/secrets/github_token \
+  -v /path/to/secret:/run/secrets/github_token:ro \
+  -v miner-data:/data/miner \
+  gittensory-miner:latest \
+  doctor
+```
+
+Precedence: an explicit plain `GITHUB_TOKEN` always wins, so if both `GITHUB_TOKEN` and `GITHUB_TOKEN_FILE` are set the plain value is used and the file is not read. If `GITHUB_TOKEN_FILE` is set but its file is missing, unreadable, or empty, the miner fails fast at startup with a clear error naming the variable and path (never the secret value) rather than silently running with no token.
+
 The repo-root [`docker-compose.yml`](../../docker-compose.yml) documents the **self-hosted review stack** (the `gittensory` API/orb), not the miner CLI. Miners are clients of that stack (or of github.com directly) and do not require it to run locally.
 
 ### Docker Compose (fleet mode)

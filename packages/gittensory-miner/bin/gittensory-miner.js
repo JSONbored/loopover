@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { runAttempt } from "../lib/attempt-cli.js";
 import { printHelp, printVersion, runCli } from "../lib/cli.js";
+import { loadMinerFileSecrets } from "../lib/load-file-secrets.js";
 import { configureLogger, extractLogOptions } from "../lib/logger.js";
 import { runDenyCheck } from "../lib/deny-check.js";
 import { runDiscover } from "../lib/discover-cli.js";
@@ -31,6 +32,17 @@ import { resolveMinerVersion } from "../lib/version.js";
 // Register signal + crash handlers once, before any command runs, so an interrupted run closes its open ledgers
 // cleanly instead of dying mid-write (#4826). Covers every subcommand below, including the local ones.
 installCliSignalHandlers();
+
+// Resolve any `<NAME>_FILE` secret-file companions (GITHUB_TOKEN today) into their plain env vars once, before
+// any command reads a credential (#5178), so a Docker/Swarm/K8s secret mount works exactly like a plain env
+// var. Fail-fast with a clear message (never the secret value) so a missing/unreadable/empty mounted secret
+// surfaces here rather than as a confusing downstream GitHub auth failure.
+try {
+  loadMinerFileSecrets(process.env);
+} catch (err) {
+  process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+  process.exit(1);
+}
 
 // Peel the global logging flags (--quiet/--verbose/--log-level) off the front of argv and configure the
 // process-wide logger once (#4835), so every command below shares one level-aware logger without re-parsing

@@ -88,7 +88,7 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
     GITTENSOR_REGISTRY_URL: "https://raw.githubusercontent.com/entrius/gittensor/test/gittensor/validator/weights/master_repositories.json",
     GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "false",
     GITTENSORY_DRIFT_ISSUE_REPO: "JSONbored/gittensory",
-    PUBLIC_API_ORIGIN: "https://gittensory-api.aethereal.dev",
+    PUBLIC_API_ORIGIN: "https://api.loopover.ai",
     PUBLIC_SITE_ORIGIN: "https://loopover.ai",
     INTERNAL_JOB_TOKEN: "dev-internal-token",
     GITTENSORY_API_TOKEN: "test-api-token",

@@ -5702,6 +5702,10 @@ function requiresApiToken(path: string): boolean {
 const DEFAULT_CORS_ORIGINS = [
   "https://loopover.ai",
   "https://gittensory.aethereal.dev",
+  // LoopOver rebrand (#4765): PUBLIC_API_ORIGIN's dynamic addition below now only covers api.loopover.ai
+  // (the new default), so the old API domain needs to stay allowed here statically for backward compat,
+  // same as the site origin above.
+  "https://gittensory-api.aethereal.dev",
   "http://localhost:3000",
   "http://localhost:4173",
   "http://localhost:5173",

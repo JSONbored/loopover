@@ -38,11 +38,18 @@
     "SCORING_TIME_DECAY_ENABLED": "true",
     "GITTENSORY_AUTO_FILE_DRIFT_ISSUES": "false",
     "GITTENSORY_DRIFT_ISSUE_REPO": "JSONbored/gittensory",
-    "PUBLIC_API_ORIGIN": "https://gittensory-api.aethereal.dev",
     // LoopOver rebrand (issue #4765, domain flip): loopover.ai is now the canonical site origin. The old
     // gittensory.aethereal.dev domain stays live (still resolves, still valid as a post-OAuth-login redirect
     // target via PUBLIC_SITE_ORIGIN_ALIASES below) -- no redirect rule, no sunset date, both domains keep
     // working side by side; only which one this instance treats as canonical has flipped.
+    //
+    // PUBLIC_API_ORIGIN flipped here too (previously deferred): it builds this Worker's own GitHub OAuth
+    // redirect_uri (githubOAuthCallbackUrl, src/auth/github-oauth.ts). The classic OAuth App behind
+    // GITHUB_OAUTH_CLIENT_ID only supports ONE registered callback URL (unlike a GitHub App's up-to-10), so
+    // this had to be a hard cutover in lockstep with updating that OAuth App's callback URL to
+    // https://api.loopover.ai/v1/auth/github/callback on GitHub's side -- no dual-domain transition window
+    // was possible for this one value the way PUBLIC_SITE_ORIGIN got above.
+    "PUBLIC_API_ORIGIN": "https://api.loopover.ai",
     "PUBLIC_SITE_ORIGIN": "https://loopover.ai",
     "PUBLIC_SITE_ORIGIN_ALIASES": "https://gittensory.aethereal.dev",
     "ADMIN_GITHUB_LOGINS": "JSONbored",

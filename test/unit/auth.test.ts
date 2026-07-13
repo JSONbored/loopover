@@ -637,7 +637,7 @@ describe("private-beta auth and rate limiting", () => {
     expect(started.returnTo).toBe("https://loopover.ai/app/workbench");
     expect(started.authorizationUrl).toContain("https://github.com/login/oauth/authorize");
     expect(started.authorizationUrl).toContain("client_id=client-id");
-    expect(started.authorizationUrl).toContain("redirect_uri=https%3A%2F%2Fgittensory-api.aethereal.dev%2Fv1%2Fauth%2Fgithub%2Fcallback");
+    expect(started.authorizationUrl).toContain("redirect_uri=https%3A%2F%2Fapi.loopover.ai%2Fv1%2Fauth%2Fgithub%2Fcallback");
 
     await expect(
       startGitHubWebOAuth(createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id" }), "https://gittensory-api.aethereal.dev/v1/auth/github/start", undefined),

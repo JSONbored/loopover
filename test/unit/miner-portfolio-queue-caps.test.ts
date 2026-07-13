@@ -16,7 +16,7 @@ describe("resolvePortfolioQueueCaps (#4850)", () => {
     roots.push(root);
     expect(
       resolvePortfolioQueueCaps({
-        env: { GITTENSORY_MINER_CONFIG_DIR: root } as NodeJS.ProcessEnv,
+        env: { GITTENSORY_MINER_CONFIG_DIR: root },
       }),
     ).toEqual({ globalWipCap: 1, perRepoWipCap: 1 });
   });
@@ -31,7 +31,7 @@ describe("resolvePortfolioQueueCaps (#4850)", () => {
     );
     expect(
       resolvePortfolioQueueCaps({
-        env: { GITTENSORY_MINER_CONFIG_DIR: root } as NodeJS.ProcessEnv,
+        env: { GITTENSORY_MINER_CONFIG_DIR: root },
       }),
     ).toEqual({ globalWipCap: 4, perRepoWipCap: 2 });
   });
@@ -44,7 +44,7 @@ describe("resolvePortfolioQueueCaps (#4850)", () => {
       GITTENSORY_MINER_CONFIG_DIR: root,
       GITTENSORY_MINER_GLOBAL_WIP_CAP: "3",
       GITTENSORY_MINER_PER_REPO_WIP_CAP: "2",
-    } as NodeJS.ProcessEnv;
+    };
     expect(resolvePortfolioQueueCaps({ env })).toEqual({ globalWipCap: 3, perRepoWipCap: 2 });
     expect(
       resolvePortfolioQueueCaps({
@@ -60,7 +60,7 @@ describe("resolvePortfolioQueueCaps (#4850)", () => {
     writeFileSync(join(root, ".gittensory-miner.yml"), "not: [valid", "utf8");
     expect(
       resolvePortfolioQueueCaps({
-        env: { GITTENSORY_MINER_CONFIG_DIR: root } as NodeJS.ProcessEnv,
+        env: { GITTENSORY_MINER_CONFIG_DIR: root },
       }),
     ).toEqual({ globalWipCap: 1, perRepoWipCap: 1 });
   });

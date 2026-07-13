@@ -45,7 +45,11 @@ export function runQueueList(
 
 export function runQueueNext(
   args: string[],
-  options?: { initPortfolioQueue?: () => PortfolioQueueStore },
+  options?: {
+    env?: Record<string, string | undefined>;
+    dbPath?: string;
+    initPortfolioQueueManager?: (opts: unknown) => PortfolioQueueManager;
+  },
 ): number;
 
 export function runQueueDone(
@@ -66,7 +70,7 @@ export function runQueueRequeue(
 export function runQueueClaimBatch(
   args: string[],
   options?: {
-    env?: NodeJS.ProcessEnv;
+    env?: Record<string, string | undefined>;
     dbPath?: string;
     initPortfolioQueueManager?: (opts: unknown) => PortfolioQueueManager;
   },
@@ -76,7 +80,7 @@ export function runQueueCli(
   subcommand: string | undefined,
   args: string[],
   options?: {
-    env?: NodeJS.ProcessEnv;
+    env?: Record<string, string | undefined>;
     dbPath?: string;
     initPortfolioQueue?: () => PortfolioQueueStore;
     initPortfolioQueueManager?: (opts: unknown) => PortfolioQueueManager;

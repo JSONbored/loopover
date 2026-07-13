@@ -1,4 +1,4 @@
 export function resolvePortfolioQueueCaps(options?: {
-  env?: NodeJS.ProcessEnv;
+  env?: Record<string, string | undefined>;
   cliCaps?: { globalWipCap?: number; perRepoWipCap?: number };
 }): { globalWipCap: number; perRepoWipCap: number };

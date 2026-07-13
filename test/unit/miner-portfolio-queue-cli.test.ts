@@ -36,8 +36,10 @@ function tempQueueStore() {
 
 function managerOptions(store: ReturnType<typeof initPortfolioQueueStore>, caps = { globalWipCap: 1, perRepoWipCap: 1 }) {
   return {
-    initPortfolioQueueManager: (opts: { caps?: { globalWipCap: number; perRepoWipCap: number } }) =>
-      initPortfolioQueueManager({ store, caps: opts.caps ?? caps }),
+    initPortfolioQueueManager: (opts: unknown) => {
+      const parsed = opts as { caps?: { globalWipCap: number; perRepoWipCap: number } };
+      return initPortfolioQueueManager({ store, caps: parsed.caps ?? caps });
+    },
   };
 }
 

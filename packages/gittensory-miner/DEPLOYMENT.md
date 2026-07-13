@@ -154,6 +154,9 @@ Want the dashboard too? [`systemd/gittensory-miner-ui.service.example`](../../sy
 
 See [`docs/operations-runbook.md`](docs/operations-runbook.md) for operational scenarios: ledger corruption, two miners on one state dir, and post-upgrade schema migration ([#4875](https://github.com/JSONbored/gittensory/issues/4875)).
 
+See [`docs/sizing.md`](docs/sizing.md) for measured CPU/RAM/disk numbers for laptop mode vs. fleet mode at
+different worker counts, with the exact commands used to reproduce them.
+
 ## Optional hosted discovery plane (opt-in)
 
 The Phase 6 **hosted discovery-index** is **off by default** — unlike Orb fleet export (`ORB_AIR_GAP` is the only opt-out). Operators who want cross-fleet metadata queries or soft-claim coordination must opt in explicitly. See [`docs/discovery-plane-operator-guide.md`](docs/discovery-plane-operator-guide.md) ([#4309](https://github.com/JSONbored/gittensory/issues/4309), placeholder until [#4300](https://github.com/JSONbored/gittensory/issues/4300) / [#4301](https://github.com/JSONbored/gittensory/issues/4301) / [#4302](https://github.com/JSONbored/gittensory/issues/4302) ship).

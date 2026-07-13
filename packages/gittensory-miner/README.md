@@ -161,6 +161,9 @@ See [`DEPLOYMENT.md`](DEPLOYMENT.md) for laptop vs fleet deployment.
 
 See [`docs/operations-runbook.md`](docs/operations-runbook.md) for SQLite concurrency guarantees, corruption recovery, multi-process collision response, and post-upgrade ledger migration ([#4875](https://github.com/JSONbored/gittensory/issues/4875)).
 
+See [`docs/sizing.md`](docs/sizing.md) for measured CPU/RAM/disk numbers across laptop mode and fleet mode at
+different worker counts.
+
 ### Laptop-mode quickstart
 
 Zero-infra local install — no Docker, Redis, or Postgres required:

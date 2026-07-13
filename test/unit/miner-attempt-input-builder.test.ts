@@ -58,9 +58,15 @@ describe("buildAttemptGovernorContext (#5132)", () => {
     expect(ctx.killSwitchRepoPaused).toBeUndefined();
   });
 
-  it("REGRESSION: convergenceInput is an honest first-attempt-shaped literal, not fabricated real history", () => {
+  it("falls back to the honest first-attempt literal when the caller supplies no convergenceInput (#5654)", () => {
     const ctx = buildAttemptGovernorContext({}, DEFAULT_AMS_POLICY_SPEC);
     expect(ctx.convergenceInput).toEqual({ attempts: 0, consecutiveFailures: 0, reenqueues: 0, reachedDone: false });
+  });
+
+  it("threads the caller's real per-issue convergenceInput through unchanged (#5654)", () => {
+    const convergenceInput = { attempts: 4, consecutiveFailures: 3, reenqueues: 2, reachedDone: false };
+    const ctx = buildAttemptGovernorContext({}, DEFAULT_AMS_POLICY_SPEC, undefined, convergenceInput);
+    expect(ctx.convergenceInput).toEqual(convergenceInput);
   });
 
   it("omits rateLimitBuckets/rateLimitBackoffAttempts/capUsage so the persisted governor-state store auto-supplies them", () => {

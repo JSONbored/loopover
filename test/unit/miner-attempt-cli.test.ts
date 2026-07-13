@@ -12,6 +12,7 @@ import { closeDefaultEventLedger, initEventLedger } from "../../packages/gittens
 import { closeDefaultAttemptLog, initAttemptLog } from "../../packages/gittensory-miner/lib/attempt-log.js";
 import { closeDefaultGovernorLedger, initGovernorLedger } from "../../packages/gittensory-miner/lib/governor-ledger.js";
 import { closeDefaultWorktreeAllocator, openWorktreeAllocator } from "../../packages/gittensory-miner/lib/worktree-allocator.js";
+import { closeDefaultPortfolioQueueStore } from "../../packages/gittensory-miner/lib/portfolio-queue.js";
 import { buildAttemptDeps, parseAttemptArgs, runAttempt } from "../../packages/gittensory-miner/lib/attempt-cli.js";
 import type { PrepareAttemptWorktreeResult } from "../../packages/gittensory-miner/lib/attempt-worktree.js";
 import { DEFAULT_AMS_POLICY_SPEC, DEFAULT_MINER_GOAL_SPEC, parseFocusManifest } from "../../packages/gittensory-engine/src/index";
@@ -64,6 +65,9 @@ function readyPipelineOptions(overrides: Record<string, unknown> = {}) {
     resolveAmsPolicy: async () => ({ spec: DEFAULT_AMS_POLICY_SPEC, source: "default" as const, warnings: [] }),
     checkMinerKillSwitch: () => ({ scope: "none" as const, active: false }),
     resolveMinerGoalSpec: () => ({ present: false, spec: DEFAULT_MINER_GOAL_SPEC, warnings: [] }),
+    // Hermetic per-issue convergence read (#5654): a stub keeps every pipeline test off the real default
+    // portfolio-queue store; the real reader is exercised by its own fallback test below.
+    readPortfolioConvergence: () => ({ attempts: 0, consecutiveFailures: 0, reenqueues: 0, reachedDone: false }),
     ...overrides,
   };
 }
@@ -89,7 +93,9 @@ afterEach(() => {
   closeDefaultEventLedger();
   closeDefaultAttemptLog();
   closeDefaultGovernorLedger();
+  closeDefaultPortfolioQueueStore();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -999,6 +1005,59 @@ describe("runAttempt: real per-repo kill switch (#5392)", () => {
     const [input] = runMinerAttemptSpy.mock.calls[0]!;
     expect(input.killSwitchScope).toBe("none");
     expect(input.governor.killSwitchRepoPaused).toBe(false);
+  });
+});
+
+describe("runAttempt: real per-issue convergence history (#5654)", () => {
+  it("reads the issue's real convergence history and threads it into the governor context", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({ outcome: "governed", decision: { allowed: false }, loopResult: {} });
+    const readConvergenceSpy = vi.fn().mockReturnValue({ attempts: 5, consecutiveFailures: 3, reenqueues: 3, reachedDone: false });
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        readPortfolioConvergence: readConvergenceSpy,
+        runMinerAttempt: runMinerAttemptSpy,
+      }),
+    });
+
+    // Keyed by the parsed repo + issue number (the reader itself maps to the `issue:<n>` identifier).
+    expect(readConvergenceSpy).toHaveBeenCalledWith("acme/widgets", 7);
+    const [input] = runMinerAttemptSpy.mock.calls[0]!;
+    expect(input.governor.convergenceInput).toEqual({ attempts: 5, consecutiveFailures: 3, reenqueues: 3, reachedDone: false });
+  });
+
+  it("falls back to the real default-store reader when no reader is injected, reading the honest zero literal for a never-queued issue", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const root = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-cli-conv-"));
+    roots.push(root);
+    // Point the default portfolio-queue store at a temp file so the real fallback reader stays hermetic.
+    vi.stubEnv("GITTENSORY_MINER_PORTFOLIO_QUEUE_DB", join(root, "portfolio-queue.sqlite3"));
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({ outcome: "governed", decision: { allowed: false }, loopResult: {} });
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        readPortfolioConvergence: undefined, // exercise the real readConvergenceInputForIssue fallback
+        runMinerAttempt: runMinerAttemptSpy,
+      }),
+    });
+
+    const [input] = runMinerAttemptSpy.mock.calls[0]!;
+    expect(input.governor.convergenceInput).toEqual({ attempts: 0, consecutiveFailures: 0, reenqueues: 0, reachedDone: false });
   });
 });
 

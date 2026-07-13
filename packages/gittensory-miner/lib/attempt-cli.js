@@ -33,6 +33,7 @@ import { buildCodingTaskSpec } from "./coding-task-spec.js";
 import { resolveAmsPolicy } from "./ams-policy.js";
 import { checkMinerKillSwitch } from "./governor-kill-switch.js";
 import { buildAttemptGovernorContext, buildAttemptLoopInput } from "./attempt-input-builder.js";
+import { readConvergenceInputForIssue } from "./portfolio-queue.js";
 import { runMinerAttempt } from "./attempt-runner.js";
 
 const ATTEMPT_USAGE =
@@ -399,7 +400,14 @@ export async function runAttempt(args, options = {}) {
       amsPolicySpec: amsPolicy.spec,
       branchRef: worktreeResult.branchName,
     });
-    const governor = buildAttemptGovernorContext(env, amsPolicy.spec, repoPaused);
+    // Real per-issue convergence history (#5654): read this issue's attempt-history counters from the
+    // portfolio-queue store (keyed by the miner's `issue:<number>` identifier) and thread them into the
+    // Governor context, replacing the honest-but-blind first-attempt literal buildAttemptGovernorContext used
+    // to hardcode. Injectable so unit tests stay hermetic (no default-store IO); the real reader reads the
+    // default store. A never-queued issue reads the zero literal — the same safe under-estimate as before.
+    const readConvergence = options.readPortfolioConvergence ?? readConvergenceInputForIssue;
+    const convergenceInput = readConvergence(parsed.repoFullName, parsed.issueNumber);
+    const governor = buildAttemptGovernorContext(env, amsPolicy.spec, repoPaused, convergenceInput);
 
     // Real soft-claim (#5393): recorded once we've committed to a real attempt (past feasibility), so a
     // sibling miner process on this machine sees it via claimLedger.listClaims/listActiveClaims while this

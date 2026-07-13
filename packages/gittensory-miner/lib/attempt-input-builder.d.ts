@@ -1,4 +1,4 @@
-import type { AmsPolicySpec, CodingAgentExecutionMode, IterateLoopInput, SelfReviewContext } from "@loopover/engine";
+import type { AmsPolicySpec, CodingAgentExecutionMode, IterateLoopInput, PortfolioConvergenceInput, SelfReviewContext } from "@loopover/engine";
 import type { AttemptGovernorContext } from "./attempt-runner.js";
 import type { CodingTaskSpecResult } from "./coding-task-spec.js";
 
@@ -6,6 +6,7 @@ export function buildAttemptGovernorContext(
   env: Record<string, string | undefined>,
   amsPolicySpec: AmsPolicySpec,
   repoPaused?: boolean,
+  convergenceInput?: PortfolioConvergenceInput,
 ): AttemptGovernorContext;
 
 export type BuildAttemptLoopInputInput = {

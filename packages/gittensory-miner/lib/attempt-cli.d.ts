@@ -13,6 +13,7 @@ import type { resolveAmsPolicy } from "./ams-policy.js";
 import type { checkMinerKillSwitch } from "./governor-kill-switch.js";
 import type { resolveMinerGoalSpec } from "./miner-goal-spec.js";
 import type { ClaimConflictResult, resolveClaimConflict } from "./claim-conflict-resolver.js";
+import type { readConvergenceInputForIssue } from "./portfolio-queue.js";
 
 type CommonAttemptResultFields = {
   repoFullName: string;
@@ -89,6 +90,9 @@ export type RunAttemptOptions = {
   resolveAmsPolicy?: typeof resolveAmsPolicy;
   checkMinerKillSwitch?: typeof checkMinerKillSwitch;
   resolveMinerGoalSpec?: typeof resolveMinerGoalSpec;
+  /** Real per-issue convergence-history reader (#5654); defaults to reading the default portfolio-queue store.
+   *  Injected by tests to stay hermetic. */
+  readPortfolioConvergence?: typeof readConvergenceInputForIssue;
   runMinerAttempt?: typeof runMinerAttempt;
   resolveClaimConflict?: typeof resolveClaimConflict;
   /** Invoked with the real structured result at every return point, in addition to (never instead of) the

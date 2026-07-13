@@ -1,3 +1,5 @@
+import type { PortfolioConvergenceInput } from "@loopover/engine";
+
 export type QueueStatus = "queued" | "in_progress" | "done";
 
 export type QueueEntry = {
@@ -33,6 +35,7 @@ export type PortfolioQueueStore = {
   listInProgress(): QueueLeaseEntry[];
   markDone(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
   markFailed(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
+  readConvergenceInput(repoFullName: string, identifier: string, apiBaseUrl?: string): PortfolioConvergenceInput;
   reclaimStuckItem(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
   requeueItem(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
   batchClaim(
@@ -58,5 +61,11 @@ export function listQueue(repoFullName?: string | null): QueueEntry[];
 export function markDone(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
 
 export function markFailed(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
+
+export function readConvergenceInputForIssue(
+  repoFullName: string,
+  issueNumber: number,
+  apiBaseUrl?: string,
+): PortfolioConvergenceInput;
 
 export function closeDefaultPortfolioQueueStore(): void;

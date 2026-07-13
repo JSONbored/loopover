@@ -473,4 +473,55 @@ describe("createCliSubprocessCodingAgentDriver (#4266)", () => {
       expect(result.costUsd).toBe(0.06);
     });
   });
+
+  describe("two-tier stalled-output timeout regression (#5196 — guards the #4994/#5053 CLI-stall outage)", () => {
+    it("surfaces a distinct 'stalled' error (not a full timeout) when the CLI emits zero stdout past firstOutputTimeoutMs", async () => {
+      // #4994/#5053: a claude/codex process that produced NO output was killed only at the full timeoutMs, masking
+      // the stall as a generic timeout. The fast-fail first-output deadline must report it distinctly instead.
+      const { spawn } = fakeSpawn({ stdout: "", code: null, timedOut: true, stalledNoOutput: true });
+      const driver = createCliSubprocessCodingAgentDriver({
+        command: "claude",
+        spawn,
+        timeoutMs: 120_000,
+        firstOutputTimeoutMs: 5_000,
+      });
+      const result = await driver.run(TASK);
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("claude_stalled_no_output");
+      expect(result.summary).toBe("claude stalled with no stdout within 5000ms");
+      // Distinctness guard: a stall must never be conflated with the generic full-timeout error.
+      expect(result.error).not.toContain("_timeout_");
+    });
+
+    it("does NOT kill a slow-but-producing run: output before firstOutputTimeoutMs clears the stall timer and it completes normally", async () => {
+      // A run that emits at least one byte before the first-output deadline is healthy — a real spawn clears the
+      // first-output timer on that byte, so `stalledNoOutput` is never set and the driver returns success.
+      const { spawn } = fakeSpawn({ stdout: "warming up... done", code: 0 });
+      const driver = createCliSubprocessCodingAgentDriver({
+        command: "claude",
+        spawn,
+        timeoutMs: 120_000,
+        firstOutputTimeoutMs: 5_000,
+      });
+      const result = await driver.run(TASK);
+      expect(result.ok).toBe(true);
+      expect(result.transcript).toBe("warming up... done");
+    });
+
+    it("preserves the pre-existing full-timeout path unchanged when output was produced but the process never exits (regression guard)", async () => {
+      // Once output has cleared the stall timer, a process that runs past the full timeoutMs must still yield the
+      // generic `_timeout_` error — the new fast-fail path must not alter the old full-timeout behavior.
+      const { spawn } = fakeSpawn({ stdout: "partial output, still working", code: null, timedOut: true });
+      const driver = createCliSubprocessCodingAgentDriver({
+        command: "claude",
+        spawn,
+        timeoutMs: 5_000,
+        firstOutputTimeoutMs: 1_000,
+      });
+      const result = await driver.run(TASK);
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("claude_timeout_5000ms");
+      expect(result.error).not.toContain("stalled");
+    });
+  });
 });

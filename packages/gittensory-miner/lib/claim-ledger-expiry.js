@@ -32,7 +32,9 @@ export function sweepExpiredClaims(store, nowMs, maxAgeMs = DEFAULT_MAX_CLAIM_AG
   const expired = findExpiredClaims(activeClaims, nowMs, maxAgeMs);
   const transitioned = [];
   for (const claim of expired) {
-    const updated = store.expireClaim(claim.repoFullName, claim.issueNumber);
+    // Echo the row's OWN apiBaseUrl back (#5563) rather than defaulting: two forge hosts can each have an
+    // active claim on the same owner/repo#issue, and defaulting here would expire the wrong host's row.
+    const updated = store.expireClaim(claim.repoFullName, claim.issueNumber, claim.apiBaseUrl);
     if (updated) transitioned.push(updated);
   }
   return transitioned;

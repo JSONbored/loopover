@@ -7,6 +7,7 @@ export type ParsedClaimClaimArgs =
       note: string | undefined;
       dryRun: boolean;
       json: boolean;
+      apiBaseUrl: string | undefined;
     }
   | { error: string };
 
@@ -16,6 +17,7 @@ export type ParsedClaimReleaseArgs =
       issueNumber: number;
       dryRun: boolean;
       json: boolean;
+      apiBaseUrl: string | undefined;
     }
   | { error: string };
 

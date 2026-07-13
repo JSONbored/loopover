@@ -7,9 +7,13 @@ import {
   CLAIM_STATUSES,
   claimIssue,
   closeDefaultClaimLedger,
+  expireClaim,
   listActiveClaims,
+  listClaims,
   openClaimLedger,
   openClaimLedgerReadOnly,
+  recordClaim,
+  releaseClaim,
   resolveClaimLedgerDbPath,
 } from "../../packages/gittensory-miner/lib/claim-ledger.js";
 
@@ -178,20 +182,34 @@ describe("gittensory-miner claim ledger (#2314)", () => {
     expect(listActiveClaims("o/missing")).toEqual([]);
   });
 
-  it("creates miner_claims with the foundation schema (#3352)", () => {
+  it("top-level recordClaim, releaseClaim, expireClaim, and listClaims use the default ledger store, forwarding apiBaseUrl (#5563)", () => {
+    const root = tempRoot();
+    vi.stubEnv("GITTENSORY_MINER_CLAIM_LEDGER_DB", join(root, "claim-ledger.sqlite3"));
+    closeDefaultClaimLedger();
+    const ghClaim = recordClaim({ repoFullName: "o/a", issueNumber: 5, apiBaseUrl: "https://api.github.com" });
+    const geClaim = recordClaim({ repoFullName: "o/a", issueNumber: 5, apiBaseUrl: "https://ghe.example.com/api/v3" });
+    expect(listClaims({ repoFullName: "o/a" })).toEqual([ghClaim, geClaim]);
+
+    expect(releaseClaim("o/a", 5, "https://api.github.com")?.status).toBe("released");
+    expect(expireClaim("o/a", 5, "https://ghe.example.com/api/v3")?.status).toBe("expired");
+    expect(listClaims({ repoFullName: "o/a", status: "active" })).toEqual([]);
+  });
+
+  it("creates miner_claims with the foundation schema, forge-scoped (#3352, #5563)", () => {
     const ledger = tempLedger();
     const db = new DatabaseSync(ledger.dbPath, { readOnly: true });
     type TableColumn = { name: string; notnull: number; dflt_value: string | null; pk: number };
     const columns = db.prepare("PRAGMA table_info(miner_claims)").all() as TableColumn[];
     expect(columns.map((column) => column.name)).toEqual([
       "id",
+      "api_base_url",
       "repo_full_name",
       "issue_number",
       "claimed_at",
       "status",
       "note",
     ]);
-    for (const name of ["repo_full_name", "issue_number", "claimed_at", "status"]) {
+    for (const name of ["api_base_url", "repo_full_name", "issue_number", "claimed_at", "status"]) {
       expect(columns.find((column) => column.name === name)?.notnull).toBe(1);
     }
     expect(columns.find((column) => column.name === "status")?.dflt_value).toBe("'active'");
@@ -201,16 +219,103 @@ describe("gittensory-miner claim ledger (#2314)", () => {
       .filter((index) => index.unique === 1);
     expect(uniqueIndexes.length).toBeGreaterThan(0);
     const indexCols = db.prepare(`PRAGMA index_info('${uniqueIndexes[0]!.name}')`).all() as Array<{ name: string }>;
-    expect(indexCols.map((column) => column.name).sort()).toEqual(["issue_number", "repo_full_name"]);
+    expect(indexCols.map((column) => column.name).sort()).toEqual(["api_base_url", "issue_number", "repo_full_name"]);
     db.close();
 
     const writable = new DatabaseSync(ledger.dbPath);
     expect(() =>
       writable.exec(
-        "INSERT INTO miner_claims (repo_full_name, issue_number, claimed_at, status) VALUES ('o/a', 1, '2026-01-01T00:00:00.000Z', 'bogus')",
+        "INSERT INTO miner_claims (api_base_url, repo_full_name, issue_number, claimed_at, status) VALUES ('https://api.github.com', 'o/a', 1, '2026-01-01T00:00:00.000Z', 'bogus')",
       ),
     ).toThrow();
     writable.close();
+  });
+
+  describe("forge-scoping (#5563)", () => {
+    it("defaults apiBaseUrl to the github.com default when omitted", () => {
+      const ledger = tempLedger();
+      const claim = ledger.recordClaim({ repoFullName: "o/a", issueNumber: 1 });
+      expect(claim.apiBaseUrl).toBe("https://api.github.com");
+    });
+
+    it("two forge hosts can each hold an active claim on the same owner/repo#issue without colliding", () => {
+      const ledger = tempLedger();
+      const ghClaim = ledger.recordClaim({ repoFullName: "acme/widgets", issueNumber: 1, apiBaseUrl: "https://api.github.com" });
+      const geClaim = ledger.recordClaim({
+        repoFullName: "acme/widgets",
+        issueNumber: 1,
+        apiBaseUrl: "https://ghe.example.com/api/v3",
+      });
+      expect(ghClaim.id).not.toBe(geClaim.id);
+      expect(ledger.listClaims({ repoFullName: "acme/widgets" })).toHaveLength(2);
+
+      // Releasing one host's claim leaves the other host's claim active.
+      expect(ledger.releaseClaim("acme/widgets", 1, "https://api.github.com")?.status).toBe("released");
+      const remaining = ledger.listClaims({ repoFullName: "acme/widgets", status: "active" });
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0]?.apiBaseUrl).toBe("https://ghe.example.com/api/v3");
+    });
+
+    it("expireClaim is scoped by apiBaseUrl too, not just repo+issue", () => {
+      const ledger = tempLedger();
+      ledger.recordClaim({ repoFullName: "acme/widgets", issueNumber: 1, apiBaseUrl: "https://api.github.com" });
+      ledger.recordClaim({ repoFullName: "acme/widgets", issueNumber: 1, apiBaseUrl: "https://ghe.example.com/api/v3" });
+      expect(ledger.expireClaim("acme/widgets", 1, "https://ghe.example.com/api/v3")?.apiBaseUrl).toBe(
+        "https://ghe.example.com/api/v3",
+      );
+      expect(ledger.listClaims({ repoFullName: "acme/widgets", status: "active" })).toHaveLength(1);
+      expect(ledger.listClaims({ repoFullName: "acme/widgets", status: "expired" })).toHaveLength(1);
+    });
+
+    it("rejects a non-string or blank apiBaseUrl", () => {
+      const ledger = tempLedger();
+      expect(() => ledger.recordClaim({ repoFullName: "o/a", issueNumber: 1, apiBaseUrl: "  " })).toThrow(
+        "invalid_api_base_url",
+      );
+      expect(() => ledger.recordClaim({ repoFullName: "o/a", issueNumber: 1, apiBaseUrl: 42 as never })).toThrow(
+        "invalid_api_base_url",
+      );
+    });
+
+    it("migrates an existing pre-#5563 file, backfilling api_base_url and preserving every row", () => {
+      const root = tempRoot();
+      const dbPath = join(root, "legacy.sqlite3");
+      const legacy = new DatabaseSync(dbPath);
+      legacy.exec(`
+        CREATE TABLE miner_claims (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          repo_full_name TEXT NOT NULL,
+          issue_number INTEGER NOT NULL,
+          claimed_at TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'released', 'expired')),
+          note TEXT,
+          UNIQUE (repo_full_name, issue_number)
+        )
+      `);
+      legacy.exec(
+        "INSERT INTO miner_claims (repo_full_name, issue_number, claimed_at, status, note) VALUES ('acme/widgets', 5, '2026-01-01T00:00:00.000Z', 'active', 'pre-migration')",
+      );
+      legacy.close();
+
+      const ledger = openClaimLedger(dbPath);
+      ledgers.push(ledger);
+      const claims = ledger.listClaims();
+      expect(claims).toEqual([
+        {
+          id: 1,
+          apiBaseUrl: "https://api.github.com",
+          repoFullName: "acme/widgets",
+          issueNumber: 5,
+          claimedAt: "2026-01-01T00:00:00.000Z",
+          status: "active",
+          note: "pre-migration",
+        },
+      ]);
+      // The old bare (repo_full_name, issue_number) collision is gone: a second host can now claim the same pair.
+      const geClaim = ledger.recordClaim({ repoFullName: "acme/widgets", issueNumber: 5, apiBaseUrl: "https://ghe.example.com/api/v3" });
+      expect(ledger.listClaims({ repoFullName: "acme/widgets" })).toHaveLength(2);
+      expect(geClaim.apiBaseUrl).toBe("https://ghe.example.com/api/v3");
+    });
   });
 
   describe("purgeByRepo (#5564)", () => {
@@ -253,6 +358,7 @@ describe("gittensory-miner claim ledger (#2314)", () => {
         expect(readOnly.listActiveClaims("acme/widgets")).toEqual([
           {
             id: expect.any(Number),
+            apiBaseUrl: "https://api.github.com",
             repoFullName: "acme/widgets",
             issueNumber: 42,
             claimedAt: expect.any(String),

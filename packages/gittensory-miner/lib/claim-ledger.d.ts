@@ -2,6 +2,7 @@ export type ClaimStatus = "active" | "released" | "expired";
 
 export type ClaimEntry = {
   id: number;
+  apiBaseUrl: string;
   repoFullName: string;
   issueNumber: number;
   claimedAt: string;
@@ -13,6 +14,7 @@ export type RecordClaimInput = {
   repoFullName: string;
   issueNumber: number;
   note?: string;
+  apiBaseUrl?: string;
 };
 
 export type ListClaimsFilter = {
@@ -23,9 +25,9 @@ export type ListClaimsFilter = {
 export type ClaimLedger = {
   dbPath: string;
   recordClaim(claim: RecordClaimInput): ClaimEntry;
-  claimIssue(repoFullName: string, issueNumber: number, note?: string): ClaimEntry;
-  releaseClaim(repoFullName: string, issueNumber: number): ClaimEntry | null;
-  expireClaim(repoFullName: string, issueNumber: number): ClaimEntry | null;
+  claimIssue(repoFullName: string, issueNumber: number, note?: string, apiBaseUrl?: string): ClaimEntry;
+  releaseClaim(repoFullName: string, issueNumber: number, apiBaseUrl?: string): ClaimEntry | null;
+  expireClaim(repoFullName: string, issueNumber: number, apiBaseUrl?: string): ClaimEntry | null;
   listClaims(filter?: ListClaimsFilter): ClaimEntry[];
   listActiveClaims(repoFullName?: string): ClaimEntry[];
   purgeByRepo(repoFullName: string): number;
@@ -48,13 +50,13 @@ export function openClaimLedgerReadOnly(dbPath: string): ReadOnlyClaimLedger;
 
 export function recordClaim(claim: RecordClaimInput): ClaimEntry;
 
-export function releaseClaim(repoFullName: string, issueNumber: number): ClaimEntry | null;
+export function releaseClaim(repoFullName: string, issueNumber: number, apiBaseUrl?: string): ClaimEntry | null;
 
-export function expireClaim(repoFullName: string, issueNumber: number): ClaimEntry | null;
+export function expireClaim(repoFullName: string, issueNumber: number, apiBaseUrl?: string): ClaimEntry | null;
 
 export function listClaims(filter?: ListClaimsFilter): ClaimEntry[];
 
-export function claimIssue(repoFullName: string, issueNumber: number, note?: string): ClaimEntry;
+export function claimIssue(repoFullName: string, issueNumber: number, note?: string, apiBaseUrl?: string): ClaimEntry;
 
 export function listActiveClaims(repoFullName?: string): ClaimEntry[];
 

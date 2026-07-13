@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { DEFAULT_FORGE_CONFIG } from "./forge-config.js";
 import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
 import { CLAIM_LEDGER_PURGE_SPEC, purgeStoreByRepo } from "./store-maintenance.js";
@@ -34,6 +35,14 @@ function normalizeIssueNumber(issueNumber) {
   return issueNumber;
 }
 
+/** Optional forge host, scoping rows so two hosts serving the same owner/repo name never collide (#5563).
+ *  Omitted/nullish → the github.com default, so every pre-existing single-forge caller is unaffected. */
+function normalizeApiBaseUrl(apiBaseUrl) {
+  if (apiBaseUrl === undefined || apiBaseUrl === null) return DEFAULT_FORGE_CONFIG.apiBaseUrl;
+  if (typeof apiBaseUrl !== "string" || !apiBaseUrl.trim()) throw new Error("invalid_api_base_url");
+  return apiBaseUrl.trim();
+}
+
 /** Optional free-text note: omitted/nullish → null; a string is kept as-is; anything else is rejected. */
 function normalizeNote(note) {
   if (note === undefined || note === null) return null;
@@ -44,6 +53,7 @@ function normalizeNote(note) {
 function rowToClaim(row) {
   return {
     id: row.id,
+    apiBaseUrl: row.api_base_url,
     repoFullName: row.repo_full_name,
     issueNumber: row.issue_number,
     claimedAt: row.claimed_at,
@@ -52,10 +62,37 @@ function rowToClaim(row) {
   };
 }
 
+// v1 -> v2 (#5563): scope the UNIQUE constraint by (api_base_url, repo_full_name, issue_number) instead of bare
+// (repo_full_name, issue_number) -- two different forge hosts serving a same-named repo/issue must not collide
+// in this ledger. SQLite cannot ALTER a UNIQUE constraint in place, so this rebuilds the table: create the new
+// shape, copy every existing row with the pre-#4784 implicit single-forge default backfilled, drop the old
+// table, rename the new one in. Runs inside applySchemaMigrations' own transaction, so a mid-rebuild failure
+// leaves the file at v1 and retries cleanly on next open.
+function addApiBaseUrlScope(db) {
+  db.exec(`
+    CREATE TABLE miner_claims_v2 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      api_base_url TEXT NOT NULL,
+      repo_full_name TEXT NOT NULL,
+      issue_number INTEGER NOT NULL,
+      claimed_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'released', 'expired')),
+      note TEXT,
+      UNIQUE (api_base_url, repo_full_name, issue_number)
+    )
+  `);
+  db.prepare(
+    `INSERT INTO miner_claims_v2 (id, api_base_url, repo_full_name, issue_number, claimed_at, status, note)
+     SELECT id, ?, repo_full_name, issue_number, claimed_at, status, note FROM miner_claims`,
+  ).run(DEFAULT_FORGE_CONFIG.apiBaseUrl);
+  db.exec("DROP TABLE miner_claims");
+  db.exec("ALTER TABLE miner_claims_v2 RENAME TO miner_claims");
+}
+
 /**
- * Opens the local claim ledger, creating the table on first use. `UNIQUE(repo_full_name, issue_number)` keeps ONE
- * row per claimed issue, and `recordClaim` is a single atomic INSERT…ON CONFLICT statement (no read-then-write), so
- * concurrent claims cannot duplicate a row. (#2314)
+ * Opens the local claim ledger, creating the table on first use. `UNIQUE(api_base_url, repo_full_name,
+ * issue_number)` keeps ONE row per claimed issue per forge host, and `recordClaim` is a single atomic
+ * INSERT…ON CONFLICT statement (no read-then-write), so concurrent claims cannot duplicate a row. (#2314, #5563)
  */
 export function openClaimLedger(dbPath = resolveClaimLedgerDbPath()) {
   const resolvedPath = normalizeDbPath(dbPath);
@@ -74,29 +111,33 @@ export function openClaimLedger(dbPath = resolveClaimLedgerDbPath()) {
       UNIQUE (repo_full_name, issue_number)
     )
   `);
-  // Schema-version convention (#4832): stamp the baseline and run any post-baseline migrations (none yet).
-  applySchemaMigrations(db, []);
+  // Schema-version convention (#4832): stamp the baseline and run any post-baseline migrations.
+  applySchemaMigrations(db, [addApiBaseUrlScope]);
 
   // Idempotent claim in ONE atomic statement: insert a new active claim, or — only if the existing row is NOT
   // already active — re-activate it (a released/expired claim can be re-claimed). The `WHERE status <> 'active'`
   // guard makes re-claiming an already-active issue a true no-op (no row churn), never a duplicate row.
   const recordStatement = db.prepare(`
-    INSERT INTO miner_claims (repo_full_name, issue_number, claimed_at, status, note)
-    VALUES (?, ?, ?, 'active', ?)
-    ON CONFLICT(repo_full_name, issue_number) DO UPDATE SET
+    INSERT INTO miner_claims (api_base_url, repo_full_name, issue_number, claimed_at, status, note)
+    VALUES (?, ?, ?, ?, 'active', ?)
+    ON CONFLICT(api_base_url, repo_full_name, issue_number) DO UPDATE SET
       claimed_at = excluded.claimed_at,
       note = excluded.note,
       status = 'active'
     WHERE miner_claims.status <> 'active'
   `);
   const getStatement = db.prepare(
-    "SELECT * FROM miner_claims WHERE repo_full_name = ? AND issue_number = ?",
+    "SELECT * FROM miner_claims WHERE api_base_url = ? AND repo_full_name = ? AND issue_number = ?",
   );
+  // RETURNING (matching portfolio-queue.js's own claim/release statements) makes the "nothing to release/expire"
+  // case observable directly from ONE atomic statement, rather than a separate post-UPDATE SELECT whose "row
+  // went missing" branch would be structurally unreachable (nothing else runs between the UPDATE and a SELECT
+  // on the same key within one synchronous call).
   const releaseStatement = db.prepare(
-    "UPDATE miner_claims SET status = 'released' WHERE repo_full_name = ? AND issue_number = ? AND status = 'active'",
+    "UPDATE miner_claims SET status = 'released' WHERE api_base_url = ? AND repo_full_name = ? AND issue_number = ? AND status = 'active' RETURNING *",
   );
   const expireStatement = db.prepare(
-    "UPDATE miner_claims SET status = 'expired' WHERE repo_full_name = ? AND issue_number = ? AND status = 'active'",
+    "UPDATE miner_claims SET status = 'expired' WHERE api_base_url = ? AND repo_full_name = ? AND issue_number = ? AND status = 'active' RETURNING *",
   );
   const listAllStatement = db.prepare("SELECT * FROM miner_claims ORDER BY id ASC");
   const listRepoStatement = db.prepare(
@@ -123,27 +164,26 @@ export function openClaimLedger(dbPath = resolveClaimLedgerDbPath()) {
   const ledger = {
     dbPath: resolvedPath,
     recordClaim(claim) {
+      const apiBaseUrl = normalizeApiBaseUrl(claim?.apiBaseUrl);
       const repoFullName = normalizeRepoFullName(claim?.repoFullName);
       const issueNumber = normalizeIssueNumber(claim?.issueNumber);
       const note = normalizeNote(claim?.note);
       const claimedAt = new Date().toISOString();
-      recordStatement.run(repoFullName, issueNumber, claimedAt, note);
-      return rowToClaim(getStatement.get(repoFullName, issueNumber));
+      recordStatement.run(apiBaseUrl, repoFullName, issueNumber, claimedAt, note);
+      return rowToClaim(getStatement.get(apiBaseUrl, repoFullName, issueNumber));
     },
-    releaseClaim(repoFullName, issueNumber) {
+    releaseClaim(repoFullName, issueNumber, apiBaseUrl) {
+      const normalizedForge = normalizeApiBaseUrl(apiBaseUrl);
       const normalizedRepo = normalizeRepoFullName(repoFullName);
       const normalizedIssue = normalizeIssueNumber(issueNumber);
-      const result = releaseStatement.run(normalizedRepo, normalizedIssue);
-      if (result.changes === 0) return null;
-      const row = getStatement.get(normalizedRepo, normalizedIssue);
+      const row = releaseStatement.get(normalizedForge, normalizedRepo, normalizedIssue);
       return row ? rowToClaim(row) : null;
     },
-    expireClaim(repoFullName, issueNumber) {
+    expireClaim(repoFullName, issueNumber, apiBaseUrl) {
+      const normalizedForge = normalizeApiBaseUrl(apiBaseUrl);
       const normalizedRepo = normalizeRepoFullName(repoFullName);
       const normalizedIssue = normalizeIssueNumber(issueNumber);
-      const result = expireStatement.run(normalizedRepo, normalizedIssue);
-      if (result.changes === 0) return null;
-      const row = getStatement.get(normalizedRepo, normalizedIssue);
+      const row = expireStatement.get(normalizedForge, normalizedRepo, normalizedIssue);
       return row ? rowToClaim(row) : null;
     },
     listClaims(filter = {}) {
@@ -162,8 +202,8 @@ export function openClaimLedger(dbPath = resolveClaimLedgerDbPath()) {
       }
       return rows.map(rowToClaim);
     },
-    claimIssue(repoFullName, issueNumber, note) {
-      return ledger.recordClaim({ repoFullName, issueNumber, note });
+    claimIssue(repoFullName, issueNumber, note, apiBaseUrl) {
+      return ledger.recordClaim({ repoFullName, issueNumber, note, apiBaseUrl });
     },
     listActiveClaims(repoFullName) {
       const filter = { status: "active" };
@@ -230,21 +270,21 @@ export function recordClaim(claim) {
   return getDefaultClaimLedger().recordClaim(claim);
 }
 
-export function releaseClaim(repoFullName, issueNumber) {
-  return getDefaultClaimLedger().releaseClaim(repoFullName, issueNumber);
+export function releaseClaim(repoFullName, issueNumber, apiBaseUrl) {
+  return getDefaultClaimLedger().releaseClaim(repoFullName, issueNumber, apiBaseUrl);
 }
 
-export function expireClaim(repoFullName, issueNumber) {
-  return getDefaultClaimLedger().expireClaim(repoFullName, issueNumber);
+export function expireClaim(repoFullName, issueNumber, apiBaseUrl) {
+  return getDefaultClaimLedger().expireClaim(repoFullName, issueNumber, apiBaseUrl);
 }
 
 export function listClaims(filter) {
   return getDefaultClaimLedger().listClaims(filter);
 }
 
-/** Foundation-phase alias for `recordClaim({ repoFullName, issueNumber, note })`. (#3351) */
-export function claimIssue(repoFullName, issueNumber, note) {
-  return getDefaultClaimLedger().claimIssue(repoFullName, issueNumber, note);
+/** Foundation-phase alias for `recordClaim({ repoFullName, issueNumber, note, apiBaseUrl })`. (#3351) */
+export function claimIssue(repoFullName, issueNumber, note, apiBaseUrl) {
+  return getDefaultClaimLedger().claimIssue(repoFullName, issueNumber, note, apiBaseUrl);
 }
 
 /** List only `active` claims, optionally scoped to one repo. (#3351) */

@@ -105,6 +105,17 @@ export function initPortfolioQueueManager(options = {}) {
       sweepStuckItems(store, Date.now(), staleLeaseMs);
       return store.batchClaim((entries) => selectEligibleBatch(entries, caps));
     },
+    /**
+     * Claim the single next-eligible item under the caps — the caps-aware counterpart to the naive `dequeueNext()`,
+     * for the `queue next` CLI path (#4850). Reclaims orphaned leases first (like `claimNextBatch`), then claims at
+     * most one item; returns it, or `null` when the queue is empty OR the WIP cap is already reached (so calling it
+     * repeatedly stops claiming once `globalWipCap` in-flight items exist).
+     */
+    claimNext() {
+      sweepStuckItems(store, Date.now(), staleLeaseMs);
+      const [claimed] = store.batchClaim((entries) => selectEligibleBatch(entries, caps).slice(0, 1));
+      return claimed ?? null;
+    },
     close() {
       store.close();
     },

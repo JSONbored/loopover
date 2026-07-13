@@ -114,3 +114,31 @@ describe("initPortfolioQueueManager().claimNextBatch() (#4285)", () => {
     expect(claimed.map((entry) => entry.identifier)).toEqual(["two"]);
   });
 });
+
+describe("initPortfolioQueueManager().claimNext() (#4850)", () => {
+  it("claims the single highest-priority eligible item, then stops once the WIP cap is reached", () => {
+    const manager = memoryManager({ globalWipCap: 1, perRepoWipCap: 1 });
+    manager.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", priority: 10 });
+    manager.enqueue({ repoFullName: "acme/widgets", identifier: "issue:2", priority: 90 });
+
+    // First claim takes the highest-priority item; the cap of 1 then blocks any further claim.
+    expect(manager.claimNext()?.identifier).toBe("issue:2");
+    expect(manager.claimNext()).toBeNull();
+  });
+
+  it("resumes claiming once an in-flight item is marked done, freeing a WIP slot", () => {
+    const manager = memoryManager({ globalWipCap: 1, perRepoWipCap: 1 });
+    manager.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", priority: 10 });
+    manager.enqueue({ repoFullName: "acme/widgets", identifier: "issue:2", priority: 90 });
+
+    expect(manager.claimNext()?.identifier).toBe("issue:2");
+    expect(manager.claimNext()).toBeNull();
+    manager.markDone("acme/widgets", "issue:2");
+    expect(manager.claimNext()?.identifier).toBe("issue:1");
+  });
+
+  it("returns null on an empty queue", () => {
+    const manager = memoryManager({ globalWipCap: 3, perRepoWipCap: 3 });
+    expect(manager.claimNext()).toBeNull();
+  });
+});

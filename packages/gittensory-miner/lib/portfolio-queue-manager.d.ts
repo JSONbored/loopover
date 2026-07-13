@@ -34,6 +34,7 @@ export type PortfolioQueueManager = {
   markFailed(repoFullName: string, identifier: string): QueueEntry | null;
   reclaimStuckItems(maxLeaseMs?: number): QueueEntry[];
   claimNextBatch(): QueueEntry[];
+  claimNext(): QueueEntry | null;
   close(): void;
 };
 

@@ -20,7 +20,7 @@ import {
   runQueueRelease,
   runQueueRequeue,
 } from "../../packages/gittensory-miner/lib/portfolio-queue-cli.js";
-import type { QueueEntry } from "../../packages/gittensory-miner/lib/portfolio-queue.d.ts";
+import type { PortfolioQueueStore, QueueEntry } from "../../packages/gittensory-miner/lib/portfolio-queue.d.ts";
 
 const roots: string[] = [];
 const stores: Array<{ close(): void }> = [];
@@ -98,35 +98,46 @@ describe("gittensory-miner portfolio queue CLI (#2292)", () => {
     });
   });
 
-  it("runQueueNext claims the highest-priority queued item", () => {
+  // Inject the operator's configured WIP cap (`maxConcurrentClaims`) so `queue next`'s caps-aware claim (#4850) is
+  // exercised deterministically without a real `.gittensory-miner.yml` on disk.
+  const nextOptions = (store: PortfolioQueueStore, maxConcurrentClaims: number) => ({
+    initPortfolioQueue: () => store,
+    resolveMinerGoalSpec: () => ({ spec: { maxConcurrentClaims } }),
+  });
+
+  it("runQueueNext claims the highest-priority queued item (within the WIP cap)", () => {
     const portfolioQueue = tempQueueStore();
     portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", priority: 10 });
     portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:2", priority: 90 });
 
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    expect(
-      runQueueNext([], {
-        initPortfolioQueue: () => portfolioQueue,
-      }),
-    ).toBe(0);
+    // A cap of 3 leaves room for both claims plus the empty follow-up, so the sequential behavior is unchanged.
+    expect(runQueueNext([], nextOptions(portfolioQueue, 3))).toBe(0);
     expect(log).toHaveBeenCalledWith("issue:2");
 
     log.mockClear();
-    expect(
-      runQueueNext(["--json"], {
-        initPortfolioQueue: () => portfolioQueue,
-      }),
-    ).toBe(0);
+    expect(runQueueNext(["--json"], nextOptions(portfolioQueue, 3))).toBe(0);
     expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
       entry: expect.objectContaining({ identifier: "issue:1", status: "in_progress" }),
     });
 
     log.mockClear();
-    expect(
-      runQueueNext([], {
-        initPortfolioQueue: () => portfolioQueue,
-      }),
-    ).toBe(0);
+    expect(runQueueNext([], nextOptions(portfolioQueue, 3))).toBe(0);
+    expect(log).toHaveBeenCalledWith("none");
+  });
+
+  it("#4850: runQueueNext stops claiming once the configured WIP cap is reached", () => {
+    const portfolioQueue = tempQueueStore();
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", priority: 10 });
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:2", priority: 90 });
+
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    // Cap of 1: the first call claims the highest-priority item, the second stops (one item already in flight).
+    expect(runQueueNext([], nextOptions(portfolioQueue, 1))).toBe(0);
+    expect(log).toHaveBeenCalledWith("issue:2");
+
+    log.mockClear();
+    expect(runQueueNext([], nextOptions(portfolioQueue, 1))).toBe(0);
     expect(log).toHaveBeenCalledWith("none");
   });
 
@@ -140,7 +151,7 @@ describe("gittensory-miner portfolio queue CLI (#2292)", () => {
 
     log.mockClear();
     expect(runQueueNext(["--dry-run"], { initPortfolioQueue: initPortfolioQueueSpy })).toBe(0);
-    expect(String(log.mock.calls[0]?.[0])).toContain("DRY RUN: would dequeue the highest-priority queued item");
+    expect(String(log.mock.calls[0]?.[0])).toContain("DRY RUN: would claim the next eligible queued item");
 
     log.mockClear();
     expect(

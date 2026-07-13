@@ -1,7 +1,18 @@
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
 import { initPortfolioQueueManager } from "./portfolio-queue-manager.js";
 import { runPortfolioDashboard } from "./portfolio-dashboard.js";
+import { resolveMinerGoalSpec } from "./miner-goal-spec.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
+
+/**
+ * The operator's configured WIP cap for `queue next` (#4850): `maxConcurrentClaims` from their own
+ * `.gittensory-miner.yml` in the working directory. Never throws — a missing/malformed file degrades to the
+ * schema default (1). `resolveMinerGoalSpec`/`cwd` are injectable for tests.
+ */
+function resolveConfiguredWipCap(options) {
+  const resolve = options.resolveMinerGoalSpec ?? resolveMinerGoalSpec;
+  return resolve(options.cwd ?? process.cwd()).spec.maxConcurrentClaims;
+}
 
 const QUEUE_LIST_USAGE = "Usage: gittensory-miner queue list [--repo <owner/repo>] [--json]";
 const QUEUE_NEXT_USAGE = "Usage: gittensory-miner queue next [--dry-run] [--json]";
@@ -192,14 +203,24 @@ export function runQueueNext(args, options = {}) {
     if (parsed.json) {
       console.log(JSON.stringify(dryRunResult, null, 2));
     } else {
-      console.log("DRY RUN: would dequeue the highest-priority queued item. No portfolio-queue write was made.");
+      console.log(
+        "DRY RUN: would claim the next eligible queued item, subject to the configured WIP cap. No portfolio-queue write was made.",
+      );
     }
     return 0;
   }
 
+  // Route through the WIP-cap-aware claimer (portfolio-queue-manager.js) instead of the naive uncapped
+  // `dequeueNext()` (#4850), capped by `maxConcurrentClaims` from the operator's own `.gittensory-miner.yml`, so
+  // running `queue next` repeatedly stops claiming once the cap's worth of items are in flight.
+  const wipCap = resolveConfiguredWipCap(options);
   try {
     return withPortfolioQueue(options, (portfolioQueue) => {
-      const entry = portfolioQueue.dequeueNext();
+      const manager = (options.initPortfolioQueueManager ?? initPortfolioQueueManager)({
+        store: portfolioQueue,
+        caps: { globalWipCap: wipCap, perRepoWipCap: wipCap },
+      });
+      const entry = manager.claimNext();
       if (parsed.json) {
         console.log(JSON.stringify({ entry }, null, 2));
       } else {

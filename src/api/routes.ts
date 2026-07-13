@@ -301,7 +301,6 @@ import type {
   RepositorySettings,
 } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
-import { dualPrefixEnvString } from "../utils/env";
 import {
   queueDeadLetterPageFromBinding,
   queueDeleteDeadLetterJobViaBinding,
@@ -1034,10 +1033,10 @@ export function createApp() {
   // touches it — GitHub's camo image proxy must fetch it without a bearer token. The handler itself enforces
   // every security choke-point: ?key= validates the R2 prefix + rejects '..'; ?url= keeps the host allowlist
   // (*.workers.dev / *.pages.dev / PUBLIC_SITE_ORIGIN) AND the isSafeHttpUrl SSRF guard. Inert flag-OFF: with
-  // GITTENSORY_REVIEW_SCREENSHOTS off nothing ever writes shots to R2, so ?key= 404s and ?url= still requires
+  // LOOPOVER_REVIEW_SCREENSHOTS off nothing ever writes shots to R2, so ?key= 404s and ?url= still requires
   // an allowlisted public host. The route's own Cache-Control headers (per mode) are set inside handleShot;
   // the rate-limit middleware classifies it as 'normal' (a sane public class) via routeClassForPath.
-  // Flag-OFF = TRULY inert: when GITTENSORY_REVIEW_SCREENSHOTS is off nothing references this route (no comment
+  // Flag-OFF = TRULY inert: when LOOPOVER_REVIEW_SCREENSHOTS is off nothing references this route (no comment
   // carries a /loopover/shot URL), so 404 it outright — that removes the on-demand `?url=` render surface
   // entirely until the feature is deliberately enabled, rather than relying on the host allowlist alone.
   app.get("/loopover/shot", (c) => {
@@ -1099,7 +1098,7 @@ export function createApp() {
     }
   });
 
-  // Public OAuth draft-submission flow (GITTENSORY_REVIEW_DRAFT), ported from reviewbot. When the flag is OFF
+  // Public OAuth draft-submission flow (LOOPOVER_REVIEW_DRAFT), ported from reviewbot. When the flag is OFF
   // every handler returns 404, so the endpoints are effectively absent (the router still registers them
   // but they short-circuit). The static `/auth/callback` route is registered before the `:id` param
   // route so it is not captured as a draft id. These are public (unauthenticated) by design — submission
@@ -2115,8 +2114,7 @@ export function createApp() {
       ...(installationHealth.some((health) => health.status !== "healthy") ? ["One or more GitHub App installations need attention."] : []),
     ];
     const upstreamLaunchBlocking = upstreamDrift.status === "unavailable" || upstreamDrift.highestSeverity === "high" || upstreamDrift.highestSeverity === "blocking";
-    // #4774 dual-read: LOOPOVER_API_TOKEN counts as configured too, same precedence as authenticatePrivateToken.
-    const ready = Boolean(snapshot) && Boolean(c.env.INTERNAL_JOB_TOKEN) && Boolean(dualPrefixEnvString(c.env as unknown as Record<string, string | undefined>, "API_TOKEN"));
+    const ready = Boolean(snapshot) && Boolean(c.env.INTERNAL_JOB_TOKEN) && Boolean(c.env.LOOPOVER_API_TOKEN);
     const readyForPublicReview = snapshot
       ? snapshot.repoCount > 0 &&
         ready &&
@@ -2181,9 +2179,8 @@ export function createApp() {
         githubAppPrivateKey: Boolean(c.env.GITHUB_APP_PRIVATE_KEY),
         githubWebhookSecret: Boolean(c.env.GITHUB_WEBHOOK_SECRET),
         githubPublicToken: Boolean(c.env.GITHUB_PUBLIC_TOKEN),
-        // #4774 dual-read: reflects whichever of LOOPOVER_/GITTENSORY_ actually resolves (see dualPrefixEnvString).
-        apiToken: Boolean(dualPrefixEnvString(c.env as unknown as Record<string, string | undefined>, "API_TOKEN")),
-        mcpToken: Boolean(dualPrefixEnvString(c.env as unknown as Record<string, string | undefined>, "MCP_TOKEN")),
+        apiToken: Boolean(c.env.LOOPOVER_API_TOKEN),
+        mcpToken: Boolean(c.env.LOOPOVER_MCP_TOKEN),
         internalJobToken: Boolean(c.env.INTERNAL_JOB_TOKEN),
       },
       warnings,
@@ -3571,7 +3568,7 @@ export function createApp() {
     return c.json(result); // { enrollId, secret } — secret shown exactly once
   });
 
-  // Convergence (ops / observability, flag GITTENSORY_REVIEW_OPS). Cross-repo review-OUTCOME aggregate (gate-block
+  // Convergence (ops / observability, flag LOOPOVER_REVIEW_OPS). Cross-repo review-OUTCOME aggregate (gate-block
   // ledger + recommendation/slop calibration) for an operator dashboard. Bearer-gated by the `/v1/internal/*`
   // middleware above (INTERNAL_JOB_TOKEN). Flag-OFF (default) → 404, so the endpoint does not exist and the
   // worker is byte-identical to today. Aggregate counts only — no PR content / actor logins.
@@ -3580,7 +3577,7 @@ export function createApp() {
     return c.json(await computeOpsStats(c.env));
   });
 
-  // Convergence prep (#preconv-parity, flag GITTENSORY_REVIEW_PARITY_AUDIT). The pre-cutover shadow-parity READINESS
+  // Convergence prep (#preconv-parity, flag LOOPOVER_REVIEW_PARITY_AUDIT). The pre-cutover shadow-parity READINESS
   // report: runs computeGateParity / isParityCutoverReady over the recorded review_audit rows and returns the
   // per-project agreement rate + cutover-ready verdict (floor 0.98, min 30 paired samples, zero unsafe
   // disagreements — all from parity.ts). Bearer-gated by the `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN).
@@ -3597,7 +3594,7 @@ export function createApp() {
   // MCP predict_gate/explain_gate_disposition verdict agrees with the REAL gate decision a contributor's PR
   // later receives -- a DIFFERENT question than /v1/internal/parity's reviewbot-vs-gittensory migration parity
   // (see src/review/predicted-gate-agreement.ts's module header). Same gate/auth contract as /v1/internal/parity:
-  // bearer-gated by the `/v1/internal/*` middleware, 404 when GITTENSORY_REVIEW_PARITY_AUDIT is off so the
+  // bearer-gated by the `/v1/internal/*` middleware, 404 when LOOPOVER_REVIEW_PARITY_AUDIT is off so the
   // endpoint does not exist on a deploy not running this telemetry family. Aggregate counts only — no PR
   // content / actor logins (see that module's privacy note on why a per-login breakdown never belongs here).
   app.get("/v1/internal/predicted-agreement", async (c) => {
@@ -5496,7 +5493,7 @@ async function requireAppRole(c: ProtectedRouteContext, allowedRoles: ControlPan
   const identity = await authenticateRequestIdentity(c);
   if (!identity) return c.json({ error: "unauthorized" }, 401);
   if (identity.kind !== "session") {
-    // GITTENSORY_MCP_TOKEN is a shared end-user credential; it must not satisfy app-role gates implicitly.
+    // LOOPOVER_MCP_TOKEN is a shared end-user credential; it must not satisfy app-role gates implicitly.
     if (identity.actor === "mcp") return c.json({ error: "insufficient_role" }, 403);
     return null;
   }
@@ -5517,7 +5514,7 @@ async function requireContributorAccess(c: ProtectedRouteContext, login: string)
   /* v8 ignore next -- Protected middleware rejects unauthenticated private routes before contributor-scoped route guards. */
   if (!identity) return c.json({ error: "unauthorized" }, 401);
   if (identity.kind === "session" && identity.actor.toLowerCase() !== login.toLowerCase()) return c.json({ error: "forbidden_contributor" }, 403);
-  // The shared, end-user-obtainable GITTENSORY_MCP_TOKEN (static `mcp` identity) must NOT read an ARBITRARY
+  // The shared, end-user-obtainable LOOPOVER_MCP_TOKEN (static `mcp` identity) must NOT read an ARBITRARY
   // contributor's private decision pack / profile / notifications over HTTP either — this mirrors the MCP tool
   // surface's guard for the identical data (GittensoryMcp.requireContributorAccess, #2455). Without this, the
   // HTTP surface silently grants what the MCP surface explicitly denies for the very same token. Only the full
@@ -5714,7 +5711,7 @@ function requiresApiToken(path: string): boolean {
   if (path === "/v1/public/stats") return false;
   if (path === "/openapi.json") return false;
   if (path === "/mcp") return false;
-  // Public OAuth draft-submission flow (GITTENSORY_REVIEW_DRAFT): the submission entry points are unauthenticated
+  // Public OAuth draft-submission flow (LOOPOVER_REVIEW_DRAFT): the submission entry points are unauthenticated
   // by design. The handlers themselves 404 when the flag is off, so this exemption is inert flag-OFF.
   if (path === "/v1/drafts" || path.startsWith("/v1/drafts/")) return false;
   if (path.startsWith("/v1/auth/")) return false;

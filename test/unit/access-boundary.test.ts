@@ -98,7 +98,7 @@ describe("access boundary: per-repo maintainer data is repo-scoped", () => {
 
   it("a server-to-server token reads settings without per-repo session scope", async () => {
     const { app, env } = await setup();
-    const res = await app.request(SETTINGS_A, { headers: { authorization: `Bearer ${env.GITTENSORY_API_TOKEN}` } }, env);
+    const res = await app.request(SETTINGS_A, { headers: { authorization: `Bearer ${env.LOOPOVER_API_TOKEN}` } }, env);
     expect(res.status).toBe(200);
   });
 

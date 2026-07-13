@@ -40,7 +40,7 @@ describe("resolveRepositorySettings — self-tune override overlay (flag-gated)"
   }
 
   it("flag ON: overlays the promoted tightening override (50 → 70)", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "true" });
     await seed(env);
     expect((await resolveRepositorySettings(env, repo)).qualityGateMinScore).toBe(70);
   });

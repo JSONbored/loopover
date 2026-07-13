@@ -77,14 +77,14 @@ describe("recordPredictedGateCall — write-only predicted-gate call history (01
     await recordPredictedGateCall(env, { login: "octocat", project: "owner/repo", verdict: verdict() });
     expect((await rawAll(env, "SELECT * FROM predicted_gate_calls")).length).toBe(0);
 
-    const envFalse = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "false" });
+    const envFalse = createTestEnv({ LOOPOVER_REVIEW_PARITY_AUDIT: "false" });
     delete envFalse.SELFHOST_TRANSIENT_CACHE;
     await recordPredictedGateCall(envFalse, { login: "octocat", project: "owner/repo", verdict: verdict() });
     expect((await rawAll(envFalse, "SELECT * FROM predicted_gate_calls")).length).toBe(0);
   });
 
-  it("the cloud worker records when GITTENSORY_REVIEW_PARITY_AUDIT is explicitly ON", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true" });
+  it("the cloud worker records when LOOPOVER_REVIEW_PARITY_AUDIT is explicitly ON", async () => {
+    const env = createTestEnv({ LOOPOVER_REVIEW_PARITY_AUDIT: "true" });
     delete env.SELFHOST_TRANSIENT_CACHE;
     await recordPredictedGateCall(env, { login: "octocat", project: "owner/repo", verdict: verdict() });
     expect((await rawAll(env, "SELECT * FROM predicted_gate_calls")).length).toBe(1);

@@ -4,18 +4,15 @@
 // `rag-wire.ts`/`grounding-wire.ts` at the same stage of their own rollout — the generation/render/dispatch
 // logic lands in later, separate PRs (#4191-#4197) once this flag exists for them to gate on.
 //
-// Single env switch: GITTENSORY_REVIEW_E2E_TESTS. Default OFF (unset/"false") — when OFF the feature never
+// Single env switch: LOOPOVER_REVIEW_E2E_TESTS. Default OFF (unset/"false") — when OFF the feature never
 // runs anywhere, regardless of any per-repo `.gittensory.yml` override (see `resolveConvergedFeature` in
 // `./feature-activation`). Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as
 // isRagEnabled / isGroundingEnabled / isSafetyEnabled).
 
-import { dualPrefixEnvFlag } from "../utils/env";
-
 /** True when E2E test generation is enabled at the deployment level. Flag-OFF (default) → the feature is
  *  never active for any repo, regardless of a per-repo `features.e2eTests` override. */
 export function isE2eTestGenerationEnabled(env: {
-  GITTENSORY_REVIEW_E2E_TESTS?: string | undefined;
   LOOPOVER_REVIEW_E2E_TESTS?: string | undefined;
 }): boolean {
-  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_E2E_TESTS");
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_E2E_TESTS ?? "").trim());
 }

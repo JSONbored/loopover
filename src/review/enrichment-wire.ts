@@ -3,13 +3,12 @@
 // license/EOL/supply-chain), and returns a pre-rendered, public-safe brief the engine splices into the review
 // prompt next to grounding + RAG (same { promptSection, systemSuffix } shape, same splice points in ai-review.ts).
 //
-// Single env switch: GITTENSORY_REVIEW_ENRICHMENT (+ REES_URL must be set, so the hosted Worker — which sets neither
+// Single env switch: LOOPOVER_REVIEW_ENRICHMENT (+ REES_URL must be set, so the hosted Worker — which sets neither
 // — is unaffected). Default OFF → gathers nothing, prompt byte-identical. FULLY FAIL-SAFE: any timeout / non-200 /
 // network / parse error, or an empty brief, returns undefined and the review proceeds on diff + grounding + RAG.
 import { extractLinkedIssueNumbers, getIssue } from "../db/repositories";
 import { sanitizePublicComment } from "../queue-intelligence";
 import { incr, observe } from "../selfhost/metrics";
-import { dualPrefixEnvFlag } from "../utils/env";
 import { neutralizePromptInjection } from "./prompt-injection";
 import { REES_ANALYZER_NAMES, REES_ANALYZER_NAME_SET, type ReesAnalyzerName } from "./enrichment-analyzer-names";
 import type { PullRequestFileRecord } from "../types";
@@ -27,7 +26,6 @@ function recordReesEnrichOutcome(status: string, startedAtMs?: number): void {
 export { REES_ANALYZER_NAMES, type ReesAnalyzerName } from "./enrichment-analyzer-names";
 
 interface EnrichmentEnv {
-  GITTENSORY_REVIEW_ENRICHMENT?: string | undefined;
   LOOPOVER_REVIEW_ENRICHMENT?: string | undefined;
   REES_URL?: string | undefined;
   REES_SHARED_SECRET?: string | undefined;
@@ -182,7 +180,7 @@ export function probeReesSecretAtStartup(env: Env): void {
 export function isEnrichmentEnabled(env: Env): boolean {
   const cfg = reesConfig(env);
   return (
-    dualPrefixEnvFlag(cfg as unknown as Record<string, string | undefined>, "REVIEW_ENRICHMENT") &&
+    /^(1|true|yes|on)$/i.test((cfg.LOOPOVER_REVIEW_ENRICHMENT ?? "").trim()) &&
     Boolean(cfg.REES_URL?.trim())
   );
 }

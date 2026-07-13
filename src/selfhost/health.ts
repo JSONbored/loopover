@@ -2,8 +2,6 @@
 // the things a request actually depends on — the DB answers and the schema migrations have been applied.
 // Backend-agnostic: runs through the D1 surface, so it works on both the SQLite and Postgres adapters.
 
-import { dualPrefixEnvStrictFlag } from "../utils/env";
-
 export interface Readiness {
   ok: boolean;
   checks: Record<string, boolean>;
@@ -90,7 +88,7 @@ export function githubAppReadinessProbe(
 /** Readiness probe for the codex CLI auth (#GITTENSORY-C). Runs `codex --version` in the restricted codex
  *  environment to confirm the binary is present AND authenticated before any review is attempted. A missing auth
  *  volume or an unauthenticated CLI exits non-zero here rather than silently inside a subprocess spawned mid-review.
- *  Only registered when `GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1` (the opt-in for the codex reviewer path). */
+ *  Only registered when `LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER=1` (the opt-in for the codex reviewer path). */
 /** `codex --version` only proves the binary starts — it exits 0 with no usable credentials at all, so on its
  *  own it can't catch the exact missing/empty-auth-volume misconfiguration this probe exists to surface.
  *  Also stat the auth file so a present-but-empty or altogether-missing auth.json still fails readiness. */
@@ -106,23 +104,22 @@ async function defaultCodexAuthFileCheck(env: Record<string, string | undefined>
 }
 
 export function codexAuthReadinessProbe(
-  parentEnv: Record<string, string | undefined>,
+  env: Record<string, string | undefined>,
   runCodexVersion: (env: Record<string, string | undefined>) => Promise<{ code: number | null }>,
   checkAuthFile: (env: Record<string, string | undefined>) => Promise<boolean> = defaultCodexAuthFileCheck,
   cacheMs = 30_000,
 ): ReadinessProbe | null {
-  // #4774 dual-read: LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER wins over the legacy name when both are set; strict
-  // "1"-only, matching this flag's intentionally narrow (non-loose-truthy) opt-in convention.
-  if (!dualPrefixEnvStrictFlag(parentEnv, "ENABLE_UNSAFE_CODEX_REVIEWER")) return null;
+  // Strict "1"-only, matching this flag's intentionally narrow (non-loose-truthy) opt-in convention.
+  if (env.LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER !== "1") return null;
   let cached: boolean | undefined;
   let cachedUntil = 0;
   let inFlight: Promise<boolean> | undefined;
   const evaluate = async (): Promise<boolean> => {
     const [versionOk, authFileOk] = await Promise.all([
-      runCodexVersion(parentEnv)
+      runCodexVersion(env)
         .then(({ code }) => code === 0)
         .catch(() => false),
-      checkAuthFile(parentEnv).catch(() => false),
+      checkAuthFile(env).catch(() => false),
     ]);
     return versionOk && authFileOk;
   };

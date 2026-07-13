@@ -233,9 +233,9 @@ describe("gittensory-mcp CLI — packets", () => {
     await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
     const withoutToken = {
       ...env,
-      GITTENSORY_API_TOKEN: "",
+      LOOPOVER_API_TOKEN: "",
       GITTENSORY_TOKEN: "",
-      GITTENSORY_MCP_TOKEN: "",
+      LOOPOVER_MCP_TOKEN: "",
     };
 
     await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], withoutToken)).rejects.toThrow(/Run `gittensory-mcp login`/);

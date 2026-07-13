@@ -21,7 +21,7 @@ import { errorMessage, nowIso } from "../utils/json";
  *  parity-flag gate (one flag controls the whole gate-accuracy telemetry family). */
 type PredictedGateCallEnv = {
   DB: D1Database;
-  GITTENSORY_REVIEW_PARITY_AUDIT?: string | undefined;
+  LOOPOVER_REVIEW_PARITY_AUDIT?: string | undefined;
   SELFHOST_TRANSIENT_CACHE?: NonNullable<Env["SELFHOST_TRANSIENT_CACHE"]>;
 };
 

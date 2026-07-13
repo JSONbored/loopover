@@ -67,8 +67,8 @@ async function seedRecommendationOutcomes(env: Env, repoFullName: string, positi
 
 describe("isSelfTuneEnabled — default OFF, truthy convention", () => {
   it("is OFF for unset / false / empty, ON for 1/true/yes/on", () => {
-    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isSelfTuneEnabled({ GITTENSORY_REVIEW_SELFTUNE: off })).toBe(false);
-    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isSelfTuneEnabled({ GITTENSORY_REVIEW_SELFTUNE: on })).toBe(true);
+    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isSelfTuneEnabled({ LOOPOVER_REVIEW_SELFTUNE: off })).toBe(false);
+    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isSelfTuneEnabled({ LOOPOVER_REVIEW_SELFTUNE: on })).toBe(true);
   });
 });
 
@@ -152,7 +152,7 @@ const ACTING_AUTONOMY = JSON.stringify({ review: "auto" }); // opts the repo int
 
 describe("runSelfTune — shadow-soak over gittensory's own outcome data", () => {
   it("FLAG-ON: a low-precision repo gets a TIGHTENING override SHADOW-SOAKED (not live yet) + audited", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "true" });
     await seedRegisteredRepo(env, "owner/repo", ACTING_AUTONOMY);
     // 5 positive / 10 negative = 33% precision over 15 decided → a clear tightening signal.
     await seedRecommendationOutcomes(env, "owner/repo", 5, 10);
@@ -167,7 +167,7 @@ describe("runSelfTune — shadow-soak over gittensory's own outcome data", () =>
   });
 
   it("ignores contributor-lane closures when building live self-tune policy", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "true" });
     await seedRegisteredRepo(env, "owner/repo", ACTING_AUTONOMY);
     await seedRecommendationOutcomes(env, "owner/repo", 0, 10, false);
 
@@ -179,7 +179,7 @@ describe("runSelfTune — shadow-soak over gittensory's own outcome data", () =>
   });
 
   it("FLAG-ON: promotes a SOAKED tightening shadow override to live on a later tick (tightening + evidence + soaked)", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "true" });
     await seedRegisteredRepo(env, "owner/repo", ACTING_AUTONOMY);
     await seedRecommendationOutcomes(env, "owner/repo", 5, 10);
     // Pre-seed a shadow override whose soak deadline is already in the past → eligible to promote this tick.
@@ -198,7 +198,7 @@ describe("runSelfTune — shadow-soak over gittensory's own outcome data", () =>
   });
 
   it("a LOOSENING change is NEVER applied — only tightening auto-applies", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "true" });
     await seedRegisteredRepo(env, "owner/repo", ACTING_AUTONOMY);
     await seedRecommendationOutcomes(env, "owner/repo", 5, 10);
     // Pre-seed a LIVE floor of 0.99 and a SOAKED shadow override of 0.80 (a DROP = loosening). Even though the
@@ -222,7 +222,7 @@ describe("runSelfTune — shadow-soak over gittensory's own outcome data", () =>
   });
 
   it("FLAG-OFF (default): runSelfTune does ZERO tuning work — no shadow, no override, no audit", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "false" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "false" });
     await seedRegisteredRepo(env, "owner/repo", ACTING_AUTONOMY);
     await seedRecommendationOutcomes(env, "owner/repo", 5, 10);
 
@@ -235,7 +235,7 @@ describe("runSelfTune — shadow-soak over gittensory's own outcome data", () =>
   });
 
   it("FLAG-ON via the processor: a stale in-flight selftune job runs the tick (defense-in-depth gate)", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "true" });
     await seedRegisteredRepo(env, "owner/repo", ACTING_AUTONOMY);
     await seedRecommendationOutcomes(env, "owner/repo", 5, 10);
 
@@ -272,7 +272,7 @@ describe("runSelfTune — shadow-soak over gittensory's own outcome data", () =>
 
 describe("selfTuneRepos — per-repo review.selftune FORCE-OFF (#4104)", () => {
   it("REGRESSION: an explicit review.selftune: false excludes an otherwise agent-configured repo from the tuning pass entirely", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "true" });
     await seedRegisteredRepo(env, "owner/opted-out", ACTING_AUTONOMY);
     await seedRecommendationOutcomes(env, "owner/opted-out", 5, 10); // would otherwise be a clear tightening signal
     await upsertRepoFocusManifest(env, "owner/opted-out", { review: { selftune: false } });
@@ -287,7 +287,7 @@ describe("selfTuneRepos — per-repo review.selftune FORCE-OFF (#4104)", () => {
   it("REGRESSION (#sweep-requires-installation): an acting-autonomy repo with NO real installation is excluded from the tuning pass, even though it resolves the operator's global-default autonomy", async () => {
     const owner = "owner";
     const name = "no-install";
-    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "true" });
     await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 0, 1)")
       .bind(`${owner}/${name}`, owner, name)
       .run();
@@ -302,7 +302,7 @@ describe("selfTuneRepos — per-repo review.selftune FORCE-OFF (#4104)", () => {
   });
 
   it("unset review.selftune (the default) does not change today's behavior — an agent-configured repo still tunes normally", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "true" });
     await seedRegisteredRepo(env, "owner/repo", ACTING_AUTONOMY);
     await seedRecommendationOutcomes(env, "owner/repo", 5, 10);
     // No manifest published at all for this repo -- byte-identical to every repo before this change.
@@ -315,7 +315,7 @@ describe("selfTuneRepos — per-repo review.selftune FORCE-OFF (#4104)", () => {
   it("an explicit review.selftune: true is a no-op — it does not force a NON-agent-configured repo into the tuning pass", async () => {
     const owner = "owner";
     const name = "no-autonomy";
-    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "true" });
     await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 1)")
       .bind(`${owner}/${name}`, owner, name)
       .run();

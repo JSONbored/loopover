@@ -3371,7 +3371,7 @@ describe("queue processors", () => {
       const repoFullName = "JSONbored/resolve-1964-a";
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-        GITTENSORY_REVIEW_MEMORY: "true",
+        LOOPOVER_REVIEW_MEMORY: "true",
       });
       await seedResolvePr(env, repoFullName, 1964, "resolve-1964-a");
       await upsertRepoFocusManifest(env, repoFullName, { review: { memory: true } });
@@ -3441,7 +3441,7 @@ describe("queue processors", () => {
 
     it("records a suppression for a current cached AI review warning", async () => {
       const repoFullName = "JSONbored/resolve-1964-ai-cached";
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_MEMORY: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_MEMORY: "true" });
       await seedResolvePr(env, repoFullName, 1974, "resolve-1964-ai-cached");
       await upsertRepoFocusManifest(env, repoFullName, { review: { memory: true } });
       await putCachedAiReview(env, repoFullName, 1974, "resolve-1964-ai-cached", "advisory", {
@@ -3484,7 +3484,7 @@ describe("queue processors", () => {
 
     it("falls back to the last published public AI review when the current cached review has no public assessment", async () => {
       const repoFullName = "JSONbored/resolve-1964-ai-published";
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_MEMORY: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_MEMORY: "true" });
       await seedResolvePr(env, repoFullName, 1975, "resolve-1964-ai-current");
       await upsertRepoFocusManifest(env, repoFullName, { review: { memory: true } });
       await putCachedAiReview(env, repoFullName, 1975, "resolve-1964-ai-old", "advisory", {
@@ -3574,7 +3574,7 @@ describe("queue processors", () => {
 
     it("denies an unauthorized actor and records no suppression signal", async () => {
       const repoFullName = "JSONbored/resolve-1966-deny";
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_MEMORY: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_MEMORY: "true" });
       await seedResolvePr(env, repoFullName, 1966, "resolve-1966-deny");
       await upsertRepoFocusManifest(env, repoFullName, { review: { memory: true } });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -3615,7 +3615,7 @@ describe("queue processors", () => {
       ["absent finding code", "@gittensory resolve readiness_score_below_threshold", "finding_not_found"],
     ] as const)("skips resolve when the maintainer supplies %s", async (_label, body, reason) => {
       const repoFullName = "JSONbored/resolve-1967-skip";
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_MEMORY: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_MEMORY: "true" });
       await seedResolvePr(env, repoFullName, 1967, "resolve-1967-skip");
       await upsertRepoFocusManifest(env, repoFullName, { review: { memory: true } });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -3648,7 +3648,7 @@ describe("queue processors", () => {
 
     it("records every current advisory warning for a whole-PR `@gittensory resolve` ack", async () => {
       const repoFullName = "JSONbored/resolve-1968-whole";
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_MEMORY: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_MEMORY: "true" });
       await seedResolvePr(env, repoFullName, 1968, "resolve-1968-whole");
       await upsertRepoFocusManifest(env, repoFullName, { review: { memory: true } });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3764,7 +3764,7 @@ describe("queue processors", () => {
 
     it("skips resolve when the cached pull request row is missing (#1964)", async () => {
       const repoFullName = "JSONbored/resolve-1969-missing-pr";
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_MEMORY: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_MEMORY: "true" });
       const slash = repoFullName.indexOf("/");
       await upsertRepositoryFromGitHub(env, { name: repoFullName.slice(slash + 1), full_name: repoFullName, private: false, owner: { login: repoFullName.slice(0, slash) } }, 123);
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -3790,7 +3790,7 @@ describe("queue processors", () => {
 
     it("skips resolve in agentDryRun without recording finding_resolved (#1964)", async () => {
       const repoFullName = "JSONbored/resolve-1970-dry-run";
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_MEMORY: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_MEMORY: "true" });
       await seedResolvePr(env, repoFullName, 1970, "resolve-1970-dry-run");
       await upsertRepositorySettings(env, { repoFullName, commentMode: "off", publicSurface: "off", autoLabelEnabled: false, checkRunMode: "off", reviewCheckMode: "required", requireLinkedIssue: true, linkedIssueGateMode: "advisory", agentDryRun: true });
       await upsertRepoFocusManifest(env, repoFullName, { review: { memory: true } });
@@ -3821,7 +3821,7 @@ describe("queue processors", () => {
 
     it("skips resolve when the repository is agentPaused (#1964)", async () => {
       const repoFullName = "JSONbored/resolve-1971-paused";
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_MEMORY: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_MEMORY: "true" });
       await seedResolvePr(env, repoFullName, 1971, "resolve-1971-paused");
       await upsertRepositorySettings(env, { repoFullName, commentMode: "off", publicSurface: "off", autoLabelEnabled: false, checkRunMode: "off", reviewCheckMode: "required", requireLinkedIssue: true, linkedIssueGateMode: "advisory", agentPaused: true });
       await upsertRepoFocusManifest(env, repoFullName, { review: { memory: true } });
@@ -4109,7 +4109,7 @@ describe("queue processors", () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: async () => ({ response: "```typescript\n" + VALID_TEST_SOURCE + "\n```" }) } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -4138,7 +4138,7 @@ describe("queue processors", () => {
 
     it("denies a collaborator-tier actor (write permission, not the PR author) — narrower than every other command", async () => {
       const repoFullName = "JSONbored/gen-tests-4195-collab";
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       await seedGenerateTestsPr(env, repoFullName, 4196, "gen-tests-4195-collab");
       let posted = 0;
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -4160,7 +4160,7 @@ describe("queue processors", () => {
 
     it("denies the PR's own author even though they authored it — the exact loophole a click-to-generate button must not open", async () => {
       const repoFullName = "JSONbored/gen-tests-4195-author";
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       await seedGenerateTestsPr(env, repoFullName, 4197, "gen-tests-4195-author", "contributor");
       let posted = 0;
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -4186,7 +4186,7 @@ describe("queue processors", () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: async () => ({ response: "```typescript\n" + VALID_TEST_SOURCE + "\n```" }) } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -4223,7 +4223,7 @@ describe("queue processors", () => {
     it("posts a not-enabled note (no generation call) when features.e2eTests is off for the repo", async () => {
       const repoFullName = "JSONbored/gen-tests-4195-disabled";
       const run = vi.fn();
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       const slash = repoFullName.indexOf("/");
       await upsertRepositoryFromGitHub(env, { name: repoFullName.slice(slash + 1), full_name: repoFullName, private: false, owner: { login: repoFullName.slice(0, slash) } }, 123);
       await upsertRepositorySettings(env, { repoFullName, commentMode: "off", publicSurface: "off", autoLabelEnabled: false, checkRunMode: "off", reviewCheckMode: "required", requireLinkedIssue: false, linkedIssueGateMode: "advisory", aiReviewMode: "advisory" });
@@ -4253,7 +4253,7 @@ describe("queue processors", () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: async () => ({ response: "not a test file" }) } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -4278,7 +4278,7 @@ describe("queue processors", () => {
 
     it("skips cleanly when the cached PR record is missing", async () => {
       const repoFullName = "JSONbored/gen-tests-4195-nopr";
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       const slash = repoFullName.indexOf("/");
       await upsertRepositoryFromGitHub(env, { name: repoFullName.slice(slash + 1), full_name: repoFullName, private: false, owner: { login: repoFullName.slice(0, slash) } }, 123);
       // No upsertPullRequestFromGitHub -- the PR was never cached.
@@ -4296,7 +4296,7 @@ describe("queue processors", () => {
 
     it("declines (returns false) for a non-command comment, claiming nothing", async () => {
       const repoFullName = "JSONbored/gen-tests-4195-decline";
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       await seedGenerateTestsPr(env, repoFullName, 4201, "gen-tests-4195-decline");
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         const url = input.toString();
@@ -4316,7 +4316,7 @@ describe("queue processors", () => {
 
     it("skips cleanly when the comment classifies as invalid (a bot posted the mention)", async () => {
       const repoFullName = "JSONbored/gen-tests-4195-bot";
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       await seedGenerateTestsPr(env, repoFullName, 4202, "gen-tests-4195-bot");
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         const url = input.toString();
@@ -4336,7 +4336,7 @@ describe("queue processors", () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
         TOKEN_ENCRYPTION_SECRET: "gen-tests-byok-test-encryption-secret-32b",
@@ -4370,7 +4370,7 @@ describe("queue processors", () => {
 
     it("degrades to the not-usable-result note when the feature is on but no AI provider is configured at all", async () => {
       const repoFullName = "JSONbored/gen-tests-4195-unavailable";
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       await seedGenerateTestsPr(env, repoFullName, 4204, "gen-tests-4195-unavailable"); // no env.AI, no BYOK key
       let postedBody = "";
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -4390,15 +4390,15 @@ describe("queue processors", () => {
       expect(JSON.parse(audited?.metadata_json ?? "{}")).toMatchObject({ status: "unavailable" });
     });
 
-    it("generates via the GITTENSORY_REVIEW_REPOS allowlist default when no manifest is published at all", async () => {
+    it("generates via the LOOPOVER_REVIEW_REPOS allowlist default when no manifest is published at all", async () => {
       // No upsertRepoFocusManifest call -- loadRepoFocusManifest resolves null, so manifest?.review (fed to
       // resolveE2eTestGenInstructions) and the e2eTests feature gate itself both take their null/allowlist path.
       const repoFullName = "JSONbored/gen-tests-4195-allowlist";
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: async () => ({ response: "```typescript\n" + VALID_TEST_SOURCE + "\n```" }) } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
-        GITTENSORY_REVIEW_REPOS: repoFullName,
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_REPOS: repoFullName,
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -4425,7 +4425,7 @@ describe("queue processors", () => {
 
     it("skips cleanly when the webhook payload has no comment object at all", async () => {
       const repoFullName = "JSONbored/gen-tests-4195-nocomment";
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       await seedGenerateTestsPr(env, repoFullName, 4206, "gen-tests-4195-nocomment");
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         const url = input.toString();
@@ -4448,7 +4448,7 @@ describe("queue processors", () => {
         const env = createTestEnv({
           GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
           AI: { run: async () => ({ response: "```typescript\n" + VALID_TEST_SOURCE + "\n```" }) } as unknown as Ai,
-          GITTENSORY_REVIEW_E2E_TESTS: "true",
+          LOOPOVER_REVIEW_E2E_TESTS: "true",
           AI_SUMMARIES_ENABLED: "true",
           AI_PUBLIC_COMMENTS_ENABLED: "true",
         });
@@ -4483,7 +4483,7 @@ describe("queue processors", () => {
         const env = createTestEnv({
           GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
           AI: { run: async () => ({ response: "```typescript\n" + VALID_TEST_SOURCE + "\n```" }) } as unknown as Ai,
-          GITTENSORY_REVIEW_E2E_TESTS: "true",
+          LOOPOVER_REVIEW_E2E_TESTS: "true",
           AI_SUMMARIES_ENABLED: "true",
           AI_PUBLIC_COMMENTS_ENABLED: "true",
         });
@@ -4516,7 +4516,7 @@ describe("queue processors", () => {
         const env = createTestEnv({
           GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
           AI: { run: async () => ({ response: "```typescript\n" + VALID_TEST_SOURCE + "\n```" }) } as unknown as Ai,
-          GITTENSORY_REVIEW_E2E_TESTS: "true",
+          LOOPOVER_REVIEW_E2E_TESTS: "true",
           AI_SUMMARIES_ENABLED: "true",
           AI_PUBLIC_COMMENTS_ENABLED: "true",
         });
@@ -4546,7 +4546,7 @@ describe("queue processors", () => {
         const env = createTestEnv({
           GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
           AI: { run: async () => ({ response: "```typescript\n" + VALID_TEST_SOURCE + "\n```" }) } as unknown as Ai,
-          GITTENSORY_REVIEW_E2E_TESTS: "true",
+          LOOPOVER_REVIEW_E2E_TESTS: "true",
           AI_SUMMARIES_ENABLED: "true",
           AI_PUBLIC_COMMENTS_ENABLED: "true",
         });
@@ -4580,7 +4580,7 @@ describe("queue processors", () => {
         const env = createTestEnv({
           GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
           AI: { run: async () => ({ response: "```typescript\n" + VALID_TEST_SOURCE + "\n```" }) } as unknown as Ai,
-          GITTENSORY_REVIEW_E2E_TESTS: "true",
+          LOOPOVER_REVIEW_E2E_TESTS: "true",
           AI_SUMMARIES_ENABLED: "true",
           AI_PUBLIC_COMMENTS_ENABLED: "true",
         });
@@ -4612,7 +4612,7 @@ describe("queue processors", () => {
         const env = createTestEnv({
           GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
           AI: { run: async () => ({ response: "```typescript\n" + VALID_TEST_SOURCE + "\n```" }) } as unknown as Ai,
-          GITTENSORY_REVIEW_E2E_TESTS: "true",
+          LOOPOVER_REVIEW_E2E_TESTS: "true",
           AI_SUMMARIES_ENABLED: "true",
           AI_PUBLIC_COMMENTS_ENABLED: "true",
         });
@@ -4651,7 +4651,7 @@ describe("queue processors", () => {
       it("respects agentDryRun — never attempts commit delivery, and records dry_run (not agent_paused)", async () => {
         const repoFullName = "JSONbored/gen-tests-4197-commit-dryrun";
         const run = vi.fn();
-        const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+        const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
         await seedGenerateTestsPr(env, repoFullName, 4211, "dryrun-head-sha", "contributor", { headRef: "feature/checkout-retry", e2eTestDelivery: "commit" });
         await upsertRepositorySettings(env, { repoFullName, commentMode: "off", publicSurface: "off", autoLabelEnabled: false, checkRunMode: "off", reviewCheckMode: "required", requireLinkedIssue: false, linkedIssueGateMode: "advisory", aiReviewMode: "advisory", agentDryRun: true });
         vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -4673,7 +4673,7 @@ describe("queue processors", () => {
       it("respects agentPaused — never attempts generation or commit delivery, and records agent_paused", async () => {
         const repoFullName = "JSONbored/gen-tests-4197-commit-paused";
         const run = vi.fn();
-        const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+        const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
         await seedGenerateTestsPr(env, repoFullName, 4212, "paused-head-sha", "contributor", { headRef: "feature/checkout-retry", e2eTestDelivery: "commit" });
         await upsertRepositorySettings(env, { repoFullName, commentMode: "off", publicSurface: "off", autoLabelEnabled: false, checkRunMode: "off", reviewCheckMode: "required", requireLinkedIssue: false, linkedIssueGateMode: "advisory", aiReviewMode: "advisory", agentPaused: true });
         vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -4810,7 +4810,7 @@ describe("queue processors", () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: async () => ({ response: "```typescript\n" + AUTO_TEST_SOURCE + "\n```" }) } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -4832,7 +4832,7 @@ describe("queue processors", () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: async () => ({ response: "```typescript\n" + AUTO_TEST_SOURCE + "\n```" }) } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -4872,7 +4872,7 @@ describe("queue processors", () => {
     it("does not auto-trigger when manifest_missing_tests fires but features.e2eTests is disabled for the repo", async () => {
       const repoFullName = "JSONbored/auto-e2e-4196-disabled";
       const run = vi.fn();
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       await seedAutoTriggerPr(env, repoFullName, 5002, "auto-4196-disabled-sha", { e2eTests: false });
       const posted = { count: 0, body: "" };
       stubAutoTriggerFetch(5002, posted);
@@ -4888,7 +4888,7 @@ describe("queue processors", () => {
     it("does not auto-trigger when features.e2eTests is enabled but review.e2e_test_auto_trigger is not set (safe default, #4196 separation)", async () => {
       const repoFullName = "JSONbored/auto-e2e-4196-no-opt-in";
       const run = vi.fn();
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       // e2eTests stays enabled (the master feature, which unlocks the command/checkbox) but autoTrigger is
       // explicitly withheld -- the exact "enabled for maintainer-initiated use, but never fires unprompted"
       // shape the feature must default to.
@@ -4907,7 +4907,7 @@ describe("queue processors", () => {
     it("does not auto-trigger when the PR already carries a test file (the manifest_missing_tests signal never fires)", async () => {
       const repoFullName = "JSONbored/auto-e2e-4196-has-test";
       const run = vi.fn();
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       await seedAutoTriggerPr(env, repoFullName, 5003, "auto-4196-has-test-sha", { hasTestFile: true });
       const posted = { count: 0, body: "" };
       stubAutoTriggerFetch(5003, posted);
@@ -4921,7 +4921,7 @@ describe("queue processors", () => {
     it("does not auto-trigger when the PR body already carries a validation note (the manifest_missing_tests signal never fires)", async () => {
       const repoFullName = "JSONbored/auto-e2e-4196-validated";
       const run = vi.fn();
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       await seedAutoTriggerPr(env, repoFullName, 5004, "auto-4196-validated-sha", { validationNote: true });
       const posted = { count: 0, body: "" };
       stubAutoTriggerFetch(5004, posted);
@@ -4938,7 +4938,7 @@ describe("queue processors", () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: async () => { runCalls += 1; return { response: "```typescript\n" + AUTO_TEST_SOURCE + "\n```" }; } } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -4963,7 +4963,7 @@ describe("queue processors", () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: async () => { runCalls += 1; return { response: "```typescript\n" + AUTO_TEST_SOURCE + "\n```" }; } } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -4988,7 +4988,7 @@ describe("queue processors", () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: async () => { runCalls += 1; return { response: "```typescript\n" + AUTO_TEST_SOURCE + "\n```" }; } } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -5032,7 +5032,7 @@ describe("queue processors", () => {
     it("respects agentPaused — records a skip and never spends an LLM call, even though the signal fired", async () => {
       const repoFullName = "JSONbored/auto-e2e-4196-paused";
       const run = vi.fn();
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       await seedAutoTriggerPr(env, repoFullName, 5008, "auto-4196-paused-sha");
       await upsertRepositorySettings(env, { repoFullName, commentMode: "off", publicSurface: "off", autoLabelEnabled: false, checkRunMode: "off", reviewCheckMode: "required", requireLinkedIssue: false, linkedIssueGateMode: "off", manifestPolicyGateMode: "advisory", aiReviewMode: "off", agentPaused: true });
       const posted = { count: 0, body: "" };
@@ -5049,7 +5049,7 @@ describe("queue processors", () => {
     it("respects agentDryRun — records a skip with detail dry_run (not agent_paused), and never spends an LLM call", async () => {
       const repoFullName = "JSONbored/auto-e2e-4196-dryrun";
       const run = vi.fn();
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       await seedAutoTriggerPr(env, repoFullName, 5009, "auto-4196-dryrun-sha");
       await upsertRepositorySettings(env, { repoFullName, commentMode: "off", publicSurface: "off", autoLabelEnabled: false, checkRunMode: "off", reviewCheckMode: "required", requireLinkedIssue: false, linkedIssueGateMode: "off", manifestPolicyGateMode: "advisory", aiReviewMode: "off", agentDryRun: true });
       const posted = { count: 0, body: "" };
@@ -5068,7 +5068,7 @@ describe("queue processors", () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: async () => ({ response: "```typescript\n" + AUTO_TEST_SOURCE + "\n```" }) } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -5211,7 +5211,7 @@ describe("queue processors", () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: async () => ({ response: "```typescript\n" + CHECKBOX_TEST_SOURCE + "\n```" }) } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -5236,7 +5236,7 @@ describe("queue processors", () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: vi.fn() } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -5262,7 +5262,7 @@ describe("queue processors", () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: async () => ({ response: "```typescript\n" + CHECKBOX_TEST_SOURCE + "\n```" }) } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -5297,7 +5297,7 @@ describe("queue processors", () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: vi.fn() } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -5334,7 +5334,7 @@ describe("queue processors", () => {
       const repoFullName = "JSONbored/checkbox-4589-bot";
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -5353,7 +5353,7 @@ describe("queue processors", () => {
 
     it("ignores the marker when it appears in a comment that isn't the bot's own", async () => {
       const repoFullName = "JSONbored/checkbox-4589-not-bot-comment";
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       await seedCheckboxPr(env, repoFullName, 6009, "checkbox-4589-not-bot-comment-sha");
       const posted = { count: 0, body: "" };
       stubCheckboxFetch(6009, "maintainer", "admin", posted);
@@ -5373,7 +5373,7 @@ describe("queue processors", () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: vi.fn() } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -5446,7 +5446,7 @@ describe("queue processors", () => {
     it("respects agentPaused — records a skip and never spends an LLM call, even though an authorized maintainer checked the box", async () => {
       const repoFullName = "JSONbored/checkbox-4589-paused";
       const run = vi.fn();
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       await seedCheckboxPr(env, repoFullName, 6008, "checkbox-4589-paused-sha");
       await upsertRepositorySettings(env, { repoFullName, commentMode: "off", publicSurface: "off", autoLabelEnabled: false, checkRunMode: "off", requireLinkedIssue: false, linkedIssueGateMode: "off", manifestPolicyGateMode: "advisory", aiReviewMode: "off", agentPaused: true });
       const posted = { count: 0, body: "" };
@@ -5465,7 +5465,7 @@ describe("queue processors", () => {
     it("respects agentDryRun — records a skip with detail dry_run (not agent_paused)", async () => {
       const repoFullName = "JSONbored/checkbox-4589-dryrun";
       const run = vi.fn();
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, GITTENSORY_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI: { run } as unknown as Ai, LOOPOVER_REVIEW_E2E_TESTS: "true", AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
       await seedCheckboxPr(env, repoFullName, 6010, "checkbox-4589-dryrun-sha");
       await upsertRepositorySettings(env, { repoFullName, commentMode: "off", publicSurface: "off", autoLabelEnabled: false, checkRunMode: "off", requireLinkedIssue: false, linkedIssueGateMode: "off", manifestPolicyGateMode: "advisory", aiReviewMode: "off", agentDryRun: true });
       const posted = { count: 0, body: "" };
@@ -5486,7 +5486,7 @@ describe("queue processors", () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI: { run: async () => ({ response: "```typescript\n" + CHECKBOX_TEST_SOURCE + "\n```" }) } as unknown as Ai,
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
       });
@@ -5540,10 +5540,10 @@ describe("queue processors", () => {
       const repoFullName = "JSONbored/checkbox-4589-full-panel";
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-        GITTENSORY_REVIEW_E2E_TESTS: "true",
+        LOOPOVER_REVIEW_E2E_TESTS: "true",
         // The checkbox/collapsible only render via the CONVERGED comment builder (buildUnifiedCommentBody);
         // the legacy buildPublicPrIntelligenceComment path has neither and must be opted out of here too.
-        GITTENSORY_REVIEW_UNIFIED_COMMENT: "true",
+        LOOPOVER_REVIEW_UNIFIED_COMMENT: "true",
       });
       const slash = repoFullName.indexOf("/");
       await upsertRepositoryFromGitHub(env, { name: repoFullName.slice(slash + 1), full_name: repoFullName, private: false, owner: { login: "JSONbored" } }, 123);
@@ -5683,7 +5683,7 @@ describe("queue processors", () => {
     });
   });
 
-  it("ops-alerts job no-ops when GITTENSORY_REVIEW_OPS is OFF (does no anomaly scan)", async () => {
+  it("ops-alerts job no-ops when LOOPOVER_REVIEW_OPS is OFF (does no anomaly scan)", async () => {
     const env = createTestEnv(); // flag unset → OFF
     await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 1)")
       .bind("owner/repo", "owner", "repo")
@@ -5699,8 +5699,8 @@ describe("queue processors", () => {
     warn.mockRestore();
   });
 
-  it("ops-alerts job runs the anomaly scan when GITTENSORY_REVIEW_OPS is ON", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_OPS: "true" });
+  it("ops-alerts job runs the anomaly scan when LOOPOVER_REVIEW_OPS is ON", async () => {
+    const env = createTestEnv({ LOOPOVER_REVIEW_OPS: "true" });
     await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 1)")
       .bind("owner/repo", "owner", "repo")
       .run();

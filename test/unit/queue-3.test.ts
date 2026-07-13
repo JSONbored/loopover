@@ -266,7 +266,7 @@ describe("queue processors", () => {
 
   it("planner (#issue-coding-plan): a maintainer @gittensory plan on an issue posts an AI plan (flag ON)", async () => {
     const run = vi.fn(async () => ({ response: "## Summary\nAdd retry-on-5xx to the fetch helper.\n\n## Steps\n1. Wrap the fetch in a retry loop." }));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
     let postedBody: string | undefined;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -295,7 +295,7 @@ describe("queue processors", () => {
 
   it("planner: enforces the shared AI budget before calling Workers AI", async () => {
     const run = vi.fn(async () => ({ response: "should not run" }));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI_DAILY_NEURON_BUDGET: "0", AI: { run } as unknown as Ai });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "true", AI_DAILY_NEURON_BUDGET: "0", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
@@ -313,7 +313,7 @@ describe("queue processors", () => {
 
   it("planner: respects agentPaused — never spends Workers AI on a paused repo (#2257)", async () => {
     const run = vi.fn(async () => ({ response: "should not run" }));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentPaused: true });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -330,7 +330,7 @@ describe("queue processors", () => {
 
   it("planner: respects a global freeze — never spends Workers AI while the DB kill-switch is engaged (#2257)", async () => {
     const run = vi.fn(async () => ({ response: "should not run" }));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AGENT_ACTIONS_PAUSED: "true", AI: { run } as unknown as Ai });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "true", AGENT_ACTIONS_PAUSED: "true", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
@@ -344,7 +344,7 @@ describe("queue processors", () => {
 
   it("planner: respects agentDryRun — never spends Workers AI on a dry-run repo (#2257)", async () => {
     const run = vi.fn(async () => ({ response: "should not run" }));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentDryRun: true });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -361,7 +361,7 @@ describe("queue processors", () => {
 
   it("planner: enforces a per-actor per-repo cooldown before spending AI", async () => {
     const run = vi.fn(async () => ({ response: "## Summary\nPlan." }));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -379,7 +379,7 @@ describe("queue processors", () => {
 
   it("planner: flag OFF is byte-identical — @gittensory plan posts no plan and the AI is never called", async () => {
     const run = vi.fn(async () => ({ response: "should not run" }));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "false", AI: { run } as unknown as Ai });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "false", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
     let postedPlan = false;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -399,7 +399,7 @@ describe("queue processors", () => {
 
   it("planner: a NON-maintainer is denied — no plan is generated or posted (flag ON)", async () => {
     const run = vi.fn(async () => ({ response: "should not run" }));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
@@ -417,7 +417,7 @@ describe("queue processors", () => {
 
   it("planner (#21): honors a per-repo commandAuthorization override that restricts `plan` to maintainers", async () => {
     const run = vi.fn(async () => ({ response: "should not run" }));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
     // Override: `plan` is maintainer-ONLY (drop the default collaborator role).
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandAuthorization: { default: ["maintainer", "collaborator", "confirmed_miner"], commands: { plan: ["maintainer"] } } });
@@ -436,7 +436,7 @@ describe("queue processors", () => {
 
   it("planner: a flag-ON non-plan comment is not intercepted (the handler declines)", async () => {
     const run = vi.fn(async () => ({ response: "nope" }));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
     vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
     await processJob(env, plannerWebhook("just a normal comment with no command", "maintainer1"));
@@ -445,7 +445,7 @@ describe("queue processors", () => {
 
   it("planner (#22): @gittensory plan on a PR is NOT consumed — it falls through (no plan, no skip audit)", async () => {
     const run = vi.fn(async () => ({ response: "nope" }));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
     vi.stubGlobal("fetch", async () => Response.json({}));
     await processJob(env, plannerWebhook("@gittensory plan", "maintainer1", { number: 77, title: "PR not issue", state: "open", user: { login: "x" }, body: "b", pull_request: { url: "https://api.github.com/x" } }));
@@ -458,7 +458,7 @@ describe("queue processors", () => {
 
   it("planner: a bot-authored @gittensory plan on an issue is recorded as a classifier skip", async () => {
     const run = vi.fn(async () => ({ response: "nope" }));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
     vi.stubGlobal("fetch", async () => Response.json({}));
     await processJob(env, {
@@ -481,7 +481,7 @@ describe("queue processors", () => {
 
   it("planner: a maintainer request that yields no plan is recorded as a skip (fail-safe)", async () => {
     const run = vi.fn(async () => ({ response: "   " })); // model returns nothing usable
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
     let posted = false;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -1366,8 +1366,8 @@ describe("queue processors", () => {
   it("screenshot-table gate (#4110): a persisted bot capture from an earlier pass satisfies the gate, no body table needed", async () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      GITTENSORY_REVIEW_UNIFIED_COMMENT: "1",
-      GITTENSORY_REVIEW_SCREENSHOTS: "true",
+      LOOPOVER_REVIEW_UNIFIED_COMMENT: "1",
+      LOOPOVER_REVIEW_SCREENSHOTS: "true",
     });
     await upsertInstallation(env, {
       installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
@@ -1472,8 +1472,8 @@ describe("queue processors", () => {
     const markSpy = vi.spyOn(repositoriesModule, "markPullRequestVisualCaptureSatisfied").mockRejectedValueOnce(new Error("D1 write failed"));
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      GITTENSORY_REVIEW_UNIFIED_COMMENT: "1",
-      GITTENSORY_REVIEW_SCREENSHOTS: "true",
+      LOOPOVER_REVIEW_UNIFIED_COMMENT: "1",
+      LOOPOVER_REVIEW_SCREENSHOTS: "true",
     });
     await upsertInstallation(env, {
       installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },

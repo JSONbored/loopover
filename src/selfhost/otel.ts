@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Attributes, Context, ContextManager, TextMapPropagator, Tracer } from "@opentelemetry/api";
 import type { ReadableSpan, Sampler, Span, SpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { dualPrefixEnvString } from "../utils/env";
 
 type OtelApi = typeof import("@opentelemetry/api");
 type OtelSdk = typeof import("@opentelemetry/sdk-trace-node");
@@ -60,8 +59,7 @@ function serviceAttributes(env: NodeJS.ProcessEnv): Attributes {
     "service.name": nonBlank(env.OTEL_SERVICE_NAME) ?? "gittensory-selfhost",
     "deployment.environment.name": nonBlank(env.OTEL_SERVICE_ENVIRONMENT) ?? nonBlank(env.SENTRY_ENVIRONMENT) ?? "selfhost",
   };
-  // #4774 dual-read: LOOPOVER_VERSION wins over the legacy GITTENSORY_VERSION when both are set.
-  const version = dualPrefixEnvString(env, "VERSION") ?? nonBlank(env.SENTRY_RELEASE);
+  const version = nonBlank(env.LOOPOVER_VERSION) ?? nonBlank(env.SENTRY_RELEASE);
   if (version) attrs["service.version"] = version;
   return attrs;
 }

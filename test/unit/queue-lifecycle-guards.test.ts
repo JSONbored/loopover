@@ -3783,7 +3783,7 @@ describe("backlog-convergence sweep (#selfhost-backlog-convergence)", () => {
   it("fans out to acting-autonomy repos, skipping a non-acting/non-allowlisted repo", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_REPOS: "",
+      LOOPOVER_REVIEW_REPOS: "",
       JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
     });
     await upsertRepositoryFromGitHub(env, { name: "agent-a", full_name: "owner/agent-a", private: false, owner: { login: "owner" } });
@@ -3804,7 +3804,7 @@ describe("backlog-convergence sweep (#selfhost-backlog-convergence)", () => {
 
   it("also fans out to an allowlisted repo regardless of autonomy mode (#sweep-all-modes parity)", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "owner/advisory-repo", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPOS: "owner/advisory-repo", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
     await upsertRepositoryFromGitHub(env, { name: "advisory-repo", full_name: "owner/advisory-repo", private: false, owner: { login: "owner" } }, 9502);
     await upsertRepositorySettings(env, { repoFullName: "owner/advisory-repo", autonomy: { merge: "observe" } });
 
@@ -3816,7 +3816,7 @@ describe("backlog-convergence sweep (#selfhost-backlog-convergence)", () => {
   it("fans out to an allowlisted repo that was never registered locally (no installationId) and staggers a second repo's delay", async () => {
     const sent: Array<{ message: import("../../src/types").JobMessage; delaySeconds?: number }> = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_REPOS: "owner/never-registered",
+      LOOPOVER_REVIEW_REPOS: "owner/never-registered",
       JOBS: { async send(m: import("../../src/types").JobMessage, options?: { delaySeconds?: number }) { sent.push({ message: m, ...(options?.delaySeconds === undefined ? {} : { delaySeconds: options.delaySeconds }) }); } } as unknown as Queue,
     });
     await upsertRepositoryFromGitHub(env, { name: "agent-a", full_name: "owner/agent-a", private: false, owner: { login: "owner" } }, 9506);
@@ -3951,7 +3951,7 @@ describe("backlog-convergence sweep (#selfhost-backlog-convergence)", () => {
 
   it("INVARIANT (#4502, in-flight guard): the fan-out SKIPS a repo whose prior sweep is still draining, enqueues an idle one", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPOS: "", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
     await upsertInstallation(env, { action: "created", installation: { id: 9511, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
     for (const name of ["draining", "idle"]) {
       await upsertRepositoryFromGitHub(env, { name, full_name: `owner/${name}`, private: false, owner: { login: "owner" } }, 9511);
@@ -3990,7 +3990,7 @@ describe("backlog-convergence sweep (#selfhost-backlog-convergence)", () => {
   it("REGRESSION (#4502, #audit-sweep-fanout-isolation): one repo's settings-check failure does not abort the fan-out for every other repo", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_REPOS: "",
+      LOOPOVER_REVIEW_REPOS: "",
       JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue,
     });
     await upsertRepositoryFromGitHub(env, { name: "agent-a", full_name: "owner/agent-a", private: false, owner: { login: "owner" } });
@@ -4018,7 +4018,7 @@ describe("backlog-convergence sweep (#selfhost-backlog-convergence)", () => {
   it("REGRESSION (#4502, #audit-sweep-fanout-isolation): one repo's dispatch failure does not abort dispatch for every other repo, and the fan-out audit event still records", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_REPOS: "",
+      LOOPOVER_REVIEW_REPOS: "",
       JOBS: {
         async send(m: import("../../src/types").JobMessage) {
           if (m.type === "backlog-convergence-sweep" && m.repoFullName === "owner/agent-a") throw new Error("queue send error");
@@ -4066,7 +4066,7 @@ describe("backlog-convergence sweep (#selfhost-backlog-convergence)", () => {
     vi.useRealTimers();
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_REPOS: "",
+      LOOPOVER_REVIEW_REPOS: "",
       JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue,
     });
     const repoNames = ["r1", "r2", "r3", "r4", "r5", "r6"];
@@ -4333,9 +4333,9 @@ describe("auto-action convergence: end-to-end plan+execute for the general heuri
 
   it("REGRESSION (#selfhost-backlog-convergence): a CI-pending PR defers, then merges once check_suite.completed reports CI green (convergence chain)", async () => {
     // maybeReReviewOnCiCompletion (processors.ts) gates its ENTIRE re-review loop on isConvergenceRepoAllowed
-    // (the GITTENSORY_REVIEW_REPOS cutover allowlist), independent of autonomy -- the check_suite/check_run
+    // (the LOOPOVER_REVIEW_REPOS cutover allowlist), independent of autonomy -- the check_suite/check_run
     // "THE auto-merge trigger" path only fires for an allowlisted repo.
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: REPO });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: REPO });
     await setupAutoActionRepo(env, { autonomy: { merge: "auto", approve: "auto" }, linkedIssueGateMode: "off" });
     await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: queueMinerSnapshot("contributor") }, 60_000);
     const seen = { closed: false, merged: false };
@@ -4413,7 +4413,7 @@ describe("auto-action convergence: end-to-end plan+execute for the general heuri
     // Mirrors the "#selfhost-backlog-convergence" chain test above (same two-step CI-pending-then-green shape,
     // the proven way this suite reaches a REAL merge attempt): a plain "opened" webhook with CI already green
     // never reaches the merge decision in this harness; the check_suite.completed re-review path does.
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: REPO });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: REPO });
     await setupAutoActionRepo(env, { autonomy: { merge: "auto", approve: "auto" }, linkedIssueGateMode: "off" });
     await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: queueMinerSnapshot("contributor") }, 60_000);
     const seen = { closed: false, merged: false };

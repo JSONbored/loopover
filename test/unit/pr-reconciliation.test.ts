@@ -59,7 +59,7 @@ describe("runOpenPrReconciliation (#audit-open-pr-reconciliation)", () => {
   });
 
   it("never reconciles a registered-but-uninstalled repo (#sweep-uninstalled-budget-waste)", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "owner/no-install" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPOS: "owner/no-install" });
     await upsertRepositoryFromGitHub(env, { name: "no-install", full_name: "owner/no-install", private: false, owner: { login: "owner" } }); // no installation id
     await upsertRepositorySettings(env, { repoFullName: "owner/no-install", autonomy: { merge: "auto" } });
     const reconcileSpy = vi.spyOn(backfillModule, "reconcileOpenPullRequests");
@@ -70,8 +70,8 @@ describe("runOpenPrReconciliation (#audit-open-pr-reconciliation)", () => {
     expect(reconcileSpy).not.toHaveBeenCalled();
   });
 
-  it("watches an ALLOWLISTED (GITTENSORY_REVIEW_REPOS) installed repo even with no autonomy configured", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "owner/allowlisted-repo" });
+  it("watches an ALLOWLISTED (LOOPOVER_REVIEW_REPOS) installed repo even with no autonomy configured", async () => {
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPOS: "owner/allowlisted-repo" });
     await upsertRepositoryFromGitHub(env, { name: "allowlisted-repo", full_name: "owner/allowlisted-repo", private: false, owner: { login: "owner" } }, 9407);
     const reconcileSpy = vi.spyOn(backfillModule, "reconcileOpenPullRequests").mockResolvedValueOnce({ repoFullName: "owner/allowlisted-repo", remoteOpenCount: 0, localOpenCount: 0, missingNumbers: [] });
 

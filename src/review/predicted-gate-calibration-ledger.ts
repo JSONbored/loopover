@@ -42,7 +42,7 @@ import type { ContributorCalibrationSignal } from "../../packages/gittensory-eng
  *  calibration.ts's ContributorCalibrationEnv exactly (same gate-accuracy telemetry family, same flag). */
 type PredictedGateCalibrationEnv = {
   DB: D1Database;
-  GITTENSORY_REVIEW_PARITY_AUDIT?: string | undefined;
+  LOOPOVER_REVIEW_PARITY_AUDIT?: string | undefined;
   SELFHOST_TRANSIENT_CACHE?: NonNullable<Env["SELFHOST_TRANSIENT_CACHE"]>;
 };
 

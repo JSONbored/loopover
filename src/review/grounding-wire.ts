@@ -2,7 +2,7 @@
 // content of the changed files, so a non-frontier model stops hallucinating CI outcomes ("this breaks the
 // build" on a green PR) and undefined symbols (flagged because they're defined just outside the visible hunk).
 //
-// Single env switch: GITTENSORY_REVIEW_GROUNDING. Default OFF (unset/"false") — when OFF this module gathers nothing,
+// Single env switch: LOOPOVER_REVIEW_GROUNDING. Default OFF (unset/"false") — when OFF this module gathers nothing,
 // the reviewer prompt is byte-identical to today, and no extra GitHub fetch is made. Truthy follows the
 // codebase convention (`/^(1|true|yes|on)$/i`, same as isSafetyEnabled / isEnabled).
 //
@@ -16,7 +16,6 @@ import { githubRateLimitAdmissionKeyForToken, PRODUCT_USER_AGENT, timeoutFetch, 
 import { getCachedGroundingFileContent, putCachedGroundingFileContent, recordAuditEvent } from "../db/repositories";
 import type { CheckSummaryRecord, PullRequestFileRecord } from "../types";
 import { repoParts } from "../utils/json";
-import { dualPrefixEnvFlag } from "../utils/env";
 import { incr } from "../selfhost/metrics";
 import { isConvergenceRepoAllowed } from "./cutover-gate";
 import {
@@ -31,10 +30,9 @@ import {
 
 /** True when grounding is enabled. Flag-OFF (default) → no grounding is gathered and the prompt is unchanged. */
 export function isGroundingEnabled(env: {
-  GITTENSORY_REVIEW_GROUNDING?: string | undefined;
   LOOPOVER_REVIEW_GROUNDING?: string | undefined;
 }): boolean {
-  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_GROUNDING");
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_GROUNDING ?? "").trim());
 }
 
 /** Historical compatibility helper for the removed AI CI-refutation path. Grounding still feeds CI/full-file truth
@@ -45,7 +43,7 @@ export function aiCiRefutationActive(env: Env, repoFullName: string): boolean {
 
 /** When ON, both grounding inputs (CI + full files) are gathered; OFF gathers neither. One switch keeps the
  *  flag-OFF path provably byte-identical (no partial grounding). */
-function groundingFlags(env: { GITTENSORY_REVIEW_GROUNDING?: string | undefined }): GroundingFlags {
+function groundingFlags(env: { LOOPOVER_REVIEW_GROUNDING?: string | undefined }): GroundingFlags {
   const on = isGroundingEnabled(env);
   return { ciGrounding: on, fullFileContext: on };
 }

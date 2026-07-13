@@ -112,13 +112,13 @@ describe("shouldStartAiReviewForAdvisory", () => {
   });
 
   it("does not start when the reputation gate downgrades the PR to deterministic-only", async () => {
-    const env = createTestEnv({ AI: { run: vi.fn() } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", GITTENSORY_REVIEW_REPUTATION: "true", GITTENSORY_REVIEW_REPOS: "acme/widgets" });
+    const env = createTestEnv({ AI: { run: vi.fn() } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", LOOPOVER_REVIEW_REPUTATION: "true", LOOPOVER_REVIEW_REPOS: "acme/widgets" });
     await env.DB.prepare("INSERT INTO submitter_stats (project, submitter, submissions, merged, closed, manual, last_seen) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)").bind("acme/widgets", "alice", 8, 0, 8, 0).run();
     await expect(shouldStartAiReviewForAdvisory(env, base)).resolves.toBe(false);
   });
 
   it("honors aiReviewAllAuthors as an explicit self-host review requirement even when reputation would skip", async () => {
-    const env = createTestEnv({ AI: { run: vi.fn() } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", GITTENSORY_REVIEW_REPUTATION: "true", GITTENSORY_REVIEW_REPOS: "acme/widgets" });
+    const env = createTestEnv({ AI: { run: vi.fn() } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", LOOPOVER_REVIEW_REPUTATION: "true", LOOPOVER_REVIEW_REPOS: "acme/widgets" });
     await env.DB.prepare("INSERT INTO submitter_stats (project, submitter, submissions, merged, closed, manual, last_seen) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)").bind("acme/widgets", "alice", 8, 0, 8, 0).run();
     await expect(
       shouldStartAiReviewForAdvisory(env, {
@@ -171,7 +171,7 @@ describe("runAiReviewForAdvisory", () => {
     });
     try {
       const env = aiEnv(async () => ({ response: defectJson() }));
-      (env as unknown as { GITTENSORY_REVIEW_RAG: string }).GITTENSORY_REVIEW_RAG = "true";
+      (env as unknown as { LOOPOVER_REVIEW_RAG: string }).LOOPOVER_REVIEW_RAG = "true";
       const result = await runAiReviewForAdvisory(env, {
         mode: "live",
         settings: { aiReviewMode: "block" } as RepositorySettings,

@@ -3,12 +3,11 @@ import { loadOverride, type StorageEnv } from "../review/auto-apply";
 import { resolveEffectiveSettings } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import type { RepositorySettings } from "../types";
-import { dualPrefixEnvFlag } from "../utils/env";
 
 /** Default-OFF self-tune flag (mirrors selftune-wire's `isSelfTuneEnabled`; inlined here to avoid a
  *  selftune-wire → repository-settings → selftune-wire import cycle). */
-function selfTuneFlagOn(env: { GITTENSORY_REVIEW_SELFTUNE?: string | undefined; LOOPOVER_REVIEW_SELFTUNE?: string | undefined }): boolean {
-  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_SELFTUNE");
+function selfTuneFlagOn(env: { LOOPOVER_REVIEW_SELFTUNE?: string | undefined }): boolean {
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_SELFTUNE ?? "").trim());
 }
 
 /** PURE: overlay a promoted (always TIGHTENING-only) self-tune override onto resolved settings. The auto-tune's
@@ -30,7 +29,7 @@ export function applySelfTuneOverrideToSettings(
 }
 
 /** Effective repository settings: DB values overlaid with `.gittensory.yml` (config-as-code), then — when the
- *  self-improvement loop is enabled (`GITTENSORY_REVIEW_SELFTUNE`, default OFF) — with the repo's promoted,
+ *  self-improvement loop is enabled (`LOOPOVER_REVIEW_SELFTUNE`, default OFF) — with the repo's promoted,
  *  soak-passed, tightening-only auto-tune override. Flag-OFF (default) ⇒ no override read, byte-identical to before. */
 export async function resolveRepositorySettings(env: Env, repoFullName: string): Promise<RepositorySettings> {
   const [dbSettings, manifest, globalContributorBlacklist] = await Promise.all([

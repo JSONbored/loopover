@@ -156,7 +156,7 @@ afterEach(() => {
 
 describe("workflow_run webhook -> actions_fallback storage (#4112)", () => {
   it("stores the fallback's captured PNGs in R2 and re-reviews the correlated PR", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
     await seedRepoAndPr(env, "cafebabecafebabecafebabecafebabecafebabe");
 
     const zip = buildZip([
@@ -204,7 +204,7 @@ describe("workflow_run webhook -> actions_fallback storage (#4112)", () => {
   });
 
   it("stores partial shots when only some route/viewport combinations are present in the artifact", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
     await seedRepoAndPr(env, "cafebabecafebabecafebabecafebabecafebabe");
 
     // Only the desktop shot is present in the artifact -- the mobile one for the same route must be silently
@@ -238,7 +238,7 @@ describe("workflow_run webhook -> actions_fallback storage (#4112)", () => {
   });
 
   it("derives the route from the PR's own stored changed files, not just the default '/'", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
     await seedRepoAndPr(env, "cafebabecafebabecafebabecafebabecafebabe");
     await upsertPullRequestFile(env, {
       repoFullName: "owner/fallback-repo",
@@ -280,7 +280,7 @@ describe("workflow_run webhook -> actions_fallback storage (#4112)", () => {
   });
 
   it("stores nothing (never throws) when the run's artifact list comes back empty", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
     await seedRepoAndPr(env, "cafebabecafebabecafebabecafebabecafebabe");
     vi.stubGlobal(
       "fetch",
@@ -308,7 +308,7 @@ describe("workflow_run webhook -> actions_fallback storage (#4112)", () => {
   });
 
   it("stores nothing (never throws) when REVIEW_AUDIT isn't configured", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/fallback-repo" });
     await seedRepoAndPr(env, "cafebabecafebabecafebabecafebabecafebabe");
     let artifactsListCalled = false;
     vi.stubGlobal(
@@ -339,7 +339,7 @@ describe("workflow_run webhook -> actions_fallback storage (#4112)", () => {
   });
 
   it("stores nothing (never throws) when minting the installation token fails", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
     await seedRepoAndPr(env, "cafebabecafebabecafebabecafebabecafebabe");
     vi.stubGlobal(
       "fetch",
@@ -367,7 +367,7 @@ describe("workflow_run webhook -> actions_fallback storage (#4112)", () => {
   });
 
   it("still returns the stored shot even when persisting it to R2 fails (fire-and-forget put, mirrors capture.ts's own pattern)", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/fallback-repo" });
     const failingAudit: R2Bucket = {
       async get() {
         return null;
@@ -404,7 +404,7 @@ describe("workflow_run webhook -> actions_fallback storage (#4112)", () => {
   });
 
   it("ignores a workflow_run whose name doesn't match this module's own workflow", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
     await seedRepoAndPr(env, "cafebabecafebabecafebabecafebabecafebabe");
     let artifactsListCalled = false;
     vi.stubGlobal(
@@ -433,7 +433,7 @@ describe("workflow_run webhook -> actions_fallback storage (#4112)", () => {
   });
 
   it("ignores a matching-name run that was NOT triggered by workflow_dispatch", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
     await seedRepoAndPr(env, "cafebabecafebabecafebabecafebabecafebabe");
     let artifactsListCalled = false;
     vi.stubGlobal(
@@ -462,7 +462,7 @@ describe("workflow_run webhook -> actions_fallback storage (#4112)", () => {
   });
 
   it("records the webhook and does nothing further when the matching run FAILED", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
     await seedRepoAndPr(env, "cafebabecafebabecafebabecafebabecafebabe");
     let artifactsListCalled = false;
     vi.stubGlobal(
@@ -491,7 +491,7 @@ describe("workflow_run webhook -> actions_fallback storage (#4112)", () => {
   });
 
   it("does not clear the dispatch marker for a non-terminal workflow_run activity", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
     await seedRepoAndPr(env, "cafebabecafebabecafebabecafebabecafebabe");
     await markFallbackDispatched(env, "cafebabecafebabecafebabecafebabecafebabe");
     let artifactsListCalled = false;
@@ -522,7 +522,7 @@ describe("workflow_run webhook -> actions_fallback storage (#4112)", () => {
   });
 
   it("clears the dispatch marker on a FAILED run too (#4112 review fix -- a failed run shouldn't block a retry for the rest of the max-age window)", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
     await seedRepoAndPr(env, "cafebabecafebabecafebabecafebabecafebabe");
     await markFallbackDispatched(env, "cafebabecafebabecafebabecafebabecafebabe");
     await expect(isFallbackDispatchInFlight(env, "cafebabecafebabecafebabecafebabecafebabe")).resolves.toBe(true);
@@ -544,7 +544,7 @@ describe("workflow_run webhook -> actions_fallback storage (#4112)", () => {
   });
 
   it("clears the dispatch marker on a SUCCESSFUL run as well", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
     await seedRepoAndPr(env, "cafebabecafebabecafebabecafebabecafebabe");
     await markFallbackDispatched(env, "cafebabecafebabecafebabecafebabecafebabe");
     vi.stubGlobal("fetch", baseFetchStub({ "/actions/runs/": () => Response.json({ artifacts: [] }) }));
@@ -565,7 +565,7 @@ describe("workflow_run webhook -> actions_fallback storage (#4112)", () => {
   });
 
   it("does not clear any marker when the run's display_title doesn't correlate to a PR (nothing to key the clear on)", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
     await seedRepoAndPr(env, "cafebabecafebabecafebabecafebabecafebabe");
     await markFallbackDispatched(env, "cafebabecafebabecafebabecafebabecafebabe");
     vi.stubGlobal("fetch", baseFetchStub({}));
@@ -588,7 +588,7 @@ describe("workflow_run webhook -> actions_fallback storage (#4112)", () => {
   });
 
   it("does nothing when the run's display_title doesn't correlate to a PR (never guesses)", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/fallback-repo", REVIEW_AUDIT: memoryReviewAudit() });
     await seedRepoAndPr(env, "cafebabecafebabecafebabecafebabecafebabe");
     let artifactsListCalled = false;
     vi.stubGlobal(

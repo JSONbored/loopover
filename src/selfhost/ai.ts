@@ -12,7 +12,6 @@ export { assertNoLegacySharedAiEnv } from "./ai-config";
 import { incr, observe } from "./metrics";
 import { withReviewSpan } from "./tracing";
 import { delimiter } from "node:path";
-import { dualPrefixEnvStrictFlag } from "../utils/env";
 
 interface AiRunOptions {
   // Content is a plain string for every message any pre-#4111 caller ever built (byte-identical). A
@@ -473,13 +472,12 @@ export function subscriptionCliEnv(
   return child;
 }
 
-function assertCodexCredentialIsolation(parent: Record<string, string | undefined>): void {
+function assertCodexCredentialIsolation(env: Record<string, string | undefined>): void {
   // `codex exec` receives attacker-controlled PR title/body/diff text. Its read-only sandbox prevents writes, but not
   // reads, so a self-hosted OAuth home mounted into the same filesystem can be prompt-injected into public output.
   // Fail closed until Codex exposes a brokered credential mode that does not put auth.json in the review sandbox.
-  // #4774 dual-read: LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER wins over the legacy name when both are set; strict
-  // "1"-only, matching health.ts's codexAuthReadinessProbe and this flag's narrow opt-in convention.
-  if (parent.CODEX_HOME || !dualPrefixEnvStrictFlag(parent, "ENABLE_UNSAFE_CODEX_REVIEWER")) {
+  // Strict "1"-only, matching health.ts's codexAuthReadinessProbe and this flag's narrow opt-in convention.
+  if (env.CODEX_HOME || env.LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER !== "1") {
     throw new Error("codex_credential_isolation_required");
   }
 }

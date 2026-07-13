@@ -38,7 +38,7 @@ function SelfHostingRag() {
           {
             title: "Repo activation",
             description:
-              "GITTENSORY_REVIEW_RAG=true, repo in GITTENSORY_REVIEW_REPOS (or features.rag: true in private config). Gittensor is_registered is not required for self-host RAG when the allowlist covers the repo.",
+              "LOOPOVER_REVIEW_RAG=true, repo in LOOPOVER_REVIEW_REPOS (or features.rag: true in private config). Gittensor is_registered is not required for self-host RAG when the allowlist covers the repo.",
           },
           {
             title: "Vector backend",
@@ -67,8 +67,8 @@ function SelfHostingRag() {
       <h2>Qdrant and Ollama example</h2>
       <CodeBlock
         filename=".env"
-        code={`GITTENSORY_REVIEW_RAG=true
-GITTENSORY_REVIEW_REPOS=owner/repo
+        code={`LOOPOVER_REVIEW_RAG=true
+LOOPOVER_REVIEW_REPOS=owner/repo
 QDRANT_URL=http://qdrant:6333
 QDRANT_DIM=768
 AI_EMBED_BASE_URL=http://ollama:11434/v1

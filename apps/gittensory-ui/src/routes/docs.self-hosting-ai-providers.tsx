@@ -132,7 +132,7 @@ OLLAMA_AI_MODEL=llama3.1`}
 CODEX_AI_EFFORT=medium
 CLAUDE_AI_EFFORT=medium
 CLAUDE_CODE_OAUTH_TOKEN=
-GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1`}
+LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER=1`}
       />
       <p>
         Set <code>AI_DUAL_REVIEW=1</code> only when you want the first two providers to run as
@@ -204,8 +204,8 @@ CLAUDE_AI_EFFORT=medium`}
       <CodeBlock code={`docker compose exec gittensory codex auth`} />
       <p>
         This also needs the explicit opt-in shown in the fallback example above (
-        <code>GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1</code>) — see the Subscription CLI safety
-        note below for why it defaults to off.
+        <code>LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER=1</code>) — see the Subscription CLI safety note
+        below for why it defaults to off.
       </p>
       <Callout variant="note" title="Rotating it needs no restart">
         Codex reads <code>auth.json</code> fresh on every review — each review spawns a new{" "}
@@ -236,7 +236,7 @@ CLAUDE_AI_EFFORT=medium`}
           {
             title: "codex_credential_isolation_required",
             description:
-              "GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER is not set to 1, or CODEX_HOME was set on the app container. Remove CODEX_HOME so Codex reads the mounted volume's default path.",
+              "LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER is not set to 1, or CODEX_HOME was set on the app container. Remove CODEX_HOME so Codex reads the mounted volume's default path.",
           },
         ]}
       />

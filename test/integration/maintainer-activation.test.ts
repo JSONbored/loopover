@@ -183,7 +183,7 @@ describe("maintainer activation routes", () => {
   it("allows a server-to-server token", async () => {
     const app = createApp();
     const env = createTestEnv();
-    const response = await app.request(PATH_PREVIEW, { headers: { authorization: `Bearer ${env.GITTENSORY_API_TOKEN}` } }, env);
+    const response = await app.request(PATH_PREVIEW, { headers: { authorization: `Bearer ${env.LOOPOVER_API_TOKEN}` } }, env);
     expect(response.status).toBe(200);
   });
 });

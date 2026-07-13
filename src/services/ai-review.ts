@@ -204,7 +204,7 @@ export type GittensoryAiReviewInput = {
   /** Present only when the repo has BYOK on AND a key configured; drives the advisory write-up. */
   providerKey?: AiReviewProviderKey | null | undefined;
   /**
-   * Convergence (grounding, flag-gated by GITTENSORY_REVIEW_GROUNDING). The caller builds this from the PR's
+   * Convergence (grounding, flag-gated by LOOPOVER_REVIEW_GROUNDING). The caller builds this from the PR's
    * finished CI status + the full content of the changed files (see `review/grounding-wire`). When ABSENT
    * (the default, flag-OFF), both the system and user prompts are byte-identical to today — no section is
    * appended. `systemSuffix` carries the grounding-discipline rules; `promptSection` carries the CI STATUS
@@ -215,7 +215,7 @@ export type GittensoryAiReviewInput = {
     | null
     | undefined;
   /**
-   * Convergence (RAG retrieval, flag-gated by GITTENSORY_REVIEW_RAG). The caller builds this by querying the
+   * Convergence (RAG retrieval, flag-gated by LOOPOVER_REVIEW_RAG). The caller builds this by querying the
    * codebase vector index for code/docs semantically related to the PR's changed files (see
    * `review/rag-wire`); it is the engine's pre-formatted "RELEVANT EXISTING CODE / DOCS" block, appended to
    * the USER prompt as additive reference context (callers, related modules, existing conventions) — exactly
@@ -225,7 +225,7 @@ export type GittensoryAiReviewInput = {
   ragContext?: string | null | undefined;
   /**
    * Deterministic impact map (#2186, additive grounding slice of #1971), flag-gated by BOTH the operator's
-   * GITTENSORY_REVIEW_IMPACT_MAP env flag AND the per-repo `.gittensory.yml review.impact_map` opt-in (see
+   * LOOPOVER_REVIEW_IMPACT_MAP env flag AND the per-repo `.gittensory.yml review.impact_map` opt-in (see
    * `shouldComputeImpactMap`, `src/review/impact-map-wire.ts`). The caller pre-formats
    * `computeImpactMap`'s (`src/review/impact-map.ts`) output into an "IMPACT MAP" block — which OTHER repo
    * files plausibly need re-checking given the PR's changed symbols — and appends it to the USER prompt as
@@ -235,7 +235,7 @@ export type GittensoryAiReviewInput = {
    */
   impactMapContext?: string | null | undefined;
   /**
-   * Repo quality-culture profile (#2995, flag-gated by GITTENSORY_REVIEW_CULTURE_PROFILE AND `.gittensory.yml`
+   * Repo quality-culture profile (#2995, flag-gated by LOOPOVER_REVIEW_CULTURE_PROFILE AND `.gittensory.yml`
    * `review.culture_profile`). The caller builds this by deriving a compact profile from the repo's OWN merge
    * history — typical PR size, common accepted labels (see `review/repo-culture-profile-wire`) — and it is
    * appended to the USER prompt as additive reference context, exactly like `ragContext`. ADVISORY GROUNDING
@@ -247,7 +247,7 @@ export type GittensoryAiReviewInput = {
    *  non-secret counters/paths; provider keys and raw prompt text never belong here. */
   observability?: Record<string, unknown> | null | undefined;
   /**
-   * Review-enrichment service brief (#1472, flag-gated by GITTENSORY_REVIEW_ENRICHMENT). The caller POSTs the PR
+   * Review-enrichment service brief (#1472, flag-gated by LOOPOVER_REVIEW_ENRICHMENT). The caller POSTs the PR
    * to the external REES (see `review/enrichment-wire`), which runs heavy/external/historical analysis the
    * no-checkout reviewer can't (dependency CVEs, leaked secrets, license/EOL/supply-chain) and returns a
    * pre-rendered, public-safe brief. Same shape + splice point as grounding: `promptSection` appends to the USER
@@ -841,20 +841,20 @@ function buildUserPrompt(input: GittensoryAiReviewInput): string {
     input.diff.slice(0, 120000),
   ];
   // Convergence (grounding): the FINISHED CI status + FULL file content when the caller supplied them (flag
-  // GITTENSORY_REVIEW_GROUNDING on). Absent/empty (the default) → the prompt is byte-identical to today.
+  // LOOPOVER_REVIEW_GROUNDING on). Absent/empty (the default) → the prompt is byte-identical to today.
   const groundingSection = input.grounding?.promptSection;
   // Convergence (RAG retrieval): the retrieved RELEVANT EXISTING CODE / DOCS block when the caller supplied
-  // one (flag GITTENSORY_REVIEW_RAG on AND an index exists). Absent/empty (the default) → byte-identical.
+  // one (flag LOOPOVER_REVIEW_RAG on AND an index exists). Absent/empty (the default) → byte-identical.
   const ragSection = input.ragContext;
   // Deterministic impact map (#2186): the "IMPACT MAP" block when the caller supplied one (BOTH
-  // GITTENSORY_REVIEW_IMPACT_MAP AND the per-repo review.impact_map opt-in on, AND the computation found at
+  // LOOPOVER_REVIEW_IMPACT_MAP AND the per-repo review.impact_map opt-in on, AND the computation found at
   // least one affected module). Absent/empty (the default) → the prompt is byte-identical to today.
   const impactMapSection = input.impactMapContext;
   // Review-enrichment brief (#1472): the external REES analysis block when the caller supplied one (flag
-  // GITTENSORY_REVIEW_ENRICHMENT on AND REES_URL set). Absent/empty (the default) → the prompt is byte-identical.
+  // LOOPOVER_REVIEW_ENRICHMENT on AND REES_URL set). Absent/empty (the default) → the prompt is byte-identical.
   const enrichmentSection = input.enrichment?.promptSection;
   // Repo quality-culture profile (#2995): the ADDITIVE "REPO QUALITY-CULTURE PROFILE" reference block when
-  // the caller supplied one (flag GITTENSORY_REVIEW_CULTURE_PROFILE + review.culture_profile both on).
+  // the caller supplied one (flag LOOPOVER_REVIEW_CULTURE_PROFILE + review.culture_profile both on).
   // Absent/empty (the default) → the prompt is byte-identical. Reference-only grounding, never a gate input.
   const cultureProfileSection = input.cultureProfileContext;
   // Test-evidence classifier (#2558): grounds the reviewer's test-adequacy judgment in the engine's own
@@ -942,7 +942,7 @@ const IMPROVEMENT_SIGNAL_SUFFIX =
   '\n\nVALUE ASSESSMENT: ALSO include an additional top-level field "valueAssessment" in the SAME JSON object — an object of the shape {"magnitude": one of exactly "unclear", "minor", "moderate", or "significant", "rationale": ONE specific sentence}. This is a DIFFERENT question from everything above: does this change, as shown in the diff, plausibly move the codebase forward given its stated title, description, and intent — is it well-targeted and worth making? It is NOT your confidence that the change is bug-free (that is the separate "confidence" field above — a defect-free change can still be low-value, and a genuinely valuable change can still carry a real bug) and it is NOT a risk or safety judgment (a separate deterministic system handles that; do not hedge on risk here). You see only the unified diff, never the full pre-change files, so base this on the before/after hunk shape visible in the diff plus the stated intent — never claim to have compared whole files you cannot see. Use "unclear" when the diff is too small, too mechanical, or too disconnected from its stated intent to judge either way — never guess. Never use the word "score" (or reward, ranking, payout, wallet, hotkey, coldkey, trust, farming, or reviewability) to describe this judgment; describe it only in terms of improvement, value, or gain.';
 
 /** The effective reviewer SYSTEM prompt. Appends the grounding-discipline suffix when the caller supplied one
- *  (flag GITTENSORY_REVIEW_GROUNDING on), the `review.profile` tone suffix when set, the `review.security_focus`
+ *  (flag LOOPOVER_REVIEW_GROUNDING on), the `review.profile` tone suffix when set, the `review.security_focus`
  *  prioritization suffix when on, then the inline-findings instruction when the caller asked for them, then the
  *  improvement-signal instruction when the caller resolved that feature on; all absent (default) → the base
  *  prompt, byte-identical to today. */
@@ -2045,9 +2045,9 @@ export async function runGittensoryAiReview(
   // prompt-injection payload never reaches the model verbatim. Flag-OFF (default) passes `input` through
   // unchanged → the prompt is byte-identical to today. Only the title/body/diff fed to buildUserPrompt are
   // affected; this NEVER changes the verdict (a redaction is data, not a finding).
-  // Per-repo feature override (phase 2): the defang activates when the global GITTENSORY_REVIEW_SAFETY kill-switch
+  // Per-repo feature override (phase 2): the defang activates when the global LOOPOVER_REVIEW_SAFETY kill-switch
   // is ON and the repo's container-private `.gittensory.yml` `features.safety` opts in — falling back to the
-  // GITTENSORY_REVIEW_REPOS allowlist when the manifest says nothing (byte-identical default).
+  // LOOPOVER_REVIEW_REPOS allowlist when the manifest says nothing (byte-identical default).
   const promptInput = (await convergedFeatureActive(
     env,
     input.repoFullName,

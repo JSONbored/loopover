@@ -14,7 +14,7 @@ const MAX_BODY_BYTES = 1024 * 1024;
 
 function apiHeaders(env: Env): Record<string, string> {
   return {
-    authorization: `Bearer ${env.GITTENSORY_API_TOKEN}`,
+    authorization: `Bearer ${env.LOOPOVER_API_TOKEN}`,
     "content-type": "application/json",
   };
 }

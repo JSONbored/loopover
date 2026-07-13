@@ -145,8 +145,8 @@ describe("recordPredictedGateCalibration — login-keyed predict-vs-live calibra
     expect(await rawAll(env, "SELECT * FROM predicted_gate_calibration_ledger")).toHaveLength(0);
   });
 
-  it("the cloud worker records when GITTENSORY_REVIEW_PARITY_AUDIT is explicitly ON", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true" });
+  it("the cloud worker records when LOOPOVER_REVIEW_PARITY_AUDIT is explicitly ON", async () => {
+    const env = createTestEnv({ LOOPOVER_REVIEW_PARITY_AUDIT: "true" });
     delete env.SELFHOST_TRANSIENT_CACHE;
     await seedPredicted(env, { login: "octocat", project: repoFullName, action: "merge", createdAt: new Date(Date.now() - 60_000).toISOString() });
     await recordPredictedGateCalibration(env, { login: "octocat", project: repoFullName, pullNumber: 7, headSha: "sha1", decision: "merge" });

@@ -220,11 +220,11 @@ describe("GET /v1/internal/predicted-agreement — bearer-gated, flag-gated endp
 
   it("401s without the internal token", async () => {
     const app = createApp();
-    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_PARITY_AUDIT: "true" });
     expect((await app.request("/v1/internal/predicted-agreement", {}, env)).status).toBe(401);
   });
 
-  it("404s when GITTENSORY_REVIEW_PARITY_AUDIT is OFF — the endpoint does not exist", async () => {
+  it("404s when LOOPOVER_REVIEW_PARITY_AUDIT is OFF — the endpoint does not exist", async () => {
     const app = createApp();
     const env = createTestEnv(); // flag unset → OFF
     const res = await app.request("/v1/internal/predicted-agreement", { headers: bearer(env) }, env);
@@ -234,7 +234,7 @@ describe("GET /v1/internal/predicted-agreement — bearer-gated, flag-gated endp
 
   it("200s with the predicted-agreement report when ON and authorized", async () => {
     const app = createApp();
-    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_PARITY_AUDIT: "true" });
     // The route hardcodes nowMs: Date.now() (no query-param override yet), so seed data relative to the
     // ACTUAL current time rather than a fixed calendar date -- a fixed T0 would silently fall outside the
     // 90-day window once enough real time has passed since this test was written.

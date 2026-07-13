@@ -3,7 +3,7 @@
 # Cloudflare Worker (wrangler) deploy is unaffected. SECRETS ARE NEVER BAKED: supply them at run time via
 # the .env file or mounted *_FILE secrets (see docker-compose.yml + .env.example).
 
-ARG GITTENSORY_VERSION=
+ARG LOOPOVER_VERSION=
 
 # --- build: install deps + bundle the Node entry --------------------------------------------------------
 # ECR Public Gallery mirrors Docker Official Images with no rate limits and no auth.
@@ -28,14 +28,14 @@ RUN node scripts/validate-selfhost-sourcemap.mjs
 # --- runtime base: slim, non-root -----------------------------------------------------------------------
 FROM public.ecr.aws/docker/library/node:24-slim AS runtime-base
 WORKDIR /app
-ARG GITTENSORY_VERSION=
+ARG LOOPOVER_VERSION=
 ENV NODE_ENV=production \
     PLATFORM=self-hosted \
     PORT=8787 \
     DATABASE_PATH=/data/gittensory.sqlite \
     MIGRATIONS_DIR=/app/migrations \
     NPM_CONFIG_PREFIX=/home/node/.npm-global \
-    GITTENSORY_VERSION=${GITTENSORY_VERSION}
+    LOOPOVER_VERSION=${LOOPOVER_VERSION}
 # Bake the Claude Code / Codex CLIs by default so the self-host image is ready for subscription reviewers (#979).
 # No credentials are baked — operators mint CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token`) / codex auth at run time
 # and pass/mount them via env/volumes. Minimal custom builds can opt out with `--build-arg INSTALL_AI_CLIS=false`.

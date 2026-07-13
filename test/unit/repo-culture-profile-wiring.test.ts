@@ -58,11 +58,11 @@ const baseReviewInput = {
 describe("isRepoCultureProfileEnabled", () => {
   it("is OFF for unset/false and ON for the truthy convention", () => {
     expect(isRepoCultureProfileEnabled({})).toBe(false);
-    expect(isRepoCultureProfileEnabled({ GITTENSORY_REVIEW_CULTURE_PROFILE: "false" })).toBe(false);
-    expect(isRepoCultureProfileEnabled({ GITTENSORY_REVIEW_CULTURE_PROFILE: "true" })).toBe(true);
-    expect(isRepoCultureProfileEnabled({ GITTENSORY_REVIEW_CULTURE_PROFILE: "1" })).toBe(true);
-    expect(isRepoCultureProfileEnabled({ GITTENSORY_REVIEW_CULTURE_PROFILE: "on" })).toBe(true);
-    expect(isRepoCultureProfileEnabled({ GITTENSORY_REVIEW_CULTURE_PROFILE: "yes" })).toBe(true);
+    expect(isRepoCultureProfileEnabled({ LOOPOVER_REVIEW_CULTURE_PROFILE: "false" })).toBe(false);
+    expect(isRepoCultureProfileEnabled({ LOOPOVER_REVIEW_CULTURE_PROFILE: "true" })).toBe(true);
+    expect(isRepoCultureProfileEnabled({ LOOPOVER_REVIEW_CULTURE_PROFILE: "1" })).toBe(true);
+    expect(isRepoCultureProfileEnabled({ LOOPOVER_REVIEW_CULTURE_PROFILE: "on" })).toBe(true);
+    expect(isRepoCultureProfileEnabled({ LOOPOVER_REVIEW_CULTURE_PROFILE: "yes" })).toBe(true);
   });
 });
 
@@ -70,15 +70,15 @@ describe("isRepoCultureProfileEnabled", () => {
 
 describe("shouldApplyRepoCultureProfile", () => {
   it("requires BOTH the operator env flag AND the per-repo manifest opt-in", () => {
-    expect(shouldApplyRepoCultureProfile({ GITTENSORY_REVIEW_CULTURE_PROFILE: "true" }, true)).toBe(true);
+    expect(shouldApplyRepoCultureProfile({ LOOPOVER_REVIEW_CULTURE_PROFILE: "true" }, true)).toBe(true);
   });
 
   it("is OFF when the operator flag is on but the manifest didn't opt in", () => {
-    expect(shouldApplyRepoCultureProfile({ GITTENSORY_REVIEW_CULTURE_PROFILE: "true" }, false)).toBe(false);
+    expect(shouldApplyRepoCultureProfile({ LOOPOVER_REVIEW_CULTURE_PROFILE: "true" }, false)).toBe(false);
   });
 
   it("is OFF when the manifest opted in but the operator flag is off (repo cannot self-enable)", () => {
-    expect(shouldApplyRepoCultureProfile({ GITTENSORY_REVIEW_CULTURE_PROFILE: "false" }, true)).toBe(false);
+    expect(shouldApplyRepoCultureProfile({ LOOPOVER_REVIEW_CULTURE_PROFILE: "false" }, true)).toBe(false);
   });
 
   it("is OFF when both are off", () => {
@@ -189,7 +189,7 @@ function aiReviewEnv(over: Partial<Env> = {}) {
   });
 }
 
-describe("culture profile wired into the AI reviewer (flag GITTENSORY_REVIEW_CULTURE_PROFILE + review.culture_profile)", () => {
+describe("culture profile wired into the AI reviewer (flag LOOPOVER_REVIEW_CULTURE_PROFILE + review.culture_profile)", () => {
   it("FLAG-ON: the user prompt gains the REPO QUALITY-CULTURE PROFILE section", async () => {
     const retrievalEnv = createTestEnv({});
     await seedSample(retrievalEnv);
@@ -234,7 +234,7 @@ describe("culture profile wired into the AI reviewer (flag GITTENSORY_REVIEW_CUL
 
   it("FLAG-ON via runAiReviewForAdvisory: builds the culture-profile context when both the global flag and review.culture_profile are on", async () => {
     const env = aiReviewEnv({
-      GITTENSORY_REVIEW_CULTURE_PROFILE: "true",
+      LOOPOVER_REVIEW_CULTURE_PROFILE: "true",
       AI: { run: capturingChatRun().run } as unknown as Ai,
     });
     await seedSample(env);
@@ -267,7 +267,7 @@ describe("culture profile wired into the AI reviewer (flag GITTENSORY_REVIEW_CUL
 
   it("FLAG-ON globally but review.culture_profile NOT set (reviewCultureProfile absent): no culture-profile context is built", async () => {
     const env = aiReviewEnv({
-      GITTENSORY_REVIEW_CULTURE_PROFILE: "true",
+      LOOPOVER_REVIEW_CULTURE_PROFILE: "true",
       AI: { run: capturingChatRun().run } as unknown as Ai,
     });
     await seedSample(env);
@@ -302,7 +302,7 @@ describe("culture profile wired into the AI reviewer (flag GITTENSORY_REVIEW_CUL
   });
 
   it("FLAG-OFF globally (default) even with review.culture_profile true: no culture-profile context is built (no D1 read)", async () => {
-    const env = aiReviewEnv({ AI: { run: capturingChatRun().run } as unknown as Ai }); // no GITTENSORY_REVIEW_CULTURE_PROFILE
+    const env = aiReviewEnv({ AI: { run: capturingChatRun().run } as unknown as Ai }); // no LOOPOVER_REVIEW_CULTURE_PROFILE
     await seedSample(env);
     const adv: Advisory = {
       id: "adv-culture-globaloff",

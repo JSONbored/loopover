@@ -28,7 +28,6 @@ import { VISUAL_REGRESSION_FINDING_CODE } from "./visual/visual-findings";
 // importers of `PR_PANEL_COMMENT_MARKER` from this module keep working. The unified body MUST prepend this
 // verbatim or `createOrUpdatePrIntelligenceComment` posts a DUPLICATE instead of updating in place.
 import { PR_PANEL_COMMENT_MARKER } from "../github/comments";
-import { dualPrefixEnvFlag } from "../utils/env";
 import { LOOPOVER_GATE_CHECK_NAME } from "./check-names";
 import { classifyChangedFile, type ReviewFileClass } from "./changed-files-classify";
 import { githubPrFileDiffUrl } from "./changed-files-diff-link";
@@ -385,13 +384,13 @@ export type UnifiedCommentBridgeArgs = {
   /** Deterministic impact-map entries (review.impact_map port, `src/review/impact-map.ts`, #2184/#2185). When
    *  present + non-empty, an "Impact map" collapsible (changed module → changed symbols → plausibly affected
    *  modules, bounded with a "+N more" overflow line) is appended. No AI. Default OFF (the processor passes
-   *  this only when BOTH the operator's GITTENSORY_REVIEW_IMPACT_MAP flag and the per-repo manifest opt-in
+   *  this only when BOTH the operator's LOOPOVER_REVIEW_IMPACT_MAP flag and the per-repo manifest opt-in
    *  are on — see `shouldComputeImpactMap`, `src/review/impact-map-wire.ts`). */
   impactMap?: ImpactMapSummaryInput[] | undefined;
   /** review.fixHandoff emission (#1962): pre-rendered fix-handoff blocks (one per inline finding — a
    *  contributor's own local agent can consume them; content-only, no server-side write). When present and
    *  non-empty a "Fix handoff" collapsible is appended. Default OFF — the processor passes this only when the
-   *  operator's GITTENSORY_REVIEW_FIX_HANDOFF flag AND the per-repo `review.fixHandoff` manifest opt-in are on
+   *  operator's LOOPOVER_REVIEW_FIX_HANDOFF flag AND the per-repo `review.fixHandoff` manifest opt-in are on
    *  (see `shouldEmitFixHandoff`, `src/review/fix-handoff.ts`), so the rendered comment is byte-identical when off. */
   fixHandoffBlocks?: FixHandoffBlock[] | undefined;
   /** The disposition holds this PR for owner review because its diff touches a hard-guardrail path — so an
@@ -891,8 +890,7 @@ export function buildClosedUnifiedCommentBody(args: { repoFullName: string; pull
 
 /** Truthy-env flag check, matching the codebase convention (e.g. SCORING_TIME_DECAY_ENABLED). */
 export function isUnifiedReviewCommentEnabled(env: {
-  GITTENSORY_REVIEW_UNIFIED_COMMENT?: string | undefined;
   LOOPOVER_REVIEW_UNIFIED_COMMENT?: string | undefined;
 }): boolean {
-  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_UNIFIED_COMMENT");
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_UNIFIED_COMMENT ?? "").trim());
 }

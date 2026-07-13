@@ -14,7 +14,6 @@ import {
 } from "./otel";
 import { hashedInstallationIdWith } from "./review-tracing";
 import { queueDeadLetterReviveIntervalMs } from "./queue-common";
-import { dualPrefixEnvString } from "../utils/env";
 
 type SentryNs = typeof import("@sentry/node");
 type SentryClient = NonNullable<ReturnType<SentryNs["init"]>>;
@@ -187,12 +186,11 @@ function setOtelTraceScope(scope: SentryScope): void {
 }
 
 /** Resolve the Sentry release id from explicit override first, then the image-baked self-host version
- *  (checked under either LOOPOVER_VERSION or the legacy GITTENSORY_VERSION -- #4774 dual-read, new name
- *  wins when both are set). */
+ *  (LOOPOVER_VERSION). */
 export function resolveSentryRelease(
   env: NodeJS.ProcessEnv,
 ): string | undefined {
-  return nonBlank(env.SENTRY_RELEASE) ?? dualPrefixEnvString(env, "VERSION");
+  return nonBlank(env.SENTRY_RELEASE) ?? nonBlank(env.LOOPOVER_VERSION);
 }
 
 export function resolveSentryTracesSampleRate(

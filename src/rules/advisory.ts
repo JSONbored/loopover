@@ -937,7 +937,7 @@ function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPoli
   if (code === REVIEW_THREAD_BLOCKER_CODE) return true;
   // A leaked-secret finding (`secret_leak`) ALWAYS hard-blocks: a committed credential must be removed and
   // rotated before merge, with no opt-in. This finding is produced ONLY by the flag-gated safety scan
-  // (GITTENSORY_REVIEW_SAFETY); when the flag is off the finding never exists, so this branch is unreachable and the
+  // (LOOPOVER_REVIEW_SAFETY); when the flag is off the finding never exists, so this branch is unreachable and the
   // gate verdict is byte-identical to today.
   if (code === "secret_leak") return true;
   // A maintainer pre-merge check (#review-pre-merge-checks) marked `enforce: true` produces this DETERMINISTIC

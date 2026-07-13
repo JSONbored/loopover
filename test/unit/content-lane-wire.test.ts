@@ -19,7 +19,7 @@ const validProvider = JSON.stringify({ provider: { id: "acme", name: "Acme", web
 const loader = (files: Record<string, string | null>): SurfaceReviewInput["loadFile"] => (path, ref) => Promise.resolve(files[`${ref}:${path}`] ?? null);
 const gate = (over: Partial<GateCheckEvaluation>): GateCheckEvaluation => ({ enabled: true, conclusion: "success", title: "Gate", summary: "", blockers: [], warnings: [], ...over });
 // A no-`contentLane:`-config manifest — evaluateWithSurfaceLane's resolver falls through to the
-// GITTENSORY_REVIEW_REPOS allowlist default (METAGRAPHED_LANE_SPEC), matching today's zero-config behavior.
+// LOOPOVER_REVIEW_REPOS allowlist default (METAGRAPHED_LANE_SPEC), matching today's zero-config behavior.
 const noConfigManifest = (): Promise<FocusManifest> => Promise.resolve(parseFocusManifest(null));
 
 afterEach(() => vi.unstubAllGlobals());
@@ -310,7 +310,7 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
   };
 
   it("returns the generic gate unchanged when the gate is disabled (no file resolve)", async () => {
-    expect(await evaluateWithSurfaceLane({ GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env, REPO, false, generic, baseArgs)).toBe(generic);
+    expect(await evaluateWithSurfaceLane({ LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO } as unknown as Env, REPO, false, generic, baseArgs)).toBe(generic);
   });
 
   it("returns the generic gate unchanged when the lane is not wired (no file resolve)", async () => {
@@ -318,7 +318,7 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
   });
 
   it("returns the generic gate unchanged when the flag is on but NO spec resolves for this repo (no config, not in the allowlist — no file resolve)", async () => {
-    const unresolvedEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: "Some/OtherRepo" } as unknown as Env;
+    const unresolvedEnv = { LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: "Some/OtherRepo" } as unknown as Env;
     expect(await evaluateWithSurfaceLane(unresolvedEnv, REPO, true, generic, baseArgs, noConfigManifest)).toBe(generic);
   });
 
@@ -334,7 +334,7 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
       const body = bodies[`${decodeURIComponent(m[2]!)}:${path}`];
       return body === undefined ? new Response("missing", { status: 404 }) : new Response(body);
     });
-    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const wiredEnv = { LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO } as unknown as Env;
     const out = await evaluateWithSurfaceLane(
       wiredEnv,
       REPO,
@@ -371,7 +371,7 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
     // was evaluated from it.
     const advisory = { findings: [aiConsensusDefect, otherWarning] };
     const genericAiOnly = gate({ conclusion: "failure", blockers: [aiConsensusDefect], warnings: [] });
-    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const wiredEnv = { LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO } as unknown as Env;
     const out = await evaluateWithSurfaceLane(
       wiredEnv,
       REPO,
@@ -412,7 +412,7 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
     };
     const advisory = { findings: [providerMisattribution] };
     const genericAiOnly = gate({ conclusion: "failure", blockers: [providerMisattribution], warnings: [] });
-    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const wiredEnv = { LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO } as unknown as Env;
     const optedInManifest = (): Promise<FocusManifest> =>
       Promise.resolve(parseFocusManifest({ wantedPaths: ["src/"], gate: { aiJudgmentBlockers: "gate" } }));
     const out = await evaluateWithSurfaceLane(
@@ -452,7 +452,7 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
     const aiConsensusDefect: AdvisoryFinding = { code: "ai_consensus_defect", title: "AI defect", severity: "critical", detail: "hallucinated" };
     const advisory = { findings: [aiConsensusDefect] };
     const genericAiOnly = gate({ conclusion: "failure", blockers: [aiConsensusDefect], warnings: [] });
-    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const wiredEnv = { LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO } as unknown as Env;
     const out = await evaluateWithSurfaceLane(
       wiredEnv,
       REPO,
@@ -477,7 +477,7 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
     const advisory = { findings: [aiConsensusDefect, secret] };
     // A real (non-AI) blocker alongside the AI one means isAiJudgmentOnlyFailure is false — no cleanup should run.
     const genericMixed = gate({ conclusion: "failure", blockers: [aiConsensusDefect, secret], warnings: [] });
-    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const wiredEnv = { LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO } as unknown as Env;
     await evaluateWithSurfaceLane(
       wiredEnv,
       REPO,
@@ -499,7 +499,7 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
     // No loadManifestOverride argument at all — exercises the production default (`loadManifestOverride ??
     // loadRepoFocusManifest`). A fake env with no D1 binding makes the real loader reject fast; `.catch(() =>
     // null)` still routes it to the allowlist-default resolution path rather than throwing out of this function.
-    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const wiredEnv = { LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO } as unknown as Env;
     const out = await evaluateWithSurfaceLane(wiredEnv, REPO, true, generic, {
       installationId: null,
       pr: { headSha: "HEAD", baseRef: "BASE" },
@@ -511,7 +511,7 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
   });
 
   it("routes an unresolved/thrown manifest load to the allowlist default rather than throwing (fail-safe)", async () => {
-    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const wiredEnv = { LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO } as unknown as Env;
     const throwingLoader = (): Promise<FocusManifest> => Promise.reject(new Error("simulated D1/network failure"));
     const out = await evaluateWithSurfaceLane(
       wiredEnv,
@@ -531,13 +531,13 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
   });
 
   it("REGRESSION (#confirmed-bug): holds the gate NEUTRAL — rather than silently passing — when a NON-allowlisted repo's manifest fails to load, since that's the only way it could have configured a contentLane", async () => {
-    // OTHER_REPO is NOT in GITTENSORY_REVIEW_REPOS, so its only path to a resolved spec is an explicit
+    // OTHER_REPO is NOT in LOOPOVER_REVIEW_REPOS, so its only path to a resolved spec is an explicit
     // contentLane: config in its OWN .gittensory.yml. If we can't even read that file, we cannot tell "this
     // repo never configured content-lane" apart from "it did, but we couldn't check this pass" — silently
     // falling through to the plain generic (clean) evaluation would let a real registry submission merge
     // unevaluated.
     const OTHER_REPO = "SomeoneElse/other-registry";
-    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const wiredEnv = { LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO } as unknown as Env;
     const throwingLoader = (): Promise<FocusManifest> => Promise.reject(new Error("simulated D1/network failure"));
     const out = await evaluateWithSurfaceLane(
       wiredEnv,
@@ -562,7 +562,7 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
 
   it("REGRESSION (#confirmed-bug): the neutral hold has empty warnings when there was no generic gate evaluation at all", async () => {
     const OTHER_REPO = "SomeoneElse/other-registry";
-    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const wiredEnv = { LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO } as unknown as Env;
     const throwingLoader = (): Promise<FocusManifest> => Promise.reject(new Error("simulated D1/network failure"));
     const out = await evaluateWithSurfaceLane(
       wiredEnv,
@@ -588,7 +588,7 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
     const OTHER_REPO = "SomeoneElse/other-registry";
     const secret: AdvisoryFinding = { code: "secret_leak", title: "Secret", severity: "critical", detail: "leaked" };
     const genericWithBlocker = gate({ conclusion: "failure", blockers: [secret], warnings: [] });
-    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const wiredEnv = { LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO } as unknown as Env;
     const throwingLoader = (): Promise<FocusManifest> => Promise.reject(new Error("simulated D1/network failure"));
     const out = await evaluateWithSurfaceLane(
       wiredEnv,
@@ -624,8 +624,8 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
       const body = bodies[`${decodeURIComponent(m[2]!)}:${path}`];
       return body === undefined ? new Response("missing", { status: 404 }) : new Response(body);
     });
-    // Flag on, but OTHER_REPO is NOT in GITTENSORY_REVIEW_REPOS — proving activation comes from the config alone.
-    const configuredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    // Flag on, but OTHER_REPO is NOT in LOOPOVER_REVIEW_REPOS — proving activation comes from the config alone.
+    const configuredEnv = { LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO } as unknown as Env;
     const configuredManifest = (): Promise<FocusManifest> =>
       Promise.resolve(
         parseFocusManifest({
@@ -669,7 +669,7 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
       const body = bodies[`${decodeURIComponent(m[2]!)}:${path}`];
       return body === undefined ? new Response("missing", { status: 404 }) : new Response(body);
     });
-    const configuredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const configuredEnv = { LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO } as unknown as Env;
     const configuredManifest = (): Promise<FocusManifest> =>
       Promise.resolve(
         parseFocusManifest({
@@ -710,7 +710,7 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
       const body = bodies[`${decodeURIComponent(m[2]!)}:${path}`];
       return body === undefined ? new Response("missing", { status: 404 }) : new Response(body);
     });
-    const configuredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const configuredEnv = { LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO } as unknown as Env;
     const configuredManifest = (): Promise<FocusManifest> =>
       Promise.resolve(
         parseFocusManifest({
@@ -747,7 +747,7 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
     const advisory = { findings: [] as AdvisoryFinding[] };
     const registeredManifest = (): Promise<FocusManifest> =>
       Promise.resolve(parseFocusManifest({ contentLane: { entryFileGlob: "registry/subnets/*.json", collectionField: "surfaces", validatorId: "metagraphed" } }));
-    const configuredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: "Some/OtherRepo" } as unknown as Env;
+    const configuredEnv = { LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: "Some/OtherRepo" } as unknown as Env;
     await evaluateWithSurfaceLane(
       configuredEnv,
       REPO,
@@ -767,7 +767,7 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
 
   it("an omitted validatorId (today's zero-config default) pushes NO unknown-validator diagnostic", async () => {
     const advisory = { findings: [] as AdvisoryFinding[] };
-    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const wiredEnv = { LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO } as unknown as Env;
     await evaluateWithSurfaceLane(
       wiredEnv,
       REPO,

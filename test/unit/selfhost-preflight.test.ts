@@ -212,8 +212,8 @@ describe("self-host environment preflight (#2080)", () => {
     it("rejects each critical secret when it is still the exact placeholder shipped in .env.selfhost.example / .env.example", () => {
       for (const [name, placeholder] of [
         ["GITHUB_WEBHOOK_SECRET", "change-this-long-random-value"],
-        ["GITTENSORY_API_TOKEN", "change-this-32-byte-random-token"],
-        ["GITTENSORY_MCP_TOKEN", "change-this-32-byte-random-token"],
+        ["LOOPOVER_API_TOKEN", "change-this-32-byte-random-token"],
+        ["LOOPOVER_MCP_TOKEN", "change-this-32-byte-random-token"],
         ["INTERNAL_JOB_TOKEN", "change-this-32-byte-random-token"],
         ["SELFHOST_SETUP_TOKEN", "change-this-long-random-value"],
       ] as const) {
@@ -256,15 +256,15 @@ describe("self-host environment preflight (#2080)", () => {
       const sharedSecret = "a-perfectly-strong-random-value-1234";
       const result = preflightEnv({
         ...baseEnv,
-        GITTENSORY_API_TOKEN: sharedSecret,
-        GITTENSORY_MCP_TOKEN: sharedSecret,
+        LOOPOVER_API_TOKEN: sharedSecret,
+        LOOPOVER_MCP_TOKEN: sharedSecret,
       });
       expect(result).toEqual({
         ok: false,
         problems: [
           expect.objectContaining({
-            var: "GITTENSORY_MCP_TOKEN",
-            message: expect.stringContaining("must not reuse the same value as GITTENSORY_API_TOKEN"),
+            var: "LOOPOVER_MCP_TOKEN",
+            message: expect.stringContaining("must not reuse the same value as LOOPOVER_API_TOKEN"),
           }),
         ],
       });
@@ -276,8 +276,8 @@ describe("self-host environment preflight (#2080)", () => {
         preflightEnv({
           ...baseEnv,
           GITHUB_WEBHOOK_SECRET: "webhook-secret-value-with-plenty-of-entropy",
-          GITTENSORY_API_TOKEN: "api-token-value-with-plenty-of-entropy-2",
-          GITTENSORY_MCP_TOKEN: "mcp-token-value-with-plenty-of-entropy-3",
+          LOOPOVER_API_TOKEN: "api-token-value-with-plenty-of-entropy-2",
+          LOOPOVER_MCP_TOKEN: "mcp-token-value-with-plenty-of-entropy-3",
           INTERNAL_JOB_TOKEN: "internal-job-token-with-plenty-of-entropy-4",
           SELFHOST_SETUP_TOKEN: "setup-token-value-with-plenty-of-entropy-5",
         }),
@@ -288,72 +288,14 @@ describe("self-host environment preflight (#2080)", () => {
       const result = preflightEnv({
         ...baseEnv,
         GITHUB_WEBHOOK_SECRET: "change-this-long-random-value",
-        GITTENSORY_API_TOKEN: "change-this-32-byte-random-token",
+        LOOPOVER_API_TOKEN: "change-this-32-byte-random-token",
       });
       expect(result).toEqual({
         ok: false,
         problems: [
           expect.objectContaining({ var: "GITHUB_WEBHOOK_SECRET" }),
-          expect.objectContaining({ var: "GITTENSORY_API_TOKEN" }),
+          expect.objectContaining({ var: "LOOPOVER_API_TOKEN" }),
         ],
-      });
-    });
-
-    // #4774 dual-read: GITTENSORY_API_TOKEN/GITTENSORY_MCP_TOKEN also accept a LOOPOVER_ companion name, new
-    // name winning when both are set. The preflight strength/placeholder/reuse checks below must judge the
-    // EFFECTIVE (dual-read-resolved) value, not just the legacy name — this is what keeps preflight in sync
-    // with the real auth gate in src/auth/security.ts.
-    describe("#4774 GITTENSORY_ -> LOOPOVER_ dual-read", () => {
-      it("accepts a strong secret supplied via the NEW LOOPOVER_ name alone (legacy name unset)", () => {
-        expect(
-          preflightEnv({ ...baseEnv, LOOPOVER_API_TOKEN: "api-token-value-with-plenty-of-entropy-2" }),
-        ).toEqual({ ok: true, problems: [] });
-      });
-
-      it("still accepts a strong secret supplied via the legacy GITTENSORY_ name alone — an untouched .env keeps working unchanged", () => {
-        expect(
-          preflightEnv({ ...baseEnv, GITTENSORY_API_TOKEN: "api-token-value-with-plenty-of-entropy-2" }),
-        ).toEqual({ ok: true, problems: [] });
-      });
-
-      it("judges the NEW LOOPOVER_ value when BOTH are set: a weak new value fails even though the legacy value is strong", () => {
-        const result = preflightEnv({
-          ...baseEnv,
-          GITTENSORY_API_TOKEN: "api-token-value-with-plenty-of-entropy-2",
-          LOOPOVER_API_TOKEN: "too-short",
-        });
-        expect(result).toEqual({
-          ok: false,
-          problems: [expect.objectContaining({ var: "GITTENSORY_API_TOKEN", message: expect.stringContaining("too short") })],
-        });
-      });
-
-      it("judges the NEW LOOPOVER_ value when BOTH are set: a strong new value passes even though the legacy value is a known placeholder", () => {
-        expect(
-          preflightEnv({
-            ...baseEnv,
-            GITTENSORY_API_TOKEN: "change-this-32-byte-random-token",
-            LOOPOVER_API_TOKEN: "api-token-value-with-plenty-of-entropy-2",
-          }),
-        ).toEqual({ ok: true, problems: [] });
-      });
-
-      it("still flags a reused value across LOOPOVER_API_TOKEN and GITTENSORY_MCP_TOKEN (dual-read resolves to the same underlying secret family)", () => {
-        const sharedSecret = "a-perfectly-strong-random-value-1234";
-        const result = preflightEnv({
-          ...baseEnv,
-          LOOPOVER_API_TOKEN: sharedSecret,
-          GITTENSORY_MCP_TOKEN: sharedSecret,
-        });
-        expect(result).toEqual({
-          ok: false,
-          problems: [
-            expect.objectContaining({
-              var: "GITTENSORY_MCP_TOKEN",
-              message: expect.stringContaining("must not reuse the same value as GITTENSORY_API_TOKEN"),
-            }),
-          ],
-        });
       });
     });
   });

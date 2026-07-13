@@ -67,7 +67,7 @@ function PrivacySecurity() {
           contributor how to bypass it.
         </li>
         <li>
-          <strong>Operator feature flags</strong> — the <code>GITTENSORY_REVIEW_*</code> family of
+          <strong>Operator feature flags</strong> — the <code>LOOPOVER_REVIEW_*</code> family of
           worker environment variables. These switch whole capabilities (safety scanning, CI and
           full-file grounding, RAG context, reputation-based spend control, the unified comment) on
           or off for a deployment.
@@ -75,36 +75,36 @@ function PrivacySecurity() {
       </ul>
       <p>
         Every feature flag ships <strong>OFF</strong>, and a per-PR capability runs only when its
-        own flag is on <em>and</em> the repo is in the <code>GITTENSORY_REVIEW_REPOS</code>{" "}
-        allowlist — so capabilities stay dormant until an operator explicitly converges a repo, one
-        flag and one repo at a time.
+        own flag is on <em>and</em> the repo is in the <code>LOOPOVER_REVIEW_REPOS</code> allowlist
+        — so capabilities stay dormant until an operator explicitly converges a repo, one flag and
+        one repo at a time.
       </p>
       <CodeBlock
         code={`# Per-PR features run only when the flag is ON and the repo is allowlisted.
-GITTENSORY_REVIEW_REPOS="JSONbored/gittensory"   # per-repo cutover allowlist (default: none)
-GITTENSORY_REVIEW_SAFETY="true"                  # prompt-injection defang + secret-leak scan
-GITTENSORY_REVIEW_GROUNDING="true"               # CI status + full changed-file content
-GITTENSORY_REVIEW_RAG="true"                     # codebase vector-index context (needs index)
-GITTENSORY_REVIEW_IMPACT_MAP="true"              # deterministic impact map (needs review.impact_map too)
-GITTENSORY_REVIEW_CULTURE_PROFILE="true"         # repo quality-culture profile (needs review.culture_profile: true)
-GITTENSORY_REVIEW_MEMORY="true"                  # repeat-false-positive suppression (needs review.memory too)
-GITTENSORY_REVIEW_REPUTATION="true"              # submitter-reputation spend control (never shown)
-GITTENSORY_REVIEW_UNIFIED_COMMENT="true"         # one in-place unified PR comment
-GITTENSORY_REVIEW_ENRICHMENT="true"              # external analyzer registry (REES) findings
-GITTENSORY_REVIEW_INLINE_COMMENTS="true"         # diff-anchored inline PR review comments
-GITTENSORY_REVIEW_FIX_HANDOFF="true"             # machine-readable fix-handoff block (contributor-run)
-GITTENSORY_REVIEW_PLANNER="true"                 # @gittensory plan on-demand implementation plan
-GITTENSORY_REVIEW_SCREENSHOTS="true"             # before/after visual capture for UI changes
-GITTENSORY_REVIEW_E2E_TESTS="true"               # AI-generated E2E test coverage (needs features.e2eTests too)
-GITTENSORY_REVIEW_IMPROVEMENT_SIGNAL="true"      # read-only PR quality-delta signal (activation only, no-op for now)
+LOOPOVER_REVIEW_REPOS="JSONbored/gittensory"   # per-repo cutover allowlist (default: none)
+LOOPOVER_REVIEW_SAFETY="true"                  # prompt-injection defang + secret-leak scan
+LOOPOVER_REVIEW_GROUNDING="true"               # CI status + full changed-file content
+LOOPOVER_REVIEW_RAG="true"                     # codebase vector-index context (needs index)
+LOOPOVER_REVIEW_IMPACT_MAP="true"              # deterministic impact map (needs review.impact_map too)
+LOOPOVER_REVIEW_CULTURE_PROFILE="true"         # repo quality-culture profile (needs review.culture_profile: true)
+LOOPOVER_REVIEW_MEMORY="true"                  # repeat-false-positive suppression (needs review.memory too)
+LOOPOVER_REVIEW_REPUTATION="true"              # submitter-reputation spend control (never shown)
+LOOPOVER_REVIEW_UNIFIED_COMMENT="true"         # one in-place unified PR comment
+LOOPOVER_REVIEW_ENRICHMENT="true"              # external analyzer registry (REES) findings
+LOOPOVER_REVIEW_INLINE_COMMENTS="true"         # diff-anchored inline PR review comments
+LOOPOVER_REVIEW_FIX_HANDOFF="true"             # machine-readable fix-handoff block (contributor-run)
+LOOPOVER_REVIEW_PLANNER="true"                 # @gittensory plan on-demand implementation plan
+LOOPOVER_REVIEW_SCREENSHOTS="true"             # before/after visual capture for UI changes
+LOOPOVER_REVIEW_E2E_TESTS="true"               # AI-generated E2E test coverage (needs features.e2eTests too)
+LOOPOVER_REVIEW_IMPROVEMENT_SIGNAL="true"      # read-only PR quality-delta signal (activation only, no-op for now)
 
-# Global (cron / endpoint) flags, not scoped by GITTENSORY_REVIEW_REPOS.
-GITTENSORY_REVIEW_CONTINUOUS="true"              # fleet-wide default: re-review on every push (else one-shot)
-GITTENSORY_REVIEW_OPS="true"                     # read-only anomaly scan + outcome stats endpoint
-GITTENSORY_REVIEW_SELFTUNE="true"                # self-tightening tuning loop, never loosens
-GITTENSORY_REVIEW_PARITY_AUDIT="true"            # shadow-record gate-decision parity readiness
-GITTENSORY_REVIEW_CONTENT_LANE="true"            # dedicated content/registry-repo review lane
-GITTENSORY_REVIEW_DRAFT="true"                   # public draft-submission (contributor fork PR) flow`}
+# Global (cron / endpoint) flags, not scoped by LOOPOVER_REVIEW_REPOS.
+LOOPOVER_REVIEW_CONTINUOUS="true"              # fleet-wide default: re-review on every push (else one-shot)
+LOOPOVER_REVIEW_OPS="true"                     # read-only anomaly scan + outcome stats endpoint
+LOOPOVER_REVIEW_SELFTUNE="true"                # self-tightening tuning loop, never loosens
+LOOPOVER_REVIEW_PARITY_AUDIT="true"            # shadow-record gate-decision parity readiness
+LOOPOVER_REVIEW_CONTENT_LANE="true"            # dedicated content/registry-repo review lane
+LOOPOVER_REVIEW_DRAFT="true"                   # public draft-submission (contributor fork PR) flow`}
       />
       <p>
         The internal-only controls never surface publicly. Submitter reputation, for example, can
@@ -115,9 +115,9 @@ GITTENSORY_REVIEW_DRAFT="true"                   # public draft-submission (cont
       <Callout variant="safety">
         Reading the open source tells you <strong>how</strong> a verdict is computed, never{" "}
         <strong>what</strong> an operator's production gate will decide. The deciding inputs —
-        thresholds, guardrail globs, and which <code>GITTENSORY_REVIEW_*</code> capabilities are
-        live — are private runtime settings, so reviews cannot be reverse-engineered or gamed from
-        the public code.
+        thresholds, guardrail globs, and which <code>LOOPOVER_REVIEW_*</code> capabilities are live
+        — are private runtime settings, so reviews cannot be reverse-engineered or gamed from the
+        public code.
       </Callout>
 
       <h2>Public output rules</h2>

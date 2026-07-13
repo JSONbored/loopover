@@ -46,7 +46,7 @@ function SelfHostingQuickstart() {
       />
       <Callout variant="warn">
         The webhook secret and static bearer tokens (<code>GITHUB_WEBHOOK_SECRET</code>,{" "}
-        <code>GITTENSORY_API_TOKEN</code>, <code>GITTENSORY_MCP_TOKEN</code>,{" "}
+        <code>LOOPOVER_API_TOKEN</code>, <code>LOOPOVER_MCP_TOKEN</code>,{" "}
         <code>INTERNAL_JOB_TOKEN</code>, <code>SELFHOST_SETUP_TOKEN</code>) ship commented out on
         purpose. Generate a distinct random value for each one (e.g.{" "}
         <code>openssl rand -hex 32</code>) — never reuse the same string across more than one of
@@ -78,7 +78,7 @@ CLAUDE_CODE_OAUTH_TOKEN=          # from \`claude setup-token\``}
         filename=".env — Codex only"
         code={`AI_PROVIDER=codex
 CODEX_AI_EFFORT=medium
-GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1   # required opt-in; see Callout below`}
+LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER=1   # required opt-in; see Callout below`}
       />
       <CodeBlock
         filename=".env — Codex primary, Claude Code fallback"
@@ -86,7 +86,7 @@ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1   # required opt-in; see Callout below
 CODEX_AI_EFFORT=medium
 CLAUDE_AI_EFFORT=medium
 CLAUDE_CODE_OAUTH_TOKEN=
-GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1`}
+LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER=1`}
       />
       <p>
         Set <code>AI_DUAL_REVIEW=1</code> only when you deliberately want the first two providers to
@@ -95,8 +95,8 @@ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1`}
       <Callout variant="warn" title="Codex is fail-closed by default">
         Codex stores its OAuth credential in <code>auth.json</code> on the same filesystem that
         prompt-influenced reviews can read, so it requires explicit opt-in (
-        <code>GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1</code>) and a mounted{" "}
-        <code>/data/codex</code> auth volume. Claude Code has no equivalent restriction. See{" "}
+        <code>LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER=1</code>) and a mounted <code>/data/codex</code>{" "}
+        auth volume. Claude Code has no equivalent restriction. See{" "}
         <Link to="/docs/self-hosting-ai-providers">AI providers</Link> for the full reference.
       </Callout>
 
@@ -194,9 +194,9 @@ review_context_fetch_failed   # REES/RAG/grounding context failure`}
       <FeatureRow
         items={[
           {
-            title: "GITTENSORY_REVIEW_REPOS (env allowlist)",
+            title: "LOOPOVER_REVIEW_REPOS (env allowlist)",
             description:
-              "Turns on the per-PR converged review path (unified comment, safety, grounding, RAG, etc.) for named repos. Empty means none — even when the global GITTENSORY_REVIEW_* flags are true.",
+              "Turns on the per-PR converged review path (unified comment, safety, grounding, RAG, etc.) for named repos. Empty means none — even when the global LOOPOVER_REVIEW_* flags are true.",
           },
           {
             title: "Gate activation (DB or private config)",
@@ -212,12 +212,12 @@ review_context_fetch_failed   # REES/RAG/grounding context failure`}
       />
       <p>
         <strong>Recommended first-repo path today:</strong> add the repo to{" "}
-        <code>GITTENSORY_REVIEW_REPOS</code>, seed a private global default, then enable advisory
-        gate mode once webhook delivery works.
+        <code>LOOPOVER_REVIEW_REPOS</code>, seed a private global default, then enable advisory gate
+        mode once webhook delivery works.
       </p>
       <CodeBlock
         filename=".env"
-        code={`GITTENSORY_REVIEW_REPOS=owner/my-repo
+        code={`LOOPOVER_REVIEW_REPOS=owner/my-repo
 SELFHOST_DEPLOYMENT_MODE=dry-run   # keep shadowing until you trust output`}
       />
       <p>

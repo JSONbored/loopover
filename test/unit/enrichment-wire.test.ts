@@ -39,21 +39,21 @@ describe("isEnrichmentEnabled", () => {
   it("true only when the flag is on AND REES_URL is set", () => {
     expect(
       isEnrichmentEnabled(
-        env({ GITTENSORY_REVIEW_ENRICHMENT: "on", REES_URL: "https://r" }),
+        env({ LOOPOVER_REVIEW_ENRICHMENT: "on", REES_URL: "https://r" }),
       ),
     ).toBe(true);
     expect(
       isEnrichmentEnabled(
-        env({ GITTENSORY_REVIEW_ENRICHMENT: "true", REES_URL: "https://r" }),
+        env({ LOOPOVER_REVIEW_ENRICHMENT: "true", REES_URL: "https://r" }),
       ),
     ).toBe(true);
     expect(
-      isEnrichmentEnabled(env({ GITTENSORY_REVIEW_ENRICHMENT: "on" })),
+      isEnrichmentEnabled(env({ LOOPOVER_REVIEW_ENRICHMENT: "on" })),
     ).toBe(false); // no URL
     expect(isEnrichmentEnabled(env({ REES_URL: "https://r" }))).toBe(false); // flag off
     expect(
       isEnrichmentEnabled(
-        env({ GITTENSORY_REVIEW_ENRICHMENT: "false", REES_URL: "https://r" }),
+        env({ LOOPOVER_REVIEW_ENRICHMENT: "false", REES_URL: "https://r" }),
       ),
     ).toBe(false);
     expect(isEnrichmentEnabled(env({}))).toBe(false);

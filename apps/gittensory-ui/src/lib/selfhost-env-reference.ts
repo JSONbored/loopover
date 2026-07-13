@@ -190,22 +190,6 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/installation-concurrency-admission.ts",
   },
   {
-    name: "GITTENSORY_ENABLE_PAGERDUTY",
-    firstReference: "src/services/notify-pagerduty.ts",
-  },
-  {
-    name: "GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER",
-    firstReference: "src/selfhost/ai.ts",
-  },
-  {
-    name: "GITTENSORY_REPO_CONFIG_DIR",
-    firstReference: "src/server.ts",
-  },
-  {
-    name: "GITTENSORY_VERSION",
-    firstReference: "src/selfhost/otel.ts",
-  },
-  {
     name: "HOME",
     firstReference: "src/selfhost/ai.ts",
   },
@@ -548,10 +532,6 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `GITHUB_INSTALLATION_CONCURRENCY_DEFER_MS` | `src/selfhost/installation-concurrency-admission.ts` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_ENABLED` | `src/selfhost/installation-concurrency-admission.ts` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_LIMIT` | `src/selfhost/installation-concurrency-admission.ts` |",
-  "| `GITTENSORY_ENABLE_PAGERDUTY` | `src/services/notify-pagerduty.ts` |",
-  "| `GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER` | `src/selfhost/ai.ts` |",
-  "| `GITTENSORY_REPO_CONFIG_DIR` | `src/server.ts` |",
-  "| `GITTENSORY_VERSION` | `src/selfhost/otel.ts` |",
   "| `HOME` | `src/selfhost/ai.ts` |",
   "| `LOOPOVER_ENABLE_PAGERDUTY` | `src/services/notify-pagerduty.ts` |",
   "| `LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER` | `src/selfhost/ai.ts` |",

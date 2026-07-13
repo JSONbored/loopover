@@ -250,7 +250,7 @@ describe("MCP gittensory_propose_action (#784)", () => {
   });
 
   it("denies a static MCP-token caller when the repo is not in MCP_ACTUATION_REPO_ALLOWLIST (#2253)", async () => {
-    // GITTENSORY_MCP_TOKEN is a shared, end-user-obtainable CLI credential — unlike an explicit maintainer
+    // LOOPOVER_MCP_TOKEN is a shared, end-user-obtainable CLI credential — unlike an explicit maintainer
     // session, it must not implicitly stage actions on every repo the App happens to be installed on.
     // createTestEnv's own default is MCP_ACTUATION_REPO_ALLOWLIST: "*" (so unrelated tests aren't broken
     // by this restriction); "" overrides that back to unset (isMcpActuationRepoAllowed treats "" the same

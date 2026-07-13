@@ -73,9 +73,9 @@ docker compose up -d --no-deps loopover`}
       <h2>Private policy</h2>
       <p>
         Keep sensitive review thresholds, autonomy, maintainer notes, and repo-specific rules in
-        <code>GITTENSORY_REPO_CONFIG_DIR</code>, not in public repo config.
+        <code>LOOPOVER_REPO_CONFIG_DIR</code>, not in public repo config.
       </p>
-      <CodeBlock filename=".env" code={`GITTENSORY_REPO_CONFIG_DIR=/config`} />
+      <CodeBlock filename=".env" code={`LOOPOVER_REPO_CONFIG_DIR=/config`} />
 
       <h2>Network exposure</h2>
       <ul>

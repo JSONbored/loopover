@@ -37,7 +37,7 @@ describe("issue-rag retrieve route (#4293)", () => {
       ISSUE_RAG_PATH,
       {
         method: "POST",
-        headers: { authorization: `Bearer ${env.GITTENSORY_API_TOKEN}`, "content-type": "application/json" },
+        headers: { authorization: `Bearer ${env.LOOPOVER_API_TOKEN}`, "content-type": "application/json" },
         body: JSON.stringify({ owner: "repo-owner", repo: "owned-repo", title: VALID_TITLE }),
       },
       env,
@@ -65,7 +65,7 @@ describe("issue-rag retrieve route (#4293)", () => {
       ISSUE_RAG_PATH,
       {
         method: "POST",
-        headers: { authorization: `Bearer ${env.GITTENSORY_API_TOKEN}`, "content-type": "application/json" },
+        headers: { authorization: `Bearer ${env.LOOPOVER_API_TOKEN}`, "content-type": "application/json" },
         body: JSON.stringify({ owner: "repo-owner", repo: "owned-repo", title: "" }),
       },
       env,
@@ -77,7 +77,7 @@ describe("issue-rag retrieve route (#4293)", () => {
       ISSUE_RAG_PATH,
       {
         method: "POST",
-        headers: { authorization: `Bearer ${env.GITTENSORY_API_TOKEN}`, "content-type": "application/json" },
+        headers: { authorization: `Bearer ${env.LOOPOVER_API_TOKEN}`, "content-type": "application/json" },
         body: "{not json",
       },
       env,

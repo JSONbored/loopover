@@ -513,19 +513,19 @@ describe("merge-readiness evidence collection (#551)", () => {
 
   describe("resolveAiReviewCadence (#one-shot-review-cadence)", () => {
     it("lets an explicit configured per-repo cadence win over the fleet env default, in both directions", () => {
-      expect(resolveAiReviewCadence({ GITTENSORY_REVIEW_CONTINUOUS: "true" }, "one_shot")).toBe("one_shot");
-      expect(resolveAiReviewCadence({ GITTENSORY_REVIEW_CONTINUOUS: "false" }, "continuous")).toBe("continuous");
+      expect(resolveAiReviewCadence({ LOOPOVER_REVIEW_CONTINUOUS: "true" }, "one_shot")).toBe("one_shot");
+      expect(resolveAiReviewCadence({ LOOPOVER_REVIEW_CONTINUOUS: "false" }, "continuous")).toBe("continuous");
     });
 
     it('falls back to "continuous" when unconfigured and the fleet env flag is truthy', () => {
-      expect(resolveAiReviewCadence({ GITTENSORY_REVIEW_CONTINUOUS: "true" }, null)).toBe("continuous");
-      expect(resolveAiReviewCadence({ GITTENSORY_REVIEW_CONTINUOUS: "1" }, null)).toBe("continuous");
+      expect(resolveAiReviewCadence({ LOOPOVER_REVIEW_CONTINUOUS: "true" }, null)).toBe("continuous");
+      expect(resolveAiReviewCadence({ LOOPOVER_REVIEW_CONTINUOUS: "1" }, null)).toBe("continuous");
     });
 
     it('defaults to "one_shot" when unconfigured and the fleet env flag is unset or falsy', () => {
       expect(resolveAiReviewCadence({}, null)).toBe("one_shot");
-      expect(resolveAiReviewCadence({ GITTENSORY_REVIEW_CONTINUOUS: "false" }, null)).toBe("one_shot");
-      expect(resolveAiReviewCadence({ GITTENSORY_REVIEW_CONTINUOUS: "nonsense" }, null)).toBe("one_shot");
+      expect(resolveAiReviewCadence({ LOOPOVER_REVIEW_CONTINUOUS: "false" }, null)).toBe("one_shot");
+      expect(resolveAiReviewCadence({ LOOPOVER_REVIEW_CONTINUOUS: "nonsense" }, null)).toBe("one_shot");
     });
   });
 });

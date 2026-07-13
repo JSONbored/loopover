@@ -224,7 +224,7 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     jobs.push({ type: "refresh-scoring-model", requestedBy: "schedule" });
     jobs.push({ type: "refresh-upstream-drift", requestedBy: "schedule" });
     jobs.push({ type: "rollup-product-usage", requestedBy: "schedule", days: 7 });
-    // Convergence (ops / observability, flag GITTENSORY_REVIEW_OPS). Hourly anomaly scan over gittensory's own
+    // Convergence (ops / observability, flag LOOPOVER_REVIEW_OPS). Hourly anomaly scan over gittensory's own
     // review-outcome data. Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never created,
     // so the cron tick does ZERO new work and the enqueued set is byte-identical to today.
     if (selfHostedReviews && isOpsEnabled(env)) jobs.push({ type: "ops-alerts", requestedBy: "schedule" });
@@ -233,7 +233,7 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     // having open PRs to regate. Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never
     // created, so the cron tick does ZERO new work and the enqueued set is byte-identical to today.
     if (selfHostedReviews && isSweepWatchdogEnabled(env)) jobs.push({ type: "sweep-liveness-watchdog", requestedBy: "schedule" });
-    // Convergence (self-improve / auto-tune, flag GITTENSORY_REVIEW_SELFTUNE). Hourly self-improvement tick over
+    // Convergence (self-improve / auto-tune, flag LOOPOVER_REVIEW_SELFTUNE). Hourly self-improvement tick over
     // gittensory's own review-outcome data: compute tuning recommendations, shadow-soak any strictly-tightening
     // one, and auto-promote it to live only after the soak window passes the gate (TIGHTENING-ONLY, audited).
     // Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never created, so the cron tick does
@@ -273,7 +273,7 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     jobs.push({ type: "build-contributor-evidence", requestedBy: "schedule" });
     jobs.push({ type: "build-contributor-decision-packs", requestedBy: "schedule" });
     jobs.push({ type: "file-upstream-drift-issues", requestedBy: "schedule" });
-    // Convergence (RAG / codebase index, flag GITTENSORY_REVIEW_RAG). SLOW-CADENCE full re-index: in the six-hourly
+    // Convergence (RAG / codebase index, flag LOOPOVER_REVIEW_RAG). SLOW-CADENCE full re-index: in the six-hourly
     // full-sync window, enqueue the RAG index fan-out (the processor fans out to one per-repo job for every
     // registered + cutover-allowlisted repo, mirroring the signal-snapshot fan-out). Enqueued ONLY when the flag
     // is ON — flag-OFF (default) this job is never created, so the cron does ZERO new RAG work and the enqueued

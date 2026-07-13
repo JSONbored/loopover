@@ -91,8 +91,8 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
     PUBLIC_API_ORIGIN: "https://api.loopover.ai",
     PUBLIC_SITE_ORIGIN: "https://loopover.ai",
     INTERNAL_JOB_TOKEN: "dev-internal-token",
-    GITTENSORY_API_TOKEN: "test-api-token",
-    GITTENSORY_MCP_TOKEN: "test-mcp-token",
+    LOOPOVER_API_TOKEN: "test-api-token",
+    LOOPOVER_MCP_TOKEN: "test-mcp-token",
     GITHUB_WEBHOOK_SECRET: "test-webhook-secret",
     GITHUB_APP_PRIVATE_KEY: "test-private-key",
     ADMIN_GITHUB_LOGINS: "jsonbored",
@@ -127,7 +127,7 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
     },
     // Per-repo review allowlist: default to the test repos so flag-ON wiring tests activate the
     // gated review features. Override to "" to assert the dormant (no-repo) default.
-    GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory,acme/widgets",
+    LOOPOVER_REVIEW_REPOS: "JSONbored/gittensory,acme/widgets",
     // Default-ON in production (settings/automation-bot-skip.ts); most tests don't involve a bot actor at
     // all, so this default doesn't change their behavior. Tests exercising this feature override it directly.
     GITTENSORY_SKIP_AUTOMATION_BOT_PRS: "true",

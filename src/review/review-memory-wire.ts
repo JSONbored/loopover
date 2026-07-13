@@ -13,24 +13,22 @@ import { resolveManifestOnlyFeature } from "./feature-activation";
 import { matchSuppressions, type ReviewMemoryFindingInput } from "./review-memory-match";
 import type { AdvisoryFinding, ReviewSuppressionRecord } from "../types";
 import { incr } from "../selfhost/metrics";
-import { dualPrefixEnvFlag } from "../utils/env";
 
 /** True when repeat-false-positive suppression is enabled at the operator level. Flag-OFF (default) → the
  *  caller takes no new branch, so no suppression-store read and no matcher call ever happens. Truthy follows
  *  the codebase convention (`/^(1|true|yes|on)$/i`, same as isImpactMapEnabled / isRagEnabled /
  *  isSafetyEnabled). */
 export function isReviewMemoryEnabled(env: {
-  GITTENSORY_REVIEW_MEMORY?: string | undefined;
   LOOPOVER_REVIEW_MEMORY?: string | undefined;
 }): boolean {
-  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_MEMORY");
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_MEMORY ?? "").trim());
 }
 
 /** Resolve whether review-memory suppression should apply for THIS repo/PR: the operator's global env
  *  kill-switch AND the per-repo manifest opt-in. Neither alone is sufficient — mirrors every other
  *  converged-feature gate in this codebase (env kill-switch first, then the manifest narrows it further). */
 export function shouldApplyReviewMemory(
-  env: { GITTENSORY_REVIEW_MEMORY?: string | undefined },
+  env: { LOOPOVER_REVIEW_MEMORY?: string | undefined },
   manifestReviewMemoryEnabled: boolean,
 ): boolean {
   return resolveManifestOnlyFeature(isReviewMemoryEnabled(env), manifestReviewMemoryEnabled);

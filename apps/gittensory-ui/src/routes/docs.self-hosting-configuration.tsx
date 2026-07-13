@@ -50,7 +50,7 @@ function SelfHostingConfiguration() {
           {
             title: "Private repo config",
             description:
-              "Mounted GITTENSORY_REPO_CONFIG_DIR files for private per-repo policy. Read fresh each review.",
+              "Mounted LOOPOVER_REPO_CONFIG_DIR files for private per-repo policy. Read fresh each review.",
           },
           {
             title: "Public repo config",
@@ -73,7 +73,7 @@ function SelfHostingConfiguration() {
       <ul>
         <li>
           the repo&apos;s <code>.loopover.yml</code> (public repo config, or the mounted private
-          per-repo config file below if <code>GITTENSORY_REPO_CONFIG_DIR</code> is set), then
+          per-repo config file below if <code>LOOPOVER_REPO_CONFIG_DIR</code> is set), then
         </li>
         <li>the per-repo database settings (the dashboard), then</li>
         <li>built-in safe defaults.</li>
@@ -102,7 +102,7 @@ function SelfHostingConfiguration() {
       <p>
         Start from a template instead of reverse-engineering env flags, private-config precedence,
         and the parser. Every template uses the same schema for a public repo-root{" "}
-        <code>.loopover.yml</code> or a container-private <code>GITTENSORY_REPO_CONFIG_DIR</code>{" "}
+        <code>.loopover.yml</code> or a container-private <code>LOOPOVER_REPO_CONFIG_DIR</code>{" "}
         mount — only what you put in each file differs.
       </p>
       <FeatureRow
@@ -192,8 +192,8 @@ GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/github-app-private-key.pem
 GITHUB_WEBHOOK_SECRET=<random-webhook-secret>
 
 GITTENSOR_REGISTRY_URL=https://example.invalid/registry.json
-GITTENSORY_API_TOKEN=<random-32-byte-token>
-GITTENSORY_MCP_TOKEN=<random-32-byte-token>
+LOOPOVER_API_TOKEN=<random-32-byte-token>
+LOOPOVER_MCP_TOKEN=<random-32-byte-token>
 INTERNAL_JOB_TOKEN=<random-32-byte-token>`}
       />
       <p>
@@ -206,14 +206,14 @@ INTERNAL_JOB_TOKEN=<random-32-byte-token>`}
         compose port mapping and any <code>curl</code>/health-check commands to match.
       </p>
       <Callout variant="warn" title="MCP_ACTUATION_REPO_ALLOWLIST">
-        <code>GITTENSORY_MCP_TOKEN</code> is a shared, end-user-obtainable CLI credential (the
-        normal alternative to <code>gittensory-mcp login</code>), so it must not implicitly stage
-        actions (merges, closes, approvals) on every repo the App happens to be installed on.{" "}
+        <code>LOOPOVER_MCP_TOKEN</code> is a shared, end-user-obtainable CLI credential (the normal
+        alternative to <code>gittensory-mcp login</code>), so it must not implicitly stage actions
+        (merges, closes, approvals) on every repo the App happens to be installed on.{" "}
         <code>MCP_ACTUATION_REPO_ALLOWLIST</code> scopes it to an explicit,
         comma/whitespace-separated <code>owner/repo</code> list —{" "}
         <strong>unset denies all actuation</strong> for this token. Set it to <code>*</code> or{" "}
         <code>all</code> to opt back into the pre-scoping, any-repo behavior. If you already rely on{" "}
-        <code>GITTENSORY_MCP_TOKEN</code> for approval-queue actuation, set this variable after
+        <code>LOOPOVER_MCP_TOKEN</code> for approval-queue actuation, set this variable after
         upgrading or MCP actuation stops working.
       </Callout>
       <CodeBlock
@@ -265,7 +265,7 @@ MCP_ACTUATION_REPO_ALLOWLIST=owner/repo-one, owner/repo-two
           attacker-controlled PR title/body/diff text, and a mounted OAuth home on the same
           filesystem could otherwise leak into review output via prompt injection. This is why the
           Codex subscription path additionally requires the explicit{" "}
-          <code>GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1</code> opt-in — see{" "}
+          <code>LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER=1</code> opt-in — see{" "}
           <Link to="/docs/self-hosting-ai-providers">AI providers</Link>.
         </li>
       </ul>
@@ -406,7 +406,7 @@ GITHUB_METADATA_CACHE_TTL_SECONDS=600`}
           {
             title: "Feature allowlist (env)",
             description:
-              "GITTENSORY_REVIEW_REPOS lists which repos run the converged per-PR path (safety, unified comment, grounding, RAG, reputation, …). Empty/unset ⇒ no repo runs those features, regardless of individual GITTENSORY_REVIEW_* flags. Per-repo features: overrides in a private or public .loopover.yml features: block can force on/off per repo (subject to env kill-switches).",
+              "LOOPOVER_REVIEW_REPOS lists which repos run the converged per-PR path (safety, unified comment, grounding, RAG, reputation, …). Empty/unset ⇒ no repo runs those features, regardless of individual LOOPOVER_REVIEW_* flags. Per-repo features: overrides in a private or public .loopover.yml features: block can force on/off per repo (subject to env kill-switches).",
           },
           {
             title: "Gate activation (DB or private config)",
@@ -416,7 +416,7 @@ GITHUB_METADATA_CACHE_TTL_SECONDS=600`}
           {
             title: "Gittensor registration (is_registered)",
             description:
-              "The registry sync (GITTENSOR_REGISTRY_URL) marks repos present in the upstream snapshot with is_registered=1. That flag gates Gittensor-scored mining, evidence graphs, and several maintainer analytics — not basic webhook review. Brokered Orb installs may keep is_registered=0; listConvergenceRepos still pre-indexes GITTENSORY_REVIEW_REPOS for RAG.",
+              "The registry sync (GITTENSOR_REGISTRY_URL) marks repos present in the upstream snapshot with is_registered=1. That flag gates Gittensor-scored mining, evidence graphs, and several maintainer analytics — not basic webhook review. Brokered Orb installs may keep is_registered=0; listConvergenceRepos still pre-indexes LOOPOVER_REVIEW_REPOS for RAG.",
           },
         ]}
       />
@@ -429,28 +429,28 @@ GITHUB_METADATA_CACHE_TTL_SECONDS=600`}
       <h2>Per-PR feature flags</h2>
       <p>
         Most review capabilities need both their own flag and the repo in{" "}
-        <code>GITTENSORY_REVIEW_REPOS</code> (unless a per-repo <code>features:</code> override says
+        <code>LOOPOVER_REVIEW_REPOS</code> (unless a per-repo <code>features:</code> override says
         otherwise). This gives you a global kill switch and a per-repo rollout switch.
       </p>
       <CodeBlock
         filename=".env"
-        code={`GITTENSORY_REVIEW_REPOS=owner/repo,owner/another
-GITTENSORY_REVIEW_UNIFIED_COMMENT=true
-GITTENSORY_REVIEW_INLINE_COMMENTS=false
-GITTENSORY_REVIEW_SAFETY=true
-GITTENSORY_REVIEW_GROUNDING=true
-GITTENSORY_REVIEW_RAG=false
-GITTENSORY_REVIEW_ENRICHMENT=false
-GITTENSORY_REVIEW_REPUTATION=false`}
+        code={`LOOPOVER_REVIEW_REPOS=owner/repo,owner/another
+LOOPOVER_REVIEW_UNIFIED_COMMENT=true
+LOOPOVER_REVIEW_INLINE_COMMENTS=false
+LOOPOVER_REVIEW_SAFETY=true
+LOOPOVER_REVIEW_GROUNDING=true
+LOOPOVER_REVIEW_RAG=false
+LOOPOVER_REVIEW_ENRICHMENT=false
+LOOPOVER_REVIEW_REPUTATION=false`}
       />
       <Callout variant="safety">
-        Empty <code>GITTENSORY_REVIEW_REPOS</code> means no repos run the per-PR feature path,
+        Empty <code>LOOPOVER_REVIEW_REPOS</code> means no repos run the per-PR feature path,
         regardless of the individual flags.
       </Callout>
 
       <h2>Private per-repo config</h2>
       <p>
-        Mount a gitignored directory and point <code>GITTENSORY_REPO_CONFIG_DIR</code> at it. If
+        Mount a gitignored directory and point <code>LOOPOVER_REPO_CONFIG_DIR</code> at it. If
         either a per-repo file or the dir-root global default (<code>.loopover.yml</code> at the
         mount root) exists, the public repo <code>.loopover.yml</code> is never fetched for that
         review. With only one of the two present, its contents are used as-is; with both present,
@@ -487,15 +487,14 @@ features:
       />
       <p>
         The <code>features:</code> block above overrides a deployment-wide{" "}
-        <code>GITTENSORY_REVIEW_*</code> flag (rag, reputation, unifiedComment, safety) for this one
+        <code>LOOPOVER_REVIEW_*</code> flag (rag, reputation, unifiedComment, safety) for this one
         repo, with three states per key: <code>true</code> forces the capability on for this repo
         (still subject to the env flag itself being enabled — it can never turn on a capability the
         operator has fully disabled at the deployment level); <code>false</code> forces it off for
         this repo regardless of the env flag; and omitting the key entirely falls back to the{" "}
-        <code>GITTENSORY_REVIEW_REPOS</code> allowlist default, i.e. today's behavior for an
-        operator who hasn't set anything here. See{" "}
-        <Link to="/docs/tuning">Tuning your reviews</Link> for the full{" "}
-        <code>GITTENSORY_REVIEW_*</code> flag list this overrides.
+        <code>LOOPOVER_REVIEW_REPOS</code> allowlist default, i.e. today's behavior for an operator
+        who hasn't set anything here. See <Link to="/docs/tuning">Tuning your reviews</Link> for the
+        full <code>LOOPOVER_REVIEW_*</code> flag list this overrides.
       </p>
 
       <h2>Config-as-code blocks with no dashboard equivalent</h2>

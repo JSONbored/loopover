@@ -217,7 +217,7 @@ export type FocusManifestGateConfig = {
 export type CopycatGateMode = "off" | "warn" | "label" | "block";
 
 // The converged per-PR review features a self-host operator toggles PER-REPO under `features:` in the private
-// `.gittensory.yml`. Each feature ALSO has a GLOBAL env flag (GITTENSORY_REVIEW_*) that stays a master
+// `.gittensory.yml`. Each feature ALSO has a GLOBAL env flag (LOOPOVER_REVIEW_*) that stays a master
 // kill-switch (the feature never runs when its env flag is off, regardless of this block). See
 // review/feature-activation.ts for the resolver (env kill-switch → per-repo override → env-allowlist default).
 // NOTE: only the per-PR REVIEW features whose every activation site is migrated are listed here. grounding
@@ -230,7 +230,7 @@ export type CopycatGateMode = "off" | "warn" | "label" | "block";
 // block's env-kill-switch → override → allowlist-default shape one-for-one; it just isn't literally routed
 // through resolveConvergedFeature yet — a disclosed, low-priority fast-follow, #4616). `selftune` (#4104)
 // ALSO deliberately lives outside this block, as its own top-level `review.selftune` field below — it has no
-// `GITTENSORY_REVIEW_REPOS` allowlist to fall back to (its own repo scoping is `isAgentConfigured`, a
+// `LOOPOVER_REVIEW_REPOS` allowlist to fall back to (its own repo scoping is `isAgentConfigured`, a
 // different consent boundary), so it doesn't fit this resolver's env-kill-switch → override → allowlist-
 // default shape; see `selfTuneRepos` in `review/selftune-wire.ts`. `e2eTests` (#4190, part of the #4189
 // E2E-test-generation epic) fits this shape exactly as a plain symmetric override — unlike `safety`/
@@ -256,7 +256,7 @@ export type ConvergedFeatureKey = (typeof CONVERGED_FEATURE_KEYS)[number];
 
 /** Per-repo activation overrides for the converged review features (`features:` block). `true`/`false` force the
  *  feature on/off for THIS repo (subject to the env kill-switch); `null` (unset) ⇒ the resolver falls back to the
- *  `GITTENSORY_REVIEW_REPOS` allowlist default, so an operator who sets nothing keeps today's behavior. */
+ *  `LOOPOVER_REVIEW_REPOS` allowlist default, so an operator who sets nothing keeps today's behavior. */
 export type FocusManifestFeaturesConfig = { present: boolean } & Record<ConvergedFeatureKey, boolean | null>;
 
 /** Optional ecosystem/network integrations under the `experimental:` block — plugins that couple gittensory to
@@ -268,7 +268,7 @@ export type FocusManifestFeaturesConfig = { present: boolean } & Record<Converge
 export const EXPERIMENTAL_PLUGIN_KEYS = ["gittensor"] as const;
 export type ExperimentalPluginKey = (typeof EXPERIMENTAL_PLUGIN_KEYS)[number];
 
-/** Per-repo activation for `experimental:` plugins. Unlike `features:`, there is no `GITTENSORY_REVIEW_REPOS`
+/** Per-repo activation for `experimental:` plugins. Unlike `features:`, there is no `LOOPOVER_REVIEW_REPOS`
  *  allowlist fallback for ANY key here — every plugin is the "manifestOnly" precedence shape
  *  (`resolveManifestOnlyFeature`): OFF unless the operator's global env kill-switch AND an explicit per-repo
  *  `true` are BOTH set. So an instance that never opts in has zero footprint from any experimental plugin. */
@@ -510,11 +510,11 @@ export type FocusManifestReviewConfig = {
   securityFocus: boolean | null;
   /** `review.inline_comments`: when true, the AI reviewer ALSO leaves quiet, non-blocking inline PR comments on
    *  specific changed lines (in addition to the decision summary). null/false (default, absent) = no inline
-   *  comments = byte-identical behavior. Operator-gated too (GITTENSORY_REVIEW_INLINE_COMMENTS + allowlist).
+   *  comments = byte-identical behavior. Operator-gated too (LOOPOVER_REVIEW_INLINE_COMMENTS + allowlist).
    *  (#inline-comments) */
   inlineComments: boolean | null;
   /** `review.fixHandoff`: when true, the reviewer emits fix-handoff blocks (copy-paste remediation guidance). null/
-   *  false (default, absent) = no fix-handoff blocks = byte-identical. Operator-gated too (GITTENSORY_REVIEW_FIX_HANDOFF
+   *  false (default, absent) = no fix-handoff blocks = byte-identical. Operator-gated too (LOOPOVER_REVIEW_FIX_HANDOFF
    *  + the convergence cutover allowlist) — the manifest toggle is only one of the ANDed gates. (#2176, for #1962) */
   fixHandoff: boolean | null;
   /** `review.auto_merge_summary`: when true, the unified comment gains a READ-ONLY collapsible showing which
@@ -555,16 +555,16 @@ export type FocusManifestReviewConfig = {
    *  deterministically from this repo's OWN `recent_merged_pull_requests` history (see
    *  `src/review/repo-culture-profile.ts` / `repo-culture-profile-wire.ts`). Reference-only grounding, exactly
    *  like RAG/CI-grounding context: it never becomes a gate/scoring input and never changes the structured
-   *  output contract. Also requires the global `GITTENSORY_REVIEW_CULTURE_PROFILE` kill-switch to be on (this
+   *  output contract. Also requires the global `LOOPOVER_REVIEW_CULTURE_PROFILE` kill-switch to be on (this
    *  field only opts THIS repo in once the capability itself is enabled). null/false (default, absent) = no
    *  section appended = byte-identical behavior. */
   cultureProfile: boolean | null;
   /** `review.selftune` (#4104): explicit per-repo FORCE-OFF for the self-improvement/auto-tune cron pass
    *  (`runSelfTune`, `src/review/selftune-wire.ts`) — `false` excludes this repo from tuning even though it's
-   *  otherwise agent-configured (`isAgentConfigured`) and the global `GITTENSORY_REVIEW_SELFTUNE` kill-switch is
+   *  otherwise agent-configured (`isAgentConfigured`) and the global `LOOPOVER_REVIEW_SELFTUNE` kill-switch is
    *  on. Deliberately FORCE-OFF-ONLY (no `true` override): forcing a NON-agent-configured repo INTO tuning would
    *  bypass that separate, broader acting-autonomy consent boundary, which this key must not touch. Unlike
-   *  `impactMap`/`cultureProfile` above, there is no `GITTENSORY_REVIEW_REPOS` allowlist fallback for selftune —
+   *  `impactMap`/`cultureProfile` above, there is no `LOOPOVER_REVIEW_REPOS` allowlist fallback for selftune —
    *  its own scoping is `isAgentConfigured`, not the cutover allowlist — so this does NOT live under the generic
    *  `features:` block/`resolveConvergedFeature` (see `CONVERGED_FEATURE_KEYS`'s own comment). null/true
    *  (default, absent) ⇒ no change to today's agent-configured-repos-only behavior. */
@@ -662,7 +662,7 @@ export type FocusManifestReviewConfig = {
   /** `review.visual`: per-repo before/after screenshot-capture config (#3609 preview / #3610 routes).
    *  All-empty (default, absent) ⇒ byte-identical to today (GitHub-native preview discovery, automatic
    *  file-to-route inference, built-in route cap). Only takes effect when the operator has also enabled
-   *  GITTENSORY_REVIEW_SCREENSHOTS + the repo cutover allowlist — this config narrows/redirects that
+   *  LOOPOVER_REVIEW_SCREENSHOTS + the repo cutover allowlist — this config narrows/redirects that
    *  feature, it never turns it on by itself. */
   visual: VisualConfig;
   /** `review.linkedIssueSatisfaction`: how strictly a linked issue must actually be SATISFIED by the PR — `off`
@@ -671,7 +671,7 @@ export type FocusManifestReviewConfig = {
    *  maintainer-only slice. null (default, absent) ⇒ byte-identical to today. */
   linkedIssueSatisfaction: LinkedIssueSatisfactionMode | null;
   /** Runtime provenance when the container-private shared base (`review.shared_config`, #2046) filled review
-   *  fields from `GITTENSORY_REPO_CONFIG_DIR/_shared/.gittensory.yml`. Never parsed from maintainer YAML —
+   *  fields from `LOOPOVER_REPO_CONFIG_DIR/_shared/.gittensory.yml`. Never parsed from maintainer YAML —
    *  set by the private-config loader only. null (default) ⇒ no shared overlay was applied. */
   sharedConfigSource: string | null;
 };
@@ -704,7 +704,7 @@ export type AutoReviewConfig = {
   /** `review.auto_review.skip_drafts`: when true, draft PRs skip AI review. null (default) ⇒ drafts reviewed as today. (#2038) */
   skipDrafts: boolean | null;
   /** `review.auto_review.cadence`: per-repo override of the AI review re-trigger cadence. null (default) ⇒
-   *  inherit the operator's fleet-wide GITTENSORY_REVIEW_CONTINUOUS default (itself "one_shot" when unset).
+   *  inherit the operator's fleet-wide LOOPOVER_REVIEW_CONTINUOUS default (itself "one_shot" when unset).
    *  (#one-shot-review-cadence) */
   cadence: AiReviewCadence | null;
   /** `review.auto_review.ignore_authors`: author-login globs whose PRs skip AI review. Empty ⇒ every author. (#2039) */
@@ -802,7 +802,7 @@ export type VisualConfig = {
    *  manifest) ⇒ byte-identical to today, no scroll frames captured at all. */
   gif: boolean;
   /** `review.visual.enabled` (#4083): a config-as-code override layered ON TOP OF the outer
-   *  `GITTENSORY_REVIEW_SCREENSHOTS` / `GITTENSORY_REVIEW_REPOS` env-var gate, not a replacement for it. null
+   *  `LOOPOVER_REVIEW_SCREENSHOTS` / `LOOPOVER_REVIEW_REPOS` env-var gate, not a replacement for it. null
    *  (default, unset at every config layer) ⇒ defers entirely to that gate's own decision. `false` (settable at
    *  the global-default layer, or overridden per-repo) ⇒ forces capture off for this repo even when the env-var
    *  gate would otherwise allow it. `true` ⇒ no additional restriction — it does NOT bypass the env-var gate,

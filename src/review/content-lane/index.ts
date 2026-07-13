@@ -2,11 +2,11 @@
 //
 // The native, flag-gated content-review primitives for the two CONTENT repos — awesome-claude (a
 // curated list) and metagraphed (a registry) — a different domain from gittensory's code-gate. The
-// lane only runs when GITTENSORY_REVIEW_CONTENT_LANE is truthy (see ./flag); flag-off the host never reaches
+// lane only runs when LOOPOVER_REVIEW_CONTENT_LANE is truthy (see ./flag); flag-off the host never reaches
 // these modules.
 //
 // PORTED so far (the deterministic core — pure or fetch-only, no engine):
-//  - flag                 : GITTENSORY_REVIEW_CONTENT_LANE gate
+//  - flag                 : LOOPOVER_REVIEW_CONTENT_LANE gate
 //  - safe-url             : SSRF-safe URL guard (shared)
 //  - scope (awesome)      : content-PR scope classification (ignore / close / deletion / review)
 //  - duplicates (awesome) : duplicate-detection + protected-edit gate

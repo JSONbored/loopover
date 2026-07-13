@@ -287,7 +287,7 @@ export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { 
   // commentVerbosity resolves the same way (#2047) — deterministic/display-only, independent of every other
   // knob here; absent (null) ⇒ the caller applies "normal" (byte-identical).
   // cultureProfile resolves the same way (#2995) — true ONLY when the manifest explicitly set
-  // review.culture_profile: true. The caller ANDs this per-repo opt-in with the GITTENSORY_REVIEW_CULTURE_PROFILE
+  // review.culture_profile: true. The caller ANDs this per-repo opt-in with the LOOPOVER_REVIEW_CULTURE_PROFILE
   // global kill-switch (mirrors how RAG/reputation/grounding compose a global flag with a per-repo override).
   // autoMergeSummary resolves the same way (#2051/#4147) — like changedFilesSummary/effortScore, it is
   // deterministic/display-only (never touches the AI prompt) and only needs the unified-comment convergence
@@ -299,7 +299,7 @@ export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { 
 /** Resolve `review.memory` (#2179, config slice of #1964) from a possibly-null manifest (null = load failure ⇒
  *  manifest toggle reads as unset/false). Mirrors resolveReviewPromptOverrides's inlineComments resolution
  *  exactly — true ONLY when the manifest explicitly set review.memory: true; null/false/absent ⇒ false. The
- *  caller further ANDs this with the operator's GITTENSORY_REVIEW_MEMORY kill-switch via isReviewMemoryEnabled
+ *  caller further ANDs this with the operator's LOOPOVER_REVIEW_MEMORY kill-switch via isReviewMemoryEnabled
  *  (src/review/review-memory-wire.ts) before ever reading the suppression store. */
 export function resolveReviewMemoryManifestToggle(manifest: FocusManifest | null): boolean {
   return manifest?.review.reviewMemory === true;

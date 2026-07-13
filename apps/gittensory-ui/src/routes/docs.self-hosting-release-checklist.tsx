@@ -275,7 +275,7 @@ git push origin orb-v0.1.0`}
               <td className="py-2 align-top text-muted-foreground">
                 <code>review-enrichment/scripts/validate-sentry-release.mjs</code> exits 0 within
                 its 5-attempt retry-poll; the Sentry release id matches the baked{" "}
-                <code>GITTENSORY_VERSION</code>.
+                <code>LOOPOVER_VERSION</code>.
               </td>
             </tr>
             <tr>
@@ -387,7 +387,7 @@ SELFHOST_SMOKE_FORBID_EVENTS="selfhost_ai_cli_missing" \\
 
 # Codex only (requires the fail-closed opt-in)
 SELFHOST_SMOKE_EXTRA_ENV="AI_PROVIDER=codex
-GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1" \\
+LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER=1" \\
 SELFHOST_SMOKE_EXPECT_EVENTS="selfhost_ai_provider" \\
 SELFHOST_SMOKE_FORBID_EVENTS="selfhost_ai_cli_missing" \\
 ./scripts/smoke-selfhost.sh gittensory:rc-candidate
@@ -397,7 +397,7 @@ SELFHOST_SMOKE_EXTRA_ENV="AI_PROVIDER=codex,claude-code
 CODEX_AI_EFFORT=medium
 CLAUDE_AI_EFFORT=medium
 CLAUDE_CODE_OAUTH_TOKEN=\${TEST_CLAUDE_TOKEN}
-GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1" \\
+LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER=1" \\
 SELFHOST_SMOKE_EXPECT_EVENTS="selfhost_ai_provider" \\
 SELFHOST_SMOKE_FORBID_EVENTS="selfhost_ai_cli_missing" \\
 ./scripts/smoke-selfhost.sh gittensory:rc-candidate`}
@@ -515,7 +515,7 @@ docker rm -f gt-qdrant && docker network rm gt-rag-smoke`}
         <code>runtime-base</code> layer: the pre-bundled <code>dist/server.mjs</code>, the{" "}
         <code>migrations/</code> SQL files, and <code>config/examples/</code> (generic, safe
         reference templates — shipping them activates nothing, since{" "}
-        <code>GITTENSORY_REPO_CONFIG_DIR</code> still points at an operator-mounted{" "}
+        <code>LOOPOVER_REPO_CONFIG_DIR</code> still points at an operator-mounted{" "}
         <code>/config</code>). Nothing else reaches that stage.
       </p>
       <FeatureRow
@@ -538,7 +538,7 @@ docker rm -f gt-qdrant && docker network rm gt-rag-smoke`}
           {
             title: "Private repo config — NOT included",
             description:
-              "gittensory-config and **/gittensory-config are excluded via .dockerignore; only the generic config/examples/ reference templates are copied, and GITTENSORY_REPO_CONFIG_DIR is resolved against an operator-mounted /config at runtime.",
+              "gittensory-config and **/gittensory-config are excluded via .dockerignore; only the generic config/examples/ reference templates are copied, and LOOPOVER_REPO_CONFIG_DIR is resolved against an operator-mounted /config at runtime.",
           },
           {
             title: "Data volumes — NOT included",

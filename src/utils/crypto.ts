@@ -110,7 +110,7 @@ export function base64Encode(bytes: Uint8Array): string {
 }
 
 // ─── Draft user-token encryption (AES-256-GCM, single-string envelope) ───────────────────────────
-// Ported from the reviewbot public draft-submission flow (GITTENSORY_REVIEW_DRAFT). Distinct from
+// Ported from the reviewbot public draft-submission flow (LOOPOVER_REVIEW_DRAFT). Distinct from
 // encryptSecret/decryptSecret above: this packs salt+iv+ciphertext into ONE `.`-joined base64url
 // string so a single TEXT column (submission_user_tokens.encrypted_token) holds the full envelope,
 // and derives the AES key via HKDF (not PBKDF2). The user's short-lived GitHub OAuth token is the

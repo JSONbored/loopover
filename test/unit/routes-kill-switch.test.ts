@@ -18,7 +18,7 @@ import { createTestEnv } from "../helpers/d1";
 // global kill-switch was raw SQL. These tests cover the new operator-only route pair that makes it operable.
 
 function apiHeaders(env: Env): Record<string, string> {
-  return { authorization: `Bearer ${env.GITTENSORY_API_TOKEN}`, "content-type": "application/json" };
+  return { authorization: `Bearer ${env.LOOPOVER_API_TOKEN}`, "content-type": "application/json" };
 }
 
 async function auditRows(env: Env): Promise<Array<{ actor: string; outcome: string; metadata_json: string }>> {
@@ -60,7 +60,7 @@ describe("kill-switch operator route (#2359)", () => {
   it("rejects the shared MCP token without changing the global kill-switch", async () => {
     const app = createApp();
     const env = createTestEnv();
-    const headers = { authorization: `Bearer ${env.GITTENSORY_MCP_TOKEN}`, "content-type": "application/json" };
+    const headers = { authorization: `Bearer ${env.LOOPOVER_MCP_TOKEN}`, "content-type": "application/json" };
 
     const read = await app.request("/v1/app/kill-switch", { headers }, env);
     expect(read.status).toBe(403);

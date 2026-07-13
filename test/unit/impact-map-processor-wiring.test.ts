@@ -67,7 +67,7 @@ describe("impact map wired into runAiReviewForAdvisory (#2186)", () => {
   it("FLAG-ON (env + reviewImpactMap): computes the impact map from changed files and splices it into the prompt", async () => {
     const { run, seenUser } = capturingChatRun();
     const env = aiReviewEnv({
-      GITTENSORY_REVIEW_IMPACT_MAP: "true",
+      LOOPOVER_REVIEW_IMPACT_MAP: "true",
       VECTORIZE: vectorizeStub() as unknown as Vectorize,
       AI: { run } as unknown as Ai,
     });
@@ -149,7 +149,7 @@ describe("impact map wired into runAiReviewForAdvisory (#2186)", () => {
   it("FLAG-ON but the manifest did not opt in (reviewImpactMap absent): no impact-map computation", async () => {
     const { run, seenUser } = capturingChatRun();
     const env = aiReviewEnv({
-      GITTENSORY_REVIEW_IMPACT_MAP: "true",
+      LOOPOVER_REVIEW_IMPACT_MAP: "true",
       VECTORIZE: vectorizeStub() as unknown as Vectorize,
       AI: { run } as unknown as Ai,
     });
@@ -175,7 +175,7 @@ describe("impact map wired into runAiReviewForAdvisory (#2186)", () => {
     // No VECTORIZE binding -> createReviewAdapters omits the vector adapter -> computeImpactMap returns []
     // -> formatImpactMapPromptSection([]) === "" -> impactMapContext is falsy -> byte-identical prompt.
     const { run, seenUser } = capturingChatRun();
-    const env = aiReviewEnv({ GITTENSORY_REVIEW_IMPACT_MAP: "true", AI: { run } as unknown as Ai });
+    const env = aiReviewEnv({ LOOPOVER_REVIEW_IMPACT_MAP: "true", AI: { run } as unknown as Ai });
     await env.DB.prepare(
       "INSERT INTO pull_request_files (repo_full_name, pull_number, path, status, additions, deletions, changes, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )

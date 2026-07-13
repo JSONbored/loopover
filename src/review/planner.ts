@@ -16,15 +16,13 @@ import { sanitizePublicComment } from "../github/commands";
 import { AGENT_COMMAND_COMMENT_MARKER } from "../github/comments";
 import { gittensoryFooter, type GittensoryFooterEnv } from "../github/footer";
 import type { GitHubWebhookPayload } from "../types";
-import { dualPrefixEnvFlag } from "../utils/env";
 
 /** True when the issue-planning command is enabled. Flag-OFF (default) → every export below is unreachable from
  *  the webhook path. Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as isSelfTuneEnabled). */
 export function isPlannerEnabled(env: {
-  GITTENSORY_REVIEW_PLANNER?: string | undefined;
   LOOPOVER_REVIEW_PLANNER?: string | undefined;
 }): boolean {
-  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_PLANNER");
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_PLANNER ?? "").trim());
 }
 
 /** Recognize a bare `@gittensory plan` mention (the rest of the line is ignored). Returns false for any other

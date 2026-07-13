@@ -50,7 +50,7 @@ function indexEnv(over: { vec?: ReturnType<typeof vectorizeStub>; ai?: ReturnTyp
   const vec = over.vec ?? vectorizeStub();
   const ai = over.ai ?? aiStub();
   const env = createTestEnv({
-    GITTENSORY_REVIEW_RAG: over.rag ?? "true",
+    LOOPOVER_REVIEW_RAG: over.rag ?? "true",
     VECTORIZE: vec as unknown as Vectorize,
     AI: ai as unknown as Ai,
   });
@@ -819,7 +819,7 @@ describe("flag-off / missing-infra is a no-op (no GitHub fetch, no adapter use)"
   afterEach(() => vi.unstubAllGlobals());
 
   it("indexRepo with a MISSING Vectorize binding does nothing (no tree fetch)", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_RAG: "true", AI: aiStub() as unknown as Ai }); // no VECTORIZE
+    const env = createTestEnv({ LOOPOVER_REVIEW_RAG: "true", AI: aiStub() as unknown as Ai }); // no VECTORIZE
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     await expect(indexRepo(env, PROJECT, REPO)).resolves.toEqual({ indexed: 0, files: 0, capped: false });
@@ -827,7 +827,7 @@ describe("flag-off / missing-infra is a no-op (no GitHub fetch, no adapter use)"
   });
 
   it("indexRepo with a MISSING AI binding does nothing (no tree fetch)", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_RAG: "true", VECTORIZE: vectorizeStub() as unknown as Vectorize }); // no AI
+    const env = createTestEnv({ LOOPOVER_REVIEW_RAG: "true", VECTORIZE: vectorizeStub() as unknown as Vectorize }); // no AI
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     await expect(indexRepo(env, PROJECT, REPO)).resolves.toEqual({ indexed: 0, files: 0, capped: false });
@@ -835,7 +835,7 @@ describe("flag-off / missing-infra is a no-op (no GitHub fetch, no adapter use)"
   });
 
   it("reindexChangedPaths with missing infra does nothing", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_RAG: "true" }); // no VECTORIZE / AI
+    const env = createTestEnv({ LOOPOVER_REVIEW_RAG: "true" }); // no VECTORIZE / AI
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     await expect(reindexChangedPaths(env, PROJECT, REPO, ["src/a.ts"])).resolves.toEqual({ indexed: 0, files: 0, capped: false });
@@ -859,9 +859,9 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
   it("FLAG-ON cron fan-out enqueues one per-repo job for every REGISTERED + ALLOWLISTED repo only", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_RAG: "true",
+      LOOPOVER_REVIEW_RAG: "true",
       // Allowlist only JSONbored/gittensory (acme/widgets is allowlisted by default but won't be registered here).
-      GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory,JSONbored/metagraphed",
+      LOOPOVER_REVIEW_REPOS: "JSONbored/gittensory,JSONbored/metagraphed",
       JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
     });
     await registerRepo(env, "JSONbored/gittensory"); // registered + allowlisted → indexed
@@ -882,11 +882,11 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
     expect(JSON.parse(fanout?.metadata_json ?? "{}")).toMatchObject({ repoCount: 2, requestedBy: "schedule" });
   });
 
-  it("cron fan-out ALSO indexes CONFIGURED (GITTENSORY_REVIEW_REPOS) repos never registered via webhook (brokered self-host fix)", async () => {
+  it("cron fan-out ALSO indexes CONFIGURED (LOOPOVER_REVIEW_REPOS) repos never registered via webhook (brokered self-host fix)", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_RAG: "true",
-      GITTENSORY_REVIEW_REPOS: "JSONbored/metagraphed, JSONbored/gittensory", // configured, NOT registered (is_registered=0)
+      LOOPOVER_REVIEW_RAG: "true",
+      LOOPOVER_REVIEW_REPOS: "JSONbored/metagraphed, JSONbored/gittensory", // configured, NOT registered (is_registered=0)
       JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
     });
     // No registerRepo() — these are is_registered=0 (the brokered model); the old registered-only fan-out indexed NOTHING.
@@ -897,8 +897,8 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
   it("dedupes a repo that is BOTH registered and configured (no double-index)", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_RAG: "true",
-      GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory",
+      LOOPOVER_REVIEW_RAG: "true",
+      LOOPOVER_REVIEW_REPOS: "JSONbored/gittensory",
       JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
     });
     await registerRepo(env, "JSONbored/gittensory"); // registered AND configured → must appear exactly once
@@ -909,7 +909,7 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
   it("FLAG-OFF cron fan-out is a no-op (no per-repo jobs enqueued, no fan-out audit)", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_RAG: "false",
+      LOOPOVER_REVIEW_RAG: "false",
       JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
     });
     await registerRepo(env, "JSONbored/gittensory");
@@ -929,8 +929,8 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
 
   it("per-repo dispatch SKIPS a repo where RAG is not active (no indexing)", async () => {
     const env = createTestEnv({
-      GITTENSORY_REVIEW_RAG: "true",
-      GITTENSORY_REVIEW_REPOS: "", // empty allowlist → not active (no per-repo features.rag override either)
+      LOOPOVER_REVIEW_RAG: "true",
+      LOOPOVER_REVIEW_REPOS: "", // empty allowlist → not active (no per-repo features.rag override either)
       VECTORIZE: vectorizeStub() as unknown as Vectorize,
       AI: aiStub() as unknown as Ai,
     });
@@ -947,8 +947,8 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
 
   it("per-repo dispatch INDEXES an un-allowlisted repo when features.rag is overridden on via the private config", async () => {
     const env = createTestEnv({
-      GITTENSORY_REVIEW_RAG: "true",
-      GITTENSORY_REVIEW_REPOS: "", // not allowlisted — only the per-repo override activates it
+      LOOPOVER_REVIEW_RAG: "true",
+      LOOPOVER_REVIEW_REPOS: "", // not allowlisted — only the per-repo override activates it
       VECTORIZE: vectorizeStub() as unknown as Vectorize,
       AI: aiStub() as unknown as Ai,
     });
@@ -970,7 +970,7 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
 
   it("FLAG-OFF per-repo dispatch is a no-op", async () => {
     const env = createTestEnv({
-      GITTENSORY_REVIEW_RAG: "false",
+      LOOPOVER_REVIEW_RAG: "false",
       VECTORIZE: vectorizeStub() as unknown as Vectorize,
       AI: aiStub() as unknown as Ai,
     });
@@ -992,8 +992,8 @@ describe("merged-PR incremental re-index trigger (webhook)", () => {
   async function runMergedPrWebhook(over: { rag?: string; repos?: string; merged?: boolean; files?: string[] }): Promise<import("../../src/types").JobMessage[]> {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_RAG: over.rag ?? "true",
-      GITTENSORY_REVIEW_REPOS: over.repos ?? "JSONbored/gittensory",
+      LOOPOVER_REVIEW_RAG: over.rag ?? "true",
+      LOOPOVER_REVIEW_REPOS: over.repos ?? "JSONbored/gittensory",
       JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
     });
     await registerRepo(env, "JSONbored/gittensory");

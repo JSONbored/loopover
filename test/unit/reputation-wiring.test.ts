@@ -82,10 +82,10 @@ const baseArgs = { mode: "live" as const, settings: { aiReviewMode: "advisory" }
 describe("isReputationEnabled", () => {
   it("is OFF for unset/false and ON for the truthy convention", () => {
     expect(isReputationEnabled({})).toBe(false);
-    expect(isReputationEnabled({ GITTENSORY_REVIEW_REPUTATION: "false" })).toBe(false);
-    expect(isReputationEnabled({ GITTENSORY_REVIEW_REPUTATION: "true" })).toBe(true);
-    expect(isReputationEnabled({ GITTENSORY_REVIEW_REPUTATION: "1" })).toBe(true);
-    expect(isReputationEnabled({ GITTENSORY_REVIEW_REPUTATION: "on" })).toBe(true);
+    expect(isReputationEnabled({ LOOPOVER_REVIEW_REPUTATION: "false" })).toBe(false);
+    expect(isReputationEnabled({ LOOPOVER_REVIEW_REPUTATION: "true" })).toBe(true);
+    expect(isReputationEnabled({ LOOPOVER_REVIEW_REPUTATION: "1" })).toBe(true);
+    expect(isReputationEnabled({ LOOPOVER_REVIEW_REPUTATION: "on" })).toBe(true);
   });
 });
 
@@ -114,7 +114,7 @@ describe("shouldDowngradeToDeterministic (pure)", () => {
 
 describe("AI-spend gate: reputation downgrade", () => {
   it("FLAG-ON: a low-reputation / burst submitter is downgraded to deterministic-only (no AI spend)", async () => {
-    const { env, run } = aiEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+    const { env, run } = aiEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
     await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 12, merged: 0, closed: 12, manual: 0 });
     const adv = advisory();
     const result = await runAiReviewForAdvisory(env, { ...baseArgs, advisory: adv });
@@ -125,7 +125,7 @@ describe("AI-spend gate: reputation downgrade", () => {
   });
 
   it("FLAG-ON: aiReviewAllAuthors bypasses the reputation downgrade and still runs the review", async () => {
-    const { env, run } = aiEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+    const { env, run } = aiEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
     await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 12, merged: 0, closed: 12, manual: 0 });
     const adv = advisory();
     const result = await runAiReviewForAdvisory(env, {
@@ -139,7 +139,7 @@ describe("AI-spend gate: reputation downgrade", () => {
   });
 
   it("FLAG-ON: a good-reputation submitter proceeds to the normal AI review", async () => {
-    const { env, run } = aiEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+    const { env, run } = aiEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
     await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 20, merged: 18, closed: 2, manual: 0 });
     const adv = advisory();
     const result = await runAiReviewForAdvisory(env, { ...baseArgs, advisory: adv });
@@ -149,7 +149,7 @@ describe("AI-spend gate: reputation downgrade", () => {
 
   it("FLAG-OFF (default): the AI-spend path is UNCHANGED even for a burst submitter — no reputation read", async () => {
     // Same burst seed as the flag-ON downgrade case, but the flag is OFF: the AI review runs exactly as today.
-    const off = aiEnv({ GITTENSORY_REVIEW_REPUTATION: "false" });
+    const off = aiEnv({ LOOPOVER_REVIEW_REPUTATION: "false" });
     await seedSubmitter(off.env, { project: "acme/widgets", submitter: "burster", submissions: 12, merged: 0, closed: 12, manual: 0 });
     const offResult = await runAiReviewForAdvisory(off.env, { ...baseArgs, advisory: advisory() });
     expect(offResult?.notes).toContain("Add a test.");
@@ -166,7 +166,7 @@ describe("AI-spend gate: reputation downgrade", () => {
 
 describe("reputation check threaded from caller to callee, not re-derived (#4507)", () => {
   it("INVARIANT: shouldStartAiReviewForAdvisory and runAiReviewForAdvisory make ZERO additional reputation-scan D1 reads when the caller threads its own already-computed result (the common, no-manifest-override case)", async () => {
-    const { env, run } = aiEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+    const { env, run } = aiEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
     // A healthy, non-downgraded submitter (matches the existing "good-reputation submitter proceeds to the
     // normal AI review" fixture) so BOTH functions actually reach their reputation check, not an early return.
     await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 20, merged: 18, closed: 2, manual: 0 });
@@ -208,10 +208,10 @@ describe("reputation check threaded from caller to callee, not re-derived (#4507
   });
 
   it("REGRESSION: a per-repo manifest override disabling reputation does NOT let a stale threaded 'skip' force-skip the AI review (divergent-config edge case)", async () => {
-    // Allowlist includes acme/widgets (createTestEnv's default GITTENSORY_REVIEW_REPOS), so the CALLER's own
+    // Allowlist includes acme/widgets (createTestEnv's default LOOPOVER_REVIEW_REPOS), so the CALLER's own
     // gate condition (isReputationEnabled && isConvergenceRepoAllowed) is true and it computes a REAL skip
     // result — for a burst/downgraded submitter, that result is `true` (skip).
-    const { env, run } = aiEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+    const { env, run } = aiEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
     await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 12, merged: 0, closed: 12, manual: 0 });
     const preComputedReputationSkip = await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "burster" });
     expect(preComputedReputationSkip).toBe(true); // burst submitter — downgraded
@@ -232,7 +232,7 @@ describe("reputation check threaded from caller to callee, not re-derived (#4507
   it("REGRESSION: a per-repo manifest override enabling reputation outside the allowlist still runs its own fresh check (the caller never threaded a value)", async () => {
     // Allowlist does NOT include this repo, so the CALLER's own gate condition is false — it never calls
     // shouldSkipAiForReputation at all, and preComputedReputationSkip stays undefined.
-    const { env, run } = aiEnv({ GITTENSORY_REVIEW_REPUTATION: "true", GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory" });
+    const { env, run } = aiEnv({ LOOPOVER_REVIEW_REPUTATION: "true", LOOPOVER_REVIEW_REPOS: "JSONbored/gittensory" });
     await seedSubmitter(env, { project: "unlisted/repo", submitter: "burster", submissions: 12, merged: 0, closed: 12, manual: 0 });
     expect(isConvergenceRepoAllowed(env, "unlisted/repo")).toBe(false); // confirms the caller's own gate is closed
     const preComputedReputationSkip =
@@ -261,19 +261,19 @@ describe("reputation check threaded from caller to callee, not re-derived (#4507
 
 describe("shouldSkipAiForReputation (helper)", () => {
   it("FLAG-OFF: returns false immediately without reading the DB (broken DB still yields false)", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "false", DB: undefined as unknown as D1Database });
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "false", DB: undefined as unknown as D1Database });
     expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "burster" })).toBe(false);
   });
 
   it("FLAG-ON: true for a seeded burst submitter, false for an unseen one", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
     await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 12, merged: 0, closed: 12, manual: 0 });
     expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "burster" })).toBe(true);
     expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "newcomer" })).toBe(false);
   });
 
   it("FLAG-ON: false for a null submitter (the ?? undefined coalesce on both the quality and cadence reads)", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
     expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: null })).toBe(false);
   });
 
@@ -288,7 +288,7 @@ describe("shouldSkipAiForReputation (helper)", () => {
     }
 
     it("FLAG-ON: true for a machine-paced submitter even though every submission itself looks fine (quality-neutral)", async () => {
-      const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+      const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
       // Anchored to now (minus a couple hours of headroom) -- the cadence query only looks back 24h, so a
       // fixed past date would fall outside the window and vacuously read as "0 samples, not machine-paced".
       const t0 = Date.now() - 2 * 60 * 60_000;
@@ -300,7 +300,7 @@ describe("shouldSkipAiForReputation (helper)", () => {
     });
 
     it("FLAG-ON: false for the same number of submissions spread naturally over hours (comfortably human pace)", async () => {
-      const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+      const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
       const t0 = Date.now() - 20 * 60 * 60_000;
       for (let i = 0; i < 5; i++) {
         await seedReviewTarget(env, { number: i + 100, submitter: "steady", createdAt: new Date(t0 + i * 3 * 60 * 60_000).toISOString() });
@@ -309,7 +309,7 @@ describe("shouldSkipAiForReputation (helper)", () => {
     });
 
     it("FLAG-ON: skips the (extra) cadence read once the quality/burst signal already justifies downgrading", async () => {
-      const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+      const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
       await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 12, merged: 0, closed: 12, manual: 0 });
       const spy = vi.spyOn(env.DB, "prepare");
       const before = spy.mock.calls.length;
@@ -472,8 +472,8 @@ describe("processGitHubWebhook records the reputation outcome on a terminal PR (
   it("FLAG-ON: a closed+merged PR webhook records a 'merged' outcome for the submitter", async () => {
     const { processJob } = await import("../../src/queue/processors");
     const { upsertRepositorySettings } = await import("../../src/db/repositories");
-    // GITTENSORY_REVIEW_UNIFIED_COMMENT on so the closing-PR comment path takes the unified-renderer branch.
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true", GITTENSORY_REVIEW_UNIFIED_COMMENT: "true" });
+    // LOOPOVER_REVIEW_UNIFIED_COMMENT on so the closing-PR comment path takes the unified-renderer branch.
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true", LOOPOVER_REVIEW_UNIFIED_COMMENT: "true" });
     // Gate enabled so the closing-PR public-surface path (skipped-gate + unified closed comment) executes.
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory" });
     // External calls (token/miner/github) are best-effort + caught; stub them so nothing throws.
@@ -515,7 +515,7 @@ describe("processGitHubWebhook records the reputation outcome on a terminal PR (
 
   it("FLAG-ON: a closed PR with no author login records against a null submitter (authorLogin ?? null)", async () => {
     const { processJob } = await import("../../src/queue/processors");
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
@@ -548,7 +548,7 @@ describe("processGitHubWebhook records the reputation outcome on a terminal PR (
     const { processJob } = await import("../../src/queue/processors");
     // Flag unset → `isReputationEnabled(env) ? … : undefined` is undefined → the `if (reputationOutcome)`
     // body never runs → submitter_stats stays empty (byte-identical to today).
-    const env = createTestEnv(); // GITTENSORY_REVIEW_REPUTATION unset → OFF
+    const env = createTestEnv(); // LOOPOVER_REVIEW_REPUTATION unset → OFF
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
@@ -578,7 +578,7 @@ describe("processGitHubWebhook records the reputation outcome on a terminal PR (
     const { processJob } = await import("../../src/queue/processors");
     const { upsertRepositorySettings } = await import("../../src/db/repositories");
     // Reputation ON, but the PR is still OPEN and the gate does not route it to manual → undefined outcome.
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
     // Gate OFF for this repo so the open PR's gate is `undefined` (not failure/action_required) → no "manual".
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", publicSurface: "off", commentMode: "off" });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -611,7 +611,7 @@ describe("processGitHubWebhook records the reputation outcome on a terminal PR (
 
 describe("recordReputationOutcome + the 0046 submitter_stats migration", () => {
   it("FLAG-OFF (default): records NOTHING — the table stays empty", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "false" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "false" });
     await recordReputationOutcome(env, { project: "acme/widgets", submitter: "alice", outcome: "closed" });
     // The migration applied (the table exists and is queryable) but nothing was written.
     const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM submitter_stats").first<{ n: number }>();
@@ -619,7 +619,7 @@ describe("recordReputationOutcome + the 0046 submitter_stats migration", () => {
   });
 
   it("FLAG-ON: records the outcome and a round-trip read reflects the counts (migration applied)", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
     await recordReputationOutcome(env, { project: "acme/widgets", submitter: "alice", outcome: "merged" });
     await recordReputationOutcome(env, { project: "acme/widgets", submitter: "alice", outcome: "closed" });
     const stats = await getSubmitterReputation(env, "acme/widgets", "alice");

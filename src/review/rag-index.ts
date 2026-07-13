@@ -1,4 +1,4 @@
-// Convergence (RAG / codebase index — Layer C, flag GITTENSORY_REVIEW_RAG): the INDEX-POPULATION driver. This is
+// Convergence (RAG / codebase index — Layer C, flag LOOPOVER_REVIEW_RAG): the INDEX-POPULATION driver. This is
 // the population half (rag-wire.ts wires RETRIEVAL only):
 // it fetches a repo's CODE tree, chunks + embeds it, and upserts vectors+text into the `gittensory-review-rag`
 // Vectorize index + the `repo_chunks` table (migration 0051) — so retrieval has a warm index to read from instead

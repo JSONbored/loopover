@@ -1,12 +1,11 @@
 // Convergence (safety) feature flag + helpers that wire the ported safety modules
 // (`./prompt-injection` + `./secrets-scan`) into gittensory's review path.
 //
-// Single env switch: GITTENSORY_REVIEW_SAFETY. Default OFF (unset/"false") — when OFF none of the helpers here
+// Single env switch: LOOPOVER_REVIEW_SAFETY. Default OFF (unset/"false") — when OFF none of the helpers here
 // alter inputs or findings, so the review path is byte-identical to today. Truthy follows the codebase
 // convention (`/^(1|true|yes|on)$/i`, same as isUnifiedReviewCommentEnabled / isEnabled).
 
 import type { AdvisoryFinding } from "../types";
-import { dualPrefixEnvFlag } from "../utils/env";
 import { neutralizePromptInjection, safeReviewTitle } from "./prompt-injection";
 import { ADVISORY_ONLY_SECRET_KINDS, HARD_SECRET_KINDS } from "./secret-patterns";
 import { scanDiffForSecretsWithLocations, type SecretScanLocationMatch } from "./secrets-scan";
@@ -24,10 +23,9 @@ import { scanDiffForSecretsWithLocations, type SecretScanLocationMatch } from ".
 
 /** True when the safety scan is enabled. Flag-OFF (default) → every helper below is a no-op pass-through. */
 export function isSafetyEnabled(env: {
-  GITTENSORY_REVIEW_SAFETY?: string | undefined;
   LOOPOVER_REVIEW_SAFETY?: string | undefined;
 }): boolean {
-  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_SAFETY");
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_SAFETY ?? "").trim());
 }
 
 /** The untrusted, author-controlled fields fed to the AI reviewer. */

@@ -527,7 +527,7 @@ describe("queue processors", () => {
   });
 
   it("runs the review recap job through the queue processor when reviewRecap.enabled is true (#1963)", async () => {
-    const env = Object.assign(createTestEnv(), { GITTENSORY_DISCORD_WEBHOOK: "https://discord.com/api/webhooks/123/abc" }) as Env;
+    const env = Object.assign(createTestEnv(), { LOOPOVER_DISCORD_WEBHOOK: "https://discord.com/api/webhooks/123/abc" }) as Env;
     await upsertRepoFocusManifest(env, "JSONbored/gittensory", { reviewRecap: { enabled: true, cadenceDays: 3 } });
     vi.stubGlobal("fetch", async () => new Response(null, { status: 204 }));
 
@@ -539,7 +539,7 @@ describe("queue processors", () => {
   });
 
   it("uses the job message's explicit windowDays over the manifest's cadenceDays default (#1963, nullish fallback present side)", async () => {
-    const env = Object.assign(createTestEnv(), { GITTENSORY_DISCORD_WEBHOOK: "https://discord.com/api/webhooks/123/abc" }) as Env;
+    const env = Object.assign(createTestEnv(), { LOOPOVER_DISCORD_WEBHOOK: "https://discord.com/api/webhooks/123/abc" }) as Env;
     await upsertRepoFocusManifest(env, "JSONbored/gittensory", { reviewRecap: { enabled: true, cadenceDays: 3 } });
     let capturedBody: string | undefined;
     vi.stubGlobal("fetch", async (_url: RequestInfo | URL, init?: RequestInit) => {
@@ -554,7 +554,7 @@ describe("queue processors", () => {
   });
 
   it("skips the review recap job as a no-op when reviewRecap is NOT enabled for the repo (default-off, #1963)", async () => {
-    const env = Object.assign(createTestEnv(), { GITTENSORY_DISCORD_WEBHOOK: "https://discord.com/api/webhooks/123/abc" }) as Env;
+    const env = Object.assign(createTestEnv(), { LOOPOVER_DISCORD_WEBHOOK: "https://discord.com/api/webhooks/123/abc" }) as Env;
     // Prime an explicit, present-but-disabled manifest so loadRepoFocusManifest hits the cache instead of
     // falling through to a live GitHub fetch for this repo's .gittensory.yml (there is none in this test env).
     await upsertRepoFocusManifest(env, "JSONbored/gittensory", { wantedPaths: ["src/"] });
@@ -881,7 +881,7 @@ describe("queue processors", () => {
   it("agent re-gate sweep fans out to acting-autonomy repos (#777), skipping non-acting ones when not allowlisted", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_REPOS: "", // isolate the acting-autonomy gate from the allowlist-sweep path (tested below)
+      LOOPOVER_REVIEW_REPOS: "", // isolate the acting-autonomy gate from the allowlist-sweep path (tested below)
       JOBS: {
         async send(message: import("../../src/types").JobMessage) {
           sent.push(message);
@@ -913,7 +913,7 @@ describe("queue processors", () => {
   it("REGRESSION (#sweep-requires-installation): an acting-autonomy repo with NO real installation is excluded, even though it resolves the operator's global-default autonomy", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_REPOS: "",
+      LOOPOVER_REVIEW_REPOS: "",
       JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue,
     });
     // A repo that merely EXISTS locally (e.g. a stray row from an unrelated sync) with a real installation and
@@ -933,7 +933,7 @@ describe("queue processors", () => {
 
   it("agent re-gate sweep ALSO fans out to allowlisted repos regardless of autonomy mode (#sweep-all-modes)", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "owner/advisory-repo", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPOS: "owner/advisory-repo", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
     // advisory-repo is allowlisted but autonomy is observe (NOT acting) — it must STILL be swept so advisory reviews fire.
     await upsertRepositoryFromGitHub(env, { name: "advisory-repo", full_name: "owner/advisory-repo", private: false, owner: { login: "owner" } }, 9102);
     await upsertRepositorySettings(env, { repoFullName: "owner/advisory-repo", autonomy: { merge: "observe", close: "observe" } });
@@ -951,7 +951,7 @@ describe("queue processors", () => {
   it("REGRESSION (#audit-sweep-fanout-isolation): one repo's settings-check failure does not abort the fan-out for every other repo", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_REPOS: "",
+      LOOPOVER_REVIEW_REPOS: "",
       JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue,
     });
     await upsertRepositoryFromGitHub(env, { name: "agent-a", full_name: "owner/agent-a", private: false, owner: { login: "owner" } }, 9204);
@@ -979,7 +979,7 @@ describe("queue processors", () => {
   it("REGRESSION (#audit-sweep-fanout-isolation): one repo's dispatch failure does not abort dispatch for every other repo, and the fan-out audit event still records", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_REPOS: "",
+      LOOPOVER_REVIEW_REPOS: "",
       JOBS: {
         async send(m: import("../../src/types").JobMessage) {
           if (m.type === "agent-regate-sweep" && m.repoFullName === "owner/agent-a") throw new Error("queue send error");
@@ -1007,7 +1007,7 @@ describe("queue processors", () => {
     vi.useRealTimers();
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_REPOS: "",
+      LOOPOVER_REVIEW_REPOS: "",
       JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue,
     });
     const repoNames = ["r1", "r2", "r3", "r4", "r5", "r6"];
@@ -2486,10 +2486,10 @@ describe("queue processors", () => {
 
   describe("durable CI-state snapshot cache (#selfhost-ci-verification, cross-job)", () => {
     async function seedRepoAndPr(headSha: string): Promise<{ env: ReturnType<typeof createTestEnv> }> {
-      // GITTENSORY_REVIEW_REPOS (review/cutover-gate.ts) gates maybeReReviewOnCiCompletion's whole invalidation
+      // LOOPOVER_REVIEW_REPOS (review/cutover-gate.ts) gates maybeReReviewOnCiCompletion's whole invalidation
       // loop -- an unlisted repo leaves the durable cache never invalidated by a check_run/check_suite webhook,
       // relying solely on the 60s TTL. Must be allowlisted for the invalidation tests below to be meaningful.
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/agent-repo" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/agent-repo" });
       await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });
       await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
       // isAgentConfigured (settings/autonomy.ts) requires at least one ACTING autonomy class before
@@ -3124,7 +3124,7 @@ describe("queue processors", () => {
   });
 
   it("#4 stale-surface repair: same-head CI completions also re-run review when the marker is current", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/agent-repo" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/agent-repo" });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", reviewCheckMode: "required", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
@@ -3161,7 +3161,7 @@ describe("queue processors", () => {
   it("drops already-enqueued self-authored app CI completions without re-reviewing", async () => {
     const env = createTestEnv({
       GITHUB_APP_SLUG: "gittensory-orb",
-      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      LOOPOVER_REVIEW_REPOS: "owner/agent-repo",
     });
     let fetchCount = 0;
     vi.stubGlobal("fetch", async () => {
@@ -3196,7 +3196,7 @@ describe("queue processors", () => {
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      LOOPOVER_REVIEW_REPOS: "owner/agent-repo",
       JOBS: {
         async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
           sent.push(options ? { message, options } : { message });
@@ -3245,7 +3245,7 @@ describe("queue processors", () => {
   });
 
   it("issue label change does NOT wake an open PR that links a DIFFERENT issue", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/agent-repo" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/agent-repo" });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", reviewCheckMode: "required", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
@@ -3275,7 +3275,7 @@ describe("queue processors", () => {
     expect(checkRunsFetched).toBe(false); // PR #7 links #99, not #1 — never re-reviewed
   });
 
-  it("issue label change wakes the linked PR via the acting-autonomy fallback even OUTSIDE the GITTENSORY_REVIEW_REPOS convergence allowlist, mirroring sweepRepoRegate's own gate (#5385)", async () => {
+  it("issue label change wakes the linked PR via the acting-autonomy fallback even OUTSIDE the LOOPOVER_REVIEW_REPOS convergence allowlist, mirroring sweepRepoRegate's own gate (#5385)", async () => {
     // Before #5385, this exact shape (real acting autonomy, but not in the env allowlist) silently stayed
     // dormant here even though the periodic sweep (sweepRepoRegate) would already treat this repo as eligible
     // via `isConvergenceRepoAllowed || isAgentConfigured(settings.autonomy)` — a self-hoster who configures
@@ -3284,7 +3284,7 @@ describe("queue processors", () => {
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      GITTENSORY_REVIEW_REPOS: "",
+      LOOPOVER_REVIEW_REPOS: "",
       JOBS: {
         async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
           sent.push(options ? { message, options } : { message });
@@ -3329,7 +3329,7 @@ describe("queue processors", () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      GITTENSORY_REVIEW_REPOS: "",
+      LOOPOVER_REVIEW_REPOS: "",
       JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue,
     });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
@@ -3364,7 +3364,7 @@ describe("queue processors", () => {
   });
 
   it("issue label change no-ops on a malformed payload missing the issue number", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/agent-repo" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_REPOS: "owner/agent-repo" });
     let fetchCount = 0;
     vi.stubGlobal("fetch", async () => {
       fetchCount += 1;
@@ -3396,7 +3396,7 @@ describe("queue processors", () => {
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      LOOPOVER_REVIEW_REPOS: "owner/agent-repo",
       JOBS: {
         async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
           sent.push(options ? { message, options } : { message });
@@ -3448,7 +3448,7 @@ describe("queue processors", () => {
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      LOOPOVER_REVIEW_REPOS: "owner/agent-repo",
       JOBS: {
         async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
           sent.push(options ? { message, options } : { message });
@@ -3508,7 +3508,7 @@ describe("queue processors", () => {
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      LOOPOVER_REVIEW_REPOS: "owner/agent-repo",
       JOBS: {
         async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
           sent.push(options ? { message, options } : { message });
@@ -3560,7 +3560,7 @@ describe("queue processors", () => {
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      LOOPOVER_REVIEW_REPOS: "owner/agent-repo",
       JOBS: {
         async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
           sent.push(options ? { message, options } : { message });
@@ -3601,7 +3601,7 @@ describe("queue processors", () => {
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      LOOPOVER_REVIEW_REPOS: "owner/agent-repo",
       JOBS: {
         async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
           sent.push(options ? { message, options } : { message });
@@ -3649,7 +3649,7 @@ describe("queue processors", () => {
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      LOOPOVER_REVIEW_REPOS: "owner/agent-repo",
       JOBS: {
         async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
           sent.push(options ? { message, options } : { message });
@@ -3692,7 +3692,7 @@ describe("queue processors", () => {
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      LOOPOVER_REVIEW_REPOS: "owner/agent-repo",
       JOBS: {
         async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
           sent.push(options ? { message, options } : { message });
@@ -3745,7 +3745,7 @@ describe("queue processors", () => {
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      LOOPOVER_REVIEW_REPOS: "owner/agent-repo",
       JOBS: {
         async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
           sent.push(options ? { message, options } : { message });
@@ -3806,7 +3806,7 @@ describe("queue processors", () => {
     let sendAttempts = 0;
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      LOOPOVER_REVIEW_REPOS: "owner/agent-repo",
       JOBS: {
         async send() {
           sendAttempts += 1;
@@ -3856,7 +3856,7 @@ describe("queue processors", () => {
     let sendAttempts = 0;
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      LOOPOVER_REVIEW_REPOS: "owner/agent-repo",
       JOBS: {
         async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
           sendAttempts += 1;
@@ -4249,7 +4249,7 @@ describe("queue processors", () => {
     });
 
     it("INVARIANT (#4507): a real agent-regate-pr pass with reputation ON makes only ONE reputation-scan D1 read set, not two", async () => {
-      // JSONbored/gittensory is in createTestEnv's default GITTENSORY_REVIEW_REPOS allowlist, so the outer
+      // JSONbored/gittensory is in createTestEnv's default LOOPOVER_REVIEW_REPOS allowlist, so the outer
       // maybePublishPrPublicSurface scope's own preComputedReputationSkip gate condition is true here — this
       // exercises the REAL caller-scope computation (processors.ts's outer webhook-processing code), not just
       // the two consumer functions called directly.
@@ -4259,7 +4259,7 @@ describe("queue processors", () => {
         AI_SUMMARIES_ENABLED: "true",
         AI_PUBLIC_COMMENTS_ENABLED: "true",
         AI_DAILY_NEURON_BUDGET: "100000",
-        GITTENSORY_REVIEW_REPUTATION: "true",
+        LOOPOVER_REVIEW_REPUTATION: "true",
       });
       await seedRegateChurnRepo(env);
       // Deliberately NOT "contributor" -- several other tests earlier in this file (e.g. line ~3732) stub the
@@ -6164,7 +6164,7 @@ describe("queue processors", () => {
           AI_PUBLIC_COMMENTS_ENABLED: "true",
           AI_DAILY_NEURON_BUDGET: "100000",
         });
-        // No cadence override anywhere (no yml, no GITTENSORY_REVIEW_CONTINUOUS) -- one_shot is the codebase default.
+        // No cadence override anywhere (no yml, no LOOPOVER_REVIEW_CONTINUOUS) -- one_shot is the codebase default.
         await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
         await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 91, title: "One-shot PR", state: "open", user: { login: "contributor" }, head: { sha: "a91-v1" }, labels: [], body: "Closes #1" });
         await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 91, status: "complete", reviewsSyncedAt: new Date().toISOString() });
@@ -6574,18 +6574,18 @@ describe("queue processors", () => {
         expect(reuseAudit?.n).toBe(0); // one-shot reuse never engaged -- this repo opted out
       });
 
-      it("fleet-wide env default (GITTENSORY_REVIEW_CONTINUOUS): applies when the repo has no yml override, but a repo override still wins over it", async () => {
+      it("fleet-wide env default (LOOPOVER_REVIEW_CONTINUOUS): applies when the repo has no yml override, but a repo override still wins over it", async () => {
         let aiCalls = 0;
         const env = createTestEnv({
           GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-          GITTENSORY_REVIEW_CONTINUOUS: "true",
+          LOOPOVER_REVIEW_CONTINUOUS: "true",
           AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Fleet-wide continuous.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
           AI_SUMMARIES_ENABLED: "true",
           AI_PUBLIC_COMMENTS_ENABLED: "true",
           AI_DAILY_NEURON_BUDGET: "100000",
         });
         await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
-        // No per-repo cadence override -- inherits the fleet-wide GITTENSORY_REVIEW_CONTINUOUS default.
+        // No per-repo cadence override -- inherits the fleet-wide LOOPOVER_REVIEW_CONTINUOUS default.
         await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 96, title: "Fleet-default PR", state: "open", user: { login: "contributor" }, head: { sha: "a96-v1" }, labels: [], body: "Closes #1" });
         await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 96, status: "complete", reviewsSyncedAt: new Date().toISOString() });
         await putCachedAiReview(env, "JSONbored/gittensory", 96, "a96-v1", "block", { notes: "Original review.", reviewerCount: 1 });

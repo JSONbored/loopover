@@ -45,7 +45,7 @@ function capturingAiEnv(grounding: boolean | undefined) {
     AI_SUMMARIES_ENABLED: "true",
     AI_PUBLIC_COMMENTS_ENABLED: "true",
     AI_DAILY_NEURON_BUDGET: "100000",
-    ...(grounding === undefined ? {} : { GITTENSORY_REVIEW_GROUNDING: grounding ? "true" : "false" }),
+    ...(grounding === undefined ? {} : { LOOPOVER_REVIEW_GROUNDING: grounding ? "true" : "false" }),
   });
   return { env, seenUser, seenSystem, run };
 }
@@ -89,15 +89,15 @@ const prFile = (path: string, status = "modified"): PullRequestFileRecord => ({
 describe("isGroundingEnabled", () => {
   it("is OFF for unset/false and ON for the truthy convention", () => {
     expect(isGroundingEnabled({})).toBe(false);
-    expect(isGroundingEnabled({ GITTENSORY_REVIEW_GROUNDING: "false" })).toBe(false);
-    expect(isGroundingEnabled({ GITTENSORY_REVIEW_GROUNDING: "true" })).toBe(true);
-    expect(isGroundingEnabled({ GITTENSORY_REVIEW_GROUNDING: "1" })).toBe(true);
-    expect(isGroundingEnabled({ GITTENSORY_REVIEW_GROUNDING: "on" })).toBe(true);
+    expect(isGroundingEnabled({ LOOPOVER_REVIEW_GROUNDING: "false" })).toBe(false);
+    expect(isGroundingEnabled({ LOOPOVER_REVIEW_GROUNDING: "true" })).toBe(true);
+    expect(isGroundingEnabled({ LOOPOVER_REVIEW_GROUNDING: "1" })).toBe(true);
+    expect(isGroundingEnabled({ LOOPOVER_REVIEW_GROUNDING: "on" })).toBe(true);
   });
 });
 
 describe("aiCiRefutationActive compatibility helper", () => {
-  const env = (grounding: string, repos: string) => ({ GITTENSORY_REVIEW_GROUNDING: grounding, GITTENSORY_REVIEW_REPOS: repos }) as unknown as Env;
+  const env = (grounding: string, repos: string) => ({ LOOPOVER_REVIEW_GROUNDING: grounding, LOOPOVER_REVIEW_REPOS: repos }) as unknown as Env;
   const REPO = "JSONbored/metagraphed";
 
   it("is ON only when grounding is enabled AND the repo is convergence-allowlisted", () => {
@@ -149,7 +149,7 @@ describe("buildCheckAggregate maps gittensory check summaries → the grounding 
 
 // ── End-to-end: flag-gated prompt grounding through runGittensoryAiReview ─────────────────────────
 
-describe("review-grounding wired into the AI reviewer (flag GITTENSORY_REVIEW_GROUNDING)", () => {
+describe("review-grounding wired into the AI reviewer (flag LOOPOVER_REVIEW_GROUNDING)", () => {
   it("FLAG-ON: the user prompt gains CI STATUS + FULL FILE CONTENT and the system prompt gains the grounding discipline", async () => {
     const { env, seenUser, seenSystem } = capturingAiEnv(true);
     // Stub the GitHub Contents API so the real FileFetcher returns deterministic file text.
@@ -186,7 +186,7 @@ describe("review-grounding wired into the AI reviewer (flag GITTENSORY_REVIEW_GR
     // runs ON, including `(await getRepository(env, repo))?.installationId ?? null`.
     const run = vi.fn(async (_model: string, _opts: Record<string, unknown>) => ({ response: notesJson }));
     const env = createTestEnv({
-      GITTENSORY_REVIEW_GROUNDING: "true",
+      LOOPOVER_REVIEW_GROUNDING: "true",
       AI: { run } as unknown as Ai,
       AI_SUMMARIES_ENABLED: "true",
       AI_PUBLIC_COMMENTS_ENABLED: "true",
@@ -228,13 +228,13 @@ describe("review-grounding wired into the AI reviewer (flag GITTENSORY_REVIEW_GR
   it("FLAG-ON via runAiReviewForAdvisory: a repo with NO installationId grounds with installationId null (?? null)", async () => {
     const run = vi.fn(async () => ({ response: notesJson }));
     const env = createTestEnv({
-      GITTENSORY_REVIEW_GROUNDING: "true",
+      LOOPOVER_REVIEW_GROUNDING: "true",
       AI: { run } as unknown as Ai,
       AI_SUMMARIES_ENABLED: "true",
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    // Grounding is "allowlistRequired" (resolveConvergedFeature): the repo must be in GITTENSORY_REVIEW_REPOS
+    // Grounding is "allowlistRequired" (resolveConvergedFeature): the repo must be in LOOPOVER_REVIEW_REPOS
     // regardless of the override, so this MUST use an allowlisted repo (createTestEnv's default includes
     // "acme/widgets") — an un-allowlisted repo would short-circuit groundingActive to false before this
     // branch is ever reached, silently no-op-ing the assertion below.
@@ -282,7 +282,7 @@ describe("review-grounding wired into the AI reviewer (flag GITTENSORY_REVIEW_GR
   });
 
   it("buildReviewGroundingText returns empty (no fetch) when the flag is OFF", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_GROUNDING: "false" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "false" });
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const out = await buildReviewGroundingText(env, {
       repoFullName: "acme/widgets",
@@ -297,7 +297,7 @@ describe("review-grounding wired into the AI reviewer (flag GITTENSORY_REVIEW_GR
   });
 
   it("FLAG-ON e2e: full-file content is fetched (capped/prioritized) and inlined into the prompt", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_GROUNDING: "true", GITHUB_PUBLIC_TOKEN: "ghp_test" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "true", GITHUB_PUBLIC_TOKEN: "ghp_test" });
     // Stub the GitHub Contents API so the real FileFetcher returns deterministic file text.
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
       const u = String(url);
@@ -321,7 +321,7 @@ describe("review-grounding wired into the AI reviewer (flag GITTENSORY_REVIEW_GR
   });
 
   it("FLAG-ON: a file record with no status still grounds (toGroundingFiles' status field is optional)", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_GROUNDING: "true", GITHUB_PUBLIC_TOKEN: "ghp_test" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "true", GITHUB_PUBLIC_TOKEN: "ghp_test" });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("export const A = 1;", { status: 200 }));
     const noStatusFile: PullRequestFileRecord = { repoFullName: "acme/widgets", pullNumber: 7, path: "src/a.ts", additions: 1, deletions: 0, changes: 1, payload: {} };
     const out = await buildReviewGroundingText(env, {
@@ -336,7 +336,7 @@ describe("review-grounding wired into the AI reviewer (flag GITTENSORY_REVIEW_GR
   });
 
   it("FLAG-ON fail-safe: a throwing fetch degrades to no file section (never throws), CI still grounds", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_GROUNDING: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "true" });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
     const out = await buildReviewGroundingText(env, {
       repoFullName: "acme/widgets",
@@ -353,7 +353,7 @@ describe("review-grounding wired into the AI reviewer (flag GITTENSORY_REVIEW_GR
   });
 
   it("FLAG-ON: with no CI rows AND no readable files, grounding is empty (system suffix not attached)", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_GROUNDING: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "true" });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 404 }));
     const out = await buildReviewGroundingText(env, {
       repoFullName: "acme/widgets",
@@ -887,7 +887,7 @@ describe("buildCheckAggregate / buildReviewGroundingText edge branches", () => {
   });
 
   it("FLAG-ON outer fail-safe: a throw inside the build degrades to EMPTY_GROUNDING (never throws)", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_GROUNDING: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "true" });
     // A file record whose path getter throws makes toGroundingFiles throw inside the try → outer catch.
     const poison = { get path(): string { throw new Error("boom"); } } as unknown as PullRequestFileRecord;
     const out = await buildReviewGroundingText(env, {

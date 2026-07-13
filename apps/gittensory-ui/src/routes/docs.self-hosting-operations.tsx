@@ -580,7 +580,7 @@ SENTRY_RELEASE=gittensory-selfhost@2026.07.05
 # SENTRY_TRACES_SAMPLE_RATE=0.05`}
       />
       <p>
-        Official release images bake <code>GITTENSORY_VERSION</code> as the default release id;
+        Official release images bake <code>LOOPOVER_VERSION</code> as the default release id;
         override with <code>SENTRY_RELEASE</code> when you tag custom builds. Mount secrets with{" "}
         <code>SENTRY_DSN_FILE</code> instead of inline env when you prefer a file-backed DSN. After
         changing Sentry env, restart the <code>loopover</code> service — there is no hot reload.
@@ -898,7 +898,7 @@ SENTRY_ORG_SLUG=<your-sentry-org-slug>
           <li>
             <code>.env</code> and any <code>*_FILE</code> secret mounts — deploy scripts only write
             back <code>GITTENSORY_IMAGE</code> (image path) or <code>SENTRY_RELEASE</code> /{" "}
-            <code>GITTENSORY_VERSION</code> (source path).
+            <code>LOOPOVER_VERSION</code> (source path).
           </li>
           <li>
             <code>./gittensory-config/</code> bind mount — private per-repo{" "}
@@ -1040,10 +1040,10 @@ git merge --ff-only origin/main
       />
       <p>
         <code>scripts/deploy-selfhost-prebuilt.sh</code> is the actual rebuild step (this is how{" "}
-        <code>GITTENSORY_VERSION</code> ends up as a short git SHA instead of an image tag). It
-        builds the bundle inside a Dockerized Node container — the host itself never needs Node or
-        npm installed — then restarts only the <code>loopover</code> service the same way as the
-        image path. <code>SENTRY_RELEASE</code> defaults to{" "}
+        <code>LOOPOVER_VERSION</code> ends up as a short git SHA instead of an image tag). It builds
+        the bundle inside a Dockerized Node container — the host itself never needs Node or npm
+        installed — then restarts only the <code>loopover</code> service the same way as the image
+        path. <code>SENTRY_RELEASE</code> defaults to{" "}
         <code>gittensory-selfhost@&lt;short git SHA of the current HEAD&gt;</code> unless you
         override it, so each deploy from a new commit gets a distinct release id automatically. When{" "}
         <code>SENTRY_AUTH_TOKEN</code>, <code>SENTRY_ORG</code>, and <code>SENTRY_PROJECT</code> are
@@ -1085,7 +1085,7 @@ git merge --ff-only origin/main
 # equivalent manual checks:
 curl -sf http://localhost:8787/ready
 docker compose ps loopover
-grep -E '^(GITTENSORY_IMAGE|GITTENSORY_VERSION|SENTRY_RELEASE)=' .env
+grep -E '^(GITTENSORY_IMAGE|LOOPOVER_VERSION|SENTRY_RELEASE)=' .env
 docker inspect --format '{{.Config.Image}}' "$(docker compose ps -q loopover)"`}
       />
       <p>

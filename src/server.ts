@@ -107,7 +107,11 @@ import {
 import { probeReesSecretAtStartup } from "./review/enrichment-wire";
 import { sampleRecentDeadLetters } from "./selfhost/dlq-recent";
 import type { JobMessage } from "./types";
-import { dualPrefixEnvString } from "./utils/env";
+
+function nonBlank(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
 
 
 interface Backend {
@@ -281,13 +285,11 @@ async function main(): Promise<void> {
   // stop redacting the `repo` label PRIVATE_REPO_LABEL_METRICS otherwise drops for every deployment
   // (#terminal-outcome-audit).
   setSelfHostedMetricsMode(true);
-  // Container-private per-repo config (self-host): register the GITTENSORY_REPO_CONFIG_DIR reader so the focus-
+  // Container-private per-repo config (self-host): register the LOOPOVER_REPO_CONFIG_DIR reader so the focus-
   // manifest loader prefers a mounted `{owner}__{repo}.yml`, deep-merged over an optional root `.gittensory.yml`
   // global default, over the public `.gittensory.yml` (review policy stays private; see
   // config/examples/README.md). Unset dir ⇒ null reader ⇒ unchanged public-fetch behavior.
-  // #4774 dual-read: LOOPOVER_REPO_CONFIG_DIR wins over the legacy GITTENSORY_REPO_CONFIG_DIR when both are
-  // set; resolved once here so every reader below and the boot-time log line agree on the same value.
-  const repoConfigDir = dualPrefixEnvString(process.env, "REPO_CONFIG_DIR");
+  const repoConfigDir = nonBlank(process.env.LOOPOVER_REPO_CONFIG_DIR);
   setLocalManifestReader(makeLocalManifestReader(repoConfigDir));
   // Per-repo review CONTEXT (#review-skills): the same config dir also holds `<repo>/review/AGENTS.md`
   // (or legacy `<repo>/review/CLAUDE.md`) + skills/*.md, injected into the reviewer prompt so reviews follow each

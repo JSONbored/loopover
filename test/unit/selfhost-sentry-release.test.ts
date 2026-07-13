@@ -67,7 +67,7 @@ describe("self-host Sentry release wiring", () => {
     expect(edgeDeployScript).not.toContain("@sentry/cli@latest");
     expect(releaseWorkflow).toContain("target: runtime-prebuilt");
     expect(releaseWorkflow).toContain(
-      "GITTENSORY_VERSION=${{ steps.version.outputs.release }}",
+      "LOOPOVER_VERSION=${{ steps.version.outputs.release }}",
     );
 
     for (const path of [

@@ -264,7 +264,7 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       await deliverNotification(env, message.deliveryId);
       return;
     case "ops-alerts":
-      // Convergence (ops / observability, flag GITTENSORY_REVIEW_OPS). Defense-in-depth: the cron only ENQUEUES this
+      // Convergence (ops / observability, flag LOOPOVER_REVIEW_OPS). Defense-in-depth: the cron only ENQUEUES this
       // when the flag is ON, but a stale in-flight job that lands after a flag-flip must still no-op, so
       // flag-OFF does zero work here too. Read-only telemetry — never throws into the queue.
       if (isOpsEnabled(env)) await runOpsAlerts(env);
@@ -282,7 +282,7 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       if (isPrReconciliationEnabled(env)) await runOpenPrReconciliation(env);
       return;
     case "selftune":
-      // Convergence (self-improve / auto-tune, flag GITTENSORY_REVIEW_SELFTUNE). Defense-in-depth: the cron only
+      // Convergence (self-improve / auto-tune, flag LOOPOVER_REVIEW_SELFTUNE). Defense-in-depth: the cron only
       // ENQUEUES this when the flag is ON, but a stale in-flight job that lands after a flag-flip must still
       // no-op, so flag-OFF does zero work here too. TIGHTENING-ONLY + shadow-soak + audited; never throws into
       // the queue (runSelfTune fails safe).
@@ -297,7 +297,7 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       }
       return;
     case "rag-index-repo":
-      // Convergence (RAG / codebase index, flag GITTENSORY_REVIEW_RAG). Defense-in-depth: the cron + webhook only
+      // Convergence (RAG / codebase index, flag LOOPOVER_REVIEW_RAG). Defense-in-depth: the cron + webhook only
       // ENQUEUE this when the flag is ON, but a stale in-flight job that lands after a flag-flip must still no-op,
       // so flag-OFF does zero work here too. indexRepo / reindexChangedPaths are fully fail-safe (never throw).
       if (isRagEnabled(env))
@@ -328,7 +328,7 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       );
       return;
     case "submit-draft":
-      // Public OAuth draft-submission (GITTENSORY_REVIEW_DRAFT). No-ops internally when the flag is off.
+      // Public OAuth draft-submission (LOOPOVER_REVIEW_DRAFT). No-ops internally when the flag is off.
       await processSubmitDraft(env, message.draftId);
       return;
     case "retry-orb-relay":

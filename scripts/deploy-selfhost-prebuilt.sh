@@ -95,12 +95,12 @@ services:
     build:
       target: runtime-prebuilt
       args:
-        GITTENSORY_VERSION: "\${SENTRY_RELEASE}"
+        LOOPOVER_VERSION: "\${SENTRY_RELEASE}"
         INSTALL_AI_CLIS: "\${INSTALL_AI_CLIS:-true}"
         INSTALL_VISUAL_REVIEW: "\${INSTALL_VISUAL_REVIEW:-false}"
     environment:
       SENTRY_RELEASE: "\${SENTRY_RELEASE}"
-      GITTENSORY_VERSION: "\${SENTRY_RELEASE}"
+      LOOPOVER_VERSION: "\${SENTRY_RELEASE}"
 YAML
 
   mapfile -t compose_args < <(compose_file_args)
@@ -128,7 +128,7 @@ SENTRY_RELEASE="${SENTRY_RELEASE:-gittensory-selfhost@$(git rev-parse --short=8 
 export SENTRY_RELEASE
 
 env_put SENTRY_RELEASE "$SENTRY_RELEASE"
-env_put GITTENSORY_VERSION "$SENTRY_RELEASE"
+env_put LOOPOVER_VERSION "$SENTRY_RELEASE"
 
 run_node_build
 run_init_secrets

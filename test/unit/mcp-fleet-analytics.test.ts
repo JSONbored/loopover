@@ -60,7 +60,7 @@ describe("gittensory_get_fleet_analytics MCP tool", () => {
     expect(JSON.stringify(result.content)).toMatch(/operator authority/i);
   });
 
-  // Regression test for #2455: the shared, end-user-obtainable GITTENSORY_MCP_TOKEN must not read
+  // Regression test for #2455: the shared, end-user-obtainable LOOPOVER_MCP_TOKEN must not read
   // cross-instance operator-only reports by default. "" overrides createTestEnv's own
   // MCP_READ_REPO_ALLOWLIST: "*" default back to unset, exercising the real deny-by-default behavior.
   it("forbids the static mcp identity without an MCP_READ_REPO_ALLOWLIST wildcard opt-in (#2455)", async () => {

@@ -16,7 +16,7 @@ const mockedPermission = vi.mocked(getRepositoryCollaboratorPermission);
 
 function apiHeaders(env: Env): Record<string, string> {
   return {
-    authorization: `Bearer ${env.GITTENSORY_API_TOKEN}`,
+    authorization: `Bearer ${env.LOOPOVER_API_TOKEN}`,
     "content-type": "application/json",
   };
 }

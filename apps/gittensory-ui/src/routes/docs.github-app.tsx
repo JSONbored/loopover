@@ -265,11 +265,11 @@ review:
       </p>
 
       <h2>
-        Review capability flags (<code>GITTENSORY_REVIEW_*</code>)
+        Review capability flags (<code>LOOPOVER_REVIEW_*</code>)
       </h2>
       <p>
         Beyond per-repo settings, operators turn whole review <em>capabilities</em> on or off with
-        the <code>GITTENSORY_REVIEW_*</code> worker environment variables. Every flag defaults to{" "}
+        the <code>LOOPOVER_REVIEW_*</code> worker environment variables. Every flag defaults to{" "}
         <strong>OFF</strong>: when a flag is off its code path is inert and the review behaves
         exactly as if the feature did not exist. "Truthy" is one of <code>1</code>,{" "}
         <code>true</code>, <code>yes</code>, or <code>on</code>. You roll capabilities forward — and
@@ -277,71 +277,71 @@ review:
       </p>
       <Callout variant="safety">
         Per-PR features require <strong>two</strong> conditions: the capability flag is on{" "}
-        <em>and</em> the repo is listed in <code>GITTENSORY_REVIEW_REPOS</code>. With an empty repo
+        <em>and</em> the repo is listed in <code>LOOPOVER_REVIEW_REPOS</code>. With an empty repo
         allowlist every per-PR feature stays dormant for everyone, no matter the global flags.
       </Callout>
       <ul>
         <li>
-          <code>GITTENSORY_REVIEW_REPOS</code> — per-repo cutover allowlist. Comma-separated{" "}
+          <code>LOOPOVER_REVIEW_REPOS</code> — per-repo cutover allowlist. Comma-separated{" "}
           <code>owner/repo</code> names that may run the per-PR features. Add repos one at a time to
           roll forward; remove to roll back.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_SAFETY</code> — safety scan: defangs untrusted PR title/body/diff
+          <code>LOOPOVER_REVIEW_SAFETY</code> — safety scan: defangs untrusted PR title/body/diff
           (prompt-injection neutralization) before the reviewer sees it, and surfaces a{" "}
           <code>secret_leak</code> blocker for leaked secrets in the diff. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_GROUNDING</code> — grounds the AI reviewer with the PR's finished
-          CI status and the full post-change content of the changed files, so the model verifies its
+          <code>LOOPOVER_REVIEW_GROUNDING</code> — grounds the AI reviewer with the PR's finished CI
+          status and the full post-change content of the changed files, so the model verifies its
           claims against reality. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_RAG</code> — retrieval-augmented context: appends semantically
+          <code>LOOPOVER_REVIEW_RAG</code> — retrieval-augmented context: appends semantically
           related code/docs from the codebase vector index to the reviewer prompt. Per-PR; inert
           until a <code>VECTORIZE</code> index exists for the repo.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_REPUTATION</code> — submitter-reputation spend control: downgrades
-          a new / burst / low-reputation submitter to a deterministic-only review. Internal-only,
+          <code>LOOPOVER_REVIEW_REPUTATION</code> — submitter-reputation spend control: downgrades a
+          new / burst / low-reputation submitter to a deterministic-only review. Internal-only,
           never surfaced publicly. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_UNIFIED_COMMENT</code> — renders the public PR comment as one
+          <code>LOOPOVER_REVIEW_UNIFIED_COMMENT</code> — renders the public PR comment as one
           in-place unified comment instead of the legacy multi-panel comment. Per-PR; flag-off keeps
           the legacy comment byte-identical.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_OPS</code> — read-only observability: a cron anomaly scan over
-          your own review-outcome data plus a bearer-gated stats aggregate. Global (not scoped by
-          the repo allowlist).
+          <code>LOOPOVER_REVIEW_OPS</code> — read-only observability: a cron anomaly scan over your
+          own review-outcome data plus a bearer-gated stats aggregate. Global (not scoped by the
+          repo allowlist).
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_SELFTUNE</code> — self-improvement loop that computes tuning
+          <code>LOOPOVER_REVIEW_SELFTUNE</code> — self-improvement loop that computes tuning
           recommendations from review outcomes, shadow-soaks any strictly-tightening recommendation,
           and can <em>only ever tighten</em> the gate. Global.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_CONTENT_LANE</code> — routes content repos (curated lists,
+          <code>LOOPOVER_REVIEW_CONTENT_LANE</code> — routes content repos (curated lists,
           registries) through the dedicated content lane instead of the code gate. Global.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_DRAFT</code> — public draft-submission flow (contributor draft →
+          <code>LOOPOVER_REVIEW_DRAFT</code> — public draft-submission flow (contributor draft →
           GitHub OAuth → fork PR). Global; also needs the draft secrets set.
         </li>
       </ul>
       <p>
         A safe rollout for a per-PR feature is two flips: set the capability flag truthy, then add
-        the repo to <code>GITTENSORY_REVIEW_REPOS</code>. Because both must hold, a capability can
+        the repo to <code>LOOPOVER_REVIEW_REPOS</code>. Because both must hold, a capability can
         stay globally enabled while remaining dormant everywhere except the repos you have
         explicitly added.
       </p>
       <CodeBlock
         lang="bash"
         code={`# Roll grounding + the unified comment onto one repo:
-GITTENSORY_REVIEW_GROUNDING="true"
-GITTENSORY_REVIEW_UNIFIED_COMMENT="true"
-GITTENSORY_REVIEW_REPOS="JSONbored/gittensory"`}
+LOOPOVER_REVIEW_GROUNDING="true"
+LOOPOVER_REVIEW_UNIFIED_COMMENT="true"
+LOOPOVER_REVIEW_REPOS="JSONbored/gittensory"`}
       />
 
       <h2>Dogfood mode</h2>

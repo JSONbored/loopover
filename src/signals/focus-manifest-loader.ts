@@ -31,7 +31,7 @@ export const MANIFEST_FILE_CANDIDATES = [
 export type RepoFocusManifestFetcher = (repoFullName: string) => Promise<string | LocalManifestLoadResult | null>;
 
 /**
- * Optional container-private per-repo config reader (self-host GITTENSORY_REPO_CONFIG_DIR). When registered it
+ * Optional container-private per-repo config reader (self-host LOOPOVER_REPO_CONFIG_DIR). When registered it
  * takes priority over — and fully REPLACES — the public `.loopover.yml` for the normal
  * (non-preview) load, so a self-host operator sets review policy privately and contributors can't read or game it. Registered once at boot
  * by the Node entry (server.ts); the filesystem access lives inside that injected closure, keeping THIS module

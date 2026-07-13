@@ -56,12 +56,12 @@ function SelfHostingRees() {
           {
             title: "Repo is allowlisted",
             description:
-              "The repo must be listed in GITTENSORY_REVIEW_REPOS, the same cutover allowlist used by the other per-PR review features.",
+              "The repo must be listed in LOOPOVER_REVIEW_REPOS, the same cutover allowlist used by the other per-PR review features.",
           },
           {
             title: "REES is enabled",
             description:
-              "GITTENSORY_REVIEW_ENRICHMENT must be truthy and REES_URL must be set. Otherwise no REES request is made.",
+              "LOOPOVER_REVIEW_ENRICHMENT must be truthy and REES_URL must be set. Otherwise no REES request is made.",
           },
           {
             title: "Service auth matches",
@@ -82,8 +82,8 @@ function SelfHostingRees() {
       <p>Point the engine at it and generate a fresh shared secret:</p>
       <CodeBlock
         filename=".env"
-        code={`GITTENSORY_REVIEW_REPOS=owner/repo
-GITTENSORY_REVIEW_ENRICHMENT=true
+        code={`LOOPOVER_REVIEW_REPOS=owner/repo
+LOOPOVER_REVIEW_ENRICHMENT=true
 REES_URL=http://rees:8080
 REES_SHARED_SECRET=<generate-a-new-shared-secret>`}
       />
@@ -106,8 +106,8 @@ REES_SHARED_SECRET=<generate-a-new-shared-secret>`}
       </p>
       <CodeBlock
         filename=".env"
-        code={`GITTENSORY_REVIEW_REPOS=owner/repo
-GITTENSORY_REVIEW_ENRICHMENT=true
+        code={`LOOPOVER_REVIEW_REPOS=owner/repo
+LOOPOVER_REVIEW_ENRICHMENT=true
 REES_URL=https://enrichment.example.internal
 REES_SHARED_SECRET=<shared-secret>`}
       />
@@ -123,11 +123,11 @@ REES_ANALYZERS=all`}
       <FeatureRow
         items={[
           {
-            title: "GITTENSORY_REVIEW_ENRICHMENT",
+            title: "LOOPOVER_REVIEW_ENRICHMENT",
             description: "Global switch. Must be truthy and REES_URL must be set.",
           },
           {
-            title: "GITTENSORY_REVIEW_REPOS",
+            title: "LOOPOVER_REVIEW_REPOS",
             description: "Repo allowlist. REES only runs for allowlisted repos.",
           },
           {
@@ -154,15 +154,15 @@ REES_ANALYZERS=all`}
 
       <h2>Disable cleanly</h2>
       <p>
-        Set <code>GITTENSORY_REVIEW_ENRICHMENT=false</code> to turn off REES for the whole instance.
+        Set <code>LOOPOVER_REVIEW_ENRICHMENT=false</code> to turn off REES for the whole instance.
         To keep REES configured but prevent a repo from using it, remove that repo from{" "}
-        <code>GITTENSORY_REVIEW_REPOS</code>. Token forwarding stays off unless you explicitly set{" "}
+        <code>LOOPOVER_REVIEW_REPOS</code>. Token forwarding stays off unless you explicitly set{" "}
         <code>REES_FORWARD_GITHUB_TOKEN=true</code>.
       </p>
       <CodeBlock
         filename=".env"
         code={`# Full REES off switch:
-GITTENSORY_REVIEW_ENRICHMENT=false
+LOOPOVER_REVIEW_ENRICHMENT=false
 
 # Keep REES on and explicitly allow token-aware analyzers:
 REES_FORWARD_GITHUB_TOKEN=true`}

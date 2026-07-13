@@ -198,7 +198,7 @@ export type JobMessage =
       deliveryId: string;
     }
   | {
-      // Convergence (ops / observability, flag-gated by GITTENSORY_REVIEW_OPS). Scan gittensory's review-outcome data
+      // Convergence (ops / observability, flag-gated by LOOPOVER_REVIEW_OPS). Scan gittensory's review-outcome data
       // (gate-block ledger + recommendation/slop calibration) and emit a structured `ops_anomaly` log on drift.
       // Enqueued hourly by the cron ONLY when the flag is ON (index.ts), so flag-OFF this job never exists.
       type: "ops-alerts";
@@ -223,7 +223,7 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
-      // Convergence (self-improve / auto-tune, flag-gated by GITTENSORY_REVIEW_SELFTUNE). Run the ported
+      // Convergence (self-improve / auto-tune, flag-gated by LOOPOVER_REVIEW_SELFTUNE). Run the ported
       // self-improvement loop over gittensory's review-outcome data — compute tuning recommendations,
       // SHADOW-SOAK any strictly-tightening one, and AUTO-PROMOTE it to live only after the soak window passes
       // the gate; every action is audited. TIGHTENING-ONLY. Enqueued hourly by the cron ONLY when the flag is
@@ -232,7 +232,7 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
-      // Convergence (RAG / codebase index — Layer C, flag-gated by GITTENSORY_REVIEW_RAG). Populate + maintain the
+      // Convergence (RAG / codebase index — Layer C, flag-gated by LOOPOVER_REVIEW_RAG). Populate + maintain the
       // vector index that retrieval reads.
       //   - No `repoFullName` (the cron fan-out) → enqueue one per-repo FULL re-index job for every
       //     registered + cutover-allowlisted repo (mirrors the agent-regate / signal-snapshot fan-out).
@@ -248,7 +248,7 @@ export type JobMessage =
       paths?: string[];
     }
   | {
-      // Public OAuth draft-submission flow (GITTENSORY_REVIEW_DRAFT): fork the content repo with the
+      // Public OAuth draft-submission flow (LOOPOVER_REVIEW_DRAFT): fork the content repo with the
       // contributor's token + open the PR. Enqueued by the draft OAuth callback.
       type: "submit-draft";
       requestedBy: "api" | "test";

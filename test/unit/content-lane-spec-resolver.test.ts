@@ -128,30 +128,30 @@ describe("resolveRegistryLaneSpec (precedence: env kill-switch → per-repo conf
 
   it("is null when the env kill-switch is off, even with an explicit config or an allowlist entry", () => {
     const manifest = parseFocusManifest({ contentLane: { entryFileGlob: "registry/*.json", collectionField: "items" } });
-    expect(resolveRegistryLaneSpec({ GITTENSORY_REVIEW_REPOS: REPO }, manifest, REPO)).toBeNull();
+    expect(resolveRegistryLaneSpec({ LOOPOVER_REVIEW_REPOS: REPO }, manifest, REPO)).toBeNull();
   });
 
   it("falls back to the allowlist default (METAGRAPHED_LANE_SPEC) when no per-repo config is present", () => {
     const manifest = parseFocusManifest(null);
-    const spec = resolveRegistryLaneSpec({ GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO }, manifest, REPO);
+    const spec = resolveRegistryLaneSpec({ LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO }, manifest, REPO);
     expect(spec).toBe(METAGRAPHED_LANE_SPEC);
   });
 
   it("is null when there's no config AND the repo is not in the allowlist — inactive", () => {
     const manifest = parseFocusManifest(null);
-    expect(resolveRegistryLaneSpec({ GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: "Other/repo" }, manifest, REPO)).toBeNull();
+    expect(resolveRegistryLaneSpec({ LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: "Other/repo" }, manifest, REPO)).toBeNull();
   });
 
   it("an explicit per-repo config WINS over the allowlist default, even for a repo not in the allowlist at all", () => {
     const manifest = parseFocusManifest({ contentLane: { entryFileGlob: "registry/items/*.json", collectionField: "items" } });
-    const spec = resolveRegistryLaneSpec({ GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: "Other/repo" }, manifest, REPO);
+    const spec = resolveRegistryLaneSpec({ LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: "Other/repo" }, manifest, REPO);
     expect(spec).not.toBeNull();
     expect(spec).not.toBe(METAGRAPHED_LANE_SPEC);
     expect(spec?.collectionField).toBe("items");
   });
 
   it("a null/undefined manifest degrades to the allowlist-default path, not a crash", () => {
-    expect(resolveRegistryLaneSpec({ GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO }, null, REPO)).toBe(METAGRAPHED_LANE_SPEC);
-    expect(resolveRegistryLaneSpec({ GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO }, undefined, REPO)).toBe(METAGRAPHED_LANE_SPEC);
+    expect(resolveRegistryLaneSpec({ LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO }, null, REPO)).toBe(METAGRAPHED_LANE_SPEC);
+    expect(resolveRegistryLaneSpec({ LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: REPO }, undefined, REPO)).toBe(METAGRAPHED_LANE_SPEC);
   });
 });

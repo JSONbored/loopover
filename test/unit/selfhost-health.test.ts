@@ -66,41 +66,18 @@ describe("codexAuthReadinessProbe (#GITTENSORY-C)", () => {
   it("registers no probe when the codex reviewer opt-in is not set", () => {
     expect(codexAuthReadinessProbe({}, async () => ({ code: 0 }))).toBeNull();
     expect(
-      codexAuthReadinessProbe({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "0" }, async () => ({ code: 0 })),
+      codexAuthReadinessProbe({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "0" }, async () => ({ code: 0 })),
     ).toBeNull();
   });
 
-  // #4774 dual-read: LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER is a first-class alias of the legacy
-  // GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER, new name winning when both are set (strict "1"-only, matching
-  // this flag's intentionally narrow opt-in convention).
-  describe("#4774 GITTENSORY_ -> LOOPOVER_ dual-read", () => {
-    it("registers a probe via the NEW LOOPOVER_ name alone (legacy unset)", () => {
-      expect(codexAuthReadinessProbe({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, async () => ({ code: 0 }))).not.toBeNull();
-    });
-    it("still registers a probe via the legacy GITTENSORY_ name alone — an untouched .env keeps working unchanged", () => {
-      expect(codexAuthReadinessProbe({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, async () => ({ code: 0 }))).not.toBeNull();
-    });
-    it("the NEW LOOPOVER_ name wins when BOTH are set", () => {
-      // legacy says on ("1"), new name says off -> no probe (new wins).
-      expect(
-        codexAuthReadinessProbe(
-          { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1", LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "0" },
-          async () => ({ code: 0 }),
-        ),
-      ).toBeNull();
-      // legacy says off, new name says on ("1") -> a probe registers (new wins).
-      expect(
-        codexAuthReadinessProbe(
-          { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "0", LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
-          async () => ({ code: 0 }),
-        ),
-      ).not.toBeNull();
-    });
+  it("registers a probe when LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER is exactly \"1\" (strict, not loose-truthy)", () => {
+    expect(codexAuthReadinessProbe({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, async () => ({ code: 0 }))).not.toBeNull();
+    expect(codexAuthReadinessProbe({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "true" }, async () => ({ code: 0 }))).toBeNull();
   });
 
   it("reports healthy only when BOTH codex --version exits 0 AND the auth file check passes", async () => {
     const probe = codexAuthReadinessProbe(
-      { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+      { LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
       async () => ({ code: 0 }),
       async () => true,
     );
@@ -117,7 +94,7 @@ describe("codexAuthReadinessProbe (#GITTENSORY-C)", () => {
       markStarted = resolve;
     });
     const probe = codexAuthReadinessProbe(
-      { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+      { LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
       async () => {
         versionCalls += 1;
         markStarted!();
@@ -140,7 +117,7 @@ describe("codexAuthReadinessProbe (#GITTENSORY-C)", () => {
   it("rechecks after the codex readiness cache expires", async () => {
     let versionCalls = 0;
     const probe = codexAuthReadinessProbe(
-      { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+      { LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
       async () => {
         versionCalls += 1;
         return { code: 0 };
@@ -156,7 +133,7 @@ describe("codexAuthReadinessProbe (#GITTENSORY-C)", () => {
 
   it("reports unhealthy when codex --version exits non-zero (missing/unauthenticated auth volume)", async () => {
     const probe = codexAuthReadinessProbe(
-      { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+      { LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
       async () => ({ code: 1 }),
       async () => true,
     );
@@ -165,7 +142,7 @@ describe("codexAuthReadinessProbe (#GITTENSORY-C)", () => {
 
   it("fails closed (does not throw) when spawning codex itself rejects", async () => {
     const probe = codexAuthReadinessProbe(
-      { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+      { LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
       async () => {
         throw new Error("ENOENT: codex not found");
       },
@@ -177,7 +154,7 @@ describe("codexAuthReadinessProbe (#GITTENSORY-C)", () => {
   it("regression: reports unhealthy when the auth FILE check fails even though `codex --version` succeeds", async () => {
     // The gap `codex --version` alone misses: the binary starts fine (exit 0) but no real credentials exist.
     const probe = codexAuthReadinessProbe(
-      { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+      { LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
       async () => ({ code: 0 }),
       async () => false,
     );
@@ -186,7 +163,7 @@ describe("codexAuthReadinessProbe (#GITTENSORY-C)", () => {
 
   it("fails closed when the auth file check itself throws", async () => {
     const probe = codexAuthReadinessProbe(
-      { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+      { LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
       async () => ({ code: 0 }),
       async () => {
         throw new Error("EACCES");
@@ -200,15 +177,15 @@ describe("codexAuthReadinessProbe (#GITTENSORY-C)", () => {
       const dir = mkdtempSync(join(tmpdir(), "codex-health-auth-"));
       const versionOk = async () => ({ code: 0 });
 
-      const missing = codexAuthReadinessProbe({ CODEX_HOME: dir, GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, versionOk);
+      const missing = codexAuthReadinessProbe({ CODEX_HOME: dir, LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, versionOk);
       await expect(missing!.check()).resolves.toBe(false);
 
       writeFileSync(join(dir, "auth.json"), "");
-      const empty = codexAuthReadinessProbe({ CODEX_HOME: dir, GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, versionOk);
+      const empty = codexAuthReadinessProbe({ CODEX_HOME: dir, LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, versionOk);
       await expect(empty!.check()).resolves.toBe(false);
 
       writeFileSync(join(dir, "auth.json"), JSON.stringify({ token: "t" }));
-      const populated = codexAuthReadinessProbe({ CODEX_HOME: dir, GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, versionOk);
+      const populated = codexAuthReadinessProbe({ CODEX_HOME: dir, LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, versionOk);
       await expect(populated!.check()).resolves.toBe(true);
     });
 
@@ -217,7 +194,7 @@ describe("codexAuthReadinessProbe (#GITTENSORY-C)", () => {
       mkdirSync(join(dir, ".codex"), { recursive: true });
       writeFileSync(join(dir, ".codex", "auth.json"), JSON.stringify({ token: "t" }));
       const probe = codexAuthReadinessProbe(
-        { HOME: dir, GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+        { HOME: dir, LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
         async () => ({ code: 0 }),
       );
       await expect(probe!.check()).resolves.toBe(true);
@@ -225,7 +202,7 @@ describe("codexAuthReadinessProbe (#GITTENSORY-C)", () => {
 
     it("falls back to the literal ~/.codex/auth.json (fails safe) when neither CODEX_HOME nor HOME is set", async () => {
       const probe = codexAuthReadinessProbe(
-        { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+        { LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
         async () => ({ code: 0 }),
       );
       await expect(probe!.check()).resolves.toBe(false);

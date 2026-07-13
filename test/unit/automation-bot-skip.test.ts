@@ -7,7 +7,7 @@ import {
 } from "../../src/settings/automation-bot-skip";
 
 describe("isSkipAutomationBotPullRequestsEnabledGlobally", () => {
-  it("defaults ON when unset (unlike most GITTENSORY_REVIEW_* flags)", () => {
+  it("defaults ON when unset (unlike most LOOPOVER_REVIEW_* flags)", () => {
     expect(isSkipAutomationBotPullRequestsEnabledGlobally({})).toBe(true);
     expect(isSkipAutomationBotPullRequestsEnabledGlobally({ GITTENSORY_SKIP_AUTOMATION_BOT_PRS: undefined })).toBe(true);
     expect(isSkipAutomationBotPullRequestsEnabledGlobally({ GITTENSORY_SKIP_AUTOMATION_BOT_PRS: "" })).toBe(true);

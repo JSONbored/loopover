@@ -42,7 +42,7 @@ import { createPendingAgentActionIfAbsent, getPendingAgentAction, recordAuditEve
 import { createTestEnv } from "../helpers/d1";
 
 const app = createApp();
-const headers = (env: Env) => ({ authorization: `Bearer ${env.GITTENSORY_API_TOKEN}`, "content-type": "application/json" });
+const headers = (env: Env) => ({ authorization: `Bearer ${env.LOOPOVER_API_TOKEN}`, "content-type": "application/json" });
 
 async function seedPending(env: Env) {
   await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });

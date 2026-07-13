@@ -6,8 +6,8 @@ import { createTestEnv } from "../helpers/d1";
 
 describe("isPlannerEnabled (#issue-coding-plan)", () => {
   it("is OFF for unset/falsey flags and ON for truthy ones", () => {
-    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isPlannerEnabled({ GITTENSORY_REVIEW_PLANNER: off })).toBe(false);
-    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isPlannerEnabled({ GITTENSORY_REVIEW_PLANNER: on })).toBe(true);
+    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isPlannerEnabled({ LOOPOVER_REVIEW_PLANNER: off })).toBe(false);
+    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isPlannerEnabled({ LOOPOVER_REVIEW_PLANNER: on })).toBe(true);
   });
 });
 

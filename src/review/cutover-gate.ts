@@ -1,10 +1,10 @@
 // Convergence (cutover) per-repo gate: an allowlist that activates the PER-PR converged review features one
 // repo at a time, so the cutover can be rolled forward (and rolled back) on a single repo without flipping the
-// global flags off for everyone. Each per-PR converged feature ALREADY has a global switch (GITTENSORY_REVIEW_SAFETY /
-// _GROUNDING / _RAG / _REPUTATION, GITTENSORY_REVIEW_UNIFIED_COMMENT); this adds a SECOND, repo-scoped gate that must
+// global flags off for everyone. Each per-PR converged feature ALREADY has a global switch (LOOPOVER_REVIEW_SAFETY /
+// _GROUNDING / _RAG / _REPUTATION, LOOPOVER_REVIEW_UNIFIED_COMMENT); this adds a SECOND, repo-scoped gate that must
 // ALSO pass for the feature to run on a given PR's repo.
 //
-// Single env var: GITTENSORY_REVIEW_REPOS — a comma-separated allowlist of repo full-names
+// Single env var: LOOPOVER_REVIEW_REPOS — a comma-separated allowlist of repo full-names
 // ("owner/repo", e.g. "JSONbored/gittensory,JSONbored/awesome-claude"). A repo activates the converged
 // features ONLY IF (the feature's global flag is ON) AND (the repo is in this allowlist).
 //
@@ -15,10 +15,8 @@
 // Matching is case-insensitive exact match on the trimmed "owner/repo" (GitHub repo full-names are
 // case-insensitive). Empty entries between commas are ignored, so a trailing/stray comma is harmless.
 
-import { dualPrefixEnvString } from "../utils/env";
-
 /**
- * True when `repoFullName` is in the GITTENSORY_REVIEW_REPOS allowlist (per-repo cutover gate).
+ * True when `repoFullName` is in the LOOPOVER_REVIEW_REPOS allowlist (per-repo cutover gate).
  *
  * - Splits the allowlist on commas, trims each entry, and does a case-insensitive exact match on "owner/repo".
  * - Empty / unset / whitespace-only allowlist → ALWAYS false (no repos converged — the dormant default).
@@ -29,12 +27,12 @@ import { dualPrefixEnvString } from "../utils/env";
  * allowlisted.
  */
 export function isConvergenceRepoAllowed(
-  env: { GITTENSORY_REVIEW_REPOS?: string | undefined; LOOPOVER_REVIEW_REPOS?: string | undefined },
+  env: { LOOPOVER_REVIEW_REPOS?: string | undefined },
   repoFullName: string,
 ): boolean {
   const target = repoFullName.trim().toLowerCase();
   if (!target) return false;
-  const raw = dualPrefixEnvString(env as unknown as Record<string, string | undefined>, "REVIEW_REPOS") ?? "";
+  const raw = env.LOOPOVER_REVIEW_REPOS ?? "";
   for (const entry of raw.split(",")) {
     const candidate = entry.trim().toLowerCase();
     if (candidate && candidate === target) return true;
@@ -43,7 +41,7 @@ export function isConvergenceRepoAllowed(
 }
 
 /**
- * The configured GITTENSORY_REVIEW_REPOS as a deduped list of "owner/repo" full-names (original case preserved,
+ * The configured LOOPOVER_REVIEW_REPOS as a deduped list of "owner/repo" full-names (original case preserved,
  * deduped case-insensitively, empty entries dropped). Empty when unset.
  *
  * Used to PROACTIVELY index a self-host maintainer's repos for RAG even when they were never registered via a
@@ -51,12 +49,11 @@ export function isConvergenceRepoAllowed(
  * codebase-aware reviews instead of waiting for a cold first-PR index.
  */
 export function listConvergenceRepos(env: {
-  GITTENSORY_REVIEW_REPOS?: string | undefined;
   LOOPOVER_REVIEW_REPOS?: string | undefined;
 }): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  const raw = dualPrefixEnvString(env as unknown as Record<string, string | undefined>, "REVIEW_REPOS") ?? "";
+  const raw = env.LOOPOVER_REVIEW_REPOS ?? "";
   for (const entry of raw.split(",")) {
     const trimmed = entry.trim();
     if (!trimmed) continue;

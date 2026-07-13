@@ -80,10 +80,10 @@ describe("runSweepLivenessWatchdog (#audit-sweep-fanout-isolation follow-up)", (
     expect(sent).toEqual([expect.objectContaining({ type: "agent-regate-sweep", repoFullName: "owner/aged-repo" })]);
   }, 60_000);
 
-  it("watches an ALLOWLISTED (GITTENSORY_REVIEW_REPOS) installed repo even with no autonomy configured, and skips a plain repo that is neither allowlisted nor agent-configured", async () => {
+  it("watches an ALLOWLISTED (LOOPOVER_REVIEW_REPOS) installed repo even with no autonomy configured, and skips a plain repo that is neither allowlisted nor agent-configured", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_REPOS: "owner/allowlisted-repo",
+      LOOPOVER_REVIEW_REPOS: "owner/allowlisted-repo",
       JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue,
     });
     // Allowlisted + installed, but NO autonomy config at all — isConvergenceRepoAllowed alone must still watch it.
@@ -138,7 +138,7 @@ describe("runSweepLivenessWatchdog (#audit-sweep-fanout-isolation follow-up)", (
 
   it("never flags a registered-but-uninstalled repo (#sweep-uninstalled-budget-waste) — no per-PR fan-out could ever help it", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "owner/no-install", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPOS: "owner/no-install", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
     await upsertRepositoryFromGitHub(env, { name: "no-install", full_name: "owner/no-install", private: false, owner: { login: "owner" } }); // no installation id
     await upsertRepositorySettings(env, { repoFullName: "owner/no-install", autonomy: { merge: "auto" } });
     await upsertPullRequestFromGitHub(env, "owner/no-install", { number: 1, title: "PR1", state: "open", user: { login: "c" }, head: { sha: "a1" }, labels: [], body: "" });

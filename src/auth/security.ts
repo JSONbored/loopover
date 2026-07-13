@@ -7,7 +7,11 @@ import {
 } from "../db/repositories";
 import type { AuthSessionRecord, JsonValue } from "../types";
 import { nowIso } from "../utils/json";
-import { dualPrefixEnvString } from "../utils/env";
+
+function nonBlank(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
 
 export type AuthIdentity =
   | { kind: "static"; actor: "api" | "mcp" | "internal" }
@@ -103,12 +107,8 @@ export function createOpaqueToken(prefix = "gts"): string {
 
 export async function authenticatePrivateToken(env: Env, token: string | undefined): Promise<AuthIdentity | null> {
   if (!token) return null;
-  // #4774 dual-read: LOOPOVER_API_TOKEN / LOOPOVER_MCP_TOKEN win over their legacy GITTENSORY_ names when
-  // both are set -- this is the real auth gate, so it must change in lockstep with preflight.ts's strength
-  // check, or a self-hoster who only set the new name would pass preflight but fail every authenticated call.
-  const rawEnv = env as unknown as Record<string, string | undefined>;
-  if (await timingSafeEqual(token, dualPrefixEnvString(rawEnv, "API_TOKEN"))) return { kind: "static", actor: "api" };
-  if (await timingSafeEqual(token, dualPrefixEnvString(rawEnv, "MCP_TOKEN"))) return { kind: "static", actor: "mcp" };
+  if (await timingSafeEqual(token, nonBlank(env.LOOPOVER_API_TOKEN))) return { kind: "static", actor: "api" };
+  if (await timingSafeEqual(token, nonBlank(env.LOOPOVER_MCP_TOKEN))) return { kind: "static", actor: "mcp" };
   return authenticateSessionToken(env, token);
 }
 
@@ -166,7 +166,7 @@ function matchesMcpRepoAllowlist(value: string | undefined, repoFullName: string
 }
 
 /** Is `repoFullName` within the operator's MCP_ACTUATION_REPO_ALLOWLIST? The static `mcp` identity is minted from
- *  a single shared secret (GITTENSORY_MCP_TOKEN) that is documented as an ordinary end-user CLI credential — unlike
+ *  a single shared secret (LOOPOVER_MCP_TOKEN) that is documented as an ordinary end-user CLI credential — unlike
  *  `api`/`internal`, it is not operator-only, so unlike those it must NOT be unconditionally trusted for every
  *  installed repo. Unset/empty ⇒ deny (fail closed: an operator must explicitly opt a repo in). `*`/`all` ⇒ every
  *  repo, an explicit escape hatch for an operator who wants the old unscoped-trust behavior. (#2253) */

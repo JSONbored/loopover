@@ -293,12 +293,12 @@ describe("api route guards and error branches", () => {
   it("blocks the shared MCP token from reading another contributor's private data unless the read allowlist is unscoped (#2455 HTTP parity)", async () => {
     const app = createApp();
 
-    // Scoped (non-wildcard) read allowlist: GITTENSORY_MCP_TOKEN is a shared, end-user-obtainable CLI credential,
+    // Scoped (non-wildcard) read allowlist: LOOPOVER_MCP_TOKEN is a shared, end-user-obtainable CLI credential,
     // so it must NOT read an arbitrary contributor's private decision pack over HTTP — mirroring the MCP tool
     // surface's guard for the identical data (GittensoryMcp.requireContributorAccess, #2455).
     const scopedEnv = createTestEnv({ MCP_READ_REPO_ALLOWLIST: "owner/private-repo" });
     await seedVictimDecisionPack(scopedEnv);
-    const mcpHeaders = { authorization: `Bearer ${scopedEnv.GITTENSORY_MCP_TOKEN}`, "content-type": "application/json" };
+    const mcpHeaders = { authorization: `Bearer ${scopedEnv.LOOPOVER_MCP_TOKEN}`, "content-type": "application/json" };
 
     const scopedDecisionPack = await app.request("/v1/contributors/victim/decision-pack", { headers: mcpHeaders }, scopedEnv);
     expect(scopedDecisionPack.status).toBe(403);
@@ -316,7 +316,7 @@ describe("api route guards and error branches", () => {
     // Explicit MCP_READ_REPO_ALLOWLIST=* opt-in unlocks the shared token (the same escape hatch as the MCP surface).
     const wildcardEnv = createTestEnv({ MCP_READ_REPO_ALLOWLIST: "*" });
     await seedVictimDecisionPack(wildcardEnv);
-    const wildcardHeaders = { authorization: `Bearer ${wildcardEnv.GITTENSORY_MCP_TOKEN}`, "content-type": "application/json" };
+    const wildcardHeaders = { authorization: `Bearer ${wildcardEnv.LOOPOVER_MCP_TOKEN}`, "content-type": "application/json" };
     const wildcardDecisionPack = await app.request("/v1/contributors/victim/decision-pack", { headers: wildcardHeaders }, wildcardEnv);
     expect(wildcardDecisionPack.status).toBe(200);
     await expect(wildcardDecisionPack.json()).resolves.toMatchObject({ login: "victim", summary: "private advisory summary" });
@@ -327,7 +327,7 @@ describe("api route guards and error branches", () => {
     const scopedEnv = createTestEnv({ MCP_READ_REPO_ALLOWLIST: "owner/private-repo" });
     await upsertRepositoryFromGitHub(scopedEnv, { name: "private-repo", full_name: "owner/private-repo", private: true, owner: { login: "owner" } });
     await upsertRepositoryFromGitHub(scopedEnv, { name: "other-repo", full_name: "other/other-repo", private: false, owner: { login: "other" } });
-    const mcpHeaders = { authorization: `Bearer ${scopedEnv.GITTENSORY_MCP_TOKEN}` };
+    const mcpHeaders = { authorization: `Bearer ${scopedEnv.LOOPOVER_MCP_TOKEN}` };
 
     const forbidden = await app.request("/v1/repos/other/other-repo/issue-quality", { headers: mcpHeaders }, scopedEnv);
     expect(forbidden.status).toBe(403);
@@ -341,7 +341,7 @@ describe("api route guards and error branches", () => {
 
     const denyEnv = createTestEnv({ MCP_READ_REPO_ALLOWLIST: "" });
     await upsertRepositoryFromGitHub(denyEnv, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" } });
-    const denied = await app.request("/v1/repos/octo/demo/issue-quality", { headers: { authorization: `Bearer ${denyEnv.GITTENSORY_MCP_TOKEN}` } }, denyEnv);
+    const denied = await app.request("/v1/repos/octo/demo/issue-quality", { headers: { authorization: `Bearer ${denyEnv.LOOPOVER_MCP_TOKEN}` } }, denyEnv);
     expect(denied.status).toBe(403);
     await expect(denied.json()).resolves.toMatchObject({ error: "forbidden_repo" });
   });
@@ -351,7 +351,7 @@ describe("api route guards and error branches", () => {
     const scopedEnv = createTestEnv({ MCP_READ_REPO_ALLOWLIST: "owner/private-repo" });
     await upsertRepositoryFromGitHub(scopedEnv, { name: "private-repo", full_name: "owner/private-repo", private: true, owner: { login: "owner" } });
     await upsertRepositoryFromGitHub(scopedEnv, { name: "other-repo", full_name: "other/other-repo", private: false, owner: { login: "other" } });
-    const mcpHeaders = { authorization: `Bearer ${scopedEnv.GITTENSORY_MCP_TOKEN}` };
+    const mcpHeaders = { authorization: `Bearer ${scopedEnv.LOOPOVER_MCP_TOKEN}` };
 
     const forbidden = await app.request("/v1/repos/other/other-repo/intelligence", { headers: mcpHeaders }, scopedEnv);
     expect(forbidden.status).toBe(403);
@@ -365,7 +365,7 @@ describe("api route guards and error branches", () => {
 
     const denyEnv = createTestEnv({ MCP_READ_REPO_ALLOWLIST: "" });
     await upsertRepositoryFromGitHub(denyEnv, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" } });
-    const denied = await app.request("/v1/repos/octo/demo/intelligence", { headers: { authorization: `Bearer ${denyEnv.GITTENSORY_MCP_TOKEN}` } }, denyEnv);
+    const denied = await app.request("/v1/repos/octo/demo/intelligence", { headers: { authorization: `Bearer ${denyEnv.LOOPOVER_MCP_TOKEN}` } }, denyEnv);
     expect(denied.status).toBe(403);
     await expect(denied.json()).resolves.toMatchObject({ error: "forbidden_repo" });
   });
@@ -375,7 +375,7 @@ describe("api route guards and error branches", () => {
     const scopedEnv = createTestEnv({ MCP_READ_REPO_ALLOWLIST: "owner/private-repo" });
     await upsertRepositoryFromGitHub(scopedEnv, { name: "private-repo", full_name: "owner/private-repo", private: true, owner: { login: "owner" } });
     await upsertRepositoryFromGitHub(scopedEnv, { name: "other-repo", full_name: "other/other-repo", private: false, owner: { login: "other" } });
-    const mcpHeaders = { authorization: `Bearer ${scopedEnv.GITTENSORY_MCP_TOKEN}` };
+    const mcpHeaders = { authorization: `Bearer ${scopedEnv.LOOPOVER_MCP_TOKEN}` };
 
     const forbidden = await app.request("/v1/repos/other/other-repo/pulls/1/reviewability", { headers: mcpHeaders }, scopedEnv);
     expect(forbidden.status).toBe(403);
@@ -389,7 +389,7 @@ describe("api route guards and error branches", () => {
 
     const denyEnv = createTestEnv({ MCP_READ_REPO_ALLOWLIST: "" });
     await upsertRepositoryFromGitHub(denyEnv, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" } });
-    const denied = await app.request("/v1/repos/octo/demo/pulls/1/reviewability", { headers: { authorization: `Bearer ${denyEnv.GITTENSORY_MCP_TOKEN}` } }, denyEnv);
+    const denied = await app.request("/v1/repos/octo/demo/pulls/1/reviewability", { headers: { authorization: `Bearer ${denyEnv.LOOPOVER_MCP_TOKEN}` } }, denyEnv);
     expect(denied.status).toBe(403);
     await expect(denied.json()).resolves.toMatchObject({ error: "forbidden_repo" });
   });
@@ -611,7 +611,7 @@ describe("api route guards and error branches", () => {
     });
 
     expect((await app.request("/v1/repos", {}, env)).status).toBe(401);
-    expect((await app.request("/v1/repos", { headers: { authorization: `Bearer ${env.GITTENSORY_MCP_TOKEN}` } }, env)).status).toBe(200);
+    expect((await app.request("/v1/repos", { headers: { authorization: `Bearer ${env.LOOPOVER_MCP_TOKEN}` } }, env)).status).toBe(200);
     expect((await app.request("/v1/registry/snapshot", { headers: apiHeaders(env) }, env)).status).toBe(404);
     expect((await app.request("/v1/repos/nope/missing", { headers: apiHeaders(env) }, env)).status).toBe(404);
     expect((await app.request("/v1/installations/not-a-number/health", { headers: apiHeaders(env) }, env)).status).toBe(400);
@@ -1087,7 +1087,7 @@ describe("api route guards and error branches", () => {
 
   it("covers public MCP preflight and successful repo/settings routes", async () => {
     const app = createApp();
-    const env = createTestEnv({ GITTENSORY_MCP_TOKEN: "" });
+    const env = createTestEnv({ LOOPOVER_MCP_TOKEN: "" });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload(
@@ -1125,7 +1125,7 @@ describe("api route guards and error branches", () => {
     ).rejects.toThrow("raw request unavailable");
     const staticRawRequest = new Request("http://localhost/mcp", {
       method: "POST",
-      headers: { authorization: `Bearer ${defensiveEnv.GITTENSORY_MCP_TOKEN}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${defensiveEnv.LOOPOVER_MCP_TOKEN}`, "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: "static-raw-failure", method: "tools/list" }),
     });
     let staticRawReads = 0;
@@ -1135,7 +1135,7 @@ describe("api route guards and error branches", () => {
         req: {
           method: "POST",
           header(name: string) {
-            return name.toLowerCase() === "authorization" ? `Bearer ${defensiveEnv.GITTENSORY_MCP_TOKEN}` : undefined;
+            return name.toLowerCase() === "authorization" ? `Bearer ${defensiveEnv.LOOPOVER_MCP_TOKEN}` : undefined;
           },
           get raw() {
             staticRawReads += 1;
@@ -1235,7 +1235,7 @@ async function seedVictimDecisionPack(env: Env): Promise<void> {
 
 function apiHeaders(env: Env): Record<string, string> {
   return {
-    authorization: `Bearer ${env.GITTENSORY_API_TOKEN}`,
+    authorization: `Bearer ${env.LOOPOVER_API_TOKEN}`,
     "content-type": "application/json",
   };
 }

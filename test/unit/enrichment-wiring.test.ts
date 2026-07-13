@@ -54,7 +54,7 @@ async function seedRepoFile(env: Env, repo: string) {
     .run();
 }
 
-describe("review-enrichment wired into the processors review (flag GITTENSORY_REVIEW_ENRICHMENT + REES_URL)", () => {
+describe("review-enrichment wired into the processors review (flag LOOPOVER_REVIEW_ENRICHMENT + REES_URL)", () => {
   it("FLAG-ON via runAiReviewForAdvisory: POSTs the PR to the REES (with bearer) and splices the brief into the prompts", async () => {
     const seenUser: string[] = [];
     const seenSystem: string[] = [];
@@ -79,7 +79,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
     });
     // The REES vars are self-host runtime env (not declared on the Worker Env type) — set them as the self-host does.
     Object.assign(env, {
-      GITTENSORY_REVIEW_ENRICHMENT: "true",
+      LOOPOVER_REVIEW_ENRICHMENT: "true",
       REES_URL: "https://rees.example",
       REES_SHARED_SECRET: "sek",
       REES_FORWARD_GITHUB_TOKEN: "true",
@@ -235,7 +235,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       GITHUB_PUBLIC_TOKEN: "public-read-token",
     });
     Object.assign(env, {
-      GITTENSORY_REVIEW_ENRICHMENT: "true",
+      LOOPOVER_REVIEW_ENRICHMENT: "true",
       REES_URL: "https://rees.example",
       REES_SHARED_SECRET: "sek",
       REES_ANALYZERS: "codeowners,assetWeight",
@@ -282,7 +282,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       AI_DAILY_NEURON_BUDGET: "100000",
     });
     Object.assign(env, {
-      GITTENSORY_REVIEW_ENRICHMENT: "true",
+      LOOPOVER_REVIEW_ENRICHMENT: "true",
       REES_URL: "https://rees.example",
       REES_SHARED_SECRET: "sek",
     });
@@ -350,7 +350,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       GITHUB_PUBLIC_TOKEN: "public-read-token",
     });
     Object.assign(env, {
-      GITTENSORY_REVIEW_ENRICHMENT: "true",
+      LOOPOVER_REVIEW_ENRICHMENT: "true",
       REES_URL: "https://rees.example",
       REES_SHARED_SECRET: "sek",
       REES_FORWARD_GITHUB_TOKEN: "true",

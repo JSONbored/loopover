@@ -17,26 +17,26 @@ describe("check-docs-drift script", () => {
     it("extracts only real field declarations, not a comment mentioning a flag name", () => {
       const fixture = `
         interface Env {
-          /** See GITTENSORY_REVIEW_SAFETY for context on why this one is separate. */
-          GITTENSORY_REVIEW_FOO?: string;
-          GITTENSORY_REVIEW_BAR: string;
-          GITTENSORY_REVIEW_BAZ?: string;
+          /** See LOOPOVER_REVIEW_SAFETY for context on why this one is separate. */
+          LOOPOVER_REVIEW_FOO?: string;
+          LOOPOVER_REVIEW_BAR: string;
+          LOOPOVER_REVIEW_BAZ?: string;
         }
       `;
 
       const flags = extractGittensoryReviewFlags(fixture);
 
-      expect(flags.sort()).toEqual(["GITTENSORY_REVIEW_BAR", "GITTENSORY_REVIEW_BAZ", "GITTENSORY_REVIEW_FOO"]);
-      expect(flags).not.toContain("GITTENSORY_REVIEW_SAFETY");
+      expect(flags.sort()).toEqual(["LOOPOVER_REVIEW_BAR", "LOOPOVER_REVIEW_BAZ", "LOOPOVER_REVIEW_FOO"]);
+      expect(flags).not.toContain("LOOPOVER_REVIEW_SAFETY");
     });
 
     it("returns unique values only", () => {
       const fixture = `
-        GITTENSORY_REVIEW_FOO?: string;
-        GITTENSORY_REVIEW_FOO?: string;
+        LOOPOVER_REVIEW_FOO?: string;
+        LOOPOVER_REVIEW_FOO?: string;
       `;
 
-      expect(extractGittensoryReviewFlags(fixture)).toEqual(["GITTENSORY_REVIEW_FOO"]);
+      expect(extractGittensoryReviewFlags(fixture)).toEqual(["LOOPOVER_REVIEW_FOO"]);
     });
   });
 
@@ -220,7 +220,7 @@ describe("check-docs-drift script", () => {
 
   describe("checkDocsDrift", () => {
     // A minimal set of fixtures that satisfies every check EXCEPT the one under test in each case below.
-    const baseFlags = Array.from({ length: 10 }, (_, i) => `GITTENSORY_REVIEW_FLAG_${i}?: string;`).join("\n");
+    const baseFlags = Array.from({ length: 10 }, (_, i) => `LOOPOVER_REVIEW_FLAG_${i}?: string;`).join("\n");
     const baseCommandsSource = `
       const PUBLIC_MENTION_COMMAND_CATALOG = [
         ${Array.from({ length: 10 }, (_, i) => `{ id: "public-${i}", title: "Public ${i}" },`).join("\n")}
@@ -233,7 +233,7 @@ describe("check-docs-drift script", () => {
       ...Array.from({ length: 10 }, (_, i) => `public-${i}`),
       ...Array.from({ length: 9 }, (_, i) => `maint-${i}`),
     ];
-    const baseFlagNames = Array.from({ length: 10 }, (_, i) => `GITTENSORY_REVIEW_FLAG_${i}`);
+    const baseFlagNames = Array.from({ length: 10 }, (_, i) => `LOOPOVER_REVIEW_FLAG_${i}`);
     // Extra plain (non-*GateMode-shaped) RepositorySettings fields -- proves check 4 covers the FULL surface,
     // not just what extractGateModeFields already saw via GATE_MODE_MANIFEST.
     const baseSettingsExtraFields = Array.from({ length: 20 }, (_, i) => `settingsField${i}`);
@@ -346,12 +346,12 @@ describe("check-docs-drift script", () => {
       const files = baseFixtures();
       // Drop one known flag from docs.tuning.tsx.
       files["apps/gittensory-ui/src/routes/docs.tuning.tsx"] = [
-        buildFlagsPageText(baseFlagNames.filter((flag) => flag !== "GITTENSORY_REVIEW_FLAG_3")),
+        buildFlagsPageText(baseFlagNames.filter((flag) => flag !== "LOOPOVER_REVIEW_FLAG_3")),
         buildGateModePageText(),
       ].join("\n");
       const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
 
-      const hit = result.failures.find((failure) => failure.includes("docs.tuning.tsx") && failure.includes("GITTENSORY_REVIEW_FLAG_3"));
+      const hit = result.failures.find((failure) => failure.includes("docs.tuning.tsx") && failure.includes("LOOPOVER_REVIEW_FLAG_3"));
       expect(hit).toBeDefined();
     });
 
@@ -403,7 +403,7 @@ describe("check-docs-drift script", () => {
 
     it("self-defends against a broken flag-extraction regex (fewer than 10 flags found)", () => {
       const files = baseFixtures();
-      files["src/env.d.ts"] = "GITTENSORY_REVIEW_ONLY_ONE?: string;";
+      files["src/env.d.ts"] = "LOOPOVER_REVIEW_ONLY_ONE?: string;";
       const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
 
       const hit = result.failures.find((failure) => failure.includes("src/env.d.ts") && failure.includes("extraction regex may be broken"));

@@ -17,7 +17,7 @@ const SECRET = "routes-byok-encryption-secret-at-least-32b";
 const REPO = "acme/widgets";
 
 function apiHeaders(env: Env): Record<string, string> {
-  return { authorization: `Bearer ${env.GITTENSORY_API_TOKEN}`, "content-type": "application/json" };
+  return { authorization: `Bearer ${env.LOOPOVER_API_TOKEN}`, "content-type": "application/json" };
 }
 
 async function seedRepo(env: Env, owner: string, name: string, installationId: number): Promise<void> {

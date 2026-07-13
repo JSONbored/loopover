@@ -76,14 +76,14 @@ describe("recordContributorGateDecision — write-only per-contributor gate hist
     await recordContributorGateDecision(env, { login: "octocat", project: "owner/repo", pullNumber: 7, headSha: "abc123", decision: "merge" });
     expect((await rawAll(env, "SELECT * FROM contributor_gate_history")).length).toBe(0);
 
-    const envFalse = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "false" });
+    const envFalse = createTestEnv({ LOOPOVER_REVIEW_PARITY_AUDIT: "false" });
     delete envFalse.SELFHOST_TRANSIENT_CACHE;
     await recordContributorGateDecision(envFalse, { login: "octocat", project: "owner/repo", pullNumber: 7, headSha: "abc123", decision: "close" });
     expect((await rawAll(envFalse, "SELECT * FROM contributor_gate_history")).length).toBe(0);
   });
 
-  it("the cloud worker records when GITTENSORY_REVIEW_PARITY_AUDIT is explicitly ON", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true" });
+  it("the cloud worker records when LOOPOVER_REVIEW_PARITY_AUDIT is explicitly ON", async () => {
+    const env = createTestEnv({ LOOPOVER_REVIEW_PARITY_AUDIT: "true" });
     delete env.SELFHOST_TRANSIENT_CACHE;
     await recordContributorGateDecision(env, { login: "octocat", project: "owner/repo", pullNumber: 7, headSha: "abc123", decision: "merge" });
     expect((await rawAll(env, "SELECT * FROM contributor_gate_history")).length).toBe(1);

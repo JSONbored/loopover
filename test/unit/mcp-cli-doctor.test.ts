@@ -109,9 +109,9 @@ describe("gittensory-mcp CLI — doctor", () => {
     const payload = JSON.parse(
       await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
         GITTENSORY_API_URL: url,
-        GITTENSORY_API_TOKEN: "",
+        LOOPOVER_API_TOKEN: "",
         GITTENSORY_TOKEN: "",
-        GITTENSORY_MCP_TOKEN: "",
+        LOOPOVER_MCP_TOKEN: "",
         GITTENSORY_CONFIG_DIR: tempDir,
         GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
       }),

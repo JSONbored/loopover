@@ -168,7 +168,7 @@ describe("maintainer Linear key route (session/API-token scoped, #3186)", () => 
   afterEach(() => vi.unstubAllGlobals());
 
   function apiHeaders(env: Env): Record<string, string> {
-    return { authorization: `Bearer ${env.GITTENSORY_API_TOKEN}`, "content-type": "application/json" };
+    return { authorization: `Bearer ${env.LOOPOVER_API_TOKEN}`, "content-type": "application/json" };
   }
 
   it("POST stores, GET returns secret-free status, DELETE removes — key never echoed", async () => {

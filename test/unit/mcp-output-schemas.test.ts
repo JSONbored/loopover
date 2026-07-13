@@ -196,7 +196,7 @@ describe("MCP tool calls return schema-valid structured content", () => {
   });
 
   // Regression test for #2455: api/internal static identities are operator-only Worker secrets (never handed to
-  // end users, unlike the shared GITTENSORY_MCP_TOKEN), so canAccessRepo must remain unconditionally trusted for
+  // end users, unlike the shared LOOPOVER_MCP_TOKEN), so canAccessRepo must remain unconditionally trusted for
   // them even with MCP_READ_REPO_ALLOWLIST unset — mirroring the existing api/internal-trusted tests for the
   // write-side MCP_ACTUATION_REPO_ALLOWLIST guards.
   it("gittensory_get_repo_context trusts the api static identity unconditionally, regardless of MCP_READ_REPO_ALLOWLIST (#2455)", async () => {
@@ -207,7 +207,7 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(data.repoFullName).toBe("octo/demo");
   });
 
-  // Regression test for #2455: the shared, end-user-obtainable GITTENSORY_MCP_TOKEN must not read an arbitrary
+  // Regression test for #2455: the shared, end-user-obtainable LOOPOVER_MCP_TOKEN must not read an arbitrary
   // repo's context by default.
   it("gittensory_get_repo_context forbids the static mcp identity without an MCP_READ_REPO_ALLOWLIST wildcard/scoped opt-in (#2455)", async () => {
     const { client } = await connectTestClient(createTestEnv({ MCP_READ_REPO_ALLOWLIST: "" }));
@@ -303,7 +303,7 @@ describe("MCP tool calls return schema-valid structured content", () => {
     await env.DB.prepare("UPDATE repositories SET is_registered = 1 WHERE full_name = ?").bind("octo/demo").run();
     // Onboarding-pack previews require a maintainer/owner/operator session or a trusted static identity --
     // the shared static "mcp" identity (connectTestClient's default) is unconditionally rejected here, unlike
-    // most other read tools, since GITTENSORY_MCP_TOKEN is an end-user-obtainable CLI credential (see
+    // most other read tools, since LOOPOVER_MCP_TOKEN is an end-user-obtainable CLI credential (see
     // requireRepoOnboardingPackAccess, src/mcp/server.ts).
     const { client } = await connectTestClient(env, { kind: "static", actor: "api" });
     const result = await client.callTool({ name: "gittensory_get_repo_onboarding_pack", arguments: { owner: "octo", repo: "demo" } });

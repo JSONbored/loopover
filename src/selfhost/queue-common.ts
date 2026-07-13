@@ -108,7 +108,7 @@ const GITHUB_BUDGET_BACKGROUND_TYPES = new Set<string>([
   // repo. Runs every 30 min, unconditional for self-hosted runtimes -- active in production today.
   "backlog-convergence-sweep",
   // selfTuneRepos calls resolveRepositorySettings per registered repo to check acting-autonomy + the per-repo
-  // opt-out. Hourly, flag-gated OFF by default (GITTENSORY_REVIEW_SELFTUNE).
+  // opt-out. Hourly, flag-gated OFF by default (LOOPOVER_REVIEW_SELFTUNE).
   "selftune",
   // refreshInstallationHealthRecords calls getAppInstallation (a direct, unprotected `GET /app/installations/{id}`
   // REST call) per installation, PLUS resolveRepositorySettings per installed repo. Runs every 30 min,

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Cross-checks five enumerable "surfaces" that each have a single code source of truth but are also meant to
-// be documented EXHAUSTIVELY somewhere: feature flags (src/env.d.ts's GITTENSORY_REVIEW_* family),
+// be documented EXHAUSTIVELY somewhere: feature flags (src/env.d.ts's LOOPOVER_REVIEW_* family),
 // @gittensory commands (src/github/commands.ts's two command catalogs), gate-mode dimensions (src/types.ts's
 // *GateMode fields on RepositorySettings) against specific docs pages, and -- the widened part (#4617) -- the
 // FULL RepositorySettings field surface plus every parseable FocusManifest field (packages/gittensory-engine)
@@ -13,13 +13,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Extract every unique GITTENSORY_REVIEW_<NAME> flag DECLARED as a TS interface field (e.g.
- *  `GITTENSORY_REVIEW_SAFETY?: string;`) from src/env.d.ts's text. Deliberately anchored on the declaration
+/** Extract every unique LOOPOVER_REVIEW_<NAME> flag DECLARED as a TS interface field (e.g.
+ *  `LOOPOVER_REVIEW_SAFETY?: string;`) from src/env.d.ts's text. Deliberately anchored on the declaration
  *  shape (optional `?`, then `:`, then whitespace, then `string`) rather than a bare name match, so a comment
  *  that merely MENTIONS a flag name (common in this file's prose-heavy JSDoc) is never mistaken for a real
  *  declaration. */
 export function extractGittensoryReviewFlags(envDtsText) {
-  const matches = envDtsText.matchAll(/GITTENSORY_REVIEW_[A-Z0-9_]+(?=\??:\s*string)/g);
+  const matches = envDtsText.matchAll(/LOOPOVER_REVIEW_[A-Z0-9_]+(?=\??:\s*string)/g);
   return [...new Set([...matches].map((match) => match[0]))];
 }
 
@@ -271,7 +271,7 @@ export function checkDocsDrift({ root, readFile = defaultReadFile }) {
   const envDtsText = read("src/env.d.ts");
   const flags = extractGittensoryReviewFlags(envDtsText);
   if (flags.length < 10) {
-    failures.push(`src/env.d.ts: extraction found only ${flags.length} GITTENSORY_REVIEW_* flags -- expected 10+; the extraction regex may be broken`);
+    failures.push(`src/env.d.ts: extraction found only ${flags.length} LOOPOVER_REVIEW_* flags -- expected 10+; the extraction regex may be broken`);
   } else {
     const flagDocsPages = ["docs.tuning.tsx", "docs.privacy-security.tsx"];
     for (const flag of flags) {

@@ -6,7 +6,7 @@
 // the reviewer's USER prompt as reference context only.
 //
 // Two independent switches, same precedence as every other converged review knob in this codebase (see
-// `review/feature-activation.ts`'s doc comment): a GLOBAL env kill-switch (GITTENSORY_REVIEW_CULTURE_PROFILE,
+// `review/feature-activation.ts`'s doc comment): a GLOBAL env kill-switch (LOOPOVER_REVIEW_CULTURE_PROFILE,
 // default OFF) gates whether the capability exists AT ALL, and the per-repo `.gittensory.yml`
 // `review.culture_profile` boolean (see signals/focus-manifest.ts) opts a specific repo in once the global
 // switch is on. Both default OFF/absent ⇒ this module is never invoked, no D1 read happens, and the reviewer
@@ -17,7 +17,6 @@
 // ADVISORY GROUNDING ONLY (house rule + #2995 requirement): this NEVER becomes a gate/scoring input. It only
 // ever appends a reference-only block to the AI reviewer's USER prompt, exactly like the RAG/grounding/
 // enrichment sections it sits alongside in `services/ai-review.ts`'s buildUserPrompt.
-import { dualPrefixEnvFlag } from "../utils/env";
 import { resolveManifestOnlyFeature } from "./feature-activation";
 import { extractRepoCultureProfile, type RepoCultureProfile } from "./repo-culture-profile";
 import { neutralizePromptInjection } from "./prompt-injection";
@@ -25,10 +24,9 @@ import { neutralizePromptInjection } from "./prompt-injection";
 /** True when the culture-profile grounding capability is enabled at all. Flag-OFF (default) → the per-repo
  *  override below is never even consulted (mirrors isRagEnabled / isGroundingEnabled / isReputationEnabled). */
 export function isRepoCultureProfileEnabled(env: {
-  GITTENSORY_REVIEW_CULTURE_PROFILE?: string | undefined;
   LOOPOVER_REVIEW_CULTURE_PROFILE?: string | undefined;
 }): boolean {
-  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_CULTURE_PROFILE");
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_CULTURE_PROFILE ?? "").trim());
 }
 
 /** Resolve whether culture-profile grounding should apply for THIS repo/PR: the operator's global env
@@ -37,7 +35,7 @@ export function isRepoCultureProfileEnabled(env: {
  *  inlined at each of its two call sites in src/queue/processors.ts as `isRepoCultureProfileEnabled(env) &&
  *  x === true`; centralized here so the precedence lives in exactly one place, like every sibling feature. */
 export function shouldApplyRepoCultureProfile(
-  env: { GITTENSORY_REVIEW_CULTURE_PROFILE?: string | undefined },
+  env: { LOOPOVER_REVIEW_CULTURE_PROFILE?: string | undefined },
   manifestCultureProfileEnabled: boolean,
 ): boolean {
   return resolveManifestOnlyFeature(isRepoCultureProfileEnabled(env), manifestCultureProfileEnabled);

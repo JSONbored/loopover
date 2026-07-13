@@ -1688,7 +1688,7 @@ describe("api routes", () => {
       "/v1/local/branch-analysis",
       {
         method: "POST",
-        headers: { authorization: `Bearer ${env.GITTENSORY_MCP_TOKEN}`, "content-type": "application/json" },
+        headers: { authorization: `Bearer ${env.LOOPOVER_MCP_TOKEN}`, "content-type": "application/json" },
         body: JSON.stringify({
           login: "oktofeesh1",
           repoFullName: "entrius/allways-ui",
@@ -4403,7 +4403,7 @@ describe("api routes", () => {
     const app = createApp();
     const sent: unknown[] = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_RAG: "true",
+      LOOPOVER_REVIEW_RAG: "true",
       JOBS: { async send(message: unknown) { sent.push(message); } } as unknown as Queue,
     });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 456);
@@ -6669,7 +6669,7 @@ async function signWebhook(body: string, secret: string | undefined): Promise<st
 
 function mcpHeaders(env: Env, sessionId?: string): Record<string, string> {
   return {
-    authorization: `Bearer ${env.GITTENSORY_MCP_TOKEN}`,
+    authorization: `Bearer ${env.LOOPOVER_MCP_TOKEN}`,
     accept: "application/json, text/event-stream",
     "content-type": "application/json",
     "mcp-protocol-version": "2025-03-26",
@@ -6705,7 +6705,7 @@ function withProductUsageInsertFailure(env: Env): Env {
 
 function apiHeaders(env: Env): Record<string, string> {
   return {
-    authorization: `Bearer ${env.GITTENSORY_API_TOKEN}`,
+    authorization: `Bearer ${env.LOOPOVER_API_TOKEN}`,
     "content-type": "application/json",
   };
 }

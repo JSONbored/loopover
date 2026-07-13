@@ -12,8 +12,8 @@ describe("private-beta auth and rate limiting", () => {
 
   it("authenticates static tokens and hashed session tokens without accepting revoked sessions", async () => {
     const env = createTestEnv();
-    await expect(authenticatePrivateToken(env, env.GITTENSORY_API_TOKEN)).resolves.toMatchObject({ kind: "static", actor: "api" });
-    await expect(authenticatePrivateToken(env, env.GITTENSORY_MCP_TOKEN)).resolves.toMatchObject({ kind: "static", actor: "mcp" });
+    await expect(authenticatePrivateToken(env, env.LOOPOVER_API_TOKEN)).resolves.toMatchObject({ kind: "static", actor: "api" });
+    await expect(authenticatePrivateToken(env, env.LOOPOVER_MCP_TOKEN)).resolves.toMatchObject({ kind: "static", actor: "mcp" });
     await expect(authenticatePrivateToken(env, "wrong-token")).resolves.toBeNull();
 
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 42 }, { scopes: ["read:user"] });
@@ -33,35 +33,16 @@ describe("private-beta auth and rate limiting", () => {
     await expect(authenticatePrivateToken(env, malformed.token)).resolves.toBeNull();
   });
 
-  // #4774 dual-read: GITTENSORY_API_TOKEN/GITTENSORY_MCP_TOKEN get a LOOPOVER_ companion here at the REAL
-  // auth gate — this must change in lockstep with preflight.ts's strength check, or a self-hoster who only
-  // set the new name would pass preflight but fail every authenticated call.
-  it("authenticates static tokens supplied via the NEW LOOPOVER_ names alone (legacy names unset)", async () => {
+  it("authenticates static tokens supplied via a custom LOOPOVER_API_TOKEN/LOOPOVER_MCP_TOKEN override", async () => {
     const env = createTestEnv({ LOOPOVER_API_TOKEN: "new-api-token", LOOPOVER_MCP_TOKEN: "new-mcp-token" });
-    delete (env as Partial<Env>).GITTENSORY_API_TOKEN;
-    delete (env as Partial<Env>).GITTENSORY_MCP_TOKEN;
     await expect(authenticatePrivateToken(env, "new-api-token")).resolves.toMatchObject({ kind: "static", actor: "api" });
     await expect(authenticatePrivateToken(env, "new-mcp-token")).resolves.toMatchObject({ kind: "static", actor: "mcp" });
-    // The old (now-unset) names must no longer authenticate.
-    await expect(authenticatePrivateToken(env, "test-api-token")).resolves.toBeNull();
-  });
-
-  it("still authenticates static tokens supplied via the legacy GITTENSORY_ names alone — an untouched .env keeps working unchanged", async () => {
-    const env = createTestEnv();
-    await expect(authenticatePrivateToken(env, "test-api-token")).resolves.toMatchObject({ kind: "static", actor: "api" });
-    await expect(authenticatePrivateToken(env, "test-mcp-token")).resolves.toMatchObject({ kind: "static", actor: "mcp" });
-  });
-
-  it("the NEW LOOPOVER_API_TOKEN wins when BOTH the legacy and new names are set", async () => {
-    const env = createTestEnv({ LOOPOVER_API_TOKEN: "new-api-token" });
-    // The winning (new) value authenticates.
-    await expect(authenticatePrivateToken(env, "new-api-token")).resolves.toMatchObject({ kind: "static", actor: "api" });
-    // The shadowed legacy value must NOT authenticate once the new name is set.
+    // The default fixture values must no longer authenticate once overridden.
     await expect(authenticatePrivateToken(env, "test-api-token")).resolves.toBeNull();
   });
 
   it("scopes MCP static-token actuation to an explicit repo allowlist, denying by default (#2253)", () => {
-    // Unset/empty ⇒ deny (fail closed — the shared GITTENSORY_MCP_TOKEN must not implicitly actuate everywhere).
+    // Unset/empty ⇒ deny (fail closed — the shared LOOPOVER_MCP_TOKEN must not implicitly actuate everywhere).
     expect(isMcpActuationRepoAllowed(undefined, "owner/repo")).toBe(false);
     expect(isMcpActuationRepoAllowed("", "owner/repo")).toBe(false);
     expect(isMcpActuationRepoAllowed("   ", "owner/repo")).toBe(false);
@@ -186,7 +167,7 @@ describe("private-beta auth and rate limiting", () => {
       enforceRateLimit(fakeContext(env, "/v1/repos", { authorization: "Bearer random-token", "cf-connecting-ip": "203.0.113.9" }), "normal"),
     ).resolves.toBeNull();
     await expect(
-      enforceRateLimit(fakeContext(env, "/v1/repos", { authorization: `Bearer ${env.GITTENSORY_API_TOKEN}`, "cf-connecting-ip": "203.0.113.9" }), "normal"),
+      enforceRateLimit(fakeContext(env, "/v1/repos", { authorization: `Bearer ${env.LOOPOVER_API_TOKEN}`, "cf-connecting-ip": "203.0.113.9" }), "normal"),
     ).resolves.toBeNull();
     expect(observedKeys[0]).toMatch(/^normal:\/v1\/repos:ip:/);
     expect(observedKeys[1]).toMatch(/^normal:\/v1\/repos:token:/);
@@ -485,7 +466,7 @@ describe("private-beta auth and rate limiting", () => {
     const deniedWithTokenEnv = createTestEnv({
       RATE_LIMITER: rateLimiterNamespace({ status: 429, body: { limit: 20, remaining: 0, retryAfterSeconds: 17, resetAt: "2026-05-25T00:03:00.000Z" } }) as unknown as DurableObjectNamespace,
     });
-    const deniedWithToken = fakeContext(deniedWithTokenEnv, "/v1/local/branch-analysis", { authorization: `Bearer ${deniedWithTokenEnv.GITTENSORY_API_TOKEN}` });
+    const deniedWithToken = fakeContext(deniedWithTokenEnv, "/v1/local/branch-analysis", { authorization: `Bearer ${deniedWithTokenEnv.LOOPOVER_API_TOKEN}` });
     const deniedWithTokenResponse = await enforceRateLimit(deniedWithToken, "expensive");
     expect(deniedWithTokenResponse?.headers.get("retry-after")).toBe("17");
     expect(deniedWithTokenResponse?.headers.get("x-ratelimit-reset")).toBe("2026-05-25T00:03:00.000Z");

@@ -22,7 +22,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-// The built-in per-repo secrets (GITTENSORY_DISCORD_WEBHOOK, …) are read via cast and not declared on Env, so
+// The built-in per-repo secrets (LOOPOVER_DISCORD_WEBHOOK, …) are read via cast and not declared on Env, so
 // set them with Object.assign; DISCORD_WEBHOOK_URL is declared, so either path works.
 const withEnv = (over: Record<string, string>): Env => Object.assign(createTestEnv(), over) as Env;
 const notify = (env: Env, repo: string): Promise<void> =>
@@ -63,44 +63,17 @@ describe("notify-discord resolveWebhook (modular self-host fallback)", () => {
 
   it("a mapped repo uses its own per-channel secret", async () => {
     const calls = stubFetch();
-    await notify(withEnv({ GITTENSORY_DISCORD_WEBHOOK: HOOK }), "JSONbored/gittensory");
+    await notify(withEnv({ LOOPOVER_DISCORD_WEBHOOK: HOOK }), "JSONbored/gittensory");
     expect(calls).toEqual([HOOK]);
   });
 
-  // #4774 dual-read: LOOPOVER_DISCORD_WEBHOOK is a first-class alias of the legacy per-repo secret name
-  // GITTENSORY_DISCORD_WEBHOOK, new name winning when both are set.
-  describe("#4774 GITTENSORY_ -> LOOPOVER_ dual-read (per-repo legacy secret name)", () => {
+  it("a repo secret outside the loopover/gittensory mapping (METAGRAPHED_/AWESOME_) never reads LOOPOVER_DISCORD_WEBHOOK", async () => {
+    const calls = stubFetch();
     const NEW_HOOK = "https://discord.com/api/webhooks/456/def";
-
-    it("resolves via the NEW LOOPOVER_DISCORD_WEBHOOK alone (legacy unset)", () => {
-      expect(resolveDiscordWebhook(withEnv({ LOOPOVER_DISCORD_WEBHOOK: NEW_HOOK }), "JSONbored/gittensory")).toEqual({
-        status: "configured",
-        url: NEW_HOOK,
-        source: "legacy_repo_secret",
-      });
-    });
-
-    it("still resolves via the legacy GITTENSORY_DISCORD_WEBHOOK alone — an untouched .env keeps working unchanged", () => {
-      expect(resolveDiscordWebhook(withEnv({ GITTENSORY_DISCORD_WEBHOOK: HOOK }), "JSONbored/gittensory")).toEqual({
-        status: "configured",
-        url: HOOK,
-        source: "legacy_repo_secret",
-      });
-    });
-
-    it("the NEW LOOPOVER_DISCORD_WEBHOOK wins when BOTH are set", async () => {
-      const calls = stubFetch();
-      await notify(withEnv({ GITTENSORY_DISCORD_WEBHOOK: HOOK, LOOPOVER_DISCORD_WEBHOOK: NEW_HOOK }), "JSONbored/gittensory");
-      expect(calls).toEqual([NEW_HOOK]);
-    });
-
-    it("does not add a LOOPOVER_ companion for a repo secret outside the GITTENSORY_ family (METAGRAPHED_/AWESOME_)", async () => {
-      const calls = stubFetch();
-      await notify(withEnv({ METAGRAPHED_DISCORD_WEBHOOK: HOOK, LOOPOVER_DISCORD_WEBHOOK: NEW_HOOK }), "JSONbored/metagraphed");
-      // METAGRAPHED_DISCORD_WEBHOOK has no LOOPOVER_ companion of its own; the unrelated LOOPOVER_DISCORD_WEBHOOK
-      // value must not leak into a different repo's channel.
-      expect(calls).toEqual([HOOK]);
-    });
+    await notify(withEnv({ METAGRAPHED_DISCORD_WEBHOOK: HOOK, LOOPOVER_DISCORD_WEBHOOK: NEW_HOOK }), "JSONbored/metagraphed");
+    // METAGRAPHED_DISCORD_WEBHOOK is its own secret name; the unrelated LOOPOVER_DISCORD_WEBHOOK value must not
+    // leak into a different repo's channel.
+    expect(calls).toEqual([HOOK]);
   });
 
   it("uses process.env as a self-host fallback when the runtime Env object does not carry the webhook", async () => {
@@ -140,9 +113,9 @@ describe("notify-discord resolveWebhook (modular self-host fallback)", () => {
     expect(await externalNotificationAudit(env, "discord")).toEqual([expect.objectContaining({ outcome: "denied", detail: "invalid_repo_webhook" })]);
   });
 
-  it("an invalid legacy repo secret suppresses instead of falling back to the global channel", async () => {
+  it("an invalid mapped repo secret suppresses instead of falling back to the global channel", async () => {
     const calls = stubFetch();
-    const env = withEnv({ GITTENSORY_DISCORD_WEBHOOK: "https://example.com/not-discord", DISCORD_WEBHOOK_URL: FALLBACK });
+    const env = withEnv({ LOOPOVER_DISCORD_WEBHOOK: "https://example.com/not-discord", DISCORD_WEBHOOK_URL: FALLBACK });
     await notify(env, "JSONbored/gittensory");
     expect(calls).toEqual([]);
     expect(await externalNotificationAudit(env, "discord")).toEqual([expect.objectContaining({ outcome: "denied", detail: "invalid_repo_webhook" })]);

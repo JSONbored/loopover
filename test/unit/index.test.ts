@@ -717,11 +717,11 @@ describe("worker entrypoint", () => {
     expect(sent.some((s) => (s.delaySeconds ?? 0) > 0)).toBe(true);
   });
 
-  it("enqueues the ops-alerts job hourly ONLY when GITTENSORY_REVIEW_OPS is ON (flag-OFF is byte-identical)", async () => {
+  it("enqueues the ops-alerts job hourly ONLY when LOOPOVER_REVIEW_OPS is ON (flag-OFF is byte-identical)", async () => {
     const sentFor = async (opsFlag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
-        ...(opsFlag === undefined ? {} : { GITTENSORY_REVIEW_OPS: opsFlag }),
+        ...(opsFlag === undefined ? {} : { LOOPOVER_REVIEW_OPS: opsFlag }),
         JOBS: {
           async send(message: import("../../src/types").JobMessage) {
             sent.push(message);
@@ -742,10 +742,10 @@ describe("worker entrypoint", () => {
     expect(on.filter((m) => m.type === "ops-alerts")).toEqual([{ type: "ops-alerts", requestedBy: "schedule" }]);
   });
 
-  it("does NOT enqueue ops-alerts outside the hourly window even when GITTENSORY_REVIEW_OPS is ON", async () => {
+  it("does NOT enqueue ops-alerts outside the hourly window even when LOOPOVER_REVIEW_OPS is ON", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_OPS: "true",
+      LOOPOVER_REVIEW_OPS: "true",
       JOBS: {
         async send(message: import("../../src/types").JobMessage) {
           sent.push(message);
@@ -880,7 +880,7 @@ describe("worker entrypoint", () => {
     expect(sent.some((m) => m.type === "reconcile-open-prs")).toBe(false);
   });
 
-  it("enqueues selftune hourly only when GITTENSORY_REVIEW_SELFTUNE is ON", async () => {
+  it("enqueues selftune hourly only when LOOPOVER_REVIEW_SELFTUNE is ON", async () => {
     const sentFor = async (
       selfTuneFlag?: string,
     ): Promise<Array<import("../../src/types").JobMessage>> => {
@@ -888,7 +888,7 @@ describe("worker entrypoint", () => {
       const env = createTestEnv({
         ...(selfTuneFlag === undefined
           ? {}
-          : { GITTENSORY_REVIEW_SELFTUNE: selfTuneFlag }),
+          : { LOOPOVER_REVIEW_SELFTUNE: selfTuneFlag }),
         JOBS: {
           async send(message: import("../../src/types").JobMessage) {
             sent.push(message);
@@ -914,11 +914,11 @@ describe("worker entrypoint", () => {
     ]);
   });
 
-  it("enqueues the rag-index-repo fan-out in the full-sync window ONLY when GITTENSORY_REVIEW_RAG is ON (flag-OFF is byte-identical)", async () => {
+  it("enqueues the rag-index-repo fan-out in the full-sync window ONLY when LOOPOVER_REVIEW_RAG is ON (flag-OFF is byte-identical)", async () => {
     const sentFor = async (ragFlag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
-        ...(ragFlag === undefined ? {} : { GITTENSORY_REVIEW_RAG: ragFlag }),
+        ...(ragFlag === undefined ? {} : { LOOPOVER_REVIEW_RAG: ragFlag }),
         JOBS: {
           async send(message: import("../../src/types").JobMessage) {
             sent.push(message);
@@ -939,10 +939,10 @@ describe("worker entrypoint", () => {
     expect(on.filter((m) => m.type === "rag-index-repo")).toEqual([{ type: "rag-index-repo", requestedBy: "schedule" }]);
   });
 
-  it("does NOT enqueue rag-index-repo outside the full-sync window even when GITTENSORY_REVIEW_RAG is ON", async () => {
+  it("does NOT enqueue rag-index-repo outside the full-sync window even when LOOPOVER_REVIEW_RAG is ON", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({
-      GITTENSORY_REVIEW_RAG: "true",
+      LOOPOVER_REVIEW_RAG: "true",
       JOBS: {
         async send(message: import("../../src/types").JobMessage) {
           sent.push(message);

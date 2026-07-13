@@ -104,7 +104,7 @@ function accuracyPct(
 
 /** The own-ledger side of public stats is intentionally constrained to an explicit allowlist (privacy: publish
  *  only what's deliberately opted in). Deliberately reads GITTENSORY_PUBLIC_STATS_REPOS, NOT
- *  GITTENSORY_REVIEW_REPOS (the live per-PR-feature cutover allowlist) -- the two once held the same value, but
+ *  LOOPOVER_REVIEW_REPOS (the live per-PR-feature cutover allowlist) -- the two once held the same value, but
  *  diverged once gittensory/awesome-claude/metagraphed moved their LIVE processing to self-host: the cutover
  *  allowlist correctly went empty, while the historical rows this worker already wrote for them remain real and
  *  safe to publish. Empty allowlist => the own-ledger side reports zero (still fails safe), but does NOT

@@ -626,7 +626,6 @@ import type {
   RepositorySettings,
 } from "../types";
 import { sha256Hex } from "../utils/crypto";
-import { dualPrefixEnvFlag } from "../utils/env";
 import { errorMessage, nowIso } from "../utils/json";
 import { maybeSuggestMilestoneMatchForPr } from "../integrations/project-tracker-adapter";
 
@@ -846,7 +845,7 @@ export async function fanOutAgentRegateSweepJobs(
     });
     return;
   }
-  // Sweep every REVIEW-ACTIVE repo (#sweep-all-modes): the convergence allowlist (GITTENSORY_REVIEW_REPOS) UNION the
+  // Sweep every REVIEW-ACTIVE repo (#sweep-all-modes): the convergence allowlist (LOOPOVER_REVIEW_REPOS) UNION the
   // webhook-registered repos, deduped case-insensitively. A repo is swept when it is review-active (allowlisted) OR
   // has acting autonomy — so ADVISORY repos (autonomy=observe) are re-gated and get fresh reviews too, not only repos
   // that can merge/close. The action layer (maybeRunAgentMaintenance) stays autonomy-gated, so an observe repo is
@@ -885,7 +884,7 @@ export async function fanOutAgentRegateSweepJobs(
         // no real `installationId` would otherwise inherit that global default and look "agent-configured"
         // purely by existing — even though no installation token exists to act on it, and it was never
         // intentionally onboarded. Require a real installation before the autonomy-based path can make a
-        // repo eligible; the explicit allowlist path is untouched (GITTENSORY_REVIEW_REPOS is a deliberate,
+        // repo eligible; the explicit allowlist path is untouched (LOOPOVER_REVIEW_REPOS is a deliberate,
         // operator-typed signal independent of installation state, e.g. reviewing ahead of a pending install).
         const hasInstallation = typeof repo.installationId === "number";
         if (
@@ -1129,7 +1128,7 @@ async function surfaceRepairPriorityPullNumbers(
   return [...priorityPullNumbers];
 }
 
-// Convergence (RAG / codebase index, flag GITTENSORY_REVIEW_RAG). The dispatch for the `rag-index-repo` job.
+// Convergence (RAG / codebase index, flag LOOPOVER_REVIEW_RAG). The dispatch for the `rag-index-repo` job.
 // Caller already gated on isRagEnabled(env).
 //   - No repoFullName → cron fan-out: enqueue one FULL re-index job per registered + cutover-allowlisted repo.
 //   - repoFullName + paths → INCREMENTAL re-index of those changed paths (the push / merged-PR path).
@@ -1168,11 +1167,11 @@ async function fanOutRagIndexJobs(
   env: Env,
   requestedBy: "schedule" | "api" | "webhook" | "test",
 ): Promise<void> {
-  // Candidate repos = the webhook-REGISTERED repos UNION the maintainer's CONFIGURED repos (GITTENSORY_REVIEW_REPOS).
+  // Candidate repos = the webhook-REGISTERED repos UNION the maintainer's CONFIGURED repos (LOOPOVER_REVIEW_REPOS).
   // The union is the fix for the brokered self-host: a maintainer's repos are is_registered=0 (never went through the
   // registration webhook), so a registered-only fan-out never indexed them — leaving reviews without codebase context.
   // Deduped case-insensitively (a repo can be both registered AND configured). Each is then filtered by whether RAG is
-  // active for it (`features.rag` override → GITTENSORY_REVIEW_REPOS allowlist default), so nothing extra is indexed.
+  // active for it (`features.rag` override → LOOPOVER_REVIEW_REPOS allowlist default), so nothing extra is indexed.
   const repositoriesByKey = new Map((await listRepositories(env)).map((repo) => [repo.fullName.toLowerCase(), repo]));
   const byKey = new Map<string, { fullName: string; installationId?: number }>();
   for (const repo of [...repositoriesByKey.values()].filter(
@@ -1217,7 +1216,7 @@ async function fanOutRagIndexJobs(
 const RAG_REINDEX_MAX_PATHS = 100;
 
 /**
- * Convergence (RAG / codebase index, flag GITTENSORY_REVIEW_RAG). On a MERGED PR into an allowlisted repo, enqueue
+ * Convergence (RAG / codebase index, flag LOOPOVER_REVIEW_RAG). On a MERGED PR into an allowlisted repo, enqueue
  * an incremental re-index of the PR's changed files so the index reflects the new default-branch state. No-op when
  * the flag is off, the repo isn't allowlisted, the action isn't a merge-close, or there are no changed paths.
  *
@@ -4146,11 +4145,11 @@ async function maybeReReviewOnLinkedIssueChange(
   const issueNumber = payload.issue?.number;
   if (!repoFullName || !installationId || !issueNumber) return false;
   // #5385: mirrors sweepRepoRegate's own gate exactly -- a repo with acting autonomy configured but NOT in the
-  // GITTENSORY_REVIEW_REPOS allowlist (e.g. removed during a rollback, or a self-hoster who configured autonomy
+  // LOOPOVER_REVIEW_REPOS allowlist (e.g. removed during a rollback, or a self-hoster who configured autonomy
   // without also updating the env allowlist) used to silently never wake affected PRs here, leaving a stale
   // type label (or any other issue-driven verdict) until the sweep eventually reached it, cycles later.
   // Short-circuited deliberately: resolveRepositorySettings does a live manifest fetch, so the allowlisted
-  // common case (this repo is already in GITTENSORY_REVIEW_REPOS) must never pay for it -- this handler's own
+  // common case (this repo is already in LOOPOVER_REVIEW_REPOS) must never pay for it -- this handler's own
   // doc comment promises "never doing the expensive live re-review inline", and that includes this gate check.
   if (isConvergenceRepoAllowed(env, repoFullName) || isAgentConfigured((await resolveRepositorySettings(env, repoFullName)).autonomy)) {
     const openPullRequests = await listOpenPullRequests(env, repoFullName);
@@ -5827,7 +5826,7 @@ async function handlePullRequestWebhookEvent(
           );
         });
       }
-      // Reputation (convergence, flag-gated by GITTENSORY_REVIEW_REPUTATION). After the gate decides, record this
+      // Reputation (convergence, flag-gated by LOOPOVER_REVIEW_REPUTATION). After the gate decides, record this
       // submitter's terminal outcome (merged / closed / manual) so the INTERNAL reputation stays current. The
       // outcome is derived ONLY from the PR's realized terminal state + the gate verdict (no PR content);
       // nothing is ever surfaced publicly. Flag-OFF (default) is an immediate no-op (nothing recorded), so the
@@ -5858,7 +5857,7 @@ async function handlePullRequestWebhookEvent(
           );
         });
       }
-      // RAG incremental index (convergence, flag-gated by GITTENSORY_REVIEW_RAG + the per-repo cutover allowlist).
+      // RAG incremental index (convergence, flag-gated by LOOPOVER_REVIEW_RAG + the per-repo cutover allowlist).
       // When a PR MERGES into an allowlisted repo, its changes have landed on the default branch — enqueue an
       // incremental re-index of just the changed files (reindexChangedPaths) so the index stays fresh without a
       // full re-crawl. Enqueued (not run inline) so the webhook stays fast + the index work is its own retryable
@@ -6295,17 +6294,16 @@ export async function shouldRefreshFilesForPreMergeChecks(
 /** #one-shot-review-cadence: resolve the effective AI review re-trigger cadence. The per-repo
  *  `review.auto_review.cadence` manifest field (`configuredCadence`, already resolved by
  *  resolveReviewAutoReviewConfig) always wins when set; otherwise falls back to the operator's fleet-wide
- *  GITTENSORY_REVIEW_CONTINUOUS default. Both unset ⇒ "one_shot" — see AutoReviewConfig["cadence"]'s own doc
+ *  LOOPOVER_REVIEW_CONTINUOUS default. Both unset ⇒ "one_shot" — see AutoReviewConfig["cadence"]'s own doc
  *  comment for the full semantics. */
 export function resolveAiReviewCadence(
   env: {
-    GITTENSORY_REVIEW_CONTINUOUS?: string | undefined;
     LOOPOVER_REVIEW_CONTINUOUS?: string | undefined;
   },
   configuredCadence: AiReviewCadence | null,
 ): AiReviewCadence {
   if (configuredCadence !== null) return configuredCadence;
-  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_CONTINUOUS")
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_CONTINUOUS ?? "").trim())
     ? "continuous"
     : "one_shot";
 }
@@ -6530,7 +6528,7 @@ export async function resolveVisualCaptureConfig(env: Env, repoFullName: string)
 }
 
 /**
- * Safety secrets-scan (convergence, flag-gated by GITTENSORY_REVIEW_SAFETY). Scans the PR diff for leaked secrets and,
+ * Safety secrets-scan (convergence, flag-gated by LOOPOVER_REVIEW_SAFETY). Scans the PR diff for leaked secrets and,
  * on a hit, appends ONE critical `secret_leak` finding to the advisory BEFORE evaluateGateCheck runs — the
  * gate treats that code as a hard blocker (rules/advisory.ts), so a committed credential holds the PR. Reuses
  * the already-loaded gate files when present, else loads them lazily. Flag-OFF (default) returns immediately:
@@ -6827,7 +6825,7 @@ export async function runLinkedIssueSatisfactionForAdvisory(
  *   • closed without merge → "closed".
  *   • still open but the gate routed it to manual review (failure / action_required) → "manual".
  *   • still open and the gate did not flag it → undefined (no terminal outcome — nothing to record).
- * Internal-only; the result is never surfaced. Used only when GITTENSORY_REVIEW_REPUTATION is ON.
+ * Internal-only; the result is never surfaced. Used only when LOOPOVER_REVIEW_REPUTATION is ON.
  */
 export function reputationOutcomeFromTerminalState(
   pr: { state: string; mergedAt?: string | null | undefined },
@@ -7531,8 +7529,8 @@ async function maybePublishPrPublicSurface(
   // computed + returned for the disposition logic, the writes are just suppressed + audited. (#dry-run-chokepoint)
   const mode = await resolveRepoActionMode(env, settings);
   // Per-repo feature override (phase 2): the unified converged comment renders for THIS repo when the global
-  // GITTENSORY_REVIEW_UNIFIED_COMMENT kill-switch is ON and the repo's container-private `.gittensory.yml`
-  // `features.unifiedComment` opts in — falling back to the GITTENSORY_REVIEW_REPOS allowlist when the manifest
+  // LOOPOVER_REVIEW_UNIFIED_COMMENT kill-switch is ON and the repo's container-private `.gittensory.yml`
+  // `features.unifiedComment` opts in — falling back to the LOOPOVER_REVIEW_REPOS allowlist when the manifest
   // says nothing (byte-identical default). Computed once and used by both unified-comment sites below.
   const unifiedCommentAllowed = await convergedFeatureActive(
     env,
@@ -8562,11 +8560,11 @@ async function maybePublishPrPublicSurface(
     inlineCommentsPerCategoryForReview = deterministicReviewOverrides.inlineCommentsPerCategory;
     // review.memory (#2179, part of #1964): deterministic, no-AI -- resolved the same unconditional way as
     // changed_files_summary/effort_score above (must apply even when the AI review itself is skipped this
-    // pass). ANDed with the operator's GITTENSORY_REVIEW_MEMORY kill-switch at the actual apply site below
+    // pass). ANDed with the operator's LOOPOVER_REVIEW_MEMORY kill-switch at the actual apply site below
     // (shouldApplyReviewMemory) — this flag alone only carries the per-repo manifest opt-in.
     reviewMemoryEnabledForReview = shouldApplyReviewMemory(env, resolveReviewMemoryManifestToggle(reviewManifestForAutoReview));
     // review.fixHandoff emission (#1962): resolved the same unconditional way as the deterministic sections above,
-    // ANDing the per-repo `review.fixHandoff` manifest opt-in with the operator's GITTENSORY_REVIEW_FIX_HANDOFF
+    // ANDing the per-repo `review.fixHandoff` manifest opt-in with the operator's LOOPOVER_REVIEW_FIX_HANDOFF
     // kill-switch + convergence allowlist (shouldEmitFixHandoff). The blocks themselves are built from this pass's
     // inline findings at the publish site below, mirroring findingCategories.
     fixHandoffEnabledForReview = shouldEmitFixHandoff(env, repoFullName, reviewManifestForAutoReview?.review.fixHandoff ?? undefined);
@@ -9287,7 +9285,7 @@ async function maybePublishPrPublicSurface(
     }
     // #preconv-parity (convergence prep): SHADOW-record the gittensory-native gate decision (source=
     // 'gittensory-native') into review_audit so the pre-cutover parity harness has data to read. RECORD-ONLY,
-    // flag-gated by GITTENSORY_REVIEW_PARITY_AUDIT: flag-OFF (default) is an immediate no-op (NO D1 write) so the review
+    // flag-gated by LOOPOVER_REVIEW_PARITY_AUDIT: flag-OFF (default) is an immediate no-op (NO D1 write) so the review
     // path is BYTE-IDENTICAL to today; flag-ON it writes one row and changes NO behavior. Best-effort. The
     // authoritative 'reviewbot' rows it is later compared against are written by reviewbot's deploy-time dual-
     // run, not here (see src/review/parity-wire.ts). Only a finalized gate evaluation (not skipped) is recorded.
@@ -11224,7 +11222,7 @@ async function recordConfigurationSkip(
 }
 
 /**
- * `@gittensory plan` (#issue-coding-plan, flag-gated by GITTENSORY_REVIEW_PLANNER). On a MAINTAINER's comment on
+ * `@gittensory plan` (#issue-coding-plan, flag-gated by LOOPOVER_REVIEW_PLANNER). On a MAINTAINER's comment on
  * an ISSUE (not a PR), generate a concise implementation plan from the issue text via Workers AI and post it as an
  * issue comment so a contributor has a concrete starting point. Flag-OFF (default) returns false immediately
  * (BEFORE any parse), so `@gittensory plan` falls through to the existing mention path → byte-identical. Returns

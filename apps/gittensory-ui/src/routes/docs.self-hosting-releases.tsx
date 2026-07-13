@@ -111,7 +111,7 @@ curl http://localhost:8787/ready
       <Callout variant="note">
         Both scripts pin a version: the image script accepts a tag/digest argument or{" "}
         <code>GITTENSORY_IMAGE</code>; the prebuilt script derives <code>SENTRY_RELEASE</code>/
-        <code>GITTENSORY_VERSION</code> from the checked-out commit (
+        <code>LOOPOVER_VERSION</code> from the checked-out commit (
         <code>git rev-parse --short=8 HEAD</code>) unless you set <code>SENTRY_RELEASE</code>{" "}
         yourself. A plain{" "}
         <code>docker compose pull gittensory &amp;&amp; docker compose up -d gittensory</code> still
@@ -134,7 +134,7 @@ docker compose up -d gittensory`}
 
       <h2>Sentry source maps</h2>
       <Callout variant="note">
-        Official releases align <code>GITTENSORY_VERSION</code>, Sentry release ids, and uploaded
+        Official releases align <code>LOOPOVER_VERSION</code>, Sentry release ids, and uploaded
         source maps. For custom images, leave <code>SENTRY_RELEASE</code> unset unless you uploaded
         source maps for that exact built bundle.
       </Callout>

@@ -107,7 +107,7 @@ if [ "$VISUAL_REVIEW" = "1" ]; then
     docker logs "$BROWSERLESS_NAME" >&2 || true
     exit 1
   fi
-  # GITTENSORY_REVIEW_SCREENSHOTS must be on: the /gittensory/shot route itself 404s when it's off
+  # LOOPOVER_REVIEW_SCREENSHOTS must be on: the /gittensory/shot route itself 404s when it's off
   # (deliberately "truly inert" by design, src/api/routes.ts), independent of BROWSER_WS_ENDPOINT.
   #
   # SMOKE_SHOT_TARGET must be a REAL, publicly resolvable URL, unlike this script's other *.example
@@ -121,7 +121,7 @@ if [ "$VISUAL_REVIEW" = "1" ]; then
   # internal addresses). Placed BEFORE the caller's own EXTRA_ENV_ARGS so an explicit override still wins.
   SMOKE_SHOT_TARGET="${SELFHOST_SMOKE_VISUAL_TARGET_URL:-https://example.com}"
   VISUAL_EXTRA_ENV_ARGS=(
-    -e "GITTENSORY_REVIEW_SCREENSHOTS=true"
+    -e "LOOPOVER_REVIEW_SCREENSHOTS=true"
     -e "BROWSER_WS_ENDPOINT=ws://${BROWSERLESS_NAME}:3000?token=${BROWSERLESS_TOKEN_SMOKE}"
     -e "PUBLIC_SITE_ORIGIN=${SMOKE_SHOT_TARGET}"
   )

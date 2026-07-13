@@ -2,7 +2,7 @@
 // file originally shipped for just the `features:`-block keys).
 //
 // Before this file existed, each feature ran when `isXEnabled(env)` (a global env flag) AND
-// `isConvergenceRepoAllowed(env, repo)` (the GITTENSORY_REVIEW_REPOS allowlist) were both true — coarse,
+// `isConvergenceRepoAllowed(env, repo)` (the LOOPOVER_REVIEW_REPOS allowlist) were both true — coarse,
 // all-or-nothing per repo, configured only via env. `resolveConvergedFeature` replaced that for the six
 // `features:`-block keys (now seven, see below) with a per-repo `.gittensory.yml` override. But that migration
 // left ~10 OTHER per-PR advisory capabilities (screenshots, impactMap, reviewMemory, cultureProfile,
@@ -14,7 +14,7 @@
 // `resolveFeatureActivation` below is now the ONE pure core every one of those precedence shapes reduces to.
 // `resolveConvergedFeature` and `resolveManifestOnlyFeature` are the two thin adapters over it in actual use:
 //   - `resolveConvergedFeature` — the `features:`-block keys (rag/reputation/unifiedComment/safety/grounding/
-//     e2eTests/screenshots): env kill-switch → per-repo `features:` override → `GITTENSORY_REVIEW_REPOS`
+//     e2eTests/screenshots): env kill-switch → per-repo `features:` override → `LOOPOVER_REVIEW_REPOS`
 //     allowlist default. Safety, grounding, and screenshots are the named exceptions this shape has; see
 //     `FEATURE_MODE` below.
 //   - `resolveManifestOnlyFeature` — the `review:`-block keys with NO allowlist role at all (impactMap /
@@ -24,7 +24,7 @@
 //     for literally becoming `ConvergedFeatureKey`s — renaming an operator's existing yml key would itself be a
 //     behavior break — but they share the exact same underlying arithmetic as "standard" mode with the
 //     allowlist input pinned to `false` (a `manifestOnly` feature can never be force-activated by
-//     GITTENSORY_REVIEW_REPOS the way its `features:`-block cousins can).
+//     LOOPOVER_REVIEW_REPOS the way its `features:`-block cousins can).
 //
 // `convergedFeatureActive` is the async convenience that loads the cached focus manifest itself for
 // `resolveConvergedFeature`'s callers that don't already hold one.
@@ -55,7 +55,7 @@ import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
  *  - `"manifestOnly"`: there is no allowlist role at all (`allowlisted` is never consulted); an explicit
  *    `override === true` is the ONLY way to activate. impactMap / reviewMemory / cultureProfile /
  *    inlineComments / fixHandoff — each shipped as an explicit-opt-in-only `.gittensory.yml` `review.*` toggle
- *    from day one, with no `GITTENSORY_REVIEW_REPOS` role ever defined for it (see
+ *    from day one, with no `LOOPOVER_REVIEW_REPOS` role ever defined for it (see
  *    {@link resolveManifestOnlyFeature}).
  */
 export type FeatureActivationMode = "standard" | "forceOnOnly" | "allowlistRequired" | "manifestOnly";
@@ -65,7 +65,7 @@ export type FeatureActivationMode = "standard" | "forceOnOnly" | "allowlistRequi
  * shares — env kill-switch, then a per-repo override, then (for two of the four modes) an allowlist default.
  * Deliberately takes already-resolved primitives, not `Env` or a raw `FocusManifest`, specifically so a future
  * per-tenant resolution path (e.g. a tenant DB row standing in for the global env var, or a tenant's own
- * allowlist standing in for `GITTENSORY_REVIEW_REPOS`) can supply the same three booleans without this
+ * allowlist standing in for `LOOPOVER_REVIEW_REPOS`) can supply the same three booleans without this
  * function — or either of its two callers' precedence logic below — changing at all.
  */
 export function resolveFeatureActivation(globalFlagOn: boolean, override: boolean | null, allowlisted: boolean, mode: FeatureActivationMode): boolean {
@@ -101,7 +101,7 @@ const FEATURE_MODE: Partial<Record<ConvergedFeatureKey, FeatureActivationMode>> 
  * Resolve whether a converged feature is active for a repo, given the already-loaded manifest (or null). Pure +
  * synchronous so it carries no I/O and is the single unit-tested place the `features:`-block precedence lives
  * (delegating the actual arithmetic to {@link resolveFeatureActivation}). Precedence: env kill-switch (off ⇒
- * false) → per-repo `features:` override → `GITTENSORY_REVIEW_REPOS` allowlist default. `safety` is asymmetric:
+ * false) → per-repo `features:` override → `LOOPOVER_REVIEW_REPOS` allowlist default. `safety` is asymmetric:
  * an override can only force it ON, never force it OFF (#2269). `grounding` and `screenshots` are asymmetric in
  * the opposite direction: a repo override can only force them OFF, never bypass the operator allowlist.
  */
@@ -120,7 +120,7 @@ export function resolveConvergedFeature(
 
 /**
  * Resolve a "manifest-only" advisory feature (#4616): the operator's global env kill-switch AND an EXPLICIT
- * per-repo `.gittensory.yml` `review.*` opt-in — no `GITTENSORY_REVIEW_REPOS` allowlist role at all. Shared by
+ * per-repo `.gittensory.yml` `review.*` opt-in — no `LOOPOVER_REVIEW_REPOS` allowlist role at all. Shared by
  * every `review:`-block feature that was never given an allowlist fallback: impactMap (`shouldComputeImpactMap`,
  * impact-map-wire.ts), reviewMemory (`shouldApplyReviewMemory`, review-memory-wire.ts), cultureProfile
  * (`shouldApplyRepoCultureProfile`, repo-culture-profile-wire.ts), inlineComments (`shouldRequestInlineFindings`,

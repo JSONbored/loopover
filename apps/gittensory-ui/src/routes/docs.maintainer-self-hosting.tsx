@@ -137,7 +137,7 @@ function MaintainerSelfHosting() {
           {
             title: "Private policy",
             description:
-              "A mounted GITTENSORY_REPO_CONFIG_DIR lets maintainers keep review thresholds, autonomy, and notes out of public repos.",
+              "A mounted LOOPOVER_REPO_CONFIG_DIR lets maintainers keep review thresholds, autonomy, and notes out of public repos.",
           },
           {
             title: "Optional intelligence",
@@ -212,7 +212,7 @@ function MaintainerSelfHosting() {
       <ol>
         <li>
           <code>cp .env.selfhost.example .env</code> — conservative defaults (<code>dry-run</code>,
-          small <code>GITTENSORY_REVIEW_REPOS</code>).
+          small <code>LOOPOVER_REVIEW_REPOS</code>).
         </li>
         <li>
           Pull or build the image (<code>INSTALL_AI_CLIS=true</code> by default;{" "}
@@ -229,7 +229,7 @@ function MaintainerSelfHosting() {
           files deep-merge on top).
         </li>
         <li>
-          Add each pilot repo to <code>GITTENSORY_REVIEW_REPOS</code>, watch a PR in{" "}
+          Add each pilot repo to <code>LOOPOVER_REVIEW_REPOS</code>, watch a PR in{" "}
           <code>dry-run</code>, then enable advisory gate mode from the control panel or{" "}
           <code>POST /v1/repos/:owner/:repo/activation</code>.
         </li>
@@ -245,7 +245,7 @@ function MaintainerSelfHosting() {
           {
             title: "Single-command repo onboarding",
             description:
-              "Today: edit .env allowlist, copy YAML templates, sign into the panel, click activate. Proposed: one CLI/API command that adds owner/repo to GITTENSORY_REVIEW_REPOS, seeds gittensory-config/owner__repo/.loopover.yml from global.gittensory.yml, and POSTs activation — idempotent, dry-run aware.",
+              "Today: edit .env allowlist, copy YAML templates, sign into the panel, click activate. Proposed: one CLI/API command that adds owner/repo to LOOPOVER_REVIEW_REPOS, seeds gittensory-config/owner__repo/.loopover.yml from global.gittensory.yml, and POSTs activation — idempotent, dry-run aware.",
           },
           {
             title: "Centralized private default only",
@@ -260,7 +260,7 @@ function MaintainerSelfHosting() {
           {
             title: "Clearer activation vocabulary",
             description:
-              "Docs now separate GITTENSORY_REVIEW_REPOS (feature allowlist), gate activation (check + rules), and is_registered (Gittensor registry). Proposed: surface all three in the control-panel repo workspace with plain labels instead of making operators infer from logs.",
+              "Docs now separate LOOPOVER_REVIEW_REPOS (feature allowlist), gate activation (check + rules), and is_registered (Gittensor registry). Proposed: surface all three in the control-panel repo workspace with plain labels instead of making operators infer from logs.",
           },
         ]}
       />

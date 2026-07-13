@@ -47,8 +47,8 @@ const healthySnapshot: RepoOutcomeSnapshot = {
 
 describe("isOpsEnabled — default OFF, truthy convention", () => {
   it("is OFF for unset / false / empty, ON for 1/true/yes/on", () => {
-    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isOpsEnabled({ GITTENSORY_REVIEW_OPS: off })).toBe(false);
-    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isOpsEnabled({ GITTENSORY_REVIEW_OPS: on })).toBe(true);
+    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isOpsEnabled({ LOOPOVER_REVIEW_OPS: off })).toBe(false);
+    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isOpsEnabled({ LOOPOVER_REVIEW_OPS: on })).toBe(true);
   });
 });
 
@@ -406,7 +406,7 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
 
   it("pages at the WORST anomaly's severity, not whichever one happened to sort first", async () => {
     const calls = stubPagerDutyFetch();
-    const env = createTestEnv({ GITTENSORY_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: PD_KEY });
+    const env = createTestEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: PD_KEY });
     await seedRegisteredRepo(env, "owner/repo");
     // A calibration nudge (warning-grade) AND a review burst (error-grade) on the same repo, same tick.
     await seedGateFalsePositiveAnomaly(env, "owner/repo");
@@ -425,7 +425,7 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
 
   it("does NOT page for a repo whose only anomaly is a routine calibration nudge (default min-severity floor)", async () => {
     const calls = stubPagerDutyFetch();
-    const env = createTestEnv({ GITTENSORY_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: PD_KEY });
+    const env = createTestEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: PD_KEY });
     await seedRegisteredRepo(env, "owner/repo");
     await seedGateFalsePositiveAnomaly(env, "owner/repo"); // warning-grade only, no burst
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -436,7 +436,7 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
     expect(calls).toEqual([]); // but never paged — below the default error floor
   });
 
-  it("does NOT page at all when GITTENSORY_ENABLE_PAGERDUTY is unset (default OFF, byte-identical to today)", async () => {
+  it("does NOT page at all when LOOPOVER_ENABLE_PAGERDUTY is unset (default OFF, byte-identical to today)", async () => {
     const calls = stubPagerDutyFetch();
     const env = createTestEnv(); // no PagerDuty env vars
     await seedRegisteredRepo(env, "owner/repo");
@@ -515,12 +515,12 @@ describe("GET /v1/internal/ops/stats — bearer-gated, flag-gated endpoint", () 
 
   it("401s without the internal token (the /v1/internal/* middleware gate)", async () => {
     const app = createApp();
-    const env = createTestEnv({ GITTENSORY_REVIEW_OPS: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_OPS: "true" });
     expect((await app.request("/v1/internal/ops/stats", {}, env)).status).toBe(401);
     expect((await app.request("/v1/internal/ops/stats", { headers: { authorization: "Bearer nope" } }, env)).status).toBe(401);
   });
 
-  it("404s when GITTENSORY_REVIEW_OPS is OFF — the endpoint does not exist (byte-identical to today)", async () => {
+  it("404s when LOOPOVER_REVIEW_OPS is OFF — the endpoint does not exist (byte-identical to today)", async () => {
     const app = createApp();
     const env = createTestEnv(); // flag unset → OFF
     const res = await app.request("/v1/internal/ops/stats", { headers: bearer(env) }, env);
@@ -528,9 +528,9 @@ describe("GET /v1/internal/ops/stats — bearer-gated, flag-gated endpoint", () 
     expect(((await res.json()) as { error: string }).error).toBe("not_found");
   });
 
-  it("200s with the aggregate when GITTENSORY_REVIEW_OPS is ON and authorized", async () => {
+  it("200s with the aggregate when LOOPOVER_REVIEW_OPS is ON and authorized", async () => {
     const app = createApp();
-    const env = createTestEnv({ GITTENSORY_REVIEW_OPS: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_OPS: "true" });
     await seedRegisteredRepo(env, "owner/repo");
     await seedGateFalsePositiveAnomaly(env, "owner/repo");
     const res = await app.request("/v1/internal/ops/stats", { headers: bearer(env) }, env);

@@ -77,10 +77,6 @@ function collectEnvReads(source, fileName) {
       }
     } else if (ts.isCallExpression(node) && isStaticEnvHelperCall(node)) {
       addRead(node.arguments[1].text);
-    } else if (ts.isCallExpression(node) && isDualPrefixEnvHelperCall(node)) {
-      const suffix = node.arguments[1].text;
-      addRead(`LOOPOVER_${suffix}`);
-      addRead(`GITTENSORY_${suffix}`);
     } else if (ts.isCallExpression(node) && isProcessEnvNameHelperCall(node)) {
       addRead(node.arguments[0].text);
     } else if (ts.isCallExpression(node) && isEnvNameLiteralArgHelperCall(node)) {
@@ -99,25 +95,6 @@ function isStaticEnvHelperCall(node) {
     node.expression.text === "envString" &&
     node.arguments.length >= 2 &&
     isEnvContainer(node.arguments[0]) &&
-    ts.isStringLiteralLike(node.arguments[1])
-  );
-}
-
-// #4774 dual-read (src/utils/env.ts): dualPrefixEnvString/dualPrefixEnvFlag/dualPrefixEnvStrictFlag each read
-// BOTH `LOOPOVER_<suffix>` and the legacy `GITTENSORY_<suffix>` under the hood via template-literal key
-// concatenation this AST scanner can't see into otherwise -- without this, converting a call site from a
-// literal `env.GITTENSORY_X` read to `dualPrefixEnvString(env, "X")` would silently DROP that var from the
-// generated reference instead of adding its new LOOPOVER_ alias. Recognized by function name only (no
-// isEnvContainer check on arg[0]): real call sites pass several different container variable names for the
-// same underlying env object (`env`, `parent`, `parentEnv`, `rawEnv`, a `(... as unknown as Record<...>)`
-// cast, or `process.env`), so requiring isEnvContainer here would silently miss most of them.
-const DUAL_PREFIX_ENV_HELPERS = new Set(["dualPrefixEnvString", "dualPrefixEnvFlag", "dualPrefixEnvStrictFlag"]);
-
-function isDualPrefixEnvHelperCall(node) {
-  return (
-    ts.isIdentifier(node.expression) &&
-    DUAL_PREFIX_ENV_HELPERS.has(node.expression.text) &&
-    node.arguments.length >= 2 &&
     ts.isStringLiteralLike(node.arguments[1])
   );
 }

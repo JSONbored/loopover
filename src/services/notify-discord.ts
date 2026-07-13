@@ -23,10 +23,8 @@ function isValidDiscordWebhook(url: string): boolean {
 // fall back to the global webhook: falling back posts repo A's disposition into repo B's channel. Generic
 // self-hosters should prefer DISCORD_REPO_WEBHOOKS for per-repo routing, or DISCORD_WEBHOOK_URL for one shared
 // channel across unmapped repos.
-// #4774 dual-read: any name here starting with GITTENSORY_ also has a LOOPOVER_ companion (e.g.
-// LOOPOVER_DISCORD_WEBHOOK) resolved below, new name winning when both are set -- see resolveDiscordWebhook.
 const WEBHOOK_SECRET_BY_REPO: Record<string, string> = {
-  "jsonbored/gittensory": "GITTENSORY_DISCORD_WEBHOOK",
+  "jsonbored/gittensory": "LOOPOVER_DISCORD_WEBHOOK",
   "jsonbored/metagraphed": "METAGRAPHED_DISCORD_WEBHOOK",
   "jsonbored/awesome-claude": "AWESOME_DISCORD_WEBHOOK",
 };
@@ -71,10 +69,7 @@ export function resolveDiscordWebhook(env: Env, repoFullName: string): DiscordWe
 
   const name = WEBHOOK_SECRET_BY_REPO[repoKey];
   if (name) {
-    // #4774 dual-read: e.g. LOOPOVER_DISCORD_WEBHOOK wins over the legacy GITTENSORY_DISCORD_WEBHOOK when
-    // both are set; a secret name outside the GITTENSORY_ family (METAGRAPHED_/AWESOME_) has no companion.
-    const loopoverName = name.startsWith("GITTENSORY_") ? name.replace("GITTENSORY_", "LOOPOVER_") : null;
-    const mapped = (loopoverName ? envString(env, loopoverName) : undefined) ?? envString(env, name);
+    const mapped = envString(env, name);
     return mapped && isValidDiscordWebhook(mapped) ? { status: "configured", url: mapped, source: "legacy_repo_secret" } : { status: "disabled", reason: mapped ? "invalid_repo_webhook" : "missing_repo_webhook" };
   }
 

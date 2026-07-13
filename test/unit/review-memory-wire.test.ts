@@ -6,25 +6,25 @@ import type { AdvisoryFinding, ReviewSuppressionRecord } from "../../src/types";
 describe("isReviewMemoryEnabled", () => {
   it("is OFF for unset/false and ON for the truthy convention", () => {
     expect(isReviewMemoryEnabled({})).toBe(false);
-    expect(isReviewMemoryEnabled({ GITTENSORY_REVIEW_MEMORY: "false" })).toBe(false);
-    expect(isReviewMemoryEnabled({ GITTENSORY_REVIEW_MEMORY: "true" })).toBe(true);
-    expect(isReviewMemoryEnabled({ GITTENSORY_REVIEW_MEMORY: "1" })).toBe(true);
-    expect(isReviewMemoryEnabled({ GITTENSORY_REVIEW_MEMORY: "on" })).toBe(true);
-    expect(isReviewMemoryEnabled({ GITTENSORY_REVIEW_MEMORY: "yes" })).toBe(true);
+    expect(isReviewMemoryEnabled({ LOOPOVER_REVIEW_MEMORY: "false" })).toBe(false);
+    expect(isReviewMemoryEnabled({ LOOPOVER_REVIEW_MEMORY: "true" })).toBe(true);
+    expect(isReviewMemoryEnabled({ LOOPOVER_REVIEW_MEMORY: "1" })).toBe(true);
+    expect(isReviewMemoryEnabled({ LOOPOVER_REVIEW_MEMORY: "on" })).toBe(true);
+    expect(isReviewMemoryEnabled({ LOOPOVER_REVIEW_MEMORY: "yes" })).toBe(true);
   });
 });
 
 describe("shouldApplyReviewMemory", () => {
   it("requires BOTH the operator env flag AND the per-repo manifest opt-in", () => {
-    expect(shouldApplyReviewMemory({ GITTENSORY_REVIEW_MEMORY: "true" }, true)).toBe(true);
+    expect(shouldApplyReviewMemory({ LOOPOVER_REVIEW_MEMORY: "true" }, true)).toBe(true);
   });
 
   it("is OFF when the operator flag is on but the manifest didn't opt in", () => {
-    expect(shouldApplyReviewMemory({ GITTENSORY_REVIEW_MEMORY: "true" }, false)).toBe(false);
+    expect(shouldApplyReviewMemory({ LOOPOVER_REVIEW_MEMORY: "true" }, false)).toBe(false);
   });
 
   it("is OFF when the manifest opted in but the operator flag is off (repo cannot self-enable)", () => {
-    expect(shouldApplyReviewMemory({ GITTENSORY_REVIEW_MEMORY: "false" }, true)).toBe(false);
+    expect(shouldApplyReviewMemory({ LOOPOVER_REVIEW_MEMORY: "false" }, true)).toBe(false);
   });
 
   it("is OFF when both are off", () => {

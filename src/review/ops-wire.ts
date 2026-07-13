@@ -1,5 +1,5 @@
 // Convergence (ops / observability) — wires the ported alerts + stats observability into gittensory, behind
-// the default-OFF `GITTENSORY_REVIEW_OPS` flag. Flag-OFF every export here is a no-op / 404, so the worker is
+// the default-OFF `LOOPOVER_REVIEW_OPS` flag. Flag-OFF every export here is a no-op / 404, so the worker is
 // byte-identical to today (the cron enqueues no ops job; the endpoint short-circuits).
 //
 // ADAPTED TO GITTENSORY'S OWN OUTCOME DATA — NOT reviewbot's `review_targets`/`review_audit` (those tables are
@@ -38,15 +38,13 @@ import { loadGatePrecisionReport, type GatePrecisionReport } from "../services/g
 import { buildRepoOutcomeCalibration, type OutcomeCalibration } from "../services/outcome-calibration";
 import { triggerPagerDutyIncident, type PagerDutySeverity } from "../services/notify-pagerduty";
 import { errorMessage, nowIso } from "../utils/json";
-import { dualPrefixEnvFlag } from "../utils/env";
 
 /** True when the ops observability surface is enabled. Flag-OFF (default) → every export below is a no-op /
  *  404. Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as isSafetyEnabled). */
 export function isOpsEnabled(env: {
-  GITTENSORY_REVIEW_OPS?: string | undefined;
   LOOPOVER_REVIEW_OPS?: string | undefined;
 }): boolean {
-  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_OPS");
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_OPS ?? "").trim());
 }
 
 // ── Anomaly thresholds (gittensory-native; conservative so a handful of samples never cries wolf) ──────────
@@ -224,7 +222,7 @@ export async function runOpsAlerts(env: Env): Promise<Record<string, string[]>> 
         // Structured log = gittensory's notify path (no Discord/operator webhook exists) AND the Sentry path
         // (level:"error" + an `event` field reaches forwardStructuredLogToSentry). One line per repo.
         console.error(JSON.stringify({ level: "error", event: "ops_anomaly", repo: repoFullName, at: nowIso(), anomalies }));
-        // Experimental PagerDuty paging (#4937): no-op unless GITTENSORY_ENABLE_PAGERDUTY is set AND a routing
+        // Experimental PagerDuty paging (#4937): no-op unless LOOPOVER_ENABLE_PAGERDUTY is set AND a routing
         // key resolves for this repo (resolvePagerDutyRoutingKey). ops_anomaly is this codebase's own existing
         // "something needs a human" judgment call -- reusing it here (rather than paging on every
         // captureError/captureReviewFailure call, which would need its own frequency/threshold policy first)

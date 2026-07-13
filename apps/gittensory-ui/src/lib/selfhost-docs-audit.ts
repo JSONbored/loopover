@@ -126,7 +126,7 @@ export const SELFHOST_SOURCE_OF_TRUTH_ROWS: readonly SelfHostSourceOfTruthRow[] 
     topic: "AI providers and unsafe Codex opt-in",
     runtimeSources: ["src/selfhost/ai-config.ts", "src/selfhost/ai.ts"],
     docsPath: "/docs/self-hosting-ai-providers",
-    notes: "Codex PR review is fail-closed unless GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1.",
+    notes: "Codex PR review is fail-closed unless LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER=1.",
   },
   {
     topic: "REES sidecar (compose profile)",

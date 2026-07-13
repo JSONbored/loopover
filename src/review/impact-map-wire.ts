@@ -15,24 +15,22 @@
 
 import { resolveManifestOnlyFeature } from "./feature-activation";
 import type { ImpactMapEntry } from "./impact-map";
-import { dualPrefixEnvFlag } from "../utils/env";
 
 /** True when impact-map computation is enabled at the operator level. Flag-OFF (default) → the caller takes
  *  no new branch, so no symbol extraction, no RAG query, and no impact-map section is ever computed or
  *  rendered. Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as isRagEnabled /
  *  isGroundingEnabled / isSafetyEnabled). */
 export function isImpactMapEnabled(env: {
-  GITTENSORY_REVIEW_IMPACT_MAP?: string | undefined;
   LOOPOVER_REVIEW_IMPACT_MAP?: string | undefined;
 }): boolean {
-  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_IMPACT_MAP");
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_IMPACT_MAP ?? "").trim());
 }
 
 /** Resolve whether impact-map computation should run for THIS repo/PR: the operator's global env kill-switch
  *  AND the per-repo manifest opt-in. Neither alone is sufficient — mirrors every other converged-feature gate
  *  in this codebase (env kill-switch first, then the manifest narrows it further). */
 export function shouldComputeImpactMap(
-  env: { GITTENSORY_REVIEW_IMPACT_MAP?: string | undefined },
+  env: { LOOPOVER_REVIEW_IMPACT_MAP?: string | undefined },
   manifestImpactMapEnabled: boolean,
 ): boolean {
   return resolveManifestOnlyFeature(isImpactMapEnabled(env), manifestImpactMapEnabled);

@@ -4,9 +4,9 @@
 // generic gate produces: the flag + per-repo RegistryLaneSpec resolution, the GitHub-backed loadFile, and the
 // verdict → GateCheckEvaluation conversion.
 //
-// FLAG-GATED + DEFAULT-OFF: GITTENSORY_REVIEW_CONTENT_LANE must be truthy, AND `resolveRegistryLaneSpec`
+// FLAG-GATED + DEFAULT-OFF: LOOPOVER_REVIEW_CONTENT_LANE must be truthy, AND `resolveRegistryLaneSpec`
 // (content-lane/spec-resolver.ts) must resolve a spec for this repo — either an explicit per-repo `.gittensory.yml`
-// `contentLane:` config, or (today's zero-config default) the repo being in the GITTENSORY_REVIEW_REPOS cutover
+// `contentLane:` config, or (today's zero-config default) the repo being in the LOOPOVER_REVIEW_REPOS cutover
 // allowlist, which resolves to METAGRAPHED_LANE_SPEC. When off / unresolved (the default for any repo that hasn't
 // opted in) the caller takes no new branch, runs no fetch, and `gateEvaluation` is byte-identical to today. The
 // verdict NEVER depends on an AI model, so this is independent of the AI-reviewer accuracy work (the surface lane
@@ -225,7 +225,7 @@ export function resolveSurfaceRefs(
 
 /** The processor SEAM in one testable call: when a RegistryLaneSpec resolves for this repo (see
  *  `resolveRegistryLaneSpec` — an explicit per-repo `.gittensory.yml` `contentLane:` config, or the
- *  GITTENSORY_REVIEW_REPOS allowlist default), run the surface lane against it and merge its verdict onto the
+ *  LOOPOVER_REVIEW_REPOS allowlist default), run the surface lane against it and merge its verdict onto the
  *  generic gate (preserving generic hard blockers); otherwise return the generic evaluation unchanged.
  *  `getChangedFiles` is a thunk so an unresolved repo resolves no files (no extra diff load). The env kill-switch
  *  is checked BEFORE loading the manifest, so a globally-disabled lane pays no manifest-load I/O either.

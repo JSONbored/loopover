@@ -29,7 +29,7 @@ import { errorMessage, nowIso } from "../utils/json";
  *  with its own on/off knob). */
 type ContributorCalibrationEnv = {
   DB: D1Database;
-  GITTENSORY_REVIEW_PARITY_AUDIT?: string | undefined;
+  LOOPOVER_REVIEW_PARITY_AUDIT?: string | undefined;
   SELFHOST_TRANSIENT_CACHE?: NonNullable<Env["SELFHOST_TRANSIENT_CACHE"]>;
 };
 

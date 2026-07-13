@@ -38,7 +38,7 @@ export function isSweepStale(input: { openPullRequestCount: number; lastRegatedA
 }
 
 /** The same acting-autonomy repo set fanOutAgentRegateSweepJobs sweeps: the convergence allowlist
- *  (GITTENSORY_REVIEW_REPOS) union the webhook-registered repos with acting autonomy, deduped case-insensitively.
+ *  (LOOPOVER_REVIEW_REPOS) union the webhook-registered repos with acting autonomy, deduped case-insensitively.
  *  Deliberately mirrors that function's own selection so the watchdog can never watch a DIFFERENT set of repos
  *  than the sweep actually covers. */
 async function watchedRepos(env: Env): Promise<Array<{ fullName: string; installationId?: number }>> {

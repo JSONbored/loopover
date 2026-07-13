@@ -4,7 +4,7 @@ export type AutomationBotSkipMode = "inherit" | "off" | "enabled";
 
 /** Truthy convention matches the rest of this codebase (`/^(1|true|yes|on)$/i`, e.g. isReputationEnabled),
  *  inverted: this flag defaults ON (skip), so only an explicit falsy value ("0"/"false"/"no"/"off") turns it
- *  off install-wide. Unlike most `GITTENSORY_REVIEW_*` flags (opt-in, default off), eliminating AI/gate spend
+ *  off install-wide. Unlike most `LOOPOVER_REVIEW_*` flags (opt-in, default off), eliminating AI/gate spend
  *  on PRs from known, maintainer-owned automation (release-please's github-actions[bot], Renovate,
  *  Dependabot) is safe and low-risk enough to be the sensible default -- it should not require every
  *  self-host operator to discover and separately opt into this. */

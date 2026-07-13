@@ -21,7 +21,7 @@ describe("MCP server telemetry", () => {
     const request = new Request("https://api.test/mcp", {
       method: "POST",
       headers: {
-        authorization: `Bearer ${env.GITTENSORY_MCP_TOKEN}`,
+        authorization: `Bearer ${env.LOOPOVER_MCP_TOKEN}`,
         "content-type": "application/json",
         "x-gittensory-mcp-package": "@loopover/mcp",
         "x-gittensory-mcp-version": "0.5.0",
@@ -73,7 +73,7 @@ describe("MCP server telemetry", () => {
     const request = new Request("https://api.test/mcp", {
       method: "POST",
       headers: {
-        authorization: `Bearer ${env.GITTENSORY_MCP_TOKEN}`,
+        authorization: `Bearer ${env.LOOPOVER_MCP_TOKEN}`,
         "content-type": "application/json",
       },
       body: JSON.stringify({ jsonrpc: "2.0", id: "ping", method: "ping" }),

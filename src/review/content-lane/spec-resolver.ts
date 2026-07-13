@@ -1,5 +1,5 @@
 // Per-repo RegistryLaneSpec resolution (#2435 — closes the "only metagraphed can use this" gap). Before this,
-// content-lane-wire.ts hard-selected METAGRAPHED_LANE_SPEC for every repo in the GITTENSORY_REVIEW_REPOS
+// content-lane-wire.ts hard-selected METAGRAPHED_LANE_SPEC for every repo in the LOOPOVER_REVIEW_REPOS
 // allowlist; a different self-hosted maintainer's registry could only be onboarded by editing gittensory's own
 // TypeScript source. This mirrors resolveConvergedFeature's precedence (review/feature-activation.ts): env
 // kill-switch → per-repo `.gittensory.yml` config → allowlist default — but resolves to a whole spec OBJECT (or
@@ -78,7 +78,7 @@ export function registeredValidatorIds(): string[] {
  * repo that hasn't opted into its own config) → inactive.
  */
 export function resolveRegistryLaneSpec(
-  env: ContentLaneEnv & { GITTENSORY_REVIEW_REPOS?: string | undefined },
+  env: ContentLaneEnv & { LOOPOVER_REVIEW_REPOS?: string | undefined },
   manifest: Pick<FocusManifest, "contentLane"> | null | undefined,
   repoFullName: string,
 ): RegistryLaneSpec | null {

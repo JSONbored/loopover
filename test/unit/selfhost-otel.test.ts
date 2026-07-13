@@ -94,7 +94,7 @@ describe("self-host OpenTelemetry", () => {
           OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318/",
           OTEL_SERVICE_NAME: "gittensory-test",
           SENTRY_ENVIRONMENT: "selfhost-test",
-          GITTENSORY_VERSION: "gittensory-selfhost@test",
+          LOOPOVER_VERSION: "gittensory-selfhost@test",
         }),
       ),
     ).toBe(true);
@@ -141,29 +141,13 @@ describe("self-host OpenTelemetry", () => {
     expect(otelMocks.OTLPTraceExporter).toHaveBeenCalledTimes(1);
   });
 
-  // #4774 dual-read: LOOPOVER_VERSION is a first-class alias of the legacy GITTENSORY_VERSION for the
-  // `service.version` resource attribute, new name winning when both are set.
-  it("resolves service.version via the NEW LOOPOVER_VERSION alone (legacy unset)", async () => {
+  it("resolves service.version from LOOPOVER_VERSION", async () => {
     await initOpenTelemetry(
       env({ OTEL_TRACES_EXPORTER: "otlp", OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318", LOOPOVER_VERSION: "loopover-selfhost@test" }),
     );
     await withOtelSpan("selfhost.queue.job", {}, async () => "ok");
     await flushOpenTelemetry();
     expect(otelMocks.exportedSpans[0].resource.attributes).toMatchObject({ "service.version": "loopover-selfhost@test" });
-  });
-
-  it("the NEW LOOPOVER_VERSION wins over the legacy GITTENSORY_VERSION when BOTH are set", async () => {
-    await initOpenTelemetry(
-      env({
-        OTEL_TRACES_EXPORTER: "otlp",
-        OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318",
-        GITTENSORY_VERSION: "gittensory-selfhost@old",
-        LOOPOVER_VERSION: "loopover-selfhost@new",
-      }),
-    );
-    await withOtelSpan("selfhost.queue.job", {}, async () => "ok");
-    await flushOpenTelemetry();
-    expect(otelMocks.exportedSpans[0].resource.attributes).toMatchObject({ "service.version": "loopover-selfhost@new" });
   });
 
   it("records failed spans and preserves nested parent context", async () => {

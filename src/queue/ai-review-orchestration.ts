@@ -321,12 +321,12 @@ export async function runAiReviewForAdvisory(
     // operator's global env vars. Absent/all-null ⇒ byte-identical (global env var, then provider default).
     reviewSelfHostAiModel?: SelfHostAiModelConfig | undefined;
     // `.gittensory.yml` review.impact_map (#2184/#2186), resolved by the caller from the cached manifest. ANDed
-    // here with the operator's GITTENSORY_REVIEW_IMPACT_MAP flag (shouldComputeImpactMap) to decide whether to
+    // here with the operator's LOOPOVER_REVIEW_IMPACT_MAP flag (shouldComputeImpactMap) to decide whether to
     // compute the deterministic impact map and splice it into the reviewer prompt as additive reference
     // context. Absent/false ⇒ byte-identical reviewer prompt (no impact-map computation, no RAG query for it).
     reviewImpactMap?: boolean | undefined;
     // `.gittensory.yml` review.culture_profile (#2995), resolved by the caller from the cached manifest. ANDed
-    // here with the GITTENSORY_REVIEW_CULTURE_PROFILE global flag to decide whether to append the repo's
+    // here with the LOOPOVER_REVIEW_CULTURE_PROFILE global flag to decide whether to append the repo's
     // quality-culture reference block (typical merged-PR size + common labels) to the reviewer prompt. Absent/
     // false ⇒ byte-identical (no section, no extra D1 read).
     reviewCultureProfile?: boolean | undefined;
@@ -409,7 +409,7 @@ export async function runAiReviewForAdvisory(
     !args.advisory.headSha
   )
     return undefined;
-  // Per-repo cutover gate (GITTENSORY_REVIEW_REPOS): the converged review features (reputation AI-skip,
+  // Per-repo cutover gate (LOOPOVER_REVIEW_REPOS): the converged review features (reputation AI-skip,
   // grounding, RAG) activate for THIS repo only when it is allowlisted. Computed once and ANDed into each
   // feature's global flag below. Empty/unset allowlist → false → every converged branch here is unreachable
   // (byte-identical to today) regardless of the global flags.
@@ -441,7 +441,7 @@ export async function runAiReviewForAdvisory(
     "grounding",
     args.repoFullName,
   );
-  // Reputation anti-abuse (convergence, flag-gated by GITTENSORY_REVIEW_REPUTATION). Extends the AI-spend gate above:
+  // Reputation anti-abuse (convergence, flag-gated by LOOPOVER_REVIEW_REPUTATION). Extends the AI-spend gate above:
   // an INTERNAL low-reputation / burst / new submitter is downgraded to a DETERMINISTIC-ONLY review — the
   // (paid) AI neurons are skipped here exactly as they are for an unconfirmed contributor, so a serial abuser
   // can't make the project spend AI on a flood of low-quality PRs. STRICTLY INTERNAL: the reputation is never
@@ -510,7 +510,7 @@ export async function runAiReviewForAdvisory(
       args.settings.aiReviewMode === "block"
         ? allFiles
         : filterReviewFilesForAi(allFiles, args.reviewExcludePaths ?? [], args.reviewPathFilters ?? []);
-    // Grounding (convergence, flag-gated by GITTENSORY_REVIEW_GROUNDING; per-repo `features.grounding` override,
+    // Grounding (convergence, flag-gated by LOOPOVER_REVIEW_GROUNDING; per-repo `features.grounding` override,
     // #4100). Build the FINISHED CI status + the full content of the changed files so the reviewer verifies its
     // claims against reality instead of guessing. Flag-OFF (default) → we take no new branch at all: NO
     // check/repo load, NO file fetch, and `grounding` is left undefined so the prompt handed to the model is
@@ -531,7 +531,7 @@ export async function runAiReviewForAdvisory(
               null,
           })
         : undefined;
-    // RAG retrieval (convergence, flag-gated by GITTENSORY_REVIEW_RAG). Query the codebase vector index for code/docs
+    // RAG retrieval (convergence, flag-gated by LOOPOVER_REVIEW_RAG). Query the codebase vector index for code/docs
     // semantically related to the changed files and append them as additive reference context — exactly like
     // grounding. Flag-OFF (default) → NO new branch: no adapter use, no vector query, and `ragContext` is left
     // undefined so the prompt is byte-identical to today. Fully fail-safe (a missing/cold index degrades to "").
@@ -574,7 +574,7 @@ export async function runAiReviewForAdvisory(
       });
       impactMapContext = formatImpactMapPromptSection(impactMapEntries);
     }
-    // Repo quality-culture profile (#2995, flag-gated by GITTENSORY_REVIEW_CULTURE_PROFILE AND the per-repo
+    // Repo quality-culture profile (#2995, flag-gated by LOOPOVER_REVIEW_CULTURE_PROFILE AND the per-repo
     // `review.culture_profile` opt-in). Derives a compact reference block from the repo's OWN merge history
     // (typical PR size, common accepted labels) and appends it as additive grounding — exactly like RAG. Both
     // gates OFF (default) → NO new branch: no D1 read, and `cultureProfileContext` is left undefined so the
@@ -582,7 +582,7 @@ export async function runAiReviewForAdvisory(
     const cultureProfileContext = shouldApplyRepoCultureProfile(env, args.reviewCultureProfile === true)
       ? await buildRepoCultureProfileContext(env, args.repoFullName)
       : undefined;
-    // Review-enrichment (#1472, flag-gated by GITTENSORY_REVIEW_ENRICHMENT + REES_URL). POST the PR to the external
+    // Review-enrichment (#1472, flag-gated by LOOPOVER_REVIEW_ENRICHMENT + REES_URL). POST the PR to the external
     // REES for the heavy/external analysis the reviewer can't run (dependency CVEs, secrets, license/EOL/supply-chain);
     // its public-safe brief splices into the prompt next to grounding + RAG. Flag-OFF (default) → no call, no branch,
     // byte-identical prompt. Fully fail-safe (any timeout/error/empty → undefined → review proceeds).

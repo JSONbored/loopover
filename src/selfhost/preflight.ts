@@ -1,5 +1,4 @@
 import { createPrivateKey } from "node:crypto";
-import { dualPrefixEnvString } from "../utils/env";
 
 export type SelfHostPreflightProblem = {
   var: string;
@@ -82,7 +81,7 @@ function addProblem(
 // values for high-privilege secrets (the webhook HMAC secret, plus the static API/MCP/internal bearer
 // tokens). An operator who copies the starter to `.env` and misses "fill in the placeholders" runs an
 // instance with a PUBLICLY KNOWN webhook secret (forgeable signatures) and PUBLICLY KNOWN bearer tokens
-// (GITTENSORY_API_TOKEN bypasses app-role + per-repo write checks; INTERNAL_JOB_TOKEN gates internal
+// (LOOPOVER_API_TOKEN bypasses app-role + per-repo write checks; INTERNAL_JOB_TOKEN gates internal
 // routes) -- silently, with no error. Reject these exact strings at boot rather than trusting every
 // operator to have actually edited the file.
 const KNOWN_PLACEHOLDER_SECRETS = new Set([
@@ -98,8 +97,8 @@ const MIN_SECRET_LENGTH = 20;
 
 const CRITICAL_SECRET_VARS = [
   "GITHUB_WEBHOOK_SECRET",
-  "GITTENSORY_API_TOKEN",
-  "GITTENSORY_MCP_TOKEN",
+  "LOOPOVER_API_TOKEN",
+  "LOOPOVER_MCP_TOKEN",
   "INTERNAL_JOB_TOKEN",
   "SELFHOST_SETUP_TOKEN",
 ] as const;
@@ -115,22 +114,13 @@ function criticalSecretProblem(name: string, value: string): string | null {
   return null;
 }
 
-// #4774 dual-read: a CRITICAL_SECRET_VARS entry prefixed GITTENSORY_ (currently API_TOKEN, MCP_TOKEN) also
-// accepts its LOOPOVER_ companion, new name winning when both are set -- same precedence as every other
-// dual-read var. The reported problem is still keyed by the legacy name in CRITICAL_SECRET_VARS either way,
-// matching every existing preflight test/message; only the VALUE being judged changes.
-function resolvedCriticalSecretValue(name: (typeof CRITICAL_SECRET_VARS)[number], env: SelfHostPreflightEnv): string | undefined {
-  if (!name.startsWith("GITTENSORY_")) return nonBlank(env[name]);
-  return dualPrefixEnvString(env, name.slice("GITTENSORY_".length));
-}
-
 function checkCriticalSecrets(
   problems: SelfHostPreflightProblem[],
   env: SelfHostPreflightEnv,
 ): void {
   const seenValues = new Map<string, string>(); // value -> first var name that used it
   for (const name of CRITICAL_SECRET_VARS) {
-    const value = resolvedCriticalSecretValue(name, env);
+    const value = nonBlank(env[name]);
     if (!value) continue; // presence is each caller's own concern; this only judges strength when SET
     const problem = criticalSecretProblem(name, value);
     if (problem) {

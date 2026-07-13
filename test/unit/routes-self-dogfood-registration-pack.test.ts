@@ -9,7 +9,7 @@ const APP_SELF_DOGFOOD_PATH = "/v1/app/self-dogfood/registration-pack";
 
 function apiHeaders(env: Env): Record<string, string> {
   return {
-    authorization: `Bearer ${env.GITTENSORY_API_TOKEN}`,
+    authorization: `Bearer ${env.LOOPOVER_API_TOKEN}`,
     "content-type": "application/json",
   };
 }

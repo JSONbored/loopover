@@ -95,7 +95,7 @@ services:
       # keys it sets; anything it doesn't mention is inherited from the next layer down — see
       # config/examples/README.md). Keeps each repo's policy OUT of the public GitHub repo so contributors can't
       # game the rules. Empty/unmounted ⇒ repos use the public file / defaults.
-      GITTENSORY_REPO_CONFIG_DIR: "${GITTENSORY_REPO_CONFIG_DIR:-/config}"
+      LOOPOVER_REPO_CONFIG_DIR: "${LOOPOVER_REPO_CONFIG_DIR:-/config}"
       # Claude Code usage telemetry → OTEL collector → Prometheus → Claude usage dashboard. OFF unless you set
       # CLAUDE_CODE_ENABLE_TELEMETRY=1 in .env (requires --profile observability so the otel-collector is up).
       CLAUDE_CODE_ENABLE_TELEMETRY: "${CLAUDE_CODE_ENABLE_TELEMETRY:-}"
@@ -513,7 +513,7 @@ services:
   # it in two places — the server reads TOKEN below, the app embeds the same value in the client URL):
   #   BROWSERLESS_TOKEN=<a-strong-random-value>
   #   BROWSER_WS_ENDPOINT=ws://browserless:3000?token=<the-same-value>
-  # Then set GITTENSORY_REVIEW_SCREENSHOTS=true. Official release images already have puppeteer-core
+  # Then set LOOPOVER_REVIEW_SCREENSHOTS=true. Official release images already have puppeteer-core
   # installed (release-selfhost.yml builds with --build-arg INSTALL_VISUAL_REVIEW=true) — a rebuild is
   # only needed for a LOCAL/custom image build from this Dockerfile directly (see Dockerfile). Unset/
   # default = fully inert, no container, no screenshots, no error — this whole feature is opt-in end to end.
@@ -593,7 +593,7 @@ services:
   # misconfig, ...) that the no-checkout `claude --print` reviewer can't do inline; the engine splices its
   # brief into the AI review prompt and treats any REES timeout/error as "no brief" and proceeds regardless
   # (src/review/enrichment-wire.ts) -- this whole service is optional end to end, same as browserless above.
-  # After `docker compose --profile rees up -d`, set in .env: GITTENSORY_REVIEW_ENRICHMENT=true,
+  # After `docker compose --profile rees up -d`, set in .env: LOOPOVER_REVIEW_ENRICHMENT=true,
   # REES_URL=http://rees:8080, and a freshly generated REES_SHARED_SECRET -- do not reuse a secret from any
   # other REES instance (e.g. a managed Railway deployment) you also point at (#1667).
   rees:

@@ -450,7 +450,7 @@ describe("content-block union (#4111 — text|image messages, advisory-only visu
       capturedInput = opts.input ?? "";
       return { stdout: JSON.stringify({ type: "result", result: "ok" }), code: 0 };
     };
-    await createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", {
+    await createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", {
       messages: [{ role: "user", content: [{ type: "text", text: "look at this" }, { type: "image", data: "QUJD", mimeType: "image/png" }] }],
     });
     expect(capturedInput).toBe("look at this");
@@ -475,7 +475,7 @@ describe("createChainAi (fallback)", () => {
     const token = "oauth-tok-abcdef123456";
     const timedOut: StubSpawn = async () => ({ stdout: "", code: null, stderr: "connection reset", timedOut: true });
     const claudeOk: StubSpawn = async () => ({ stdout: JSON.stringify({ type: "result", result: "claude review" }), code: 0 });
-    const codex = createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, timedOut, noAuthCheck);
+    const codex = createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, timedOut, noAuthCheck);
     const claudeCode = createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: token }, claudeOk);
     const chain = createChainAi([
       { name: "codex", ai: codex },
@@ -1103,7 +1103,7 @@ describe("branch coverage — defaults + edge inputs", () => {
   it("claude/codex with a null exit code", async () => {
     const nullExit: StubSpawn = async () => ({ stdout: "", code: null });
     await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, nullExit).run("m", { prompt: "x" })).rejects.toThrow(/claude_code_exit_null/);
-    await expect(createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, nullExit, noAuthCheck).run("m", { prompt: "x" })).rejects.toThrow(/codex_exit_null/);
+    await expect(createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, nullExit, noAuthCheck).run("m", { prompt: "x" })).rejects.toThrow(/codex_exit_null/);
   });
   it("embed uses the bge-m3 default when no embedModel is set", async () => {
     let sentModel = "";
@@ -1386,7 +1386,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect((await claudeChain.run("bge-m3", { text: ["a", "b"] })).data?.length).toBe(2);
     // Same for codex as the frontier reviewer.
     const codexOk: StubSpawn = async () => ({ stdout: JSON.stringify({ type: "result", result: "codex review" }), code: 0 });
-    const codexChain = createChainAi([{ name: "codex", ai: createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, codexOk) }, embedder]);
+    const codexChain = createChainAi([{ name: "codex", ai: createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, codexOk) }, embedder]);
     expect((await codexChain.run("bge-m3", { text: ["a"] })).data?.length).toBe(1);
   });
 
@@ -1406,7 +1406,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     };
     // No configured model + the dual-router's empty model id → omit --model (Codex picks the account default).
     expect(
-      (await createCodexAi({ PATH: "/bin", WORKER_ONLY_VALUE: "internal", OPENAI_API_KEY: "sk-bill", CODEX_AI_TIMEOUT_MS: "300000", GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", {
+      (await createCodexAi({ PATH: "/bin", WORKER_ONLY_VALUE: "internal", OPENAI_API_KEY: "sk-bill", CODEX_AI_TIMEOUT_MS: "300000", LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", {
         prompt: "x",
       })).response,
     ).toBe("codex review");
@@ -1418,12 +1418,12 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(capturedCwd).toContain("gittensory-ai-");
     expect(timeout).toBe(300_000);
     // Provider-specific model/effort are passed through.
-    await createCodexAi({ CODEX_AI_MODEL: "gpt-5.5", CODEX_AI_EFFORT: "high", GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", { prompt: "x" });
+    await createCodexAi({ CODEX_AI_MODEL: "gpt-5.5", CODEX_AI_EFFORT: "high", LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", { prompt: "x" });
     expect(seen.join(" ")).toContain("--model gpt-5.5");
     expect(seen.join(" ")).toContain('model_reasoning_effort="high"');
     expect(capturedEnv.CODEX_AI_MODEL).toBeUndefined();
     const bad: StubSpawn = async () => ({ stdout: "", code: 1 });
-    await expect(createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, bad, noAuthCheck).run("", { prompt: "x" })).rejects.toThrow(/codex_exit_1/);
+    await expect(createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, bad, noAuthCheck).run("", { prompt: "x" })).rejects.toThrow(/codex_exit_1/);
   });
 
   it("Codex's per-repo review.ai_model override (#selfhost-ai-model-override) outranks CODEX_AI_MODEL/CODEX_AI_EFFORT, which outrank the account default", async () => {
@@ -1433,7 +1433,7 @@ describe("subscription CLI helpers + fail-safe", () => {
       return { stdout: JSON.stringify({ type: "result", result: "codex review" }), code: 0 };
     };
     // Global env set, but this call's per-repo override wins for both model and effort.
-    await createCodexAi({ CODEX_AI_MODEL: "gpt-5.5", CODEX_AI_EFFORT: "high", GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", {
+    await createCodexAi({ CODEX_AI_MODEL: "gpt-5.5", CODEX_AI_EFFORT: "high", LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", {
       prompt: "x",
       codexModel: "gpt-5.4-mini",
       codexEffort: "low",
@@ -1441,11 +1441,11 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(seen.join(" ")).toContain("--model gpt-5.4-mini");
     expect(seen.join(" ")).toContain('model_reasoning_effort="low"');
     // No override on this call → falls through to the global env var.
-    await createCodexAi({ CODEX_AI_MODEL: "gpt-5.5", CODEX_AI_EFFORT: "high", GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", { prompt: "x" });
+    await createCodexAi({ CODEX_AI_MODEL: "gpt-5.5", CODEX_AI_EFFORT: "high", LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", { prompt: "x" });
     expect(seen.join(" ")).toContain("--model gpt-5.5");
     expect(seen.join(" ")).toContain('model_reasoning_effort="high"');
     // No override AND no global env → no --model flag at all (Codex picks the account default), effort medium.
-    await createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", { prompt: "x" });
+    await createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", { prompt: "x" });
     expect(seen).not.toContain("--model");
     expect(seen.join(" ")).toContain('model_reasoning_effort="medium"');
   });
@@ -1457,7 +1457,7 @@ describe("subscription CLI helpers + fail-safe", () => {
       capturedInput = opts.input ?? "";
       return { stdout: JSON.stringify({ type: "result", result: "codex review" }), code: 0 };
     };
-    await createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", {
+    await createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", {
       messages: [
         { role: "system", content: `Base system. ${systemAppend}` },
         { role: "user", content: "Review this diff." },
@@ -1469,7 +1469,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(capturedInput).toContain("Base system.");
     expect(capturedInput).toContain("Review this diff.");
 
-    await createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", {
+    await createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", {
       messages: [
         { role: "system", content: "Base system without the append block." },
         { role: "user", content: "Review this diff." },
@@ -1532,7 +1532,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     chmodSync(fake, 0o755);
     const origPath = process.env.PATH;
     try {
-      const out = await createCodexAi({ PATH: `${dir}:${origPath ?? ""}`, HOME: dir, GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, undefined, noAuthCheck).run("", { prompt: "hello" });
+      const out = await createCodexAi({ PATH: `${dir}:${origPath ?? ""}`, HOME: dir, LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, undefined, noAuthCheck).run("", { prompt: "hello" });
       expect(out.response).toBe("OK:hello");
     } finally {
       process.env.PATH = origPath;
@@ -1561,7 +1561,7 @@ describe("subscription CLI helpers + fail-safe", () => {
           {
             PATH: `${dir}:${origPath ?? ""}`,
             HOME: dir,
-            GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1",
+            LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1",
             // Full timeout stays large (60s) so a false-pass (hitting the FULL timeout instead of the fast one)
             // would make this test hang for a minute rather than silently succeed for the wrong reason.
             CODEX_AI_TIMEOUT_MS: "60000",
@@ -1593,7 +1593,7 @@ describe("subscription CLI helpers + fail-safe", () => {
         {
           PATH: `${dir}:${origPath ?? ""}`,
           HOME: dir,
-          GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1",
+          LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1",
           CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS: "200",
         },
         undefined,
@@ -1631,7 +1631,7 @@ describe("subscription CLI helpers + fail-safe", () => {
           {
             PATH: `${dir}:${origPath ?? ""}`,
             HOME: dir,
-            GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1",
+            LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1",
             CODEX_AI_TIMEOUT_MS: "60000",
             CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS: "200",
           },
@@ -1673,7 +1673,7 @@ describe("subscription CLI helpers + fail-safe", () => {
         {
           PATH: `${dir}:${origPath ?? ""}`,
           HOME: dir,
-          GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1",
+          LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1",
           CODEX_AI_TIMEOUT_MS: "30000",
           // Shorter than the 400ms completion delay above, but the process must survive because a stdout byte
           // already arrived (at ~50ms) before this deadline — proving the fast-fail timer is truly cleared by
@@ -1704,7 +1704,7 @@ describe("subscription CLI helpers + fail-safe", () => {
   it("Codex throws on empty output", async () => {
     const empty: StubSpawn = async () => ({ stdout: "", code: 0 });
     await expect(
-      createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, empty, noAuthCheck).run("gpt-5", { prompt: "x" }),
+      createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, empty, noAuthCheck).run("gpt-5", { prompt: "x" }),
     ).rejects.toThrow(/codex_empty_output/);
     const metrics = await renderMetrics();
     expect(metrics).toContain('loopover_ai_requests_total{effort="medium",model="gpt-5",provider="codex"} 1');
@@ -1773,11 +1773,11 @@ describe("subscription CLI helpers + fail-safe", () => {
       return { stdout: "", code: null, stderr: "Reading prompt from stdin...", timedOut: true, stalledNoOutput: true };
     };
     await expect(
-      createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, stalled, noAuthCheck).run("m", { prompt: "x" }),
+      createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, stalled, noAuthCheck).run("m", { prompt: "x" }),
     ).rejects.toThrow(/codex_stalled_no_output/);
     // Never the generic message — the whole point is that these two failure modes are separately observable.
     await expect(
-      createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, stalled, noAuthCheck).run("m", { prompt: "x" }),
+      createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, stalled, noAuthCheck).run("m", { prompt: "x" }),
     ).rejects.not.toThrow(/^codex_timeout/);
     // The fast-fail deadline defaults to 30s and is strictly less than the (180s-default) full timeout.
     expect(capturedOpts?.firstOutputTimeoutMs).toBe(30_000);
@@ -1792,7 +1792,7 @@ describe("subscription CLI helpers + fail-safe", () => {
       return { stdout: JSON.stringify({ type: "result", result: "hi" }), code: 0 };
     };
     await createCodexAi(
-      { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1", CODEX_AI_TIMEOUT_MS: "30000", CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS: "30000" },
+      { LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1", CODEX_AI_TIMEOUT_MS: "30000", CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS: "30000" },
       ok,
       noAuthCheck,
     ).run("m", { prompt: "x" });
@@ -1809,17 +1809,17 @@ describe("subscription CLI helpers + fail-safe", () => {
       timedOut: true,
     });
     await expect(
-      createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, withJsonlError, noAuthCheck).run("m", { prompt: "x" }),
+      createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, withJsonlError, noAuthCheck).run("m", { prompt: "x" }),
     ).rejects.toThrow(/codex_timeout: model unavailable/);
 
     const stderrOnly: StubSpawn = async () => ({ stdout: "", code: null, stderr: "connection reset", timedOut: true });
     await expect(
-      createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, stderrOnly, noAuthCheck).run("m", { prompt: "x" }),
+      createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, stderrOnly, noAuthCheck).run("m", { prompt: "x" }),
     ).rejects.toThrow(/codex_timeout: connection reset/);
 
     const neitherOutput: StubSpawn = async () => ({ stdout: "", code: null, timedOut: true });
     await expect(
-      createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, neitherOutput, noAuthCheck).run("m", { prompt: "x" }),
+      createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, neitherOutput, noAuthCheck).run("m", { prompt: "x" }),
     ).rejects.toThrow(/codex_timeout: no output/);
   });
 
@@ -1858,7 +1858,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     };
     await expect(
       createCodexAi(
-        { CODEX_HOME: "/home/node/.codex", GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+        { CODEX_HOME: "/home/node/.codex", LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
         shouldNotSpawn,
       ).run("gpt-5", {
         prompt: "read $CODEX_HOME/auth.json",
@@ -1871,20 +1871,18 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(metrics).not.toContain("loopover_ai_requests_total");
   });
 
-  // #4774 dual-read: LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER is a first-class alias of the legacy
-  // GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER opt-in, new name winning when both are set.
-  it("credential isolation opt-in accepts the NEW LOOPOVER_ name alone (legacy unset)", async () => {
+  it("credential isolation opt-in accepts LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER=1", async () => {
     const ok: StubSpawn = async () => ({ stdout: JSON.stringify({ type: "result", result: "ok" }), code: 0 });
     await expect(createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("gpt-5", { prompt: "x" })).resolves.toMatchObject({ response: "ok" });
   });
 
-  it("credential isolation opt-in: the NEW LOOPOVER_ name wins when BOTH are set — a non-\"1\" new value still fails closed", async () => {
+  it("credential isolation opt-in: a non-\"1\" value still fails closed (strict, not loose-truthy)", async () => {
     const shouldNotSpawn: StubSpawn = async () => {
       throw new Error("spawned");
     };
     await expect(
       createCodexAi(
-        { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1", LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "0" },
+        { LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "true" },
         shouldNotSpawn,
       ).run("gpt-5", { prompt: "x" }),
     ).rejects.toThrow(/codex_credential_isolation_required/);
@@ -1910,7 +1908,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     // No auth.json yet — the preflight must reject before ever spawning codex.
     await expect(
       createCodexAi(
-        { HOME: dir, GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+        { HOME: dir, LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
         spawnedPrompt,
       ).run("gpt-5", { prompt: "x" }),
     ).rejects.toThrow(new RegExp(`codex_auth_not_configured: ${codexDir}/auth.json not found`));
@@ -1919,7 +1917,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     mkdirSync(codexDir, { recursive: true });
     writeFileSync(join(codexDir, "auth.json"), JSON.stringify({ token: "t" }));
     const out = await createCodexAi(
-      { HOME: dir, GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+      { HOME: dir, LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
       spawnedPrompt,
     ).run("gpt-5", { prompt: "x" });
     expect(out.response).toBe("ok");
@@ -1939,7 +1937,7 @@ describe("subscription CLI helpers + fail-safe", () => {
       try {
         const stub: StubSpawn = async () => ({ stdout: JSON.stringify({ type: "result", result: "ok" }), code: 0 });
         await expect(
-          createCodexAi({ HOME: dir, GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, stub).run("gpt-5", { prompt: "x" }),
+          createCodexAi({ HOME: dir, LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, stub).run("gpt-5", { prompt: "x" }),
         ).rejects.toThrow(new RegExp(`codex_auth_not_configured: ${authPath} not found or unreadable`));
       } finally {
         chmodSync(authPath, 0o600);
@@ -1950,7 +1948,7 @@ describe("subscription CLI helpers + fail-safe", () => {
   it("codex: a bare 'Reading prompt from stdin...' stderr on a non-zero exit is surfaced as codex_no_auth (expired/deleted creds)", async () => {
     const bannerOnly: StubSpawn = async () => ({ stdout: "", code: 1, stderr: "Reading prompt from stdin..." });
     await expect(
-      createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, bannerOnly, noAuthCheck).run("m", { prompt: "x" }),
+      createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, bannerOnly, noAuthCheck).run("m", { prompt: "x" }),
     ).rejects.toThrow(/codex_no_auth: auth\.json missing or expired/);
   });
 
@@ -1962,7 +1960,7 @@ describe("subscription CLI helpers + fail-safe", () => {
       createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, claudeErr).run("m", { prompt: "x" }),
     ).rejects.toThrow(/claude_code_exit_1: Invalid API key/);
     const codexErr: StubSpawn = async () => ({ stdout: "", code: 1, stderr: "stream error: rate limit reached" });
-    await expect(createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, codexErr, noAuthCheck).run("m", { prompt: "x" })).rejects.toThrow(
+    await expect(createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, codexErr, noAuthCheck).run("m", { prompt: "x" })).rejects.toThrow(
       /codex_exit_1: stream error: rate limit reached/,
     );
     const metrics = await renderMetrics();
@@ -1982,7 +1980,7 @@ describe("subscription CLI helpers + fail-safe", () => {
 
   it("redacts key-shaped tokens from codex stderr (no env token to key off) (#1605 sec)", async () => {
     const leaky: StubSpawn = async () => ({ stdout: "", code: 1, stderr: "auth failed: ghp_ABCDEFGHIJ0123456789KLMNOPQRSTUV" });
-    await expect(createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, leaky, noAuthCheck).run("m", { prompt: "x" })).rejects.toThrow(/codex_exit_1: auth failed: \[redacted\]/);
+    await expect(createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, leaky, noAuthCheck).run("m", { prompt: "x" })).rejects.toThrow(/codex_exit_1: auth failed: \[redacted\]/);
   });
 
   it("defaultSpawn captures a failing CLI's stderr and surfaces it on the exit error (#26)", async () => {
@@ -2007,18 +2005,18 @@ describe("subscription CLI helpers + fail-safe", () => {
     const origPath = process.env.PATH;
     process.env.PATH = "/nonexistent-gittensory-empty";
     try {
-      await expect(createCodexAi({ ...process.env, GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }).run("gpt-5", { prompt: "x" })).rejects.toThrow();
+      await expect(createCodexAi({ ...process.env, LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }).run("gpt-5", { prompt: "x" })).rejects.toThrow();
     } finally {
       process.env.PATH = origPath;
     }
   });
 
   it("defaultSpawn's spawn-error handler clears the firstOutputTimer for both providers (#4994: both now arm one)", async () => {
-    // Explicit env (no ambient CODEX_HOME / GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER inherited from the operator's
+    // Explicit env (no ambient CODEX_HOME / LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER inherited from the operator's
     // shell) so this reaches the REAL ENOENT spawn error deterministically, rather than short-circuiting on the
     // credential-isolation guard the way an ambient CODEX_HOME would.
     await expect(
-      createCodexAi({ PATH: "/nonexistent-gittensory-empty", GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, undefined, noAuthCheck).run(
+      createCodexAi({ PATH: "/nonexistent-gittensory-empty", LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, undefined, noAuthCheck).run(
         "gpt-5",
         { prompt: "x" },
       ),
@@ -2042,7 +2040,7 @@ describe("subscription CLI helpers + fail-safe", () => {
       JSON.stringify({ type: "result", result: "review" }),
     ].join("\n");
     const ok: StubSpawn = async () => ({ stdout, code: 0 });
-    const result = await createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1", CODEX_AI_EFFORT: "medium" }, ok, noAuthCheck).run("", { prompt: "x" });
+    const result = await createCodexAi({ LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER: "1", CODEX_AI_EFFORT: "medium" }, ok, noAuthCheck).run("", { prompt: "x" });
     expect(result.usage).toMatchObject({ provider: "codex", model: "gpt-5-codex", effort: "medium", inputTokens: 20, outputTokens: 7, totalTokens: 27 });
     const metrics = await renderMetrics();
     expect(metrics).toContain('loopover_ai_requests_total{effort="medium",model="gpt-5-codex",provider="codex"} 1');

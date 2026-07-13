@@ -1,5 +1,5 @@
 // Container-private per-repo config (self-host). A self-host operator mounts a directory at
-// GITTENSORY_REPO_CONFIG_DIR and configures each repo's review policy there; the focus-manifest loader reads it
+// LOOPOVER_REPO_CONFIG_DIR and configures each repo's review policy there; the focus-manifest loader reads it
 // INSTEAD of fetching the public `.loopover.yml`, so policy (gate, autonomy, labels, model/effort) is configured
 // PRIVATELY and never exposed to contributors who could read and game the public file. Node-only — it is
 // registered into the Workers-safe loader via setLocalManifestReader at boot (server.ts), so this module's fs
@@ -62,18 +62,18 @@ function isSafeRepoSegment(segment: string): boolean {
   return segment !== "." && segment !== ".." && GITHUB_REPO_SEGMENT.test(segment);
 }
 
-/** Global-default candidates (relative to GITTENSORY_REPO_CONFIG_DIR): the dir-root `.loopover.{yml,yaml,json}`,
+/** Global-default candidates (relative to LOOPOVER_REPO_CONFIG_DIR): the dir-root `.loopover.{yml,yaml,json}`,
  *  deep-merged under any per-repo file (or applied alone, when a repo has no per-repo file of its own). */
 export const GLOBAL_CONFIG_CANDIDATES: string[] = [...CONFIG_BASENAMES];
 
-/** Shared-base candidates (#1959, relative to GITTENSORY_REPO_CONFIG_DIR): `_shared/.loopover.{yml,yaml,json}`,
+/** Shared-base candidates (#1959, relative to LOOPOVER_REPO_CONFIG_DIR): `_shared/.loopover.{yml,yaml,json}`,
  *  sibling to the per-repo folders inside the SAME container-private directory — no new env var. This is the
  *  lowest-priority layer: a cross-repo "house policy" an operator running many repos writes once, deep-merged
  *  UNDER both the global default and any per-repo file (or applied alone, when neither of those exists). */
 export const SHARED_BASE_CONFIG_CANDIDATES: string[] = CONFIG_BASENAMES.map((base) => join("_shared", base));
 const SHARED_BASE_CONFIG_CANDIDATE_SET = new Set(SHARED_BASE_CONFIG_CANDIDATES);
 
-/** Per-repo private-config candidate paths (relative to GITTENSORY_REPO_CONFIG_DIR), in priority order:
+/** Per-repo private-config candidate paths (relative to LOOPOVER_REPO_CONFIG_DIR), in priority order:
  *  owner-qualified folder → bare repo-name folder → flat `owner__repo` file (the #1390 back-compat form). The slug
  *  is the lowercased GitHub `owner__repo` (double underscore because `/` is not filename-safe); the bare folder is
  *  the lowercased repo name. An invalid repo full name (no single interior slash) yields no candidates. */
@@ -120,7 +120,7 @@ async function readFirstExistingWithPath(
 
 export type LocalManifestLoadResult = {
   content: string | null;
-  /** Relative path under GITTENSORY_REPO_CONFIG_DIR when a shared-base `review:` block contributed (#2046). */
+  /** Relative path under LOOPOVER_REPO_CONFIG_DIR when a shared-base `review:` block contributed (#2046). */
   sharedConfigSource: string | null;
   warnings: string[];
 };
@@ -230,7 +230,7 @@ function combineConfigLayersWithMeta(
   return { content: JSON.stringify(mergedBody), sharedConfigSource, warnings };
 }
 
-/** Build the container-local manifest reader over GITTENSORY_REPO_CONFIG_DIR, or null when the dir is unset/blank
+/** Build the container-local manifest reader over LOOPOVER_REPO_CONFIG_DIR, or null when the dir is unset/blank
  *  (⇒ the loader keeps fetching the public `.loopover.yml`). Looks up the first existing per-repo candidate, the
  *  global-default candidate, and the shared-base candidate (#1959) independently and folds whichever are present
  *  in ascending priority (shared → global → per-repo) via {@link combineConfigLayers}: with only one present, its
@@ -260,7 +260,7 @@ export function makeLocalManifestReader(dir: string | undefined): RepoFocusManif
   };
 }
 
-/** Per-repo review-context candidate FOLDERS (relative to GITTENSORY_REPO_CONFIG_DIR): `{owner}__{repo}/review` then
+/** Per-repo review-context candidate FOLDERS (relative to LOOPOVER_REPO_CONFIG_DIR): `{owner}__{repo}/review` then
  *  `{repo}/review`. Same owner/repo validation as localConfigCandidates; an invalid full name yields none. (#review-skills) */
 function reviewContextFolders(repoFullName: string): string[] {
   const slash = repoFullName.indexOf("/");
@@ -313,7 +313,7 @@ export function isReviewSkillEnabled(text: string): boolean {
   return raw === undefined ? true : /^(1|true|yes|on)$/i.test(raw);
 }
 
-/** Build the container-local review-context reader over GITTENSORY_REPO_CONFIG_DIR, or null when the dir is unset. Per
+/** Build the container-local review-context reader over LOOPOVER_REPO_CONFIG_DIR, or null when the dir is unset. Per
  *  repo (first existing folder wins) reads `review/AGENTS.md` (Codex) or `review/CLAUDE.md` (Claude Code) as the
  *  guide + every `review/skills/*.md` rubric module, sorted. A skill whose frontmatter sets `enabled: false` is
  *  omitted (turned off without deleting the file). Missing files/dir degrade to nulls/empty; a per-file read

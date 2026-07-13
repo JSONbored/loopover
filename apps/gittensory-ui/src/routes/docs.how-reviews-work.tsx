@@ -219,17 +219,17 @@ function HowReviewsWork() {
         changing <em>who</em> can be blocked.
       </p>
       <Callout variant="note" title="Grounding makes the AI check reality">
-        The <code>GITTENSORY_REVIEW_GROUNDING</code> flag grounds the reviewer prompt with the PR's
+        The <code>LOOPOVER_REVIEW_GROUNDING</code> flag grounds the reviewer prompt with the PR's
         finished CI status and the full post-change content of the changed files — so the model
         verifies its claims instead of predicting CI or flagging a symbol defined just outside the
-        diff hunk. <code>GITTENSORY_REVIEW_RAG</code> adds semantically related existing code and
-        docs as extra context. Both are additive and opt-in.
+        diff hunk. <code>LOOPOVER_REVIEW_RAG</code> adds semantically related existing code and docs
+        as extra context. Both are additive and opt-in.
       </Callout>
 
       <h2>3. The unified review comment</h2>
       <p>
         The result is rendered as <strong>one in-place comment</strong> on the PR — updated in place
-        on each push rather than stacked — when <code>GITTENSORY_REVIEW_UNIFIED_COMMENT</code> is on
+        on each push rather than stacked — when <code>LOOPOVER_REVIEW_UNIFIED_COMMENT</code> is on
         for the repo. It has three parts, top to bottom:
       </p>
       <ul>
@@ -260,15 +260,14 @@ function HowReviewsWork() {
       <Callout variant="safety">
         Public-facing comments are sanitized before they leave the worker. Private scoring, reward,
         and reputation language never appears in the PR thread — and reputation-based spend control
-        (<code>GITTENSORY_REVIEW_REPUTATION</code>) is never surfaced in any comment, label, or
-        check.
+        (<code>LOOPOVER_REVIEW_REPUTATION</code>) is never surfaced in any comment, label, or check.
       </Callout>
 
       <h2>4. The signals behind a verdict</h2>
       <p>Each row in the signal table comes from a named finding. The common ones you will see:</p>
       <ul>
         <li>
-          <code>secret_leak</code> — the safety scan (<code>GITTENSORY_REVIEW_SAFETY</code>) found a
+          <code>secret_leak</code> — the safety scan (<code>LOOPOVER_REVIEW_SAFETY</code>) found a
           leaked secret in the diff. The same scan also defangs untrusted PR text before the AI
           reviewer reads it.
         </li>

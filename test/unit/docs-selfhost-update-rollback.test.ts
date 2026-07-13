@@ -46,7 +46,7 @@ describe("self-host update + rollback docs (#1823)", () => {
   it("post-update script probes /ready without mutating operator-owned state", () => {
     expect(postUpdateScript).toContain("/ready");
     expect(postUpdateScript).toContain("GITTENSORY_IMAGE");
-    expect(postUpdateScript).toContain("GITTENSORY_VERSION");
+    expect(postUpdateScript).toContain("LOOPOVER_VERSION");
     expect(postUpdateScript).toContain("SENTRY_RELEASE");
     expect(postUpdateScript).not.toContain("env_put");
     expect(postUpdateScript).not.toContain("docker compose down");

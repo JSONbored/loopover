@@ -45,10 +45,10 @@ function Tuning() {
           <code>.loopover.yml</code> file in the repo.
         </li>
         <li>
-          <strong>Feature flags</strong> — the <code>GITTENSORY_REVIEW_*</code> family of
-          environment variables on the worker. These switch whole capabilities (safety scanning,
-          grounding, RAG context, the unified comment, the content lane, observability, self-tuning,
-          and more) on or off for the deployment.
+          <strong>Feature flags</strong> — the <code>LOOPOVER_REVIEW_*</code> family of environment
+          variables on the worker. These switch whole capabilities (safety scanning, grounding, RAG
+          context, the unified comment, the content lane, observability, self-tuning, and more) on
+          or off for the deployment.
         </li>
       </ul>
       <p>
@@ -98,7 +98,7 @@ function Tuning() {
         <code>.github/loopover.json</code>.
       </p>
 
-      <h2>Feature flags (GITTENSORY_REVIEW_*)</h2>
+      <h2>Feature flags (LOOPOVER_REVIEW_*)</h2>
       <p>
         These are worker environment variables, every one defaulting to <strong>OFF</strong>.
         "Truthy" means one of <code>1</code>, <code>true</code>, <code>yes</code>, or{" "}
@@ -108,13 +108,13 @@ function Tuning() {
       </p>
       <p>
         One flag is a <strong>scope</strong> rather than a capability:{" "}
-        <code>GITTENSORY_REVIEW_REPOS</code> is a per-repo allowlist that must <em>also</em> pass
-        for any per-PR feature to run on a given repo. So a per-PR feature activates only when{" "}
+        <code>LOOPOVER_REVIEW_REPOS</code> is a per-repo allowlist that must <em>also</em> pass for
+        any per-PR feature to run on a given repo. So a per-PR feature activates only when{" "}
         <strong>its own flag is ON and the repo is allowlisted</strong>.
       </p>
       <ul>
         <li>
-          <code>GITTENSORY_REVIEW_REPOS</code> — the per-repo allowlist. Comma-separated{" "}
+          <code>LOOPOVER_REVIEW_REPOS</code> — the per-repo allowlist. Comma-separated{" "}
           <code>owner/repo</code> names that may run the per-PR features (safety, grounding, RAG,
           reputation, unified comment). Empty or unset means no repos — every per-PR feature stays
           dormant for everyone regardless of the global flags. Case-insensitive and trimmed; stray
@@ -122,35 +122,35 @@ function Tuning() {
           lane, draft) are <strong>not</strong> scoped by this list.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_SAFETY</code> — safety scan in the review path: it neutralizes
+          <code>LOOPOVER_REVIEW_SAFETY</code> — safety scan in the review path: it neutralizes
           prompt-injection in untrusted PR title/body/diff before the AI reviewer sees it, and scans
           the diff for leaked secrets, surfacing a <code>secret_leak</code> blocker. Per-PR (also
           needs the repo in the allowlist).
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_GROUNDING</code> — grounds the AI reviewer with the PR's{" "}
+          <code>LOOPOVER_REVIEW_GROUNDING</code> — grounds the AI reviewer with the PR's{" "}
           <em>finished</em> CI status plus the <em>full post-change content</em> of the changed
           files, so the model verifies claims against reality instead of predicting CI or flagging
           symbols defined just outside the diff hunk. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_E2E_TESTS</code> — master kill-switch for the opt-in,
+          <code>LOOPOVER_REVIEW_E2E_TESTS</code> — master kill-switch for the opt-in,
           maintainer-triggered AI-generated E2E test coverage feature. Off by default; a repo also
           needs its own <code>features.e2eTests: true</code> override in <code>.loopover.yml</code>{" "}
           before the feature is active for it. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_IMPROVEMENT_SIGNAL</code> — master kill-switch for the read-only,
+          <code>LOOPOVER_REVIEW_IMPROVEMENT_SIGNAL</code> — master kill-switch for the read-only,
           advisory PR quality-delta signal (the positive-axis counterpart to the slop risk score).
           Off by default; config-as-code activation only for now — no tier reads the resolved value
           yet, so turning this on has no visible effect until a later release wires real behavior
           behind it. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_CONTINUOUS</code> — fleet-wide default AI review re-trigger
-          cadence. Off by default (one-shot): AI-generated content (main review, slop advisory,
-          linked-issue satisfaction) is produced once per PR and never regenerated automatically
-          afterward — only an explicit maintainer retrigger (the PR-panel checkbox, or{" "}
+          <code>LOOPOVER_REVIEW_CONTINUOUS</code> — fleet-wide default AI review re-trigger cadence.
+          Off by default (one-shot): AI-generated content (main review, slop advisory, linked-issue
+          satisfaction) is produced once per PR and never regenerated automatically afterward — only
+          an explicit maintainer retrigger (the PR-panel checkbox, or{" "}
           <code>@gittensory review</code> as a maintainer) spends a fresh call. Truthy switches the
           fleet default to continuous — every push/CI-completion/sweep re-runs AI content
           generation. A repo's own <code>review.auto_review.cadence</code> in{" "}
@@ -159,28 +159,28 @@ function Tuning() {
           always re-evaluates regardless.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_RAG</code> — retrieval-augmented context: queries the codebase
+          <code>LOOPOVER_REVIEW_RAG</code> — retrieval-augmented context: queries the codebase
           vector index for related code and docs (callers, related modules, existing conventions)
           and appends a "Relevant existing code / docs" section to the reviewer prompt. Additive
           only. Inert until a vector index exists for the repo — a cold or missing index degrades to
           no context. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_IMPACT_MAP</code> — deterministic impact map: from the codebase
+          <code>LOOPOVER_REVIEW_IMPACT_MAP</code> — deterministic impact map: from the codebase
           vector index plus the PR's changed exported symbols, computes which other repo files
           plausibly need re-checking, and renders that as a compact section in the unified review
           comment (also feeds it to the AI reviewer as additive reference context). ANDed with the
           per-repo <code>review.impact_map</code> opt-in — neither alone is sufficient. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_CULTURE_PROFILE</code> — appends a "repo quality-culture profile"
+          <code>LOOPOVER_REVIEW_CULTURE_PROFILE</code> — appends a "repo quality-culture profile"
           reference block to the reviewer prompt: typical merged-PR size and common accepted labels,
           derived from this repo's own merge history. Additive reference only — never a gate or
           scoring input. Also requires the per-repo <code>review.culture_profile: true</code> opt-in
           in <code>.loopover.yml</code>. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_MEMORY</code> — repeat-false-positive suppression: matches an
+          <code>LOOPOVER_REVIEW_MEMORY</code> — repeat-false-positive suppression: matches an
           advisory (non-blocking) AI finding against this repo's stored suppression signals (a
           maintainer's own past false-positive dismissals) and demotes or drops it before the
           unified comment renders. A maintainer records a signal with{" "}
@@ -190,65 +190,65 @@ function Tuning() {
           per-repo <code>review.memory: true</code> opt-in in <code>.loopover.yml</code>. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_REPUTATION</code> — submitter-reputation spend control. A new,
+          <code>LOOPOVER_REVIEW_REPUTATION</code> — submitter-reputation spend control. A new,
           burst, or low-reputation submitter is downgraded to a deterministic-only review; good
           reputation proceeds normally. Never surfaced publicly — no comment, label, or check shows
           reputation. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_UNIFIED_COMMENT</code> — renders the public PR comment as one
+          <code>LOOPOVER_REVIEW_UNIFIED_COMMENT</code> — renders the public PR comment as one
           in-place unified comment instead of the legacy multi-panel comment. Per-PR. With the flag
           off, the legacy comment is byte-identical.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_ENRICHMENT</code> — runs the review-enrichment analyzer registry
+          <code>LOOPOVER_REVIEW_ENRICHMENT</code> — runs the review-enrichment analyzer registry
           (duplication, churn hotspots, blame links, approval integrity, undocumented exports, and
           more) and folds their findings into the review context. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_INLINE_COMMENTS</code> — posts AI-review findings as inline
+          <code>LOOPOVER_REVIEW_INLINE_COMMENTS</code> — posts AI-review findings as inline
           diff-anchored PR review comments instead of (or alongside) the summary comment. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_FIX_HANDOFF</code> — renders a review finding as a structured,
+          <code>LOOPOVER_REVIEW_FIX_HANDOFF</code> — renders a review finding as a structured,
           machine-readable "apply this fix" block for the contributor's own local agent to consume —
           content only, no server-side write, no execution. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_PLANNER</code> — enables <code>@gittensory plan</code>, an
-          on-demand structured implementation plan posted to the PR thread. Per-PR.
+          <code>LOOPOVER_REVIEW_PLANNER</code> — enables <code>@gittensory plan</code>, an on-demand
+          structured implementation plan posted to the PR thread. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_SCREENSHOTS</code> — visual capture: renders and attaches
+          <code>LOOPOVER_REVIEW_SCREENSHOTS</code> — visual capture: renders and attaches
           before/after screenshots for PRs that change UI. Per-PR.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_OPS</code> — observability, read-only. On the cron tick an anomaly
+          <code>LOOPOVER_REVIEW_OPS</code> — observability, read-only. On the cron tick an anomaly
           scan over the gate-block ledger and calibration data emits a structured{" "}
           <code>ops_anomaly</code> log when something drifts, and a bearer-gated{" "}
           <code>GET /v1/internal/ops/stats</code> serves an outcome aggregate. Does not mutate
           config. Global.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_SELFTUNE</code> — the self-improvement loop. On the cron tick it
+          <code>LOOPOVER_REVIEW_SELFTUNE</code> — the self-improvement loop. On the cron tick it
           computes tuning recommendations from your own outcome data, shadow-soaks any strictly
           tightening recommendation, and auto-promotes it only after the soak passes. It can{" "}
           <strong>only ever tighten</strong> the gate — a loosening recommendation is never applied.
           Global, and safe to leave on.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_PARITY_AUDIT</code> — parity readiness, shadow record-only.
-          Records each finalized gate decision and serves a readiness report at{" "}
+          <code>LOOPOVER_REVIEW_PARITY_AUDIT</code> — parity readiness, shadow record-only. Records
+          each finalized gate decision and serves a readiness report at{" "}
           <code>GET /v1/internal/parity</code>. Changes no review behavior. Global.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_CONTENT_LANE</code> — routes content repos (curated lists,
+          <code>LOOPOVER_REVIEW_CONTENT_LANE</code> — routes content repos (curated lists,
           registries) through the dedicated content lane — duplicate detection, source-evidence
           reachability, security scanning, scope classification, registry grounding — instead of the
           code gate. Global.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_DRAFT</code> — the public draft-submission flow (the{" "}
+          <code>LOOPOVER_REVIEW_DRAFT</code> — the public draft-submission flow (the{" "}
           <code>/v1/drafts</code> endpoints: contributor draft → GitHub OAuth → fork PR). With the
           flag off every draft endpoint 404s. Requires the{" "}
           <code>DRAFT_TOKEN_ENCRYPTION_SECRET</code> and <code>GITHUB_OAUTH_CLIENT_SECRET</code>{" "}
@@ -263,10 +263,10 @@ function Tuning() {
 
       <Callout variant="note" title="Rolling out a per-PR feature">
         A safe rollout is two flips: turn the capability flag <code>true</code>, then add the repo
-        to <code>GITTENSORY_REVIEW_REPOS</code>. Because both must be true, you can leave a
-        capability globally enabled while it stays dormant everywhere except the repos you have
-        explicitly allowlisted — and you roll a single repo back by removing it from the list
-        without disturbing the others.
+        to <code>LOOPOVER_REVIEW_REPOS</code>. Because both must be true, you can leave a capability
+        globally enabled while it stays dormant everywhere except the repos you have explicitly
+        allowlisted — and you roll a single repo back by removing it from the list without
+        disturbing the others.
       </Callout>
 
       <h2>Gate modes</h2>

@@ -14,16 +14,16 @@ const fileWith = (path: string, patch: string) => ({ path, payload: { patch } })
 describe("isInlineCommentsEnabled (#inline-comments)", () => {
   it("is truthy-string gated and OFF by default", () => {
     expect(isInlineCommentsEnabled({})).toBe(false);
-    expect(isInlineCommentsEnabled({ GITTENSORY_REVIEW_INLINE_COMMENTS: "true" })).toBe(true);
-    expect(isInlineCommentsEnabled({ GITTENSORY_REVIEW_INLINE_COMMENTS: "on" })).toBe(true);
-    expect(isInlineCommentsEnabled({ GITTENSORY_REVIEW_INLINE_COMMENTS: "false" })).toBe(false);
+    expect(isInlineCommentsEnabled({ LOOPOVER_REVIEW_INLINE_COMMENTS: "true" })).toBe(true);
+    expect(isInlineCommentsEnabled({ LOOPOVER_REVIEW_INLINE_COMMENTS: "on" })).toBe(true);
+    expect(isInlineCommentsEnabled({ LOOPOVER_REVIEW_INLINE_COMMENTS: "false" })).toBe(false);
   });
 });
 
 describe("shouldRequestInlineFindings (#inline-comments / #4099)", () => {
-  const on = { GITTENSORY_REVIEW_INLINE_COMMENTS: "true", GITTENSORY_REVIEW_REPOS: "acme/widgets" };
+  const on = { LOOPOVER_REVIEW_INLINE_COMMENTS: "true", LOOPOVER_REVIEW_REPOS: "acme/widgets" };
   it("operator flag is a master kill-switch — off ⇒ always false regardless of the manifest toggle", () => {
-    expect(shouldRequestInlineFindings({ GITTENSORY_REVIEW_REPOS: "acme/widgets" }, "acme/widgets", true)).toBe(false);
+    expect(shouldRequestInlineFindings({ LOOPOVER_REVIEW_REPOS: "acme/widgets" }, "acme/widgets", true)).toBe(false);
     expect(shouldRequestInlineFindings({}, "acme/widgets", true)).toBe(false);
   });
 

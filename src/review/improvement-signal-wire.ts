@@ -7,18 +7,15 @@
 // nothing calls resolveConvergedFeature(env, manifest, "improvementSignal", repoFullName) yet outside this
 // feature's own tests.
 //
-// Single env switch: GITTENSORY_REVIEW_IMPROVEMENT_SIGNAL. Default OFF (unset/"false") -- when OFF the feature
+// Single env switch: LOOPOVER_REVIEW_IMPROVEMENT_SIGNAL. Default OFF (unset/"false") -- when OFF the feature
 // never runs anywhere, regardless of any per-repo `.gittensory.yml` override (see `resolveConvergedFeature` in
 // `./feature-activation`). Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as
 // isRagEnabled / isE2eTestGenerationEnabled).
 
-import { dualPrefixEnvFlag } from "../utils/env";
-
 /** True when the PR improvement signal is enabled at the deployment level. Flag-OFF (default) → the feature is
  *  never active for any repo, regardless of a per-repo `features.improvementSignal` override. */
 export function isImprovementSignalEnabled(env: {
-  GITTENSORY_REVIEW_IMPROVEMENT_SIGNAL?: string | undefined;
   LOOPOVER_REVIEW_IMPROVEMENT_SIGNAL?: string | undefined;
 }): boolean {
-  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_IMPROVEMENT_SIGNAL");
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_IMPROVEMENT_SIGNAL ?? "").trim());
 }

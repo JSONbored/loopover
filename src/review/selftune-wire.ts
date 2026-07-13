@@ -1,5 +1,5 @@
 // Convergence (#self-improve) — wires the ported self-improvement loop (src/review/auto-tune.ts +
-// src/review/auto-apply.ts) into gittensory's cron behind the default-OFF `GITTENSORY_REVIEW_SELFTUNE` flag.
+// src/review/auto-apply.ts) into gittensory's cron behind the default-OFF `LOOPOVER_REVIEW_SELFTUNE` flag.
 //
 // SAFETY CONTRACT (must hold under every path):
 //   • flag-OFF (default) → the cron enqueues NO selftune job and this module is never reached; ZERO tuning
@@ -27,7 +27,7 @@
 // CONFIG-APPLICATION — WIRED (live read-back, tightening-only):
 //   The ported override model is `confidenceFloor` (a proceed-confidence floor in [0,1]) + `scopeCap`. The live
 //   read-back lives in resolveRepositorySettings → `applySelfTuneOverrideToSettings`, gated by the SAME default-OFF
-//   GITTENSORY_REVIEW_SELFTUNE flag: it translates a promoted `confidenceFloor` into gittensory's NATIVE readiness
+//   LOOPOVER_REVIEW_SELFTUNE flag: it translates a promoted `confidenceFloor` into gittensory's NATIVE readiness
 //   tunable by RAISING an EXISTING `qualityGateMinScore` to `round(confidenceFloor * 100)` via a `max()`. By
 //   construction this can ONLY tighten — it never CREATES a readiness gate the operator didn't set, and never
 //   LOWERS one — so the always-tightening recommendation (this module only ever populates the would-merge error
@@ -39,7 +39,6 @@ import { isAgentConfigured } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
-import { dualPrefixEnvFlag } from "../utils/env";
 import { errorMessage } from "../utils/json";
 import { computeTuningRecommendations, type GateEvalReport, type GateEvalRow } from "./auto-tune";
 import { runAutoApplyRecommendations, type StorageEnv } from "./auto-apply";
@@ -47,10 +46,9 @@ import { runAutoApplyRecommendations, type StorageEnv } from "./auto-apply";
 /** True when the self-improvement loop is enabled. Flag-OFF (default) → every export below is a no-op. Truthy
  *  follows the codebase convention (`/^(1|true|yes|on)$/i`, same as isOpsEnabled / isReputationEnabled). */
 export function isSelfTuneEnabled(env: {
-  GITTENSORY_REVIEW_SELFTUNE?: string | undefined;
   LOOPOVER_REVIEW_SELFTUNE?: string | undefined;
 }): boolean {
-  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_SELFTUNE");
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_SELFTUNE ?? "").trim());
 }
 
 /** The project's base confidence floor the tightening direction is judged against IN THE SOAK. Gittensory has no
@@ -104,7 +102,7 @@ async function buildEvalRow(env: Env, repoFullName: string): Promise<GateEvalRow
 /** The registered, agent-configured repos to tune over — SAME scoping the ops scan + regate sweep use (only
  *  repos that opt into the acting-autonomy surface). A repo whose settings blip is skipped, never aborts.
  *
- *  Per-repo opt-out (#4104): unlike rag/reputation/grounding, selftune has no `GITTENSORY_REVIEW_REPOS`
+ *  Per-repo opt-out (#4104): unlike rag/reputation/grounding, selftune has no `LOOPOVER_REVIEW_REPOS`
  *  allowlist to fall back to — every agent-configured repo is already IN by default once the global flag is
  *  on. So this doesn't fit `resolveConvergedFeature`'s env-kill-switch → override → allowlist-default shape;
  *  there is no allowlist. Instead, deliberately FORCE-OFF-ONLY (mirroring the `safety` feature's asymmetric

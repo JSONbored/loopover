@@ -103,7 +103,7 @@ describe("mergeConfigOverlay (generic recursive deep-merge, no manifest-field-sp
   });
 });
 
-describe("makeLocalManifestReader (GITTENSORY_REPO_CONFIG_DIR)", () => {
+describe("makeLocalManifestReader (LOOPOVER_REPO_CONFIG_DIR)", () => {
   it("returns null when the dir is unset or blank (⇒ public fetch)", () => {
     expect(makeLocalManifestReader(undefined)).toBeNull(); // ?? right side
     expect(makeLocalManifestReader("")).toBeNull();

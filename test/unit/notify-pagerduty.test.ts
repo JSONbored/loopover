@@ -31,7 +31,7 @@ function stubFetch(status = 202): Array<{ url: string; body: Record<string, unkn
 }
 
 const withEnv = (over: Record<string, string> = {}): Env => Object.assign(createTestEnv(), over) as Env;
-const enabledEnv = (over: Record<string, string> = {}): Env => withEnv({ GITTENSORY_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: VALID_KEY, ...over });
+const enabledEnv = (over: Record<string, string> = {}): Env => withEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1", PAGERDUTY_ROUTING_KEY: VALID_KEY, ...over });
 
 async function pagerDutyAudit(env: Env): Promise<Array<{ outcome: string; detail: string; target_key: string; metadata_json: string }>> {
   const rows = await env.DB.prepare("select outcome, detail, target_key, metadata_json from audit_events where event_type = ? order by created_at").bind("external_notification.pagerduty").all<{
@@ -55,29 +55,10 @@ function trigger(env: Env, over: Partial<{ repoFullName: string; summary: string
 
 describe("isPagerDutyEnabled", () => {
   it("accepts the codebase-standard truthy strings, case-insensitively", () => {
-    for (const value of ["1", "true", "YES", "On"]) expect(isPagerDutyEnabled({ GITTENSORY_ENABLE_PAGERDUTY: value })).toBe(true);
+    for (const value of ["1", "true", "YES", "On"]) expect(isPagerDutyEnabled({ LOOPOVER_ENABLE_PAGERDUTY: value })).toBe(true);
   });
   it("treats anything else (including unset) as disabled", () => {
-    for (const value of [undefined, "", "0", "false", "nah"]) expect(isPagerDutyEnabled({ GITTENSORY_ENABLE_PAGERDUTY: value })).toBe(false);
-  });
-
-  // #4774 dual-read: LOOPOVER_ENABLE_PAGERDUTY is a first-class alias of the legacy GITTENSORY_ENABLE_PAGERDUTY.
-  describe("#4774 GITTENSORY_ -> LOOPOVER_ dual-read", () => {
-    it("enables via the NEW LOOPOVER_ name alone (legacy name unset)", () => {
-      expect(isPagerDutyEnabled({ LOOPOVER_ENABLE_PAGERDUTY: "true" })).toBe(true);
-    });
-    it("still enables via the legacy GITTENSORY_ name alone — an untouched .env keeps working unchanged", () => {
-      expect(isPagerDutyEnabled({ GITTENSORY_ENABLE_PAGERDUTY: "true" })).toBe(true);
-    });
-    it("the NEW LOOPOVER_ name wins when BOTH are set", () => {
-      // legacy says on, new name says off -> effective result must be OFF (new wins).
-      expect(isPagerDutyEnabled({ GITTENSORY_ENABLE_PAGERDUTY: "true", LOOPOVER_ENABLE_PAGERDUTY: "false" })).toBe(false);
-      // legacy says off, new name says on -> effective result must be ON (new wins).
-      expect(isPagerDutyEnabled({ GITTENSORY_ENABLE_PAGERDUTY: "false", LOOPOVER_ENABLE_PAGERDUTY: "true" })).toBe(true);
-    });
-    it("blank LOOPOVER_ENABLE_PAGERDUTY falls through to the legacy name, not to disabled", () => {
-      expect(isPagerDutyEnabled({ GITTENSORY_ENABLE_PAGERDUTY: "true", LOOPOVER_ENABLE_PAGERDUTY: "   " })).toBe(true);
-    });
+    for (const value of [undefined, "", "0", "false", "nah"]) expect(isPagerDutyEnabled({ LOOPOVER_ENABLE_PAGERDUTY: value })).toBe(false);
   });
 });
 
@@ -110,7 +91,7 @@ describe("resolvePagerDutyRoutingKey", () => {
   });
 
   it("unmapped repo + no global key → disabled/missing_global_key", () => {
-    expect(resolvePagerDutyRoutingKey(withEnv({ GITTENSORY_ENABLE_PAGERDUTY: "1" }), "acme/widgets")).toEqual({ status: "disabled", reason: "missing_global_key" });
+    expect(resolvePagerDutyRoutingKey(withEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1" }), "acme/widgets")).toEqual({ status: "disabled", reason: "missing_global_key" });
   });
 
   it("unmapped repo + invalid global key → disabled/invalid_global_key", () => {
@@ -119,7 +100,7 @@ describe("resolvePagerDutyRoutingKey", () => {
 
   it("uses process.env as a self-host fallback for the routing key when the runtime Env object does not carry it", () => {
     process.env.PAGERDUTY_ROUTING_KEY = VALID_KEY;
-    expect(resolvePagerDutyRoutingKey(withEnv({ GITTENSORY_ENABLE_PAGERDUTY: "1" }), "acme/widgets")).toEqual({ status: "configured", routingKey: VALID_KEY, source: "global" });
+    expect(resolvePagerDutyRoutingKey(withEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1" }), "acme/widgets")).toEqual({ status: "configured", routingKey: VALID_KEY, source: "global" });
   });
 });
 
@@ -172,7 +153,7 @@ describe("triggerPagerDutyIncident — flag/routing gate", () => {
 
   it("flag on, no routing key resolves → no fetch, audited denied/missing_global_key", async () => {
     const calls = stubFetch();
-    const env = withEnv({ GITTENSORY_ENABLE_PAGERDUTY: "1" });
+    const env = withEnv({ LOOPOVER_ENABLE_PAGERDUTY: "1" });
     await trigger(env);
     expect(calls).toEqual([]);
     expect(await pagerDutyAudit(env)).toEqual([expect.objectContaining({ outcome: "denied", detail: "missing_global_key" })]);
@@ -181,7 +162,7 @@ describe("triggerPagerDutyIncident — flag/routing gate", () => {
   it("audit failures are best-effort and never throw", async () => {
     const calls = stubFetch();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    await expect(trigger({ GITTENSORY_ENABLE_PAGERDUTY: "1" } as Env)).resolves.toBeUndefined();
+    await expect(trigger({ LOOPOVER_ENABLE_PAGERDUTY: "1" } as Env)).resolves.toBeUndefined();
     expect(calls).toEqual([]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("pagerduty_notify_audit_failed"));
     warn.mockRestore();

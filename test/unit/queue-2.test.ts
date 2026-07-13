@@ -611,10 +611,10 @@ describe("queue processors", () => {
       CLAUDE_AI_EFFORT: "high",
       // Grounding + enrichment ON, with the repo allowlisted for convergence, so both feature flags
       // resolve past their `isXEnabled(env) && convergedRepoAllowed` check into the fingerprint.
-      GITTENSORY_REVIEW_GROUNDING: "true",
-      GITTENSORY_REVIEW_ENRICHMENT: "true",
+      LOOPOVER_REVIEW_GROUNDING: "true",
+      LOOPOVER_REVIEW_ENRICHMENT: "true",
       REES_URL: "https://rees.example",
-      GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory",
+      LOOPOVER_REVIEW_REPOS: "JSONbored/gittensory",
     });
     await persistRegistrySnapshot(
       env,
@@ -689,7 +689,7 @@ describe("queue processors", () => {
       // Both gates on: the global capability switch, and — unlike grounding/enrichment/RAG/reputation, which are
       // env-only — the per-repo `.loopover.yml` opt-in mocked below, so `dynamicReviewFeatures.cultureProfile`
       // (src/queue/processors.ts) actually evaluates its `&&` right-hand side true, not just short-circuits.
-      GITTENSORY_REVIEW_CULTURE_PROFILE: "true",
+      LOOPOVER_REVIEW_CULTURE_PROFILE: "true",
     });
     await persistRegistrySnapshot(
       env,
@@ -764,7 +764,7 @@ describe("queue processors", () => {
       // grounding/enrichment/RAG/reputation which are env-only) the per-repo `.loopover.yml` opt-in mocked
       // below, so `dynamicReviewFeatures.impactMap` (src/queue/processors.ts) actually evaluates
       // shouldComputeImpactMap's `&&` right-hand side true, not just short-circuits.
-      GITTENSORY_REVIEW_IMPACT_MAP: "true",
+      LOOPOVER_REVIEW_IMPACT_MAP: "true",
     });
     await persistRegistrySnapshot(
       env,
@@ -853,8 +853,8 @@ describe("queue processors", () => {
       AI_SUMMARIES_ENABLED: "true",
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
-      GITTENSORY_REVIEW_GROUNDING: "true",
-      GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory",
+      LOOPOVER_REVIEW_GROUNDING: "true",
+      LOOPOVER_REVIEW_REPOS: "JSONbored/gittensory",
     });
     await persistRegistrySnapshot(
       env,
@@ -2078,7 +2078,7 @@ describe("queue processors", () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
       GITHUB_PUBLIC_TOKEN: "public-token",
-      GITTENSORY_REVIEW_REPOS: "owner/missing-repo",
+      LOOPOVER_REVIEW_REPOS: "owner/missing-repo",
       JOBS: {
         async send(m: import("../../src/types").JobMessage) {
           sent.push(m);
@@ -2491,7 +2491,7 @@ describe("queue processors", () => {
 
   it("INVARIANT (in-flight guard): the fan-out SKIPS a repo whose prior sweep is still draining, enqueues an idle one (#audit-sweep-fanout)", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPOS: "", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
     await upsertInstallation(env, { action: "created", installation: { id: 9101, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
     for (const name of ["draining", "idle"]) {
       await upsertRepositoryFromGitHub(env, { name, full_name: `owner/${name}`, private: false, owner: { login: "owner" } }, 9101);
@@ -3313,7 +3313,7 @@ describe("queue processors", () => {
   });
 
   it("REGRESSION: a deployment_status webhook for an allowlisted repo re-reviews the correlated PR and short-circuits before the other wake triggers", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPOS: "JSONbored/gittensory" });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
     // Deliberately no stored PR #4242 -- reReviewStoredPullRequest's own `if (!pr || pr.state !== "open") return;`
     // no-ops immediately, so this test stays focused on maybeCaptureOnDeploymentStatus's early-return contract

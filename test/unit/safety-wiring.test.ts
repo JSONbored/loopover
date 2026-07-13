@@ -47,7 +47,7 @@ function capturingAiEnv(safety: boolean | undefined) {
     AI_DAILY_NEURON_BUDGET: "100000",
     ...(safety === undefined
       ? {}
-      : { GITTENSORY_REVIEW_SAFETY: safety ? "true" : "false" }),
+      : { LOOPOVER_REVIEW_SAFETY: safety ? "true" : "false" }),
   });
   return { env, seenPrompts, run };
 }
@@ -84,10 +84,10 @@ function advisory(findings: AdvisoryFinding[] = []): Advisory {
 describe("isSafetyEnabled", () => {
   it("is OFF for unset/false and ON for the truthy convention", () => {
     expect(isSafetyEnabled({})).toBe(false);
-    expect(isSafetyEnabled({ GITTENSORY_REVIEW_SAFETY: "false" })).toBe(false);
-    expect(isSafetyEnabled({ GITTENSORY_REVIEW_SAFETY: "true" })).toBe(true);
-    expect(isSafetyEnabled({ GITTENSORY_REVIEW_SAFETY: "1" })).toBe(true);
-    expect(isSafetyEnabled({ GITTENSORY_REVIEW_SAFETY: "on" })).toBe(true);
+    expect(isSafetyEnabled({ LOOPOVER_REVIEW_SAFETY: "false" })).toBe(false);
+    expect(isSafetyEnabled({ LOOPOVER_REVIEW_SAFETY: "true" })).toBe(true);
+    expect(isSafetyEnabled({ LOOPOVER_REVIEW_SAFETY: "1" })).toBe(true);
+    expect(isSafetyEnabled({ LOOPOVER_REVIEW_SAFETY: "on" })).toBe(true);
   });
 });
 
@@ -232,7 +232,7 @@ describe("defangReviewInput (helper)", () => {
 
 describe("secret-leak finding in the advisory build", () => {
   it("FLAG-ON: a leaked secret in the diff surfaces a critical secret_leak finding", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SAFETY: "true" });
     const adv = advisory();
     const files = [
       {
@@ -261,7 +261,7 @@ describe("secret-leak finding in the advisory build", () => {
   });
 
   it("FLAG-ON: scans a lower-priority file even when the AI review diff budget would omit it", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SAFETY: "true" });
     const adv = advisory();
     const noisySourcePatch = `@@\n${Array.from({ length: 2600 }, (_, i) => `+export const generated${i} = "${"x".repeat(20)}";`).join("\n")}`;
     const files = [
@@ -298,7 +298,7 @@ describe("secret-leak finding in the advisory build", () => {
   });
 
   it("FLAG-ON: scans low-signal hunks that the AI review diff reducer would drop", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SAFETY: "true" });
     const adv = advisory();
     const highSignalHunk = `@@ -1,0 +1,2200 @@\n${Array.from({ length: 2200 }, (_, i) => `+const filler${i} = "${"x".repeat(32)}";`).join("\n")}`;
     const secretHunk = `@@ -9000,0 +9000,1 @@\n+const token = "${FAKE_GH_TOKEN}";`;
@@ -379,7 +379,7 @@ describe("secret-leak finding in the advisory build", () => {
   });
 
   it("FLAG-OFF: a concrete leaked secret STILL produces the secret_leak finding (unconditional, #audit-3.4)", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "false" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SAFETY: "false" });
     const adv = advisory();
     const files = [
       {
@@ -401,12 +401,12 @@ describe("secret-leak finding in the advisory build", () => {
       pullNumber: 7,
       files,
     });
-    // The concrete-credential hard block does not depend on GITTENSORY_REVIEW_SAFETY.
+    // The concrete-credential hard block does not depend on LOOPOVER_REVIEW_SAFETY.
     expect(adv.findings.map((f) => f.code)).toContain("secret_leak");
   });
 
   it("FLAG-ON + files=null: lazily loads the changed files from D1 and still finds the leaked secret", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SAFETY: "true" });
     // Seed a changed-file row so the lazy `listPullRequestFiles` load (args.files ?? …) returns a real diff.
     await env.DB.prepare(
       "INSERT INTO pull_request_files (repo_full_name, pull_number, path, status, additions, deletions, changes, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -435,7 +435,7 @@ describe("secret-leak finding in the advisory build", () => {
   });
 
   it("FLAG-ON + files=null with no changed files: lazy load yields a clean diff, no finding", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_SAFETY: "true" });
     const adv = advisory();
     // No seeded rows → listPullRequestFiles returns [] → buildAiReviewDiff('') → secretLeakFinding null
     await maybeAddSecretLeakFinding(env, {

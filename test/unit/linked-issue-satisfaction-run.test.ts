@@ -780,10 +780,10 @@ describe("linked-issue satisfaction wired end-to-end through the real webhook pi
       AI_DAILY_NEURON_BUDGET: "100000",
       // The converged unified-comment renderer (which folds in the "Linked issue satisfaction" section this
       // feature populates) is itself behind BOTH the global kill-switch AND the (back-compat, manifest-absent)
-      // GITTENSORY_REVIEW_REPOS allowlist -- see convergedFeatureActive/resolveConvergedFeature
+      // LOOPOVER_REVIEW_REPOS allowlist -- see convergedFeatureActive/resolveConvergedFeature
       // (src/review/feature-activation.ts). Both are required for a repo with no `.gittensory.yml` manifest.
-      GITTENSORY_REVIEW_UNIFIED_COMMENT: "true",
-      GITTENSORY_REVIEW_REPOS: "JSONbored/metagraphed",
+      LOOPOVER_REVIEW_UNIFIED_COMMENT: "true",
+      LOOPOVER_REVIEW_REPOS: "JSONbored/metagraphed",
     });
     await persistRegistrySnapshot(
       env,
@@ -873,8 +873,8 @@ describe("linked-issue satisfaction wired end-to-end through the real webhook pi
       AI_SUMMARIES_ENABLED: "true",
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
-      GITTENSORY_REVIEW_UNIFIED_COMMENT: "true",
-      GITTENSORY_REVIEW_REPOS: "JSONbored/metagraphed",
+      LOOPOVER_REVIEW_UNIFIED_COMMENT: "true",
+      LOOPOVER_REVIEW_REPOS: "JSONbored/metagraphed",
     });
     await persistRegistrySnapshot(
       env,

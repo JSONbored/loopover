@@ -261,7 +261,7 @@ testExpectations:
       expect(await rawAll(env, "SELECT * FROM predicted_gate_calls")).toHaveLength(1);
     });
 
-    it("records NOTHING on the CLOUD WORKER when GITTENSORY_REVIEW_PARITY_AUDIT is unset (byte-identical default)", async () => {
+    it("records NOTHING on the CLOUD WORKER when LOOPOVER_REVIEW_PARITY_AUDIT is unset (byte-identical default)", async () => {
       const env = createTestEnv();
       delete env.SELFHOST_TRANSIENT_CACHE; // simulate the cloud worker
       const client = await connect(env);

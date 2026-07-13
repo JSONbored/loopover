@@ -3,7 +3,7 @@
 // so a non-frontier model judges the change against how the rest of the codebase actually works. This is the
 // RETRIEVAL half of codebase RAG (Layer C) — additive prompt context, exactly like `grounding-wire`.
 //
-// Single env switch: GITTENSORY_REVIEW_RAG. Default OFF (unset/"false") — when OFF this module is never invoked from
+// Single env switch: LOOPOVER_REVIEW_RAG. Default OFF (unset/"false") — when OFF this module is never invoked from
 // the review path (the caller guards on the flag), gathers nothing, makes NO adapter use and NO vector query,
 // and the reviewer prompt is byte-identical to today. Truthy follows the codebase convention
 // (`/^(1|true|yes|on)$/i`, same as isGroundingEnabled / isSafetyEnabled / isEnabled).
@@ -21,15 +21,13 @@
 
 import { createReviewAdapters } from "./adapters";
 import { type RagChunk, retrieveContextWithMetrics, upsertChunks } from "./rag";
-import { dualPrefixEnvFlag } from "../utils/env";
 
 /** True when RAG retrieval is enabled. Flag-OFF (default) → the caller takes no new branch, so no retrieval is
  *  performed and the reviewer prompt is unchanged. */
 export function isRagEnabled(env: {
-  GITTENSORY_REVIEW_RAG?: string | undefined;
   LOOPOVER_REVIEW_RAG?: string | undefined;
 }): boolean {
-  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_RAG");
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_RAG ?? "").trim());
 }
 
 /** Cap on how many changed-file paths feed the query string — bounds the query length / embed cost. */

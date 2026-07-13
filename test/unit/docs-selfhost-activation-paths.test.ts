@@ -19,7 +19,7 @@ const maintainer = readFileSync(MAINTAINER, "utf8");
 
 describe("self-host activation + onboarding docs (#1574)", () => {
   it("quickstart documents allowlist, private config seed, activation POST, and Checks: write", () => {
-    expect(quickstart).toContain("GITTENSORY_REVIEW_REPOS");
+    expect(quickstart).toContain("LOOPOVER_REVIEW_REPOS");
     expect(quickstart).toContain("config/examples/global.gittensory.yml");
     expect(quickstart).toContain("gittensory-config/.loopover.yml");
     expect(quickstart).toContain("/v1/repos/owner/my-repo/activation");
@@ -28,7 +28,7 @@ describe("self-host activation + onboarding docs (#1574)", () => {
   });
 
   it("configuration separates feature allowlist, gate activation, and is_registered", () => {
-    expect(configuration).toContain("GITTENSORY_REVIEW_REPOS");
+    expect(configuration).toContain("LOOPOVER_REVIEW_REPOS");
     expect(configuration).toContain("is_registered");
     expect(configuration).toContain("/v1/repos/:owner/:repo/activation-preview");
     expect(configuration).toContain("/v1/repos/:owner/:repo/activation");

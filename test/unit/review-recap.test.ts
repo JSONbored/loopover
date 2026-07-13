@@ -228,7 +228,7 @@ describe("loadReviewRecap (#1963, D1-backed loader)", () => {
 const HOOK = "https://discord.com/api/webhooks/123/abc";
 
 function envWithWebhook(): Env {
-  return Object.assign(createTestEnv(), { GITTENSORY_DISCORD_WEBHOOK: HOOK }) as Env;
+  return Object.assign(createTestEnv(), { LOOPOVER_DISCORD_WEBHOOK: HOOK }) as Env;
 }
 
 async function auditRows(env: Env): Promise<Array<{ outcome: string; detail: string }>> {

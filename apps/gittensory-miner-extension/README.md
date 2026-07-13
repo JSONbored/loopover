@@ -27,3 +27,11 @@ omitted entirely for a cache saved before this field existed.
 The extension does not request the `unlimitedStorage` permission, so a paste is rejected with a clear error before
 being parsed or saved once it exceeds a conservative size bound well under `chrome.storage.local`'s default 10 MiB
 quota, instead of silently failing to save or leaving storage partially written.
+
+## Host permissions
+
+`manifest.json` grants `https://github.com/*` (for the issue-page content script) plus loopback host permissions —
+`http://localhost/*` and `http://127.0.0.1/*` — so the extension can reach the operator's own local miner-ui API
+(#4860). Chrome match patterns cannot pin a port, so `http://localhost/*` is the narrowest grant the platform
+allows; `https` is intentionally omitted because the local miner-ui dev server is plain HTTP. This is the enabling
+permission for live-fetching ranked candidates from the local miner-ui instead of pasting them.

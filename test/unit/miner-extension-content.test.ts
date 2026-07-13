@@ -46,6 +46,19 @@ describe("miner extension opportunity badge", () => {
     expect(manifest.content_scripts[0].css).toEqual(["styles.css"]);
   });
 
+  it("grants loopback host permissions so the extension can reach the local miner-ui, scoped to localhost only (#4860)", () => {
+    // Chrome match patterns cannot pin a port, so http://localhost/* + http://127.0.0.1/* is the narrowest the
+    // platform allows; https is intentionally omitted (the local miner-ui dev server is plain HTTP).
+    expect(manifest.host_permissions).toContain("http://localhost/*");
+    expect(manifest.host_permissions).toContain("http://127.0.0.1/*");
+    // github.com stays; the loopback grant is additive, not a replacement.
+    expect(manifest.host_permissions).toContain("https://github.com/*");
+    // No broad or non-loopback host is granted alongside it.
+    for (const pattern of manifest.host_permissions) {
+      expect(pattern).toMatch(/^https:\/\/github\.com\/\*$|^http:\/\/(?:localhost|127\.0\.0\.1)\/\*$/);
+    }
+  });
+
   it("detects GitHub issue routes without matching pull requests", () => {
     const internals = loadContentInternals();
     expect(internals.matchGitHubIssueTarget("/JSONbored/gittensory/issues/145")).toEqual({

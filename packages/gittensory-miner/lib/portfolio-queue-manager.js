@@ -1,7 +1,8 @@
 // Stateful PortfolioQueueManager (#4285): compose the persisted SQLite portfolio/queue store
 // (portfolio-queue.js, #2292) with the pure engine selector (nextEligibleItems, queue.ts, #2326) so batch
-// claiming respects global/per-repo WIP caps and cross-repo diversification instead of a naive priority-only
-// single-row dequeue. Caps are plain constructor arguments — not wired to .gittensory-miner.yml here.
+// (and, since #4850, single-item) claiming respects global/per-repo WIP caps and cross-repo diversification
+// instead of a naive priority-only single-row dequeue. Caps are plain constructor arguments here -- reading
+// them from .gittensory-miner.yml is the caller's job (portfolio-queue-cli.js's runQueueNext, for #4850).
 import { nextEligibleItems } from "@jsonbored/gittensory-engine";
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
 import { DEFAULT_MAX_LEASE_MS, sweepStuckItems } from "./portfolio-queue-expiry.js";
@@ -104,6 +105,15 @@ export function initPortfolioQueueManager(options = {}) {
       // instead of permanently consuming a WIP slot and starving the queue.
       sweepStuckItems(store, Date.now(), staleLeaseMs);
       return store.batchClaim((entries) => selectEligibleBatch(entries, caps));
+    },
+    /** Claim exactly the single highest-priority eligible item under the same caps-aware, diversified selection
+     *  `claimNextBatch()` uses -- the caps-respecting counterpart to the old naive single-row `dequeueNext()`
+     *  (#4850). Slicing the selector's result to one keeps every cap/diversification rule identical; it never
+     *  claims more than the one item the caller asked for. Returns null when nothing is eligible. */
+    claimNext() {
+      sweepStuckItems(store, Date.now(), staleLeaseMs);
+      const claimed = store.batchClaim((entries) => selectEligibleBatch(entries, caps).slice(0, 1));
+      return claimed[0] ?? null;
     },
     close() {
       store.close();

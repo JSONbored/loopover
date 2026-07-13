@@ -1,3 +1,4 @@
+import type { PortfolioCaps } from "@jsonbored/gittensory-engine";
 import type { PortfolioQueueStore, QueueEntry } from "./portfolio-queue.js";
 import type { PortfolioQueueManager } from "./portfolio-queue-manager.js";
 
@@ -41,9 +42,18 @@ export function runQueueList(
   options?: { initPortfolioQueue?: () => PortfolioQueueStore },
 ): number;
 
+export function resolveQueueNextCaps(
+  cwd?: string,
+  deps?: { existsSync?: (path: string) => boolean; readFileSync?: (path: string, encoding: "utf8") => string },
+): PortfolioCaps;
+
 export function runQueueNext(
   args: string[],
-  options?: { initPortfolioQueue?: () => PortfolioQueueStore },
+  options?: {
+    initPortfolioQueueManager?: (opts: unknown) => PortfolioQueueManager;
+    resolveQueueNextCaps?: (cwd?: string) => PortfolioCaps;
+    cwd?: string;
+  },
 ): number;
 
 export function runQueueDone(
@@ -72,5 +82,7 @@ export function runQueueCli(
   options?: {
     initPortfolioQueue?: () => PortfolioQueueStore;
     initPortfolioQueueManager?: (opts: unknown) => PortfolioQueueManager;
+    resolveQueueNextCaps?: (cwd?: string) => PortfolioCaps;
+    cwd?: string;
   },
 ): number;

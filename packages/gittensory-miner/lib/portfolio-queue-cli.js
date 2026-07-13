@@ -1,6 +1,30 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { discoverMinerGoalSpecPath, parseMinerGoalSpecContent } from "@jsonbored/gittensory-engine";
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
 import { initPortfolioQueueManager } from "./portfolio-queue-manager.js";
 import { runPortfolioDashboard } from "./portfolio-dashboard.js";
+
+// No MinerGoalSpec field bounds the portfolio-wide (cross-repo) WIP count today, so `queue next` (#4850) only
+// enforces the per-repo cap from config; this stands in for "no cap" without tripping the caps-aware selector's
+// own `cap === 0` ⇒ "claim nothing" rule (queue.ts), which a non-finite/undefined value would.
+const UNBOUNDED_WIP_CAP = Number.MAX_SAFE_INTEGER;
+
+/**
+ * Resolve `queue next`'s per-repo WIP cap from the CWD's discovered `.gittensory-miner.yml` (mirrors status.js's
+ * own config-file discovery), reusing `maxConcurrentClaims` -- already documented as "max issues a single miner
+ * may hold claimed on this repo at once" -- rather than inventing a new field. Falls back to an effectively
+ * unbounded cap when NO config file exists at all, so an operator who has never configured a cap keeps today's
+ * uncapped `queue next` behavior unchanged; the cap only applies once a config file is actually present (#4850).
+ */
+export function resolveQueueNextCaps(cwd = process.cwd(), deps = {}) {
+  const exists = deps.existsSync ?? existsSync;
+  const read = deps.readFileSync ?? readFileSync;
+  const relativePath = discoverMinerGoalSpecPath((candidate) => exists(join(cwd, candidate)));
+  if (!relativePath) return { globalWipCap: UNBOUNDED_WIP_CAP, perRepoWipCap: UNBOUNDED_WIP_CAP };
+  const { spec } = parseMinerGoalSpecContent(read(join(cwd, relativePath), "utf8"));
+  return { globalWipCap: UNBOUNDED_WIP_CAP, perRepoWipCap: spec.maxConcurrentClaims };
+}
 
 const QUEUE_LIST_USAGE = "Usage: gittensory-miner queue list [--repo <owner/repo>] [--json]";
 const QUEUE_NEXT_USAGE = "Usage: gittensory-miner queue next [--json]";
@@ -176,6 +200,8 @@ export function runQueueList(args, options = {}) {
   }
 }
 
+/** Claim the single next eligible item via the WIP-cap-aware claimer (portfolio-queue-manager.js's
+ *  `claimNext()`), respecting the per-repo cap configured via `.gittensory-miner.yml` (#4850). */
 export function runQueueNext(args, options = {}) {
   const parsed = parseQueueNextArgs(args);
   if ("error" in parsed) {
@@ -183,19 +209,25 @@ export function runQueueNext(args, options = {}) {
     return 2;
   }
 
+  // Open the manager INSIDE the try so a store/config-read failure returns 2 instead of crashing; the finally
+  // guards the close with `?.` since the initializer may have thrown before assigning (mirrors claim-batch).
+  const ownsManager = options.initPortfolioQueueManager === undefined;
+  let manager;
   try {
-    return withPortfolioQueue(options, (portfolioQueue) => {
-      const entry = portfolioQueue.dequeueNext();
-      if (parsed.json) {
-        console.log(JSON.stringify({ entry }, null, 2));
-      } else {
-        console.log(entry ? entry.identifier : "none");
-      }
-      return 0;
-    });
+    const caps = (options.resolveQueueNextCaps ?? resolveQueueNextCaps)(options.cwd);
+    manager = (options.initPortfolioQueueManager ?? initPortfolioQueueManager)({ caps });
+    const entry = manager.claimNext();
+    if (parsed.json) {
+      console.log(JSON.stringify({ entry }, null, 2));
+    } else {
+      console.log(entry ? entry.identifier : "none");
+    }
+    return 0;
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     return 2;
+  } finally {
+    if (ownsManager) manager?.close();
   }
 }
 

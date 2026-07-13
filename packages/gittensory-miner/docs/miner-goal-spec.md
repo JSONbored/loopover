@@ -44,7 +44,9 @@ Issue labels a miner must skip.
 
 ### `maxConcurrentClaims` (integer `>= 1`, default: `1`)
 
-Maximum issues one miner may hold claimed on this repo at once.
+Maximum issues one miner may hold claimed on this repo at once. Enforced as `gittensory-miner queue next`'s
+per-repo WIP cap (#4850): discovered from the CWD's `.gittensory-miner.yml`, same as `status`/`doctor`'s own
+config-file lookup, falling back to an unbounded cap only when no config file exists at all.
 
 ### `issueDiscoveryPolicy` (`encouraged` | `neutral` | `discouraged`, default: `neutral`)
 

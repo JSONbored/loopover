@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +6,7 @@ import {
   closeDefaultPortfolioQueueStore,
   initPortfolioQueueStore,
 } from "../../packages/gittensory-miner/lib/portfolio-queue.js";
+import { initPortfolioQueueManager } from "../../packages/gittensory-miner/lib/portfolio-queue-manager.js";
 import {
   parseQueueDoneArgs,
   parseQueueListArgs,
@@ -13,6 +14,7 @@ import {
   parseQueueReleaseArgs,
   parseQueueRequeueArgs,
   renderQueueTable,
+  resolveQueueNextCaps,
   runQueueCli,
   runQueueDone,
   runQueueList,
@@ -22,12 +24,19 @@ import {
 } from "../../packages/gittensory-miner/lib/portfolio-queue-cli.js";
 import type { QueueEntry } from "../../packages/gittensory-miner/lib/portfolio-queue.d.ts";
 
+const UNBOUNDED_CAPS = { globalWipCap: Number.MAX_SAFE_INTEGER, perRepoWipCap: Number.MAX_SAFE_INTEGER };
+
 const roots: string[] = [];
 const stores: Array<{ close(): void }> = [];
 
-function tempQueueStore() {
+function tempRoot() {
   const root = mkdtempSync(join(tmpdir(), "gittensory-miner-portfolio-queue-cli-"));
   roots.push(root);
+  return root;
+}
+
+function tempQueueStore() {
+  const root = tempRoot();
   const store = initPortfolioQueueStore(join(root, "portfolio-queue.sqlite3"));
   stores.push(store);
   return store;
@@ -97,15 +106,18 @@ describe("gittensory-miner portfolio queue CLI (#2292)", () => {
     });
   });
 
-  it("runQueueNext claims the highest-priority queued item", () => {
+  it("runQueueNext claims the highest-priority queued item, uncapped by default (no config file present)", () => {
     const portfolioQueue = tempQueueStore();
     portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", priority: 10 });
     portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:2", priority: 90 });
+    const manager = initPortfolioQueueManager({ store: portfolioQueue, caps: UNBOUNDED_CAPS });
+    const cwd = tempRoot(); // isolated, config-less working dir -- never depend on the real repo's own filesystem
 
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     expect(
       runQueueNext([], {
-        initPortfolioQueue: () => portfolioQueue,
+        initPortfolioQueueManager: () => manager,
+        cwd,
       }),
     ).toBe(0);
     expect(log).toHaveBeenCalledWith("issue:2");
@@ -113,20 +125,115 @@ describe("gittensory-miner portfolio queue CLI (#2292)", () => {
     log.mockClear();
     expect(
       runQueueNext(["--json"], {
-        initPortfolioQueue: () => portfolioQueue,
+        initPortfolioQueueManager: () => manager,
+        cwd,
       }),
     ).toBe(0);
     expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
       entry: expect.objectContaining({ identifier: "issue:1", status: "in_progress" }),
     });
 
+    // Both same-repo items are now claimed with no per-repo cap in force -- "none" left because the queue is
+    // genuinely empty, not because of any WIP cap.
     log.mockClear();
     expect(
       runQueueNext([], {
-        initPortfolioQueue: () => portfolioQueue,
+        initPortfolioQueueManager: () => manager,
+        cwd,
       }),
     ).toBe(0);
     expect(log).toHaveBeenCalledWith("none");
+  });
+
+  describe("WIP-cap-aware queue next (#4850)", () => {
+    it("stops claiming once the configured per-repo cap is reached, leaving a second same-repo item queued", () => {
+      const portfolioQueue = tempQueueStore();
+      portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", priority: 10 });
+      portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:2", priority: 90 });
+      const manager = initPortfolioQueueManager({
+        store: portfolioQueue,
+        caps: { globalWipCap: UNBOUNDED_CAPS.globalWipCap, perRepoWipCap: 1 },
+      });
+
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      expect(runQueueNext([], { initPortfolioQueueManager: () => manager })).toBe(0);
+      expect(log).toHaveBeenCalledWith("issue:2"); // the higher-priority item claims the repo's one WIP slot
+
+      log.mockClear();
+      expect(runQueueNext([], { initPortfolioQueueManager: () => manager })).toBe(0);
+      expect(log).toHaveBeenCalledWith("none"); // capped, even though issue:1 is still queued and eligible otherwise
+
+      expect(portfolioQueue.listQueue("acme/widgets").find((entry) => entry.identifier === "issue:1")?.status).toBe(
+        "queued",
+      );
+    });
+
+    it("resolveQueueNextCaps falls back to an effectively unbounded cap when no config file exists", () => {
+      const root = tempRoot();
+      expect(resolveQueueNextCaps(root)).toEqual(UNBOUNDED_CAPS);
+    });
+
+    it("resolveQueueNextCaps reads the per-repo cap from maxConcurrentClaims in a discovered .gittensory-miner.yml", () => {
+      const root = tempRoot();
+      writeFileSync(join(root, ".gittensory-miner.yml"), "maxConcurrentClaims: 3\n");
+      expect(resolveQueueNextCaps(root)).toEqual({ globalWipCap: UNBOUNDED_CAPS.globalWipCap, perRepoWipCap: 3 });
+    });
+
+    it("resolveQueueNextCaps falls back to MinerGoalSpec's own default (1) when a config file exists but omits maxConcurrentClaims", () => {
+      const root = tempRoot();
+      writeFileSync(join(root, ".gittensory-miner.yml"), "minerEnabled: true\n");
+      expect(resolveQueueNextCaps(root)).toEqual({ globalWipCap: UNBOUNDED_CAPS.globalWipCap, perRepoWipCap: 1 });
+    });
+
+    it("resolveQueueNextCaps checks the documented discovery order, preferring .gittensory-miner.yml over the .github/ and .json variants", () => {
+      const root = tempRoot();
+      mkdirSync(join(root, ".github"), { recursive: true });
+      writeFileSync(join(root, ".github", "gittensory-miner.yml"), "maxConcurrentClaims: 9\n");
+      writeFileSync(join(root, ".gittensory-miner.yml"), "maxConcurrentClaims: 2\n");
+      expect(resolveQueueNextCaps(root).perRepoWipCap).toBe(2);
+    });
+
+    it("runQueueNext resolves caps from process.cwd() by default and from an injected resolveQueueNextCaps override", () => {
+      const portfolioQueue = tempQueueStore();
+      portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", priority: 10 });
+      const manager = initPortfolioQueueManager({ store: portfolioQueue, caps: { globalWipCap: 1, perRepoWipCap: 1 } });
+      let receivedCwd = null;
+
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      expect(
+        runQueueNext([], {
+          initPortfolioQueueManager: () => manager,
+          resolveQueueNextCaps: (cwd) => {
+            receivedCwd = cwd;
+            return { globalWipCap: 1, perRepoWipCap: 1 };
+          },
+        }),
+      ).toBe(0);
+      expect(log).toHaveBeenCalledWith("issue:1");
+      expect(receivedCwd).toBeUndefined();
+    });
+
+    it("returns 2 (not a crash) when caps resolution throws", () => {
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const code = runQueueNext([], {
+        resolveQueueNextCaps: () => {
+          throw new Error("bad_config");
+        },
+      });
+      expect(code).toBe(2);
+      expect(errorLog).toHaveBeenCalledWith("bad_config");
+    });
+
+    it("formats a non-Error thrown value into the error message (defensive fallback)", () => {
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const code = runQueueNext([], {
+        resolveQueueNextCaps: () => {
+          throw "boom"; // deliberately non-Error, exercising the ternary's fallback branch
+        },
+      });
+      expect(code).toBe(2);
+      expect(errorLog).toHaveBeenCalledWith("boom");
+    });
   });
 
   it("runQueueDone marks an item done and rejects missing entries", () => {

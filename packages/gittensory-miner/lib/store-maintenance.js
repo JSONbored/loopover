@@ -43,7 +43,10 @@ export function classifyIntegrityRows(rows) {
 /**
  * Run `PRAGMA integrity_check` on a single store file. A store that does not exist yet is healthy by absence
  * (nothing to corrupt). Never throws: a store that cannot be opened or read is reported as not-ok, so one bad
- * store cannot abort the whole doctor sweep.
+ * store cannot abort the whole doctor sweep. Opens the connection driver-enforced read-only -- `readOnly`
+ * (camelCase) is the only option key node:sqlite recognizes for this; the lowercase `readonly` is silently
+ * ignored and opens read-write instead (the exact gotcha claim-ledger.js's own openClaimLedgerReadOnly already
+ * documents), which would defeat the read-only guarantee this function's own docs claim.
  * @param {string} name - the check label (e.g. "event-ledger").
  * @param {string} dbPath - the store file path.
  * @returns {{ name: string, ok: boolean, detail: string }}
@@ -54,7 +57,7 @@ export function checkStoreIntegrity(name, dbPath) {
   }
   let db;
   try {
-    db = new DatabaseSync(dbPath, { readonly: true });
+    db = new DatabaseSync(dbPath, { readOnly: true });
     const { ok, note } = classifyIntegrityRows(db.prepare("PRAGMA integrity_check").all());
     return { name, ok, detail: `${dbPath}: ${note}` };
   } catch (error) {

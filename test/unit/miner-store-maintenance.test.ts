@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -85,6 +85,34 @@ describe("checkStoreIntegrity (#4834)", () => {
     // assigned) — exercises the open-failure path and the no-handle-to-close branch.
     const result = checkStoreIntegrity("event-ledger", tempDir());
     expect(result.ok).toBe(false);
+  });
+
+  it("REGRESSION: pins the camelCase `readOnly` option key, never the lowercase `readonly` node:sqlite silently ignores", () => {
+    // node:sqlite's DatabaseSync only recognizes `readOnly` (camelCase) for a driver-enforced read-only
+    // connection; the lowercase `readonly` key is silently ignored and the connection opens read-write instead
+    // -- the exact gotcha claim-ledger.js's own openClaimLedgerReadOnly already documents and pins. A source-text
+    // check (rather than only a live-connection assertion below) means a future edit that reintroduces the wrong
+    // casing fails immediately, without needing to reason about SQLite's own error-message wording.
+    const source = readFileSync("packages/gittensory-miner/lib/store-maintenance.js", "utf8");
+    expect(source).toContain("new DatabaseSync(dbPath, { readOnly: true })");
+    expect(source).not.toMatch(/new DatabaseSync\(dbPath,\s*\{\s*readonly:/);
+  });
+
+  it("REGRESSION: a connection opened the same way checkStoreIntegrity does genuinely rejects a write", () => {
+    // Mirrors claim-ledger.test.ts's own "readOnly vs. readonly key gotcha" regression test: proves the driver
+    // itself enforces read-only for this exact option shape, so checkStoreIntegrity's connection can never
+    // silently mutate the store file it's meant to only inspect.
+    const path = join(tempDir(), "healthy.sqlite3");
+    const setup = new DatabaseSync(path);
+    setup.exec("CREATE TABLE t (id INTEGER)");
+    setup.close();
+
+    const readOnlyConnection = new DatabaseSync(path, { readOnly: true });
+    try {
+      expect(() => readOnlyConnection.exec("INSERT INTO t (id) VALUES (1)")).toThrow(/readonly/i);
+    } finally {
+      readOnlyConnection.close();
+    }
   });
 });
 

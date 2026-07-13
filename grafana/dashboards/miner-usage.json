@@ -1,0 +1,366 @@
+{
+  "uid": "loopover-miner-usage",
+  "title": "LoopOver \u2014 AMS (miner) attempts & predictions",
+  "tags": [
+    "loopover",
+    "ams",
+    "miner",
+    "observability"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "description": "AMS (gittensory-miner) attempt outcomes and prediction/readiness activity, read from the redacted AMS SQLite reporting exports (#5185).",
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Total attempts",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "ams-attempt-log"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT count(DISTINCT attempt_id) AS value FROM attempt_log_events WHERE unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT count(DISTINCT attempt_id) AS value FROM attempt_log_events WHERE unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Succeeded",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "ams-attempt-log"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT count(*) AS value FROM attempt_log_events WHERE event_type = 'attempt_succeeded' AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT count(*) AS value FROM attempt_log_events WHERE event_type = 'attempt_succeeded' AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Failed",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "ams-attempt-log"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "red"
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT count(*) AS value FROM attempt_log_events WHERE event_type = 'attempt_failed' AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT count(*) AS value FROM attempt_log_events WHERE event_type = 'attempt_failed' AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Aborted",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "ams-attempt-log"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT count(*) AS value FROM attempt_log_events WHERE event_type = 'attempt_aborted' AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT count(*) AS value FROM attempt_log_events WHERE event_type = 'attempt_aborted' AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "piechart",
+      "title": "Attempt outcomes",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "ams-attempt-log"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": [
+            "value"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT event_type AS metric, count(*) AS value FROM attempt_log_events WHERE event_type IN ('attempt_succeeded','attempt_failed','attempt_aborted') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY event_type",
+          "rawQueryText": "SELECT event_type AS metric, count(*) AS value FROM attempt_log_events WHERE event_type IN ('attempt_succeeded','attempt_failed','attempt_aborted') AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY event_type"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "piechart",
+      "title": "Attempts by execution mode",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "ams-attempt-log"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": [
+            "value"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT mode AS metric, count(DISTINCT attempt_id) AS value FROM attempt_log_events WHERE unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY mode",
+          "rawQueryText": "SELECT mode AS metric, count(DISTINCT attempt_id) AS value FROM attempt_log_events WHERE unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY mode"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Top action classes",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "ams-attempt-log"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {}
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT action_class, count(*) AS events FROM attempt_log_events WHERE unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY action_class ORDER BY events DESC LIMIT 15",
+          "rawQueryText": "SELECT action_class, count(*) AS events FROM attempt_log_events WHERE unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY action_class ORDER BY events DESC LIMIT 15"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Total predictions",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "ams-prediction-ledger"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 13
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT count(*) AS value FROM predictions WHERE unixepoch(ts) >= ${__from:date:seconds} AND unixepoch(ts) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT count(*) AS value FROM predictions WHERE unixepoch(ts) >= ${__from:date:seconds} AND unixepoch(ts) < ${__to:date:seconds}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Avg readiness score",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "ams-prediction-ledger"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 13
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT avg(readiness_score) AS value FROM predictions WHERE readiness_score IS NOT NULL AND unixepoch(ts) >= ${__from:date:seconds} AND unixepoch(ts) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT avg(readiness_score) AS value FROM predictions WHERE readiness_score IS NOT NULL AND unixepoch(ts) >= ${__from:date:seconds} AND unixepoch(ts) < ${__to:date:seconds}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "piechart",
+      "title": "Predictions by conclusion",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "ams-prediction-ledger"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": [
+            "value"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT conclusion AS metric, count(*) AS value FROM predictions WHERE unixepoch(ts) >= ${__from:date:seconds} AND unixepoch(ts) < ${__to:date:seconds} GROUP BY conclusion",
+          "rawQueryText": "SELECT conclusion AS metric, count(*) AS value FROM predictions WHERE unixepoch(ts) >= ${__from:date:seconds} AND unixepoch(ts) < ${__to:date:seconds} GROUP BY conclusion"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "text",
+      "title": "Data scope",
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "This dashboard reads the **redacted** AMS reporting exports (`ams-attempt-log`, `ams-prediction-ledger`), which are the only AMS sources Grafana is permitted to mount (see `export-ams-reporting-db.sh`, #5184). Per-provider token/cost breakdowns are **not shown** here because that detail lives in the attempt log's `payload_json`, which the reporting export deliberately drops for privacy \u2014 so `provider`, tokens, and cost are absent from the datasource. The panels above surface every attempt-outcome and prediction signal the redacted exports **do** expose."
+      }
+    }
+  ]
+}

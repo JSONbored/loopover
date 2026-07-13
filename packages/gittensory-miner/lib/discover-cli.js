@@ -256,7 +256,7 @@ export async function runDiscover(args, options = {}) {
       goalSpecsByRepo: options.goalSpecsByRepo,
       goalSpecContentByRepo: options.goalSpecContentByRepo,
     });
-    const enqueueSummary = enqueue(rankedSummary.issues, { queueStore: portfolioQueue });
+    const enqueueSummary = enqueue(rankedSummary.issues, { queueStore: portfolioQueue, apiBaseUrl });
 
     const result = {
       fanOutCount: fanOut.issues.length,

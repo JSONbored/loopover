@@ -9,6 +9,7 @@
 import { extractLinkedIssueNumbers, getIssue } from "../db/repositories";
 import { sanitizePublicComment } from "../queue-intelligence";
 import { incr, observe } from "../selfhost/metrics";
+import { dualPrefixEnvFlag } from "../utils/env";
 import { neutralizePromptInjection } from "./prompt-injection";
 import { REES_ANALYZER_NAMES, REES_ANALYZER_NAME_SET, type ReesAnalyzerName } from "./enrichment-analyzer-names";
 import type { PullRequestFileRecord } from "../types";
@@ -27,6 +28,7 @@ export { REES_ANALYZER_NAMES, type ReesAnalyzerName } from "./enrichment-analyze
 
 interface EnrichmentEnv {
   GITTENSORY_REVIEW_ENRICHMENT?: string | undefined;
+  LOOPOVER_REVIEW_ENRICHMENT?: string | undefined;
   REES_URL?: string | undefined;
   REES_SHARED_SECRET?: string | undefined;
   REES_TIMEOUT_MS?: string | undefined;
@@ -180,7 +182,7 @@ export function probeReesSecretAtStartup(env: Env): void {
 export function isEnrichmentEnabled(env: Env): boolean {
   const cfg = reesConfig(env);
   return (
-    /^(1|true|yes|on)$/i.test(cfg.GITTENSORY_REVIEW_ENRICHMENT ?? "") &&
+    dualPrefixEnvFlag(cfg as unknown as Record<string, string | undefined>, "REVIEW_ENRICHMENT") &&
     Boolean(cfg.REES_URL?.trim())
   );
 }

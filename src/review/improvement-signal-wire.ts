@@ -12,8 +12,13 @@
 // `./feature-activation`). Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as
 // isRagEnabled / isE2eTestGenerationEnabled).
 
+import { dualPrefixEnvFlag } from "../utils/env";
+
 /** True when the PR improvement signal is enabled at the deployment level. Flag-OFF (default) → the feature is
  *  never active for any repo, regardless of a per-repo `features.improvementSignal` override. */
-export function isImprovementSignalEnabled(env: { GITTENSORY_REVIEW_IMPROVEMENT_SIGNAL?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_IMPROVEMENT_SIGNAL ?? "");
+export function isImprovementSignalEnabled(env: {
+  GITTENSORY_REVIEW_IMPROVEMENT_SIGNAL?: string | undefined;
+  LOOPOVER_REVIEW_IMPROVEMENT_SIGNAL?: string | undefined;
+}): boolean {
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_IMPROVEMENT_SIGNAL");
 }

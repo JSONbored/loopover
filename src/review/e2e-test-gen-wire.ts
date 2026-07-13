@@ -9,8 +9,13 @@
 // `./feature-activation`). Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as
 // isRagEnabled / isGroundingEnabled / isSafetyEnabled).
 
+import { dualPrefixEnvFlag } from "../utils/env";
+
 /** True when E2E test generation is enabled at the deployment level. Flag-OFF (default) → the feature is
  *  never active for any repo, regardless of a per-repo `features.e2eTests` override. */
-export function isE2eTestGenerationEnabled(env: { GITTENSORY_REVIEW_E2E_TESTS?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_E2E_TESTS ?? "");
+export function isE2eTestGenerationEnabled(env: {
+  GITTENSORY_REVIEW_E2E_TESTS?: string | undefined;
+  LOOPOVER_REVIEW_E2E_TESTS?: string | undefined;
+}): boolean {
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_E2E_TESTS");
 }

@@ -23,12 +23,16 @@ import type { ReviewFindingSeverity } from "../signals/focus-manifest";
 import type { AgentActionMode } from "../settings/agent-execution";
 import type { PullRequestFileRecord } from "../types";
 import { errorMessage } from "../utils/json";
+import { dualPrefixEnvFlag } from "../utils/env";
 
 /** True when the operator enabled inline comments globally. Flag-OFF (default) ⇒ the caller never asks the model
  *  for inline findings, so this module is never reached. Truthy follows the codebase convention (same regex as
  *  isUnifiedReviewCommentEnabled / isSafetyEnabled). */
-export function isInlineCommentsEnabled(env: { GITTENSORY_REVIEW_INLINE_COMMENTS?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_INLINE_COMMENTS ?? "");
+export function isInlineCommentsEnabled(env: {
+  GITTENSORY_REVIEW_INLINE_COMMENTS?: string | undefined;
+  LOOPOVER_REVIEW_INLINE_COMMENTS?: string | undefined;
+}): boolean {
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_INLINE_COMMENTS");
 }
 
 /** PURE (#4099): should the reviewer be asked to emit line-anchored inline findings for this PR? (1) The

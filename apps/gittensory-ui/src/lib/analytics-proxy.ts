@@ -1,6 +1,6 @@
 // First-party endpoint for forwarding cookieless analytics events.
 //
-// The browser only ever talks to our own origin (gittensory.aethereal.dev):
+// The browser only ever talks to our own origin (loopover.ai):
 //   POST /stats/api/send -> https://tasty.aethereal.dev/api/send
 //
 // Do not proxy the remote Umami script through this origin. Serving mutable

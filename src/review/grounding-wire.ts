@@ -16,6 +16,7 @@ import { githubRateLimitAdmissionKeyForToken, PRODUCT_USER_AGENT, timeoutFetch, 
 import { getCachedGroundingFileContent, putCachedGroundingFileContent, recordAuditEvent } from "../db/repositories";
 import type { CheckSummaryRecord, PullRequestFileRecord } from "../types";
 import { repoParts } from "../utils/json";
+import { dualPrefixEnvFlag } from "../utils/env";
 import { incr } from "../selfhost/metrics";
 import { isConvergenceRepoAllowed } from "./cutover-gate";
 import {
@@ -29,8 +30,11 @@ import {
 } from "./review-grounding";
 
 /** True when grounding is enabled. Flag-OFF (default) → no grounding is gathered and the prompt is unchanged. */
-export function isGroundingEnabled(env: { GITTENSORY_REVIEW_GROUNDING?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_GROUNDING ?? "");
+export function isGroundingEnabled(env: {
+  GITTENSORY_REVIEW_GROUNDING?: string | undefined;
+  LOOPOVER_REVIEW_GROUNDING?: string | undefined;
+}): boolean {
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_GROUNDING");
 }
 
 /** Historical compatibility helper for the removed AI CI-refutation path. Grounding still feeds CI/full-file truth

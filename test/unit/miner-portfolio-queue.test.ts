@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   QUEUE_STATUSES,
@@ -8,6 +9,7 @@ import {
   dequeueNext,
   enqueue,
   initPortfolioQueueStore,
+  markDone,
   markFailed,
   resolvePortfolioQueueDbPath,
 } from "../../packages/gittensory-miner/lib/portfolio-queue.js";
@@ -198,5 +200,125 @@ describe("gittensory-miner portfolio/queue store (#2292)", () => {
     expect(() => store.markDone("o/a", "  ")).toThrow("invalid_identifier");
     expect(() => store.markFailed("no-slash", "1")).toThrow("invalid_repo_full_name");
     expect(() => store.markFailed("o/a", "  ")).toThrow("invalid_identifier");
+  });
+
+  it("module-level markDone delegates to the default portfolio-queue store", () => {
+    const root = mkdtempSync(join(tmpdir(), "gittensory-miner-portfolio-default-"));
+    roots.push(root);
+    vi.stubEnv("GITTENSORY_MINER_PORTFOLIO_QUEUE_DB", join(root, "portfolio-queue.sqlite3"));
+    enqueue({ repoFullName: "o/a", identifier: "work", priority: 1 });
+    expect(markDone("o/a", "work")?.status).toBe("done");
+    expect(markDone("o/a", "work")).toBeNull();
+  });
+
+  describe("forge-scoping (#5563)", () => {
+    it("defaults apiBaseUrl to the github.com default when omitted", () => {
+      const entry = tempStore().enqueue({ repoFullName: "o/a", identifier: "x" });
+      expect(entry.apiBaseUrl).toBe("https://api.github.com");
+    });
+
+    it("two forge hosts can each hold an item with the same owner/repo+identifier without colliding", () => {
+      const store = tempStore();
+      const gh = store.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", apiBaseUrl: "https://api.github.com" });
+      const ghe = store.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", apiBaseUrl: "https://ghe.example.com/api/v3" });
+      expect(gh.apiBaseUrl).not.toBe(ghe.apiBaseUrl);
+      expect(store.listQueue("acme/widgets")).toHaveLength(2);
+
+      expect(store.markDone("acme/widgets", "issue:1", "https://api.github.com")?.apiBaseUrl).toBe("https://api.github.com");
+      const stillQueued = store.listQueue("acme/widgets").find((entry) => entry.status === "queued");
+      expect(stillQueued?.apiBaseUrl).toBe("https://ghe.example.com/api/v3");
+    });
+
+    it("markFailed, reclaimStuckItem, and requeueItem are all scoped by apiBaseUrl too", () => {
+      const store = tempStore();
+      store.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", apiBaseUrl: "https://api.github.com" });
+      store.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", apiBaseUrl: "https://ghe.example.com/api/v3" });
+
+      // dequeueNext is global (no host filter): claims the github.com row first (enqueued first), then — since
+      // that row is no longer 'queued' — the GHE row on the next call.
+      const claimedGh = store.dequeueNext();
+      expect(claimedGh?.apiBaseUrl).toBe("https://api.github.com");
+      const claimedGhe = store.dequeueNext();
+      expect(claimedGhe?.apiBaseUrl).toBe("https://ghe.example.com/api/v3");
+
+      // Releasing the github.com host's in-flight row must not touch the still-in-flight GHE row.
+      expect(store.markFailed("acme/widgets", "issue:1", "https://api.github.com")?.status).toBe("queued");
+      const stillInProgress = store.listInProgress();
+      expect(stillInProgress).toEqual([expect.objectContaining({ apiBaseUrl: "https://ghe.example.com/api/v3" })]);
+
+      const released = store.reclaimStuckItem("acme/widgets", "issue:1", "https://ghe.example.com/api/v3");
+      expect(released?.status).toBe("queued");
+      expect(store.listInProgress()).toEqual([]);
+
+      store.markDone("acme/widgets", "issue:1", "https://api.github.com");
+      const requeued = store.requeueItem("acme/widgets", "issue:1", "https://api.github.com");
+      expect(requeued?.status).toBe("queued");
+      expect(requeued?.apiBaseUrl).toBe("https://api.github.com");
+      // The GHE row (still 'queued' from its own reclaim above) is untouched by requeueItem's github.com scope.
+      expect(store.listQueue("acme/widgets")).toHaveLength(2);
+    });
+
+    it("batchClaim threads target.apiBaseUrl through claimTargetStatement, scoped per host", () => {
+      const store = tempStore();
+      store.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", apiBaseUrl: "https://api.github.com" });
+      store.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", apiBaseUrl: "https://ghe.example.com/api/v3" });
+      const claimed = store.batchClaim((entries) =>
+        entries.map((entry) => ({ repoFullName: entry.repoFullName, identifier: entry.identifier, apiBaseUrl: entry.apiBaseUrl })),
+      );
+      expect(claimed.map((entry) => entry.apiBaseUrl).sort()).toEqual([
+        "https://api.github.com",
+        "https://ghe.example.com/api/v3",
+      ]);
+    });
+
+    it("rejects a non-string or blank apiBaseUrl", () => {
+      const store = tempStore();
+      expect(() => store.enqueue({ repoFullName: "o/a", identifier: "1", apiBaseUrl: "  " })).toThrow(
+        "invalid_api_base_url",
+      );
+      expect(() => store.enqueue({ repoFullName: "o/a", identifier: "1", apiBaseUrl: 42 as never })).toThrow(
+        "invalid_api_base_url",
+      );
+    });
+
+    it("migrates an existing pre-#5563 file (already at the leased_at v2 shape), backfilling api_base_url and preserving every row", () => {
+      const root = mkdtempSync(join(tmpdir(), "gittensory-miner-portfolio-legacy-"));
+      roots.push(root);
+      const dbPath = join(root, "legacy.sqlite3");
+      const legacy = new DatabaseSync(dbPath);
+      legacy.exec(`
+        CREATE TABLE miner_portfolio_queue (
+          repo_full_name TEXT NOT NULL,
+          identifier TEXT NOT NULL,
+          priority REAL NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'in_progress', 'done')),
+          enqueued_at TEXT NOT NULL,
+          leased_at TEXT,
+          PRIMARY KEY (repo_full_name, identifier)
+        )
+      `);
+      legacy.exec("PRAGMA user_version = 2");
+      legacy.exec(
+        "INSERT INTO miner_portfolio_queue (repo_full_name, identifier, priority, status, enqueued_at, leased_at) VALUES ('acme/widgets', 'issue:5', 3, 'queued', '2026-01-01T00:00:00.000Z', NULL)",
+      );
+      legacy.close();
+
+      const store = initPortfolioQueueStore(dbPath);
+      stores.push(store);
+      expect(store.listQueue("acme/widgets")).toEqual([
+        {
+          apiBaseUrl: "https://api.github.com",
+          repoFullName: "acme/widgets",
+          identifier: "issue:5",
+          priority: 3,
+          status: "queued",
+          enqueuedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ]);
+      // The old bare (repo_full_name, identifier) collision is gone: a second host can now enqueue the same pair.
+      const geEntry = store.enqueue({ repoFullName: "acme/widgets", identifier: "issue:5", apiBaseUrl: "https://ghe.example.com/api/v3" });
+      expect(store.listQueue("acme/widgets")).toHaveLength(2);
+      expect(geEntry.apiBaseUrl).toBe("https://ghe.example.com/api/v3");
+    });
   });
 });

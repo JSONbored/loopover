@@ -38,11 +38,15 @@ import { loadGatePrecisionReport, type GatePrecisionReport } from "../services/g
 import { buildRepoOutcomeCalibration, type OutcomeCalibration } from "../services/outcome-calibration";
 import { triggerPagerDutyIncident, type PagerDutySeverity } from "../services/notify-pagerduty";
 import { errorMessage, nowIso } from "../utils/json";
+import { dualPrefixEnvFlag } from "../utils/env";
 
 /** True when the ops observability surface is enabled. Flag-OFF (default) → every export below is a no-op /
  *  404. Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as isSafetyEnabled). */
-export function isOpsEnabled(env: { GITTENSORY_REVIEW_OPS?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_OPS ?? "");
+export function isOpsEnabled(env: {
+  GITTENSORY_REVIEW_OPS?: string | undefined;
+  LOOPOVER_REVIEW_OPS?: string | undefined;
+}): boolean {
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_OPS");
 }
 
 // ── Anomaly thresholds (gittensory-native; conservative so a handful of samples never cries wolf) ──────────

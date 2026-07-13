@@ -6810,7 +6810,7 @@ describe("queue processors", () => {
         expect(body.body).toContain("**Gittensory maintainer queue summary**");
         expect(body.body).toContain("Open PRs: 4");
         expect(body.body).toContain("confirmed-miner PRs: 1");
-        expect(body.body).toContain("Authenticated control panel: https://gittensory.aethereal.dev/app?view=maintainer&repo=JSONbored%2Fgittensory");
+        expect(body.body).toContain("Authenticated control panel: https://loopover.ai/app?view=maintainer&repo=JSONbored%2Fgittensory");
         expect(body.body).not.toMatch(/wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate/i);
         return Response.json({ id: 1001 }, { status: 201 });
       }

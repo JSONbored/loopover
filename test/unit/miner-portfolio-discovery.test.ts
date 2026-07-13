@@ -169,6 +169,19 @@ describe("gittensory-miner portfolio discovery (#2292)", () => {
     ]);
   });
 
+  it("threads options.apiBaseUrl through to every enqueued row, so a non-default host doesn't collide with github.com (#5563)", () => {
+    const queueStore = tempQueueStore();
+    queueStore.enqueue({ repoFullName: "acme/widgets", identifier: "issue:7", apiBaseUrl: "https://api.github.com" });
+    enqueueRankedDiscovery([rankedIssue({ issueNumber: 7, rankScore: 10 })], {
+      queueStore,
+      apiBaseUrl: "https://ghe.example.com/api/v3",
+    });
+    expect(queueStore.listQueue("acme/widgets")).toHaveLength(2);
+    expect(
+      queueStore.listQueue("acme/widgets").find((entry) => entry.apiBaseUrl === "https://ghe.example.com/api/v3"),
+    ).toMatchObject({ identifier: "issue:7", status: "queued" });
+  });
+
   it("rejects invalid rankedIssues, queue store, event ledger, or minRankScore", () => {
     const queueStore = tempQueueStore();
     expect(() => enqueueRankedDiscovery(null as never, { queueStore })).toThrow("invalid_ranked_issues");

@@ -615,6 +615,11 @@ describe("runDiscover (#4247)", () => {
         "tenant-secret",
         expect.objectContaining({ apiBaseUrl: "https://ghe.example.com/api/v3" }),
       );
+      // REGRESSION (#5563): the enqueued portfolio-queue row itself carries the resolved forge host, not just
+      // the fan-out call — otherwise a same-named repo on github.com would collide with this GHE tenant's row.
+      expect(portfolioQueue.listQueue()).toEqual([
+        expect.objectContaining({ apiBaseUrl: "https://ghe.example.com/api/v3" }),
+      ]);
     } finally {
       if (previous === undefined) delete process.env.FORGE_PAT;
       else process.env.FORGE_PAT = previous;

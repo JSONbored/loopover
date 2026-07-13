@@ -41,12 +41,48 @@ describe("gittensory-miner state CLI", () => {
     });
   });
 
+  it("parseStateGetArgs and parseStateSetArgs accept --api-base-url (#5563)", () => {
+    expect(parseStateGetArgs(["acme/widgets", "--api-base-url", "https://ghe.example.com/api/v3"])).toEqual({
+      repoFullName: "acme/widgets",
+      json: false,
+      apiBaseUrl: "https://ghe.example.com/api/v3",
+    });
+    expect(parseStateGetArgs(["acme/widgets", "--api-base-url"])).toEqual({
+      error: expect.stringContaining("Usage: gittensory-miner state get"),
+    });
+    expect(parseStateSetArgs(["acme/widgets", "planning", "--api-base-url", "https://ghe.example.com/api/v3"])).toEqual({
+      repoFullName: "acme/widgets",
+      state: "planning",
+      dryRun: false,
+      json: false,
+      apiBaseUrl: "https://ghe.example.com/api/v3",
+    });
+    expect(parseStateSetArgs(["acme/widgets", "planning", "--api-base-url"])).toEqual({
+      error: expect.stringContaining("Usage: gittensory-miner state set"),
+    });
+  });
+
   it("runStateGet prints none before any write", () => {
     getRunState.mockReturnValue(null);
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     expect(runStateGet(["acme/widgets"])).toBe(0);
-    expect(getRunState).toHaveBeenCalledWith("acme/widgets");
+    expect(getRunState).toHaveBeenCalledWith("acme/widgets", undefined);
     expect(log).toHaveBeenCalledWith("none");
+  });
+
+  it("runStateGet and runStateSet thread --api-base-url through to the store (#5563)", () => {
+    getRunState.mockReturnValue("planning");
+    setRunState.mockReturnValue({
+      apiBaseUrl: "https://ghe.example.com/api/v3",
+      repoFullName: "acme/widgets",
+      state: "planning",
+      updatedAt: "2026-07-03T00:00:00.000Z",
+    });
+    expect(runStateGet(["acme/widgets", "--api-base-url", "https://ghe.example.com/api/v3"])).toBe(0);
+    expect(getRunState).toHaveBeenCalledWith("acme/widgets", "https://ghe.example.com/api/v3");
+
+    expect(runStateSet(["acme/widgets", "planning", "--api-base-url", "https://ghe.example.com/api/v3"])).toBe(0);
+    expect(setRunState).toHaveBeenCalledWith("acme/widgets", "planning", "https://ghe.example.com/api/v3");
   });
 
   it("runStateSet persists state and runStateGet returns JSON output", () => {

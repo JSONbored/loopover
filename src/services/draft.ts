@@ -10,6 +10,7 @@
 // reviewbot is collapsed into module constants + env vars. The flow is gated by GITTENSORY_REVIEW_DRAFT; when
 // the flag is off the router never mounts these handlers (callers see 404).
 import { decryptDraftToken, encryptDraftToken, newDraftId, randomDraftToken, sha256Hex, timingSafeEqualHex } from "../utils/crypto";
+import { dualPrefixEnvFlag } from "../utils/env";
 import { timeoutFetch } from "../github/client";
 
 const REDACT_KEYS = /(email|phone|address|contact|zip|postcode|name)/i;
@@ -38,7 +39,7 @@ const SUPPORTED_CATEGORIES = [
 // ---------------------------------------------------------------------------
 
 export function draftFlowEnabled(env: Env): boolean {
-  return /^(1|true|yes|on)$/i.test(String(env.GITTENSORY_REVIEW_DRAFT ?? "").trim());
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_DRAFT");
 }
 
 function draftConfig(env: Env): { publicRepo: string; baseRef: string; categories: string[]; branchPrefix: string } {

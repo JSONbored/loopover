@@ -15,6 +15,8 @@
 // Matching is case-insensitive exact match on the trimmed "owner/repo" (GitHub repo full-names are
 // case-insensitive). Empty entries between commas are ignored, so a trailing/stray comma is harmless.
 
+import { dualPrefixEnvString } from "../utils/env";
+
 /**
  * True when `repoFullName` is in the GITTENSORY_REVIEW_REPOS allowlist (per-repo cutover gate).
  *
@@ -26,10 +28,13 @@
  * isConvergenceRepoAllowed(env, repo)`), so a feature runs only when BOTH the global flag is ON and the repo is
  * allowlisted.
  */
-export function isConvergenceRepoAllowed(env: { GITTENSORY_REVIEW_REPOS?: string | undefined }, repoFullName: string): boolean {
+export function isConvergenceRepoAllowed(
+  env: { GITTENSORY_REVIEW_REPOS?: string | undefined; LOOPOVER_REVIEW_REPOS?: string | undefined },
+  repoFullName: string,
+): boolean {
   const target = repoFullName.trim().toLowerCase();
   if (!target) return false;
-  const raw = env.GITTENSORY_REVIEW_REPOS ?? "";
+  const raw = dualPrefixEnvString(env as unknown as Record<string, string | undefined>, "REVIEW_REPOS") ?? "";
   for (const entry of raw.split(",")) {
     const candidate = entry.trim().toLowerCase();
     if (candidate && candidate === target) return true;
@@ -45,10 +50,14 @@ export function isConvergenceRepoAllowed(env: { GITTENSORY_REVIEW_REPOS?: string
  * webhook (the brokered model leaves is_registered=0), so a maintainer's whole repo set is pre-indexed for
  * codebase-aware reviews instead of waiting for a cold first-PR index.
  */
-export function listConvergenceRepos(env: { GITTENSORY_REVIEW_REPOS?: string | undefined }): string[] {
+export function listConvergenceRepos(env: {
+  GITTENSORY_REVIEW_REPOS?: string | undefined;
+  LOOPOVER_REVIEW_REPOS?: string | undefined;
+}): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const entry of (env.GITTENSORY_REVIEW_REPOS ?? "").split(",")) {
+  const raw = dualPrefixEnvString(env as unknown as Record<string, string | undefined>, "REVIEW_REPOS") ?? "";
+  for (const entry of raw.split(",")) {
     const trimmed = entry.trim();
     if (!trimmed) continue;
     const key = trimmed.toLowerCase();

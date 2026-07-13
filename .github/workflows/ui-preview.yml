@@ -47,7 +47,7 @@ jobs:
 
       - name: Build UI
         env:
-          VITE_GITTENSORY_API_ORIGIN: https://gittensory-api.aethereal.dev
+          VITE_GITTENSORY_API_ORIGIN: https://api.loopover.ai
           # Preview-only: enables the synthetic demo session (useSession().signInPreview) so reviewbot can
           # screenshot the authenticated /app/* dashboard via ?preview=1 instead of the sign-in wall. The
           # production build (ui-deploy.yml) does NOT set this, so the escape hatch is dead-code-eliminated

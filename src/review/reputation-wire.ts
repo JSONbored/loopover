@@ -25,10 +25,14 @@ import {
   type SubmissionOutcome,
   type SubmitterStats,
 } from "./submitter-reputation";
+import { dualPrefixEnvFlag } from "../utils/env";
 
 /** True when the reputation signal is enabled. Flag-OFF (default) → every helper below is a no-op. */
-export function isReputationEnabled(env: { GITTENSORY_REVIEW_REPUTATION?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_REPUTATION ?? "");
+export function isReputationEnabled(env: {
+  GITTENSORY_REVIEW_REPUTATION?: string | undefined;
+  LOOPOVER_REVIEW_REPUTATION?: string | undefined;
+}): boolean {
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_REPUTATION");
 }
 
 // ── Anti-abuse thresholds. GENERIC mechanism (not the gameable secret — they don't reveal any review

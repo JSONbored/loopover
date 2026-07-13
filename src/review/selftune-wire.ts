@@ -39,14 +39,18 @@ import { isAgentConfigured } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
+import { dualPrefixEnvFlag } from "../utils/env";
 import { errorMessage } from "../utils/json";
 import { computeTuningRecommendations, type GateEvalReport, type GateEvalRow } from "./auto-tune";
 import { runAutoApplyRecommendations, type StorageEnv } from "./auto-apply";
 
 /** True when the self-improvement loop is enabled. Flag-OFF (default) → every export below is a no-op. Truthy
  *  follows the codebase convention (`/^(1|true|yes|on)$/i`, same as isOpsEnabled / isReputationEnabled). */
-export function isSelfTuneEnabled(env: { GITTENSORY_REVIEW_SELFTUNE?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_SELFTUNE ?? "");
+export function isSelfTuneEnabled(env: {
+  GITTENSORY_REVIEW_SELFTUNE?: string | undefined;
+  LOOPOVER_REVIEW_SELFTUNE?: string | undefined;
+}): boolean {
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_SELFTUNE");
 }
 
 /** The project's base confidence floor the tightening direction is judged against IN THE SOAK. Gittensory has no

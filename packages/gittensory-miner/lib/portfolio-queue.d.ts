@@ -1,6 +1,7 @@
 export type QueueStatus = "queued" | "in_progress" | "done";
 
 export type QueueEntry = {
+  apiBaseUrl: string;
   repoFullName: string;
   identifier: string;
   priority: number;
@@ -12,10 +13,12 @@ export type EnqueueItem = {
   repoFullName: string;
   identifier: string;
   priority?: number | null;
+  apiBaseUrl?: string;
 };
 
 /** Lease-annotated view of an in-flight row: when it was claimed, for the expiry sweep (#4827). */
 export type QueueLeaseEntry = {
+  apiBaseUrl: string;
   repoFullName: string;
   identifier: string;
   status: QueueStatus;
@@ -28,12 +31,14 @@ export type PortfolioQueueStore = {
   dequeueNext(): QueueEntry | null;
   listQueue(repoFullName?: string | null): QueueEntry[];
   listInProgress(): QueueLeaseEntry[];
-  markDone(repoFullName: string, identifier: string): QueueEntry | null;
-  markFailed(repoFullName: string, identifier: string): QueueEntry | null;
-  reclaimStuckItem(repoFullName: string, identifier: string): QueueEntry | null;
-  requeueItem(repoFullName: string, identifier: string): QueueEntry | null;
+  markDone(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
+  markFailed(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
+  reclaimStuckItem(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
+  requeueItem(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
   batchClaim(
-    selectFn: (entries: QueueEntry[]) => Array<{ repoFullName: string; identifier: string }>,
+    selectFn: (
+      entries: QueueEntry[],
+    ) => Array<{ repoFullName: string; identifier: string; apiBaseUrl?: string }>,
   ): QueueEntry[];
   close(): void;
 };
@@ -50,8 +55,8 @@ export function dequeueNext(): QueueEntry | null;
 
 export function listQueue(repoFullName?: string | null): QueueEntry[];
 
-export function markDone(repoFullName: string, identifier: string): QueueEntry | null;
+export function markDone(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
 
-export function markFailed(repoFullName: string, identifier: string): QueueEntry | null;
+export function markFailed(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
 
 export function closeDefaultPortfolioQueueStore(): void;

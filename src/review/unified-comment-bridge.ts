@@ -28,6 +28,7 @@ import { VISUAL_REGRESSION_FINDING_CODE } from "./visual/visual-findings";
 // importers of `PR_PANEL_COMMENT_MARKER` from this module keep working. The unified body MUST prepend this
 // verbatim or `createOrUpdatePrIntelligenceComment` posts a DUPLICATE instead of updating in place.
 import { PR_PANEL_COMMENT_MARKER } from "../github/comments";
+import { dualPrefixEnvFlag } from "../utils/env";
 import { LOOPOVER_GATE_CHECK_NAME } from "./check-names";
 import { classifyChangedFile, type ReviewFileClass } from "./changed-files-classify";
 import { githubPrFileDiffUrl } from "./changed-files-diff-link";
@@ -889,6 +890,9 @@ export function buildClosedUnifiedCommentBody(args: { repoFullName: string; pull
 }
 
 /** Truthy-env flag check, matching the codebase convention (e.g. SCORING_TIME_DECAY_ENABLED). */
-export function isUnifiedReviewCommentEnabled(env: { GITTENSORY_REVIEW_UNIFIED_COMMENT?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_UNIFIED_COMMENT ?? "");
+export function isUnifiedReviewCommentEnabled(env: {
+  GITTENSORY_REVIEW_UNIFIED_COMMENT?: string | undefined;
+  LOOPOVER_REVIEW_UNIFIED_COMMENT?: string | undefined;
+}): boolean {
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_UNIFIED_COMMENT");
 }

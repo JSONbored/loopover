@@ -4156,7 +4156,7 @@ type PublicSafeCollapsibleArgs = {
   e2eTestGenAvailable?: boolean | undefined;
   /** #5078: resolved by the caller from `env.PUBLIC_SITE_ORIGIN`, same as `buildPublicPrIntelligenceComment`'s
    *  own `env` param -- lets the "[BETA] Chat with Gittensory" collapsible link to a self-hoster's own
-   *  command-reference doc page instead of always the canonical gittensory.aethereal.dev. */
+   *  command-reference doc page instead of always the canonical loopover.ai. */
   env: GittensoryFooterEnv;
 };
 

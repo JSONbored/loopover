@@ -21,11 +21,15 @@
 
 import { createReviewAdapters } from "./adapters";
 import { type RagChunk, retrieveContextWithMetrics, upsertChunks } from "./rag";
+import { dualPrefixEnvFlag } from "../utils/env";
 
 /** True when RAG retrieval is enabled. Flag-OFF (default) → the caller takes no new branch, so no retrieval is
  *  performed and the reviewer prompt is unchanged. */
-export function isRagEnabled(env: { GITTENSORY_REVIEW_RAG?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_RAG ?? "");
+export function isRagEnabled(env: {
+  GITTENSORY_REVIEW_RAG?: string | undefined;
+  LOOPOVER_REVIEW_RAG?: string | undefined;
+}): boolean {
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_RAG");
 }
 
 /** Cap on how many changed-file paths feed the query string — bounds the query length / embed cost. */

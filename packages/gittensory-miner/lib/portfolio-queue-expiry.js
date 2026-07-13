@@ -42,7 +42,9 @@ export function sweepStuckItems(store, nowMs, maxLeaseMs = DEFAULT_MAX_LEASE_MS)
   const stuck = findStuckItems(inProgress, nowMs, maxLeaseMs);
   const reclaimed = [];
   for (const item of stuck) {
-    const updated = store.reclaimStuckItem(item.repoFullName, item.identifier);
+    // Echo the item's OWN apiBaseUrl back (#5563) rather than defaulting: two forge hosts can each have an
+    // in-flight item with the same owner/repo+identifier, and defaulting here would reclaim the wrong host's row.
+    const updated = store.reclaimStuckItem(item.repoFullName, item.identifier, item.apiBaseUrl);
     if (updated) reclaimed.push(updated);
   }
   return reclaimed;

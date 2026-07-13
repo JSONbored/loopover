@@ -506,7 +506,7 @@ args = ["-y", "@jsonbored/gittensory-mcp@latest", "--stdio"]`,
     audience: "Agents",
     filename: "endpoint",
     lang: "http",
-    snippet: `https://gittensory-api.aethereal.dev/mcp`,
+    snippet: `https://api.loopover.ai/mcp`,
   },
 ];
 

@@ -48,7 +48,7 @@
     "miner-extension:lint": "npm --workspace @jsonbored/gittensory-miner-extension run lint",
     "miner-extension:typecheck": "npm --workspace @jsonbored/gittensory-miner-extension run typecheck",
     "ui:kit:build": "npm run build --workspace @jsonbored/gittensory-ui-kit",
-    "ui:build": "npm run ui:kit:build && npm run ui:openapi && npm run extension:build && npm run miner-extension:build && npm --workspace @jsonbored/gittensory-ui run build && npm --workspace @jsonbored/gittensory-miner-ui run build",
+    "ui:build": "npm run ui:kit:build && npm run build --workspace @jsonbored/gittensory-engine && npm run ui:openapi && npm run extension:build && npm run miner-extension:build && npm --workspace @jsonbored/gittensory-ui run build && npm --workspace @jsonbored/gittensory-miner-ui run build",
     "ui:preview": "npm run ui:build && wrangler dev --config apps/gittensory-ui/dist/server/wrangler.json --ip 127.0.0.1 --port 4173 --local",
     "ui:lint": "npm run ui:kit:build && npm --workspace @jsonbored/gittensory-ui run lint && npm --workspace @jsonbored/gittensory-miner-ui run lint",
     "ui:typecheck": "npm run ui:kit:build && npm --workspace @jsonbored/gittensory-ui run typecheck && npm --workspace @jsonbored/gittensory-miner-ui run typecheck",

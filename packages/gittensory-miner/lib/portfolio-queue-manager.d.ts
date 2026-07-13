@@ -30,8 +30,8 @@ export type PortfolioQueueManager = {
   dbPath: string;
   enqueue(item: EnqueueItem): QueueEntry;
   listQueue(repoFullName?: string | null): QueueEntry[];
-  markDone(repoFullName: string, identifier: string): QueueEntry | null;
-  markFailed(repoFullName: string, identifier: string): QueueEntry | null;
+  markDone(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
+  markFailed(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
   reclaimStuckItems(maxLeaseMs?: number): QueueEntry[];
   claimNextBatch(): QueueEntry[];
   close(): void;

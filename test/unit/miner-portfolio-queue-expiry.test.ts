@@ -29,6 +29,7 @@ afterEach(() => {
 });
 
 const leaseItem = (overrides: Partial<QueueLeaseEntry> = {}): QueueLeaseEntry => ({
+  apiBaseUrl: "https://api.github.com",
   repoFullName: "o/a",
   identifier: "x",
   status: "in_progress",
@@ -47,7 +48,13 @@ describe("portfolio-queue lease bookkeeping (#4827)", () => {
     const claimed = store.dequeueNext();
     expect(claimed).toMatchObject({ identifier: "x", status: "in_progress" });
     expect(store.listInProgress()).toEqual([
-      { repoFullName: "o/a", identifier: "x", status: "in_progress", leasedAt: "2026-07-12T10:00:00.000Z" },
+      {
+        apiBaseUrl: "https://api.github.com",
+        repoFullName: "o/a",
+        identifier: "x",
+        status: "in_progress",
+        leasedAt: "2026-07-12T10:00:00.000Z",
+      },
     ]);
   });
 
@@ -142,6 +149,28 @@ describe("sweepStuckItems (#4827)", () => {
     expect(store.listInProgress().map((e) => e.identifier)).toEqual(["recent"]);
     // The reclaimed item is back in the queue for another attempt.
     expect(store.listQueue("o/a").find((e) => e.identifier === "old")?.status).toBe("queued");
+  });
+
+  it("REGRESSION: echoes each item's own apiBaseUrl to reclaimStuckItem, so it can't reclaim the wrong host's row (#5563)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-01T00:00:00.000Z"));
+    const store = tempStore();
+    const maxLeaseMs = 30 * 60 * 1000;
+
+    // Two forge hosts each hold an in-flight lease on the SAME owner/repo+identifier -- only possible post-#5563's
+    // scoped uniqueness.
+    store.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", apiBaseUrl: "https://ghe.example.com/api/v3" });
+    store.dequeueNext();
+    vi.setSystemTime(new Date("2026-06-01T00:29:00.000Z")); // still within the lease bound
+    store.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", apiBaseUrl: "https://api.github.com" });
+    store.dequeueNext();
+
+    const nowMs = Date.parse("2026-06-01T00:31:00.000Z"); // GHE lease (31min old) exceeds the bound; github.com (2min) doesn't
+    const reclaimed = sweepStuckItems(store, nowMs, maxLeaseMs);
+    expect(reclaimed).toEqual([expect.objectContaining({ apiBaseUrl: "https://ghe.example.com/api/v3", status: "queued" })]);
+
+    const stillInProgress = store.listInProgress();
+    expect(stillInProgress).toEqual([expect.objectContaining({ apiBaseUrl: "https://api.github.com" })]);
   });
 
   it("defaults the bound to DEFAULT_MAX_LEASE_MS and reclaims nothing when all leases are fresh", () => {

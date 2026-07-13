@@ -39,10 +39,12 @@
     "GITTENSORY_AUTO_FILE_DRIFT_ISSUES": "false",
     "GITTENSORY_DRIFT_ISSUE_REPO": "JSONbored/gittensory",
     "PUBLIC_API_ORIGIN": "https://gittensory-api.aethereal.dev",
-    "PUBLIC_SITE_ORIGIN": "https://gittensory.aethereal.dev",
-    // LoopOver rebrand (issue #4762, Step 1): loopover.ai runs live side-by-side with the existing domain, not
-    // as a replacement -- keeps the post-OAuth-login redirect working when a user signs in from loopover.ai.
-    "PUBLIC_SITE_ORIGIN_ALIASES": "https://loopover.ai",
+    // LoopOver rebrand (issue #4765, domain flip): loopover.ai is now the canonical site origin. The old
+    // gittensory.aethereal.dev domain stays live (still resolves, still valid as a post-OAuth-login redirect
+    // target via PUBLIC_SITE_ORIGIN_ALIASES below) -- no redirect rule, no sunset date, both domains keep
+    // working side by side; only which one this instance treats as canonical has flipped.
+    "PUBLIC_SITE_ORIGIN": "https://loopover.ai",
+    "PUBLIC_SITE_ORIGIN_ALIASES": "https://gittensory.aethereal.dev",
     "ADMIN_GITHUB_LOGINS": "JSONbored",
     // Hosted reviews are retired. Cloudflare now serves the public API + Orb broker only; review execution runs
     // in the self-host container, where Redis-backed transient state is mandatory. The Cloudflare API worker no

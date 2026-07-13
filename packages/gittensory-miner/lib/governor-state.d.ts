@@ -29,8 +29,8 @@ export type GovernorState = {
   saveCapUsage(capUsage: GovernorCapUsage): void;
   loadPauseState(): GovernorPauseState;
   savePauseState(pauseState: GovernorPauseInput): GovernorPauseState;
-  loadReputationHistory(repoFullName: string): RepoOutcomeHistory;
-  saveReputationHistory(repoFullName: string, history: RepoOutcomeHistory): RepoOutcomeHistory;
+  loadReputationHistory(repoFullName: string, apiBaseUrl?: string): RepoOutcomeHistory;
+  saveReputationHistory(repoFullName: string, history: RepoOutcomeHistory, apiBaseUrl?: string): RepoOutcomeHistory;
   recordOwnSubmission(record: OwnSubmissionRecord): OwnSubmissionRecord;
   listRecentOwnSubmissions(filter?: ListRecentOwnSubmissionsFilter): OwnSubmissionRecord[];
   close(): void;
@@ -52,9 +52,9 @@ export function loadPauseState(): GovernorPauseState;
 
 export function savePauseState(pauseState: GovernorPauseInput): GovernorPauseState;
 
-export function loadReputationHistory(repoFullName: string): RepoOutcomeHistory;
+export function loadReputationHistory(repoFullName: string, apiBaseUrl?: string): RepoOutcomeHistory;
 
-export function saveReputationHistory(repoFullName: string, history: RepoOutcomeHistory): RepoOutcomeHistory;
+export function saveReputationHistory(repoFullName: string, history: RepoOutcomeHistory, apiBaseUrl?: string): RepoOutcomeHistory;
 
 export function recordOwnSubmission(record: OwnSubmissionRecord): OwnSubmissionRecord;
 

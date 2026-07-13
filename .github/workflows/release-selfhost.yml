@@ -351,7 +351,7 @@ jobs:
           docker pull ghcr.io/${REPOSITORY_OWNER_LOWER}/loopover-selfhost:${RELEASE_TAG}
           \`\`\`
 
-          Multi-arch (linux/amd64 + linux/arm64). See https://gittensory.aethereal.dev/docs/maintainer-self-hosting for setup.
+          Multi-arch (linux/amd64 + linux/arm64). See https://loopover.ai/docs/maintainer-self-hosting for setup.
           Includes the Claude Code / Codex subscription CLIs by default; credentials stay runtime-only.
           Sentry release id baked into the image: \`${RELEASE_ID}\`.
 

@@ -112,7 +112,7 @@ args = ["--stdio"]`}
         The Worker also exposes a remote MCP endpoint. Use this when your agent runs in the cloud or
         you don't want a local Node process.
       </p>
-      <CodeBlock lang="http" code={`https://gittensory-api.aethereal.dev/mcp`} />
+      <CodeBlock lang="http" code={`https://api.loopover.ai/mcp`} />
 
       <Callout variant="safety">
         Local <code>--stdio</code> is the default recommendation. It keeps auth + analysis on your

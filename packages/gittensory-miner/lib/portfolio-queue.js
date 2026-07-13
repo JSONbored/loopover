@@ -1,3 +1,4 @@
+import { DEFAULT_FORGE_CONFIG } from "./forge-config.js";
 import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
 
@@ -44,8 +45,17 @@ function normalizePriority(priority) {
   return priority;
 }
 
+/** Optional forge host, scoping rows so two hosts serving the same owner/repo name never collide (#5563).
+ *  Omitted/nullish → the github.com default, so every pre-existing single-forge caller is unaffected. */
+function normalizeApiBaseUrl(apiBaseUrl) {
+  if (apiBaseUrl === undefined || apiBaseUrl === null) return DEFAULT_FORGE_CONFIG.apiBaseUrl;
+  if (typeof apiBaseUrl !== "string" || !apiBaseUrl.trim()) throw new Error("invalid_api_base_url");
+  return apiBaseUrl.trim();
+}
+
 function rowToEntry(row) {
   return {
+    apiBaseUrl: row.api_base_url,
     repoFullName: row.repo_full_name,
     identifier: row.identifier,
     priority: row.priority,
@@ -58,6 +68,7 @@ function rowToEntry(row) {
  *  from `rowToEntry` so the base entry shape every existing caller relies on is unchanged. */
 function rowToLeaseEntry(row) {
   return {
+    apiBaseUrl: row.api_base_url,
     repoFullName: row.repo_full_name,
     identifier: row.identifier,
     status: row.status,
@@ -92,6 +103,12 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
   // table, so add it idempotently. Expressed as the store's first schema migration (#4832): the baseline table is
   // version 1; migration 1→2 adds `leased_at`. The migration stays defensive (checks table_info) so a version-0
   // file that already ran the pre-convention ad-hoc ALTER is not re-altered into a duplicate-column error.
+  //
+  // v2 -> v3 (#5563): rebuild PRIMARY KEY (repo_full_name, identifier) into PRIMARY KEY (api_base_url,
+  // repo_full_name, identifier) -- two forge hosts serving a same-named owner/repo must not collide in this
+  // queue. SQLite cannot ALTER a PRIMARY KEY in place, so this rebuilds the table: create the new shape, copy
+  // every existing row with the pre-#4784 implicit single-forge default backfilled, drop the old table, rename
+  // the new one in.
   applySchemaMigrations(db, [
     (migrationDb) => {
       const hasLeasedAtColumn = migrationDb
@@ -99,6 +116,32 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
         .all()
         .some((column) => column.name === "leased_at");
       if (!hasLeasedAtColumn) migrationDb.exec("ALTER TABLE miner_portfolio_queue ADD COLUMN leased_at TEXT");
+    },
+    (migrationDb) => {
+      migrationDb.exec(`
+        CREATE TABLE miner_portfolio_queue_v3 (
+          api_base_url TEXT NOT NULL,
+          repo_full_name TEXT NOT NULL,
+          identifier TEXT NOT NULL,
+          priority REAL NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'in_progress', 'done')),
+          enqueued_at TEXT NOT NULL,
+          leased_at TEXT,
+          PRIMARY KEY (api_base_url, repo_full_name, identifier)
+        )
+      `);
+      // ORDER BY rowid preserves the old table's FIFO insertion order in the new table's freshly-assigned rowids
+      // (the composite PRIMARY KEY above is not itself the rowid), so this rebuild doesn't reshuffle queue order.
+      migrationDb
+        .prepare(
+          `INSERT INTO miner_portfolio_queue_v3
+             (api_base_url, repo_full_name, identifier, priority, status, enqueued_at, leased_at)
+           SELECT ?, repo_full_name, identifier, priority, status, enqueued_at, leased_at
+           FROM miner_portfolio_queue ORDER BY rowid`,
+        )
+        .run(DEFAULT_FORGE_CONFIG.apiBaseUrl);
+      migrationDb.exec("DROP TABLE miner_portfolio_queue");
+      migrationDb.exec("ALTER TABLE miner_portfolio_queue_v3 RENAME TO miner_portfolio_queue");
     },
   ]);
 
@@ -111,19 +154,20 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
   // jumping the queue. (Restamping `enqueued_at` would be inconsistent — the fixed `rowid` still pins the old
   // position whenever timestamps collide — so position is deliberately preserved instead.)
   const enqueueStatement = db.prepare(`
-    INSERT INTO miner_portfolio_queue (repo_full_name, identifier, priority, status, enqueued_at)
-    VALUES (?, ?, ?, 'queued', ?)
-    ON CONFLICT(repo_full_name, identifier) DO UPDATE SET
+    INSERT INTO miner_portfolio_queue (api_base_url, repo_full_name, identifier, priority, status, enqueued_at)
+    VALUES (?, ?, ?, ?, 'queued', ?)
+    ON CONFLICT(api_base_url, repo_full_name, identifier) DO UPDATE SET
       priority = excluded.priority,
       status = 'queued'
     WHERE miner_portfolio_queue.status <> 'in_progress'
   `);
   const getStatement = db.prepare(
-    "SELECT * FROM miner_portfolio_queue WHERE repo_full_name = ? AND identifier = ?",
+    "SELECT * FROM miner_portfolio_queue WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ?",
   );
   // Claim the highest-priority queued item ATOMICALLY: one UPDATE selects the ordered top row in a subquery and
   // flips it to 'in_progress', RETURNING it — so two processes sharing the file can't both claim the same row (a
-  // separate SELECT-then-UPDATE would race).
+  // separate SELECT-then-UPDATE would race). Deliberately global (no api_base_url filter): the queue is a single
+  // cross-host priority ordering, not a per-host one.
   // Claiming stamps `leased_at` with the caller-supplied claim time; leaving 'in_progress' (done/failed/reclaim)
   // clears it back to NULL so only genuinely in-flight rows carry a lease.
   const dequeueStatement = db.prepare(`
@@ -133,12 +177,16 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
     )
     RETURNING *
   `);
-  const markDoneStatement = db.prepare(
-    "UPDATE miner_portfolio_queue SET status = 'done', leased_at = NULL WHERE repo_full_name = ? AND identifier = ? AND status <> 'done'",
-  );
+  // RETURNING (rather than a separate post-UPDATE SELECT) makes the "nothing to mark done" case observable
+  // directly from one atomic statement.
+  const markDoneStatement = db.prepare(`
+    UPDATE miner_portfolio_queue SET status = 'done', leased_at = NULL
+    WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ? AND status <> 'done'
+    RETURNING *
+  `);
   const markFailedStatement = db.prepare(`
     UPDATE miner_portfolio_queue SET status = 'queued', leased_at = NULL
-    WHERE repo_full_name = ? AND identifier = ? AND status = 'in_progress'
+    WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ? AND status = 'in_progress'
     RETURNING *
   `);
   const listAllStatement = db.prepare(`SELECT * FROM miner_portfolio_queue ${ORDER}`);
@@ -153,7 +201,7 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
   );
   const reclaimStatement = db.prepare(`
     UPDATE miner_portfolio_queue SET status = 'queued', leased_at = NULL
-    WHERE repo_full_name = ? AND identifier = ? AND status = 'in_progress'
+    WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ? AND status = 'in_progress'
     RETURNING *
   `);
   // Requeue only ever targets a COMPLETED ('done') row — an in-flight item is released via reclaimStatement, and
@@ -161,24 +209,25 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
   // row keeps its rowid/enqueued_at, so it re-enters the queue at its original FIFO position, not the back.
   const requeueStatement = db.prepare(`
     UPDATE miner_portfolio_queue SET status = 'queued', leased_at = NULL
-    WHERE repo_full_name = ? AND identifier = ? AND status = 'done'
+    WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ? AND status = 'done'
     RETURNING *
   `);
   const claimTargetStatement = db.prepare(`
     UPDATE miner_portfolio_queue SET status = 'in_progress', leased_at = ?
-    WHERE repo_full_name = ? AND identifier = ? AND status = 'queued'
+    WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ? AND status = 'queued'
     RETURNING *
   `);
 
   return {
     dbPath: resolvedPath,
     enqueue(item) {
+      const apiBaseUrl = normalizeApiBaseUrl(item?.apiBaseUrl);
       const repoFullName = normalizeRepoFullName(item?.repoFullName);
       const identifier = normalizeIdentifier(item?.identifier);
       const priority = normalizePriority(item?.priority);
       const enqueuedAt = new Date().toISOString();
-      enqueueStatement.run(repoFullName, identifier, priority, enqueuedAt);
-      return rowToEntry(getStatement.get(repoFullName, identifier));
+      enqueueStatement.run(apiBaseUrl, repoFullName, identifier, priority, enqueuedAt);
+      return rowToEntry(getStatement.get(apiBaseUrl, repoFullName, identifier));
     },
     dequeueNext() {
       const row = dequeueStatement.get(new Date().toISOString());
@@ -190,8 +239,9 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
     },
     /** Reclaim a single stuck in-flight item back to 'queued' (clearing its lease), returning it — or null if it is
      *  no longer 'in_progress' (already finished/reclaimed by another sweep). The sweep target of #4827. */
-    reclaimStuckItem(repoFullName, identifier) {
+    reclaimStuckItem(repoFullName, identifier, apiBaseUrl) {
       const row = reclaimStatement.get(
+        normalizeApiBaseUrl(apiBaseUrl),
         normalizeRepoFullName(repoFullName),
         normalizeIdentifier(identifier),
       );
@@ -201,8 +251,9 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
      *  (rowid/enqueued_at unchanged). Returns the entry, or null when there is no 'done' item to requeue — i.e.
      *  it is already 'queued', is currently 'in_progress' (release it via {@link reclaimStuckItem} instead), or
      *  does not exist. The manual counterpart to {@link reclaimStuckItem} for the queue CLI's escape hatch (#4828). */
-    requeueItem(repoFullName, identifier) {
+    requeueItem(repoFullName, identifier, apiBaseUrl) {
       const row = requeueStatement.get(
+        normalizeApiBaseUrl(apiBaseUrl),
         normalizeRepoFullName(repoFullName),
         normalizeIdentifier(identifier),
       );
@@ -214,19 +265,21 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
         : listRepoStatement.all(normalizeRepoFullName(repoFullName));
       return rows.map(rowToEntry);
     },
-    markDone(repoFullName, identifier) {
-      const normalizedRepo = normalizeRepoFullName(repoFullName);
-      const normalizedIdentifier = normalizeIdentifier(identifier);
-      const result = markDoneStatement.run(normalizedRepo, normalizedIdentifier);
-      if (result.changes === 0) return null;
-      const row = getStatement.get(normalizedRepo, normalizedIdentifier);
+    markDone(repoFullName, identifier, apiBaseUrl) {
+      const row = markDoneStatement.get(
+        normalizeApiBaseUrl(apiBaseUrl),
+        normalizeRepoFullName(repoFullName),
+        normalizeIdentifier(identifier),
+      );
       return row ? rowToEntry(row) : null;
     },
     /** Release an in-flight item back to `queued` when a run halts (#2347). */
-    markFailed(repoFullName, identifier) {
-      const normalizedRepo = normalizeRepoFullName(repoFullName);
-      const normalizedIdentifier = normalizeIdentifier(identifier);
-      const row = markFailedStatement.get(normalizedRepo, normalizedIdentifier);
+    markFailed(repoFullName, identifier, apiBaseUrl) {
+      const row = markFailedStatement.get(
+        normalizeApiBaseUrl(apiBaseUrl),
+        normalizeRepoFullName(repoFullName),
+        normalizeIdentifier(identifier),
+      );
       return row ? rowToEntry(row) : null;
     },
     /**
@@ -243,9 +296,10 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
         const leasedAt = new Date().toISOString();
         const claimed = [];
         for (const target of targets) {
+          const apiBaseUrl = normalizeApiBaseUrl(target?.apiBaseUrl);
           const repoFullName = normalizeRepoFullName(target?.repoFullName);
           const identifier = normalizeIdentifier(target?.identifier);
-          const row = claimTargetStatement.get(leasedAt, repoFullName, identifier);
+          const row = claimTargetStatement.get(leasedAt, apiBaseUrl, repoFullName, identifier);
           if (row) claimed.push(rowToEntry(row));
         }
         db.exec("COMMIT");
@@ -278,12 +332,12 @@ export function listQueue(repoFullName) {
   return getDefaultPortfolioQueueStore().listQueue(repoFullName);
 }
 
-export function markDone(repoFullName, identifier) {
-  return getDefaultPortfolioQueueStore().markDone(repoFullName, identifier);
+export function markDone(repoFullName, identifier, apiBaseUrl) {
+  return getDefaultPortfolioQueueStore().markDone(repoFullName, identifier, apiBaseUrl);
 }
 
-export function markFailed(repoFullName, identifier) {
-  return getDefaultPortfolioQueueStore().markFailed(repoFullName, identifier);
+export function markFailed(repoFullName, identifier, apiBaseUrl) {
+  return getDefaultPortfolioQueueStore().markFailed(repoFullName, identifier, apiBaseUrl);
 }
 
 export function closeDefaultPortfolioQueueStore() {

@@ -3,11 +3,12 @@ import { loadOverride, type StorageEnv } from "../review/auto-apply";
 import { resolveEffectiveSettings } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import type { RepositorySettings } from "../types";
+import { dualPrefixEnvFlag } from "../utils/env";
 
 /** Default-OFF self-tune flag (mirrors selftune-wire's `isSelfTuneEnabled`; inlined here to avoid a
  *  selftune-wire → repository-settings → selftune-wire import cycle). */
-function selfTuneFlagOn(env: { GITTENSORY_REVIEW_SELFTUNE?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_SELFTUNE ?? "");
+function selfTuneFlagOn(env: { GITTENSORY_REVIEW_SELFTUNE?: string | undefined; LOOPOVER_REVIEW_SELFTUNE?: string | undefined }): boolean {
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_SELFTUNE");
 }
 
 /** PURE: overlay a promoted (always TIGHTENING-only) self-tune override onto resolved settings. The auto-tune's

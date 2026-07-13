@@ -9,11 +9,15 @@
 // core this, and four sibling `review:`-block features, now delegate to.
 
 import { resolveManifestOnlyFeature } from "./feature-activation";
+import { dualPrefixEnvFlag } from "../utils/env";
 
 /** True when the operator enabled fix-handoff globally. Flag-OFF (default) ⇒ the caller never emits fix-handoff
  *  blocks. Truthy follows the codebase convention (same regex as isInlineCommentsEnabled). */
-export function isFixHandoffEnabled(env: { GITTENSORY_REVIEW_FIX_HANDOFF?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_FIX_HANDOFF ?? "");
+export function isFixHandoffEnabled(env: {
+  GITTENSORY_REVIEW_FIX_HANDOFF?: string | undefined;
+  LOOPOVER_REVIEW_FIX_HANDOFF?: string | undefined;
+}): boolean {
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_FIX_HANDOFF");
 }
 
 /** PURE (#4099): should the reviewer emit fix-handoff blocks for this PR? (1) The operator's

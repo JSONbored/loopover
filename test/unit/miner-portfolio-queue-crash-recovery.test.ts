@@ -89,7 +89,13 @@ describe("portfolio-queue crash recovery (#4868)", () => {
 
     // The crash alone does not un-stick the row -- it is still genuinely 'in_progress' on disk.
     expect(bootstrap.listInProgress()).toEqual([
-      { repoFullName: "acme/widgets", identifier: "pr:1", status: "in_progress", leasedAt: claimed.leasedAt },
+      {
+        apiBaseUrl: "https://api.github.com",
+        repoFullName: "acme/widgets",
+        identifier: "pr:1",
+        status: "in_progress",
+        leasedAt: claimed.leasedAt,
+      },
     ]);
 
     // Sweeping before the lease bound elapses must NOT reclaim it (still within the grace window).

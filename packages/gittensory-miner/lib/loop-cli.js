@@ -346,7 +346,7 @@ export async function runLoop(args, options = {}) {
       if (issueNumber === null) {
         // Never produced by enqueueRankedDiscovery in practice (always "issue:N") -- fail soft rather than
         // crash the whole run: this exact item can never be attempted, so it will never resolve on retry.
-        portfolioQueue.markDone(claimed.repoFullName, claimed.identifier);
+        portfolioQueue.markDone(claimed.repoFullName, claimed.identifier, claimed.apiBaseUrl);
         cycles.push({ cycle: cycleIndex, outcome: "skipped_malformed_identifier", identifier: claimed.identifier });
         claimed = portfolioQueue.dequeueNext();
         continue;
@@ -364,7 +364,9 @@ export async function runLoop(args, options = {}) {
           convergence: convergenceInput,
           convergenceThresholds: amsPolicy.spec.convergenceThresholds ?? DEFAULT_AMS_POLICY_SPEC.convergenceThresholds,
           inFlightItem: { repoFullName: claimed.repoFullName, identifier: claimed.identifier },
-          markFailed: (repoFullName, identifier) => portfolioQueue.markFailed(repoFullName, identifier),
+          // Echoes claimed.apiBaseUrl (#5563), NOT the callback's own repoFullName/identifier alone -- two forge
+          // hosts can share an in-flight item with the same repo name+identifier.
+          markFailed: (repoFullName, identifier) => portfolioQueue.markFailed(repoFullName, identifier, claimed.apiBaseUrl),
         },
         { append: (event) => governorLedger.appendGovernorEvent(event) },
       );
@@ -419,14 +421,14 @@ export async function runLoop(args, options = {}) {
       const permanentBlock = attemptOutcome === "blocked_rejection_signaled";
 
       if (submitted) {
-        portfolioQueue.markDone(claimed.repoFullName, claimed.identifier);
+        portfolioQueue.markDone(claimed.repoFullName, claimed.identifier, claimed.apiBaseUrl);
         convergenceInput.reachedDone = true;
         convergenceInput.consecutiveFailures = 0;
       } else if (permanentBlock) {
-        portfolioQueue.markDone(claimed.repoFullName, claimed.identifier);
+        portfolioQueue.markDone(claimed.repoFullName, claimed.identifier, claimed.apiBaseUrl);
         convergenceInput.consecutiveFailures += 1;
       } else {
-        portfolioQueue.markFailed(claimed.repoFullName, claimed.identifier);
+        portfolioQueue.markFailed(claimed.repoFullName, claimed.identifier, claimed.apiBaseUrl);
         convergenceInput.consecutiveFailures += 1;
         convergenceInput.reenqueues += 1;
       }

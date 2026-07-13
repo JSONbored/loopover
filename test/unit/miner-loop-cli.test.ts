@@ -452,6 +452,39 @@ describe("runLoop (#5135)", () => {
     });
   });
 
+  it("REGRESSION: an item whose identifier isn't 'issue:N' is marked done (skipped) rather than crashing the loop, scoped by its own apiBaseUrl (#5563)", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState, paths } = tempStores();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    // Never produced by enqueueRankedDiscovery in practice, but the loop must fail soft rather than crash if
+    // some other writer ever enqueues a malformed identifier -- and it must echo the row's OWN apiBaseUrl back
+    // to markDone, not the github.com default, so a non-default-host row isn't silently left untouched.
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "not-an-issue", apiBaseUrl: "https://ghe.example.com/api/v3" });
+    const runDiscoverSpy = vi.fn(async () => 0);
+    const runAttemptSpy = vi.fn();
+
+    const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--max-cycles", "1", "--json"], {
+      env: { GITHUB_TOKEN: "ghp_loop_test" },
+      openGovernorState: () => governorState,
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: runDiscoverSpy,
+      runAttempt: runAttemptSpy,
+      ...readyLoopOptions(),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(runAttemptSpy).not.toHaveBeenCalled();
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed.cycles[0]).toMatchObject({ outcome: "skipped_malformed_identifier", identifier: "not-an-issue" });
+
+    const after = reopenAfterRun(paths);
+    expect(after.portfolioQueue.listQueue()).toEqual([
+      expect.objectContaining({ apiBaseUrl: "https://ghe.example.com/api/v3", identifier: "not-an-issue", status: "done" }),
+    ]);
+  });
+
   it("REGRESSION (#5394): polls CI status before PR disposition, on the same PR", async () => {
     const { eventLedger, governorLedger, portfolioQueue, runState, governorState } = tempStores();
     vi.spyOn(console, "log").mockImplementation(() => undefined);

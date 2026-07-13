@@ -488,7 +488,7 @@ export async function buildCapture(env: Env, token: string, target: CaptureTarge
   const repo = parseRepo(target.repoFullName);
   const apiVersion = "2022-11-28";
   // before = production. review.visual.production_url (#3611 follow-up) ALWAYS wins when set -- PUBLIC_SITE_ORIGIN
-  // is a single GLOBAL env var (e.g. https://gittensory.aethereal.dev) with no per-repo awareness, correct for at
+  // is a single GLOBAL env var (e.g. https://loopover.ai) with no per-repo awareness, correct for at
   // most one repo on a multi-repo self-host instance; every other repo needs its own override here.
   const prodBase = visualConfig?.productionUrl ? visualConfig.productionUrl : (env.PUBLIC_SITE_ORIGIN ?? "");
 

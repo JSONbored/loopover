@@ -6,8 +6,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   closeDefaultGovernorState,
   loadPauseState,
+  loadReputationHistory,
   openGovernorState,
   savePauseState,
+  saveReputationHistory,
 } from "../../packages/gittensory-miner/lib/governor-state.js";
 
 const roots: string[] = [];
@@ -236,6 +238,128 @@ describe("governor-state reputation history (#5134)", () => {
     expect(() => state.loadReputationHistory("not-a-repo")).toThrow(/invalid_repo_full_name/);
     expect(() => state.saveReputationHistory("not-a-repo", { decided: 1, unfavorable: 0 })).toThrow(/invalid_repo_full_name/);
   });
+
+  describe("forge-scoping (#5563)", () => {
+    it("two forge hosts can each hold their own reputation history for the same owner/repo without colliding", () => {
+      const state = tempState();
+      state.saveReputationHistory("acme/widgets", { decided: 10, unfavorable: 4 }, "https://api.github.com");
+      state.saveReputationHistory("acme/widgets", { decided: 2, unfavorable: 1 }, "https://ghe.example.com/api/v3");
+      expect(state.loadReputationHistory("acme/widgets", "https://api.github.com")).toEqual({ decided: 10, unfavorable: 4 });
+      expect(state.loadReputationHistory("acme/widgets", "https://ghe.example.com/api/v3")).toEqual({
+        decided: 2,
+        unfavorable: 1,
+      });
+    });
+
+    it("defaults apiBaseUrl to the github.com default when omitted", () => {
+      const state = tempState();
+      state.saveReputationHistory("acme/widgets", { decided: 3, unfavorable: 0 });
+      expect(state.loadReputationHistory("acme/widgets", "https://api.github.com")).toEqual({
+        decided: 3,
+        unfavorable: 0,
+      });
+    });
+
+    it("rejects a non-string or blank apiBaseUrl", () => {
+      const state = tempState();
+      expect(() => state.loadReputationHistory("acme/widgets", "  ")).toThrow("invalid_api_base_url");
+      expect(() => state.saveReputationHistory("acme/widgets", { decided: 1, unfavorable: 0 }, 42 as never)).toThrow(
+        "invalid_api_base_url",
+      );
+    });
+
+    it("migrates an existing pre-#5563 file, backfilling api_base_url and preserving every row", () => {
+      const root = mkdtempSync(join(tmpdir(), "gittensory-miner-governor-state-legacy-"));
+      roots.push(root);
+      const dbPath = join(root, "legacy.sqlite3");
+      const legacy = new DatabaseSync(dbPath);
+      legacy.exec(`
+        CREATE TABLE governor_reputation_history (
+          repo_full_name TEXT PRIMARY KEY,
+          decided INTEGER NOT NULL,
+          unfavorable INTEGER NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `);
+      legacy.exec(
+        "INSERT INTO governor_reputation_history (repo_full_name, decided, unfavorable, updated_at) VALUES ('acme/widgets', 7, 2, '2026-01-01T00:00:00.000Z')",
+      );
+      legacy.close();
+
+      const state = openGovernorState(dbPath);
+      states.push(state);
+      expect(state.loadReputationHistory("acme/widgets", "https://api.github.com")).toEqual({
+        decided: 7,
+        unfavorable: 2,
+      });
+      // The old bare repo_full_name PRIMARY KEY collision is gone: a second host can now hold its own history.
+      state.saveReputationHistory("acme/widgets", { decided: 1, unfavorable: 0 }, "https://ghe.example.com/api/v3");
+      expect(state.loadReputationHistory("acme/widgets", "https://api.github.com")).toEqual({
+        decided: 7,
+        unfavorable: 2,
+      });
+      expect(state.loadReputationHistory("acme/widgets", "https://ghe.example.com/api/v3")).toEqual({
+        decided: 1,
+        unfavorable: 0,
+      });
+    });
+
+    it("REGRESSION: a legacy row violating the rebuilt table's NOT NULL columns is dropped, not a migration-aborting crash", () => {
+      const root = mkdtempSync(join(tmpdir(), "gittensory-miner-governor-state-legacy-corrupt-"));
+      roots.push(root);
+      const dbPath = join(root, "legacy-corrupt.sqlite3");
+      const legacy = new DatabaseSync(dbPath);
+      // No NOT NULL on decided/unfavorable here, simulating a hand-edited or otherwise corrupted legacy file --
+      // the real baseline schema always enforces NOT NULL, so this can only arise from external tampering.
+      legacy.exec(`
+        CREATE TABLE governor_reputation_history (
+          repo_full_name TEXT PRIMARY KEY,
+          decided INTEGER,
+          unfavorable INTEGER,
+          updated_at TEXT NOT NULL
+        )
+      `);
+      legacy
+        .prepare("INSERT INTO governor_reputation_history (repo_full_name, decided, unfavorable, updated_at) VALUES (?, NULL, NULL, ?)")
+        .run("acme/corrupt", "2026-01-01T00:00:00.000Z");
+      legacy
+        .prepare("INSERT INTO governor_reputation_history (repo_full_name, decided, unfavorable, updated_at) VALUES (?, ?, ?, ?)")
+        .run("acme/widgets", 3, 1, "2026-01-01T00:00:00.000Z");
+      legacy.close();
+
+      let opened: ReturnType<typeof openGovernorState> | undefined;
+      expect(() => {
+        opened = openGovernorState(dbPath);
+      }).not.toThrow();
+      const state = opened!;
+      states.push(state);
+      expect(state.loadReputationHistory("acme/widgets", "https://api.github.com")).toEqual({
+        decided: 3,
+        unfavorable: 1,
+      });
+      // The corrupt row was dropped, not migrated -- it reads back as the zero default, not a NULL leak.
+      expect(state.loadReputationHistory("acme/corrupt", "https://api.github.com")).toEqual({
+        decided: 0,
+        unfavorable: 0,
+      });
+    });
+
+    it("migration is idempotent: reopening an already-migrated file doesn't rebuild the table again", () => {
+      const root = mkdtempSync(join(tmpdir(), "gittensory-miner-governor-state-idempotent-"));
+      roots.push(root);
+      const dbPath = join(root, "state.sqlite3");
+      const first = openGovernorState(dbPath);
+      first.saveReputationHistory("acme/widgets", { decided: 5, unfavorable: 2 }, "https://ghe.example.com/api/v3");
+      first.close();
+
+      const second = openGovernorState(dbPath);
+      states.push(second);
+      expect(second.loadReputationHistory("acme/widgets", "https://ghe.example.com/api/v3")).toEqual({
+        decided: 5,
+        unfavorable: 2,
+      });
+    });
+  });
 });
 
 describe("governor-state own-submission history (#5134)", () => {
@@ -294,5 +418,20 @@ describe("governor-state module-level default singleton (#5134)", () => {
     const written = savePauseState({ paused: true, reason: "singleton pause" });
     expect(written).toMatchObject({ paused: true, reason: "singleton pause" });
     expect(loadPauseState()).toEqual(written);
+  });
+
+  it("loadReputationHistory/saveReputationHistory module-level wrappers round-trip through the default singleton, forwarding apiBaseUrl (#5563)", () => {
+    const root = mkdtempSync(join(tmpdir(), "gittensory-miner-governor-state-singleton-reputation-"));
+    roots.push(root);
+    vi.stubEnv("GITTENSORY_MINER_GOVERNOR_STATE_DB", join(root, "governor-state.sqlite3"));
+    expect(loadReputationHistory("acme/widgets", "https://ghe.example.com/api/v3")).toEqual({
+      decided: 0,
+      unfavorable: 0,
+    });
+    const written = saveReputationHistory("acme/widgets", { decided: 4, unfavorable: 1 }, "https://ghe.example.com/api/v3");
+    expect(written).toEqual({ decided: 4, unfavorable: 1 });
+    expect(loadReputationHistory("acme/widgets", "https://ghe.example.com/api/v3")).toEqual(written);
+    // The github.com default host is untouched.
+    expect(loadReputationHistory("acme/widgets")).toEqual({ decided: 0, unfavorable: 0 });
   });
 });

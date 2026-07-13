@@ -13,6 +13,7 @@ export type EnqueueRankedDiscoveryOptions = {
   queueStore: PortfolioQueueStore;
   eventLedger?: EventLedger;
   minRankScore?: number | null;
+  apiBaseUrl?: string;
 };
 
 export type EnqueueRankedDiscoverySummary = {

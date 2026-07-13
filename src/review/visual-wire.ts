@@ -18,7 +18,12 @@
 // capture AFTER this key decides whether it is attempted for the repo at all — see resolveVisualCaptureConfig
 // in src/queue/processors.ts. That layer's existing force-off-only semantics are unchanged by #4616.
 
+import { dualPrefixEnvFlag } from "../utils/env";
+
 /** True when the visual-capture global flag is enabled. Flag-OFF (default) → no capture is attempted. */
-export function isScreenshotsEnabled(env: { GITTENSORY_REVIEW_SCREENSHOTS?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_SCREENSHOTS ?? "");
+export function isScreenshotsEnabled(env: {
+  GITTENSORY_REVIEW_SCREENSHOTS?: string | undefined;
+  LOOPOVER_REVIEW_SCREENSHOTS?: string | undefined;
+}): boolean {
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_SCREENSHOTS");
 }

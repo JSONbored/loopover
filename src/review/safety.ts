@@ -6,6 +6,7 @@
 // convention (`/^(1|true|yes|on)$/i`, same as isUnifiedReviewCommentEnabled / isEnabled).
 
 import type { AdvisoryFinding } from "../types";
+import { dualPrefixEnvFlag } from "../utils/env";
 import { neutralizePromptInjection, safeReviewTitle } from "./prompt-injection";
 import { ADVISORY_ONLY_SECRET_KINDS, HARD_SECRET_KINDS } from "./secret-patterns";
 import { scanDiffForSecretsWithLocations, type SecretScanLocationMatch } from "./secrets-scan";
@@ -24,8 +25,9 @@ import { scanDiffForSecretsWithLocations, type SecretScanLocationMatch } from ".
 /** True when the safety scan is enabled. Flag-OFF (default) → every helper below is a no-op pass-through. */
 export function isSafetyEnabled(env: {
   GITTENSORY_REVIEW_SAFETY?: string | undefined;
+  LOOPOVER_REVIEW_SAFETY?: string | undefined;
 }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_SAFETY ?? "");
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_SAFETY");
 }
 
 /** The untrusted, author-controlled fields fed to the AI reviewer. */

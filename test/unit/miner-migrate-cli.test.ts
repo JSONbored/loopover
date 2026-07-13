@@ -85,14 +85,15 @@ describe("gittensory-miner migrate (#4871)", () => {
     const results = runMigrateChecks(env);
     const portfolioQueue = results.find((result) => result.name === "portfolio-queue");
 
-    expect(portfolioQueue).toMatchObject({ ok: true, status: "migrated", versionBefore: 1, versionAfter: 2 });
+    // Runs BOTH post-baseline migrations in sequence: v1->v2 adds leased_at, v2->v3 adds api_base_url (#5563).
+    expect(portfolioQueue).toMatchObject({ ok: true, status: "migrated", versionBefore: 1, versionAfter: 3 });
 
     const verifyDb = new DatabaseSync(dbPath, { readOnly: true });
     try {
-      expect(
-        verifyDb.prepare("PRAGMA table_info(miner_portfolio_queue)").all().some((column) => column.name === "leased_at"),
-      ).toBe(true);
-      expect(verifyDb.prepare("PRAGMA user_version").get()?.user_version).toBe(2);
+      const columns = verifyDb.prepare("PRAGMA table_info(miner_portfolio_queue)").all().map((column) => column.name);
+      expect(columns).toContain("leased_at");
+      expect(columns).toContain("api_base_url");
+      expect(verifyDb.prepare("PRAGMA user_version").get()?.user_version).toBe(3);
     } finally {
       verifyDb.close();
     }

@@ -33,12 +33,13 @@ describe("normalizePortfolioCaps() (#4285)", () => {
 
 describe("entriesToPortfolioQueue() / selectEligibleBatch() (#4285)", () => {
   it("mirrors the engine diversification scenario through persisted row shapes", () => {
+    const apiBaseUrl = "https://api.github.com";
     const entries: QueueEntry[] = [
-      { repoFullName: "acme/alpha", identifier: "a-running", priority: 0, status: "in_progress", enqueuedAt: "t1" },
-      { repoFullName: "acme/alpha", identifier: "a-queued-1", priority: 0, status: "queued", enqueuedAt: "t2" },
-      { repoFullName: "acme/alpha", identifier: "a-queued-2", priority: 0, status: "queued", enqueuedAt: "t3" },
-      { repoFullName: "acme/beta", identifier: "b-queued-1", priority: 0, status: "queued", enqueuedAt: "t4" },
-      { repoFullName: "acme/gamma", identifier: "c-queued-1", priority: 0, status: "queued", enqueuedAt: "t5" },
+      { apiBaseUrl, repoFullName: "acme/alpha", identifier: "a-running", priority: 0, status: "in_progress", enqueuedAt: "t1" },
+      { apiBaseUrl, repoFullName: "acme/alpha", identifier: "a-queued-1", priority: 0, status: "queued", enqueuedAt: "t2" },
+      { apiBaseUrl, repoFullName: "acme/alpha", identifier: "a-queued-2", priority: 0, status: "queued", enqueuedAt: "t3" },
+      { apiBaseUrl, repoFullName: "acme/beta", identifier: "b-queued-1", priority: 0, status: "queued", enqueuedAt: "t4" },
+      { apiBaseUrl, repoFullName: "acme/gamma", identifier: "c-queued-1", priority: 0, status: "queued", enqueuedAt: "t5" },
     ];
 
     expect(
@@ -57,7 +58,7 @@ describe("entriesToPortfolioQueue() / selectEligibleBatch() (#4285)", () => {
 
   it("returns nothing when either cap is zero", () => {
     const entries: QueueEntry[] = [
-      { repoFullName: "acme/alpha", identifier: "x", priority: 0, status: "queued", enqueuedAt: "t1" },
+      { apiBaseUrl: "https://api.github.com", repoFullName: "acme/alpha", identifier: "x", priority: 0, status: "queued", enqueuedAt: "t1" },
     ];
     expect(selectEligibleBatch(entries, { globalWipCap: 0, perRepoWipCap: 1 })).toEqual([]);
     expect(selectEligibleBatch(entries, { globalWipCap: 1, perRepoWipCap: 0 })).toEqual([]);
@@ -68,6 +69,15 @@ describe("initPortfolioQueueManager().claimNextBatch() (#4285)", () => {
   it("returns an empty batch on an empty queue", () => {
     const manager = memoryManager({ globalWipCap: 2, perRepoWipCap: 2 });
     expect(manager.claimNextBatch()).toEqual([]);
+  });
+
+  it("markDone and markFailed pass repoFullName/identifier/apiBaseUrl straight through to the store (#5563)", () => {
+    const manager = memoryManager({ globalWipCap: 2, perRepoWipCap: 2 });
+    manager.enqueue({ repoFullName: "acme/alpha", identifier: "x", apiBaseUrl: "https://ghe.example.com/api/v3" });
+    manager.store.dequeueNext();
+    expect(manager.markFailed("acme/alpha", "x", "https://ghe.example.com/api/v3")?.status).toBe("queued");
+    manager.store.dequeueNext();
+    expect(manager.markDone("acme/alpha", "x", "https://ghe.example.com/api/v3")?.status).toBe("done");
   });
 
   it("respects a saturated per-repo cap", () => {

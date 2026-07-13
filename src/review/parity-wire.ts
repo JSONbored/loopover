@@ -31,6 +31,7 @@ import { computeGateParity, isParityCutoverReady, type GateAction, type GatePari
 import type { GateCheckConclusion, GateCheckEvaluation } from "../rules/advisory";
 import { isSelfHostedReviewRuntime } from "../selfhost/review-runtime";
 import { errorMessage, nowIso } from "../utils/json";
+import { dualPrefixEnvFlag } from "../utils/env";
 
 // Bounded reason-class codes evaluateGateCheckCore (rules/advisory.ts) attaches to a NEUTRAL evaluation's
 // `warnings`, in the same priority order as its own return branches. Kept here (not re-exported from
@@ -61,8 +62,11 @@ export function neutralHoldReasonCode(gateEvaluation: Pick<GateCheckEvaluation, 
 /** True when the shadow-parity audit is enabled. Flag-OFF (default) → recordNativeGateDecision is a no-op and
  *  the parity endpoint 404s. Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as
  *  isOpsEnabled / isSelfTuneEnabled). */
-export function isParityAuditEnabled(env: { GITTENSORY_REVIEW_PARITY_AUDIT?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_PARITY_AUDIT ?? "");
+export function isParityAuditEnabled(env: {
+  GITTENSORY_REVIEW_PARITY_AUDIT?: string | undefined;
+  LOOPOVER_REVIEW_PARITY_AUDIT?: string | undefined;
+}): boolean {
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_PARITY_AUDIT");
 }
 
 /** The `source` discriminator this writer stamps on every row — the SHADOW side computeGateParity compares

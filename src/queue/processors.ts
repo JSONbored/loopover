@@ -626,6 +626,7 @@ import type {
   RepositorySettings,
 } from "../types";
 import { sha256Hex } from "../utils/crypto";
+import { dualPrefixEnvFlag } from "../utils/env";
 import { errorMessage, nowIso } from "../utils/json";
 import { maybeSuggestMilestoneMatchForPr } from "../integrations/project-tracker-adapter";
 
@@ -6297,11 +6298,16 @@ export async function shouldRefreshFilesForPreMergeChecks(
  *  GITTENSORY_REVIEW_CONTINUOUS default. Both unset ⇒ "one_shot" — see AutoReviewConfig["cadence"]'s own doc
  *  comment for the full semantics. */
 export function resolveAiReviewCadence(
-  env: { GITTENSORY_REVIEW_CONTINUOUS?: string | undefined },
+  env: {
+    GITTENSORY_REVIEW_CONTINUOUS?: string | undefined;
+    LOOPOVER_REVIEW_CONTINUOUS?: string | undefined;
+  },
   configuredCadence: AiReviewCadence | null,
 ): AiReviewCadence {
   if (configuredCadence !== null) return configuredCadence;
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_CONTINUOUS ?? "") ? "continuous" : "one_shot";
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_CONTINUOUS")
+    ? "continuous"
+    : "one_shot";
 }
 
 function shouldProcessPullRequestPublicSurface(

@@ -15,13 +15,17 @@
 
 import { resolveManifestOnlyFeature } from "./feature-activation";
 import type { ImpactMapEntry } from "./impact-map";
+import { dualPrefixEnvFlag } from "../utils/env";
 
 /** True when impact-map computation is enabled at the operator level. Flag-OFF (default) → the caller takes
  *  no new branch, so no symbol extraction, no RAG query, and no impact-map section is ever computed or
  *  rendered. Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as isRagEnabled /
  *  isGroundingEnabled / isSafetyEnabled). */
-export function isImpactMapEnabled(env: { GITTENSORY_REVIEW_IMPACT_MAP?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_IMPACT_MAP ?? "");
+export function isImpactMapEnabled(env: {
+  GITTENSORY_REVIEW_IMPACT_MAP?: string | undefined;
+  LOOPOVER_REVIEW_IMPACT_MAP?: string | undefined;
+}): boolean {
+  return dualPrefixEnvFlag(env as unknown as Record<string, string | undefined>, "REVIEW_IMPACT_MAP");
 }
 
 /** Resolve whether impact-map computation should run for THIS repo/PR: the operator's global env kill-switch

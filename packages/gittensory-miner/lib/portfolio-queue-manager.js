@@ -89,16 +89,22 @@ export function initPortfolioQueueManager(options = {}) {
     listQueue(repoFullName) {
       return store.listQueue(repoFullName);
     },
-    markDone(repoFullName, identifier) {
-      return store.markDone(repoFullName, identifier);
+    markDone(repoFullName, identifier, apiBaseUrl) {
+      return store.markDone(repoFullName, identifier, apiBaseUrl);
     },
-    markFailed(repoFullName, identifier) {
-      return store.markFailed(repoFullName, identifier);
+    markFailed(repoFullName, identifier, apiBaseUrl) {
+      return store.markFailed(repoFullName, identifier, apiBaseUrl);
     },
     /** Sweep leases orphaned by a crashed/killed process back to 'queued', returning the reclaimed items (#4827). */
     reclaimStuckItems(maxLeaseMs = staleLeaseMs) {
       return sweepStuckItems(store, Date.now(), maxLeaseMs);
     },
+    // NOTE (#5563): claimNextBatch's engine-driven selection (queueItemId/parseQueueItemId, entriesToPortfolioQueue)
+    // has no apiBaseUrl dimension -- @jsonbored/gittensory-engine's PortfolioQueueItem shape predates multi-forge
+    // support. selectFn below therefore never supplies target.apiBaseUrl, so batchClaim falls back to the
+    // github.com default for every claim; a non-default-host item enqueued under a different apiBaseUrl safely
+    // fails to match (no row, no claim, no corruption) rather than being claimed under the wrong host. Retrofitting
+    // the engine primitive itself with a forge dimension is out of this store-level fix's scope.
     claimNextBatch() {
       // Reclaim orphaned leases first, so an item stranded 'in_progress' by a dead process becomes eligible again
       // instead of permanently consuming a WIP slot and starving the queue.

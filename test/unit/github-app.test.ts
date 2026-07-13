@@ -1362,7 +1362,7 @@ describe("GitHub check runs", () => {
     expect(capturedBody.output?.text).toContain("blocks every author");
     // The "Details" link points at the repo's Gittensory maintainer panel, not GitHub's generic check page. (#audit-details-url)
     expect(capturedBody.details_url).toBe(
-      "https://gittensory.aethereal.dev/app?view=maintainer&repo=JSONbored%2Fgittensory",
+      "https://loopover.ai/app?view=maintainer&repo=JSONbored%2Fgittensory",
     );
   });
 

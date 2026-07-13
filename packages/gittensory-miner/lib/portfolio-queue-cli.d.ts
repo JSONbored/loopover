@@ -16,6 +16,7 @@ export type ParsedQueueDoneArgs =
       identifier: string;
       dryRun: boolean;
       json: boolean;
+      apiBaseUrl: string | undefined;
     }
   | { error: string };
 

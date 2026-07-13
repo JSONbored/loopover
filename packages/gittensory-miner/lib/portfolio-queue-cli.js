@@ -5,9 +5,12 @@ import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js
 
 const QUEUE_LIST_USAGE = "Usage: gittensory-miner queue list [--repo <owner/repo>] [--json]";
 const QUEUE_NEXT_USAGE = "Usage: gittensory-miner queue next [--dry-run] [--json]";
-const QUEUE_DONE_USAGE = "Usage: gittensory-miner queue done <owner/repo> <identifier> [--dry-run] [--json]";
-const QUEUE_RELEASE_USAGE = "Usage: gittensory-miner queue release <owner/repo> <identifier> [--dry-run] [--json]";
-const QUEUE_REQUEUE_USAGE = "Usage: gittensory-miner queue requeue <owner/repo> <identifier> [--dry-run] [--json]";
+const QUEUE_DONE_USAGE =
+  "Usage: gittensory-miner queue done <owner/repo> <identifier> [--api-base-url <url>] [--dry-run] [--json]";
+const QUEUE_RELEASE_USAGE =
+  "Usage: gittensory-miner queue release <owner/repo> <identifier> [--api-base-url <url>] [--dry-run] [--json]";
+const QUEUE_REQUEUE_USAGE =
+  "Usage: gittensory-miner queue requeue <owner/repo> <identifier> [--api-base-url <url>] [--dry-run] [--json]";
 const QUEUE_CLAIM_BATCH_USAGE =
   "Usage: gittensory-miner queue claim-batch [--global-wip <n>] [--per-repo-wip <n>] [--dry-run] [--json]";
 
@@ -87,19 +90,48 @@ export function parseQueueNextArgs(args) {
   return { json: parsed.json, dryRun: parsed.dryRun };
 }
 
-/** Shared `<owner/repo> <identifier> [--json]` parse for the item-targeting subcommands (done/release/requeue).
- *  `usage` is the command-specific message surfaced on a malformed argv. */
+/** Shared `<owner/repo> <identifier> [--api-base-url <url>] [--json]` parse for the item-targeting subcommands
+ *  (done/release/requeue). `usage` is the command-specific message surfaced on a malformed argv. */
 function parseRepoIdentifierArgs(args, usage) {
-  const parsed = parseJsonFlag(args);
-  if ("error" in parsed) return parsed;
-  if (parsed.positional.length !== 2) {
+  const options = { json: false, dryRun: false, apiBaseUrl: undefined };
+  const positional = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === "--json") {
+      options.json = true;
+      continue;
+    }
+    // #4847: reports what a real mutation would do and returns before opening the portfolio queue at all.
+    if (token === "--dry-run") {
+      options.dryRun = true;
+      continue;
+    }
+    // #5563: scope the target to a non-default forge host, so it doesn't collide with (or get confused for) a
+    // same-named repo on the default github.com host.
+    if (token === "--api-base-url") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) {
+        return { error: usage };
+      }
+      options.apiBaseUrl = value;
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("-")) {
+      return { error: `Unknown option: ${token}` };
+    }
+    positional.push(token);
+  }
+
+  if (positional.length !== 2) {
     return { error: usage };
   }
 
-  const repo = parseRepoArg(parsed.positional[0], usage);
+  const repo = parseRepoArg(positional[0], usage);
   if ("error" in repo) return repo;
 
-  const identifier = parsed.positional[1]?.trim();
+  const identifier = positional[1]?.trim();
   if (!identifier) {
     return { error: usage };
   }
@@ -107,8 +139,9 @@ function parseRepoIdentifierArgs(args, usage) {
   return {
     repoFullName: repo.repoFullName,
     identifier,
-    dryRun: parsed.dryRun,
-    json: parsed.json,
+    dryRun: options.dryRun,
+    json: options.json,
+    apiBaseUrl: options.apiBaseUrl,
   };
 }
 
@@ -230,7 +263,7 @@ export function runQueueDone(args, options = {}) {
 
   try {
     return withPortfolioQueue(options, (portfolioQueue) => {
-      const entry = portfolioQueue.markDone(parsed.repoFullName, parsed.identifier);
+      const entry = portfolioQueue.markDone(parsed.repoFullName, parsed.identifier, parsed.apiBaseUrl);
       if (!entry) {
         return reportCliFailure(parsed.json, "queue_entry_not_found");
       }
@@ -266,7 +299,7 @@ export function runQueueRelease(args, options = {}) {
 
   try {
     return withPortfolioQueue(options, (portfolioQueue) => {
-      const entry = portfolioQueue.reclaimStuckItem(parsed.repoFullName, parsed.identifier);
+      const entry = portfolioQueue.reclaimStuckItem(parsed.repoFullName, parsed.identifier, parsed.apiBaseUrl);
       if (!entry) {
         return reportCliFailure(parsed.json, "queue_entry_not_in_progress");
       }
@@ -303,7 +336,7 @@ export function runQueueRequeue(args, options = {}) {
 
   try {
     return withPortfolioQueue(options, (portfolioQueue) => {
-      const entry = portfolioQueue.requeueItem(parsed.repoFullName, parsed.identifier);
+      const entry = portfolioQueue.requeueItem(parsed.repoFullName, parsed.identifier, parsed.apiBaseUrl);
       if (!entry) {
         return reportCliFailure(parsed.json, "queue_entry_not_requeuable");
       }

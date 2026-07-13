@@ -72,7 +72,7 @@ function AgentsPage() {
                 <CodeBlock code={`npx -y @jsonbored/gittensory-mcp@latest --stdio`} />
               </div>
               <div className="mt-2">
-                <CodeBlock lang="http" code={`https://gittensory-api.aethereal.dev/mcp`} />
+                <CodeBlock lang="http" code={`https://api.loopover.ai/mcp`} />
               </div>
             </div>
           </Card>

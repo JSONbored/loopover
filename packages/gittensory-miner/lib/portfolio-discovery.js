@@ -50,6 +50,10 @@ export function enqueueRankedDiscovery(rankedIssues, options = {}) {
   }
 
   const minRankScore = normalizeMinRankScore(options.minRankScore);
+  // #5563: threaded through from the caller's already-resolved forge host, so a non-default (GitHub Enterprise)
+  // tenant's ranked issues land in the queue scoped to their own host instead of colliding with a same-named
+  // owner/repo on github.com. Omitted/nullish falls through to the queue store's own github.com default.
+  const apiBaseUrl = options.apiBaseUrl;
 
   const summary = {
     enqueued: 0,
@@ -73,6 +77,7 @@ export function enqueueRankedDiscovery(rankedIssues, options = {}) {
       repoFullName: normalized.repoFullName,
       identifier: `issue:${normalized.issueNumber}`,
       priority: normalized.rankScore,
+      apiBaseUrl,
     });
     summary.enqueued += 1;
 

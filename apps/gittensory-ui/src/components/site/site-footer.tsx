@@ -96,9 +96,9 @@ export function SiteFooter() {
       <div className="border-t border-border">
         <div className="mx-auto flex max-w-7xl flex-col items-start gap-3 px-4 py-5 text-token-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
           <div className="font-mono">
-            <span className="text-foreground/70">gittensory.aethereal.dev</span>
+            <span className="text-foreground/70">loopover.ai</span>
             <span className="mx-2 opacity-40">·</span>
-            <span>api: gittensory-api.aethereal.dev</span>
+            <span>api: api.loopover.ai</span>
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <a

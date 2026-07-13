@@ -39,7 +39,7 @@ gittensory-mcp status
 gittensory-mcp whoami`}
       />
       <p>Or hit the public API endpoint directly to confirm reachability:</p>
-      <CodeBlock lang="http" code={`GET https://gittensory-api.aethereal.dev/health`} />
+      <CodeBlock lang="http" code={`GET https://api.loopover.ai/health`} />
 
       <h2>Self-host Docker observability</h2>
       <p>
@@ -111,7 +111,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318`}
       <p>
         <code>/health</code> couldn't be reached at all. This usually means a network problem
         between you and the API edge. Try the <strong>Recheck</strong> button in the banner, or run{" "}
-        <code>curl https://gittensory-api.aethereal.dev/health</code> from your machine to confirm.
+        <code>curl https://api.loopover.ai/health</code> from your machine to confirm.
       </p>
       <h3 id="api-timeout">API timing out</h3>
       <p>

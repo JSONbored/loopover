@@ -9,7 +9,7 @@ const target = resolve(root, "apps/gittensory-ui/public/openapi.json");
 const checkOnly = process.argv.includes("--check");
 
 const spec = buildOpenApiSpec();
-spec.servers = [{ url: "https://gittensory-api.aethereal.dev", description: "Production" }];
+spec.servers = [{ url: "https://api.loopover.ai", description: "Production" }];
 
 const current = await readFile(target, "utf8").catch(() => "");
 const currentSpec = parseCurrentSpec(current);

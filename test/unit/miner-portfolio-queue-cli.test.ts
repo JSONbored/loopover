@@ -62,6 +62,7 @@ describe("gittensory-miner portfolio queue CLI (#2292)", () => {
   it("renderQueueTable formats numeric priority and empty output", () => {
     const entries: QueueEntry[] = [
       {
+        apiBaseUrl: "https://api.github.com",
         repoFullName: "acme/widgets",
         identifier: "issue:7",
         status: "queued",
@@ -239,6 +240,33 @@ describe("gittensory-miner portfolio queue CLI (#2292)", () => {
       expect(parseQueueRequeueArgs([])).toEqual({ error: expect.stringContaining("queue requeue") });
     });
 
+    it("parseQueueDoneArgs, parseQueueReleaseArgs, and parseQueueRequeueArgs accept --api-base-url (#5563)", () => {
+      expect(parseQueueDoneArgs(["acme/widgets", "issue:1", "--api-base-url", "https://ghe.example.com/api/v3"])).toEqual({
+        repoFullName: "acme/widgets",
+        identifier: "issue:1",
+        dryRun: false,
+        json: false,
+        apiBaseUrl: "https://ghe.example.com/api/v3",
+      });
+      expect(parseQueueDoneArgs(["acme/widgets", "issue:1", "--api-base-url"])).toEqual({
+        error: expect.stringContaining("queue done"),
+      });
+      expect(parseQueueReleaseArgs(["acme/widgets", "issue:1", "--api-base-url", "https://ghe.example.com/api/v3"])).toEqual({
+        repoFullName: "acme/widgets",
+        identifier: "issue:1",
+        dryRun: false,
+        json: false,
+        apiBaseUrl: "https://ghe.example.com/api/v3",
+      });
+      expect(parseQueueRequeueArgs(["acme/widgets", "issue:1", "--api-base-url", "https://ghe.example.com/api/v3"])).toEqual({
+        repoFullName: "acme/widgets",
+        identifier: "issue:1",
+        dryRun: false,
+        json: false,
+        apiBaseUrl: "https://ghe.example.com/api/v3",
+      });
+    });
+
     it("#4847: --dry-run reports what release/requeue would do and returns 0 without opening the portfolio queue", () => {
       const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
       const initPortfolioQueueSpy = vi.fn();
@@ -295,6 +323,44 @@ describe("gittensory-miner portfolio queue CLI (#2292)", () => {
       expect(runQueueRelease(["acme/widgets", "issue:7"], options)).toBe(0);
       expect(log).toHaveBeenCalledWith("queued");
       expect(portfolioQueue.listQueue("acme/widgets")[0]?.status).toBe("queued");
+    });
+
+    it("runQueueDone, runQueueRelease, and runQueueRequeue thread --api-base-url through, so two hosts don't collide (#5563)", () => {
+      const portfolioQueue = tempQueueStore();
+      const options = { initPortfolioQueue: () => portfolioQueue };
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", apiBaseUrl: "https://api.github.com" });
+      portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", apiBaseUrl: "https://ghe.example.com/api/v3" });
+
+      // Marking the GHE host's row done must not touch the github.com row.
+      expect(
+        runQueueDone(["acme/widgets", "issue:1", "--api-base-url", "https://ghe.example.com/api/v3", "--json"], options),
+      ).toBe(0);
+      expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+        entry: expect.objectContaining({ apiBaseUrl: "https://ghe.example.com/api/v3", status: "done" }),
+      });
+      const stillQueued = portfolioQueue.listQueue("acme/widgets").find((entry) => entry.status === "queued");
+      expect(stillQueued?.apiBaseUrl).toBe("https://api.github.com");
+
+      // release: claim the github.com row, then release only it via --api-base-url.
+      portfolioQueue.dequeueNext();
+      log.mockClear();
+      expect(
+        runQueueRelease(["acme/widgets", "issue:1", "--api-base-url", "https://api.github.com", "--json"], options),
+      ).toBe(0);
+      expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+        entry: expect.objectContaining({ apiBaseUrl: "https://api.github.com", status: "queued" }),
+      });
+
+      // requeue: the GHE row is 'done' from above -- requeue only it via --api-base-url.
+      log.mockClear();
+      expect(
+        runQueueRequeue(["acme/widgets", "issue:1", "--api-base-url", "https://ghe.example.com/api/v3", "--json"], options),
+      ).toBe(0);
+      expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+        entry: expect.objectContaining({ apiBaseUrl: "https://ghe.example.com/api/v3", status: "queued" }),
+      });
     });
 
     it("release emits the full entry as JSON under --json", () => {

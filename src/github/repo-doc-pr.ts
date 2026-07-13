@@ -150,7 +150,7 @@ export async function openRepoDocPullRequest(env: Env, repoFullName: string, mod
     const profile = await extractRepoProfile(env, repoFullName);
     if (!profile.present) return { opened: false, reason: profile.reason };
     // #4613: a self-hoster's own domain (env.PUBLIC_SITE_ORIGIN) reaches the generated AGENTS.md's
-    // attribution link instead of gittensory.aethereal.dev -- same fallback `maintainerControlPanelUrl`/
+    // attribution link instead of loopover.ai -- same fallback `maintainerControlPanelUrl`/
     // `gittensoryFooter` already use.
     const generatedSection = renderRepoDocContent(profile, env.PUBLIC_SITE_ORIGIN ?? GITTENSORY_SITE_URL);
     if (!generatedSection) return { opened: false, reason: "no content rendered from profile" };

@@ -632,9 +632,9 @@ describe("private-beta auth and rate limiting", () => {
     const started = await startGitHubWebOAuth(
       env,
       "https://gittensory-api.aethereal.dev/v1/auth/github/start",
-      "https://gittensory.aethereal.dev/app/workbench",
+      "https://loopover.ai/app/workbench",
     );
-    expect(started.returnTo).toBe("https://gittensory.aethereal.dev/app/workbench");
+    expect(started.returnTo).toBe("https://loopover.ai/app/workbench");
     expect(started.authorizationUrl).toContain("https://github.com/login/oauth/authorize");
     expect(started.authorizationUrl).toContain("client_id=client-id");
     expect(started.authorizationUrl).toContain("redirect_uri=https%3A%2F%2Fgittensory-api.aethereal.dev%2Fv1%2Fauth%2Fgithub%2Fcallback");
@@ -655,7 +655,7 @@ describe("private-beta auth and rate limiting", () => {
         state: started.state,
         cookieState: started.state,
       }),
-    ).resolves.toMatchObject({ login: "jsonbored", scopes: ["read:user"], returnTo: "https://gittensory.aethereal.dev/app/workbench" });
+    ).resolves.toMatchObject({ login: "jsonbored", scopes: ["read:user"], returnTo: "https://loopover.ai/app/workbench" });
 
     await expect(
       completeGitHubWebOAuth(env, "https://gittensory-api.aethereal.dev/v1/auth/github/callback", {
@@ -689,7 +689,7 @@ describe("private-beta auth and rate limiting", () => {
     delete (env as Partial<Env>).PUBLIC_SITE_ORIGIN;
 
     const invalidReturnTo = await startGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/start", "https://evil.example/app");
-    expect(invalidReturnTo.returnTo).toBe("https://gittensory.aethereal.dev/app");
+    expect(invalidReturnTo.returnTo).toBe("https://loopover.ai/app");
     expect(invalidReturnTo.authorizationUrl).toContain("redirect_uri=https%3A%2F%2Fpreview.example.workers.dev%2Fv1%2Fauth%2Fgithub%2Fcallback");
 
     const localhostReturnTo = await startGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/start", "http://localhost:5173/app");

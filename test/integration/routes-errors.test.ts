@@ -57,7 +57,7 @@ describe("api route guards and error branches", () => {
       ADMIN_GITHUB_LOGINS: "jsonbored",
     });
 
-    const started = await app.request("/v1/auth/github/start?returnTo=https%3A%2F%2Fgittensory.aethereal.dev%2Fapp", {}, env);
+    const started = await app.request("/v1/auth/github/start?returnTo=https%3A%2F%2Floopover.ai%2Fapp", {}, env);
     expect(started.status).toBe(302);
     const startCookie = started.headers.get("set-cookie") ?? "";
     const location = new URL(started.headers.get("location") ?? "");
@@ -74,7 +74,7 @@ describe("api route guards and error branches", () => {
 
     const callback = await app.request(`/v1/auth/github/callback?code=code&state=${encodeURIComponent(state)}`, { headers: { cookie: firstCookiePair(startCookie) } }, env);
     expect(callback.status).toBe(302);
-    expect(callback.headers.get("location")).toBe("https://gittensory.aethereal.dev/app");
+    expect(callback.headers.get("location")).toBe("https://loopover.ai/app");
     const callbackCookie = callback.headers.get("set-cookie") ?? "";
     expect(callbackCookie).toContain("gittensory_session=");
     expect(callbackCookie).toContain("HttpOnly");

@@ -196,7 +196,12 @@ describe("gittensory-miner run-state store (#2289)", () => {
     const store = initRunStateStore(dbPath);
     try {
       expect(store.listRunStates()).toEqual([
-        { repoFullName: "acme/widgets", state: "planning", updatedAt: "2026-07-02T00:00:00.000Z" },
+        {
+          apiBaseUrl: "https://api.github.com",
+          repoFullName: "acme/widgets",
+          state: "planning",
+          updatedAt: "2026-07-02T00:00:00.000Z",
+        },
       ]);
     } finally {
       store.close();
@@ -211,5 +216,84 @@ describe("gittensory-miner run-state store (#2289)", () => {
     expect(listRunStates()).toEqual([
       expect.objectContaining({ repoFullName: "acme/widgets", state: "preparing" }),
     ]);
+  });
+
+  it("module-level getRunState forwards apiBaseUrl to the default store (#5563)", () => {
+    vi.stubEnv("GITTENSORY_MINER_RUN_STATE_DB", join(tempRoot(), "default-get.sqlite3"));
+    setRunState("acme/widgets", "planning", "https://ghe.example.com/api/v3");
+    expect(getRunState("acme/widgets")).toBeNull(); // github.com default: no row there
+    expect(getRunState("acme/widgets", "https://ghe.example.com/api/v3")).toBe("planning");
+  });
+
+  describe("forge-scoping (#5563)", () => {
+    it("defaults apiBaseUrl to the github.com default when omitted", () => {
+      const store = initRunStateStore(join(tempRoot(), "run-state.sqlite3"));
+      try {
+        const write = store.setRunState("o/a", "idle");
+        expect(write.apiBaseUrl).toBe("https://api.github.com");
+      } finally {
+        store.close();
+      }
+    });
+
+    it("two forge hosts can each hold their own current state for the same owner/repo without colliding", () => {
+      const store = initRunStateStore(join(tempRoot(), "run-state.sqlite3"));
+      try {
+        store.setRunState("acme/widgets", "discovering", "https://api.github.com");
+        store.setRunState("acme/widgets", "preparing", "https://ghe.example.com/api/v3");
+        expect(store.getRunState("acme/widgets", "https://api.github.com")).toBe("discovering");
+        expect(store.getRunState("acme/widgets", "https://ghe.example.com/api/v3")).toBe("preparing");
+        expect(store.listRunStates().map((row) => row.apiBaseUrl).sort()).toEqual([
+          "https://api.github.com",
+          "https://ghe.example.com/api/v3",
+        ]);
+      } finally {
+        store.close();
+      }
+    });
+
+    it("rejects a non-string or blank apiBaseUrl", () => {
+      const store = initRunStateStore(join(tempRoot(), "run-state.sqlite3"));
+      try {
+        expect(() => store.setRunState("o/a", "idle", "  ")).toThrow("invalid_api_base_url");
+        expect(() => store.getRunState("o/a", 42 as never)).toThrow("invalid_api_base_url");
+      } finally {
+        store.close();
+      }
+    });
+
+    it("migrates an existing pre-#5563 file, backfilling api_base_url and preserving every row", () => {
+      const dbPath = join(tempRoot(), "legacy.sqlite3");
+      const legacy = new DatabaseSync(dbPath);
+      legacy.exec(`
+        CREATE TABLE miner_run_state (
+          repo_full_name TEXT PRIMARY KEY,
+          state TEXT NOT NULL CHECK (state IN ('idle', 'discovering', 'planning', 'preparing')),
+          updated_at TEXT NOT NULL
+        )
+      `);
+      legacy.exec(
+        "INSERT INTO miner_run_state (repo_full_name, state, updated_at) VALUES ('acme/widgets', 'planning', '2026-01-01T00:00:00.000Z')",
+      );
+      legacy.close();
+
+      const store = initRunStateStore(dbPath);
+      try {
+        expect(store.listRunStates()).toEqual([
+          {
+            apiBaseUrl: "https://api.github.com",
+            repoFullName: "acme/widgets",
+            state: "planning",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ]);
+        // The old bare repo_full_name PRIMARY KEY collision is gone: a second host can now hold its own state.
+        const geWrite = store.setRunState("acme/widgets", "preparing", "https://ghe.example.com/api/v3");
+        expect(store.listRunStates()).toHaveLength(2);
+        expect(geWrite.apiBaseUrl).toBe("https://ghe.example.com/api/v3");
+      } finally {
+        store.close();
+      }
+    });
   });
 });

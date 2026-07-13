@@ -11,7 +11,7 @@
 /** The LoopOver product site (marketing on-ramp / attribution target) -- the DEFAULT only. A
  *  self-hoster with `PUBLIC_SITE_ORIGIN` set gets their own domain instead, both here and in
  *  `gittensoryFooter` below (#4613). */
-export const GITTENSORY_SITE_URL = "https://gittensory.aethereal.dev";
+export const GITTENSORY_SITE_URL = "https://loopover.ai";
 
 /** Minimal env slice `gittensoryFooter` needs, narrowed from the full `Env` the same way this file's
  *  `maintainerControlPanelUrl` already narrows its own `env` param inline -- so every file that renders

@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { applySchemaMigrations } from "./schema-version.js";
+import { reportCliFailure } from "./cli-error.js";
 
 const githubApiBaseUrl = "https://api.github.com";
 const githubApiVersion = "2022-11-28";
@@ -307,8 +308,7 @@ export async function runInit(args = [], env = process.env) {
   if (verifyToken) {
     verification = await verifyGithubToken({ githubToken: env.GITHUB_TOKEN ?? "" });
     if (!verification.ok) {
-      console.error(verification.detail);
-      return 1;
+      return reportCliFailure(jsonOutput, verification.detail, 1);
     }
   }
 

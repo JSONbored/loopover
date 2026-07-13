@@ -13,6 +13,7 @@
 // query (attempt-log.js's schema has no repo+issue index, and reenqueue counts aren't tracked anywhere yet).
 
 import { resolveCodingAgentModeFromConfig } from "@jsonbored/gittensory-engine";
+import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 import { constructProductionCodingAgentDriver } from "./coding-agent-construction.js";
 import { runSlopAssessment } from "./slop-assessment.js";
 import { fetchLiveIssueSnapshot } from "./live-issue-snapshot.js";
@@ -139,8 +140,7 @@ export function buildAttemptDeps(env, ledgers) {
 export async function runAttempt(args, options = {}) {
   const parsed = parseAttemptArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   const env = options.env ?? process.env;
@@ -149,10 +149,11 @@ export async function runAttempt(args, options = {}) {
   const mode = resolveMode({ env, agentDryRun: !parsed.live });
 
   if (mode === "paused") {
-    console.error(
+    return reportCliFailure(
+      parsed.json,
       `Coding-agent execution is globally paused (MINER_CODING_AGENT_PAUSED). Not running attempt for ${parsed.repoFullName}#${parsed.issueNumber}.`,
+      3,
     );
-    return 3;
   }
 
   const attemptId = options.attemptId ?? `${parsed.repoFullName.replace("/", "_")}-${parsed.issueNumber}-${nowMs}`;
@@ -222,9 +223,12 @@ export async function runAttempt(args, options = {}) {
       const buildDeps = options.buildAttemptDeps ?? buildAttemptDeps;
       deps = buildDeps(env, { claimLedger, eventLedger, attemptLog, governorLedger, nowMs });
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      console.error(`Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: ${reason}`);
-      return 3;
+      const reason = describeCliError(error);
+      return reportCliFailure(
+        parsed.json,
+        `Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: ${reason}`,
+        3,
+      );
     }
 
     // Real worktree preparation (repo-clone.js + attempt-worktree.js, #5237): the allocator above only
@@ -461,8 +465,7 @@ export async function runAttempt(args, options = {}) {
         return 2;
     }
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   } finally {
     // worktreeResult.attemptOk is set to the REAL runMinerAttempt outcome (submitted = true) once that call
     // happens; every earlier blocked path (rejection/worktree-prep-failure/infeasible) never sets it, since

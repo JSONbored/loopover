@@ -1,4 +1,5 @@
 import { PLAN_STATUSES, openPlanStore } from "./plan-store.js";
+import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const PLAN_LIST_USAGE =
   "Usage: gittensory-miner plan list [--status pending|running|completed|failed] [--json]";
@@ -101,8 +102,7 @@ function withPlanStore(options, run) {
 export function runPlanList(args, options = {}) {
   const parsed = parsePlanListArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   try {
@@ -116,24 +116,21 @@ export function runPlanList(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   }
 }
 
 export function runPlanShow(args, options = {}) {
   const parsed = parsePlanShowArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   try {
     return withPlanStore(options, (planStore) => {
       const plan = planStore.loadPlan(parsed.planId);
       if (!plan) {
-        console.error("plan_not_found");
-        return 2;
+        return reportCliFailure(parsed.json, "plan_not_found");
       }
       if (parsed.json) {
         console.log(JSON.stringify({ plan }, null, 2));
@@ -143,14 +140,12 @@ export function runPlanShow(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   }
 }
 
 export function runPlanCli(subcommand, args, options = {}) {
   if (subcommand === "list") return runPlanList(args, options);
   if (subcommand === "show") return runPlanShow(args, options);
-  console.error(`Unknown plan subcommand: ${subcommand ?? ""}. ${PLAN_LIST_USAGE}`);
-  return 2;
+  return reportCliFailure(argsWantJson(args), `Unknown plan subcommand: ${subcommand ?? ""}. ${PLAN_LIST_USAGE}`);
 }

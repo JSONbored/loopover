@@ -9,6 +9,7 @@
 // collector below is factored so it is directly reusable once such a channel exists.
 
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
+import { argsWantJson, reportCliFailure } from "./cli-error.js";
 
 const QUEUE_STATUS_KEYS = ["queued", "in_progress", "done"];
 
@@ -90,8 +91,7 @@ export function parsePortfolioDashboardArgs(args = []) {
 export function runPortfolioDashboard(args = [], options = {}) {
   const parsed = parsePortfolioDashboardArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
   const ownsQueue = options.initPortfolioQueue === undefined;
   const portfolioQueue = (options.initPortfolioQueue ?? initPortfolioQueueStore)();

@@ -1,6 +1,7 @@
 import { initEventLedger } from "./event-ledger.js";
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
 import { initRunStateStore } from "./run-state.js";
+import { argsWantJson, reportCliFailure } from "./cli-error.js";
 
 /** Event vocabulary for manage-phase PR snapshots written by manage poll. (#2325) */
 export const MANAGE_PR_UPDATE_EVENT = "manage_pr_update";
@@ -207,8 +208,7 @@ export function parseManageStatusArgs(args = []) {
 export function runManageStatus(args = [], options = {}) {
   const parsed = parseManageStatusArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   const ownsPortfolioQueue = options.initPortfolioQueue === undefined;

@@ -1,4 +1,5 @@
 import { CLAIM_STATUSES, openClaimLedger } from "./claim-ledger.js";
+import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const CLAIM_CLAIM_USAGE =
   "Usage: gittensory-miner claim claim <owner/repo> <issue#> [--note <text>] [--json]";
@@ -183,8 +184,7 @@ function withClaimLedger(options, run) {
 export function runClaimClaim(args, options = {}) {
   const parsed = parseClaimClaimArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   try {
@@ -202,24 +202,21 @@ export function runClaimClaim(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   }
 }
 
 export function runClaimRelease(args, options = {}) {
   const parsed = parseClaimReleaseArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   try {
     return withClaimLedger(options, (claimLedger) => {
       const claim = claimLedger.releaseClaim(parsed.repoFullName, parsed.issueNumber);
       if (!claim) {
-        console.error("claim_not_found");
-        return 2;
+        return reportCliFailure(parsed.json, "claim_not_found");
       }
       if (parsed.json) {
         console.log(JSON.stringify({ claim }, null, 2));
@@ -229,16 +226,14 @@ export function runClaimRelease(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   }
 }
 
 export function runClaimList(args, options = {}) {
   const parsed = parseClaimListArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   try {
@@ -255,8 +250,7 @@ export function runClaimList(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   }
 }
 
@@ -264,6 +258,5 @@ export function runClaimCli(subcommand, args, options = {}) {
   if (subcommand === "claim") return runClaimClaim(args, options);
   if (subcommand === "release") return runClaimRelease(args, options);
   if (subcommand === "list") return runClaimList(args, options);
-  console.error(`Unknown claim subcommand: ${subcommand ?? ""}. ${CLAIM_LIST_USAGE}`);
-  return 2;
+  return reportCliFailure(argsWantJson(args), `Unknown claim subcommand: ${subcommand ?? ""}. ${CLAIM_LIST_USAGE}`);
 }

@@ -1,5 +1,6 @@
 import { renderMinerPredictionMetrics } from "@jsonbored/gittensory-engine";
 import { initPredictionLedger } from "./prediction-ledger.js";
+import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 // `metrics` (#4838): render the miner's prediction-calibration counters as Prometheus text-exposition to stdout,
 // for a scrape wrapper or cron redirect. The counters are produced by the engine's already-built
@@ -33,8 +34,7 @@ function withPredictionLedger(options, run) {
 
 export function runMetrics(args, options = {}) {
   if (args.length > 0) {
-    console.error(METRICS_USAGE);
-    return 2;
+    return reportCliFailure(argsWantJson(args), METRICS_USAGE);
   }
 
   try {
@@ -45,7 +45,6 @@ export function runMetrics(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(argsWantJson(args), describeCliError(error));
   }
 }

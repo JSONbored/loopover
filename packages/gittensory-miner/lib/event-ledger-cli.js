@@ -1,4 +1,5 @@
 import { initEventLedger } from "./event-ledger.js";
+import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const LEDGER_LIST_USAGE =
   "Usage: gittensory-miner ledger list [--repo <owner/repo>] [--since <seq>] [--type <eventType>] [--json]";
@@ -217,8 +218,7 @@ function withEventLedger(options, run) {
 export function runLedgerList(args, options = {}) {
   const parsed = parseLedgerListArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   try {
@@ -238,15 +238,13 @@ export function runLedgerList(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   }
 }
 
 export function runLedgerMetrics(args, options = {}) {
   if (args.length > 0) {
-    console.error(EVENT_LEDGER_METRICS_USAGE);
-    return 2;
+    return reportCliFailure(argsWantJson(args), EVENT_LEDGER_METRICS_USAGE);
   }
 
   try {
@@ -257,14 +255,12 @@ export function runLedgerMetrics(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(argsWantJson(args), describeCliError(error));
   }
 }
 
 export function runLedgerCli(subcommand, args, options = {}) {
   if (subcommand === "list") return runLedgerList(args, options);
   if (subcommand === "metrics") return runLedgerMetrics(args, options);
-  console.error(`Unknown ledger subcommand: ${subcommand ?? ""}. ${LEDGER_LIST_USAGE}`);
-  return 2;
+  return reportCliFailure(argsWantJson(args), `Unknown ledger subcommand: ${subcommand ?? ""}. ${LEDGER_LIST_USAGE}`);
 }

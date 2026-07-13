@@ -1,3 +1,5 @@
+import { argsWantJson, reportCliFailure } from "./cli-error.js";
+
 export function printVersion(input) {
   console.log(`${input.packageName}/${input.packageVersion} (node ${process.version})`);
 }
@@ -55,6 +57,6 @@ export function printHelp(input) {
 
 export function runCli(cliArgs, input) {
   const command = cliArgs[0] ?? "";
-  console.error(`Unknown command: ${command}. Run ${input.packageName} --help.`);
-  return 1;
+  const message = `Unknown command: ${command}. Run ${input.packageName} --help.`;
+  return reportCliFailure(argsWantJson(cliArgs), message, 1);
 }

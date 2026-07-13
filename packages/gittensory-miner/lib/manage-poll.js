@@ -5,6 +5,7 @@ import {
   formatManagedPrIdentifier,
 } from "./manage-status.js";
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
+import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const MANAGE_POLL_USAGE =
   "Usage: gittensory-miner manage poll <owner/repo> <pr#> [--branch <name>] [--json]";
@@ -162,8 +163,7 @@ export async function recordManagePollSnapshot(input, options = {}) {
 export async function runManagePoll(args = [], options = {}) {
   const parsed = parseManagePollArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   const ownsEventLedger = options.initEventLedger === undefined;
@@ -201,8 +201,7 @@ export async function runManagePoll(args = [], options = {}) {
     }
     return 0;
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   } finally {
     if (ownsEventLedger) eventLedger.close();
     if (ownsPortfolioQueue) portfolioQueue.close();

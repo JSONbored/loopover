@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createHmac, randomBytes } from "node:crypto";
 import { readPrOutcomes } from "./pr-outcome.js";
 import { initEventLedger } from "./event-ledger.js";
+import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 // Optional anonymized Orb telemetry export (#4277). The self-host Orb collector (src/selfhost/orb-collector.ts,
 // #1255) is ALWAYS-ON for a maintainer's own instance; a miner runs on a third-party contributor's laptop with a
@@ -157,8 +158,7 @@ export function parseOrbExportArgs(args) {
 export function runOrbExportCli(args, options = {}) {
   const parsed = parseOrbExportArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   // Open the stores INSIDE the try so a bad config path / SQLite open failure returns 2 instead of crashing the
@@ -180,8 +180,7 @@ export function runOrbExportCli(args, options = {}) {
     else console.log(`${batch.length} anonymized event(s)`);
     return 0;
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   } finally {
     if (ownsStore) store?.close();
     if (ownsLedger) eventLedger?.close();

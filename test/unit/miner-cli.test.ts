@@ -81,6 +81,19 @@ describe("gittensory-miner CLI helpers", () => {
     );
   });
 
+  it("emits JSON for unknown commands when --json is set (#4836)", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(
+      runCli(["mystery", "--json"], { packageName: "@jsonbored/gittensory-miner" }),
+    ).toBe(1);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      ok: false,
+      error: "Unknown command: mystery. Run @jsonbored/gittensory-miner --help.",
+    });
+    expect(error).not.toHaveBeenCalled();
+  });
+
   it("keeps the CLI version source aligned with package metadata", async () => {
     const packageJson = await import(
       "../../packages/gittensory-miner/package.json",

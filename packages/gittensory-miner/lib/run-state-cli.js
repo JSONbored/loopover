@@ -1,4 +1,5 @@
 import { RUN_STATES, getRunState, setRunState } from "./run-state.js";
+import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const STATE_GET_USAGE = "Usage: gittensory-miner state get <owner/repo> [--json]";
 const STATE_SET_USAGE =
@@ -76,8 +77,7 @@ export function parseStateSetArgs(args) {
 export function runStateGet(args) {
   const parsed = parseStateGetArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   try {
@@ -89,16 +89,14 @@ export function runStateGet(args) {
     }
     return 0;
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   }
 }
 
 export function runStateSet(args) {
   const parsed = parseStateSetArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   try {
@@ -110,14 +108,12 @@ export function runStateSet(args) {
     }
     return 0;
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   }
 }
 
 export function runStateCli(subcommand, args) {
   if (subcommand === "get") return runStateGet(args);
   if (subcommand === "set") return runStateSet(args);
-  console.error(`Unknown state subcommand: ${subcommand ?? ""}. ${STATE_GET_USAGE}`);
-  return 2;
+  return reportCliFailure(argsWantJson(args), `Unknown state subcommand: ${subcommand ?? ""}. ${STATE_GET_USAGE}`);
 }

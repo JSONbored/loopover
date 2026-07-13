@@ -1,4 +1,6 @@
 /** Must match `GOVERNOR_LEDGER_EVENT_TYPES` in `@jsonbored/gittensory-engine`. */
+import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
+
 const GOVERNOR_LEDGER_EVENT_TYPES = Object.freeze([
   "allowed",
   "denied",
@@ -109,8 +111,7 @@ async function withGovernorLedger(options, run) {
 export async function runGovernorList(args, options = {}) {
   const parsed = parseGovernorListArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   try {
@@ -129,13 +130,11 @@ export async function runGovernorList(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   }
 }
 
 export async function runGovernorCli(subcommand, args, options = {}) {
   if (subcommand === "list") return runGovernorList(args, options);
-  console.error(`Unknown governor subcommand: ${subcommand ?? ""}. ${GOVERNOR_LIST_USAGE}`);
-  return 2;
+  return reportCliFailure(argsWantJson(args), `Unknown governor subcommand: ${subcommand ?? ""}. ${GOVERNOR_LIST_USAGE}`);
 }

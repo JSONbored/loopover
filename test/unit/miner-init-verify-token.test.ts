@@ -278,4 +278,22 @@ describe("runInit", () => {
       "GITHUB_TOKEN verification failed: Bad credentials",
     );
   });
+
+  it("emits JSON when token verification fails with --json (#4836)", async () => {
+    const { env } = makeTempEnv();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockJsonResponse({ message: "Bad credentials" }, { status: 401 }),
+    );
+
+    const exitCode = await runInit(["--json", "--verify-token"], env);
+
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(String(logSpy.mock.calls[0]?.[0]))).toEqual({
+      ok: false,
+      error: "GITHUB_TOKEN verification failed: Bad credentials",
+    });
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
 });

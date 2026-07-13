@@ -26,6 +26,7 @@
 // attempt-input-builder.js's header already flags as out of scope here).
 
 import { checkMinerKillSwitch } from "./governor-kill-switch.js";
+import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 import { evaluateRunLoopBoundaryGate } from "./governor-run-halt.js";
 import { openGovernorState } from "./governor-state.js";
 import { initGovernorLedger } from "./governor-ledger.js";
@@ -195,8 +196,7 @@ function zeroConvergence() {
 export async function runLoop(args, options = {}) {
   const parsed = parseLoopArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   const env = options.env ?? process.env;
@@ -208,10 +208,11 @@ export async function runLoop(args, options = {}) {
   try {
     governorState = (options.openGovernorState ?? openGovernorState)();
   } catch (error) {
-    console.error(
-      `Loop refuses to start: governor state cannot be loaded: ${error instanceof Error ? error.message : String(error)}`,
+    return reportCliFailure(
+      parsed.json,
+      `Loop refuses to start: governor state cannot be loaded: ${describeCliError(error)}`,
+      3,
     );
-    return 3;
   }
 
   const eventLedger = (options.initEventLedger ?? initEventLedger)();
@@ -469,8 +470,7 @@ export async function runLoop(args, options = {}) {
     }
     return 0;
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   } finally {
     governorState.close();
     eventLedger.close();

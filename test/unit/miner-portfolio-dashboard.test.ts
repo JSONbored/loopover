@@ -86,5 +86,13 @@ describe("runPortfolioDashboard (#4287)", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(runPortfolioDashboard(["--bad"], { initPortfolioQueue: () => store })).toBe(2);
     expect(String(err.mock.calls[0]?.[0])).toContain("Unknown option");
+    log.mockClear();
+    err.mockClear();
+    expect(runPortfolioDashboard(["--bad", "--json"], { initPortfolioQueue: () => store })).toBe(2);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      ok: false,
+      error: expect.stringContaining("Unknown option"),
+    });
+    expect(err).not.toHaveBeenCalled();
   });
 });

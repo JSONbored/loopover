@@ -2,6 +2,7 @@
  * `buildFeasibilityVerdict` composer. Purely local — no network, no filesystem — so it never needs the
  * npm-registry update check other subcommands opt into. */
 import { buildFeasibilityVerdict } from "@jsonbored/gittensory-engine";
+import { argsWantJson, reportCliFailure } from "./cli-error.js";
 
 const CLAIM_STATUSES = ["unclaimed", "claimed", "solved", "unknown"];
 const DUPLICATE_CLUSTER_RISKS = ["none", "low", "medium", "high"];
@@ -59,8 +60,7 @@ export function parseFeasibilityArgs(args) {
 export function runFeasibilityCli(args, options = {}) {
   const parsed = parseFeasibilityArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   const buildVerdict = options.buildFeasibilityVerdict ?? buildFeasibilityVerdict;

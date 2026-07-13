@@ -6,6 +6,7 @@ import { buildCalibrationReport } from "./calibration.js";
 import { initEventLedger, resolveEventLedgerDbPath } from "./event-ledger.js";
 import { MINER_PR_OUTCOME_EVENT } from "./pr-outcome.js";
 import { initPredictionLedger, resolvePredictionLedgerDbPath } from "./prediction-ledger.js";
+import { reportCliFailure } from "./cli-error.js";
 
 const CALIBRATION_USAGE = "Usage: gittensory-miner calibration [--json]";
 
@@ -67,8 +68,7 @@ export function runCalibrationCli(args = [], env = process.env) {
   const json = args.includes("--json");
   const unknown = args.find((token) => token.startsWith("-") && token !== "--json");
   if (unknown) {
-    console.error(`Unknown option: ${unknown}. ${CALIBRATION_USAGE}`);
-    return 1;
+    return reportCliFailure(json, `Unknown option: ${unknown}. ${CALIBRATION_USAGE}`, 1);
   }
 
   const predictionStore = initPredictionLedger(resolvePredictionLedgerDbPath(env));

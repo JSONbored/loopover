@@ -1,4 +1,5 @@
 import { evaluateDenyHooks } from "./deny-hooks.js";
+import { argsWantJson, reportCliFailure } from "./cli-error.js";
 
 const DENY_CHECK_USAGE =
   "Usage: gittensory-miner hooks check --tool <name> --input <json> [--json]";
@@ -59,8 +60,7 @@ export function parseDenyCheckArgs(args) {
 export function runDenyCheck(args) {
   const parsed = parseDenyCheckArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   const verdict = evaluateDenyHooks({ name: parsed.tool, input: parsed.input });

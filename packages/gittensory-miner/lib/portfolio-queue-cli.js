@@ -1,6 +1,7 @@
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
 import { initPortfolioQueueManager } from "./portfolio-queue-manager.js";
 import { runPortfolioDashboard } from "./portfolio-dashboard.js";
+import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const QUEUE_LIST_USAGE = "Usage: gittensory-miner queue list [--repo <owner/repo>] [--json]";
 const QUEUE_NEXT_USAGE = "Usage: gittensory-miner queue next [--json]";
@@ -156,8 +157,7 @@ function withPortfolioQueue(options, run) {
 export function runQueueList(args, options = {}) {
   const parsed = parseQueueListArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   try {
@@ -171,16 +171,14 @@ export function runQueueList(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   }
 }
 
 export function runQueueNext(args, options = {}) {
   const parsed = parseQueueNextArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   try {
@@ -194,24 +192,21 @@ export function runQueueNext(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   }
 }
 
 export function runQueueDone(args, options = {}) {
   const parsed = parseQueueDoneArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   try {
     return withPortfolioQueue(options, (portfolioQueue) => {
       const entry = portfolioQueue.markDone(parsed.repoFullName, parsed.identifier);
       if (!entry) {
-        console.error("queue_entry_not_found");
-        return 2;
+        return reportCliFailure(parsed.json, "queue_entry_not_found");
       }
       if (parsed.json) {
         console.log(JSON.stringify({ entry }, null, 2));
@@ -221,8 +216,7 @@ export function runQueueDone(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   }
 }
 
@@ -231,16 +225,14 @@ export function runQueueDone(args, options = {}) {
 export function runQueueRelease(args, options = {}) {
   const parsed = parseQueueReleaseArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   try {
     return withPortfolioQueue(options, (portfolioQueue) => {
       const entry = portfolioQueue.reclaimStuckItem(parsed.repoFullName, parsed.identifier);
       if (!entry) {
-        console.error("queue_entry_not_in_progress");
-        return 2;
+        return reportCliFailure(parsed.json, "queue_entry_not_in_progress");
       }
       if (parsed.json) {
         console.log(JSON.stringify({ entry }, null, 2));
@@ -250,8 +242,7 @@ export function runQueueRelease(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   }
 }
 
@@ -261,16 +252,14 @@ export function runQueueRelease(args, options = {}) {
 export function runQueueRequeue(args, options = {}) {
   const parsed = parseQueueRequeueArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   try {
     return withPortfolioQueue(options, (portfolioQueue) => {
       const entry = portfolioQueue.requeueItem(parsed.repoFullName, parsed.identifier);
       if (!entry) {
-        console.error("queue_entry_not_requeuable");
-        return 2;
+        return reportCliFailure(parsed.json, "queue_entry_not_requeuable");
       }
       if (parsed.json) {
         console.log(JSON.stringify({ entry }, null, 2));
@@ -280,8 +269,7 @@ export function runQueueRequeue(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   }
 }
 
@@ -313,8 +301,7 @@ export function parseQueueClaimBatchArgs(args) {
 export function runQueueClaimBatch(args, options = {}) {
   const parsed = parseQueueClaimBatchArgs(args);
   if ("error" in parsed) {
-    console.error(parsed.error);
-    return 2;
+    return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   // Open the manager INSIDE the try so a store open failure returns 2 instead of crashing; the finally guards the
@@ -333,8 +320,7 @@ export function runQueueClaimBatch(args, options = {}) {
     }
     return 0;
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    return 2;
+    return reportCliFailure(parsed.json, describeCliError(error));
   } finally {
     if (ownsManager) manager?.close();
   }
@@ -348,6 +334,5 @@ export function runQueueCli(subcommand, args, options = {}) {
   if (subcommand === "requeue") return runQueueRequeue(args, options);
   if (subcommand === "claim-batch") return runQueueClaimBatch(args, options);
   if (subcommand === "dashboard") return runPortfolioDashboard(args, options);
-  console.error(`Unknown queue subcommand: ${subcommand ?? ""}. ${QUEUE_LIST_USAGE}`);
-  return 2;
+  return reportCliFailure(argsWantJson(args), `Unknown queue subcommand: ${subcommand ?? ""}. ${QUEUE_LIST_USAGE}`);
 }

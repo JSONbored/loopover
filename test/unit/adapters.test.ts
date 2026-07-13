@@ -206,7 +206,7 @@ describe("small adapters and normalizers", () => {
     // (invisible via structured logs, only found through this metric).
     await fetchPublicContributorProfile("dev", { GITHUB_PUBLIC_TOKEN: "public-token" });
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_github_rest_rate_limit_responses_total{key_scope="public"');
-    expect(metrics).not.toContain('gittensory_github_rest_rate_limit_responses_total{key_scope="unknown"');
+    expect(metrics).toContain('loopover_github_rest_rate_limit_responses_total{key_scope="public"');
+    expect(metrics).not.toContain('loopover_github_rest_rate_limit_responses_total{key_scope="unknown"');
   });
 });

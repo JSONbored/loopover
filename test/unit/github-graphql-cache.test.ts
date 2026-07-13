@@ -232,7 +232,7 @@ describe("fetchCachedGitHubGraphQl", () => {
     await fetchCachedGitHubGraphQl(MUTABLE_QUERY, "token-a");
 
     expect(fetches).toBe(2);
-    expect(await renderMetrics()).toContain('gittensory_github_graphql_cache_total{class="sensitive",result="bypassed"}');
+    expect(await renderMetrics()).toContain('loopover_github_graphql_cache_total{class="sensitive",result="bypassed"}');
   });
 
   it("does not cache non-200 GraphQL responses", async () => {
@@ -256,7 +256,7 @@ describe("fetchCachedGitHubGraphQl", () => {
 
     expect(fetches).toBe(2);
     expect(store.size).toBe(0);
-    expect(await renderMetrics()).not.toContain('gittensory_github_graphql_cache_total{class="repo_totals",result="set"}');
+    expect(await renderMetrics()).not.toContain('loopover_github_graphql_cache_total{class="repo_totals",result="set"}');
   });
 
   it("treats cached GraphQL error envelopes as a miss on replay", async () => {
@@ -295,7 +295,7 @@ describe("fetchCachedGitHubGraphQl", () => {
     const response = await fetchCachedGitHubGraphQl(TOTALS_QUERY, "token-a");
     expect(response.ok).toBe(true);
     expect(fetches).toBe(1);
-    expect(await renderMetrics()).toContain('gittensory_github_graphql_cache_total{class="repo_totals",result="error"}');
+    expect(await renderMetrics()).toContain('loopover_github_graphql_cache_total{class="repo_totals",result="error"}');
   });
 
   it("fail-opens on cache read errors and still fetches upstream", async () => {
@@ -314,7 +314,7 @@ describe("fetchCachedGitHubGraphQl", () => {
     const response = await fetchCachedGitHubGraphQl(TOTALS_QUERY, "token-a");
     expect(response.ok).toBe(true);
     expect(fetches).toBe(1);
-    expect(await renderMetrics()).toContain('gittensory_github_graphql_cache_total{class="repo_totals",result="error"}');
+    expect(await renderMetrics()).toContain('loopover_github_graphql_cache_total{class="repo_totals",result="error"}');
   });
 
   it("treats malformed cached payloads as a miss", async () => {
@@ -374,7 +374,7 @@ describe("fetchCachedGitHubGraphQl", () => {
     expect(second.ok).toBe(true);
     expect(fetches).toBe(2);
     expect(setCalls).toBeGreaterThanOrEqual(2);
-    expect(await renderMetrics()).toContain('gittensory_github_graphql_cache_total{class="repo_totals",result="coalesced"}');
+    expect(await renderMetrics()).toContain('loopover_github_graphql_cache_total{class="repo_totals",result="coalesced"}');
   });
 
   it("surfaces upstream fetch failures from the cache path", async () => {
@@ -410,7 +410,7 @@ describe("fetchCachedGitHubGraphQl", () => {
     await fetchCachedGitHubGraphQl(TOTALS_QUERY, "token-a");
 
     expect(fetches).toBe(2);
-    expect(await renderMetrics()).toContain('gittensory_github_graphql_cache_total{class="repo_totals",result="bypassed"}');
+    expect(await renderMetrics()).toContain('loopover_github_graphql_cache_total{class="repo_totals",result="bypassed"}');
   });
 });
 

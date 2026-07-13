@@ -1189,7 +1189,7 @@ describe("createPgQueue (durable #977)", () => {
       expect(claimSql[0]).toContain("foreground_lane='backlog'");
       expect(sequenceAllocations).toBeGreaterThan(0);
       expect(repoRecorded).toBe("owner/repo");
-      expect(await renderMetrics()).toContain('gittensory_jobs_claimed_by_lane_total{lane="backlog"} 1');
+      expect(await renderMetrics()).toContain('loopover_jobs_claimed_by_lane_total{lane="backlog"} 1');
     });
 
     it("falls through to the plain unscoped foreground claim when the backlog lane has no pending candidates", async () => {
@@ -1229,7 +1229,7 @@ describe("createPgQueue (durable #977)", () => {
       expect(claimSql[0]).not.toContain("foreground_lane");
       // The unscoped fallback claim is not lane-scoped, so it must never record a lane-claim increment
       // (#selfhost-lane-observability).
-      expect(await renderMetrics()).not.toContain("gittensory_jobs_claimed_by_lane_total");
+      expect(await renderMetrics()).not.toContain("loopover_jobs_claimed_by_lane_total");
     });
 
     it("does not let a lower-priority classified lane starve a higher-priority manual regate", async () => {
@@ -1280,7 +1280,7 @@ describe("createPgQueue (durable #977)", () => {
       expect(claimSql[0]).toContain("foreground_lane='backlog'");
       expect(claimSql[0]).toContain("candidate.priority > $2");
       expect(claimSql[1]).not.toContain("foreground_lane");
-      expect(await renderMetrics()).not.toContain("gittensory_jobs_claimed_by_lane_total");
+      expect(await renderMetrics()).not.toContain("loopover_jobs_claimed_by_lane_total");
     });
 
     it("records the fresh-intake lane-claim counter on a successful fresh-lane claim (#selfhost-lane-observability)", async () => {
@@ -1307,7 +1307,7 @@ describe("createPgQueue (durable #977)", () => {
       await q.drain();
 
       expect(seen).toEqual(["github-webhook"]);
-      expect(await renderMetrics()).toContain('gittensory_jobs_claimed_by_lane_total{lane="fresh"} 1');
+      expect(await renderMetrics()).toContain('loopover_jobs_claimed_by_lane_total{lane="fresh"} 1');
     });
 
     it("allocates the claim sequence atomically via UPDATE ... RETURNING, not a separate SELECT-then-UPDATE (#selfhost-backlog-convergence review)", async () => {
@@ -1729,9 +1729,9 @@ describe("createPgQueue (durable #977)", () => {
       );
       expect(m.pool.query).toHaveBeenCalledWith(
         expect.stringContaining("INSERT INTO _selfhost_job_stats"),
-        ["gittensory_jobs_rate_limit_deferred_total", 1],
+        ["loopover_jobs_rate_limit_deferred_total", 1],
       );
-      expect(await renderMetrics()).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="agent-regate-pr",key_scope="installation",kind="background"} 1');
+      expect(await renderMetrics()).toContain('loopover_jobs_rate_limit_admission_deferred_total{job_type="agent-regate-pr",key_scope="installation",kind="background"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -1801,7 +1801,7 @@ describe("createPgQueue (durable #977)", () => {
         expect.stringContaining("SET status='pending', run_after=GREATEST"),
         [Date.parse("2026-06-24T12:10:15.000Z"), "github rate-limit background admission", "background"],
       );
-      expect(await renderMetrics()).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="agent-regate-sweep",key_scope="public",kind="background"} 1');
+      expect(await renderMetrics()).toContain('loopover_jobs_rate_limit_admission_deferred_total{job_type="agent-regate-sweep",key_scope="public",kind="background"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -1858,9 +1858,9 @@ describe("createPgQueue (durable #977)", () => {
       );
       expect(m.pool.query).toHaveBeenCalledWith(
         expect.stringContaining("INSERT INTO _selfhost_job_stats"),
-        ["gittensory_jobs_rate_limit_deferred_total", 1],
+        ["loopover_jobs_rate_limit_deferred_total", 1],
       );
-      expect(await renderMetrics()).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
+      expect(await renderMetrics()).toContain('loopover_jobs_rate_limit_admission_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -2039,7 +2039,7 @@ describe("createPgQueue (durable #977)", () => {
       expect(warned).not.toHaveBeenCalled();
       expect(m.pool.query).not.toHaveBeenCalledWith(
         expect.stringContaining("INSERT INTO _selfhost_job_stats"),
-        ["gittensory_jobs_rate_limit_deferred_total", 1],
+        ["loopover_jobs_rate_limit_deferred_total", 1],
       );
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
@@ -2106,7 +2106,7 @@ describe("createPgQueue (durable #977)", () => {
         expect.stringContaining("SET status='pending', run_after=$1, last_error=NULL"),
         expect.arrayContaining(["2"]),
       );
-      expect(await renderMetrics()).toContain("gittensory_jobs_dead_letter_revived_total 2");
+      expect(await renderMetrics()).toContain("loopover_jobs_dead_letter_revived_total 2");
     });
 
     it("is a no-op (and records nothing) when no dead job is under the ceiling", async () => {
@@ -2117,7 +2117,7 @@ describe("createPgQueue (durable #977)", () => {
       const revived = await q.reviveDeadLetterJobs();
 
       expect(revived).toBe(0);
-      expect(await renderMetrics()).not.toContain("gittensory_jobs_dead_letter_revived_total");
+      expect(await renderMetrics()).not.toContain("loopover_jobs_dead_letter_revived_total");
     });
 
     // REGRESSION (#2581 review defect): the SELECT is a stale snapshot. Without an "AND status='dead'" re-check on
@@ -2155,7 +2155,7 @@ describe("createPgQueue (durable #977)", () => {
         ),
         expect.arrayContaining(["2"]),
       );
-      expect(await renderMetrics()).toContain("gittensory_jobs_dead_letter_revived_total 1");
+      expect(await renderMetrics()).toContain("loopover_jobs_dead_letter_revived_total 1");
     });
 
     // REGRESSION (#2581 review defect): the revive interval had no error handler of its own, so a thrown
@@ -2268,7 +2268,7 @@ describe("createPgQueue (durable #977)", () => {
         expect.stringContaining("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1"),
         expect.arrayContaining(["fg-1"]),
       );
-      expect(await renderMetrics()).toContain("gittensory_jobs_foreground_liveness_released_total 1");
+      expect(await renderMetrics()).toContain("loopover_jobs_foreground_liveness_released_total 1");
     });
 
     // Isolates the AGE condition from the OR'd rate-limit-clear condition: the default candidate payload
@@ -2304,7 +2304,7 @@ describe("createPgQueue (durable #977)", () => {
         expect.stringContaining("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1"),
         expect.arrayContaining(["fg-fresh"]),
       );
-      expect(await renderMetrics()).not.toContain("gittensory_jobs_foreground_liveness_released_total");
+      expect(await renderMetrics()).not.toContain("loopover_jobs_foreground_liveness_released_total");
     });
 
     it("caches foreground-liveness admission reads for candidates sharing the same rate-limit target", async () => {
@@ -2360,7 +2360,7 @@ describe("createPgQueue (durable #977)", () => {
       const released = await q.releaseStaleForegroundDeferrals();
 
       expect(released).toBe(1);
-      expect(await renderMetrics()).toContain("gittensory_jobs_foreground_liveness_released_total 1");
+      expect(await renderMetrics()).toContain("loopover_jobs_foreground_liveness_released_total 1");
     });
 
     // The payload is unparseable -- isRateLimitAdmissionNowClear's own catch(){ return false } branch -- so ONLY
@@ -2411,7 +2411,7 @@ describe("createPgQueue (durable #977)", () => {
         expect.stringContaining("SELECT id, payload, created_at FROM _selfhost_jobs WHERE status='pending' AND priority>=$1 AND run_after>$2"),
         expect.anything(),
       );
-      expect(await renderMetrics()).not.toContain("gittensory_jobs_foreground_liveness_released_total");
+      expect(await renderMetrics()).not.toContain("loopover_jobs_foreground_liveness_released_total");
     });
 
     // REGRESSION (#selfhost-queue-liveness): the production incident this module exists to make structurally
@@ -2444,7 +2444,7 @@ describe("createPgQueue (durable #977)", () => {
         );
       }
       // Exactly one aggregate increment of 3, not three separate increments of 1.
-      expect(await renderMetrics()).toContain("gittensory_jobs_foreground_liveness_released_total 3");
+      expect(await renderMetrics()).toContain("loopover_jobs_foreground_liveness_released_total 3");
     });
 
     // Ramp-up cap (#selfhost-queue-liveness): a large inherited backlog (the production incident had ~190
@@ -2493,7 +2493,7 @@ describe("createPgQueue (durable #977)", () => {
           expect.arrayContaining([id]),
         );
       }
-      expect(await renderMetrics()).toContain("gittensory_jobs_foreground_liveness_released_total 2");
+      expect(await renderMetrics()).toContain("loopover_jobs_foreground_liveness_released_total 2");
       delete process.env.FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP;
     });
 
@@ -2639,7 +2639,7 @@ describe("createPgQueue (durable #977)", () => {
       const released = await q.releaseStaleForegroundDeferrals();
 
       expect(released).toBe(0); // null ?? 0 -- no metric recorded, no crash
-      expect(await renderMetrics()).not.toContain("gittensory_jobs_foreground_liveness_released_total");
+      expect(await renderMetrics()).not.toContain("loopover_jobs_foreground_liveness_released_total");
     });
   });
 
@@ -2707,7 +2707,7 @@ describe("createPgQueue (durable #977)", () => {
       [2, "openai api rate limit exceeded", expect.any(Number), "1"],
     );
     expect(m.pool.query).not.toHaveBeenCalledWith(
-      expect.stringContaining("gittensory_jobs_rate_limited_total"),
+      expect.stringContaining("loopover_jobs_rate_limited_total"),
       expect.anything(),
     );
   });
@@ -2742,7 +2742,7 @@ describe("createPgQueue (durable #977)", () => {
       expect.stringContaining("DELETE FROM _selfhost_jobs WHERE id=$1"),
       ["2"],
     );
-    expect(await renderMetrics()).toContain('gittensory_jobs_rate_limited_by_type_total{job_type="refresh-registry",key_scope="unknown",kind="unknown"} 1');
+    expect(await renderMetrics()).toContain('loopover_jobs_rate_limited_by_type_total{job_type="refresh-registry",key_scope="unknown",kind="unknown"} 1');
   });
 
   it("defers matching GitHub-budget jobs and coalesces a keyed rate-limit retry into the pending duplicate", async () => {
@@ -2843,8 +2843,8 @@ describe("createPgQueue (durable #977)", () => {
         expect.arrayContaining([expect.stringContaining('"deliveryId":"after-rate-limit"'), expect.any(Number)]),
       );
       const metrics = await renderMetrics();
-      expect(metrics).toContain('gittensory_jobs_rate_limit_budget_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
-      expect(metrics).toContain('gittensory_jobs_rate_limited_by_type_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
+      expect(metrics).toContain('loopover_jobs_rate_limit_budget_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
+      expect(metrics).toContain('loopover_jobs_rate_limited_by_type_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_STARTUP_JITTER_MS;
       else process.env.QUEUE_STARTUP_JITTER_MS = oldJitter;
@@ -3161,14 +3161,14 @@ describe("createPgQueue (durable #977)", () => {
     await q.init();
     m.fn.mockResolvedValueOnce({
       rows: [
-        { name: "gittensory_jobs_processed_total", value: "42" },
-        { name: "gittensory_jobs_dead_total", value: null },
+        { name: "loopover_jobs_processed_total", value: "42" },
+        { name: "loopover_jobs_dead_total", value: null },
       ],
       rowCount: 2,
     });
     await expect(q.stats()).resolves.toEqual({
-      gittensory_jobs_processed_total: 42,
-      gittensory_jobs_dead_total: 0,
+      loopover_jobs_processed_total: 42,
+      loopover_jobs_dead_total: 0,
     });
   });
 
@@ -3230,7 +3230,7 @@ describe("createPgQueue (durable #977)", () => {
         expect.arrayContaining([expect.stringContaining("live_pending_high")]),
       );
       expect(await renderMetrics()).toContain(
-        'gittensory_jobs_maintenance_admission_deferred_by_reason_total{job_type="build-contributor-evidence",reason="live_pending_high"} 1',
+        'loopover_jobs_maintenance_admission_deferred_by_reason_total{job_type="build-contributor-evidence",reason="live_pending_high"} 1',
       );
     });
 
@@ -3299,7 +3299,7 @@ describe("createPgQueue (durable #977)", () => {
       await q.drain();
       expect(started).not.toContain("build-contributor-evidence");
       expect(await renderMetrics()).toContain(
-        'gittensory_jobs_maintenance_admission_deferred_by_reason_total{job_type="build-contributor-evidence",reason="backlog_convergence_high"} 1',
+        'loopover_jobs_maintenance_admission_deferred_by_reason_total{job_type="build-contributor-evidence",reason="backlog_convergence_high"} 1',
       );
     });
 
@@ -3332,7 +3332,7 @@ describe("createPgQueue (durable #977)", () => {
         await q.drain();
         expect(started).toEqual(["build-contributor-evidence"]);
         expect(await renderMetrics()).toContain(
-          'gittensory_jobs_maintenance_admission_granted_under_pressure_total{job_type="build-contributor-evidence",reason="maintenance_pending_high_drain"} 1',
+          'loopover_jobs_maintenance_admission_granted_under_pressure_total{job_type="build-contributor-evidence",reason="maintenance_pending_high_drain"} 1',
         );
       } finally {
         if (oldEnv === undefined) delete process.env.MAINTENANCE_ADMISSION_DRAIN_AGE_MS;
@@ -3390,8 +3390,8 @@ describe("createPgQueue (durable #977)", () => {
         await q.drain();
         expect(started).toEqual(["build-contributor-evidence"]);
         const metrics = await renderMetrics();
-        expect(metrics).toContain('gittensory_jobs_maintenance_trickle_admitted_by_type_total{job_type="build-contributor-evidence"} 1');
-        expect(metrics).toContain('gittensory_jobs_maintenance_admission_granted_under_pressure_total{job_type="build-contributor-evidence",reason="trickle_max_defer_age"} 1');
+        expect(metrics).toContain('loopover_jobs_maintenance_trickle_admitted_by_type_total{job_type="build-contributor-evidence"} 1');
+        expect(metrics).toContain('loopover_jobs_maintenance_admission_granted_under_pressure_total{job_type="build-contributor-evidence",reason="trickle_max_defer_age"} 1');
       } finally {
         if (oldEnv === undefined) delete process.env.MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS;
         else process.env.MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS = oldEnv;
@@ -3406,7 +3406,7 @@ describe("createPgQueue (durable #977)", () => {
       const q = createPgQueue(m.pool, async (j) => void started.push(typeOf(j)));
       await q.drain();
       expect(started).toEqual(["build-contributor-evidence"]);
-      expect(await renderMetrics()).not.toContain("gittensory_jobs_maintenance_admission_granted_under_pressure_total");
+      expect(await renderMetrics()).not.toContain("loopover_jobs_maintenance_admission_granted_under_pressure_total");
     });
 
     it("pressureSignals() surfaces the live, maintenance, backlog-convergence, and fresh-intake aggregate reads", async () => {
@@ -3506,7 +3506,7 @@ describe("createPgQueue (durable #977)", () => {
           expect.arrayContaining([expect.stringContaining("installation concurrency admission deferred: concurrency_high")]),
         );
         expect(await renderMetrics()).toContain(
-          'gittensory_jobs_installation_concurrency_deferred_by_reason_total{job_type="backfill-repo-segment",reason="concurrency_high"} 1',
+          'loopover_jobs_installation_concurrency_deferred_by_reason_total{job_type="backfill-repo-segment",reason="concurrency_high"} 1',
         );
       } finally {
         release();
@@ -3560,7 +3560,7 @@ describe("createPgQueue (durable #977)", () => {
           expect.arrayContaining([expect.stringContaining("installation concurrency admission deferred: concurrency_high")]),
         );
         expect(await renderMetrics()).toContain(
-          'gittensory_jobs_installation_concurrency_deferred_by_reason_total{job_type="agent-regate-sweep",reason="concurrency_high"} 1',
+          'loopover_jobs_installation_concurrency_deferred_by_reason_total{job_type="agent-regate-sweep",reason="concurrency_high"} 1',
         );
       } finally {
         release();

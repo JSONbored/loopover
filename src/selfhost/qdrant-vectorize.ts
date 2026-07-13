@@ -105,10 +105,10 @@ export function createQdrantVectorize(url: string, collection = DEFAULT_COLLECTI
         body: JSON.stringify({ points }),
       });
       if (!res.ok) {
-        incr("gittensory_qdrant_errors_total", { op: "upsert" });
+        incr("loopover_qdrant_errors_total", { op: "upsert" });
         throw new Error(`Qdrant upsert failed: HTTP ${res.status}`);
       }
-      incr("gittensory_qdrant_upserts_total", {}, vectors.length);
+      incr("loopover_qdrant_upserts_total", {}, vectors.length);
       return { count: vectors.length, ids: vectors.map((v) => v.id) };
     },
 
@@ -126,14 +126,14 @@ export function createQdrantVectorize(url: string, collection = DEFAULT_COLLECTI
         });
       } catch {
         // Qdrant unreachable — degrade gracefully (RAG returns no context rather than crashing)
-        incr("gittensory_qdrant_errors_total", { op: "query" });
+        incr("loopover_qdrant_errors_total", { op: "query" });
         return { matches: [] };
       }
       if (!res.ok) {
-        incr("gittensory_qdrant_errors_total", { op: "query" });
+        incr("loopover_qdrant_errors_total", { op: "query" });
         return { matches: [] };
       }
-      incr("gittensory_qdrant_queries_total");
+      incr("loopover_qdrant_queries_total");
       const data = (await res.json()) as QdrantSearchResult;
       const matches: Match[] = data.result.map((r) => {
         const { _orig_id, namespace: _ns, ...rest } = r.payload;
@@ -152,7 +152,7 @@ export function createQdrantVectorize(url: string, collection = DEFAULT_COLLECTI
         body: JSON.stringify({ points }),
       });
       if (!res.ok) {
-        incr("gittensory_qdrant_errors_total", { op: "delete" });
+        incr("loopover_qdrant_errors_total", { op: "delete" });
         throw new Error(`Qdrant deleteByIds failed: HTTP ${res.status}`);
       }
       return { count: ids.length };

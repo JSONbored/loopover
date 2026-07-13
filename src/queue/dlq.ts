@@ -4,8 +4,8 @@ import { incr } from "../selfhost/metrics";
 import { githubRateLimitAdmissionKeyForJob } from "../selfhost/queue-common";
 import type { JobMessage, JsonValue } from "../types";
 
-const DLQ_DEAD_LETTERED_METRIC = "gittensory_dlq_dead_lettered_total";
-const DLQ_REDRIVEN_METRIC = "gittensory_dlq_redriven_total";
+const DLQ_DEAD_LETTERED_METRIC = "loopover_dlq_dead_lettered_total";
+const DLQ_REDRIVEN_METRIC = "loopover_dlq_redriven_total";
 
 /**
  * DLQ consumer for both `gittensory-jobs-dlq` (maintenance lane) and `gittensory-webhooks-dlq` (the

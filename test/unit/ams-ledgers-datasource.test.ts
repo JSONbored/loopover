@@ -54,6 +54,6 @@ describe("AMS ledger Grafana datasources (#5184)", () => {
       expect(existingUids.has(ds.uid)).toBe(false);
     }
     // the maintainer LoopoverDB datasource still exists — this change added a file, it did not edit one
-    expect(existingUids.has("gittensory-db")).toBe(true);
+    expect(existingUids.has("loopover-db")).toBe(true);
   });
 });

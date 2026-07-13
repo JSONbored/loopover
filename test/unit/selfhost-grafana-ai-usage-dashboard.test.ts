@@ -106,7 +106,7 @@ afterEach(() => {
   for (const dir of tmpRoots.splice(0)) rmSync(dir, { force: true, recursive: true });
 });
 
-describe("Gittensory - AI usage dashboard (Phase B2 consolidation)", () => {
+describe("Loopover - AI usage dashboard (Phase B2 consolidation)", () => {
   it("replaces the 3 old AI-usage dashboards, not just adds a 4th", () => {
     const files = readdirSync(dashboardsDir);
     expect(files).toContain("ai-usage.json");
@@ -179,12 +179,12 @@ describe("Gittensory - AI usage dashboard (Phase B2 consolidation)", () => {
   it("carries over the exact Prometheus expressions from the removed dashboards, byte-for-byte (no copy-paste drift)", () => {
     const targets = readDashboard().panels.flatMap((panel) => panel.targets ?? []);
     // From gittensory.json's removed "AI Usage & Cost" row.
-    expect(targets.some((t) => t.expr === "sum by (provider) (gittensory_ai_cost_usd_total) or vector(0)")).toBe(true);
-    expect(targets.some((t) => t.expr === "sum by (provider) ((rate(gittensory_ai_input_tokens_total[5m]) + rate(gittensory_ai_output_tokens_total[5m])) * 60)")).toBe(true);
-    expect(targets.some((t) => t.expr === "sum by (model, effort) (increase(gittensory_ai_requests_total[1h]))")).toBe(true);
-    expect(targets.some((t) => t.expr === "sum by (primary, fallback) (increase(gittensory_ai_review_model_fallback_total[1h]))")).toBe(true);
+    expect(targets.some((t) => t.expr === "sum by (provider) (loopover_ai_cost_usd_total) or vector(0)")).toBe(true);
+    expect(targets.some((t) => t.expr === "sum by (provider) ((rate(loopover_ai_input_tokens_total[5m]) + rate(loopover_ai_output_tokens_total[5m])) * 60)")).toBe(true);
+    expect(targets.some((t) => t.expr === "sum by (model, effort) (increase(loopover_ai_requests_total[1h]))")).toBe(true);
+    expect(targets.some((t) => t.expr === "sum by (primary, fallback) (increase(loopover_ai_review_model_fallback_total[1h]))")).toBe(true);
     // From codex-usage.json.
-    expect(targets.some((t) => t.expr === "sum by (model, effort) (increase(gittensory_ai_requests_total{provider=\"codex\"}[$__rate_interval]))")).toBe(true);
+    expect(targets.some((t) => t.expr === "sum by (model, effort) (increase(loopover_ai_requests_total{provider=\"codex\"}[$__rate_interval]))")).toBe(true);
     // From claude-usage.json's OTEL section (uses $claudeModel, not $model, to stay independent of the durable-log filters).
     expect(targets.some((t) => t.expr === "sum(last_over_time(claude_code_cost_usage_USD_total{model=~\"$claudeModel\"}[$__range]))")).toBe(true);
   });

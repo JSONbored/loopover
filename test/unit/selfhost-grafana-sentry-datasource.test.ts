@@ -102,9 +102,9 @@ describe("Grafana Sentry data source (#5369)", () => {
 
   it("declares the expected uid/title/tags and a $DS_SENTRY datasource-type template variable", () => {
     const dashboard = readDashboard();
-    expect(dashboard.uid).toBe("gittensory-sentry");
-    expect(dashboard.title).toBe("Gittensory — Sentry issues");
-    expect(dashboard.tags).toEqual(["gittensory", "sentry", "observability"]);
+    expect(dashboard.uid).toBe("loopover-sentry");
+    expect(dashboard.title).toBe("LoopOver — Sentry issues");
+    expect(dashboard.tags).toEqual(["loopover", "sentry", "observability"]);
   });
 
   it("every panel uses the grafana-sentry-datasource type and the ${DS_SENTRY} variable, never a hardcoded uid", () => {
@@ -133,6 +133,6 @@ describe("Grafana Sentry data source (#5369)", () => {
     };
     expect(hub.links.some((l) => l.title === "Sentry — errors")).toBe(true);
     const markdown = hub.panels.map((p) => p.options?.content ?? "").join("\n");
-    expect(markdown).toContain("/d/gittensory-sentry");
+    expect(markdown).toContain("/d/loopover-sentry");
   });
 });

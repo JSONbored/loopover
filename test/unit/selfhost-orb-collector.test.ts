@@ -186,7 +186,7 @@ describe("exportOrbBatch() — always-on; reads review_audit, ships anonymized r
     await audit(db, "o/r", 1, "gate_decision", "merge", "2026-01-01T00:00:00Z");
     await audit(db, "o/r", 1, "pr_outcome", "merged", "2026-01-01T01:00:00Z");
     expect(await exportOrbBatch(db, 200, async () => new Response(null, { status: 503 }))).toBe(0);
-    expect(await renderMetrics()).toContain("gittensory_orb_export_errors_total");
+    expect(await renderMetrics()).toContain("loopover_orb_export_errors_total");
   });
 
   it("returns 0 + increments error counter when the collector is unreachable", async () => {
@@ -194,7 +194,7 @@ describe("exportOrbBatch() — always-on; reads review_audit, ships anonymized r
     await audit(db, "o/r", 1, "gate_decision", "merge", "2026-01-01T00:00:00Z");
     await audit(db, "o/r", 1, "pr_outcome", "merged", "2026-01-01T01:00:00Z");
     expect(await exportOrbBatch(db, 200, async () => { throw new Error("ECONNREFUSED"); })).toBe(0);
-    expect(await renderMetrics()).toContain("gittensory_orb_export_errors_total");
+    expect(await renderMetrics()).toContain("loopover_orb_export_errors_total");
   });
 
   it("signs the batch and respects batchSize", async () => {

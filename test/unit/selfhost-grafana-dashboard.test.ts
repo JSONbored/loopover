@@ -88,19 +88,19 @@ afterEach(() => {
   for (const dir of tmpRoots.splice(0)) rmSync(dir, { force: true, recursive: true });
 });
 
-describe("Gittensory Self-Host Grafana dashboard", () => {
+describe("Loopover Self-Host Grafana dashboard", () => {
   it("surfaces the GitHub response cache Prometheus counters", () => {
     const dashboard = readDashboard(selfhostDashboardPath);
     const targets = dashboard.panels.flatMap((panel) => panel.targets ?? []);
 
-    expect(targets.some((target) => target.expr === "sum by (result) (rate(gittensory_github_response_cache_total[5m]))")).toBe(true);
-    expect(targets.some((target) => target.expr === "sum by (class, result) (gittensory_github_response_cache_total)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (result) (rate(loopover_github_response_cache_total[5m]))")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (class, result) (loopover_github_response_cache_total)")).toBe(true);
     expect(targets.some((target) => target.legendFormat === "{{class}} {{result}}")).toBe(true);
-    expect(targets.some((target) => target.expr === "sum by (remaining_bucket, key_scope) (rate(gittensory_github_rest_rate_limit_observations_total[5m])) or vector(0)")).toBe(true);
-    expect(targets.some((target) => target.expr === "sum by (status, retry, key_scope) (rate(gittensory_github_rest_rate_limit_responses_total[5m])) or vector(0)")).toBe(true);
-    expect(targets.some((target) => target.expr === "sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_admission_deferred_total[5m])) or vector(0)")).toBe(true);
-    expect(targets.some((target) => target.expr === "sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_budget_deferred_total[5m])) or vector(0)")).toBe(true);
-    expect(targets.some((target) => target.expr === "sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limited_by_type_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (remaining_bucket, key_scope) (rate(loopover_github_rest_rate_limit_observations_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (status, retry, key_scope) (rate(loopover_github_rest_rate_limit_responses_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (kind, key_scope, job_type) (rate(loopover_jobs_rate_limit_admission_deferred_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (kind, key_scope, job_type) (rate(loopover_jobs_rate_limit_budget_deferred_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (kind, key_scope, job_type) (rate(loopover_jobs_rate_limited_by_type_total[5m])) or vector(0)")).toBe(true);
     // The AI request/fallback + cost/token panels moved to the consolidated grafana/dashboards/ai-usage.json
     // (Phase B2, 2026-07) — see test/unit/selfhost-grafana-ai-usage-dashboard.test.ts for their coverage there.
   });
@@ -122,19 +122,19 @@ describe("Gittensory Self-Host Grafana dashboard", () => {
     const dashboard = readDashboard(selfhostDashboardPath);
     const targets = dashboard.panels.flatMap((panel) => panel.targets ?? []);
 
-    expect(targets.some((target) => target.expr === "gittensory_orb_events_exported_total or vector(0)")).toBe(true);
-    expect(targets.some((target) => target.expr === "gittensory_orb_export_errors_total or vector(0)")).toBe(true);
-    expect(targets.some((target) => target.expr === "sum by (result) (rate(gittensory_orb_webhook_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "loopover_orb_events_exported_total or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "loopover_orb_export_errors_total or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (result) (rate(loopover_orb_webhook_total[5m])) or vector(0)")).toBe(true);
   });
 
-  it("no longer references gittensory_orb_events_recorded_total / gittensory_orb_installs_total, retired with the per-instance Orb App in #1256 but never cleaned out of the dashboard (2026-07 fix)", () => {
+  it("no longer references loopover_orb_events_recorded_total / loopover_orb_installs_total, retired with the per-instance Orb App in #1256 but never cleaned out of the dashboard (2026-07 fix)", () => {
     const dashboard = readDashboard(selfhostDashboardPath);
     const targets = dashboard.panels.flatMap((panel) => panel.targets ?? []);
     const titles = dashboard.panels.map((panel) => panel.title);
 
     for (const target of targets) {
-      expect(target.expr ?? "").not.toContain("gittensory_orb_events_recorded_total");
-      expect(target.expr ?? "").not.toContain("gittensory_orb_installs_total");
+      expect(target.expr ?? "").not.toContain("loopover_orb_events_recorded_total");
+      expect(target.expr ?? "").not.toContain("loopover_orb_installs_total");
     }
     expect(titles).not.toContain("Orb Events Recorded");
     expect(titles).not.toContain("Orb Installations");
@@ -154,17 +154,17 @@ describe("Gittensory Self-Host Grafana dashboard", () => {
     const targets = dashboard.panels.flatMap((panel) => panel.targets ?? []);
     const alerts = readFileSync(selfhostAlertsPath, "utf8");
 
-    expect(targets.some((target) => target.expr === "gittensory_ai_review_onmerge_clamped_total or vector(0)")).toBe(true);
-    expect(alerts).toContain("alert: GittensoryAiReviewOnMergeFloorBypassAttempted");
-    expect(alerts).toContain("expr: increase(gittensory_ai_review_onmerge_clamped_total[1h]) > 0");
+    expect(targets.some((target) => target.expr === "loopover_ai_review_onmerge_clamped_total or vector(0)")).toBe(true);
+    expect(alerts).toContain("alert: LoopoverAiReviewOnMergeFloorBypassAttempted");
+    expect(alerts).toContain("expr: increase(loopover_ai_review_onmerge_clamped_total[1h]) > 0");
   });
 
   it("keeps rate-limit alerts grouped by the dashboard label dimensions", () => {
     const alerts = readFileSync(selfhostAlertsPath, "utf8");
 
-    expect(alerts).toContain("sum by (status, retry, key_scope) (rate(gittensory_github_rest_rate_limit_responses_total[5m])) > 0");
-    expect(alerts).toContain("sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_admission_deferred_total[5m])) > 0.05");
-    expect(alerts).toContain("sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_budget_deferred_total[5m])) > 0.05");
+    expect(alerts).toContain("sum by (status, retry, key_scope) (rate(loopover_github_rest_rate_limit_responses_total[5m])) > 0");
+    expect(alerts).toContain("sum by (kind, key_scope, job_type) (rate(loopover_jobs_rate_limit_admission_deferred_total[5m])) > 0.05");
+    expect(alerts).toContain("sum by (kind, key_scope, job_type) (rate(loopover_jobs_rate_limit_budget_deferred_total[5m])) > 0.05");
   });
 
   it("surfaces Postgres internals and backup freshness panels", () => {
@@ -182,28 +182,28 @@ describe("Gittensory Self-Host Grafana dashboard", () => {
     expect(targets.some((target) => target.expr === 'topk(10, pg_stat_user_tables_n_live_tup{datname="loopover"}) or vector(0)')).toBe(true);
     expect(targets.some((target) => target.expr === 'topk(10, pg_stat_user_tables_n_dead_tup{datname="loopover"}) or vector(0)')).toBe(true);
     expect(targets.some((target) => target.expr === 'sum by (relname) (increase(pg_stat_user_tables_autovacuum_count{datname="loopover"}[1h])) or vector(0)')).toBe(true);
-    expect(targets.some((target) => target.expr === 'gittensory_backup_files{target=~"postgres|sqlite|qdrant"} or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'loopover_backup_files{target=~"postgres|sqlite|qdrant"} or vector(0)')).toBe(true);
   });
 
   it("ships Postgres and backup alerts for the same dashboarded failure modes", () => {
     const alerts = readFileSync(selfhostAlertsPath, "utf8");
 
-    expect(alerts).toContain("alert: GittensoryPostgresConnectionPressure");
+    expect(alerts).toContain("alert: LoopoverPostgresConnectionPressure");
     expect(alerts).toContain('sum(pg_stat_activity_count{datname="loopover"})');
-    expect(alerts).toContain("alert: GittensoryPostgresLockWaits");
+    expect(alerts).toContain("alert: LoopoverPostgresLockWaits");
     expect(alerts).toContain('pg_stat_activity_count{datname="loopover", wait_event_type="Lock"}');
-    expect(alerts).toContain("alert: GittensoryPostgresSlowTransaction");
+    expect(alerts).toContain("alert: LoopoverPostgresSlowTransaction");
     expect(alerts).toContain('pg_stat_activity_max_tx_duration{datname="loopover"}');
-    expect(alerts).toContain("alert: GittensoryPostgresDeadlocks");
+    expect(alerts).toContain("alert: LoopoverPostgresDeadlocks");
     expect(alerts).toContain('pg_stat_database_deadlocks{datname="loopover"}');
-    expect(alerts).toContain("alert: GittensoryPostgresDatabaseGrowingFast");
+    expect(alerts).toContain("alert: LoopoverPostgresDatabaseGrowingFast");
     expect(alerts).toContain('deriv(pg_database_size_bytes{datname="loopover"}[6h]) > 262144');
-    expect(alerts).toContain("alert: GittensoryPostgresDeadTuplesHigh");
+    expect(alerts).toContain("alert: LoopoverPostgresDeadTuplesHigh");
     expect(alerts).toContain('pg_stat_user_tables_n_dead_tup{datname="loopover"}');
-    expect(alerts).toContain("alert: GittensoryBackupMissing");
-    expect(alerts).toContain('gittensory_backup_files{target=~"postgres|sqlite"} == 0');
-    expect(alerts).toContain("alert: GittensoryBackupStale");
-    expect(alerts).toContain('time() - gittensory_backup_latest_timestamp_seconds{target=~"postgres|sqlite"} > 93600');
+    expect(alerts).toContain("alert: LoopoverBackupMissing");
+    expect(alerts).toContain('loopover_backup_files{target=~"postgres|sqlite"} == 0');
+    expect(alerts).toContain("alert: LoopoverBackupStale");
+    expect(alerts).toContain('time() - loopover_backup_latest_timestamp_seconds{target=~"postgres|sqlite"} > 93600');
   });
 
   it("surfaces a Maintenance Admission Deferrals (total) panel alongside the by-reason breakdown", () => {
@@ -218,8 +218,8 @@ describe("Gittensory Self-Host Grafana dashboard", () => {
         "Maintenance Admission Deferrals (total)",
       ]),
     );
-    expect(targets.some((target) => target.expr === "sum by (reason, job_type) (rate(gittensory_jobs_maintenance_admission_deferred_by_reason_total[5m])) or vector(0)")).toBe(true);
-    expect(targets.some((target) => target.expr === "sum(rate(gittensory_jobs_maintenance_admission_deferred_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (reason, job_type) (rate(loopover_jobs_maintenance_admission_deferred_by_reason_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum(rate(loopover_jobs_maintenance_admission_deferred_total[5m])) or vector(0)")).toBe(true);
   });
 
   it("surfaces self-host runtime-drift signal panels, every counter query fleet-aggregated", () => {
@@ -241,25 +241,25 @@ describe("Gittensory Self-Host Grafana dashboard", () => {
     );
     // Every stat-panel counter is sum()-wrapped, matching its siblings -- a multi-instance self-host scrape
     // must render one fleet-level value per stat, not one value per target (gate finding, #chore-runtime-drift).
-    expect(targets.some((target) => target.expr === "sum(gittensory_jobs_maintenance_trickle_admitted_persisted_total) or vector(0)")).toBe(true);
-    expect(targets.some((target) => target.expr === 'sum(gittensory_orb_relay_register_total{result="failed"}) or vector(0)')).toBe(true);
-    expect(targets.some((target) => target.expr === 'sum(gittensory_installation_health_broker_probe_total{result="failed"}) or vector(0)')).toBe(true);
-    expect(targets.some((target) => target.expr === "sum(gittensory_agent_action_permission_denied_total) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum(loopover_jobs_maintenance_trickle_admitted_persisted_total) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === 'sum(loopover_orb_relay_register_total{result="failed"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'sum(loopover_installation_health_broker_probe_total{result="failed"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === "sum(loopover_agent_action_permission_denied_total) or vector(0)")).toBe(true);
     // Grouped (sum-by) queries must NOT have "or vector(0)": Prometheus's `or` unions result sets, and
     // vector(0) is a single unlabeled series that can't match the actionClass/mode,result label set --
     // that renders a bogus extra unlabeled zero-series alongside the real labeled series (gate finding).
-    expect(targets.some((target) => target.expr === "sum by (actionClass) (rate(gittensory_agent_action_permission_denied_total[5m]))")).toBe(true);
-    expect(targets.some((target) => target.expr === "sum by (actionClass) (rate(gittensory_agent_action_permission_denied_suppressed_total[5m]))")).toBe(true);
-    expect(targets.some((target) => target.expr === "sum by (mode, result) (rate(gittensory_orb_relay_register_total[5m]))")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (actionClass) (rate(loopover_agent_action_permission_denied_total[5m]))")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (actionClass) (rate(loopover_agent_action_permission_denied_suppressed_total[5m]))")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (mode, result) (rate(loopover_orb_relay_register_total[5m]))")).toBe(true);
     // #selfhost-runtime-drift follow-up: the streak-vs-drain-progress panel is the dashboard-visible
     // counterpart to isOrbRelayRegistrationAlerting's gate -- a lone registration timeout must not read as
     // a dashboard error on its own as long as the drain loop is still making progress.
-    expect(targets.some((target) => target.expr === "gittensory_orb_relay_register_consecutive_failures or vector(0)")).toBe(true);
-    expect(targets.some((target) => target.expr === "gittensory_orb_relay_drain_seconds_since_last or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "loopover_orb_relay_register_consecutive_failures or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "loopover_orb_relay_drain_seconds_since_last or vector(0)")).toBe(true);
 
     const alerts = readFileSync(selfhostAlertsPath, "utf8");
-    expect(alerts).toContain("alert: GittensoryOrbRelayRegistrationStuck");
-    expect(alerts).toContain("gittensory_orb_relay_register_consecutive_failures >= 3 or gittensory_orb_relay_drain_seconds_since_last > 1800");
+    expect(alerts).toContain("alert: LoopoverOrbRelayRegistrationStuck");
+    expect(alerts).toContain("loopover_orb_relay_register_consecutive_failures >= 3 or loopover_orb_relay_drain_seconds_since_last > 1800");
   });
 
   it("surfaces the backlog-vs-fresh-intake lane fairness panels (#selfhost-lane-observability)", () => {
@@ -277,12 +277,12 @@ describe("Gittensory Self-Host Grafana dashboard", () => {
         "Top Repos by Backlog Depth",
       ]),
     );
-    expect(targets.some((target) => target.expr === "gittensory_queue_backlog_convergence_pending")).toBe(true);
-    expect(targets.some((target) => target.expr === "gittensory_queue_fresh_intake_pending")).toBe(true);
-    expect(targets.some((target) => target.expr === "gittensory_github_rest_rate_limit_remaining")).toBe(true);
-    expect(targets.some((target) => target.legendFormat === "{{key_scope}}" && target.expr === "gittensory_github_rest_rate_limit_remaining")).toBe(true);
-    expect(targets.some((target) => target.expr === "sum by (lane) (rate(gittensory_jobs_claimed_by_lane_total[5m])) or vector(0)")).toBe(true);
-    expect(targets.some((target) => target.expr === "gittensory_queue_backlog_by_repo" && target.format === "table" && target.instant === true)).toBe(true);
+    expect(targets.some((target) => target.expr === "loopover_queue_backlog_convergence_pending")).toBe(true);
+    expect(targets.some((target) => target.expr === "loopover_queue_fresh_intake_pending")).toBe(true);
+    expect(targets.some((target) => target.expr === "loopover_github_rest_rate_limit_remaining")).toBe(true);
+    expect(targets.some((target) => target.legendFormat === "{{key_scope}}" && target.expr === "loopover_github_rest_rate_limit_remaining")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (lane) (rate(loopover_jobs_claimed_by_lane_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "loopover_queue_backlog_by_repo" && target.format === "table" && target.instant === true)).toBe(true);
   });
 });
 

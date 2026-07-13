@@ -246,10 +246,10 @@ export async function runOpsAlerts(env: Env): Promise<Record<string, string[]>> 
         // this module exists to catch fast (#orb-ci-stuck-repeat / #review-burst-blind-spot) -- rather than every
         // anomaly kind, so the counter stays a precise "stuck-CI/retry-storm" signal, not a catch-all.
         if (reviewBurst && reviewBurst.count >= REVIEW_BURST_THRESHOLD) {
-          incr("gittensory_ops_anomaly_total", { repo: repoFullName, kind: "review_burst" });
+          incr("loopover_ops_anomaly_total", { repo: repoFullName, kind: "review_burst" });
         }
         if (reviewFailureBurst && reviewFailureBurst.count >= REVIEW_FAILURE_BURST_THRESHOLD) {
-          incr("gittensory_ops_anomaly_total", { repo: repoFullName, kind: "review_failure_burst" });
+          incr("loopover_ops_anomaly_total", { repo: repoFullName, kind: "review_failure_burst" });
         }
       } catch (error) {
         console.error(JSON.stringify({ level: "error", event: "ops_anomaly_repo_error", repo: repoFullName, message: errorMessage(error).slice(0, 200) }));

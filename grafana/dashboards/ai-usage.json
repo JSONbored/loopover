@@ -1,7 +1,7 @@
 {
-  "uid": "gittensory-ai-usage",
-  "title": "Gittensory - AI usage",
-  "tags": ["gittensory", "ai"],
+  "uid": "loopover-ai-usage",
+  "title": "LoopOver - AI usage",
+  "tags": ["loopover", "ai"],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
@@ -14,7 +14,7 @@
         "name": "provider",
         "label": "Provider",
         "type": "query",
-        "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+        "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
         "query": { "queryType": "table", "queryText": "SELECT DISTINCT provider FROM ai_usage_events WHERE provider IS NOT NULL ORDER BY provider", "rawQueryText": "SELECT DISTINCT provider FROM ai_usage_events WHERE provider IS NOT NULL ORDER BY provider" },
         "includeAll": true,
         "allValue": "$__all",
@@ -27,7 +27,7 @@
         "name": "feature",
         "label": "Feature",
         "type": "query",
-        "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+        "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
         "query": { "queryType": "table", "queryText": "SELECT DISTINCT feature FROM ai_usage_events ORDER BY feature", "rawQueryText": "SELECT DISTINCT feature FROM ai_usage_events ORDER BY feature" },
         "includeAll": true,
         "allValue": "$__all",
@@ -40,7 +40,7 @@
         "name": "model",
         "label": "Model",
         "type": "query",
-        "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+        "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
         "query": {
           "queryType": "table",
           "queryText": "SELECT DISTINCT model FROM ai_usage_events WHERE (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) ORDER BY model",
@@ -85,7 +85,7 @@
       "title": "Total AI events",
       "description": "Every ai_usage_events row with a non-null provider (i.e. a real, attributed AI call) in the selected time range, filtered by Provider/Feature/Model.",
       "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
       "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "blue" } } },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "justifyMode": "center" },
       "targets": [
@@ -102,7 +102,7 @@
       "type": "stat",
       "title": "Total tokens",
       "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
       "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "purple" } } },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "justifyMode": "center" },
       "targets": [
@@ -119,7 +119,7 @@
       "type": "stat",
       "title": "Total cost",
       "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
       "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 4, "color": { "mode": "fixed", "fixedColor": "green" } } },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "justifyMode": "center" },
       "targets": [
@@ -137,7 +137,7 @@
       "title": "Events missing real usage",
       "description": "Completed AI calls (status='ok') with no real usage captured (no provider attribution, or every numeric field still at its zero default). Only scoped by Feature + time range — not by Provider/Model, since a NULL provider is exactly the kind of row this panel exists to surface, and filtering it out by provider would hide the very rows it's meant to catch. Excludes quota_exceeded/disabled/unavailable (no call was attempted) and ai_key_change (not an AI call).",
       "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
       "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "orange" } } },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "justifyMode": "center" },
       "targets": [
@@ -161,7 +161,7 @@
       "title": "Tokens by feature, over time",
       "description": "Stacked daily token totals per feature within the selected Provider/Model filter — a spike in one feature's stack is the signal to investigate.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
       "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 70, "lineWidth": 1, "stacking": { "mode": "normal" } } } },
       "options": { "legend": { "showLegend": true, "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [
@@ -180,7 +180,7 @@
       "type": "piechart",
       "title": "Cost share by feature",
       "gridPos": { "h": 8, "w": 6, "x": 12, "y": 7 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
       "fieldConfig": { "defaults": { "unit": "currencyUSD" } },
       "options": { "pieType": "donut", "legend": { "showLegend": true, "placement": "right", "values": ["percent", "value"] }, "reduceOptions": { "calcs": ["lastNotNull"] }, "displayLabels": ["percent"] },
       "targets": [
@@ -197,7 +197,7 @@
       "type": "piechart",
       "title": "Events by provider",
       "gridPos": { "h": 8, "w": 6, "x": 18, "y": 7 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
       "fieldConfig": { "defaults": { "unit": "short" } },
       "options": { "pieType": "donut", "legend": { "showLegend": true, "placement": "right", "values": ["percent", "value"] }, "reduceOptions": { "calcs": ["lastNotNull"] }, "displayLabels": ["percent"] },
       "targets": [
@@ -214,7 +214,7 @@
       "type": "table",
       "title": "Usage by provider + model + effort",
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 15 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
       "options": { "showHeader": true, "cellHeight": "sm", "sortBy": [{ "displayName": "events", "desc": true }] },
       "fieldConfig": { "defaults": { "custom": { "filterable": true } } },
       "targets": [
@@ -237,7 +237,7 @@
       "type": "table",
       "title": "Top repos by AI usage",
       "gridPos": { "h": 10, "w": 12, "x": 0, "y": 24 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
       "options": { "showHeader": true, "cellHeight": "sm", "sortBy": [{ "displayName": "events", "desc": true }] },
       "fieldConfig": { "defaults": { "custom": { "filterable": true } } },
       "targets": [
@@ -254,7 +254,7 @@
       "type": "table",
       "title": "Recent AI events",
       "gridPos": { "h": 10, "w": 12, "x": 12, "y": 24 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
       "options": { "showHeader": true, "cellHeight": "sm", "sortBy": [{ "displayName": "created_at", "desc": true }] },
       "fieldConfig": { "defaults": { "custom": { "filterable": true } } },
       "targets": [
@@ -276,12 +276,12 @@
       "id": 15,
       "type": "timeseries",
       "title": "Cumulative AI cost (USD) by provider",
-      "description": "gittensory's own monotonic cost counter (gittensory_ai_cost_usd_total) — continuously scraped, so it draws a clean cumulative line. Resets to 0 on a stack restart.",
+      "description": "loopover's own monotonic cost counter (loopover_ai_cost_usd_total) — continuously scraped, so it draws a clean cumulative line. Resets to 0 on a stack restart.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 35 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "currencyUSD", "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 } } },
       "options": { "legend": { "showLegend": true, "placement": "bottom" }, "tooltip": { "mode": "multi" } },
-      "targets": [{ "refId": "A", "expr": "sum by (provider) (gittensory_ai_cost_usd_total) or vector(0)", "legendFormat": "{{provider}}" }]
+      "targets": [{ "refId": "A", "expr": "sum by (provider) (loopover_ai_cost_usd_total) or vector(0)", "legendFormat": "{{provider}}" }]
     },
     {
       "id": 16,
@@ -294,7 +294,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (provider) ((rate(gittensory_ai_input_tokens_total[5m]) + rate(gittensory_ai_output_tokens_total[5m])) * 60)",
+          "expr": "sum by (provider) ((rate(loopover_ai_input_tokens_total[5m]) + rate(loopover_ai_output_tokens_total[5m])) * 60)",
           "legendFormat": "{{provider}}"
         }
       ]
@@ -308,8 +308,8 @@
       "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 } } },
       "options": { "legend": { "showLegend": true, "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
-        { "refId": "A", "expr": "sum by (model, effort) (increase(gittensory_ai_requests_total[1h]))", "legendFormat": "{{model}} · {{effort}}" },
-        { "refId": "B", "expr": "sum by (primary, fallback) (increase(gittensory_ai_review_model_fallback_total[1h]))", "legendFormat": "fallback {{primary}}→{{fallback}}" }
+        { "refId": "A", "expr": "sum by (model, effort) (increase(loopover_ai_requests_total[1h]))", "legendFormat": "{{model}} · {{effort}}" },
+        { "refId": "B", "expr": "sum by (primary, fallback) (increase(loopover_ai_review_model_fallback_total[1h]))", "legendFormat": "fallback {{primary}}→{{fallback}}" }
       ]
     },
     {
@@ -321,8 +321,8 @@
       "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2, "fillOpacity": 10 } } },
       "options": { "legend": { "showLegend": true, "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
-        { "refId": "A", "expr": "sum by (provider, kind) (gittensory_ai_input_tokens_total)", "legendFormat": "{{provider}} {{kind}} in" },
-        { "refId": "B", "expr": "sum by (provider, kind) (gittensory_ai_output_tokens_total)", "legendFormat": "{{provider}} {{kind}} out" }
+        { "refId": "A", "expr": "sum by (provider, kind) (loopover_ai_input_tokens_total)", "legendFormat": "{{provider}} {{kind}} in" },
+        { "refId": "B", "expr": "sum by (provider, kind) (loopover_ai_output_tokens_total)", "legendFormat": "{{provider}} {{kind}} out" }
       ]
     },
     {
@@ -337,7 +337,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (model, effort) (increase(gittensory_ai_requests_total{provider=\"codex\"}[$__rate_interval]))",
+          "expr": "sum by (model, effort) (increase(loopover_ai_requests_total{provider=\"codex\"}[$__rate_interval]))",
           "legendFormat": "{{model}} / {{effort}}"
         }
       ]
@@ -351,8 +351,8 @@
       "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 70, "lineWidth": 1, "stacking": { "mode": "normal" } } } },
       "options": { "legend": { "showLegend": true, "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [
-        { "refId": "A", "expr": "sum by (kind) (increase(gittensory_ai_input_tokens_total{provider=\"codex\"}[$__rate_interval]))", "legendFormat": "input {{kind}}" },
-        { "refId": "B", "expr": "sum by (kind) (increase(gittensory_ai_output_tokens_total{provider=\"codex\"}[$__rate_interval]))", "legendFormat": "output {{kind}}" }
+        { "refId": "A", "expr": "sum by (kind) (increase(loopover_ai_input_tokens_total{provider=\"codex\"}[$__rate_interval]))", "legendFormat": "input {{kind}}" },
+        { "refId": "B", "expr": "sum by (kind) (increase(loopover_ai_output_tokens_total{provider=\"codex\"}[$__rate_interval]))", "legendFormat": "output {{kind}}" }
       ]
     },
     {

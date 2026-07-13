@@ -79,7 +79,7 @@ describe("github webhook enqueue failure (#786)", () => {
     await expect(response.json()).resolves.toMatchObject({ error: "enqueue_failed" });
     const event = await getWebhookEvent(env, "enqueue-missing-binding-1");
     expect(event?.status).toBe("error");
-    expect(await renderMetrics()).toContain('gittensory_webhook_enqueue_total{action="opened",event="pull_request",result="enqueue_failed"} 1');
+    expect(await renderMetrics()).toContain('loopover_webhook_enqueue_total{action="opened",event="pull_request",result="enqueue_failed"} 1');
     // ERROR level so the central Sentry forwarder captures a missing-binding webhook ingest failure (#1824) --
     // previously this only moved a Prometheus counter, invisible without comparing dashboards.
     expect(
@@ -130,7 +130,7 @@ describe("github webhook enqueue failure (#786)", () => {
     // Flagged "error" so the dedup guard lets GitHub redeliver instead of suppressing it.
     const event = await getWebhookEvent(env, "enqueue-fail-1");
     expect(event?.status).toBe("error");
-    expect(await renderMetrics()).toContain('gittensory_webhook_enqueue_total{action="opened",event="pull_request",result="enqueue_failed"} 1');
+    expect(await renderMetrics()).toContain('loopover_webhook_enqueue_total{action="opened",event="pull_request",result="enqueue_failed"} 1');
     // ERROR level so the central Sentry forwarder captures a failing webhook enqueue (#1824). Never logs rawBody,
     // parsed payload, or repository metadata -- only the event kind + the thrown error's message.
     expect(
@@ -257,7 +257,7 @@ describe("github webhook dedup (#789)", () => {
     expect(response.status).toBe(202);
     await expect(response.json()).resolves.toMatchObject({ status: "duplicate" });
     expect(sendCount).toBe(0); // not re-enqueued
-    expect(await renderMetrics()).toContain('gittensory_webhook_enqueue_total{action="opened",event="pull_request",result="duplicate"} 1');
+    expect(await renderMetrics()).toContain('loopover_webhook_enqueue_total{action="opened",event="pull_request",result="duplicate"} 1');
   });
 });
 
@@ -281,8 +281,8 @@ describe("github webhook queue isolation (#audit-webhook-queue)", () => {
     ).resolves.toBe("queued");
 
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_webhook_enqueue_total{action="none",event="pull_request",result="invalid_json"} 1');
-    expect(metrics).toContain('gittensory_webhook_enqueue_total{action="other",event="other",result="queued"} 1');
+    expect(metrics).toContain('loopover_webhook_enqueue_total{action="none",event="pull_request",result="invalid_json"} 1');
+    expect(metrics).toContain('loopover_webhook_enqueue_total{action="other",event="other",result="queued"} 1');
   });
 
   it("REGRESSION (#zero-trace-webhook-loss): an unparseable delivery still gets a durable webhook_events row instead of vanishing with no trace", async () => {
@@ -327,7 +327,7 @@ describe("github webhook queue isolation (#audit-webhook-queue)", () => {
     expect(response.status).toBe(410);
     await expect(response.json()).resolves.toMatchObject({ error: "selfhost_review_runtime_required" });
     expect(webhookSends).toBe(0);
-    expect(await renderMetrics()).toContain('gittensory_webhook_enqueue_total{action="none",event="pull_request",result="review_unavailable"} 1');
+    expect(await renderMetrics()).toContain('loopover_webhook_enqueue_total{action="none",event="pull_request",result="review_unavailable"} 1');
   });
 
   it("INVARIANT: a valid webhook is enqueued onto the dedicated WEBHOOKS lane, never the shared JOBS queue", async () => {
@@ -362,7 +362,7 @@ describe("github webhook queue isolation (#audit-webhook-queue)", () => {
     await expect(response.json()).resolves.toMatchObject({ status: "queued" });
     expect(webhookSends).toBe(1); // routed to the dedicated webhook lane
     expect(jobsSends).toBe(0); // never the shared maintenance queue
-    expect(await renderMetrics()).toContain('gittensory_webhook_enqueue_total{action="opened",event="pull_request",result="queued"} 1');
+    expect(await renderMetrics()).toContain('loopover_webhook_enqueue_total{action="opened",event="pull_request",result="queued"} 1');
   });
 
   it("copies the internal self-host traceparent onto queued webhook jobs", async () => {
@@ -438,7 +438,7 @@ describe("github webhook queue isolation (#audit-webhook-queue)", () => {
     expect(webhookSends).toBe(0);
     const event = await getWebhookEvent(env, "self-comment-ignore-1");
     expect(event?.status).toBe("processed");
-    expect(await renderMetrics()).toContain('gittensory_webhook_enqueue_total{action="edited",event="issue_comment",result="ignored"} 1');
+    expect(await renderMetrics()).toContain('loopover_webhook_enqueue_total{action="edited",event="issue_comment",result="ignored"} 1');
   });
 
   it("drops self-authored app CI completion webhooks before they add queue pressure", async () => {

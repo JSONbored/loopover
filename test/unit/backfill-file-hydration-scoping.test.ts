@@ -451,11 +451,11 @@ describe("GitHub PR file hydration scoping (#audit-rate-headroom)", () => {
     await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "recent_merged_pull_requests", mode: "light" });
 
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_github_pull_request_files_fetch_total{caller="backfill_open_pr_details"} 1');
-    expect(metrics).toContain('gittensory_github_pull_request_files_fetch_total{caller="live_review"} 1');
-    expect(metrics).toContain('gittensory_github_pull_request_files_fetch_total{caller="backfill_merged_history"} 1');
+    expect(metrics).toContain('loopover_github_pull_request_files_fetch_total{caller="backfill_open_pr_details"} 1');
+    expect(metrics).toContain('loopover_github_pull_request_files_fetch_total{caller="live_review"} 1');
+    expect(metrics).toContain('loopover_github_pull_request_files_fetch_total{caller="backfill_merged_history"} 1');
     // Bounded: only the 3 known caller values appear, never a per-PR-number label.
-    const callerLines = metrics.split("\n").filter((line) => line.startsWith("gittensory_github_pull_request_files_fetch_total{"));
+    const callerLines = metrics.split("\n").filter((line) => line.startsWith("loopover_github_pull_request_files_fetch_total{"));
     expect(callerLines).toHaveLength(3);
   });
 

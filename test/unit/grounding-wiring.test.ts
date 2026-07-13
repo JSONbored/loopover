@@ -428,8 +428,8 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
       expect(second).toBe("export const v = 1;");
 
       const rendered = await renderMetrics();
-      expect(rendered).toContain("gittensory_grounding_cache_hit_total 1");
-      expect(rendered).not.toContain("gittensory_grounding_cache_miss_total");
+      expect(rendered).toContain("loopover_grounding_cache_hit_total 1");
+      expect(rendered).not.toContain("loopover_grounding_cache_miss_total");
       const hitEvent = await auditEvent(env, "github_app.grounding_cache_hit", "acme/telemetry");
       expect(hitEvent?.outcome).toBe("completed");
       expect(await auditEvent(env, "github_app.grounding_cache_miss", "acme/telemetry")).toBeUndefined();
@@ -444,8 +444,8 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
       expect(first).toBe("export const v = 1;");
 
       const rendered = await renderMetrics();
-      expect(rendered).toContain("gittensory_grounding_cache_miss_total 1");
-      expect(rendered).not.toContain("gittensory_grounding_cache_hit_total");
+      expect(rendered).toContain("loopover_grounding_cache_miss_total 1");
+      expect(rendered).not.toContain("loopover_grounding_cache_hit_total");
       const missEvent = await auditEvent(env, "github_app.grounding_cache_miss", "acme/telemetry");
       expect(missEvent?.outcome).toBe("completed");
       expect(await auditEvent(env, "github_app.grounding_cache_hit", "acme/telemetry")).toBeUndefined();

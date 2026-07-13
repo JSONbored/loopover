@@ -110,7 +110,7 @@ docker compose --profile postgres --profile observability --profile backup up -d
         Check sync health with <code>chronyc sources</code> (or <code>ntpq -p</code> on an{" "}
         <code>ntpd</code> host) — every configured source should show a nonzero <code>Reach</code>{" "}
         value; <code>Reach: 0</code> means that source has never successfully synced. The{" "}
-        <code>gittensory_clock_skew_seconds</code> gauge on the <strong>Clock Sync (NTP)</strong>{" "}
+        <code>loopover_clock_skew_seconds</code> gauge on the <strong>Clock Sync (NTP)</strong>{" "}
         row of the main Grafana dashboard tracks the live drift between this process and GitHub's
         server time, sampled from the <code>Date</code> header of the GitHub App's own
         installation-token mint calls — no extra network probe required. The bundled Prometheus
@@ -650,7 +650,7 @@ SENTRY_RELEASE=gittensory-selfhost@2026.07.05
               </td>
               <td className="py-2 align-top text-muted-foreground">
                 Check Grafana dead-job panel, <code>/metrics</code>{" "}
-                <code>gittensory_jobs_dead_total</code>, queue logs; replay from DLQ dashboard only
+                <code>loopover_jobs_dead_total</code>, queue logs; replay from DLQ dashboard only
                 after fixing root cause
               </td>
             </tr>

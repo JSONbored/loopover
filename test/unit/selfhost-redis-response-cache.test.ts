@@ -33,7 +33,7 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
       await createRedisResponseCache(fakeRedis().redis).get(URL_A),
     ).toBeNull();
     expect(await renderMetrics()).toContain(
-      'gittensory_redis_gh_response_cache_total{result="miss"} 1',
+      'loopover_redis_gh_response_cache_total{result="miss"} 1',
     );
   });
 
@@ -63,10 +63,10 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
     });
     const metrics = await renderMetrics();
     expect(metrics).toContain(
-      'gittensory_redis_gh_response_cache_total{result="set"} 1',
+      'loopover_redis_gh_response_cache_total{result="set"} 1',
     );
     expect(metrics).toContain(
-      'gittensory_redis_gh_response_cache_total{result="hit"} 1',
+      'loopover_redis_gh_response_cache_total{result="hit"} 1',
     );
   });
 
@@ -127,7 +127,7 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
     f.store.set("gh:resp:" + URL_A, "{nope");
     expect(await createRedisResponseCache(f.redis).get(URL_A)).toBeNull();
     expect(await renderMetrics()).toContain(
-      'gittensory_redis_gh_response_cache_total{result="miss"} 1',
+      'loopover_redis_gh_response_cache_total{result="miss"} 1',
     );
   });
 
@@ -136,7 +136,7 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
     f.store.set("gh:resp:" + URL_A, JSON.stringify({ status: "200", body: 1 }));
     expect(await createRedisResponseCache(f.redis).get(URL_A)).toBeNull();
     expect(await renderMetrics()).toContain(
-      'gittensory_redis_gh_response_cache_total{result="miss"} 1',
+      'loopover_redis_gh_response_cache_total{result="miss"} 1',
     );
   });
 
@@ -206,7 +206,7 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
       contentType: "application/json",
     });
     expect(await renderMetrics()).toContain(
-      'gittensory_redis_gh_response_cache_total{result="hit"} 1',
+      'loopover_redis_gh_response_cache_total{result="hit"} 1',
     );
   });
 
@@ -221,7 +221,7 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
       "redis read failed",
     );
     expect(await renderMetrics()).toContain(
-      'gittensory_redis_gh_response_cache_total{result="error"} 1',
+      'loopover_redis_gh_response_cache_total{result="error"} 1',
     );
   });
 
@@ -244,14 +244,14 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
       ),
     ).rejects.toThrow("redis write failed");
     expect(await renderMetrics()).toContain(
-      'gittensory_redis_gh_response_cache_total{result="error"} 1',
+      'loopover_redis_gh_response_cache_total{result="error"} 1',
     );
   });
 
   it("registers a scrape-time hit-ratio gauge when the cache is constructed (#2090)", async () => {
-    incr("gittensory_redis_gh_response_cache_total", { result: "hit" }, 3);
-    incr("gittensory_redis_gh_response_cache_total", { result: "miss" }, 1);
+    incr("loopover_redis_gh_response_cache_total", { result: "hit" }, 3);
+    incr("loopover_redis_gh_response_cache_total", { result: "miss" }, 1);
     createRedisResponseCache(fakeRedis().redis);
-    expect(await renderMetrics()).toContain("gittensory_redis_gh_response_cache_hit_ratio 0.75");
+    expect(await renderMetrics()).toContain("loopover_redis_gh_response_cache_hit_ratio 0.75");
   });
 });

@@ -1060,7 +1060,7 @@ async function runWorkersOpinion(
   const models = fallback && fallback !== primary ? [primary, fallback] : [primary];
   for (const [modelIndex, model] of models.entries()) {
     if (modelIndex > 0) {
-      incr("gittensory_ai_review_model_fallback_total", { primary, fallback: model });
+      incr("loopover_ai_review_model_fallback_total", { primary, fallback: model });
     }
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
@@ -1804,7 +1804,7 @@ async function runDualAiTieBreakJudgeCall(
   const models = fallback && fallback !== model ? [model, fallback] : [model];
   for (const [modelIndex, activeModel] of models.entries()) {
     if (modelIndex > 0) {
-      incr("gittensory_ai_review_model_fallback_total", { primary: model, fallback: activeModel });
+      incr("loopover_ai_review_model_fallback_total", { primary: model, fallback: activeModel });
     }
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
@@ -2075,7 +2075,7 @@ export async function runGittensoryAiReview(
   // switching to `combine: "single"` either (a floor of "either ONE of two reviewers can flag it" is just as
   // bypassed by dropping to one reviewer as by flipping onMerge itself). resolveEffectiveAiReviewPlan enforces
   // the clamp across all three fields together; a fired clamp increments a metric so it is surfaced, not
-  // silently ignored (mirrors the gittensory_ai_review_inconclusive_total pattern below).
+  // silently ignored (mirrors the loopover_ai_review_inconclusive_total pattern below).
   const plan = env.AI_REVIEW_PLAN;
   const planResolution = resolveEffectiveAiReviewPlan(
     { combine: input.combine, onMerge: input.onMerge, reviewers: input.reviewers },
@@ -2100,7 +2100,7 @@ export async function runGittensoryAiReview(
   const combine: CombineStrategy = planResolution.combine ?? "consensus";
   const onMerge = planResolution.onMerge;
   if (planResolution.clamped) {
-    incr("gittensory_ai_review_onmerge_clamped_total", { mode: input.mode });
+    incr("loopover_ai_review_onmerge_clamped_total", { mode: input.mode });
   }
   const dual = combine !== "single" && (!configured || configured.length > 1);
   const freeAiCalls =
@@ -2278,7 +2278,7 @@ export async function runGittensoryAiReview(
           correlation: aiRunCorrelation,
         });
         if (tieBreak.orderUnstable) {
-          incr("gittensory_ai_review_tiebreak_order_unstable_total", { mode: input.mode });
+          incr("loopover_ai_review_tiebreak_order_unstable_total", { mode: input.mode });
           console.warn(
             JSON.stringify({
               level: "warn",
@@ -2334,7 +2334,7 @@ export async function runGittensoryAiReview(
   // review call -- increment exactly once here, never at the downstream consumers in queue/processors.ts that
   // push an `ai_review_inconclusive` advisory finding off this same already-computed result (incrementing there
   // too would double/triple-count one review).
-  if (inconclusive) incr("gittensory_ai_review_inconclusive_total", { mode: input.mode });
+  if (inconclusive) incr("loopover_ai_review_inconclusive_total", { mode: input.mode });
   const advisoryNotes =
     reviewsForNotes.length > 0
       ? (composeAdvisoryNotes(reviewsForNotes) ?? composeFallbackAdvisoryNotes(fallbackNotes))

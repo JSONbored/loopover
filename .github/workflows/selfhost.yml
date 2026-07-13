@@ -140,6 +140,6 @@ jobs:
           if [ "$ok" != "1" ]; then echo "::error::container did not become healthy"; docker logs gt; exit 1; fi
           curl -sf http://127.0.0.1:8787/health  | grep -q '"status":"ok"'
           curl -sf http://127.0.0.1:8787/ready   | grep -q '"ok":true'
-          curl -sf http://127.0.0.1:8787/metrics | grep -q 'gittensory_uptime_seconds'
+          curl -sf http://127.0.0.1:8787/metrics | grep -q 'loopover_uptime_seconds'
           docker logs gt 2>&1 | grep -q 'selfhost_migrations_applied'
           echo "self-host smoke test passed"

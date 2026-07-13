@@ -151,7 +151,7 @@ export async function makeGithubFileFetcher(env: Env, repoFullName: string, inst
       if (cached !== null) {
         // #4448: mirrors repo-culture-profile's #4509 cache hit/miss instrumentation exactly -- one of the six
         // AI-touching capabilities that had no reuse-rate signal at all before this.
-        incr("gittensory_grounding_cache_hit_total");
+        incr("loopover_grounding_cache_hit_total");
         await recordAuditEvent(env, {
           eventType: "github_app.grounding_cache_hit",
           targetKey: repoFullName,
@@ -161,7 +161,7 @@ export async function makeGithubFileFetcher(env: Env, repoFullName: string, inst
         }).catch(() => undefined);
         return cached;
       }
-      incr("gittensory_grounding_cache_miss_total");
+      incr("loopover_grounding_cache_miss_total");
       await recordAuditEvent(env, {
         eventType: "github_app.grounding_cache_miss",
         targetKey: repoFullName,

@@ -85,7 +85,7 @@ describe("self-host observability trace config", () => {
 
     expect(script).toContain("http://otel-collector:4318/v1/traces");
     expect(script).toContain("http://tempo:3200/api/traces/");
-    expect(script).toContain("gittensory-selfhost-smoke");
+    expect(script).toContain("loopover-selfhost-smoke");
     expect(script).toContain("selfhost.observability.smoke");
   });
 
@@ -98,8 +98,8 @@ describe("self-host observability trace config", () => {
     expect(script).toContain("http://otel-collector:4318/v1/metrics");
     expect(script).toContain("http://otel-collector:8889/metrics");
     expect(script).toContain("http://localhost:8787/metrics");
-    expect(script).toContain("gittensory-selfhost-smoke");
-    expect(script).toContain("# HELP gittensory_uptime_seconds");
+    expect(script).toContain("loopover-selfhost-smoke");
+    expect(script).toContain("# HELP loopover_uptime_seconds");
 
     const packageJson = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8"));
     expect(packageJson.scripts["test:smoke:observability:metrics"]).toBe(
@@ -138,7 +138,7 @@ describe("self-host observability trace config", () => {
     ]);
     expect(backupExporter.healthcheck?.test).toEqual([
       "CMD-SHELL",
-      "wget -qO- http://127.0.0.1:9101/metrics | grep -q '^gittensory_backup_latest_timestamp_seconds'",
+      "wget -qO- http://127.0.0.1:9101/metrics | grep -q '^loopover_backup_latest_timestamp_seconds'",
     ]);
 
     expect(scrapeConfigs).toEqual(

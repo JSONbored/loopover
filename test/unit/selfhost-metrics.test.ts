@@ -62,20 +62,20 @@ describe("metrics registry (#982)", () => {
 
   it("resetMetrics preserves seeded metadata for built-in metrics", async () => {
     resetMetrics();
-    incr("gittensory_jobs_processed_total");
+    incr("loopover_jobs_processed_total");
 
     expect(await renderMetrics()).toBe(
-      "# HELP gittensory_jobs_processed_total Durable queue jobs processed successfully.\n# TYPE gittensory_jobs_processed_total counter\ngittensory_jobs_processed_total 1\n",
+      "# HELP loopover_jobs_processed_total Durable queue jobs processed successfully.\n# TYPE loopover_jobs_processed_total counter\nloopover_jobs_processed_total 1\n",
     );
   });
 
-  it("renders gittensory_backup_acknowledged with seeded metadata (#2089)", async () => {
-    gauge("gittensory_backup_acknowledged", () =>
+  it("renders loopover_backup_acknowledged with seeded metadata (#2089)", async () => {
+    gauge("loopover_backup_acknowledged", () =>
       backupAcknowledgedGaugeValue({ usingSqlite: true, backupAcknowledged: false }),
     );
 
     expect(await renderMetrics()).toBe(
-      "# HELP gittensory_backup_acknowledged 1 when SQLite backup is acknowledged or Postgres is in use; 0 when the boot backup advisory would fire.\n# TYPE gittensory_backup_acknowledged gauge\ngittensory_backup_acknowledged 0\n",
+      "# HELP loopover_backup_acknowledged 1 when SQLite backup is acknowledged or Postgres is in use; 0 when the boot backup advisory would fire.\n# TYPE loopover_backup_acknowledged gauge\nloopover_backup_acknowledged 0\n",
     );
   });
 
@@ -96,37 +96,37 @@ describe("metrics registry (#982)", () => {
   });
 
   it("redacts private repository labels from public review counters", async () => {
-    incr("gittensory_reviews_published_total", { repo: "private-owner/secret-repo" });
+    incr("loopover_reviews_published_total", { repo: "private-owner/secret-repo" });
 
     const out = await renderMetrics();
-    expect(out).toContain("gittensory_reviews_published_total 1");
+    expect(out).toContain("loopover_reviews_published_total 1");
     expect(out).not.toContain("private-owner/secret-repo");
     expect(out).not.toContain('repo="');
   });
 
   it("keeps non-sensitive gate labels after redacting the repository", async () => {
-    incr("gittensory_gate_decisions_total", {
+    incr("loopover_gate_decisions_total", {
       repo: "private-owner/secret-repo",
       conclusion: "success",
     });
 
     const out = await renderMetrics();
-    expect(out).toContain('gittensory_gate_decisions_total{conclusion="success"} 1');
+    expect(out).toContain('loopover_gate_decisions_total{conclusion="success"} 1');
     expect(out).not.toContain("private-owner/secret-repo");
     expect(out).not.toContain('repo="');
   });
 
   it("keeps sensitive metric labels when no repository label is present", async () => {
-    incr("gittensory_gate_decisions_total", { conclusion: "hold" });
+    incr("loopover_gate_decisions_total", { conclusion: "hold" });
 
-    expect(await renderMetrics()).toContain('gittensory_gate_decisions_total{conclusion="hold"} 1');
+    expect(await renderMetrics()).toContain('loopover_gate_decisions_total{conclusion="hold"} 1');
   });
 
   it("redacts the repository label from the ops anomaly counter but keeps the kind label (#ops-anomaly-metric)", async () => {
-    incr("gittensory_ops_anomaly_total", { repo: "private-owner/secret-repo", kind: "review_burst" });
+    incr("loopover_ops_anomaly_total", { repo: "private-owner/secret-repo", kind: "review_burst" });
 
     const out = await renderMetrics();
-    expect(out).toContain('gittensory_ops_anomaly_total{kind="review_burst"} 1');
+    expect(out).toContain('loopover_ops_anomaly_total{kind="review_burst"} 1');
     expect(out).not.toContain("private-owner/secret-repo");
     expect(out).not.toContain('repo="');
   });
@@ -141,31 +141,31 @@ describe("metrics registry (#982)", () => {
   // redacting `repo` from these counters so an operator can actually slice their OWN dashboards by repo.
   it("setSelfHostedMetricsMode(true) stops redacting the repo label on the cloud-private counters", async () => {
     setSelfHostedMetricsMode(true);
-    incr("gittensory_gate_decisions_total", { repo: "owner/repo", conclusion: "success" });
-    incr("gittensory_reviews_published_total", { repo: "owner/repo" });
-    incr("gittensory_ops_anomaly_total", { repo: "owner/repo", kind: "review_burst" });
+    incr("loopover_gate_decisions_total", { repo: "owner/repo", conclusion: "success" });
+    incr("loopover_reviews_published_total", { repo: "owner/repo" });
+    incr("loopover_ops_anomaly_total", { repo: "owner/repo", kind: "review_burst" });
 
     const out = await renderMetrics();
-    expect(out).toContain('gittensory_gate_decisions_total{conclusion="success",repo="owner/repo"} 1');
-    expect(out).toContain('gittensory_reviews_published_total{repo="owner/repo"} 1');
-    expect(out).toContain('gittensory_ops_anomaly_total{kind="review_burst",repo="owner/repo"} 1');
+    expect(out).toContain('loopover_gate_decisions_total{conclusion="success",repo="owner/repo"} 1');
+    expect(out).toContain('loopover_reviews_published_total{repo="owner/repo"} 1');
+    expect(out).toContain('loopover_ops_anomaly_total{kind="review_burst",repo="owner/repo"} 1');
     expect(out).toContain('repo="owner/repo"');
   });
 
   it("setSelfHostedMetricsMode(false) (the default) still redacts — byte-identical to the cloud worker", async () => {
     setSelfHostedMetricsMode(false);
-    incr("gittensory_agent_disposition_total", { repo: "owner/repo", action_class: "hold", blocker_class: "none", autonomy_level: "auto" });
+    incr("loopover_agent_disposition_total", { repo: "owner/repo", action_class: "hold", blocker_class: "none", autonomy_level: "auto" });
 
     const out = await renderMetrics();
     expect(out).not.toContain("owner/repo");
     expect(out).toContain(
-      'gittensory_agent_disposition_total{action_class="hold",autonomy_level="auto",blocker_class="none",repo="redacted-1"} 1',
+      'loopover_agent_disposition_total{action_class="hold",autonomy_level="auto",blocker_class="none",repo="redacted-1"} 1',
     );
   });
 
   it("keeps agent disposition repository labels redacted in self-hosted metrics mode", async () => {
     setSelfHostedMetricsMode(true);
-    incr("gittensory_agent_disposition_total", {
+    incr("loopover_agent_disposition_total", {
       repo: "private-owner/secret-repo",
       action_class: "hold",
       blocker_class: "manifest_blocked",
@@ -174,7 +174,7 @@ describe("metrics registry (#982)", () => {
 
     const out = await renderMetrics();
     expect(out).toContain(
-      'gittensory_agent_disposition_total{action_class="hold",autonomy_level="auto",blocker_class="manifest_blocked",repo="redacted-1"} 1',
+      'loopover_agent_disposition_total{action_class="hold",autonomy_level="auto",blocker_class="manifest_blocked",repo="redacted-1"} 1',
     );
     expect(out).not.toContain("private-owner/secret-repo");
   });
@@ -212,43 +212,43 @@ describe("gaugeVector (#selfhost-lane-observability)", () => {
   });
 
   it("redacts repository labels from the public backlog-by-repo gauge vector", async () => {
-    gaugeVector("gittensory_queue_backlog_by_repo", () => [
+    gaugeVector("loopover_queue_backlog_by_repo", () => [
       { labels: { rank: "1", repo: "private-owner/secret-repo" }, value: 3 },
       { labels: { rank: "2", repo: "other-org/confidential" }, value: 1 },
     ]);
 
     const out = await renderMetrics();
-    expect(out).toContain('gittensory_queue_backlog_by_repo{rank="1",repo="redacted-1"} 3');
-    expect(out).toContain('gittensory_queue_backlog_by_repo{rank="2",repo="redacted-2"} 1');
+    expect(out).toContain('loopover_queue_backlog_by_repo{rank="1",repo="redacted-1"} 3');
+    expect(out).toContain('loopover_queue_backlog_by_repo{rank="2",repo="redacted-2"} 1');
     resetMetrics();
-    gaugeVector("gittensory_queue_backlog_by_repo", () => [
+    gaugeVector("loopover_queue_backlog_by_repo", () => [
       { labels: { repo: "private-owner/secret-repo" }, value: 4 },
     ]);
-    expect(await renderMetrics()).toContain('gittensory_queue_backlog_by_repo{repo="redacted-1"} 4');
+    expect(await renderMetrics()).toContain('loopover_queue_backlog_by_repo{repo="redacted-1"} 4');
     expect(out).not.toContain("private-owner/secret-repo");
     expect(out).not.toContain("other-org/confidential");
   });
 
   it("keeps backlog-by-repo redacted even in self-hosted metrics mode", async () => {
     setSelfHostedMetricsMode(true);
-    gaugeVector("gittensory_queue_backlog_by_repo", () => [
+    gaugeVector("loopover_queue_backlog_by_repo", () => [
       { labels: { rank: "1", repo: "owner/repo" }, value: 2 },
     ]);
 
     const out = await renderMetrics();
-    expect(out).toContain('gittensory_queue_backlog_by_repo{rank="1",repo="redacted-1"} 2');
+    expect(out).toContain('loopover_queue_backlog_by_repo{rank="1",repo="redacted-1"} 2');
     expect(out).not.toContain("owner/repo");
   });
 
   it("reuses the same redacted label for a repo across repeated scrapes, without resetting", async () => {
-    gaugeVector("gittensory_queue_backlog_by_repo", () => [
+    gaugeVector("loopover_queue_backlog_by_repo", () => [
       { labels: { rank: "1", repo: "owner/repo" }, value: 2 },
     ]);
 
     const first = await renderMetrics();
     const second = await renderMetrics();
-    expect(first).toContain('gittensory_queue_backlog_by_repo{rank="1",repo="redacted-1"} 2');
-    expect(second).toContain('gittensory_queue_backlog_by_repo{rank="1",repo="redacted-1"} 2');
+    expect(first).toContain('loopover_queue_backlog_by_repo{rank="1",repo="redacted-1"} 2');
+    expect(second).toContain('loopover_queue_backlog_by_repo{rank="1",repo="redacted-1"} 2');
   });
 
   it("supports an async sampler", async () => {
@@ -349,11 +349,11 @@ describe("hitRatio (#2090)", () => {
   });
 
   it("counterValue reads labeled counter totals and defaults missing series to 0", () => {
-    incr("gittensory_redis_gh_response_cache_total", { result: "hit" }, 4);
-    incr("gittensory_redis_gh_response_cache_total", { result: "miss" }, 1);
-    expect(counterValue("gittensory_redis_gh_response_cache_total", { result: "hit" })).toBe(4);
-    expect(counterValue("gittensory_redis_gh_response_cache_total", { result: "miss" })).toBe(1);
-    expect(counterValue("gittensory_redis_gh_response_cache_total", { result: "set" })).toBe(0);
+    incr("loopover_redis_gh_response_cache_total", { result: "hit" }, 4);
+    incr("loopover_redis_gh_response_cache_total", { result: "miss" }, 1);
+    expect(counterValue("loopover_redis_gh_response_cache_total", { result: "hit" })).toBe(4);
+    expect(counterValue("loopover_redis_gh_response_cache_total", { result: "miss" })).toBe(1);
+    expect(counterValue("loopover_redis_gh_response_cache_total", { result: "set" })).toBe(0);
   });
 });
 

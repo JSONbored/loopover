@@ -700,7 +700,7 @@ describe("GitHub backfill", () => {
       });
       // Never takes the local App-JWT path (which would 404 here and throw "credentials not configured").
       expect(calls.some((url) => url.includes("/app/installations/"))).toBe(false);
-      expect(await renderMetrics()).toContain('gittensory_installation_health_broker_probe_total{result="ok"} 1');
+      expect(await renderMetrics()).toContain('loopover_installation_health_broker_probe_total{result="ok"} 1');
       // The persisted authMode round-trips as "broker" through the repository read path (getInstallationHealth),
       // not just the in-memory refresh result — mirrors the "local" round-trip check above.
       expect(await getInstallationHealth(env, 900)).toMatchObject({ authMode: "broker" });
@@ -762,7 +762,7 @@ describe("GitHub backfill", () => {
       expect(result.installations[0]?.status).toBe("needs_attention");
       expect(result.installations[0]?.authMode).toBe("broker");
       expect(result.installations[0]?.errorSummary).toMatch(/910/);
-      expect(await renderMetrics()).toContain('gittensory_installation_health_broker_probe_total{result="mismatched_installation"} 1');
+      expect(await renderMetrics()).toContain('loopover_installation_health_broker_probe_total{result="mismatched_installation"} 1');
     });
 
     it("REGRESSION (gate finding): a broker-mode refresh preserves the previously-persisted missingPermissions/missingEvents instead of fabricating a clean []", async () => {
@@ -819,7 +819,7 @@ describe("GitHub backfill", () => {
       expect(result.installations[0]?.authMode).toBe("broker");
       expect(result.installations[0]?.errorSummary).toMatch(/token/i);
       expect(result.installations[0]?.errorSummary).not.toMatch(/GitHub App credentials are not configured/);
-      expect(await renderMetrics()).toContain('gittensory_installation_health_broker_probe_total{result="failed"} 1');
+      expect(await renderMetrics()).toContain('loopover_installation_health_broker_probe_total{result="failed"} 1');
     });
 
     it("enrichInstallationHealth's broker branch reports introspection-unavailable remediation, not fabricated grants or gaps", () => {

@@ -1110,8 +1110,8 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
       expect(mergePullRequest).not.toHaveBeenCalled();
 
       const metrics = await renderMetrics();
-      expect(metrics).toContain('gittensory_agent_action_permission_denied_total{actionClass="merge"} 2');
-      expect(metrics).toContain('gittensory_agent_action_permission_denied_suppressed_total{actionClass="merge"} 1');
+      expect(metrics).toContain('loopover_agent_action_permission_denied_total{actionClass="merge"} 2');
+      expect(metrics).toContain('loopover_agent_action_permission_denied_suppressed_total{actionClass="merge"} 1');
     });
 
     it("resumes loud auditing once the cooldown window elapses", async () => {

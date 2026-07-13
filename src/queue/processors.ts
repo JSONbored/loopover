@@ -1999,7 +1999,7 @@ export function precisionBreakerDowngradeDirections(planned: PlannedAgentAction[
   return directions;
 }
 
-/** PURE: the bounded `{actionClass, blockerClass}` label pair for the `gittensory_agent_disposition_total`
+/** PURE: the bounded `{actionClass, blockerClass}` label pair for the `loopover_agent_disposition_total`
  *  counter (#terminal-outcome-audit), derived from the FINAL post-breaker plan and the gate's own blocker/hold
  *  codes -- never from free text. `actionClass` is "merge"/"close" when the final plan still contains that
  *  action, else "hold" (guardrail, owner-exemption, migration-collision, not-yet-mergeable, breaker-downgraded,
@@ -2853,7 +2853,7 @@ async function runAgentMaintenancePlanAndExecute(
   // whether/which direction the breaker engaged without recomputing it a second time (#selfhost-holdplan-audit).
   const precisionBreakerDirections = precisionBreakerDowngradeDirections(planned, breakerOnPlan);
   for (const direction of precisionBreakerDirections) {
-    incr("gittensory_precision_breaker_downgrades_total", { direction });
+    incr("loopover_precision_breaker_downgrades_total", { direction });
   }
   // Observability (#terminal-outcome-audit): the final per-pass disposition, ALWAYS recorded -- including the
   // "hold" bucket below (guardrail, owner-exemption, migration-collision, breaker-downgraded, or any other
@@ -2866,7 +2866,7 @@ async function runAgentMaintenancePlanAndExecute(
   // reason from `gate.warnings` in that case, so a guardrail/size/manifest-blocked hold doesn't flatten to the
   // same "none" bucket as a merge-ready PR waiting on nothing more than pending CI.
   const disposition = agentDispositionLabels(breakerOnPlan, gate.blockers.map((blocker) => blocker.code), neutralHoldReasonCode(gate));
-  incr("gittensory_agent_disposition_total", {
+  incr("loopover_agent_disposition_total", {
     repo: repoFullName,
     action_class: disposition.actionClass,
     blocker_class: disposition.blockerClass,
@@ -6726,7 +6726,7 @@ export async function runLinkedIssueSatisfactionForAdvisory(
     let result: Awaited<ReturnType<typeof runGittensoryLinkedIssueSatisfaction>>;
     if (cached) {
       result = { status: "ok", result: cached.result, estimatedNeurons: cached.estimatedNeurons };
-      incr("gittensory_linked_issue_satisfaction_cache_hit_total");
+      incr("loopover_linked_issue_satisfaction_cache_hit_total");
       await recordAuditEvent(env, {
         eventType: "github_app.linked_issue_satisfaction_cache_hit",
         actor: args.author,
@@ -6737,7 +6737,7 @@ export async function runLinkedIssueSatisfactionForAdvisory(
         metadata: { repoFullName: args.repoFullName, headSha: args.advisory.headSha ?? null, linkedIssueNumber: primaryIssueNumber },
       }).catch(() => undefined);
     } else {
-      incr("gittensory_linked_issue_satisfaction_cache_miss_total");
+      incr("loopover_linked_issue_satisfaction_cache_miss_total");
       await recordAuditEvent(env, {
         eventType: "github_app.linked_issue_satisfaction_cache_miss",
         actor: args.author,
@@ -6770,7 +6770,7 @@ export async function runLinkedIssueSatisfactionForAdvisory(
           inputFingerprint,
           { status: result.status, result: result.result, estimatedNeurons: result.estimatedNeurons },
         ).catch((error) => {
-          incr("gittensory_linked_issue_satisfaction_cache_write_error_total");
+          incr("loopover_linked_issue_satisfaction_cache_write_error_total");
           return recordAuditEvent(env, {
             eventType: "github_app.linked_issue_satisfaction_cache_write_error",
             actor: args.author,
@@ -8613,7 +8613,7 @@ async function maybePublishPrPublicSurface(
         advisory.findings.push(...frozenReview.findings);
         aiReview = frozenReview;
         aiReviewWasReused = true;
-        incr("gittensory_ai_review_frozen_reuse_total");
+        incr("loopover_ai_review_frozen_reuse_total");
         await recordAuditEvent(env, {
           eventType: "github_app.ai_review_frozen_reuse",
           actor: author,
@@ -8639,7 +8639,7 @@ async function maybePublishPrPublicSurface(
         advisory.findings.push(...pausedReview.findings);
         aiReview = pausedReview;
         aiReviewWasReused = true;
-        incr("gittensory_ai_review_paused_reuse_total");
+        incr("loopover_ai_review_paused_reuse_total");
         await recordAuditEvent(env, {
           eventType: "github_app.ai_review_paused_reuse",
           actor: author,
@@ -8653,7 +8653,7 @@ async function maybePublishPrPublicSurface(
       advisory.findings.push(...oneShotPriorReview.findings);
       aiReview = oneShotPriorReview;
       aiReviewWasReused = true;
-      incr("gittensory_ai_review_one_shot_reuse_total");
+      incr("loopover_ai_review_one_shot_reuse_total");
       await recordAuditEvent(env, {
         eventType: "github_app.ai_review_one_shot_reuse",
         actor: author,
@@ -8980,7 +8980,7 @@ async function maybePublishPrPublicSurface(
             advisory.findings.push(...cachedReview.findings);
             aiReview = cachedReview;
             aiReviewWasReused = true;
-            incr("gittensory_ai_review_cache_hit_total");
+            incr("loopover_ai_review_cache_hit_total");
             await recordAuditEvent(env, {
               eventType: "github_app.ai_review_cache_hit",
               actor: author,
@@ -8997,14 +8997,14 @@ async function maybePublishPrPublicSurface(
               detail: "AI review already current for this head+fingerprint; skipped re-review",
               metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null },
             }).catch(() => undefined);
-            incr("gittensory_regate_ai_skipped_current_total");
+            incr("loopover_regate_ai_skipped_current_total");
           } else {
             // A forced bypass is NOT a cache miss — the cache may well have had a valid, reusable entry; the
             // caller explicitly asked to skip it. Counting it under the miss metric would make "the cache failed
             // to serve" indistinguishable from "a caller deliberately opted out," which muddies exactly the
             // incident-dashboard signal this whole fix exists to provide.
             if (webhook.forceAiReview === true) {
-              incr("gittensory_ai_review_force_bypass_total");
+              incr("loopover_ai_review_force_bypass_total");
               await recordAuditEvent(env, {
                 eventType: "github_app.ai_review_force_bypass",
                 actor: author,
@@ -9014,7 +9014,7 @@ async function maybePublishPrPublicSurface(
                 metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null },
               }).catch(() => undefined);
             } else {
-              incr("gittensory_ai_review_cache_miss_total");
+              incr("loopover_ai_review_cache_miss_total");
               await recordAuditEvent(env, {
                 eventType: "github_app.ai_review_cache_miss",
                 actor: author,
@@ -9066,7 +9066,7 @@ async function maybePublishPrPublicSurface(
               // the review's own verdict (consensus defect / inconclusive → false).
               const cacheableForStorage = !dynamicReviewContextActive && aiReview.cacheable !== false;
               if (!cacheableForStorage) {
-                incr("gittensory_ai_review_non_cacheable_total");
+                incr("loopover_ai_review_non_cacheable_total");
                 await recordAuditEvent(env, {
                   eventType: "github_app.ai_review_non_cacheable",
                   actor: author,
@@ -9100,7 +9100,7 @@ async function maybePublishPrPublicSurface(
               ).catch((error) => {
                 // #regate-churn (req 3/9): a swallowed write failure here is exactly how the cache goes silently
                 // stale in production — make it observable instead of a bare no-op catch.
-                incr("gittensory_ai_review_cache_write_error_total");
+                incr("loopover_ai_review_cache_write_error_total");
                 return recordAuditEvent(env, {
                   eventType: "github_app.ai_review_cache_write_error",
                   actor: author,
@@ -9407,7 +9407,7 @@ async function maybePublishPrPublicSurface(
           }
         }
         if (canSkipCurrentSurface) {
-          incr("gittensory_public_surface_publish_skipped_current_total");
+          incr("loopover_public_surface_publish_skipped_current_total");
           await recordAuditEvent(env, {
             eventType: "github_app.public_surface_publish_skipped_current",
             actor: author,
@@ -9855,7 +9855,7 @@ async function maybePublishPrPublicSurface(
       const commentGate = gateEvaluation;
       // Observability (#reviews-dashboard): record the would-be gate verdict so the Grafana panel shows the
       // merge/close/hold mix — the "are we rubber-stamping?" signal — even in advisory/dryRun (this is the rendered verdict).
-      incr("gittensory_gate_decisions_total", {
+      incr("loopover_gate_decisions_total", {
         repo: repoFullName,
         conclusion: commentGate.conclusion,
       });
@@ -10041,7 +10041,7 @@ async function maybePublishPrPublicSurface(
           );
           if (suppressedCount > 0 || demotedCount > 0) {
             renderedGate = { ...commentGate, warnings: suppressedWarnings };
-            incr("gittensory_review_memory_suppressed_total", { repo: repoFullName });
+            incr("loopover_review_memory_suppressed_total", { repo: repoFullName });
             console.log(
               JSON.stringify({
                 event: "review_memory_applied",
@@ -10209,7 +10209,7 @@ async function maybePublishPrPublicSurface(
           ),
       );
       publishedOutputs.push("comment");
-      incr("gittensory_reviews_published_total", { repo: repoFullName });
+      incr("loopover_reviews_published_total", { repo: repoFullName });
     } catch (error) {
       const message = errorMessage(error);
       failedOutputs.push({ output: "comment", error: message, transient: isGitHubTransientPublishError(error) });

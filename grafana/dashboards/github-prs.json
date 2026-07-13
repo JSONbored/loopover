@@ -1,7 +1,7 @@
 {
-  "uid": "gittensory-github",
-  "title": "Gittensory — Upstream PRs & issues (GitHub)",
-  "tags": ["gittensory", "github", "maintainer"],
+  "uid": "loopover-github",
+  "title": "LoopOver — Upstream PRs & issues (GitHub)",
+  "tags": ["loopover", "github", "maintainer"],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
@@ -14,7 +14,7 @@
         "name": "scope",
         "label": "Scope",
         "type": "query",
-        "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+        "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
         "description": "Dynamic, never hardcoded: built from the repositories tracked in this self-hoster's own reporting DB. Each option is an explicit repo:<owner>/<repo> GitHub search qualifier; the dashboard deliberately does not synthesize an org-wide \"All repos\" option because the GitHub datasource token may be able to read private repositories that are not tracked locally.",
         "query": {
           "queryType": "table",

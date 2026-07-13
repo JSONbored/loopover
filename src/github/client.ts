@@ -18,9 +18,9 @@ import type { RepositorySettings } from "../types";
 
 const GITHUB_FETCH_TIMEOUT_MS = 12_000;
 const GITHUB_API_PREFIX = "https://api.github.com";
-const GITHUB_RESPONSE_CACHE_METRIC = "gittensory_github_response_cache_total";
-const GITHUB_REST_RATE_LIMIT_OBSERVATION_METRIC = "gittensory_github_rest_rate_limit_observations_total";
-const GITHUB_REST_RATE_LIMIT_RESPONSE_METRIC = "gittensory_github_rest_rate_limit_responses_total";
+const GITHUB_RESPONSE_CACHE_METRIC = "loopover_github_response_cache_total";
+const GITHUB_REST_RATE_LIMIT_OBSERVATION_METRIC = "loopover_github_rest_rate_limit_observations_total";
+const GITHUB_REST_RATE_LIMIT_RESPONSE_METRIC = "loopover_github_rest_rate_limit_responses_total";
 const DEFAULT_BRANCH_PROTECTION_TTL_SECONDS = 20 * 60;
 const DEFAULT_METADATA_TTL_SECONDS = 10 * 60;
 // A bare `/commits/{ref}` read resolves a ref to its HEAD commit — mutable (a branch moves), so cache it only
@@ -268,7 +268,7 @@ export function latestGitHubRestRateLimitObservation(admissionKey: GitHubRateLim
 }
 
 /** gaugeVector sampler (see selfhost/metrics.ts + server.ts) for a genuine "remaining right now" GitHub REST
- *  rate-limit gauge -- the existing gittensory_github_rest_rate_limit_observations_total counter only supports a
+ *  rate-limit gauge -- the existing loopover_github_rest_rate_limit_observations_total counter only supports a
  *  bucketed `rate()` over a window, never the actual current value. Grouped by key_scope (installation / public /
  *  global / unknown / other -- a small, fixed set, NOT per-installation, so cardinality stays bounded regardless
  *  of how many installations a self-host deploy has), picking the NEWEST observation (by observedAtMs) among

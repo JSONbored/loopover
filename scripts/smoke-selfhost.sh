@@ -177,7 +177,7 @@ fi
 echo "smoke-selfhost: checking /health, /ready, /metrics"
 curl -sf "http://127.0.0.1:${PORT}/health" | grep -q '"status":"ok"'
 curl -sf "http://127.0.0.1:${PORT}/ready" | grep -q '"ok":true'
-curl -sf "http://127.0.0.1:${PORT}/metrics" | grep -q 'gittensory_uptime_seconds'
+curl -sf "http://127.0.0.1:${PORT}/metrics" | grep -q 'loopover_uptime_seconds'
 
 if [ "$VISUAL_REVIEW" = "1" ]; then
   echo "smoke-selfhost: checking /gittensory/shot renders a real PNG through the self-host browser stub"

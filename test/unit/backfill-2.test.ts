@@ -2206,7 +2206,7 @@ describe("GitHub backfill", () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async () => new Response("forbidden", { status: 403 }));
       expect(await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token")).toBeNull();
-      expect(await renderMetrics()).toContain("gittensory_github_branch_protection_permission_denied_total 1");
+      expect(await renderMetrics()).toContain("loopover_github_branch_protection_permission_denied_total 1");
     });
 
     it("does not count a 404 (no branch protection configured) as permission-denied", async () => {
@@ -2214,7 +2214,7 @@ describe("GitHub backfill", () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
       expect(await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token")).toBeNull();
-      expect(await renderMetrics()).not.toContain("gittensory_github_branch_protection_permission_denied_total");
+      expect(await renderMetrics()).not.toContain("loopover_github_branch_protection_permission_denied_total");
     });
 
     it("does not count a genuinely rate-limited 403 (x-ratelimit-remaining: 0) as permission-denied", async () => {
@@ -2229,7 +2229,7 @@ describe("GitHub backfill", () => {
           }),
       );
       expect(await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token")).toBeNull();
-      expect(await renderMetrics()).not.toContain("gittensory_github_branch_protection_permission_denied_total");
+      expect(await renderMetrics()).not.toContain("loopover_github_branch_protection_permission_denied_total");
     }, 15_000);
   });
 

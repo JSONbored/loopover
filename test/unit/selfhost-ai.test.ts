@@ -568,34 +568,34 @@ describe("AI provider request duration/error metrics (#4367)", () => {
     const provider = { name: "gpu-metrics-ok-provider", ai: { run: async () => ({ response: "ok" }) } };
     await createChainAi([provider]).run("m", { prompt: "review this" });
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_ai_provider_request_duration_seconds_count{provider="gpu-metrics-ok-provider",request_kind="review"} 1');
-    expect(metrics).not.toContain('gittensory_ai_provider_request_errors_total{provider="gpu-metrics-ok-provider"');
+    expect(metrics).toContain('loopover_ai_provider_request_duration_seconds_count{provider="gpu-metrics-ok-provider",request_kind="review"} 1');
+    expect(metrics).not.toContain('loopover_ai_provider_request_errors_total{provider="gpu-metrics-ok-provider"');
   });
 
   it("labels an embedding call's duration by request_kind=embedding", async () => {
     const provider = { name: "gpu-metrics-embed-provider", ai: { run: async () => ({ response: "ok" }) } };
     await createChainAi([provider]).run("m", { text: ["chunk one", "chunk two"] });
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_ai_provider_request_duration_seconds_count{provider="gpu-metrics-embed-provider",request_kind="embedding"} 1');
+    expect(metrics).toContain('loopover_ai_provider_request_duration_seconds_count{provider="gpu-metrics-embed-provider",request_kind="embedding"} 1');
   });
 
   it("records duration AND increments the error counter on a real failure", async () => {
     const provider = { name: "gpu-metrics-fail-provider", ai: { run: async () => { throw new Error("boom"); } } };
     await expect(createChainAi([provider]).run("m", { prompt: "review this" })).rejects.toThrow(/boom/);
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_ai_provider_request_duration_seconds_count{provider="gpu-metrics-fail-provider",request_kind="review"} 1');
-    expect(metrics).toContain('gittensory_ai_provider_request_errors_total{provider="gpu-metrics-fail-provider",request_kind="review"} 1');
+    expect(metrics).toContain('loopover_ai_provider_request_duration_seconds_count{provider="gpu-metrics-fail-provider",request_kind="review"} 1');
+    expect(metrics).toContain('loopover_ai_provider_request_errors_total{provider="gpu-metrics-fail-provider",request_kind="review"} 1');
   });
 
-  it("records duration but NOT the error counter for an expected embedding-routing fallback (matches gittensory_ai_provider_failures_total's exemption)", async () => {
+  it("records duration but NOT the error counter for an expected embedding-routing fallback (matches loopover_ai_provider_failures_total's exemption)", async () => {
     const provider = {
       name: "gpu-metrics-routing-provider",
       ai: { run: async () => { throw new Error("claude_code_no_embed"); } },
     };
     await expect(createChainAi([provider]).run("m", { text: ["chunk"] })).rejects.toThrow();
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_ai_provider_request_duration_seconds_count{provider="gpu-metrics-routing-provider",request_kind="embedding"} 1');
-    expect(metrics).not.toContain('gittensory_ai_provider_request_errors_total{provider="gpu-metrics-routing-provider"');
+    expect(metrics).toContain('loopover_ai_provider_request_duration_seconds_count{provider="gpu-metrics-routing-provider",request_kind="embedding"} 1');
+    expect(metrics).not.toContain('loopover_ai_provider_request_errors_total{provider="gpu-metrics-routing-provider"');
   });
 });
 
@@ -618,8 +618,8 @@ describe("per-provider circuit breaker (#2540 — skip fast during a sustained o
     await expect(createChainAi([flaky]).run("m", { prompt: "x" })).rejects.toThrow(/circuit_open: provider "flaky-provider"/);
     expect(calls).toHaveBeenCalledTimes(3); // unchanged — the real provider was never reached
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_ai_provider_circuit_open_total{provider="flaky-provider"} 1');
-    expect(metrics).toContain('gittensory_ai_provider_failures_total{provider="flaky-provider"} 3');
+    expect(metrics).toContain('loopover_ai_provider_circuit_open_total{provider="flaky-provider"} 1');
+    expect(metrics).toContain('loopover_ai_provider_failures_total{provider="flaky-provider"} 3');
   });
 
   it("REGRESSION (gate finding): concurrent same-provider failures accumulate correctly (no lost-update race)", async () => {
@@ -722,8 +722,8 @@ describe("per-provider circuit breaker (#2540 — skip fast during a sustained o
     await expect(route.run("claude-code", { prompt: "review this" })).resolves.toEqual({ response: "review ok" });
     expect(chatOnlyCalls).toHaveBeenCalledTimes(4);
     const metrics = await renderMetrics();
-    expect(metrics).not.toContain('gittensory_ai_provider_failures_total{provider="claude-code"}');
-    expect(metrics).not.toContain('gittensory_ai_provider_circuit_open_total{provider="claude-code"}');
+    expect(metrics).not.toContain('loopover_ai_provider_failures_total{provider="claude-code"}');
+    expect(metrics).not.toContain('loopover_ai_provider_circuit_open_total{provider="claude-code"}');
   });
 
   it("does not affect isAiProviderHealthy / aiConsecutiveFailures — independent whole-chain streak", async () => {
@@ -1698,7 +1698,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     const empty: StubSpawn = async () => ({ stdout: "", code: 0 });
     await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, empty).run("m", { prompt: "x" })).rejects.toThrow(/claude_code_empty_output/);
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_ai_requests_total{effort="medium",model="m",provider="claude-code"} 2');
+    expect(metrics).toContain('loopover_ai_requests_total{effort="medium",model="m",provider="claude-code"} 2');
   });
 
   it("Codex throws on empty output", async () => {
@@ -1707,7 +1707,7 @@ describe("subscription CLI helpers + fail-safe", () => {
       createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, empty, noAuthCheck).run("gpt-5", { prompt: "x" }),
     ).rejects.toThrow(/codex_empty_output/);
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_ai_requests_total{effort="medium",model="gpt-5",provider="codex"} 1');
+    expect(metrics).toContain('loopover_ai_requests_total{effort="medium",model="gpt-5",provider="codex"} 1');
   });
 
   it("Claude Code throws subscription_cli_timeout when the CLI is killed for exceeding its deadline", async () => {
@@ -1868,7 +1868,7 @@ describe("subscription CLI helpers + fail-safe", () => {
       /codex_credential_isolation_required/,
     );
     const metrics = await renderMetrics();
-    expect(metrics).not.toContain("gittensory_ai_requests_total");
+    expect(metrics).not.toContain("loopover_ai_requests_total");
   });
 
   it("resolveCodexAuthPath: CODEX_HOME wins, else HOME/.codex, else ~/.codex", () => {
@@ -1947,7 +1947,7 @@ describe("subscription CLI helpers + fail-safe", () => {
       /codex_exit_1: stream error: rate limit reached/,
     );
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_ai_requests_total{effort="medium",model="m",provider="codex"} 1');
+    expect(metrics).toContain('loopover_ai_requests_total{effort="medium",model="m",provider="codex"} 1');
   });
 
   it("redacts the OAuth token and key-shaped tokens from claude stderr before they reach the error (#1605 sec)", async () => {
@@ -2026,10 +2026,10 @@ describe("subscription CLI helpers + fail-safe", () => {
     const result = await createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1", CODEX_AI_EFFORT: "medium" }, ok, noAuthCheck).run("", { prompt: "x" });
     expect(result.usage).toMatchObject({ provider: "codex", model: "gpt-5-codex", effort: "medium", inputTokens: 20, outputTokens: 7, totalTokens: 27 });
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_ai_requests_total{effort="medium",model="gpt-5-codex",provider="codex"} 1');
-    expect(metrics).toContain('gittensory_ai_input_tokens_total{effort="medium",kind="review",model="gpt-5-codex",provider="codex"} 20');
-    expect(metrics).toContain('gittensory_ai_output_tokens_total{effort="medium",kind="review",model="gpt-5-codex",provider="codex"} 7');
-    expect(metrics).toContain('gittensory_ai_total_tokens_total{effort="medium",model="gpt-5-codex",provider="codex"} 27');
+    expect(metrics).toContain('loopover_ai_requests_total{effort="medium",model="gpt-5-codex",provider="codex"} 1');
+    expect(metrics).toContain('loopover_ai_input_tokens_total{effort="medium",kind="review",model="gpt-5-codex",provider="codex"} 20');
+    expect(metrics).toContain('loopover_ai_output_tokens_total{effort="medium",kind="review",model="gpt-5-codex",provider="codex"} 7');
+    expect(metrics).toContain('loopover_ai_total_tokens_total{effort="medium",model="gpt-5-codex",provider="codex"} 27');
   });
 });
 

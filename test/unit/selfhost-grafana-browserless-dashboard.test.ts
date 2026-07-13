@@ -28,12 +28,12 @@ function allTargets(dashboard = readDashboard()): DashboardTarget[] {
   return dashboard.panels.flatMap((panel) => panel.targets ?? []);
 }
 
-describe("Gittensory — Browserless (visual review) dashboard (#5368)", () => {
+describe("LoopOver — Browserless (visual review) dashboard (#5368)", () => {
   it("declares the expected uid/title/tags", () => {
     const dashboard = readDashboard();
-    expect(dashboard.uid).toBe("gittensory-browserless");
-    expect(dashboard.title).toBe("Gittensory — Browserless (visual review)");
-    expect(dashboard.tags).toEqual(["gittensory", "browserless", "observability"]);
+    expect(dashboard.uid).toBe("loopover-browserless");
+    expect(dashboard.title).toBe("LoopOver — Browserless (visual review)");
+    expect(dashboard.tags).toEqual(["loopover", "browserless", "observability"]);
   });
 
   it("every panel target uses the Prometheus datasource variable, never a hardcoded uid", () => {

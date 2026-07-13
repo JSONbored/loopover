@@ -4232,7 +4232,7 @@ describe("auto-action convergence: end-to-end plan+execute for the general heuri
     // #terminal-outcome-audit: the disposition counter's "close" action_class, with the actual gate-blocker
     // code (missing_linked_issue, from the default linkedIssueGateMode:block + no-linked-issue body) as the
     // bounded blocker_class -- proof this reaches the real gate.blockers, not just a hardcoded label.
-    expect(await renderMetrics()).toContain('gittensory_agent_disposition_total{action_class="close",autonomy_level="auto",blocker_class="missing_linked_issue",repo="redacted-1"} 1');
+    expect(await renderMetrics()).toContain('loopover_agent_disposition_total{action_class="close",autonomy_level="auto",blocker_class="missing_linked_issue",repo="redacted-1"} 1');
     const nativeDecision = await env.DB.prepare("select decision, summary, source from review_audit where event_type = 'gate_decision' and target_id = ?").bind(`${REPO}#60`).first<{ decision: string; summary: string; source: string }>();
     expect(nativeDecision).toMatchObject({ decision: "close", summary: "missing_linked_issue", source: "gittensory-native" });
   });
@@ -4275,7 +4275,7 @@ describe("auto-action convergence: end-to-end plan+execute for the general heuri
 
     expect(seen.merged).toBe(false);
     expect(seen.closed).toBe(false);
-    expect(await renderMetrics()).toContain('gittensory_agent_disposition_total{action_class="hold",autonomy_level="auto",blocker_class="guardrail_hold",repo="redacted-1"} 1');
+    expect(await renderMetrics()).toContain('loopover_agent_disposition_total{action_class="hold",autonomy_level="auto",blocker_class="guardrail_hold",repo="redacted-1"} 1');
     const holdAudit = await env.DB.prepare("select metadata_json from audit_events where event_type = 'agent.action.hold' order by created_at desc limit 1").first<{ metadata_json: string }>();
     expect(JSON.parse(holdAudit?.metadata_json ?? "{}")).toMatchObject({
       repoFullName: REPO,
@@ -4403,12 +4403,12 @@ describe("auto-action convergence: end-to-end plan+execute for the general heuri
     const mergeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.merge'").first<{ n: number }>();
     expect(mergeAudit?.n).toBeGreaterThanOrEqual(1);
     // #terminal-outcome-audit: the disposition counter's "merge" action_class, on the actual live call site.
-    expect(await renderMetrics()).toContain('gittensory_agent_disposition_total{action_class="merge",autonomy_level="auto",blocker_class="none",repo="redacted-1"} 1');
+    expect(await renderMetrics()).toContain('loopover_agent_disposition_total{action_class="merge",autonomy_level="auto",blocker_class="none",repo="redacted-1"} 1');
   });
 
   // #terminal-outcome-audit: end-to-end proof that the LIVE runAgentMaintenancePlanAndExecute call site (not just
   // the extracted pure precisionBreakerDowngradeDirections/applyPrecisionBreakers unit tests) actually increments
-  // gittensory_precision_breaker_downgrades_total when an engaged accuracy circuit-breaker rewrites a real plan.
+  // loopover_precision_breaker_downgrades_total when an engaged accuracy circuit-breaker rewrites a real plan.
   it("REGRESSION (#terminal-outcome-audit): an engaged holdonly breaker withholds a real would-merge AND increments the downgrade counter", async () => {
     // Mirrors the "#selfhost-backlog-convergence" chain test above (same two-step CI-pending-then-green shape,
     // the proven way this suite reaches a REAL merge attempt): a plain "opened" webhook with CI already green
@@ -4472,12 +4472,12 @@ describe("auto-action convergence: end-to-end plan+execute for the general heuri
     expect(seen.merged).toBe(false);
     const mergeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.merge'").first<{ n: number }>();
     expect(mergeAudit?.n).toBe(0);
-    expect(await renderMetrics()).toContain('gittensory_precision_breaker_downgrades_total{direction="merge"} 1');
+    expect(await renderMetrics()).toContain('loopover_precision_breaker_downgrades_total{direction="merge"} 1');
     // #terminal-outcome-audit: the ALWAYS-recorded disposition counter, placed before the "nothing was planned"
     // early return -- this is the exact "hold, but no audit_events row at all" shape (the breaker downgrade
     // leaves no merge/close action) that previously had zero aggregate signal. close autonomy is unset in this
     // repo's settings (only merge/approve are configured), so it resolves to the default "observe".
-    expect(await renderMetrics()).toContain('gittensory_agent_disposition_total{action_class="hold",autonomy_level="observe",blocker_class="none",repo="redacted-1"} 1');
+    expect(await renderMetrics()).toContain('loopover_agent_disposition_total{action_class="hold",autonomy_level="observe",blocker_class="none",repo="redacted-1"} 1');
     const holdAudit = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = 'agent.action.hold' order by created_at desc limit 1").first<{ detail: string; metadata_json: string }>();
     expect(holdAudit?.detail).toBe("auto-action held by precision circuit breaker");
     expect(JSON.parse(holdAudit?.metadata_json ?? "{}")).toMatchObject({

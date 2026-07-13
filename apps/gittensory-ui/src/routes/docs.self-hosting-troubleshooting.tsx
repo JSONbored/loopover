@@ -36,7 +36,7 @@ function SelfHostingTroubleshooting() {
       <CodeBlock
         lang="bash"
         code={`docker compose ps
-docker compose logs --tail=200 gittensory
+docker compose logs --tail=200 loopover
 curl http://localhost:8787/ready
 curl http://localhost:8787/metrics`}
       />
@@ -122,18 +122,18 @@ rees_analyzer_config_invalid`}
       </p>
       <CodeBlock
         lang="bash"
-        code={`curl http://localhost:8787/metrics | grep gittensory_queue
-docker compose logs gittensory | grep selfhost_job_dead`}
+        code={`curl http://localhost:8787/metrics | grep loopover_queue
+docker compose logs loopover | grep selfhost_job_dead`}
       />
 
       <h2>GitHub rate-limit responses or admission deferrals</h2>
       <p>
         Two independent signals cover this:{" "}
-        <code>gittensory_github_rest_rate_limit_responses_total</code> counts actual 403/429
+        <code>loopover_github_rest_rate_limit_responses_total</code> counts actual 403/429
         responses from GitHub, and the{" "}
-        <code>gittensory_jobs_rate_limit_admission_deferred_total</code> /{" "}
-        <code>gittensory_jobs_rate_limit_budget_deferred_total</code> /{" "}
-        <code>gittensory_jobs_rate_limited_by_type_total</code> counters track jobs the queue itself
+        <code>loopover_jobs_rate_limit_admission_deferred_total</code> /{" "}
+        <code>loopover_jobs_rate_limit_budget_deferred_total</code> /{" "}
+        <code>loopover_jobs_rate_limited_by_type_total</code> counters track jobs the queue itself
         held back <em>before</em> making a request, to avoid tripping a limit. All three job-side
         counters carry the same three labels — <code>kind</code> (<code>webhook</code> or{" "}
         <code>background</code>), <code>key_scope</code> (<code>installation</code>,{" "}
@@ -145,20 +145,20 @@ docker compose logs gittensory | grep selfhost_job_dead`}
         A short burst of deferrals is expected and self-resolving: the queue is deliberately trading
         a few seconds of delay to avoid a real 429. Treat it as a real problem only once it&apos;s
         <strong> sustained</strong> — which is exactly what{" "}
-        <code>GittensoryGitHubRateLimitResponses</code> (real 403/429s observed) and{" "}
-        <code>GittensoryQueueRateLimitDeferralsHigh</code> (a sustained deferral rate, not a blip)
+        <code>LoopoverGitHubRateLimitResponses</code> (real 403/429s observed) and{" "}
+        <code>LoopoverQueueRateLimitDeferralsHigh</code> (a sustained deferral rate, not a blip)
         are tuned to alert on, rather than firing on every brief admission hold.
       </p>
       <CodeBlock
         lang="promql"
         code={`# Deferrals broken down by token pool and job type over the last 10m
-sum by (key_scope, job_type) (rate(gittensory_jobs_rate_limit_admission_deferred_total[10m]))
+sum by (key_scope, job_type) (rate(loopover_jobs_rate_limit_admission_deferred_total[10m]))
 
 # Is one key_scope (e.g. a single installation token) the bottleneck?
-topk(5, sum by (key_scope) (rate(gittensory_jobs_rate_limit_budget_deferred_total[10m])))
+topk(5, sum by (key_scope) (rate(loopover_jobs_rate_limit_budget_deferred_total[10m])))
 
 # Real rate-limit responses from GitHub itself (not just internal deferrals)
-sum(rate(gittensory_github_rest_rate_limit_responses_total[10m]))`}
+sum(rate(loopover_github_rest_rate_limit_responses_total[10m]))`}
       />
       <p>
         If a single <code>key_scope=installation</code> pool is consistently the bottleneck, the fix
@@ -168,8 +168,8 @@ sum(rate(gittensory_github_rest_rate_limit_responses_total[10m]))`}
 
       <h2>Low GitHub response-cache hit rate</h2>
       <p>
-        <code>gittensory_github_response_cache_total</code> (REST) and{" "}
-        <code>gittensory_github_graphql_cache_total</code> (GraphQL) both carry a{" "}
+        <code>loopover_github_response_cache_total</code> (REST) and{" "}
+        <code>loopover_github_graphql_cache_total</code> (GraphQL) both carry a{" "}
         <code>result</code> label — <code>hit</code>, <code>miss</code>, <code>set</code>,{" "}
         <code>coalesced</code>, <code>bypassed</code>, or <code>error</code> — and a{" "}
         <code>class</code> label identifying the endpoint family. A healthy cache should show most
@@ -180,21 +180,21 @@ sum(rate(gittensory_github_rest_rate_limit_responses_total[10m]))`}
       <CodeBlock
         lang="promql"
         code={`# REST hit rate by endpoint class over the last 15m
-sum by (class) (rate(gittensory_github_response_cache_total{result="hit"}[15m]))
+sum by (class) (rate(loopover_github_response_cache_total{result="hit"}[15m]))
 /
-sum by (class) (rate(gittensory_github_response_cache_total[15m]))
+sum by (class) (rate(loopover_github_response_cache_total[15m]))
 
 # GraphQL hit rate — same shape, separate metric
-sum by (class) (rate(gittensory_github_graphql_cache_total{result="hit"}[15m]))
+sum by (class) (rate(loopover_github_graphql_cache_total{result="hit"}[15m]))
 /
-sum by (class) (rate(gittensory_github_graphql_cache_total[15m]))`}
+sum by (class) (rate(loopover_github_graphql_cache_total[15m]))`}
       />
 
       <h2>Qdrant / vector-store errors</h2>
       <p>
-        <code>gittensory_qdrant_errors_total</code> carries an <code>op</code> label (
+        <code>loopover_qdrant_errors_total</code> carries an <code>op</code> label (
         <code>upsert</code>, <code>query</code>, or <code>delete</code>) so you can tell whether
-        indexing or retrieval is failing. <code>GittensoryQdrantErrorRateHigh</code> fires on a
+        indexing or retrieval is failing. <code>LoopoverQdrantErrorRateHigh</code> fires on a
         sustained error ratio, not an isolated blip.
       </p>
       <ul>
@@ -226,13 +226,13 @@ curl -X DELETE "$QDRANT_URL/collections/gittensory"`}
 
       <h2>Orb export or relay problems</h2>
       <p>
-        For brokered self-host deployments, <code>gittensory_orb_events_exported_total</code> and{" "}
-        <code>gittensory_orb_export_errors_total</code> track the hourly outcome-export loop;{" "}
-        <code>GittensoryOrbExportErrorRateHigh</code> fires on a sustained error ratio there. The
+        For brokered self-host deployments, <code>loopover_orb_events_exported_total</code> and{" "}
+        <code>loopover_orb_export_errors_total</code> track the hourly outcome-export loop;{" "}
+        <code>LoopoverOrbExportErrorRateHigh</code> fires on a sustained error ratio there. The
         pull-mode relay loop (for installations receiving events outbound from Orb) reports through{" "}
-        <code>gittensory_orb_relay_drains_total</code> (<code>result=events</code> when it drained
+        <code>loopover_orb_relay_drains_total</code> (<code>result=events</code> when it drained
         something, <code>result=empty</code> otherwise) and{" "}
-        <code>gittensory_orb_webhook_total</code> (<code>event</code> + <code>result</code> labels)
+        <code>loopover_orb_webhook_total</code> (<code>event</code> + <code>result</code> labels)
         for what happened to each relayed event once enqueued locally.
       </p>
       <p>
@@ -257,7 +257,7 @@ curl -X DELETE "$QDRANT_URL/collections/gittensory"`}
         </li>
         <li>
           <strong>Pull mode</strong> — logged at <code>warn</code> and non-fatal: the drain loop (
-          <code>gittensory_orb_relay_drains_total</code>) keeps retrying on its own schedule
+          <code>loopover_orb_relay_drains_total</code>) keeps retrying on its own schedule
           regardless, so a transient failure here recovers on its own once the broker is reachable
           again. A registration failure that never clears across many retries still points at{" "}
           <code>ORB_ENROLLMENT_SECRET</code> being wrong, revoked, or not yet provisioned
@@ -274,9 +274,9 @@ curl -X DELETE "$QDRANT_URL/collections/gittensory"`}
       <p>
         Each AI provider (self-host <code>AI_PROVIDER</code> entries) has its own circuit breaker:
         after 3 consecutive failures it stops attempting real calls to that provider for 60 seconds,
-        recorded as <code>gittensory_ai_provider_circuit_open_total{'{provider="..."}'}</code>{" "}
+        recorded as <code>loopover_ai_provider_circuit_open_total{'{provider="..."}'}</code>{" "}
         (skipped calls) alongside{" "}
-        <code>gittensory_ai_provider_failures_total{'{provider="..."}'}</code> (real failures). It
+        <code>loopover_ai_provider_failures_total{'{provider="..."}'}</code> (real failures). It
         self-heals automatically — there is no manual reset — but it will reopen immediately if the
         underlying problem is still there.
       </p>
@@ -293,7 +293,7 @@ curl -X DELETE "$QDRANT_URL/collections/gittensory"`}
           unreachable from the container.
         </li>
         <li>
-          <code>GittensoryAiProviderCircuitOpen</code> fires on any circuit-open event in a
+          <code>LoopoverAiProviderCircuitOpen</code> fires on any circuit-open event in a
           15-minute window — a single trip during a real but brief outage is expected; a rule that
           keeps firing across multiple windows points at the persistent case above.
         </li>
@@ -326,7 +326,7 @@ npm run test:smoke:observability:metrics`}
         </li>
         <li>
           If the app's own <code>/metrics</code> check fails, that is unrelated to the OTEL
-          collector — check the app container directly (<code>docker compose logs gittensory</code>
+          collector — check the app container directly (<code>docker compose logs loopover</code>
           ).
         </li>
         <li>

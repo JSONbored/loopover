@@ -530,9 +530,9 @@ describe("durable PR-state cache (#2537)", () => {
       await cachedFetchLivePullRequestMergeState(env, "owner/repo", 70, "tok");
 
       const metrics = await renderMetrics();
-      expect(metrics).toContain('gittensory_pr_state_cache_total{field="mergeable_state",result="miss"} 1');
-      expect(metrics).toContain('gittensory_pr_state_cache_total{field="mergeable_state",result="hit"} 1');
-      expect(metrics).toContain('gittensory_pr_state_cache_total{field="write",result="set"} 1');
+      expect(metrics).toContain('loopover_pr_state_cache_total{field="mergeable_state",result="miss"} 1');
+      expect(metrics).toContain('loopover_pr_state_cache_total{field="mergeable_state",result="hit"} 1');
+      expect(metrics).toContain('loopover_pr_state_cache_total{field="write",result="set"} 1');
     });
   });
 });
@@ -760,7 +760,7 @@ describe("durable CI-state cache (#selfhost-ci-verification)", () => {
       resetMetrics();
       const env = createTestEnv();
       await writeThroughCiStateCache(env, "owner/repo", 84, null, "sha1", "", sampleAggregate);
-      expect(await renderMetrics()).toContain('gittensory_ci_state_cache_total{field="write",result="set"} 1');
+      expect(await renderMetrics()).toContain('loopover_ci_state_cache_total{field="write",result="set"} 1');
     });
   });
 

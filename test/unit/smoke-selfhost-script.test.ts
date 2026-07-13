@@ -32,7 +32,7 @@ printf '\\n' >> "${calls}"
 case "$*" in
   *'/health'*) echo '{"status":"ok"}' ;;
   *'/ready'*) echo '{"ok":true}' ;;
-  *'/metrics'*) echo 'gittensory_uptime_seconds 1' ;;
+  *'/metrics'*) echo 'loopover_uptime_seconds 1' ;;
 esac
 `,
   );

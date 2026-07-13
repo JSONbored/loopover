@@ -232,10 +232,10 @@ describe("createSqliteQueue (durable #980)", () => {
         ["github rate-limit background admission"],
       ).rows[0] as { c: number };
       expect(pendingBackground.c).toBe(2);
-      expect(await q.stats()).toMatchObject({ gittensory_jobs_rate_limit_deferred_total: 2 });
+      expect(await q.stats()).toMatchObject({ loopover_jobs_rate_limit_deferred_total: 2 });
       const metrics = await renderMetrics();
-      expect(metrics).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="agent-regate-pr",key_scope="installation",kind="background"} 1');
-      expect(metrics).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="rag-index-repo",key_scope="public",kind="background"} 1');
+      expect(metrics).toContain('loopover_jobs_rate_limit_admission_deferred_total{job_type="agent-regate-pr",key_scope="installation",kind="background"} 1');
+      expect(metrics).toContain('loopover_jobs_rate_limit_admission_deferred_total{job_type="rag-index-repo",key_scope="public",kind="background"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -389,8 +389,8 @@ describe("createSqliteQueue (durable #980)", () => {
         run_after: Date.parse("2026-06-24T12:10:15.000Z"),
         last_error: "github rate-limit webhook admission",
       });
-      expect(await q.stats()).toMatchObject({ gittensory_jobs_rate_limit_deferred_total: 1 });
-      expect(await renderMetrics()).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
+      expect(await q.stats()).toMatchObject({ loopover_jobs_rate_limit_deferred_total: 1 });
+      expect(await renderMetrics()).toContain('loopover_jobs_rate_limit_admission_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -441,8 +441,8 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.binding.send(installedWebhook("fresh", 123));
       await q.drain();
 
-      expect(await q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
-      expect(await renderMetrics()).not.toContain("gittensory_jobs_rate_limit_admission_deferred_total");
+      expect(await q.stats()).not.toHaveProperty("loopover_jobs_rate_limit_deferred_total");
+      expect(await renderMetrics()).not.toContain("loopover_jobs_rate_limit_admission_deferred_total");
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -543,7 +543,7 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.drain();
 
       expect(seen).toEqual(["github-webhook"]);
-      expect(await q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+      expect(await q.stats()).not.toHaveProperty("loopover_jobs_rate_limit_deferred_total");
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -647,7 +647,7 @@ describe("createSqliteQueue (durable #980)", () => {
     await q.drain();
 
     expect(seen).toEqual(["github-webhook"]);
-    expect(await q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+    expect(await q.stats()).not.toHaveProperty("loopover_jobs_rate_limit_deferred_total");
   });
 
   it("does not keep webhook admission closed from stale legacy rows after a newer healthy exact observation", async () => {
@@ -686,7 +686,7 @@ describe("createSqliteQueue (durable #980)", () => {
     await q.drain();
 
     expect(seen).toEqual(["github-webhook"]);
-    expect(await q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+    expect(await q.stats()).not.toHaveProperty("loopover_jobs_rate_limit_deferred_total");
   });
 
   it("does not pre-yield webhook jobs for another installation's persisted REST exhaustion", async () => {
@@ -720,7 +720,7 @@ describe("createSqliteQueue (durable #980)", () => {
     await q.drain();
 
     expect(seen).toEqual(["github-webhook"]);
-    expect(await q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+    expect(await q.stats()).not.toHaveProperty("loopover_jobs_rate_limit_deferred_total");
   });
 
   it("skips the background-admission metric when the defer update changes no rows", async () => {
@@ -770,7 +770,7 @@ describe("createSqliteQueue (durable #980)", () => {
 
       expect(seen).toEqual([]);
       expect(warned).not.toHaveBeenCalled();
-      expect(await q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+      expect(await q.stats()).not.toHaveProperty("loopover_jobs_rate_limit_deferred_total");
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -866,8 +866,8 @@ describe("createSqliteQueue (durable #980)", () => {
     ]);
     expect(rows.map((row) => JSON.parse(row.payload).deliveryId).filter(Boolean).sort()).toEqual(["ci-2", "pr-2"]);
     expect(await q.stats()).toMatchObject({
-      gittensory_jobs_enqueued_total: 3,
-      gittensory_jobs_coalesced_total: 3,
+      loopover_jobs_enqueued_total: 3,
+      loopover_jobs_coalesced_total: 3,
     });
   });
 
@@ -986,8 +986,8 @@ describe("createSqliteQueue (durable #980)", () => {
       repoFullName: "JSONbored/gittensory",
     });
     expect(await q.stats()).toMatchObject({
-      gittensory_jobs_enqueued_total: 1,
-      gittensory_jobs_coalesced_total: 1,
+      loopover_jobs_enqueued_total: 1,
+      loopover_jobs_coalesced_total: 1,
     });
   });
 
@@ -1026,8 +1026,8 @@ describe("createSqliteQueue (durable #980)", () => {
     // The two incrementals now MERGE into one row before the full job supersedes it (#selfhost-maintenance-self-pin):
     // 1 insert (the first incremental) + 2 coalesces (the merge, then the supersede), not 2 inserts + 1 coalesce.
     expect(await q.stats()).toMatchObject({
-      gittensory_jobs_enqueued_total: 1,
-      gittensory_jobs_coalesced_total: 2,
+      loopover_jobs_enqueued_total: 1,
+      loopover_jobs_coalesced_total: 2,
     });
   });
 
@@ -1063,8 +1063,8 @@ describe("createSqliteQueue (durable #980)", () => {
     });
     expect(rows[0]?.job_key).toBe(jobCoalesceKey(rows[0]!.payload));
     expect(await q.stats()).toMatchObject({
-      gittensory_jobs_enqueued_total: 1,
-      gittensory_jobs_coalesced_total: 1,
+      loopover_jobs_enqueued_total: 1,
+      loopover_jobs_coalesced_total: 1,
     });
   });
 
@@ -1263,8 +1263,8 @@ describe("createSqliteQueue (durable #980)", () => {
       "schedule",
     ]);
     expect(await q.stats()).toMatchObject({
-      gittensory_jobs_enqueued_total: 5,
-      gittensory_jobs_coalesced_total: 4,
+      loopover_jobs_enqueued_total: 5,
+      loopover_jobs_coalesced_total: 4,
     });
   });
 
@@ -1298,7 +1298,7 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(rows[0]?.id).toBe(first.id);
       expect(rows[0]?.created_at).toBe(first.created_at); // NOT reset to the re-enqueue time
       expect(rows[0]?.run_after).toBeGreaterThan(first.run_after); // still advances with the new request
-      expect(await q.stats()).toMatchObject({ gittensory_jobs_coalesced_total: 1 });
+      expect(await q.stats()).toMatchObject({ loopover_jobs_coalesced_total: 1 });
     } finally {
       vi.useRealTimers();
     }
@@ -1706,7 +1706,7 @@ describe("createSqliteQueue (durable #980)", () => {
       const q = createSqliteQueue(driver, async () => undefined, { concurrency: 1 });
       await q.binding.send(backlogJob("owner/repo", 1));
       await q.drain();
-      expect(await renderMetrics()).toContain('gittensory_jobs_claimed_by_lane_total{lane="backlog"} 1');
+      expect(await renderMetrics()).toContain('loopover_jobs_claimed_by_lane_total{lane="backlog"} 1');
       expect(await renderMetrics()).not.toContain('lane="fresh"');
     });
 
@@ -1721,8 +1721,8 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.binding.send(backlogJob("owner/repo", 3));
       await q.binding.send(prWebhook("fresh-1"));
       await q.drain();
-      expect(await renderMetrics()).toContain('gittensory_jobs_claimed_by_lane_total{lane="fresh"} 1');
-      expect(await renderMetrics()).toContain('gittensory_jobs_claimed_by_lane_total{lane="backlog"} 3');
+      expect(await renderMetrics()).toContain('loopover_jobs_claimed_by_lane_total{lane="fresh"} 1');
+      expect(await renderMetrics()).toContain('loopover_jobs_claimed_by_lane_total{lane="backlog"} 3');
     });
 
     it("does NOT increment the lane-claim counter when the preferred lane has nothing pending (falls through unscoped)", async () => {
@@ -1733,7 +1733,7 @@ describe("createSqliteQueue (durable #980)", () => {
       // claimNextForegroundLane's "fresh" branch -- so NEITHER lane value is recorded for this claim.
       await q.binding.send(prWebhook("fresh-only"));
       await q.drain();
-      expect(await renderMetrics()).not.toContain("gittensory_jobs_claimed_by_lane_total");
+      expect(await renderMetrics()).not.toContain("loopover_jobs_claimed_by_lane_total");
     });
 
     it("does NOT increment the lane-claim counter when the picked repo's candidate row can't actually be claimed (defensive)", async () => {
@@ -1744,7 +1744,7 @@ describe("createSqliteQueue (durable #980)", () => {
         [JSON.stringify(backlogJob("owner/repo", 1)), "agent-regate-pr:owner/repo#1"],
       );
       await q.drain();
-      expect(await renderMetrics()).not.toContain("gittensory_jobs_claimed_by_lane_total");
+      expect(await renderMetrics()).not.toContain("loopover_jobs_claimed_by_lane_total");
     });
   });
 
@@ -2286,7 +2286,7 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(released).toBe(1);
       const row = driver.query("SELECT run_after FROM _selfhost_jobs", []).rows[0] as { run_after: number };
       expect(row.run_after).toBeLessThanOrEqual(Date.now());
-      expect(await renderMetrics()).toContain("gittensory_jobs_foreground_liveness_released_total 1");
+      expect(await renderMetrics()).toContain("loopover_jobs_foreground_liveness_released_total 1");
     });
 
     // Isolates the AGE condition from the OR'd rate-limit-clear condition: uses a github-webhook row (which IS
@@ -2317,7 +2317,7 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(released).toBe(0);
       const row = driver.query("SELECT run_after FROM _selfhost_jobs", []).rows[0] as { run_after: number };
       expect(row.run_after).toBe(futureRunAfter);
-      expect(await renderMetrics()).not.toContain("gittensory_jobs_foreground_liveness_released_total");
+      expect(await renderMetrics()).not.toContain("loopover_jobs_foreground_liveness_released_total");
     });
 
     it("caches foreground-liveness admission reads for candidates sharing the same rate-limit target", async () => {
@@ -2373,7 +2373,7 @@ describe("createSqliteQueue (durable #980)", () => {
       const released = await q.releaseStaleForegroundDeferrals();
 
       expect(released).toBe(1);
-      expect(await renderMetrics()).toContain("gittensory_jobs_foreground_liveness_released_total 1");
+      expect(await renderMetrics()).toContain("loopover_jobs_foreground_liveness_released_total 1");
     });
 
     // The payload is unparseable -- isRateLimitAdmissionNowClear's own catch(){ return false } branch -- so ONLY
@@ -2433,7 +2433,7 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(released).toBe(0);
       const row = driver.query("SELECT run_after FROM _selfhost_jobs", []).rows[0] as { run_after: number };
       expect(row.run_after).toBeGreaterThan(Date.now()); // still deferred -- the escape hatch never touched it
-      expect(await renderMetrics()).not.toContain("gittensory_jobs_foreground_liveness_released_total");
+      expect(await renderMetrics()).not.toContain("loopover_jobs_foreground_liveness_released_total");
     });
 
     // REGRESSION (#selfhost-queue-liveness): the production incident this module exists to make structurally
@@ -2460,7 +2460,7 @@ describe("createSqliteQueue (durable #980)", () => {
       const released = await q.releaseStaleForegroundDeferrals();
 
       expect(released).toBe(3);
-      expect(await renderMetrics()).toContain("gittensory_jobs_foreground_liveness_released_total 3");
+      expect(await renderMetrics()).toContain("loopover_jobs_foreground_liveness_released_total 3");
       // kickAll() (called internally once released > 0) means pump activity picks these up without waiting for
       // the next poll tick -- drain() confirms all three are now genuinely runnable.
       await q.drain();
@@ -2488,7 +2488,7 @@ describe("createSqliteQueue (durable #980)", () => {
       const released = await q.releaseStaleForegroundDeferrals();
 
       expect(released).toBe(2);
-      expect(await renderMetrics()).toContain("gittensory_jobs_foreground_liveness_released_total 2");
+      expect(await renderMetrics()).toContain("loopover_jobs_foreground_liveness_released_total 2");
       const remainingFuture = driver.query(
         `SELECT COUNT(*) AS c FROM _selfhost_jobs WHERE status='pending' AND run_after>?`,
         [now],
@@ -2704,10 +2704,10 @@ describe("createSqliteQueue (durable #980)", () => {
       last_error: "openai api rate limit exceeded",
     });
     expect(await q.stats()).toMatchObject({
-      gittensory_jobs_failed_total: 2,
-      gittensory_jobs_dead_total: 1,
+      loopover_jobs_failed_total: 2,
+      loopover_jobs_dead_total: 1,
     });
-    expect(await q.stats()).not.toHaveProperty("gittensory_jobs_rate_limited_total");
+    expect(await q.stats()).not.toHaveProperty("loopover_jobs_rate_limited_total");
   });
 
   it("does not defer GitHub work when a non-GitHub job throws a GitHub-looking rate limit", async () => {
@@ -2745,9 +2745,9 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(pending).toHaveLength(1);
     expect(JSON.parse(pending[0]!.payload)).toMatchObject({ type: "refresh-registry" });
     expect(pending[0]!.last_error).toBe("API rate limit exceeded for installation ID 123");
-    expect(await q.stats()).toMatchObject({ gittensory_jobs_rate_limited_total: 1 });
-    expect(await q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
-    expect(await renderMetrics()).toContain('gittensory_jobs_rate_limited_by_type_total{job_type="refresh-registry",key_scope="unknown",kind="unknown"} 1');
+    expect(await q.stats()).toMatchObject({ loopover_jobs_rate_limited_total: 1 });
+    expect(await q.stats()).not.toHaveProperty("loopover_jobs_rate_limit_deferred_total");
+    expect(await renderMetrics()).toContain('loopover_jobs_rate_limited_by_type_total{job_type="refresh-registry",key_scope="unknown",kind="unknown"} 1');
   });
 
   it("defers only the depleted keyed GitHub budget while unrelated work keeps draining", async () => {
@@ -2824,13 +2824,13 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(byType.get("agent-regate-pr:9")?.last_error).toBe("github rate-limit budget deferred");
     expect(byType.has("agent-regate-pr:10")).toBe(false);
     expect(await q.stats()).toMatchObject({
-      gittensory_jobs_processed_total: 3,
-      gittensory_jobs_rate_limited_total: 1,
-      gittensory_jobs_rate_limit_deferred_total: 1,
+      loopover_jobs_processed_total: 3,
+      loopover_jobs_rate_limited_total: 1,
+      loopover_jobs_rate_limit_deferred_total: 1,
     });
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_jobs_rate_limit_budget_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
-    expect(metrics).toContain('gittensory_jobs_rate_limited_by_type_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
+    expect(metrics).toContain('loopover_jobs_rate_limit_budget_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
+    expect(metrics).toContain('loopover_jobs_rate_limited_by_type_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
   });
 
   it("coalesces a rate-limited active job into an existing pending duplicate without consuming attempts", async () => {
@@ -2868,7 +2868,7 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(JSON.parse(rows[0]!.payload).deliveryId).toBe("ci-existing");
     expect(rows[0]!.attempts).toBe(0);
     expect(rows[0]!.last_error).toContain("secondary rate limit");
-    expect(await q.stats()).toMatchObject({ gittensory_jobs_coalesced_total: 1 });
+    expect(await q.stats()).toMatchObject({ loopover_jobs_coalesced_total: 1 });
   });
 
   it("reschedules a keyed rate-limited job when no pending duplicate exists", async () => {
@@ -2908,7 +2908,7 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(row.attempts).toBe(0);
     expect(row.run_after).toBeGreaterThan(Date.now());
     expect(row.last_error).toContain("secondary rate limit");
-    expect(await q.stats()).toMatchObject({ gittensory_jobs_rate_limited_total: 1 });
+    expect(await q.stats()).toMatchObject({ loopover_jobs_rate_limited_total: 1 });
   });
 
   it("consumes retryable incomplete review attempts and dead-letters after maxRetries", async () => {
@@ -2995,7 +2995,7 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(JSON.parse(rows[1]!.payload).deliveryId).toBe("ci-existing");
     expect(rows[1]!.attempts).toBe(0);
     expect(rows[1]!.last_error).toBeNull();
-    expect((await q.stats()).gittensory_jobs_coalesced_total ?? 0).toBe(0);
+    expect((await q.stats()).loopover_jobs_coalesced_total ?? 0).toBe(0);
   });
 
   it("SURVIVES A RESTART: a fresh queue over the same DB processes a persisted pending job", async () => {
@@ -3022,7 +3022,7 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.drain();
 
       expect(driver.query("SELECT status FROM _selfhost_jobs", []).rows[0]).toMatchObject({ status: "processing" });
-      expect((await q.stats()).gittensory_jobs_recovered_total ?? 0).toBe(0);
+      expect((await q.stats()).loopover_jobs_recovered_total ?? 0).toBe(0);
     } finally {
       if (old === undefined) delete process.env.QUEUE_PROCESSING_TIMEOUT_MS;
       else process.env.QUEUE_PROCESSING_TIMEOUT_MS = old;
@@ -3156,8 +3156,8 @@ describe("createSqliteQueue (durable #980)", () => {
 
       expect(seen).toEqual(["lease-expired"]);
       expect(await q.stats()).toMatchObject({
-        gittensory_jobs_recovered_total: 1,
-        gittensory_jobs_processed_total: 1,
+        loopover_jobs_recovered_total: 1,
+        loopover_jobs_processed_total: 1,
       });
     } finally {
       if (oldTimeout === undefined) delete process.env.QUEUE_PROCESSING_TIMEOUT_MS;
@@ -3201,7 +3201,7 @@ describe("createSqliteQueue (durable #980)", () => {
         await new Promise((r) => setTimeout(r, 10));
 
       expect(seen.filter((type) => type === "slow")).toHaveLength(1);
-      expect((await queue.stats()).gittensory_jobs_recovered_total ?? 0).toBe(0);
+      expect((await queue.stats()).loopover_jobs_recovered_total ?? 0).toBe(0);
     } finally {
       for (const release of releases) release();
       if (q) await q.stop();
@@ -3411,9 +3411,9 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(row.status).toBe("pending");
       expect(row.run_after).toBeGreaterThan(before);
       expect(row.last_error).toContain("live_pending_high");
-      expect(await q.stats()).toMatchObject({ gittensory_jobs_maintenance_admission_deferred_total: 1 });
+      expect(await q.stats()).toMatchObject({ loopover_jobs_maintenance_admission_deferred_total: 1 });
       expect(await renderMetrics()).toContain(
-        'gittensory_jobs_maintenance_admission_deferred_by_reason_total{job_type="build-contributor-evidence",reason="live_pending_high"} 1',
+        'loopover_jobs_maintenance_admission_deferred_by_reason_total{job_type="build-contributor-evidence",reason="live_pending_high"} 1',
       );
     });
 
@@ -3529,7 +3529,7 @@ describe("createSqliteQueue (durable #980)", () => {
       ).rows[0] as { last_error: string };
       expect(freshRow.last_error).toContain("maintenance_pending_high");
       expect(await renderMetrics()).toContain(
-        'gittensory_jobs_maintenance_admission_granted_under_pressure_total{job_type="build-contributor-evidence",reason="maintenance_pending_high_drain"} 1',
+        'loopover_jobs_maintenance_admission_granted_under_pressure_total{job_type="build-contributor-evidence",reason="maintenance_pending_high_drain"} 1',
       );
     });
 
@@ -3601,10 +3601,10 @@ describe("createSqliteQueue (durable #980)", () => {
       );
       await q.drain();
       expect(started).toEqual(["build-contributor-evidence"]);
-      expect(await q.stats()).toMatchObject({ gittensory_jobs_maintenance_trickle_admitted_total: 1 });
+      expect(await q.stats()).toMatchObject({ loopover_jobs_maintenance_trickle_admitted_total: 1 });
       const metrics = await renderMetrics();
-      expect(metrics).toContain('gittensory_jobs_maintenance_trickle_admitted_by_type_total{job_type="build-contributor-evidence"} 1');
-      expect(metrics).toContain('gittensory_jobs_maintenance_admission_granted_under_pressure_total{job_type="build-contributor-evidence",reason="trickle_max_defer_age"} 1');
+      expect(metrics).toContain('loopover_jobs_maintenance_trickle_admitted_by_type_total{job_type="build-contributor-evidence"} 1');
+      expect(metrics).toContain('loopover_jobs_maintenance_admission_granted_under_pressure_total{job_type="build-contributor-evidence",reason="trickle_max_defer_age"} 1');
     });
 
     it("does not record a trickle-admitted metric on a normal clear-pressure admission", async () => {
@@ -3614,8 +3614,8 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.binding.send(msg("build-contributor-evidence"));
       await q.drain();
       expect(started).toEqual(["build-contributor-evidence"]);
-      expect(await q.stats()).not.toHaveProperty("gittensory_jobs_maintenance_trickle_admitted_total");
-      expect(await renderMetrics()).not.toContain("gittensory_jobs_maintenance_trickle_admitted");
+      expect(await q.stats()).not.toHaveProperty("loopover_jobs_maintenance_trickle_admitted_total");
+      expect(await renderMetrics()).not.toContain("loopover_jobs_maintenance_trickle_admitted");
     });
 
     it("does not record the granted-under-pressure metric for an ordinary pressure_clear admission", async () => {
@@ -3625,7 +3625,7 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.binding.send(msg("build-contributor-evidence"));
       await q.drain();
       expect(started).toEqual(["build-contributor-evidence"]);
-      expect(await renderMetrics()).not.toContain("gittensory_jobs_maintenance_admission_granted_under_pressure_total");
+      expect(await renderMetrics()).not.toContain("loopover_jobs_maintenance_admission_granted_under_pressure_total");
     });
 
     it("pressureSignals() reports live/maintenance pending counts and oldest ages", async () => {
@@ -3837,8 +3837,8 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.binding.send(msg("build-contributor-evidence"));
       await q.drain();
       expect(started).not.toContain("build-contributor-evidence");
-      expect(await q.stats()).not.toHaveProperty("gittensory_jobs_maintenance_admission_deferred_total");
-      expect(await renderMetrics()).not.toContain("gittensory_jobs_maintenance_admission_deferred_by_reason_total");
+      expect(await q.stats()).not.toHaveProperty("loopover_jobs_maintenance_admission_deferred_total");
+      expect(await renderMetrics()).not.toContain("loopover_jobs_maintenance_admission_deferred_by_reason_total");
     });
   });
 
@@ -3893,7 +3893,7 @@ describe("createSqliteQueue (durable #980)", () => {
         ).rows[0] as { last_error: string } | undefined;
         expect(row?.last_error).toContain("installation concurrency admission deferred: concurrency_high");
         expect(await renderMetrics()).toContain(
-          'gittensory_jobs_installation_concurrency_deferred_by_reason_total{job_type="backfill-repo-segment",reason="concurrency_high"} 1',
+          'loopover_jobs_installation_concurrency_deferred_by_reason_total{job_type="backfill-repo-segment",reason="concurrency_high"} 1',
         );
       } finally {
         release();
@@ -3936,7 +3936,7 @@ describe("createSqliteQueue (durable #980)", () => {
         ).rows[0] as { last_error: string } | undefined;
         expect(row?.last_error).toContain("installation concurrency admission deferred: concurrency_high");
         expect(await renderMetrics()).toContain(
-          'gittensory_jobs_installation_concurrency_deferred_by_reason_total{job_type="agent-regate-sweep",reason="concurrency_high"} 1',
+          'loopover_jobs_installation_concurrency_deferred_by_reason_total{job_type="agent-regate-sweep",reason="concurrency_high"} 1',
         );
       } finally {
         release();
@@ -4055,8 +4055,8 @@ describe("createSqliteQueue (durable #980)", () => {
         for (let i = 0; i < 20 && started < 1; i += 1) await new Promise((r) => setTimeout(r, 10));
         await new Promise((r) => setTimeout(r, 30));
         expect(started).toBe(1);
-        expect(await renderMetrics()).not.toContain("gittensory_jobs_installation_concurrency_deferred_total");
-        expect(await renderMetrics()).not.toContain("gittensory_jobs_installation_concurrency_deferred_by_reason_total");
+        expect(await renderMetrics()).not.toContain("loopover_jobs_installation_concurrency_deferred_total");
+        expect(await renderMetrics()).not.toContain("loopover_jobs_installation_concurrency_deferred_by_reason_total");
       } finally {
         release();
         await q.stop();

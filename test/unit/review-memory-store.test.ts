@@ -289,8 +289,8 @@ describe("getCachedReviewSuppressions: cache hit/miss telemetry (#4448)", () => 
     expect(second).toEqual([]);
 
     const rendered = await renderMetrics();
-    expect(rendered).toContain("gittensory_review_memory_cache_hit_total 1");
-    expect(rendered).not.toContain("gittensory_review_memory_cache_miss_total");
+    expect(rendered).toContain("loopover_review_memory_cache_hit_total 1");
+    expect(rendered).not.toContain("loopover_review_memory_cache_miss_total");
     const hitEvent = await auditEvent(env, "github_app.review_memory_cache_hit", "owner/telemetry-repo");
     expect(hitEvent?.outcome).toBe("completed");
     expect(await auditEvent(env, "github_app.review_memory_cache_miss", "owner/telemetry-repo")).toBeUndefined();
@@ -303,8 +303,8 @@ describe("getCachedReviewSuppressions: cache hit/miss telemetry (#4448)", () => 
     expect(first).toEqual([]);
 
     const rendered = await renderMetrics();
-    expect(rendered).toContain("gittensory_review_memory_cache_miss_total 1");
-    expect(rendered).not.toContain("gittensory_review_memory_cache_hit_total");
+    expect(rendered).toContain("loopover_review_memory_cache_miss_total 1");
+    expect(rendered).not.toContain("loopover_review_memory_cache_hit_total");
     const missEvent = await auditEvent(env, "github_app.review_memory_cache_miss", "owner/telemetry-repo-2");
     expect(missEvent?.outcome).toBe("completed");
     expect(await auditEvent(env, "github_app.review_memory_cache_hit", "owner/telemetry-repo-2")).toBeUndefined();
@@ -321,8 +321,8 @@ describe("getCachedReviewSuppressions: cache hit/miss telemetry (#4448)", () => 
     await getCachedReviewSuppressions(env, "owner/telemetry-repo-3", t0 + 60_001); // past the 60s TTL
 
     const rendered = await renderMetrics();
-    expect(rendered).toContain("gittensory_review_memory_cache_miss_total 1");
-    expect(rendered).not.toContain("gittensory_review_memory_cache_hit_total");
+    expect(rendered).toContain("loopover_review_memory_cache_miss_total 1");
+    expect(rendered).not.toContain("loopover_review_memory_cache_hit_total");
   });
 
   it("swallows a failing cache-hit audit-event write without throwing, still returning the cached suppression list", async () => {

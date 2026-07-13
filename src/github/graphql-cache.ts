@@ -10,7 +10,7 @@ import {
 import { incr } from "../selfhost/metrics";
 
 const GITHUB_GRAPHQL_URL = "https://api.github.com/graphql";
-const GITHUB_GRAPHQL_CACHE_METRIC = "gittensory_github_graphql_cache_total";
+const GITHUB_GRAPHQL_CACHE_METRIC = "loopover_github_graphql_cache_total";
 const DEFAULT_GRAPHQL_TTL_SECONDS = 10 * 60;
 
 export type GitHubGraphQlCacheClass = "repo_totals" | "contributor_activity";

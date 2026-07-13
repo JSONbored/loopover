@@ -86,7 +86,7 @@
   ],
   "refresh": "30s",
   "schemaVersion": 38,
-  "tags": ["gittensory", "rees", "observability"],
+  "tags": ["loopover", "rees", "observability"],
   "templating": {
     "list": [
       { "current": {}, "hide": 0, "includeAll": false, "name": "DS_PROMETHEUS", "options": [], "query": "prometheus", "refresh": 1, "type": "datasource" }
@@ -95,7 +95,7 @@
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Gittensory — REES (review-enrichment)",
-  "uid": "gittensory-rees",
+  "title": "LoopOver — REES (review-enrichment)",
+  "uid": "loopover-rees",
   "version": 1
 }

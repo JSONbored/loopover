@@ -701,23 +701,23 @@ async function main(): Promise<void> {
     });
   }
 
-  gauge("gittensory_queue_pending", () => backend.queue.size());
-  gauge("gittensory_queue_dead", () => backend.queue.deadCount());
-  gauge("gittensory_dlq_dead_lettered_recent", () => sampleRecentDeadLetters(env));
-  gauge("gittensory_queue_processing", () => backend.queue.processingCount());
+  gauge("loopover_queue_pending", () => backend.queue.size());
+  gauge("loopover_queue_dead", () => backend.queue.deadCount());
+  gauge("loopover_dlq_dead_lettered_recent", () => sampleRecentDeadLetters(env));
+  gauge("loopover_queue_processing", () => backend.queue.processingCount());
   const durableJobMetric = async (name: string): Promise<number> =>
     Number((await backend.queue.stats())[name] ?? 0);
   for (const name of [
-    "gittensory_jobs_enqueued_total",
-    "gittensory_jobs_processed_total",
-    "gittensory_jobs_failed_total",
-    "gittensory_jobs_dead_total",
-    "gittensory_jobs_rate_limited_total",
-    "gittensory_jobs_rate_limit_deferred_total",
-    "gittensory_jobs_coalesced_total",
-    "gittensory_jobs_recovered_total",
-    "gittensory_jobs_maintenance_admission_deferred_total",
-    "gittensory_jobs_maintenance_trickle_admitted_total",
+    "loopover_jobs_enqueued_total",
+    "loopover_jobs_processed_total",
+    "loopover_jobs_failed_total",
+    "loopover_jobs_dead_total",
+    "loopover_jobs_rate_limited_total",
+    "loopover_jobs_rate_limit_deferred_total",
+    "loopover_jobs_coalesced_total",
+    "loopover_jobs_recovered_total",
+    "loopover_jobs_maintenance_admission_deferred_total",
+    "loopover_jobs_maintenance_trickle_admitted_total",
   ]) {
     gauge(name.replace("_total", "_persisted_total"), () =>
       durableJobMetric(name),
@@ -729,79 +729,79 @@ async function main(): Promise<void> {
   // (best-effort) host CPU pressure. Distinguishes "the app queue is backed up" from "CI/other host load is
   // starving the app" from "GitHub/AI latency", the ambiguity that made the original slowdown hard to diagnose.
   const maintenancePressure = () => backend.queue.pressureSignals();
-  gauge("gittensory_queue_live_pending", async () => (await maintenancePressure()).livePendingCount);
-  gauge("gittensory_queue_maintenance_pending", async () => (await maintenancePressure()).maintenancePendingCount);
-  gauge("gittensory_queue_oldest_live_pending_age_seconds", async () =>
+  gauge("loopover_queue_live_pending", async () => (await maintenancePressure()).livePendingCount);
+  gauge("loopover_queue_maintenance_pending", async () => (await maintenancePressure()).maintenancePendingCount);
+  gauge("loopover_queue_oldest_live_pending_age_seconds", async () =>
     Math.floor(((await maintenancePressure()).oldestLivePendingAgeMs ?? 0) / 1000),
   );
-  gauge("gittensory_queue_oldest_maintenance_pending_age_seconds", async () =>
+  gauge("loopover_queue_oldest_maintenance_pending_age_seconds", async () =>
     Math.floor(((await maintenancePressure()).oldestMaintenancePendingAgeMs ?? 0) / 1000),
   );
   // #selfhost-queue-liveness: runnable-now is the "is anything actually due right now" signal the incident
   // this module fixes required manual SQL to answer (processing=0, runnable_now=0 with hundreds pending).
-  // gittensory_queue_runnable_now covers every priority; the live-scoped pair narrows to foreground work
+  // loopover_queue_runnable_now covers every priority; the live-scoped pair narrows to foreground work
   // specifically and adds the oldest-RUNNABLE age, distinct from oldest-PENDING age (which a job intentionally
   // scheduled far out can inflate without indicating anything is stuck).
-  gauge("gittensory_queue_runnable_now", async () => (await backend.queue.snapshot()).totals.due);
-  gauge("gittensory_queue_live_runnable_now", async () => (await maintenancePressure()).liveRunnableNowCount);
-  gauge("gittensory_queue_oldest_live_runnable_age_seconds", async () =>
+  gauge("loopover_queue_runnable_now", async () => (await backend.queue.snapshot()).totals.due);
+  gauge("loopover_queue_live_runnable_now", async () => (await maintenancePressure()).liveRunnableNowCount);
+  gauge("loopover_queue_oldest_live_runnable_age_seconds", async () =>
     Math.floor(((await maintenancePressure()).oldestLiveRunnableAgeMs ?? 0) / 1000),
   );
   // -1 (not 0) when unavailable -- a genuine idle host reads 0, so a dashboard can tell "known idle" apart
   // from "no signal on this platform" (see host-pressure.ts).
-  gauge("gittensory_host_load_avg1_per_core", async () => (await maintenancePressure()).hostLoadAvg1PerCore ?? -1);
-  gauge("gittensory_clock_skew_seconds", () => clockSkewSecondsSample());
+  gauge("loopover_host_load_avg1_per_core", async () => (await maintenancePressure()).hostLoadAvg1PerCore ?? -1);
+  gauge("loopover_clock_skew_seconds", () => clockSkewSecondsSample());
   // D1 size/row-count observability probe (#3810): opt-in Cloudflare Management API poll for the shared
   // cloud D1's file size and monitored-table row counts. Always registered (byte-identical -1/empty samples
   // when the probe is disabled or has never completed) so the metric names/HELP/TYPE lines are present on
   // the very first scrape, matching the seeded-counter convention below.
-  gauge("gittensory_d1_database_size_bytes", () => d1DatabaseSizeBytesSample());
-  gaugeVector("gittensory_d1_table_row_count", () => d1TableRowCountSamples());
-  gauge("gittensory_signal_snapshots_rows_per_key", () => d1SignalSnapshotsRowsPerKeySample());
+  gauge("loopover_d1_database_size_bytes", () => d1DatabaseSizeBytesSample());
+  gaugeVector("loopover_d1_table_row_count", () => d1TableRowCountSamples());
+  gauge("loopover_signal_snapshots_rows_per_key", () => d1SignalSnapshotsRowsPerKeySample());
   // Backlog-vs-fresh-intake fairness lanes (#selfhost-lane-observability, see queue-fairness.ts): the SAME
   // `foreground_lane` classification the claim-time fairness mechanism itself consults, so an operator can see
   // whether a stuck-looking queue is actually a real, unresolved PR-review backlog (high backlog-convergence
   // pending) or a burst of brand-new webhook traffic (high fresh-intake pending) -- two very different causes
   // that both otherwise just show up as "live pending is high."
-  gauge("gittensory_queue_backlog_convergence_pending", async () => (await maintenancePressure()).backlogConvergencePendingCount);
-  gauge("gittensory_queue_fresh_intake_pending", async () => (await maintenancePressure()).freshIntakePendingCount);
+  gauge("loopover_queue_backlog_convergence_pending", async () => (await maintenancePressure()).backlogConvergencePendingCount);
+  gauge("loopover_queue_fresh_intake_pending", async () => (await maintenancePressure()).freshIntakePendingCount);
   // Top-10 repos by backlog-convergence depth, recomputed fresh every scrape (gaugeVector -- see metrics.ts) so
   // a repo that drains out of the top-10 stops appearing on its own, with no stale per-repo series lingering.
   // Bounded to 10 regardless of how many repos a self-host install has registered.
-  gaugeVector("gittensory_queue_backlog_by_repo", async () =>
+  gaugeVector("loopover_queue_backlog_by_repo", async () =>
     (await backend.queue.topBacklogRepos(10)).map((r) => ({ labels: { repo: r.repo }, value: r.count })),
   );
-  // A genuine "remaining right now" gauge, by key_scope -- gittensory_github_rest_rate_limit_observations_total
+  // A genuine "remaining right now" gauge, by key_scope -- loopover_github_rest_rate_limit_observations_total
   // only supports a bucketed rate() over a window, never the actual current value (#selfhost-lane-observability).
-  gaugeVector("gittensory_github_rest_rate_limit_remaining", () => githubRestRateLimitRemainingSamples());
-  gauge("gittensory_uptime_seconds", () =>
+  gaugeVector("loopover_github_rest_rate_limit_remaining", () => githubRestRateLimitRemainingSamples());
+  gauge("loopover_uptime_seconds", () =>
     Math.floor((Date.now() - startedAt) / 1000),
   );
-  gauge("gittensory_backup_acknowledged", () => backupAcknowledgedGaugeValue(sqliteBackupOpts));
-  gauge("gittensory_public_origin_acknowledged", () => publicOriginAcknowledgedGaugeValue(publicOriginOpts));
+  gauge("loopover_backup_acknowledged", () => backupAcknowledgedGaugeValue(sqliteBackupOpts));
+  gauge("loopover_public_origin_acknowledged", () => publicOriginAcknowledgedGaugeValue(publicOriginOpts));
   // Pre-initialize job counters to 0 so they appear in the first Prometheus scrape (lazy counters
   // created on first use would otherwise cause "No data" in Grafana until the first job event).
   for (const c of [
-    "gittensory_jobs_enqueued_total",
-    "gittensory_jobs_processed_total",
-    "gittensory_jobs_failed_total",
-    "gittensory_jobs_dead_total",
-    "gittensory_jobs_rate_limit_deferred_total",
-    "gittensory_jobs_recovered_total",
-    "gittensory_webhook_dedup_total",
-    "gittensory_qdrant_queries_total",
-    "gittensory_qdrant_upserts_total",
-    "gittensory_orb_events_exported_total",
-    "gittensory_orb_export_errors_total",
+    "loopover_jobs_enqueued_total",
+    "loopover_jobs_processed_total",
+    "loopover_jobs_failed_total",
+    "loopover_jobs_dead_total",
+    "loopover_jobs_rate_limit_deferred_total",
+    "loopover_jobs_recovered_total",
+    "loopover_webhook_dedup_total",
+    "loopover_qdrant_queries_total",
+    "loopover_qdrant_upserts_total",
+    "loopover_orb_events_exported_total",
+    "loopover_orb_export_errors_total",
   ])
-    incr(c, c === "gittensory_webhook_dedup_total" ? { backend: "redis" } : undefined, 0);
-  // Seed gittensory_http_requests_total per status class so the breakdown panel has every series from the
+    incr(c, c === "loopover_webhook_dedup_total" ? { backend: "redis" } : undefined, 0);
+  // Seed loopover_http_requests_total per status class so the breakdown panel has every series from the
   // first scrape (keeping the metric consistently labeled — never mix labeled and unlabeled samples).
   for (const status of ["2xx", "3xx", "4xx", "5xx"])
-    incr("gittensory_http_requests_total", { status }, 0);
+    incr("loopover_http_requests_total", { status }, 0);
   // Same seeding for the D1 probe's error counter (#3810) -- byte-identical to 0 whether or not the probe is
   // even enabled, so its stat panel reads "0" rather than "No data" before any failure has ever occurred.
-  for (const part of ["database_info", "table_row_count"]) incr("gittensory_d1_probe_errors_total", { part }, 0);
+  for (const part of ["database_info", "table_row_count"]) incr("loopover_d1_probe_errors_total", { part }, 0);
 
   const ctx = {
     waitUntil: (p: Promise<unknown>) =>
@@ -957,11 +957,11 @@ async function main(): Promise<void> {
               // /health /ready /metrics and the setup wizard already returned above and are not counted.)
               const startedReq = Date.now();
               const finish = (response: Response): Response => {
-                incr("gittensory_http_requests_total", {
+                incr("loopover_http_requests_total", {
                   status: `${Math.floor(response.status / 100)}xx`,
                 });
                 observe(
-                  "gittensory_http_request_duration_seconds",
+                  "loopover_http_request_duration_seconds",
                   (Date.now() - startedReq) / 1000,
                 );
                 setCurrentOtelSpanAttributes(selfHostHttpResponseAttributes(response.status));
@@ -978,7 +978,7 @@ async function main(): Promise<void> {
                 : null;
               if (deliveryId) {
                 // Redis dedup hit — return 204 before enqueue (#1216).
-                // Metric: gittensory_webhook_dedup_total{backend="redis"} (#2075).
+                // Metric: loopover_webhook_dedup_total{backend="redis"} (#2075).
                 if (await isWebhookDeliveryDuplicate(webhookCache!, deliveryId)) {
                   return finish(new Response(null, { status: 204 }));
                 }
@@ -1082,8 +1082,8 @@ async function main(): Promise<void> {
   // Dashboard-visible counterparts to the streak/no-progress alert gate in isOrbRelayRegistrationAlerting:
   // an operator staring at the registration-failures counter alone can't tell "one hiccup" from "actually
   // stuck" -- these two gauges are the SAME two signals that gate, sampled live at scrape time.
-  gauge("gittensory_orb_relay_register_consecutive_failures", () => orbRelayRegistrationState.consecutiveFailures);
-  gauge("gittensory_orb_relay_drain_seconds_since_last", () =>
+  gauge("loopover_orb_relay_register_consecutive_failures", () => orbRelayRegistrationState.consecutiveFailures);
+  gauge("loopover_orb_relay_drain_seconds_since_last", () =>
     relayDrainState?.lastDrainAtMs == null ? -1 : Math.floor((Date.now() - relayDrainState.lastDrainAtMs) / 1000),
   );
   /* v8 ignore stop */

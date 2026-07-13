@@ -216,11 +216,11 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
       body,
     });
     if (!res.ok) {
-      incr("gittensory_orb_export_errors_total");
+      incr("loopover_orb_export_errors_total");
       return 0;
     }
   } catch {
-    incr("gittensory_orb_export_errors_total");
+    incr("loopover_orb_export_errors_total");
     return 0;
   }
 
@@ -233,6 +233,6 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
     .bind(instance, lastRow.event_at, lastRow.target_id, new Date().toISOString())
     .run();
 
-  incr("gittensory_orb_events_exported_total", {}, results.length);
+  incr("loopover_orb_events_exported_total", {}, results.length);
   return results.length;
 }

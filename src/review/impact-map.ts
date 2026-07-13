@@ -162,7 +162,7 @@ export async function computeImpactMap(
       if (cached !== null) {
         // #4448: mirrors repo-culture-profile's #4509 cache hit/miss instrumentation exactly -- one of the six
         // AI-touching capabilities that had no reuse-rate signal at all before this.
-        incr("gittensory_impact_map_cache_hit_total");
+        incr("loopover_impact_map_cache_hit_total");
         await recordAuditEvent(env, {
           eventType: "github_app.impact_map_cache_hit",
           targetKey,
@@ -172,7 +172,7 @@ export async function computeImpactMap(
         }).catch(() => undefined);
         result = cached;
       } else {
-        incr("gittensory_impact_map_cache_miss_total");
+        incr("loopover_impact_map_cache_miss_total");
         await recordAuditEvent(env, {
           eventType: "github_app.impact_map_cache_miss",
           targetKey,

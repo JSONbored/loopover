@@ -60,7 +60,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_uptime_seconds",
+          "expr": "loopover_uptime_seconds",
           "legendFormat": "uptime"
         }
       ]
@@ -100,7 +100,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_pending",
+          "expr": "loopover_queue_pending",
           "legendFormat": "pending"
         }
       ]
@@ -140,7 +140,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_dead",
+          "expr": "loopover_queue_dead",
           "legendFormat": "dead"
         }
       ]
@@ -176,7 +176,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_jobs_processed_persisted_total",
+          "expr": "loopover_jobs_processed_persisted_total",
           "legendFormat": "processed"
         }
       ]
@@ -216,7 +216,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_webhook_dedup_total",
+          "expr": "loopover_webhook_dedup_total",
           "legendFormat": "deduped"
         }
       ]
@@ -255,7 +255,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(gittensory_qdrant_errors_total) or vector(0)",
+          "expr": "sum(loopover_qdrant_errors_total) or vector(0)",
           "legendFormat": "errors"
         }
       ]
@@ -291,12 +291,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(gittensory_http_requests_total[2m])",
+          "expr": "rate(loopover_http_requests_total[2m])",
           "legendFormat": "requests/s"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(gittensory_webhook_dedup_total[2m])",
+          "expr": "rate(loopover_webhook_dedup_total[2m])",
           "legendFormat": "dedup/s"
         }
       ]
@@ -325,12 +325,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_pending",
+          "expr": "loopover_queue_pending",
           "legendFormat": "pending"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_dead",
+          "expr": "loopover_queue_dead",
           "legendFormat": "dead-letter"
         }
       ]
@@ -366,22 +366,22 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(gittensory_jobs_processed_persisted_total[2m])",
+          "expr": "rate(loopover_jobs_processed_persisted_total[2m])",
           "legendFormat": "processed/s"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(gittensory_jobs_enqueued_persisted_total[2m])",
+          "expr": "rate(loopover_jobs_enqueued_persisted_total[2m])",
           "legendFormat": "enqueued/s"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(gittensory_jobs_failed_persisted_total[2m])",
+          "expr": "rate(loopover_jobs_failed_persisted_total[2m])",
           "legendFormat": "failed/s"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(gittensory_jobs_dead_persisted_total[2m])",
+          "expr": "rate(loopover_jobs_dead_persisted_total[2m])",
           "legendFormat": "dead/s"
         }
       ]
@@ -412,7 +412,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(gittensory_jobs_failed_persisted_total[5m]) / (rate(gittensory_jobs_processed_persisted_total[5m]) + rate(gittensory_jobs_failed_persisted_total[5m]) + 0.0001)",
+          "expr": "rate(loopover_jobs_failed_persisted_total[5m]) / (rate(loopover_jobs_processed_persisted_total[5m]) + rate(loopover_jobs_failed_persisted_total[5m]) + 0.0001)",
           "legendFormat": "failure %"
         }
       ]
@@ -448,7 +448,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(gittensory_qdrant_queries_total[2m])",
+          "expr": "rate(loopover_qdrant_queries_total[2m])",
           "legendFormat": "queries/s"
         }
       ]
@@ -477,12 +477,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(gittensory_qdrant_upserts_total[2m])",
+          "expr": "rate(loopover_qdrant_upserts_total[2m])",
           "legendFormat": "upserts/s"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(gittensory_qdrant_errors_total[2m])",
+          "expr": "rate(loopover_qdrant_errors_total[2m])",
           "legendFormat": "errors/s"
         }
       ]
@@ -491,7 +491,7 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
       "id": 104,
-      "title": "Gittensory Orb",
+      "title": "LoopOver Orb",
       "type": "row"
     },
     {
@@ -525,7 +525,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_orb_events_exported_total or vector(0)",
+          "expr": "loopover_orb_events_exported_total or vector(0)",
           "legendFormat": "exported"
         }
       ]
@@ -564,7 +564,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_orb_export_errors_total or vector(0)",
+          "expr": "loopover_orb_export_errors_total or vector(0)",
           "legendFormat": "errors"
         }
       ]
@@ -593,12 +593,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(gittensory_orb_events_exported_total[5m]) or vector(0)",
+          "expr": "rate(loopover_orb_events_exported_total[5m]) or vector(0)",
           "legendFormat": "exported/s"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum by (result) (rate(gittensory_orb_webhook_total[5m])) or vector(0)",
+          "expr": "sum by (result) (rate(loopover_orb_webhook_total[5m])) or vector(0)",
           "legendFormat": "{{result}} webhooks/s"
         }
       ]
@@ -650,7 +650,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{service=\"gittensory\"} | json eventf=\"event\", errf=\"error\" | line_format \"{{.eventf}}{{if .errf}} — {{.errf}}{{end}}\"",
+          "expr": "{service=\"loopover\"} | json eventf=\"event\", errf=\"error\" | line_format \"{{.eventf}}{{if .errf}} — {{.errf}}{{end}}\"",
           "queryType": "range",
           "refId": "A"
         }
@@ -691,7 +691,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{service=\"gittensory\"} | json eventf=\"event\", errf=\"error\" | errf != \"\" | line_format \"{{.eventf}} — {{.errf}}\"",
+          "expr": "{service=\"loopover\"} | json eventf=\"event\", errf=\"error\" | errf != \"\" | line_format \"{{.eventf}} — {{.errf}}\"",
           "queryType": "range",
           "refId": "A"
         }
@@ -818,7 +818,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (status) (rate(gittensory_http_requests_total[5m]))",
+          "expr": "sum by (status) (rate(loopover_http_requests_total[5m]))",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
@@ -868,7 +868,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(gittensory_http_request_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(loopover_http_request_duration_seconds_bucket[5m])))",
           "legendFormat": "p50",
           "refId": "A"
         },
@@ -877,7 +877,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(gittensory_http_request_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(loopover_http_request_duration_seconds_bucket[5m])))",
           "legendFormat": "p95",
           "refId": "B"
         },
@@ -886,7 +886,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(gittensory_http_request_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(loopover_http_request_duration_seconds_bucket[5m])))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -953,7 +953,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(rate(gittensory_http_requests_total{status=\"5xx\"}[5m])) / clamp_min(sum(rate(gittensory_http_requests_total[5m])), 1e-9)",
+          "expr": "sum(rate(loopover_http_requests_total{status=\"5xx\"}[5m])) / clamp_min(sum(rate(loopover_http_requests_total[5m])), 1e-9)",
           "legendFormat": "5xx ratio",
           "refId": "A"
         }
@@ -1157,7 +1157,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (result) (rate(gittensory_github_response_cache_total[5m]))",
+          "expr": "sum by (result) (rate(loopover_github_response_cache_total[5m]))",
           "legendFormat": "{{result}}",
           "refId": "A"
         }
@@ -1208,7 +1208,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (class, result) (gittensory_github_response_cache_total)",
+          "expr": "sum by (class, result) (loopover_github_response_cache_total)",
           "legendFormat": "{{class}} {{result}}",
           "refId": "A"
         }
@@ -1259,7 +1259,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (remaining_bucket, key_scope) (rate(gittensory_github_rest_rate_limit_observations_total[5m])) or vector(0)",
+          "expr": "sum by (remaining_bucket, key_scope) (rate(loopover_github_rest_rate_limit_observations_total[5m])) or vector(0)",
           "legendFormat": "{{key_scope}} {{remaining_bucket}} remaining",
           "refId": "A"
         },
@@ -1268,7 +1268,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (status, retry, key_scope) (rate(gittensory_github_rest_rate_limit_responses_total[5m])) or vector(0)",
+          "expr": "sum by (status, retry, key_scope) (rate(loopover_github_rest_rate_limit_responses_total[5m])) or vector(0)",
           "legendFormat": "{{key_scope}} {{status}} {{retry}}",
           "refId": "B"
         }
@@ -1319,7 +1319,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_admission_deferred_total[5m])) or vector(0)",
+          "expr": "sum by (kind, key_scope, job_type) (rate(loopover_jobs_rate_limit_admission_deferred_total[5m])) or vector(0)",
           "legendFormat": "admission {{kind}} {{key_scope}} {{job_type}}",
           "refId": "A"
         },
@@ -1328,7 +1328,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_budget_deferred_total[5m])) or vector(0)",
+          "expr": "sum by (kind, key_scope, job_type) (rate(loopover_jobs_rate_limit_budget_deferred_total[5m])) or vector(0)",
           "legendFormat": "budget {{kind}} {{key_scope}} {{job_type}}",
           "refId": "B"
         },
@@ -1337,7 +1337,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limited_by_type_total[5m])) or vector(0)",
+          "expr": "sum by (kind, key_scope, job_type) (rate(loopover_jobs_rate_limited_by_type_total[5m])) or vector(0)",
           "legendFormat": "limited {{kind}} {{key_scope}} {{job_type}}",
           "refId": "C"
         }
@@ -1552,7 +1552,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "(time() - max(gittensory_backup_latest_timestamp_seconds{target=~\"postgres|sqlite\"})) and max(gittensory_backup_latest_timestamp_seconds{target=~\"postgres|sqlite\"}) > 0",
+          "expr": "(time() - max(loopover_backup_latest_timestamp_seconds{target=~\"postgres|sqlite\"})) and max(loopover_backup_latest_timestamp_seconds{target=~\"postgres|sqlite\"}) > 0",
           "legendFormat": "age",
           "refId": "A"
         }
@@ -1823,7 +1823,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "(time() - gittensory_backup_latest_timestamp_seconds{target=~\"postgres|sqlite|qdrant\"}) and gittensory_backup_latest_timestamp_seconds{target=~\"postgres|sqlite|qdrant\"} > 0",
+          "expr": "(time() - loopover_backup_latest_timestamp_seconds{target=~\"postgres|sqlite|qdrant\"}) and loopover_backup_latest_timestamp_seconds{target=~\"postgres|sqlite|qdrant\"} > 0",
           "legendFormat": "{{target}} age seconds",
           "refId": "A"
         },
@@ -1832,7 +1832,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "gittensory_backup_files{target=~\"postgres|sqlite|qdrant\"} or vector(0)",
+          "expr": "loopover_backup_files{target=~\"postgres|sqlite|qdrant\"} or vector(0)",
           "legendFormat": "{{target}} files",
           "refId": "B"
         }
@@ -1878,7 +1878,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_live_pending",
+          "expr": "loopover_queue_live_pending",
           "legendFormat": "live pending"
         }
       ]
@@ -1914,7 +1914,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_maintenance_pending",
+          "expr": "loopover_queue_maintenance_pending",
           "legendFormat": "maintenance pending"
         }
       ]
@@ -1950,7 +1950,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_oldest_live_pending_age_seconds",
+          "expr": "loopover_queue_oldest_live_pending_age_seconds",
           "legendFormat": "oldest live age"
         }
       ]
@@ -1986,7 +1986,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_oldest_maintenance_pending_age_seconds",
+          "expr": "loopover_queue_oldest_maintenance_pending_age_seconds",
           "legendFormat": "oldest maintenance age"
         }
       ]
@@ -2022,7 +2022,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_host_load_avg1_per_core",
+          "expr": "loopover_host_load_avg1_per_core",
           "legendFormat": "load/core"
         }
       ]
@@ -2057,7 +2057,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_github_branch_protection_permission_denied_total or vector(0)",
+          "expr": "loopover_github_branch_protection_permission_denied_total or vector(0)",
           "legendFormat": "permission denied"
         }
       ]
@@ -2082,12 +2082,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_live_pending",
+          "expr": "loopover_queue_live_pending",
           "legendFormat": "live"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_maintenance_pending",
+          "expr": "loopover_queue_maintenance_pending",
           "legendFormat": "maintenance"
         }
       ]
@@ -2112,7 +2112,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum by (reason, job_type) (rate(gittensory_jobs_maintenance_admission_deferred_by_reason_total[5m])) or vector(0)",
+          "expr": "sum by (reason, job_type) (rate(loopover_jobs_maintenance_admission_deferred_by_reason_total[5m])) or vector(0)",
           "legendFormat": "{{reason}} {{job_type}}",
           "refId": "A"
         }
@@ -2139,7 +2139,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum by (reason, job_type) (rate(gittensory_jobs_maintenance_admission_granted_under_pressure_total[5m])) or vector(0)",
+          "expr": "sum by (reason, job_type) (rate(loopover_jobs_maintenance_admission_granted_under_pressure_total[5m])) or vector(0)",
           "legendFormat": "{{reason}} {{job_type}}",
           "refId": "A"
         }
@@ -2166,7 +2166,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(rate(gittensory_jobs_maintenance_admission_deferred_total[5m])) or vector(0)",
+          "expr": "sum(rate(loopover_jobs_maintenance_admission_deferred_total[5m])) or vector(0)",
           "legendFormat": "deferred",
           "refId": "A"
         }
@@ -2209,7 +2209,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(gittensory_jobs_maintenance_trickle_admitted_persisted_total) or vector(0)",
+          "expr": "sum(loopover_jobs_maintenance_trickle_admitted_persisted_total) or vector(0)",
           "legendFormat": "trickle-admitted"
         }
       ]
@@ -2244,7 +2244,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(gittensory_orb_relay_register_total{result=\"failed\"}) or vector(0)",
+          "expr": "sum(loopover_orb_relay_register_total{result=\"failed\"}) or vector(0)",
           "legendFormat": "register failed"
         }
       ]
@@ -2279,7 +2279,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(gittensory_installation_health_broker_probe_total{result=\"failed\"}) or vector(0)",
+          "expr": "sum(loopover_installation_health_broker_probe_total{result=\"failed\"}) or vector(0)",
           "legendFormat": "broker probe failed"
         }
       ]
@@ -2314,7 +2314,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(gittensory_agent_action_permission_denied_total) or vector(0)",
+          "expr": "sum(loopover_agent_action_permission_denied_total) or vector(0)",
           "legendFormat": "permission denied"
         }
       ]
@@ -2339,13 +2339,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum by (actionClass) (rate(gittensory_agent_action_permission_denied_total[5m]))",
+          "expr": "sum by (actionClass) (rate(loopover_agent_action_permission_denied_total[5m]))",
           "legendFormat": "{{actionClass}} denied",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum by (actionClass) (rate(gittensory_agent_action_permission_denied_suppressed_total[5m]))",
+          "expr": "sum by (actionClass) (rate(loopover_agent_action_permission_denied_suppressed_total[5m]))",
           "legendFormat": "{{actionClass}} suppressed-repeat",
           "refId": "B"
         }
@@ -2371,7 +2371,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum by (mode, result) (rate(gittensory_orb_relay_register_total[5m]))",
+          "expr": "sum by (mode, result) (rate(loopover_orb_relay_register_total[5m]))",
           "legendFormat": "{{mode}} {{result}}",
           "refId": "A"
         }
@@ -2403,13 +2403,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_orb_relay_register_consecutive_failures or vector(0)",
+          "expr": "loopover_orb_relay_register_consecutive_failures or vector(0)",
           "legendFormat": "consecutive registration failures",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_orb_relay_drain_seconds_since_last or vector(0)",
+          "expr": "loopover_orb_relay_drain_seconds_since_last or vector(0)",
           "legendFormat": "seconds since last pull-mode drain",
           "refId": "B"
         }
@@ -2441,7 +2441,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_runnable_now",
+          "expr": "loopover_queue_runnable_now",
           "legendFormat": "runnable now"
         }
       ]
@@ -2464,7 +2464,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_live_runnable_now",
+          "expr": "loopover_queue_live_runnable_now",
           "legendFormat": "live runnable now"
         }
       ]
@@ -2487,7 +2487,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_processing",
+          "expr": "loopover_queue_processing",
           "legendFormat": "processing"
         }
       ]
@@ -2523,7 +2523,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_oldest_live_runnable_age_seconds",
+          "expr": "loopover_queue_oldest_live_runnable_age_seconds",
           "legendFormat": "oldest live runnable age"
         }
       ]
@@ -2546,7 +2546,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_jobs_foreground_liveness_released_total or vector(0)",
+          "expr": "loopover_jobs_foreground_liveness_released_total or vector(0)",
           "legendFormat": "released"
         }
       ]
@@ -2567,7 +2567,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum by (reason) (rate(gittensory_jobs_foreground_liveness_released_by_reason_total[15m])) or vector(0)",
+          "expr": "sum by (reason) (rate(loopover_jobs_foreground_liveness_released_by_reason_total[15m])) or vector(0)",
           "legendFormat": "{{reason}}",
           "refId": "A"
         }
@@ -2611,7 +2611,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_backlog_convergence_pending",
+          "expr": "loopover_queue_backlog_convergence_pending",
           "legendFormat": "backlog pending"
         }
       ]
@@ -2647,7 +2647,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_fresh_intake_pending",
+          "expr": "loopover_queue_fresh_intake_pending",
           "legendFormat": "fresh pending"
         }
       ]
@@ -2664,12 +2664,12 @@
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "title": "GitHub REST Rate Limit Remaining (by scope)",
-      "description": "The NEWEST observed x-ratelimit-remaining per key_scope -- unlike gittensory_github_rest_rate_limit_observations_total (a bucketed rate() counter), this is the actual current remaining count.",
+      "description": "The NEWEST observed x-ratelimit-remaining per key_scope -- unlike loopover_github_rest_rate_limit_observations_total (a bucketed rate() counter), this is the actual current remaining count.",
       "type": "timeseries",
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_github_rest_rate_limit_remaining",
+          "expr": "loopover_github_rest_rate_limit_remaining",
           "legendFormat": "{{key_scope}}",
           "refId": "A"
         }
@@ -2691,7 +2691,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum by (lane) (rate(gittensory_jobs_claimed_by_lane_total[5m])) or vector(0)",
+          "expr": "sum by (lane) (rate(loopover_jobs_claimed_by_lane_total[5m])) or vector(0)",
           "legendFormat": "{{lane}}",
           "refId": "A"
         }
@@ -2713,7 +2713,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_queue_backlog_by_repo",
+          "expr": "loopover_queue_backlog_by_repo",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -2768,7 +2768,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "abs(gittensory_clock_skew_seconds)",
+          "expr": "abs(loopover_clock_skew_seconds)",
           "legendFormat": "skew"
         }
       ]
@@ -2803,7 +2803,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_ai_review_onmerge_clamped_total or vector(0)",
+          "expr": "loopover_ai_review_onmerge_clamped_total or vector(0)",
           "legendFormat": "clamped"
         }
       ]
@@ -2831,12 +2831,12 @@
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "title": "Ops Anomaly Detections (review burst / review failure burst)",
-      "description": "runOpsAlerts' hourly scan over gittensory's own outcome data, labeled by kind (review_burst / review_failure_burst) and repo. Any nonzero value here means the scan flagged a stuck-CI finalize loop or retry storm -- see the ops_anomaly structured log for the human-readable detail line.",
+      "description": "runOpsAlerts' hourly scan over loopover's own outcome data, labeled by kind (review_burst / review_failure_burst) and repo. Any nonzero value here means the scan flagged a stuck-CI finalize loop or retry storm -- see the ops_anomaly structured log for the human-readable detail line.",
       "type": "timeseries",
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum by (kind, repo) (increase(gittensory_ops_anomaly_total[1h])) or vector(0)",
+          "expr": "sum by (kind, repo) (increase(loopover_ops_anomaly_total[1h])) or vector(0)",
           "legendFormat": "{{kind}} {{repo}}",
           "refId": "A"
         }
@@ -2858,12 +2858,12 @@
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "title": "Published Review Comments (rate)",
-      "description": "Published review comments/summaries per repo -- the gittensory review pipeline's actual output rate.",
+      "description": "Published review comments/summaries per repo -- the loopover review pipeline's actual output rate.",
       "type": "timeseries",
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum by (repo) (rate(gittensory_reviews_published_total[5m])) or vector(0)",
+          "expr": "sum by (repo) (rate(loopover_reviews_published_total[5m])) or vector(0)",
           "legendFormat": "{{repo}}",
           "refId": "A"
         }
@@ -2890,7 +2890,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum by (conclusion) (rate(gittensory_gate_decisions_total[5m])) or vector(0)",
+          "expr": "sum by (conclusion) (rate(loopover_gate_decisions_total[5m])) or vector(0)",
           "legendFormat": "{{conclusion}}",
           "refId": "A"
         }
@@ -2935,7 +2935,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_d1_database_size_bytes",
+          "expr": "loopover_d1_database_size_bytes",
           "legendFormat": "size",
           "refId": "A"
         }
@@ -2973,7 +2973,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_signal_snapshots_rows_per_key",
+          "expr": "loopover_signal_snapshots_rows_per_key",
           "legendFormat": "rows/key",
           "refId": "A"
         }
@@ -3010,7 +3010,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(gittensory_d1_probe_errors_total) or vector(0)",
+          "expr": "sum(loopover_d1_probe_errors_total) or vector(0)",
           "legendFormat": "errors",
           "refId": "A"
         }
@@ -3037,13 +3037,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_d1_database_size_bytes",
+          "expr": "loopover_d1_database_size_bytes",
           "legendFormat": "database bytes",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_d1_table_row_count",
+          "expr": "loopover_d1_table_row_count",
           "legendFormat": "{{table}} rows",
           "refId": "B"
         }
@@ -3052,7 +3052,7 @@
   ],
   "refresh": "30s",
   "schemaVersion": 38,
-  "tags": ["gittensory", "self-host"],
+  "tags": ["loopover", "self-host"],
   "templating": {
     "list": [
       {
@@ -3070,7 +3070,7 @@
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Gittensory Self-Host",
-  "uid": "gittensory-selfhost",
+  "title": "LoopOver Self-Host",
+  "uid": "loopover-selfhost",
   "version": 10
 }

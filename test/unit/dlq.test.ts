@@ -87,7 +87,7 @@ describe("DLQ consumer (processDlqBatch)", () => {
 
     await expect(processDlqBatch(batch as unknown as MessageBatch<never>, env)).resolves.toBeUndefined();
     expect(batch.acked).toEqual(["msg-6"]);
-    expect(await renderMetrics()).toContain('gittensory_dlq_dead_lettered_total{jobType="unknown",redriven="false"} 1');
+    expect(await renderMetrics()).toContain('loopover_dlq_dead_lettered_total{jobType="unknown",redriven="false"} 1');
   });
 
   it("is fail-safe when recordAuditEvent throws — the catch body runs and ack is not blocked", async () => {
@@ -98,7 +98,7 @@ describe("DLQ consumer (processDlqBatch)", () => {
 
     await expect(processDlqBatch(batch as unknown as MessageBatch<never>, brokenEnv)).resolves.toBeUndefined();
     expect(batch.acked).toEqual(["msg-7"]);
-    expect(await renderMetrics()).toContain('gittensory_dlq_dead_lettered_total{jobType="github-webhook",redriven="false"} 1');
+    expect(await renderMetrics()).toContain('loopover_dlq_dead_lettered_total{jobType="github-webhook",redriven="false"} 1');
   });
 
   describe("webhook self-heal re-drive (#1276)", () => {
@@ -120,8 +120,8 @@ describe("DLQ consumer (processDlqBatch)", () => {
       expect(sent[0]).toMatchObject({ type: "github-webhook", deliveryId: "fresh-1", eventName: "pull_request", redriven: true });
       expect(batch.acked).toEqual(["wh-1"]);
       const metrics = await renderMetrics();
-      expect(metrics).toContain('gittensory_dlq_dead_lettered_total{jobType="github-webhook",redriven="false"} 1');
-      expect(metrics).toContain('gittensory_dlq_redriven_total{eventName="pull_request"} 1');
+      expect(metrics).toContain('loopover_dlq_dead_lettered_total{jobType="github-webhook",redriven="false"} 1');
+      expect(metrics).toContain('loopover_dlq_redriven_total{eventName="pull_request"} 1');
     });
 
     it("REGRESSION (idempotency): does NOT re-drive a webhook whose event row is already 'processed'", async () => {
@@ -134,7 +134,7 @@ describe("DLQ consumer (processDlqBatch)", () => {
 
       expect(sent).toEqual([]); // already processed → no duplicate side effects
       expect(batch.acked).toEqual(["wh-2"]);
-      expect(await renderMetrics()).not.toContain("gittensory_dlq_redriven_total");
+      expect(await renderMetrics()).not.toContain("loopover_dlq_redriven_total");
     });
 
     it("REGRESSION (metrics): failed webhook re-drive sends do not increment the redriven counter", async () => {
@@ -150,8 +150,8 @@ describe("DLQ consumer (processDlqBatch)", () => {
 
       expect(batch.acked).toEqual(["wh-send-fail"]);
       const metrics = await renderMetrics();
-      expect(metrics).toContain('gittensory_dlq_dead_lettered_total{jobType="github-webhook",redriven="false"} 1');
-      expect(metrics).not.toContain("gittensory_dlq_redriven_total");
+      expect(metrics).toContain('loopover_dlq_dead_lettered_total{jobType="github-webhook",redriven="false"} 1');
+      expect(metrics).not.toContain("loopover_dlq_redriven_total");
     });
 
     it("REGRESSION (metrics): missing webhook queue binding does not increment the redriven counter", async () => {
@@ -163,8 +163,8 @@ describe("DLQ consumer (processDlqBatch)", () => {
 
       expect(batch.acked).toEqual(["wh-no-queue"]);
       const metrics = await renderMetrics();
-      expect(metrics).toContain('gittensory_dlq_dead_lettered_total{jobType="github-webhook",redriven="false"} 1');
-      expect(metrics).not.toContain("gittensory_dlq_redriven_total");
+      expect(metrics).toContain('loopover_dlq_dead_lettered_total{jobType="github-webhook",redriven="false"} 1');
+      expect(metrics).not.toContain("loopover_dlq_redriven_total");
     });
 
     it("REGRESSION (no DLQ loop): does NOT re-drive a webhook that was already re-driven once", async () => {
@@ -177,8 +177,8 @@ describe("DLQ consumer (processDlqBatch)", () => {
       expect(sent).toEqual([]); // bounded to a single re-drive
       expect(batch.acked).toEqual(["wh-3"]);
       const metrics = await renderMetrics();
-      expect(metrics).toContain('gittensory_dlq_dead_lettered_total{jobType="github-webhook",redriven="true"} 1');
-      expect(metrics).not.toContain("gittensory_dlq_redriven_total");
+      expect(metrics).toContain('loopover_dlq_dead_lettered_total{jobType="github-webhook",redriven="true"} 1');
+      expect(metrics).not.toContain("loopover_dlq_redriven_total");
     });
 
     it("REGRESSION (no re-drive of maintenance jobs): a backfill job is audited and dropped, never re-driven", async () => {
@@ -191,8 +191,8 @@ describe("DLQ consumer (processDlqBatch)", () => {
       expect(sent).toEqual([]); // cron self-heals maintenance jobs
       expect(batch.acked).toEqual(["mn-1"]);
       const metrics = await renderMetrics();
-      expect(metrics).toContain('gittensory_dlq_dead_lettered_total{jobType="backfill-repo-segment",redriven="false"} 1');
-      expect(metrics).not.toContain("gittensory_dlq_redriven_total");
+      expect(metrics).toContain('loopover_dlq_dead_lettered_total{jobType="backfill-repo-segment",redriven="false"} 1');
+      expect(metrics).not.toContain("loopover_dlq_redriven_total");
     });
 
     it("does not re-drive webhook jobs when webhook redrive is disabled for broker-only Cloudflare", async () => {

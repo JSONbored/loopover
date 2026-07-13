@@ -253,7 +253,7 @@ export function createSqliteQueue(
   // Recover jobs a crashed previous run left mid-flight → make them claimable again.
   const recovered = recoverProcessingJobs(driver);
   if (recovered) {
-    recordQueueMetric(driver, "gittensory_jobs_recovered_total", recovered);
+    recordQueueMetric(driver, "loopover_jobs_recovered_total", recovered);
     console.log(
       JSON.stringify({ event: "selfhost_queue_recovered", count: recovered }),
     );
@@ -286,7 +286,7 @@ export function createSqliteQueue(
   async function reviveDeadLetterJobs(): Promise<number> {
     const revived = reviveEligibleDeadJobs(driver, maxRetries);
     if (revived) {
-      recordQueueMetric(driver, "gittensory_jobs_dead_letter_revived_total", revived);
+      recordQueueMetric(driver, "loopover_jobs_dead_letter_revived_total", revived);
       console.log(JSON.stringify({ event: "selfhost_queue_dead_letter_revived", count: revived }));
       kickAll();
     }
@@ -408,9 +408,9 @@ export function createSqliteQueue(
       else releasedByRateLimitClear += changes;
     }
     if (released) {
-      recordQueueMetric(driver, "gittensory_jobs_foreground_liveness_released_total", released);
-      if (releasedByAge) incr("gittensory_jobs_foreground_liveness_released_by_reason_total", { reason: "age" }, releasedByAge);
-      if (releasedByRateLimitClear) incr("gittensory_jobs_foreground_liveness_released_by_reason_total", { reason: "rate_limit_cleared" }, releasedByRateLimitClear);
+      recordQueueMetric(driver, "loopover_jobs_foreground_liveness_released_total", released);
+      if (releasedByAge) incr("loopover_jobs_foreground_liveness_released_by_reason_total", { reason: "age" }, releasedByAge);
+      if (releasedByRateLimitClear) incr("loopover_jobs_foreground_liveness_released_by_reason_total", { reason: "rate_limit_cleared" }, releasedByRateLimitClear);
       console.warn(
         JSON.stringify({
           level: "warn",
@@ -492,7 +492,7 @@ export function createSqliteQueue(
         [absorbedByKey],
       ).rows[0] as { id: number } | undefined;
       if (existingFull) {
-        recordQueueMetric(driver, "gittensory_jobs_coalesced_total");
+        recordQueueMetric(driver, "loopover_jobs_coalesced_total");
         kickOne();
         return;
       }
@@ -525,7 +525,7 @@ export function createSqliteQueue(
              WHERE id=?`,
             [mergedPayload, runAfter, now, priority, mergedKey, claimSortKey, claimSortKey, mergeCandidate.id],
           );
-          recordQueueMetric(driver, "gittensory_jobs_coalesced_total");
+          recordQueueMetric(driver, "loopover_jobs_coalesced_total");
           kickOne();
           return;
         }
@@ -559,7 +559,7 @@ export function createSqliteQueue(
            WHERE status='pending' AND id<>? AND job_key IS NOT NULL AND substr(job_key, 1, ?)=?`,
           [existing.id, prefixLength, supersededKeyPrefix],
         );
-        recordQueueMetric(driver, "gittensory_jobs_coalesced_total");
+        recordQueueMetric(driver, "loopover_jobs_coalesced_total");
         kickOne();
         return;
       }
@@ -586,7 +586,7 @@ export function createSqliteQueue(
            WHERE id=?`,
           [payload, runAfter, priority, lane, claimSortKey, claimSortKey, existing.id],
         );
-        recordQueueMetric(driver, "gittensory_jobs_coalesced_total");
+        recordQueueMetric(driver, "loopover_jobs_coalesced_total");
         kickOne();
         return;
       }
@@ -595,7 +595,7 @@ export function createSqliteQueue(
       `INSERT INTO ${TABLE} (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance, foreground_lane, claim_sort_key) VALUES (?, 'pending', 0, ?, ?, ?, ?, ?, ?, ?)`,
       [payload, runAfter, now, priority, key, isMaintenanceJobType(message.type) ? 1 : 0, lane, claimSortKey],
     );
-    recordQueueMetric(driver, "gittensory_jobs_enqueued_total");
+    recordQueueMetric(driver, "loopover_jobs_enqueued_total");
     kickOne();
   }
 
@@ -647,7 +647,7 @@ export function createSqliteQueue(
     const lanePriorityFloor = unclassifiedPriority ?? FOREGROUND_QUEUE_PRIORITY_FLOOR;
     if (lane === "fresh") {
       const freshRow = claimNextWhere(now, lanePriorityPredicate, { sql: "candidate.foreground_lane='fresh'", params: [] }, lanePriorityFloor);
-      if (freshRow) incr("gittensory_jobs_claimed_by_lane_total", { lane: "fresh" });
+      if (freshRow) incr("loopover_jobs_claimed_by_lane_total", { lane: "fresh" });
       return freshRow;
     }
     const { rows: backlogRows } = driver.query(
@@ -669,7 +669,7 @@ export function createSqliteQueue(
     }, lanePriorityFloor);
     if (row) {
       driver.query(`UPDATE ${FAIRNESS_TABLE} SET last_backlog_repo=? WHERE id='singleton'`, [repo]);
-      incr("gittensory_jobs_claimed_by_lane_total", { lane: "backlog" });
+      incr("loopover_jobs_claimed_by_lane_total", { lane: "backlog" });
     }
     return row;
   }
@@ -812,7 +812,7 @@ export function createSqliteQueue(
       activeJobIds,
     );
     if (recovered) {
-      recordQueueMetric(driver, "gittensory_jobs_recovered_total", recovered);
+      recordQueueMetric(driver, "loopover_jobs_recovered_total", recovered);
       console.warn(
         JSON.stringify({
           level: "warn",
@@ -841,7 +841,7 @@ export function createSqliteQueue(
           `UPDATE ${TABLE} SET status='dead', attempts=attempts+1, last_error='unparseable payload', dead_at=? WHERE id=?`,
           [Date.now(), job.id],
         );
-        recordQueueMetric(driver, "gittensory_jobs_dead_total");
+        recordQueueMetric(driver, "loopover_jobs_dead_total");
         logAudit({
           event: "job_dead",
           ts: Date.now(),
@@ -881,8 +881,8 @@ export function createSqliteQueue(
               [retryAfter, lastError, job.id],
             );
             if (changes) {
-              recordQueueMetric(driver, "gittensory_jobs_rate_limit_deferred_total");
-              incr("gittensory_jobs_rate_limit_admission_deferred_total", rateLimitMetric.labels);
+              recordQueueMetric(driver, "loopover_jobs_rate_limit_deferred_total");
+              incr("loopover_jobs_rate_limit_admission_deferred_total", rateLimitMetric.labels);
               console.warn(
                 JSON.stringify({
                   level: "warn",
@@ -919,8 +919,8 @@ export function createSqliteQueue(
                 [retryAfter, `maintenance admission deferred: ${decision.reason}`, job.id],
               );
               if (changes) {
-                recordQueueMetric(driver, "gittensory_jobs_maintenance_admission_deferred_total");
-                incr("gittensory_jobs_maintenance_admission_deferred_by_reason_total", {
+                recordQueueMetric(driver, "loopover_jobs_maintenance_admission_deferred_total");
+                incr("loopover_jobs_maintenance_admission_deferred_by_reason_total", {
                   reason: decision.reason,
                   job_type: message.type,
                 });
@@ -945,8 +945,8 @@ export function createSqliteQueue(
         // counters distinguishes "load-shed maintenance is working as designed" from "maintenance is chronically
         // starved and only ever runs via the trickle floor" (the "truly stuck" signal operators need).
         if (decision.reason === "trickle_max_defer_age") {
-          recordQueueMetric(driver, "gittensory_jobs_maintenance_trickle_admitted_total");
-          incr("gittensory_jobs_maintenance_trickle_admitted_by_type_total", { job_type: message.type });
+          recordQueueMetric(driver, "loopover_jobs_maintenance_trickle_admitted_total");
+          incr("loopover_jobs_maintenance_trickle_admitted_by_type_total", { job_type: message.type });
           console.warn(
             JSON.stringify({
               level: "warn",
@@ -961,7 +961,7 @@ export function createSqliteQueue(
         // so an operator can trend "how often does pressure admission get overridden at all" without needing to
         // sum multiple per-reason metrics.
         if (isMaintenanceAdmissionGrantedUnderPressure(decision.reason)) {
-          incr("gittensory_jobs_maintenance_admission_granted_under_pressure_total", {
+          incr("loopover_jobs_maintenance_admission_granted_under_pressure_total", {
             reason: decision.reason,
             job_type: message.type,
           });
@@ -995,8 +995,8 @@ export function createSqliteQueue(
                 [retryAfter, `installation concurrency admission deferred: ${decision.reason}`, job.id],
               );
               if (changes) {
-                recordQueueMetric(driver, "gittensory_jobs_installation_concurrency_deferred_total");
-                incr("gittensory_jobs_installation_concurrency_deferred_by_reason_total", {
+                recordQueueMetric(driver, "loopover_jobs_installation_concurrency_deferred_total");
+                incr("loopover_jobs_installation_concurrency_deferred_by_reason_total", {
                   reason: decision.reason,
                   job_type: message.type,
                 });
@@ -1026,7 +1026,7 @@ export function createSqliteQueue(
           { parentTraceParent: message.type === "github-webhook" ? message.traceParent : undefined },
         );
         driver.query(`DELETE FROM ${TABLE} WHERE id=?`, [job.id]);
-        recordQueueMetric(driver, "gittensory_jobs_processed_total");
+        recordQueueMetric(driver, "loopover_jobs_processed_total");
         logAudit({
           event: "job_complete",
           ts: Date.now(),
@@ -1047,8 +1047,8 @@ export function createSqliteQueue(
           const deferred = target ? deferPendingJobsForRateLimit(driver, rateLimitDelayMs, now, target) : 0;
           const rateLimitMetric = githubRateLimitMetricContext(message, target);
           if (target !== null && deferred > 0) {
-            recordQueueMetric(driver, "gittensory_jobs_rate_limit_deferred_total", deferred);
-            incr("gittensory_jobs_rate_limit_budget_deferred_total", rateLimitMetric.labels, deferred);
+            recordQueueMetric(driver, "loopover_jobs_rate_limit_deferred_total", deferred);
+            incr("loopover_jobs_rate_limit_budget_deferred_total", rateLimitMetric.labels, deferred);
             console.warn(
               JSON.stringify({
                 level: "warn",
@@ -1059,15 +1059,15 @@ export function createSqliteQueue(
             );
           }
           if (job.job_key && mergeRescheduledJobIntoPending(driver, job as JobRow & { job_key: string }, retryAfter, errMsg)) {
-            recordQueueMetric(driver, "gittensory_jobs_coalesced_total");
+            recordQueueMetric(driver, "loopover_jobs_coalesced_total");
           } else {
             driver.query(
               `UPDATE ${TABLE} SET status='pending', run_after=?, last_error=? WHERE id=?`,
               [retryAfter, errMsg, job.id],
             );
           }
-          recordQueueMetric(driver, "gittensory_jobs_rate_limited_total");
-          incr("gittensory_jobs_rate_limited_by_type_total", rateLimitMetric.labels);
+          recordQueueMetric(driver, "loopover_jobs_rate_limited_total");
+          incr("loopover_jobs_rate_limited_by_type_total", rateLimitMetric.labels);
           logAudit({
             event: "job_rate_limited",
             ts: Date.now(),
@@ -1081,13 +1081,13 @@ export function createSqliteQueue(
           }, jobTraceParent);
           return true;
         }
-        recordQueueMetric(driver, "gittensory_jobs_failed_total");
+        recordQueueMetric(driver, "loopover_jobs_failed_total");
         if (attempts >= maxRetries) {
           driver.query(
             `UPDATE ${TABLE} SET status='dead', attempts=?, last_error=?, dead_at=? WHERE id=?`,
             [attempts, errMsg, Date.now(), job.id],
           );
-          recordQueueMetric(driver, "gittensory_jobs_dead_total");
+          recordQueueMetric(driver, "loopover_jobs_dead_total");
           console.error(
             JSON.stringify({
               level: "error",

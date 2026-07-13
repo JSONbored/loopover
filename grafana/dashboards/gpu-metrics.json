@@ -95,7 +95,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum by (provider, request_kind) (rate(gittensory_ai_provider_request_duration_seconds_count[5m]))",
+          "expr": "sum by (provider, request_kind) (rate(loopover_ai_provider_request_duration_seconds_count[5m]))",
           "legendFormat": "{{provider}} / {{request_kind}}",
           "refId": "A"
         }
@@ -110,9 +110,9 @@
       "title": "AI Request Latency (p50 / p95 / p99)",
       "type": "timeseries",
       "targets": [
-        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.50, sum by (le) (rate(gittensory_ai_provider_request_duration_seconds_bucket[5m])))", "legendFormat": "p50", "refId": "A" },
-        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.95, sum by (le) (rate(gittensory_ai_provider_request_duration_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "B" },
-        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.99, sum by (le) (rate(gittensory_ai_provider_request_duration_seconds_bucket[5m])))", "legendFormat": "p99", "refId": "C" }
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.50, sum by (le) (rate(loopover_ai_provider_request_duration_seconds_bucket[5m])))", "legendFormat": "p50", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.95, sum by (le) (rate(loopover_ai_provider_request_duration_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.99, sum by (le) (rate(loopover_ai_provider_request_duration_seconds_bucket[5m])))", "legendFormat": "p99", "refId": "C" }
       ]
     },
     {
@@ -122,12 +122,12 @@
       "id": 13,
       "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "title": "AI Request Error Rate",
-      "description": "Excludes expected embedding-routing fallbacks (those never increment this counter -- see gittensory_ai_provider_request_errors_total's HELP text).",
+      "description": "Excludes expected embedding-routing fallbacks (those never increment this counter -- see loopover_ai_provider_request_errors_total's HELP text).",
       "type": "timeseries",
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum by (provider, request_kind) (rate(gittensory_ai_provider_request_errors_total[5m]))",
+          "expr": "sum by (provider, request_kind) (rate(loopover_ai_provider_request_errors_total[5m]))",
           "legendFormat": "{{provider}} / {{request_kind}}",
           "refId": "A"
         }
@@ -181,7 +181,7 @@
   ],
   "refresh": "30s",
   "schemaVersion": 38,
-  "tags": ["gittensory", "gpu"],
+  "tags": ["loopover", "gpu"],
   "templating": {
     "list": [
       { "current": {}, "hide": 0, "includeAll": false, "name": "DS_PROMETHEUS", "options": [], "query": "prometheus", "refresh": 1, "type": "datasource" }
@@ -190,7 +190,7 @@
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Gittensory — GPU Metrics",
-  "uid": "gittensory-gpu",
+  "title": "LoopOver — GPU Metrics",
+  "uid": "loopover-gpu",
   "version": 1
 }

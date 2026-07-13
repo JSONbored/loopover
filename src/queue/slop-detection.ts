@@ -113,7 +113,7 @@ export async function runAiSlopForAdvisory(
     let result: Awaited<ReturnType<typeof runGittensoryAiSlopAdvisory>>;
     if (cachedSlop) {
       result = { status: "ok", finding: cachedSlop.finding, band: cachedSlop.band as SlopBand | null, estimatedNeurons: cachedSlop.estimatedNeurons };
-      incr("gittensory_ai_slop_cache_hit_total");
+      incr("loopover_ai_slop_cache_hit_total");
       await recordAuditEvent(env, {
         eventType: "github_app.ai_slop_cache_hit",
         actor: args.author,
@@ -124,7 +124,7 @@ export async function runAiSlopForAdvisory(
         metadata: { repoFullName: args.repoFullName, headSha: args.advisory.headSha ?? null },
       }).catch(() => undefined);
     } else {
-      incr("gittensory_ai_slop_cache_miss_total");
+      incr("loopover_ai_slop_cache_miss_total");
       await recordAuditEvent(env, {
         eventType: "github_app.ai_slop_cache_miss",
         actor: args.author,
@@ -154,7 +154,7 @@ export async function runAiSlopForAdvisory(
           finding: result.finding,
           estimatedNeurons: result.estimatedNeurons,
         }).catch((error) => {
-          incr("gittensory_ai_slop_cache_write_error_total");
+          incr("loopover_ai_slop_cache_write_error_total");
           return recordAuditEvent(env, {
             eventType: "github_app.ai_slop_cache_write_error",
             actor: args.author,

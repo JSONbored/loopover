@@ -36,7 +36,7 @@ describe("runOpenPrReconciliation (#audit-open-pr-reconciliation)", () => {
     const found = await runOpenPrReconciliation(env);
 
     expect(found).toEqual([{ repoFullName: "owner/lost-repo", remoteOpenCount: 1, localOpenCount: 0, missingNumbers: [7] }]);
-    expect(counterValue("gittensory_open_pr_reconciliation_missing_total", { repo: "owner/lost-repo" })).toBe(1);
+    expect(counterValue("loopover_open_pr_reconciliation_missing_total", { repo: "owner/lost-repo" })).toBe(1);
     const logged = errors.mock.calls.map((c) => String(c[0])).find((line) => line.includes("open_pr_reconciliation_divergence"));
     expect(logged).toBeDefined();
     expect(JSON.parse(logged!)).toMatchObject({ level: "error", event: "open_pr_reconciliation_divergence", repository: "owner/lost-repo", missingNumbers: [7] });

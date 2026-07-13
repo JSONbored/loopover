@@ -1,9 +1,9 @@
-# Prometheus alerting rules for the gittensory self-host stack (#980 observability).
+# Prometheus alerting rules for the loopover self-host stack (#980 observability).
 #
 # Mounted into the prometheus container at /etc/prometheus/rules/alerts.yml and loaded
 # via the `rule_files: ["/etc/prometheus/rules/*.yml"]` glob in prometheus.yml.
 #
-# Every rule below is grounded ONLY in metrics the gittensory app actually exports at
+# Every rule below is grounded ONLY in metrics the loopover app actually exports at
 # GET /metrics, plus the synthetic `up` metric Prometheus emits per scrape target.
 #
 # Thresholds are sane defaults for a SMALL single-host self-host. Tune the numbers in
@@ -20,9 +20,9 @@
 
 groups:
   # ── Scrape target liveness ────────────────────────────────────────────────
-  - name: gittensory-availability
+  - name: loopover-availability
     rules:
-      - alert: GittensoryTargetDown
+      - alert: LoopoverTargetDown
         # `up` is 0 when Prometheus cannot scrape /metrics (process down, crash-loop,
         # network partition, or wrong port). Scoped to our job so node/other targets
         # don't trip this. 2m absorbs a single missed scrape + a restart.
@@ -31,16 +31,16 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "gittensory target {{ $labels.instance }} is down"
+          summary: "loopover target {{ $labels.instance }} is down"
           description: "Prometheus has failed to scrape {{ $labels.instance }} (job {{ $labels.job }}) for over 2m. The app is unreachable or not serving /metrics."
-          runbook: "Check `docker compose ps` and `docker compose logs gittensory`. Look for a missing selfhost_listening log line or a crash-loop (restart count climbing)."
+          runbook: "Check `docker compose ps` and `docker compose logs loopover`. Look for a missing selfhost_listening log line or a crash-loop (restart count climbing)."
 
   # ── Job queue / worker health ─────────────────────────────────────────────
-  - name: gittensory-jobs
+  - name: loopover-jobs
     rules:
-      - alert: GittensoryHighJobFailureRatio
+      - alert: LoopoverHighJobFailureRatio
         # Fraction of jobs ATTEMPTED (failed + succeeded) that failed over the last 10m.
-        # gittensory_jobs_processed_total only increments on success, so the denominator
+        # loopover_jobs_processed_total only increments on success, so the denominator
         # must be failed+processed, not processed alone (#3892) -- dividing by processed
         # alone computes failed:success and can read as high as 100% at a true 50% failure
         # rate. The `> 0` guard on the ratio avoids a 0/0 = NaN (which never fires but is
@@ -49,49 +49,49 @@ groups:
         # problem. Mirrors the Grafana "Job Failure Rate" panel's formula.
         expr: |
           (
-            sum(rate(gittensory_jobs_failed_total[10m]))
+            sum(rate(loopover_jobs_failed_total[10m]))
             /
             (
-              sum(rate(gittensory_jobs_failed_total[10m]))
+              sum(rate(loopover_jobs_failed_total[10m]))
               +
-              sum(rate(gittensory_jobs_processed_total[10m]))
+              sum(rate(loopover_jobs_processed_total[10m]))
             ) > 0
           ) > 0.10
         for: 15m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory job failure ratio above 10%"
+          summary: "loopover job failure ratio above 10%"
           description: "{{ $value | humanizePercentage }} of jobs attempted in the last 10m failed (sustained 15m). Expected: well under 10%."
           runbook: "Tail logs for level=error job events (e.g. selfhost_cron_error). A spike usually means a bad upstream (GitHub API / AI provider / DB) or a poison payload — check what changed."
 
-      - alert: GittensoryDeadLetterJobsGrowing
+      - alert: LoopoverDeadLetterJobsGrowing
         # Jobs exhausted all retries and landed in the dead-letter queue. ANY new dead
         # job in 15m is worth a look — these are lost work that won't self-heal.
         # `increase(...) > 0` fires on the first dead job in the window.
-        expr: increase(gittensory_jobs_dead_total[15m]) > 0
+        expr: increase(loopover_jobs_dead_total[15m]) > 0
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory dead-letter jobs increasing"
+          summary: "loopover dead-letter jobs increasing"
           description: "{{ $value | printf \"%.0f\" }} job(s) moved to the dead-letter queue in the last 15m. These exhausted all retries and need manual attention."
-          runbook: "Inspect gittensory_queue_dead gauge and the dead-letter records. Decide whether to fix-and-requeue or discard. A steady climb points at a systematic failure, not a blip."
+          runbook: "Inspect loopover_queue_dead gauge and the dead-letter records. Decide whether to fix-and-requeue or discard. A steady climb points at a systematic failure, not a blip."
 
-      - alert: GittensoryDeadLetterBacklogHigh
+      - alert: LoopoverDeadLetterBacklogHigh
         # Standing size of the dead-letter queue. Distinct from the rate alert above:
         # this catches a large backlog that built up before alerting was watching.
         # 50 dead jobs is a generous default for a small host — tune down if you expect ~0.
-        expr: gittensory_queue_dead > 50
+        expr: loopover_queue_dead > 50
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory dead-letter backlog above 50"
+          summary: "loopover dead-letter backlog above 50"
           description: "The dead-letter queue holds {{ $value | printf \"%.0f\" }} jobs (sustained 10m). Work is accumulating with no automatic recovery."
           runbook: "Drain or triage the dead-letter queue. If it only ever grows, fix the root cause before requeuing or you'll just re-fill it."
 
-      - alert: GittensoryDeadLetterBacklogPersisting
+      - alert: LoopoverDeadLetterBacklogPersisting
         # The two rules above have a coverage gap: the rate alert (increase() over 15m)
         # only fires in a narrow window around a job's transition INTO dead, and the
         # backlog alert only trips above 50. A single dead job — the common case, e.g. one
@@ -99,78 +99,78 @@ groups:
         # 15m window closes, invisible to both. This is a LEVEL check with no count floor:
         # any non-zero dead-letter count sustained for an hour pages, regardless of how it
         # got there or how large it is.
-        expr: gittensory_queue_dead > 0
+        expr: loopover_queue_dead > 0
         for: 1h
         labels:
           severity: warning
         annotations:
-          summary: "gittensory dead-letter queue not empty for over an hour"
+          summary: "loopover dead-letter queue not empty for over an hour"
           description: "{{ $value | printf \"%.0f\" }} job(s) have sat in the dead-letter queue for over an hour with no automatic recovery."
           runbook: "Check whether the underlying bug is already fixed and redeployed — if so the job(s) can be requeued; otherwise triage before requeuing."
 
   # ── Queue backlog (live processing pressure) ───────────────────────────────
-  - name: gittensory-queue
+  - name: loopover-queue
     rules:
-      - alert: GittensoryQueueBacklogHigh
+      - alert: LoopoverQueueBacklogHigh
         # Pending (not-yet-processed) jobs. A sustained high pending count means workers
         # can't keep up with enqueue rate. 100 is a starting line for a single-node host;
         # raise it if your normal steady-state pending depth is higher.
-        expr: gittensory_queue_pending > 100
+        expr: loopover_queue_pending > 100
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory queue backlog above 100"
+          summary: "loopover queue backlog above 100"
           description: "{{ $value | printf \"%.0f\" }} jobs pending for over 10m — the worker is falling behind the enqueue rate."
-          runbook: "Compare rate(gittensory_jobs_enqueued_total) vs rate(gittensory_jobs_processed_total). If enqueue > processed persistently, the worker is the bottleneck (slow AI/DB, or it's stuck). Check worker logs."
+          runbook: "Compare rate(loopover_jobs_enqueued_total) vs rate(loopover_jobs_processed_total). If enqueue > processed persistently, the worker is the bottleneck (slow AI/DB, or it's stuck). Check worker logs."
 
   # ── Maintenance-job backpressure (#selfhost-runtime-pressure) ──────────────
-  - name: gittensory-maintenance-pressure
+  - name: loopover-maintenance-pressure
     rules:
-      - alert: GittensoryLiveQueueStarved
+      - alert: LoopoverLiveQueueStarved
         # Live/foreground work (webhooks, per-PR re-gates) is the whole point of the review stack -- it
         # should clear in seconds to low minutes. A sustained old live job means something OTHER than
         # maintenance admission is the bottleneck (AI latency, GitHub, DB, or genuine host CPU pressure),
         # since maintenance-admission.ts already yields to live work at claim time.
-        expr: gittensory_queue_oldest_live_pending_age_seconds > 300
+        expr: loopover_queue_oldest_live_pending_age_seconds > 300
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory live/webhook work is stuck behind something other than maintenance"
-          description: "The oldest live-priority queue job has been pending for {{ $value | printf \"%.0f\" }}s. Maintenance admission already yields to live work, so check AI latency, GitHub rate limits, DB pressure, or host CPU (gittensory_host_load_avg1_per_core)."
-          runbook: "Open the Runtime Pressure & Maintenance row. If gittensory_host_load_avg1_per_core is elevated, a co-located CI runner or other host process is starving the app -- see docker-compose.yml's runner isolation guidance."
+          summary: "loopover live/webhook work is stuck behind something other than maintenance"
+          description: "The oldest live-priority queue job has been pending for {{ $value | printf \"%.0f\" }}s. Maintenance admission already yields to live work, so check AI latency, GitHub rate limits, DB pressure, or host CPU (loopover_host_load_avg1_per_core)."
+          runbook: "Open the Runtime Pressure & Maintenance row. If loopover_host_load_avg1_per_core is elevated, a co-located CI runner or other host process is starving the app -- see docker-compose.yml's runner isolation guidance."
 
-      - alert: GittensoryLiveQueueNoRunnableWork
+      - alert: LoopoverLiveQueueNoRunnableWork
         # #selfhost-queue-liveness: the precise "is the foreground lane actually stuck" signal, distinct from
-        # GittensoryLiveQueueStarved's age-based check -- a large live-pending count on its own is NORMAL (a
+        # LoopoverLiveQueueStarved's age-based check -- a large live-pending count on its own is NORMAL (a
         # legitimate burst, or work intentionally staggered/rate-deferred); this only fires when there is
         # PENDING live work AND NOTHING runnable right now, sustained. That combination is exactly the
         # production incident this invariant exists to make impossible: hundreds of pending contributor-PR-
         # review jobs, zero processing, zero runnable, previously requiring manual intervention to unstick.
-        expr: gittensory_queue_live_pending > 0 and gittensory_queue_live_runnable_now == 0
+        expr: loopover_queue_live_pending > 0 and loopover_queue_live_runnable_now == 0
         for: 3m
         labels:
           severity: critical
         annotations:
-          summary: "gittensory foreground/live queue has pending work but nothing runnable"
-          description: "{{ $value | printf \"%.0f\" }} live-priority job(s) are pending but gittensory_queue_live_runnable_now has read 0 for over 3m -- contributor PR review work is not making progress."
-          runbook: "Open the Foreground Liveness row. Check gittensory_jobs_rate_limit_admission_deferred_total / gittensory_jobs_rate_limit_budget_deferred_total for a stuck GitHub rate-limit bucket, and gittensory_jobs_foreground_liveness_released_total for whether the liveness sweep is already recovering it (releases should show up within FOREGROUND_LIVENESS_CHECK_INTERVAL_MS, default 1m). If releases are firing repeatedly with no lasting effect, the underlying rate-limit exhaustion is the real bottleneck, not the queue."
+          summary: "loopover foreground/live queue has pending work but nothing runnable"
+          description: "{{ $value | printf \"%.0f\" }} live-priority job(s) are pending but loopover_queue_live_runnable_now has read 0 for over 3m -- contributor PR review work is not making progress."
+          runbook: "Open the Foreground Liveness row. Check loopover_jobs_rate_limit_admission_deferred_total / loopover_jobs_rate_limit_budget_deferred_total for a stuck GitHub rate-limit bucket, and loopover_jobs_foreground_liveness_released_total for whether the liveness sweep is already recovering it (releases should show up within FOREGROUND_LIVENESS_CHECK_INTERVAL_MS, default 1m). If releases are firing repeatedly with no lasting effect, the underlying rate-limit exhaustion is the real bottleneck, not the queue."
 
-      - alert: GittensoryForegroundLivenessReleasing
+      - alert: LoopoverForegroundLivenessReleasing
         # Informational: the liveness sweep IS working (foreground work would otherwise be stuck), but a
         # sustained rate means something keeps re-deferring the SAME class of work past the trickle ceiling --
         # worth investigating even though the invariant is holding.
-        expr: rate(gittensory_jobs_foreground_liveness_released_total[15m]) > 0
+        expr: rate(loopover_jobs_foreground_liveness_released_total[15m]) > 0
         for: 15m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory foreground-liveness sweep is repeatedly force-releasing deferred work"
+          summary: "loopover foreground-liveness sweep is repeatedly force-releasing deferred work"
           description: "The foreground-liveness sweep has released stale-deferred jobs for over 15m — the invariant is holding, but something is repeatedly pushing foreground work past FOREGROUND_LIVENESS_MAX_DEFER_MS."
-          runbook: "Check gittensory_jobs_rate_limit_admission_deferred_total / gittensory_jobs_rate_limit_budget_deferred_total by key_scope for a chronically exhausted GitHub REST budget (often installation-scoped after a burst)."
+          runbook: "Check loopover_jobs_rate_limit_admission_deferred_total / loopover_jobs_rate_limit_budget_deferred_total by key_scope for a chronically exhausted GitHub REST budget (often installation-scoped after a burst)."
 
-      - alert: GittensoryMaintenanceStarved
+      - alert: LoopoverMaintenanceStarved
         # Maintenance admission (maintenance-admission.ts) has TWO age escapes (#selfhost-maintenance-self-pin):
         # a short maintenanceDrainAgeMs trickle that lets old jobs through even while `maintenance_pending_high`
         # is breached (bounded further by the queue's own background concurrency cap), and the ultimate
@@ -178,50 +178,50 @@ groups:
         # so under correct operation this should never sit much past that outer ceiling, and in practice the
         # drain escape should keep it well under it. A value well beyond 4h means either an escape isn't
         # triggering (a bug) or the host is so overloaded even a force-admitted job can't be claimed/processed.
-        expr: gittensory_queue_oldest_maintenance_pending_age_seconds > 21600
+        expr: loopover_queue_oldest_maintenance_pending_age_seconds > 21600
         for: 15m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory maintenance work has not run in over 6h"
+          summary: "loopover maintenance work has not run in over 6h"
           description: "The oldest maintenance-lane queue job has been pending for {{ $value | printf \"%.0f\" }}s, past the default trickle ceiling. Contributor evidence, RAG indexing, drift scans, and similar sweeps are stale."
-          runbook: "Check gittensory_jobs_maintenance_admission_deferred_by_reason_total for the dominant defer reason and gittensory_jobs_maintenance_admission_granted_under_pressure_total to confirm the escapes are actually firing, and confirm MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS / MAINTENANCE_ADMISSION_DRAIN_AGE_MS weren't raised. Sustained host_load_high suggests the box itself (not just this app) is overloaded -- host_load_high also blocks the drain escape specifically, see maintenance-admission.ts."
+          runbook: "Check loopover_jobs_maintenance_admission_deferred_by_reason_total for the dominant defer reason and loopover_jobs_maintenance_admission_granted_under_pressure_total to confirm the escapes are actually firing, and confirm MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS / MAINTENANCE_ADMISSION_DRAIN_AGE_MS weren't raised. Sustained host_load_high suggests the box itself (not just this app) is overloaded -- host_load_high also blocks the drain escape specifically, see maintenance-admission.ts."
 
   # ── GitHub API budget / queue admission pressure ──────────────────────────
-  - name: gittensory-github-rate-limits
+  - name: loopover-github-rate-limits
     rules:
-      - alert: GittensoryGitHubRateLimitResponses
+      - alert: LoopoverGitHubRateLimitResponses
         # Live 403/429 GitHub rate-limit responses mean admission/caching did not avoid
         # a depleted bucket. This should be rare; sustained values explain hard queue stalls.
-        expr: sum by (status, retry, key_scope) (rate(gittensory_github_rest_rate_limit_responses_total[5m])) > 0
+        expr: sum by (status, retry, key_scope) (rate(loopover_github_rest_rate_limit_responses_total[5m])) > 0
         for: 2m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory is receiving GitHub REST rate-limit responses"
-          description: "GitHub REST rate-limit responses are occurring for over 2m. Check labels status/retry/key_scope on gittensory_github_rest_rate_limit_responses_total."
+          summary: "loopover is receiving GitHub REST rate-limit responses"
+          description: "GitHub REST rate-limit responses are occurring for over 2m. Check labels status/retry/key_scope on loopover_github_rest_rate_limit_responses_total."
           runbook: "Open the GitHub REST Rate Limits panel and compare with Queue Rate-Limit Deferrals. If responses are installation-scoped, lower concurrent GitHub work for that installation; if key_scope=none/other, identify the unaffiliated caller and route it through an admission key."
 
-      - alert: GittensoryQueueRateLimitDeferralsHigh
+      - alert: LoopoverQueueRateLimitDeferralsHigh
         # Jobs are being intentionally parked to preserve GitHub budget. That is better
         # than burning through the bucket, but a sustained storm means throughput is bound
         # by GitHub admission rather than worker capacity.
         expr: |
-          sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_admission_deferred_total[5m])) > 0.05
+          sum by (kind, key_scope, job_type) (rate(loopover_jobs_rate_limit_admission_deferred_total[5m])) > 0.05
           or
-          sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_budget_deferred_total[5m])) > 0.05
+          sum by (kind, key_scope, job_type) (rate(loopover_jobs_rate_limit_budget_deferred_total[5m])) > 0.05
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory queue is rate-limit deferring jobs"
+          summary: "loopover queue is rate-limit deferring jobs"
           description: "GitHub rate-limit deferrals exceeded 0.05/s for 10m. The queue is protecting the bucket but throughput is GitHub-budget bound."
-          runbook: "Use gittensory_jobs_rate_limit_* labels (kind/key_scope/job_type) to identify the stuck class. Prefer reducing duplicate webhook/regate work or adding cache coverage before raising worker concurrency."
+          runbook: "Use loopover_jobs_rate_limit_* labels (kind/key_scope/job_type) to identify the stuck class. Prefer reducing duplicate webhook/regate work or adding cache coverage before raising worker concurrency."
 
   # ── Postgres database + backup freshness ───────────────────────────────────
-  - name: gittensory-postgres
+  - name: loopover-postgres
     rules:
-      - alert: GittensoryPostgresConnectionPressure
+      - alert: LoopoverPostgresConnectionPressure
         # Postgres exporter is present only for Postgres-backed installs. Fire when the app DB
         # consumes more than 80% of max_connections for 10m; use PgBouncer or lower app concurrency.
         expr: |
@@ -235,10 +235,10 @@ groups:
           severity: warning
         annotations:
           summary: "Postgres connection usage is above 80%"
-          description: "The gittensory database is using {{ $value | humanizePercentage }} of max_connections for over 10m."
+          description: "The loopover database is using {{ $value | humanizePercentage }} of max_connections for over 10m."
           runbook: "Enable the pgbouncer profile or reduce self-host worker/app concurrency. Check the Postgres Connections panel by state before increasing max_connections."
 
-      - alert: GittensoryPostgresLockWaits
+      - alert: LoopoverPostgresLockWaits
         # Wait-event labels are emitted by the postgres_exporter stat_activity collector. Any sustained
         # lock wait means a write path is blocked and queue processing can appear stuck.
         expr: sum(pg_stat_activity_count{datname="loopover", wait_event_type="Lock"}) > 0
@@ -247,10 +247,10 @@ groups:
           severity: warning
         annotations:
           summary: "Postgres sessions are waiting on locks"
-          description: "{{ $value | printf \"%.0f\" }} gittensory database session(s) have waited on Postgres locks for over 5m."
+          description: "{{ $value | printf \"%.0f\" }} loopover database session(s) have waited on Postgres locks for over 5m."
           runbook: "Inspect the Postgres Locks and Slow Transactions panels. Look for long transactions, migration jobs, or stuck writers before restarting workers."
 
-      - alert: GittensoryPostgresSlowTransaction
+      - alert: LoopoverPostgresSlowTransaction
         # Long active transactions are the self-host proxy for slow/problem queries without requiring
         # pg_stat_statements or superuser-only setup.
         expr: max(pg_stat_activity_max_tx_duration{datname="loopover"}) > 120
@@ -259,10 +259,10 @@ groups:
           severity: warning
         annotations:
           summary: "Postgres transaction has been active for over 2m"
-          description: "The longest active gittensory database transaction is {{ $value | printf \"%.0f\" }}s old."
+          description: "The longest active loopover database transaction is {{ $value | printf \"%.0f\" }}s old."
           runbook: "Check app logs around DB-heavy jobs and review whether queue workers are saturating Postgres. A single long transaction can block cleanup or migrations."
 
-      - alert: GittensoryPostgresDeadlocks
+      - alert: LoopoverPostgresDeadlocks
         # Deadlocks should be effectively zero; even a low rate points at competing write paths.
         expr: rate(pg_stat_database_deadlocks{datname="loopover"}[5m]) > 0
         for: 2m
@@ -270,10 +270,10 @@ groups:
           severity: warning
         annotations:
           summary: "Postgres deadlocks detected"
-          description: "Postgres deadlocks are occurring for the gittensory database."
+          description: "Postgres deadlocks are occurring for the loopover database."
           runbook: "Correlate with deploys and queue write paths. Repeated deadlocks usually mean a transaction ordering bug or too much parallel write pressure."
 
-      - alert: GittensoryPostgresDatabaseGrowingFast
+      - alert: LoopoverPostgresDatabaseGrowingFast
         # Growth over a 6h window smooths normal small-table churn while catching runaway queue/audit growth.
         # 262144 bytes/s is roughly 5.4 GiB over 6h.
         expr: deriv(pg_database_size_bytes{datname="loopover"}[6h]) > 262144
@@ -282,10 +282,10 @@ groups:
           severity: warning
         annotations:
           summary: "Postgres database is growing quickly"
-          description: "The gittensory database is growing at about {{ $value | humanize }} bytes/s over a 6h trend window."
+          description: "The loopover database is growing at about {{ $value | humanize }} bytes/s over a 6h trend window."
           runbook: "Open the Postgres Table Growth panel and inspect queue/audit/event tables first. Confirm retention and backup volume capacity before raising traffic."
 
-      - alert: GittensoryPostgresDeadTuplesHigh
+      - alert: LoopoverPostgresDeadTuplesHigh
         # Autovacuum pressure: high dead tuple ratio and enough absolute dead rows to avoid tiny-table noise.
         expr: |
           (
@@ -306,10 +306,10 @@ groups:
           description: "More than 20% of table tuples are dead and at least 10k dead tuples remain for over 30m."
           runbook: "Check the Dead Tuples / Autovacuum panel. If autovacuum counts are flat while dead tuples rise, reduce write pressure or tune autovacuum for the largest tables."
 
-      - alert: GittensoryBackupMissing
+      - alert: LoopoverBackupMissing
         # Fires only when the backup-exporter service is running (backup profile enabled) and no retained
         # DB backup exists yet. Qdrant backups are best-effort and not included in this DB backup alert.
-        expr: gittensory_backup_files{target=~"postgres|sqlite"} == 0
+        expr: loopover_backup_files{target=~"postgres|sqlite"} == 0
         for: 2h
         labels:
           severity: warning
@@ -318,35 +318,35 @@ groups:
           description: "The backup profile is exposing metrics, but {{ $labels.target }} has no retained backup file after 2h."
           runbook: "Run `docker compose --profile backup run --rm backup sh /backup.sh` and inspect the loopover-backups volume. For Postgres, confirm DATABASE_URL is available to the backup service."
 
-      - alert: GittensoryBackupStale
+      - alert: LoopoverBackupStale
         # Default backup loop is daily. 26h allows one missed scrape/restart window before warning.
         expr: |
-          (time() - gittensory_backup_latest_timestamp_seconds{target=~"postgres|sqlite"} > 93600)
+          (time() - loopover_backup_latest_timestamp_seconds{target=~"postgres|sqlite"} > 93600)
           and
-          gittensory_backup_latest_timestamp_seconds{target=~"postgres|sqlite"} > 0
+          loopover_backup_latest_timestamp_seconds{target=~"postgres|sqlite"} > 0
         for: 30m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory database backup is stale"
+          summary: "loopover database backup is stale"
           description: "The newest retained {{ $labels.target }} backup is older than 26h."
           runbook: "Check `docker compose --profile backup logs backup` and run the backup command manually. Pair this with the restore verification drill before deleting old backups."
 
   # ── Qdrant vector backend ──────────────────────────────────────────────────
-  - name: gittensory-qdrant
+  - name: loopover-qdrant
     rules:
-      - alert: GittensoryQdrantErrorRateHigh
+      - alert: LoopoverQdrantErrorRateHigh
         # Qdrant errors (across upsert/query/delete) relative to total Qdrant traffic.
         # `... or vector(0)` keeps the denominator non-empty so the ratio is defined even
         # when query/upsert counters haven't been created yet. > 0.05 = 5% error rate.
         expr: |
           (
-            sum(rate(gittensory_qdrant_errors_total[10m]))
+            sum(rate(loopover_qdrant_errors_total[10m]))
             /
             (
-              sum(rate(gittensory_qdrant_queries_total[10m]))
-              + sum(rate(gittensory_qdrant_upserts_total[10m]))
-              + sum(rate(gittensory_qdrant_errors_total[10m]))
+              sum(rate(loopover_qdrant_queries_total[10m]))
+              + sum(rate(loopover_qdrant_upserts_total[10m]))
+              + sum(rate(loopover_qdrant_errors_total[10m]))
               > 0
             )
           ) > 0.05
@@ -354,25 +354,25 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "gittensory Qdrant error rate above 5%"
+          summary: "loopover Qdrant error rate above 5%"
           description: "{{ $value | humanizePercentage }} of Qdrant operations errored over the last 10m (sustained 10m). RAG retrieval/indexing is degraded."
-          runbook: "Check the qdrant container (`docker compose --profile qdrant ps/logs`) and gittensory_qdrant_errors_total{op=...} to see whether upsert, query, or delete is failing. A reachable-but-erroring Qdrant often means a schema/collection or disk problem."
+          runbook: "Check the qdrant container (`docker compose --profile qdrant ps/logs`) and loopover_qdrant_errors_total{op=...} to see whether upsert, query, or delete is failing. A reachable-but-erroring Qdrant often means a schema/collection or disk problem."
 
   # ── Orb usage-event export pipeline ────────────────────────────────────────
-  - name: gittensory-orb
+  - name: loopover-orb
     rules:
-      - alert: GittensoryOrbExportErrorRateHigh
+      - alert: LoopoverOrbExportErrorRateHigh
         # Failed Orb event exports vs total export attempts (errors + successes).
         # The `> 0` denominator guard avoids 0/0. Export failures mean billed usage
         # events aren't reaching Orb — a revenue/billing-integrity issue, so it warns
         # even at a modest 5% rate.
         expr: |
           (
-            sum(rate(gittensory_orb_export_errors_total[15m]))
+            sum(rate(loopover_orb_export_errors_total[15m]))
             /
             (
-              sum(rate(gittensory_orb_events_exported_total[15m]))
-              + sum(rate(gittensory_orb_export_errors_total[15m]))
+              sum(rate(loopover_orb_events_exported_total[15m]))
+              + sum(rate(loopover_orb_export_errors_total[15m]))
               > 0
             )
           ) > 0.05
@@ -380,64 +380,64 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "gittensory Orb export error rate above 5%"
+          summary: "loopover Orb export error rate above 5%"
           description: "{{ $value | humanizePercentage }} of Orb usage-event exports failed over the last 15m (sustained 15m). Billable events may not be reaching Orb."
-          runbook: "Verify Orb API credentials/connectivity and check level=error logs around orb export. Recorded-but-unexported events (gittensory_orb_events_recorded_total vs _exported_total diverging) confirm a stuck exporter."
+          runbook: "Verify Orb API credentials/connectivity and check level=error logs around orb export. Recorded-but-unexported events (loopover_orb_events_recorded_total vs _exported_total diverging) confirm a stuck exporter."
 
-      - alert: GittensoryWebhookEnqueueFailures
+      - alert: LoopoverWebhookEnqueueFailures
         # A webhook accepted by the receiver but not durably queued becomes GitHub
         # redelivery pressure and can look like queue jitter. Any sustained enqueue
         # failures deserve attention.
-        expr: sum(rate(gittensory_webhook_enqueue_total{result="enqueue_failed"}[5m])) > 0
+        expr: sum(rate(loopover_webhook_enqueue_total{result="enqueue_failed"}[5m])) > 0
         for: 2m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory webhook enqueue failures detected"
+          summary: "loopover webhook enqueue failures detected"
           description: "Webhook enqueue failures are occurring for over 2m. Labels event/action show which GitHub event class is failing."
-          runbook: "Check WEBHOOKS queue availability and the durable queue backend. If this coincides with Orb relay drains, inspect gittensory_orb_webhook_total{result=\"enqueue_failed\"}."
+          runbook: "Check WEBHOOKS queue availability and the durable queue backend. If this coincides with Orb relay drains, inspect loopover_orb_webhook_total{result=\"enqueue_failed\"}."
 
-      - alert: GittensoryOrbRelayRegistrationStuck
+      - alert: LoopoverOrbRelayRegistrationStuck
         # #selfhost-runtime-drift follow-up: mirrors isOrbRelayRegistrationAlerting's own gate (3 consecutive
         # registration failures, OR the pull-mode drain loop gone quiet for 30m) so Prometheus escalates on
         # EXACTLY the same evidence the app itself uses to decide "actually stuck" vs "one hiccup, still
         # draining fine". A single transient registration timeout will not trip this on its own.
-        expr: gittensory_orb_relay_register_consecutive_failures >= 3 or gittensory_orb_relay_drain_seconds_since_last > 1800
+        expr: loopover_orb_relay_register_consecutive_failures >= 3 or loopover_orb_relay_drain_seconds_since_last > 1800
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory orb relay registration looks actually stuck, not just a transient hiccup"
+          summary: "loopover orb relay registration looks actually stuck, not just a transient hiccup"
           description: "Either the consecutive registration-failure streak has reached {{ $value | printf \"%.0f\" }}, or the pull-mode drain loop hasn't completed in over 30m. A lone registration timeout alone would not trigger this."
-          runbook: "Check gittensory_orb_relay_register_total{result=\"failed\"} by mode for the failure pattern, and confirm ORB_BROKER_URL / ORB_ENROLLMENT_SECRET are still valid. If pull mode, verify the drain loop itself isn't crash-looping (selfhost_orb_relay_register_failed logs at level=error)."
+          runbook: "Check loopover_orb_relay_register_total{result=\"failed\"} by mode for the failure pattern, and confirm ORB_BROKER_URL / ORB_ENROLLMENT_SECRET are still valid. If pull mode, verify the drain loop itself isn't crash-looping (selfhost_orb_relay_register_failed logs at level=error)."
 
   # ── HTTP serving health (status label + duration histogram, both live in src/server.ts) ─
-  # gittensory_http_requests_total carries a status="2xx|3xx|4xx|5xx" label (seeded at zero per
-  # class so every series exists from boot), and gittensory_http_request_duration_seconds is a
+  # loopover_http_requests_total carries a status="2xx|3xx|4xx|5xx" label (seeded at zero per
+  # class so every series exists from boot), and loopover_http_request_duration_seconds is a
   # histogram of request duration. Both rules below still tolerate an absent metric/label on an
   # older running build: the ratio uses a `> 0` denominator guard, and an absent series simply
   # yields no result (rule stays inactive) rather than erroring.
-  - name: gittensory-http
+  - name: loopover-http
     rules:
-      - alert: GittensoryHighHttp5xxRatio
+      - alert: LoopoverHighHttp5xxRatio
         # Share of responses that are 5xx. status="5xx" selects only server errors;
         # the denominator sums all statuses. If the status label is missing entirely
         # (old build), the numerator selector matches nothing → no firing. 0.05 = 5%.
         expr: |
           (
-            sum(rate(gittensory_http_requests_total{status="5xx"}[5m]))
+            sum(rate(loopover_http_requests_total{status="5xx"}[5m]))
             /
-            sum(rate(gittensory_http_requests_total[5m])) > 0
+            sum(rate(loopover_http_requests_total[5m])) > 0
           ) > 0.05
         for: 10m
         labels:
           severity: critical
         annotations:
-          summary: "gittensory HTTP 5xx ratio above 5%"
+          summary: "loopover HTTP 5xx ratio above 5%"
           description: "{{ $value | humanizePercentage }} of HTTP responses were 5xx over the last 5m (sustained 10m). The API is throwing server errors."
-          runbook: "Tail logs for level=error around the request path. Correlate with deploys, DB availability, and AI-provider outages. If 5xx coincides with a target restart, it may be a crash-loop — see GittensoryTargetDown."
+          runbook: "Tail logs for level=error around the request path. Correlate with deploys, DB availability, and AI-provider outages. If 5xx coincides with a target restart, it may be a crash-loop — see LoopoverTargetDown."
 
-      - alert: GittensoryRequestLatencySLOBreach
+      - alert: LoopoverRequestLatencySLOBreach
         # p95 request latency from the duration histogram. histogram_quantile over the
         # per-le bucket rate gives the 95th percentile end-to-end. 1s p95 is a reasonable
         # SLO for a review API; raise for heavier AI-bound endpoints. `by (le)` is
@@ -445,125 +445,125 @@ groups:
         expr: |
           histogram_quantile(
             0.95,
-            sum(rate(gittensory_http_request_duration_seconds_bucket[5m])) by (le)
+            sum(rate(loopover_http_request_duration_seconds_bucket[5m])) by (le)
           ) > 1
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory p95 request latency above 1s"
+          summary: "loopover p95 request latency above 1s"
           description: "p95 HTTP request latency is {{ $value | printf \"%.2f\" }}s over the last 5m (sustained 10m), breaching the 1s SLO."
-          runbook: "Check whether slowness is queue/DB/AI-bound: correlate with gittensory_queue_pending and Qdrant/AI latency. A rising p95 with flat error rate usually means a saturated dependency, not a bug."
+          runbook: "Check whether slowness is queue/DB/AI-bound: correlate with loopover_queue_pending and Qdrant/AI latency. A rising p95 with flat error rate usually means a saturated dependency, not a bug."
 
   # ── AI review reliability (dual-AI combiner + per-provider circuit breaker, #2540) ─
-  - name: gittensory-ai-review
+  - name: loopover-ai-review
     rules:
-      - alert: GittensoryAiReviewInconclusiveSpike
+      - alert: LoopoverAiReviewInconclusiveSpike
         # `inconclusive` means the AI review pipeline could not produce a usable verdict (every reviewer
         # opinion missing/unparseable, or a required opinion never came back) -- the review still runs
         # deterministically, but dual-AI review is repeatedly failing to add value. Absolute-increase
-        # threshold (matching GittensoryDeadLetterJobsGrowing above): there's no clean matching-cardinality
+        # threshold (matching LoopoverDeadLetterJobsGrowing above): there's no clean matching-cardinality
         # denominator (total review attempts aren't broken out per-mode the same way), so a ratio query
         # would need an unrelated series. > 5 in 30m tolerates the occasional one-off degrade.
-        expr: increase(gittensory_ai_review_inconclusive_total[30m]) > 5
+        expr: increase(loopover_ai_review_inconclusive_total[30m]) > 5
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory AI review is repeatedly inconclusive"
+          summary: "loopover AI review is repeatedly inconclusive"
           description: "{{ $value | printf \"%.0f\" }} AI review(s) came back inconclusive over the last 30m (sustained 10m). Dual-AI review is repeatedly failing to produce a usable verdict."
-          runbook: "Check provider health and circuit-breaker state (gittensory_ai_provider_failures_total / gittensory_ai_provider_circuit_open_total) and verify AI_PROVIDER credentials are still valid for every configured reviewer."
+          runbook: "Check provider health and circuit-breaker state (loopover_ai_provider_failures_total / loopover_ai_provider_circuit_open_total) and verify AI_PROVIDER credentials are still valid for every configured reviewer."
 
-      - alert: GittensoryAiReviewOnMergeFloorBypassAttempted
+      - alert: LoopoverAiReviewOnMergeFloorBypassAttempted
         # A repo's .gittensory.yml tried to loosen the operator's onMerge/combine/reviewer-count floor and
         # got clamped back to the operator's own configured minimum (#3901). A governance/config signal, not
-        # an operational outage, but same absolute-increase style as GittensoryAiProviderCircuitOpen above:
+        # an operational outage, but same absolute-increase style as LoopoverAiProviderCircuitOpen above:
         # any occurrence (> 0) over 1h is worth a look, sustained 5m so a single instantaneous blip doesn't
         # immediately page.
-        expr: increase(gittensory_ai_review_onmerge_clamped_total[1h]) > 0
+        expr: increase(loopover_ai_review_onmerge_clamped_total[1h]) > 0
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: "a repo's review-floor clamp fired"
           description: "{{ $value | printf \"%.0f\" }} onMerge/combine/reviewer-count clamp event(s) over the last 1h — a repo config tried to loosen below the operator's configured floor."
-          runbook: "Check which repo's .gittensory.yml requested the loosened setting (gittensory_ai_review_onmerge_clamped_total is labeled by mode) and confirm whether that repo's floor should be adjusted or the request declined."
+          runbook: "Check which repo's .gittensory.yml requested the loosened setting (loopover_ai_review_onmerge_clamped_total is labeled by mode) and confirm whether that repo's floor should be adjusted or the request declined."
 
-      - alert: GittensoryAiProviderCircuitOpen
+      - alert: LoopoverAiProviderCircuitOpen
         # A provider's circuit breaker opens after AI_PROVIDER_FAILURE_THRESHOLD consecutive failures and
         # short-circuits further attempts for a cooldown window -- ANY circuit-open event in 15m means that
         # provider has been failing repeatedly and calls are being skipped fast rather than retried at full
-        # cost. Same absolute-increase style as GittensoryDeadLetterJobsGrowing: any occurrence is worth a look.
-        expr: increase(gittensory_ai_provider_circuit_open_total[15m]) > 0
+        # cost. Same absolute-increase style as LoopoverDeadLetterJobsGrowing: any occurrence is worth a look.
+        expr: increase(loopover_ai_provider_circuit_open_total[15m]) > 0
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory AI provider {{ $labels.provider }} circuit breaker is open"
+          summary: "loopover AI provider {{ $labels.provider }} circuit breaker is open"
           description: "Provider {{ $labels.provider }} has failed repeatedly and its circuit breaker is skipping calls fast during its cooldown (sustained 5m)."
-          runbook: "Check that provider's credentials/reachability (CLI auth for claude-code/codex, or the configured API key/base URL for HTTP providers) via gittensory_ai_provider_failures_total{provider=\"...\"} and recent selfhost_ai_provider_failed logs."
+          runbook: "Check that provider's credentials/reachability (CLI auth for claude-code/codex, or the configured API key/base URL for HTTP providers) via loopover_ai_provider_failures_total{provider=\"...\"} and recent selfhost_ai_provider_failed logs."
 
   # ── Ops anomaly scan (review burst / review failure burst, #ops-anomaly-metric) ────
-  - name: gittensory-ops-anomalies
+  - name: loopover-ops-anomalies
     rules:
-      - alert: GittensoryOpsAnomalyDetected
-        # runOpsAlerts (src/review/ops-wire.ts) scans gittensory's own outcome data hourly and increments this
+      - alert: LoopoverOpsAnomalyDetected
+        # runOpsAlerts (src/review/ops-wire.ts) scans loopover's own outcome data hourly and increments this
         # counter, labeled by kind, when it catches a review burst (a stuck-CI finalize loop or sweep retry
         # storm re-publishing the same PR far more than normal iteration ever does) or a review failure burst
         # (repeated inconclusive AI-review calls with zero successful publish -- the #3747 incident shape).
-        # Same absolute-increase style as GittensoryDeadLetterJobsGrowing: any occurrence over the scan's own
+        # Same absolute-increase style as LoopoverDeadLetterJobsGrowing: any occurrence over the scan's own
         # 2h detection window is worth a look, not a rate/ratio.
-        expr: increase(gittensory_ops_anomaly_total[2h]) > 0
+        expr: increase(loopover_ops_anomaly_total[2h]) > 0
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory ops anomaly scan flagged a {{ $labels.kind }} on {{ $labels.repo }}"
+          summary: "loopover ops anomaly scan flagged a {{ $labels.kind }} on {{ $labels.repo }}"
           description: "{{ $value | printf \"%.0f\" }} {{ $labels.kind }} detection(s) over the last 2h for {{ $labels.repo }} (sustained 5m). Check the ops_anomaly structured log for the full detail line."
           runbook: "Tail logs for level=error event=ops_anomaly repo={{ $labels.repo }} for the human-readable anomaly text. A review_burst or review_failure_burst usually means a stuck-CI finalize loop or a sweep retry storm -- see #orb-ci-stuck-repeat / #review-burst-blind-spot."
 
   # ── Host clock sync (#3811) ───────────────────────────────────────────────
-  - name: gittensory-system-health
+  - name: loopover-system-health
     rules:
-      - alert: GittensoryClockSkewWarning
+      - alert: LoopoverClockSkewWarning
         # GitHub App JWTs are signed with iat backdated 60s for skew tolerance and exp at now+540s
         # (createAppJwt, src/github/app.ts). A local clock running ahead erodes that backdate; once skew
         # approaches it, GitHub can reject the JWT as not-yet-valid ("Bad credentials"), breaking ALL
         # GitHub App auth fleet-wide -- exactly what happened when edge-us-01's sole NTP source died and
         # its clock drifted ~3 minutes unnoticed. 60s is well under that 3-minute drift, so this fires long
         # before auth actually breaks.
-        expr: abs(gittensory_clock_skew_seconds) > 60
+        expr: abs(loopover_clock_skew_seconds) > 60
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory host clock has drifted {{ $value | printf \"%.0f\" }}s from GitHub's server time"
+          summary: "loopover host clock has drifted {{ $value | printf \"%.0f\" }}s from GitHub's server time"
           description: "Clock skew has been over 60s (sustained 5m). GitHub App JWT auth starts failing once skew approaches the 60s iat backdate margin."
           runbook: "Check `chronyc sources` / `chronyc tracking` on the host. Confirm at least one NTP source shows a nonzero Reach (Reach: 0 means that source has never successfully synced). Configure redundant NTP sources -- a single dead source is a silent single point of failure."
 
-      - alert: GittensoryClockSkewCritical
+      - alert: LoopoverClockSkewCritical
         # 120s is comfortably past the 60s JWT backdate margin -- GitHub App auth is very likely already
         # failing fleet-wide by this point.
-        expr: abs(gittensory_clock_skew_seconds) > 120
+        expr: abs(loopover_clock_skew_seconds) > 120
         for: 2m
         labels:
           severity: critical
         annotations:
-          summary: "gittensory host clock skew is CRITICAL ({{ $value | printf \"%.0f\" }}s) -- GitHub App auth is likely failing"
+          summary: "loopover host clock skew is CRITICAL ({{ $value | printf \"%.0f\" }}s) -- GitHub App auth is likely failing"
           description: "Clock skew has exceeded 120s (sustained 2m), well past the point GitHub App JWT auth (\"Bad credentials\") is expected to start failing fleet-wide."
-          runbook: "Same as GittensoryClockSkewWarning, but treat as urgent: fix NTP sync immediately (chronyc sources, chronyc makestep, restart chrony if every source stays at Reach: 0). Check for github_app_jwt_rejected logs to confirm auth impact."
+          runbook: "Same as LoopoverClockSkewWarning, but treat as urgent: fix NTP sync immediately (chronyc sources, chronyc makestep, restart chrony if every source stays at Reach: 0). Check for github_app_jwt_rejected logs to confirm auth impact."
 
   # ── Cloudflare D1 (central cloud) size + signal_snapshots dedup regression (#3810) ────
-  # gittensory_d1_* metrics come from the OPT-IN Cloudflare Management API probe (src/selfhost/
+  # loopover_d1_* metrics come from the OPT-IN Cloudflare Management API probe (src/selfhost/
   # d1-size-probe.ts, CLOUDFLARE_D1_MONITOR_* env vars) -- absent/disabled reads -1 on every gauge below,
   # comfortably under every threshold here, so these rules never fire on an install that hasn't configured
   # the probe (most self-host installs run their own SQLite/Postgres backend and have nothing to monitor).
-  - name: gittensory-d1-storage
+  - name: loopover-d1-storage
     rules:
-      - alert: GittensoryD1DatabaseSizeWarning
+      - alert: LoopoverD1DatabaseSizeWarning
         # 7e9 bytes is ~70% of D1's known ~10GB per-database cap that was hit on 2026-07-06 (#3810), which
         # caused real D1 writes (including an Orb relay registration handshake) to start failing/timing out.
-        expr: gittensory_d1_database_size_bytes > 7000000000
+        expr: loopover_d1_database_size_bytes > 7000000000
         for: 30m
         labels:
           severity: warning
@@ -572,10 +572,10 @@ groups:
           description: "The monitored D1 database is {{ $value | humanize }}B, over 70% of the ~10GB per-database cap (sustained 30m)."
           runbook: "Check the D1 panel's per-table row counts (Cloudflare D1 (Central Cloud) row) and confirm the daily signal_snapshots dedup job (dedupeSignalSnapshots, wired into prune-retention) is actually running. See #3810 for the 2026-07-06 incident this guards against."
 
-      - alert: GittensoryD1DatabaseSizeCritical
+      - alert: LoopoverD1DatabaseSizeCritical
         # 9e9 bytes is ~90% of the ~10GB cap -- D1 writes started failing fleet-wide the last time the
         # database actually hit the cap, so this is meant to fire well before that happens again.
-        expr: gittensory_d1_database_size_bytes > 9000000000
+        expr: loopover_d1_database_size_bytes > 9000000000
         for: 10m
         labels:
           severity: critical
@@ -584,8 +584,8 @@ groups:
           description: "The monitored D1 database is {{ $value | humanize }}B, over 90% of the ~10GB per-database cap (sustained 10m). D1 writes failed fleet-wide the last time this cap was hit (2026-07-06)."
           runbook: "Immediate: verify the signal_snapshots dedup job is running (POST /v1/internal/retention/preview, or check audit_events for its record) and identify + trim/archive any other unbounded table from the row-count panel. Contact Cloudflare to raise the account storage limit if cleanup alone doesn't recover enough headroom."
 
-      - alert: GittensorySignalSnapshotsDedupRegression
-        # gittensory_signal_snapshots_rows_per_key is rows-per-distinct-key scoped ONLY to the four
+      - alert: LoopoverSignalSnapshotsDedupRegression
+        # loopover_signal_snapshots_rows_per_key is rows-per-distinct-key scoped ONLY to the four
         # latest-only-dedup signal types dedupeSignalSnapshots (src/db/retention.ts) actually converges to
         # ~1 row per key -- NOT the whole signal_snapshots table, which intentionally keeps bounded
         # multi-row history for other signal types (queue-health, contributor-decision-pack, ...). Healthy
@@ -593,7 +593,7 @@ groups:
         # dedup run); 10 is a wide margin above that, while the actual 2026-07-06 incident ratio (342243
         # rows / 2183 keys) was ~157 -- so a value anywhere near double digits means the dedup job has
         # stopped running, started erroring, or its allowlist regressed.
-        expr: gittensory_signal_snapshots_rows_per_key > 10
+        expr: loopover_signal_snapshots_rows_per_key > 10
         for: 30m
         labels:
           severity: warning
@@ -602,12 +602,12 @@ groups:
           description: "signal_snapshots has {{ $value | printf \"%.1f\" }} rows per distinct dedup key (sustained 30m) -- the daily dedupeSignalSnapshots job may not be running."
           runbook: "Confirm the prune-retention cron (03:00 UTC daily) is completing (audit_events around that time) and that dedupeSignalSnapshots isn't throwing. See #3810 and src/db/retention.ts."
 
-      - alert: GittensoryD1ProbeFailing
+      - alert: LoopoverD1ProbeFailing
         # The probe itself (a Cloudflare Management API call) can fail independently of the database it
         # monitors -- an expired/rotated API token, a wrong account/database id, or a Cloudflare API outage.
         # Without this, an operator would see a flat/stale D1 panel and could mistake "the probe broke" for
         # "the database stopped growing".
-        expr: increase(gittensory_d1_probe_errors_total[1h]) > 3
+        expr: increase(loopover_d1_probe_errors_total[1h]) > 3
         for: 15m
         labels:
           severity: warning

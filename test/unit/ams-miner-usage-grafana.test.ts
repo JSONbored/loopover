@@ -123,7 +123,7 @@ describe("iterate-loop driverProvider stamping (#5185)", () => {
         contributorLogin: "miner",
         title: "title",
         reviewContext: {
-          manifest: { gate: { duplicates: "block", linkedIssue: "advisory" } },
+          manifest: parseFocusManifest({ gate: { duplicates: "block", linkedIssue: "advisory" } }),
           repo: { fullName: "acme/widgets", owner: "acme", name: "widgets", isInstalled: true, isRegistered: true, isPrivate: false },
           issues: [],
           pullRequests: [],
@@ -174,6 +174,7 @@ describe("iterate-loop driverProvider stamping (#5185)", () => {
             changedFiles: ["src/upload.ts"],
             summary: "added retry logic",
             turnsUsed: 5,
+            tokensUsed: 1200,
             costUsd: 0.08,
           }),
         }),
@@ -188,6 +189,148 @@ describe("iterate-loop driverProvider stamping (#5185)", () => {
     const succeeded = loopEvents.find((event) => event.eventType === "attempt_succeeded");
     expect(succeeded?.payload?.driverProvider).toBe("claude-cli");
     expect(succeeded?.payload?.turnsUsed).toBe(5);
+    expect(succeeded?.payload?.tokensUsed).toBe(1200);
     expect(succeeded?.payload?.costUsd).toBe(0.08);
+  });
+
+  it("records budgetBreaches on a hard budget-ceiling abandon and omits metering on continue iterations", async () => {
+    const loopEvents: AttemptLogEvent[] = [];
+    const duplicateBlockerContext = {
+      manifest: parseFocusManifest({ gate: { duplicates: "block", linkedIssue: "advisory" } }),
+      repo: { fullName: "acme/widgets", owner: "acme", name: "widgets", isInstalled: true, isRegistered: true, isPrivate: false },
+      issues: [{ repoFullName: "acme/widgets", number: 7, title: "Uploads should retry on 5xx", state: "open", labels: [], linkedPrs: [] }],
+      pullRequests: [
+        {
+          repoFullName: "acme/widgets",
+          number: 99,
+          title: "Duplicate PR",
+          state: "open" as const,
+          authorLogin: "miner1",
+          linkedIssues: [7],
+          labels: [],
+        },
+      ],
+    };
+    await runIterateLoop(
+      {
+        attemptId: "usage-continue",
+        workingDirectory: "/tmp/attempt-1",
+        acceptanceCriteriaPath: "/tmp/attempt-1/acceptance-criteria.json",
+        instructions: "Add retry to the upload client",
+        mode: "live",
+        maxIterations: 2,
+        maxTurnsPerIteration: 20,
+        repoFullName: "acme/widgets",
+        contributorLogin: "miner1",
+        title: "Add retry to the upload client",
+        body: "Closes #7",
+        linkedIssues: [7],
+        reviewContext: duplicateBlockerContext,
+        rejectionSignaled: false,
+      },
+      {
+        driver: createFakeCodingAgentDriver({
+          run: async () => ({
+            ok: true,
+            changedFiles: ["src/upload.ts"],
+            summary: "added retry logic",
+            turnsUsed: 1,
+            tokensUsed: 50,
+            costUsd: 0.01,
+          }),
+        }),
+        runSlopAssessment: () => ({ slopRisk: 0, band: "clean", findings: [] }),
+        appendAttemptLogEvent: (event) => loopEvents.push(event),
+        driverProvider: "codex-cli",
+      },
+    );
+    const continueEvent = loopEvents.find((event) => event.eventType === "attempt_tool_edit");
+    expect(continueEvent?.payload?.driverProvider).toBe("codex-cli");
+    expect(continueEvent?.payload?.turnsUsed).toBeUndefined();
+
+    const budgetEvents: AttemptLogEvent[] = [];
+    await runIterateLoop(
+      {
+        attemptId: "usage-budget",
+        workingDirectory: "/tmp/attempt-1",
+        acceptanceCriteriaPath: "/tmp/attempt-1/acceptance-criteria.json",
+        instructions: "Add retry to the upload client",
+        mode: "live",
+        maxIterations: 3,
+        maxTurnsPerIteration: 1,
+        budget: { maxTurns: 1 },
+        repoFullName: "acme/widgets",
+        contributorLogin: "miner1",
+        title: "Add retry to the upload client",
+        body: "Closes #7",
+        linkedIssues: [7],
+        reviewContext: {
+          manifest: parseFocusManifest({ gate: { duplicates: "block", linkedIssue: "advisory" } }),
+          repo: { fullName: "acme/widgets", owner: "acme", name: "widgets", isInstalled: true, isRegistered: true, isPrivate: false },
+          issues: [{ repoFullName: "acme/widgets", number: 7, title: "Uploads should retry on 5xx", state: "open", labels: [], linkedPrs: [] }],
+          pullRequests: [],
+        },
+        rejectionSignaled: false,
+      },
+      {
+        driver: createFakeCodingAgentDriver({
+          run: async () => ({
+            ok: true,
+            changedFiles: ["src/upload.ts"],
+            summary: "added retry logic",
+            turnsUsed: 2,
+            tokensUsed: 80,
+            costUsd: 0.02,
+          }),
+        }),
+        runSlopAssessment: () => ({ slopRisk: 0, band: "clean", findings: [] }),
+        appendAttemptLogEvent: (event) => budgetEvents.push(event),
+        driverProvider: "agent-sdk",
+      },
+    );
+    const budgetAbandon = budgetEvents.find((event) => event.eventType === "attempt_failed");
+    expect(budgetAbandon?.payload?.budgetBreaches).toEqual(["turns"]);
+    expect(budgetAbandon?.payload?.tokensUsed).toBe(80);
+    expect(budgetAbandon?.payload?.driverProvider).toBe("agent-sdk");
+  });
+
+  it("normalizes a thrown live driver into an ambiguous abandon without crashing", async () => {
+    const loopEvents: AttemptLogEvent[] = [];
+    const result = await runIterateLoop(
+      {
+        attemptId: "usage-throw",
+        workingDirectory: "/tmp/attempt-1",
+        acceptanceCriteriaPath: "/tmp/attempt-1/acceptance-criteria.json",
+        instructions: "Add retry to the upload client",
+        mode: "live",
+        maxIterations: 1,
+        maxTurnsPerIteration: 20,
+        repoFullName: "acme/widgets",
+        contributorLogin: "miner1",
+        title: "Add retry to the upload client",
+        body: "Closes #7",
+        linkedIssues: [7],
+        reviewContext: {
+          manifest: parseFocusManifest({ gate: { duplicates: "block", linkedIssue: "advisory" } }),
+          repo: { fullName: "acme/widgets", owner: "acme", name: "widgets", isInstalled: true, isRegistered: true, isPrivate: false },
+          issues: [{ repoFullName: "acme/widgets", number: 7, title: "Uploads should retry on 5xx", state: "open", labels: [], linkedPrs: [] }],
+          pullRequests: [],
+        },
+        rejectionSignaled: false,
+      },
+      {
+        driver: createFakeCodingAgentDriver({
+          run: async () => {
+            throw new Error("spawn failed");
+          },
+        }),
+        runSlopAssessment: () => ({ slopRisk: 0, band: "clean", findings: [] }),
+        appendAttemptLogEvent: (event) => loopEvents.push(event),
+        driverProvider: "claude-cli",
+      },
+    );
+    expect(result.outcome).toBe("abandon");
+    expect(loopEvents.at(-1)?.eventType).toBe("attempt_aborted");
+    expect(loopEvents.at(-1)?.payload?.driverProvider).toBe("claude-cli");
   });
 });

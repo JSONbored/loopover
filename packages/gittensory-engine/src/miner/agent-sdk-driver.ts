@@ -168,6 +168,27 @@ export function createAgentSdkCodingAgentDriver(
       // or not (the session was billed either way), absent only when the stream produced no result message.
       const costUsd =
         typeof resultMessage?.total_cost_usd === "number" ? resultMessage.total_cost_usd : undefined;
+      const usageRecord = asRecord(resultMessage?.usage) ?? asRecord(resultMessage?.token_usage);
+      const inputTokens =
+        usageRecord && typeof usageRecord.input_tokens === "number"
+          ? usageRecord.input_tokens
+          : usageRecord && typeof usageRecord.inputTokens === "number"
+            ? usageRecord.inputTokens
+            : undefined;
+      const outputTokens =
+        usageRecord && typeof usageRecord.output_tokens === "number"
+          ? usageRecord.output_tokens
+          : usageRecord && typeof usageRecord.outputTokens === "number"
+            ? usageRecord.outputTokens
+            : undefined;
+      const totalTokens =
+        usageRecord && typeof usageRecord.total_tokens === "number"
+          ? usageRecord.total_tokens
+          : usageRecord && typeof usageRecord.totalTokens === "number"
+            ? usageRecord.totalTokens
+            : inputTokens !== undefined || outputTokens !== undefined
+              ? (inputTokens ?? 0) + (outputTokens ?? 0)
+              : undefined;
       const resultText =
         typeof resultMessage?.result === "string" ? redactSecrets(resultMessage.result) : "";
       const transcript = redactSecrets(
@@ -194,6 +215,7 @@ export function createAgentSdkCodingAgentDriver(
           transcript,
           turnsUsed,
           costUsd,
+          ...(totalTokens !== undefined ? { tokensUsed: totalTokens } : {}),
           error: `agent_sdk_${subtype === "success" ? "errored" : subtype}`,
         };
       }
@@ -210,6 +232,7 @@ export function createAgentSdkCodingAgentDriver(
           transcript,
           turnsUsed,
           costUsd,
+          ...(totalTokens !== undefined ? { tokensUsed: totalTokens } : {}),
           error: `agent_sdk_changed_files_unavailable: ${detail}`,
         };
       }
@@ -222,6 +245,7 @@ export function createAgentSdkCodingAgentDriver(
         transcript,
         turnsUsed,
         costUsd,
+        ...(totalTokens !== undefined ? { tokensUsed: totalTokens } : {}),
       };
     },
   };

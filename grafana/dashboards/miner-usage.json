@@ -87,7 +87,7 @@
       "id": 4,
       "type": "stat",
       "title": "Total tokens",
-      "description": "Sum of tokens_used on terminal attempt rows. Drivers report an honest 0 today when no real token signal exists.",
+      "description": "Sum of tokens_used on terminal attempt rows when the driver reports a real usage signal in CLI/SDK output; absent providers leave this at 0.",
       "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
       "datasource": { "type": "frser-sqlite-datasource", "uid": "ams-attempt-log" },
       "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "purple" } } },

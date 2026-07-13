@@ -412,6 +412,23 @@ describe("createCliSubprocessCodingAgentDriver (#4266)", () => {
       expect(result.costUsd).toBe(0.05);
     });
 
+    it("extracts claude token usage from nested usage objects on success", async () => {
+      const { spawn } = fakeSpawn({
+        stdout: JSON.stringify({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "done",
+          total_cost_usd: 0.1234,
+          usage: { input_tokens: 100, output_tokens: 25 },
+        }),
+        code: 0,
+      });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });
+      const result = await driver.run(TASK);
+      expect(result.tokensUsed).toBe(125);
+    });
+
     it("stays undefined (never fabricated) when stdout carries no cost field at all", async () => {
       const { spawn } = fakeSpawn({ stdout: "plain text output, no JSON", code: 0 });
       const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });

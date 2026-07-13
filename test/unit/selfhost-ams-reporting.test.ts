@@ -144,7 +144,7 @@ describe("scripts/export-ams-reporting-db.sh", () => {
         mode: "live",
         reason: "handed off",
         payloadJson:
-          '{"driverProvider":"claude-cli","turnsUsed":3,"tokensUsed":0,"costUsd":0.12,"iterationNumber":1,"action":"handoff"}',
+          '{"driverProvider":"claude-cli","turnsUsed":3,"tokensUsed":1250,"costUsd":0.12,"iterationNumber":1,"action":"handoff"}',
         createdAt: "2026-07-12T01:00:00Z",
       },
     ]);
@@ -157,7 +157,7 @@ describe("scripts/export-ams-reporting-db.sh", () => {
         outDb,
         "SELECT driver_provider || '|' || turns_used || '|' || tokens_used || '|' || cost_usd FROM attempt_log_events;",
       ),
-    ).toBe("claude-cli|3|0|0.12");
+      ).toBe("claude-cli|3|1250|0.12");
   });
 
   it("exports predictions with every column intact (already bounded/structured, no free text)", () => {

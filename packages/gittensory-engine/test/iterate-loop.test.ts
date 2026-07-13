@@ -68,8 +68,14 @@ function driverReturning(result: CodingAgentDriverResult): CodingAgentDriver {
   return { async run() { return result; } };
 }
 
-function okResult(changedFiles: string[] = ["src/upload.ts"], turnsUsed = 5): CodingAgentDriverResult {
-  return { ok: true, changedFiles, summary: "added retry logic", turnsUsed };
+function okResult(changedFiles: string[] = ["src/upload.ts"], turnsUsed = 5, tokensUsed?: number): CodingAgentDriverResult {
+  return {
+    ok: true,
+    changedFiles,
+    summary: "added retry logic",
+    turnsUsed,
+    ...(tokensUsed !== undefined ? { tokensUsed } : {}),
+  };
 }
 
 /** Collects every logged attempt-log event alongside the deps object, so a test can assert on the audit trail
@@ -293,10 +299,13 @@ test("handoff: a budget that IS configured but comfortably within limits never t
   assert.equal(result.finalMeterTotals.turns, 5);
 });
 
-test("finalMeterTotals.tokens is always an honest 0 -- no driver reports a real token count", async () => {
-  const { deps } = collectingDeps({ driver: driverReturning(okResult()) });
+test("finalMeterTotals.tokens reflects driver-reported usage when present, else stays 0", async () => {
+  const { deps } = collectingDeps({ driver: driverReturning(okResult(["src/upload.ts"], 5, 42)) });
   const result = await runIterateLoop(passingInput(), deps);
-  assert.equal(result.finalMeterTotals.tokens, 0);
+  assert.equal(result.finalMeterTotals.tokens, 42);
+  const { deps: noopDeps } = collectingDeps({ driver: driverReturning(okResult()) });
+  const noopResult = await runIterateLoop(passingInput(), noopDeps);
+  assert.equal(noopResult.finalMeterTotals.tokens, 0);
 });
 
 test("immediate abandon: finalMeterTotals/budgetBreaches are the honest zero/empty shape when the driver never ran", async () => {

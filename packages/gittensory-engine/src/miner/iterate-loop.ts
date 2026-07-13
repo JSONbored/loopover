@@ -362,10 +362,8 @@ async function runIterateLoopCore(input: IterateLoopInput, deps: IterateLoopDeps
     const iterationElapsedMs = Math.max(0, nowMs() - iterationStartMs);
     totalTurnsUsed += driverResult.turnsUsed ?? 0;
     totalCostUsd += driverResult.costUsd ?? 0;
-    // tokens stays an honest 0: no CodingAgentDriver reports a real per-iteration token count today (#5395) --
-    // an absence, never a fabricated number, matching this package's costUsd discipline elsewhere.
     tracker.totals = accumulateAttemptUsage(tracker.totals, {
-      tokens: 0,
+      tokens: driverResult.tokensUsed ?? 0,
       turns: driverResult.turnsUsed ?? 0,
       wallClockMs: iterationElapsedMs,
       costUsd: driverResult.costUsd ?? 0,

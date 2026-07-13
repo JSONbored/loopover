@@ -119,7 +119,7 @@ export async function invokeCodingAgentDriver(
         },
         options,
         true,
-        { tokens: 0, turns: result.turnsUsed ?? 0, costUsd: result.costUsd ?? 0 },
+        { tokens: result.tokensUsed ?? 0, turns: result.turnsUsed ?? 0, costUsd: result.costUsd ?? 0 },
       ),
     });
     return result;

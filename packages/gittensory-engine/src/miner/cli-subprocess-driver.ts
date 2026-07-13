@@ -131,6 +131,13 @@ function resolveDefaultBuildArgs(command: string): (task: CodingAgentDriverTask)
  *  "still evolving" per src/selfhost/ai.ts's own comment, so multiple real key spellings are tolerated). A
  *  missing/malformed field means "no cost signal", never an error -- never fabricated. */
 const COST_KEYS = ["total_cost_usd", "totalCostUsd", "cost_usd", "costUsd"] as const;
+const TOTAL_TOKEN_KEYS = ["total_tokens", "totalTokens"] as const;
+const INPUT_TOKEN_KEYS = ["input_tokens", "inputTokens", "prompt_tokens", "promptTokens"] as const;
+const OUTPUT_TOKEN_KEYS = ["output_tokens", "outputTokens", "completion_tokens", "completionTokens"] as const;
+
+function asUsageRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
 
 function finiteNonNegativeNumber(value: unknown): number | undefined {
   const n = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
@@ -146,16 +153,70 @@ function costUsdFromRecord(record: Record<string, unknown>): number | undefined 
   return best;
 }
 
-function extractCostUsd(stdout: string): number | undefined {
-  const trimmed = stdout.trim();
-  if (!trimmed) return undefined;
+function tokensUsedFromRecord(record: Record<string, unknown>): number | undefined {
   let best: number | undefined;
+  for (const key of TOTAL_TOKEN_KEYS) {
+    const n = finiteNonNegativeNumber(record[key]);
+    if (n !== undefined) best = Math.max(best ?? 0, n);
+  }
+  if (best !== undefined) return best;
+  let input: number | undefined;
+  let output: number | undefined;
+  for (const key of INPUT_TOKEN_KEYS) {
+    const n = finiteNonNegativeNumber(record[key]);
+    if (n !== undefined) input = Math.max(input ?? 0, n);
+  }
+  for (const key of OUTPUT_TOKEN_KEYS) {
+    const n = finiteNonNegativeNumber(record[key]);
+    if (n !== undefined) output = Math.max(output ?? 0, n);
+  }
+  if (input !== undefined || output !== undefined) return (input ?? 0) + (output ?? 0);
+  return undefined;
+}
+
+function usageFromRecord(record: Record<string, unknown>): { costUsd?: number; tokensUsed?: number } {
+  const nested = [
+    record,
+    asUsageRecord(record.usage),
+    asUsageRecord(record.token_usage),
+    asUsageRecord(record.tokenUsage),
+    asUsageRecord(record.usage_metadata),
+    asUsageRecord(record.usageMetadata),
+  ].filter((entry): entry is Record<string, unknown> => entry !== null);
+  let costUsd: number | undefined;
+  let tokensUsed: number | undefined;
+  for (const entry of nested) {
+    const cost = costUsdFromRecord(entry);
+    if (cost !== undefined) costUsd = Math.max(costUsd ?? 0, cost);
+    const tokens = tokensUsedFromRecord(entry);
+    if (tokens !== undefined) tokensUsed = Math.max(tokensUsed ?? 0, tokens);
+  }
+  return {
+    ...(costUsd !== undefined ? { costUsd } : {}),
+    ...(tokensUsed !== undefined ? { tokensUsed } : {}),
+  };
+}
+
+function extractCostUsd(stdout: string): number | undefined {
+  return extractCliUsage(stdout).costUsd;
+}
+
+function extractTokensUsed(stdout: string): number | undefined {
+  return extractCliUsage(stdout).tokensUsed;
+}
+
+function extractCliUsage(stdout: string): { costUsd?: number; tokensUsed?: number } {
+  const trimmed = stdout.trim();
+  if (!trimmed) return {};
+  let costUsd: number | undefined;
+  let tokensUsed: number | undefined;
   const tryLine = (text: string): void => {
     try {
       const parsed = JSON.parse(text) as unknown;
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        const n = costUsdFromRecord(parsed as Record<string, unknown>);
-        if (n !== undefined) best = Math.max(best ?? 0, n);
+        const usage = usageFromRecord(parsed as Record<string, unknown>);
+        if (usage.costUsd !== undefined) costUsd = Math.max(costUsd ?? 0, usage.costUsd);
+        if (usage.tokensUsed !== undefined) tokensUsed = Math.max(tokensUsed ?? 0, usage.tokensUsed);
       }
     } catch {
       /* not JSON -- best-effort only */
@@ -165,7 +226,10 @@ function extractCostUsd(stdout: string): number | undefined {
   for (const line of trimmed.split(/\r?\n/)) {
     if (line.trim()) tryLine(line);
   }
-  return best;
+  return {
+    ...(costUsd !== undefined ? { costUsd } : {}),
+    ...(tokensUsed !== undefined ? { tokensUsed } : {}),
+  };
 }
 
 /** Claude Code's `--output-format json` sometimes exits non-zero while still emitting a structured
@@ -328,13 +392,14 @@ export function createCliSubprocessCodingAgentDriver(options: CliSubprocessDrive
           };
         }
       }
-      const costUsd = extractCostUsd(spawned.stdout);
+      const usage = extractCliUsage(spawned.stdout);
       return {
         ok: true,
         changedFiles: [],
         summary: `${options.command} completed for ${task.attemptId}`,
         transcript,
-        ...(costUsd !== undefined ? { costUsd } : {}),
+        ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
+        ...(usage.tokensUsed !== undefined ? { tokensUsed: usage.tokensUsed } : {}),
       };
     },
   };

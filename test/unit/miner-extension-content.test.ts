@@ -151,7 +151,7 @@ describe("miner extension opportunity badge", () => {
   it("rejects a pasted ranked-candidates JSON payload over the storage-size bound with a clear error, before ever attempting to parse it (#4863)", () => {
     const internals = loadOptionsInternals();
     const oversized = "not valid json but that must not matter".padEnd(
-      internals.MAX_RANKED_CANDIDATES_JSON_CHARS + 1,
+      internals.MAX_RANKED_CANDIDATES_JSON_BYTES + 1,
       "x",
     );
 
@@ -167,11 +167,23 @@ describe("miner extension opportunity badge", () => {
 
   it("accepts a pasted ranked-candidates JSON payload exactly at the storage-size bound (#4863)", () => {
     const internals = loadOptionsInternals();
-    const padding = "x".repeat(internals.MAX_RANKED_CANDIDATES_JSON_CHARS - 4);
+    const padding = "x".repeat(internals.MAX_RANKED_CANDIDATES_JSON_BYTES - 4);
     const atLimit = `["${padding}"]`;
-    expect(atLimit).toHaveLength(internals.MAX_RANKED_CANDIDATES_JSON_CHARS);
+    expect(atLimit).toHaveLength(internals.MAX_RANKED_CANDIDATES_JSON_BYTES);
 
     expect(internals.parseRankedCandidatesJson(atLimit)).toEqual([padding]);
+  });
+
+  it("REGRESSION (gate-caught): measures real UTF-8 byte size, not UTF-16 character count, so multibyte content can't sneak past the bound (#4863)", () => {
+    const internals = loadOptionsInternals();
+    // "é" is 1 UTF-16 code unit but 2 UTF-8 bytes -- a char-length check would see roughly half the real byte
+    // size and wrongly accept a payload that actually exceeds the quota once chrome.storage.local serializes it.
+    const halfLimitCharCount = Math.floor(internals.MAX_RANKED_CANDIDATES_JSON_BYTES / 2) + 10;
+    const padding = "é".repeat(halfLimitCharCount);
+    const payload = `["${padding}"]`;
+
+    expect(payload.length).toBeLessThan(internals.MAX_RANKED_CANDIDATES_JSON_BYTES);
+    expect(() => internals.parseRankedCandidatesJson(payload)).toThrow(/too large/i);
   });
 
   it("regression: an oversized paste surfaces its error through the save flow and never reaches chrome.storage.local.set (#4863)", async () => {
@@ -184,6 +196,7 @@ describe("miner extension opportunity badge", () => {
     };
     const context: Record<string, unknown> = {
       __GITTENSORY_MINER_EXTENSION_TEST__: true,
+      TextEncoder,
       document: { querySelector: (selector: string) => elements[selector as keyof typeof elements] ?? null },
       chrome: {
         storage: {
@@ -203,8 +216,8 @@ describe("miner extension opportunity badge", () => {
     new Script(optionsScript).runInContext(vmContext);
     await flushPromises();
 
-    const internals = vmContext.__gittensoryMinerOptionsInternals as { MAX_RANKED_CANDIDATES_JSON_CHARS: number };
-    elements["#rankedCandidatesJson"].value = "x".repeat(internals.MAX_RANKED_CANDIDATES_JSON_CHARS + 1);
+    const internals = vmContext.__gittensoryMinerOptionsInternals as { MAX_RANKED_CANDIDATES_JSON_BYTES: number };
+    elements["#rankedCandidatesJson"].value = "x".repeat(internals.MAX_RANKED_CANDIDATES_JSON_BYTES + 1);
     await elements["#settings"].dispatchSubmit();
 
     expect(elements["#status"].textContent).toMatch(/too large/i);
@@ -321,6 +334,7 @@ describe("miner extension opportunity badge", () => {
     const context: Record<string, unknown> = {
       __GITTENSORY_MINER_EXTENSION_TEST__: true,
       Date: { now: () => fakeNowMs },
+      TextEncoder,
       document: { querySelector: (selector: string) => elements[selector as keyof typeof elements] ?? null },
       chrome: {
         storage: {
@@ -370,6 +384,7 @@ describe("miner extension opportunity badge", () => {
     };
     const context: Record<string, unknown> = {
       __GITTENSORY_MINER_EXTENSION_TEST__: true,
+      TextEncoder,
       document: { querySelector: (selector: string) => elements[selector as keyof typeof elements] ?? null },
       chrome: {
         storage: {
@@ -529,6 +544,7 @@ function loadBackgroundInternals({
 function loadOptionsInternals() {
   const context: Record<string, unknown> = {
     __GITTENSORY_MINER_EXTENSION_TEST__: true,
+    TextEncoder,
     document: { querySelector: () => null },
     chrome: {
       storage: {
@@ -545,6 +561,6 @@ function loadOptionsInternals() {
     parseWatchedRepos: (text: string) => string[];
     parseRankedCandidatesJson: (text: string) => unknown[];
     removeLegacyDiscoveryIndexUrl: () => Promise<void>;
-    MAX_RANKED_CANDIDATES_JSON_CHARS: number;
+    MAX_RANKED_CANDIDATES_JSON_BYTES: number;
   };
 }

@@ -7,17 +7,21 @@ function parseWatchedRepos(text) {
 
 // This extension does not request the "unlimitedStorage" permission, so chrome.storage.local is capped at its
 // default 10 MiB (QUOTA_BYTES) quota shared across every key -- an unbounded paste can silently fail to save
-// or leave storage in a partial state (#4863). Checked against the raw pasted text's UTF-16 length (not a
-// TextEncoder byte count) so this stays a plain, portable JS check usable from an unbundled content script;
-// it's a conservative proxy for the eventual serialized size, with headroom under the 10 MiB quota.
-const MAX_RANKED_CANDIDATES_JSON_CHARS = 8 * 1024 * 1024;
+// or leave storage in a partial state (#4863). Measured with TextEncoder against the actual serialized UTF-8
+// byte size, NOT the pasted text's UTF-16 .length -- a char count undercounts any multibyte content (e.g. a
+// non-ASCII repo/issue title), so a payload that passes a char-based check could still exceed the real quota at
+// chrome.storage.local.set, recreating the exact silent-failure bug this guard exists to prevent. TextEncoder is
+// a standard Web API available in both the real extension runtime and this repo's node:vm test harness (once
+// injected into the sandbox context).
+const MAX_RANKED_CANDIDATES_JSON_BYTES = 8 * 1024 * 1024;
 
 function parseRankedCandidatesJson(text) {
   const trimmed = String(text ?? "").trim();
   if (!trimmed) return [];
-  if (trimmed.length > MAX_RANKED_CANDIDATES_JSON_CHARS) {
+  const byteLength = new TextEncoder().encode(trimmed).length;
+  if (byteLength > MAX_RANKED_CANDIDATES_JSON_BYTES) {
     throw new Error(
-      `Ranked candidates JSON is too large (${trimmed.length.toLocaleString()} characters; limit ${MAX_RANKED_CANDIDATES_JSON_CHARS.toLocaleString()}). Paste a smaller discover-run export.`,
+      `Ranked candidates JSON is too large (${byteLength.toLocaleString()} bytes; limit ${MAX_RANKED_CANDIDATES_JSON_BYTES.toLocaleString()}). Paste a smaller discover-run export.`,
     );
   }
   const parsed = JSON.parse(trimmed);
@@ -41,7 +45,7 @@ if (globalThis.__GITTENSORY_MINER_EXTENSION_TEST__) {
     parseWatchedRepos,
     parseRankedCandidatesJson,
     removeLegacyDiscoveryIndexUrl,
-    MAX_RANKED_CANDIDATES_JSON_CHARS,
+    MAX_RANKED_CANDIDATES_JSON_BYTES,
   };
 }
 

@@ -142,7 +142,7 @@ The report has an `overallStatus` (`pass`/`warn`/`fail`) and a `sections` array 
 degrades to `fail` with a public-safe `slopRiskError`/`prTextLintError` reason instead of aborting the
 whole report — the other sections still return.
 
-The same composed check is exposed to MCP clients as `gittensory_review_pr_before_push`.
+The same composed check is exposed to MCP clients as `loopover_review_pr_before_push` (aliased for one deprecation cycle as `gittensory_review_pr_before_push`).
 
 ## Auth
 
@@ -182,11 +182,13 @@ gittensory-mcp agent packet --login jsonbored --repo we-promise/sure --base orig
 
 The same capabilities are exposed to MCP clients as:
 
-- `gittensory_agent_plan_next_work`
-- `gittensory_agent_start_run`
-- `gittensory_agent_get_run`
-- `gittensory_agent_explain_next_action`
-- `gittensory_agent_prepare_pr_packet`
+- `loopover_agent_plan_next_work`
+- `loopover_agent_start_run`
+- `loopover_agent_get_run`
+- `loopover_agent_explain_next_action`
+- `loopover_agent_prepare_pr_packet`
+
+(Each is aliased for one deprecation cycle under its old `gittensory_agent_*` name.)
 
 ### Client config
 
@@ -271,7 +273,7 @@ gittensory-mcp changelog
 
 ## Offline decision-pack fallback
 
-Successful `decision-pack` and MCP `gittensory_get_decision_pack` calls store a bounded last-good local cache entry keyed by API version and login. If the API or network is temporarily unavailable, the wrapper can return that last-good guidance as `source: "local_cache"` with `stale: true`, `cachedAt`, and rerun guidance. Auth and permission failures do not use stale fallback data.
+Successful `decision-pack` and MCP `loopover_get_decision_pack` calls (aliased for one deprecation cycle as `gittensory_get_decision_pack`) store a bounded last-good local cache entry keyed by API version and login. If the API or network is temporarily unavailable, the wrapper can return that last-good guidance as `source: "local_cache"` with `stale: true`, `cachedAt`, and rerun guidance. Auth and permission failures do not use stale fallback data.
 
 The cache excludes source contents and local paths, is bounded, and can be removed with:
 

@@ -110,7 +110,7 @@ Implications for you:
   a coverage miss closes the PR. This is why Phases 3–5 are non-negotiable.
 - **A merge conflict closes the PR** — keep your branch current with `main`.
 - **Linking the wrong issue closes the PR** — only link an open, unassigned, eligible issue (verify
-  with `gittensory_validate_linked_issue`).
+  with `loopover_validate_linked_issue`, aliased for one deprecation cycle as `gittensory_validate_linked_issue`).
 - Owner / automation-bot PRs are exempt from auto-close, and crucial guarded-path PRs are held — but
   **assume you are a contributor** and that adverse = close.
 
@@ -149,30 +149,33 @@ gittensory-mcp init-client --print codex    # → ~/.codex/config.toml  ([mcp_se
 gittensory-mcp init-client --print claude   # or --print cursor  (→ mcpServers JSON)
 ```
 
-All tools are metadata-only (no source upload). Run in this order:
+All tools are metadata-only (no source upload). Each local-package tool below is now primarily named
+`loopover_*` (#4775) — the old `gittensory_*` name still works, unchanged, as a deprecated alias for
+one full minor-version deprecation cycle. Run in this order:
 
-1. `gittensory_check_before_start` — `{owner, repo, issueNumber, plannedChange{title, paths}}` →
-   go/raise/avoid (claimed? duplicate cluster? already solved?).
-2. `gittensory_validate_linked_issue` — `{owner, repo, issueNumber, plannedChange}` → is the issue
-   open, valid, single-owner, solvable by this PR.
-3. `gittensory_check_slop_risk` — `{changedFiles[{path,additions,deletions}], description, tests,
+1. `loopover_check_before_start` (was `gittensory_check_before_start`) — `{owner, repo, issueNumber,
+   plannedChange{title, paths}}` → go/raise/avoid (claimed? duplicate cluster? already solved?).
+2. `loopover_validate_linked_issue` (was `gittensory_validate_linked_issue`) — `{owner, repo,
+   issueNumber, plannedChange}` → is the issue open, valid, single-owner, solvable by this PR.
+3. `loopover_check_slop_risk` (was `gittensory_check_slop_risk`) — `{changedFiles[{path,additions,deletions}], description, tests,
    testFiles}` → band + findings.
 4. `gittensory_check_improvement_potential` — `{changedFiles?[{path,additions,deletions}], tests?,
    testFiles?, patchCoverageDeltaPercent?, complexityDeltas?[{file,line,name,before,after,delta}],
    duplicationDeltas?[{file,line,duplicateOfLine,lines}]}` → improvementScore + band
    (insufficient-signal/none/minor/moderate/significant) + findings. The positive-axis mirror of
-   `gittensory_check_slop_risk` — deterministic tier only (no LLM judgment); complexityDeltas/
+   `loopover_check_slop_risk` — deterministic tier only (no LLM judgment); complexityDeltas/
    duplicationDeltas are optional precomputed deltas the calling agent supplies, never raw source.
-5. `gittensory_lint_pr_text` — `{commitMessages[], prBody, linkedIssue}` → verdict
+5. `loopover_lint_pr_text` (was `gittensory_lint_pr_text`) — `{commitMessages[], prBody, linkedIssue}` → verdict
    strong/adequate/weak + specific fixes.
-6. `gittensory_validate_config` — `{content, source?}` → normalized manifest fields,
+6. `loopover_validate_config` (was `gittensory_validate_config`) — `{content, source?}` → normalized manifest fields,
    warnings, and ok/warn/error status.
 7. `gittensory_predict_gate` — `{login, owner, repo, title, body, labels, linkedIssues}` → predicted
    conclusion + blockers + warnings + readiness score.
 
-(Auth'd extras: `gittensory_preflight_pr` / `…_local_diff` for lane fit + collision + queue health;
-`gittensory_get_pr_ai_review_findings` — `{login, owner, repo, pullNumber}` → structured post-submission
-AI-review inline findings (category/path/severity) for your own PR.)
+(Auth'd extras: `loopover_preflight_pr` / `…_local_diff` (was `gittensory_preflight_pr` / `…_local_diff`)
+for lane fit + collision + queue health; `gittensory_get_pr_ai_review_findings` — `{login, owner, repo,
+pullNumber}` → structured post-submission AI-review inline findings (category/path/severity) for your
+own PR.)
 
 ---
 

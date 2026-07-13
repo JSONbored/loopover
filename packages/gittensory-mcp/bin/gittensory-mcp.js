@@ -427,161 +427,180 @@ const agentRunIdShape = {
 
 // Single source of truth for stdio tool name + one-line description (#2233).
 // Registration and `gittensory-mcp tools` both read this list.
+// #4775: these are the canonical loopover_-prefixed primary names. Each also gets a thin,
+// fully-working gittensory_-prefixed deprecated alias — see ALL_STDIO_TOOL_DESCRIPTORS below.
 const STDIO_TOOL_DESCRIPTORS = [
   {
-    name: "gittensory_get_repo_context",
+    name: "loopover_get_repo_context",
     description: "Return the canonical repo intelligence bundle from the private Gittensory API.",
   },
   {
-    name: "gittensory_get_maintainer_noise",
+    name: "loopover_get_maintainer_noise",
     description: "Return the maintainer queue-noise triage report for a repo: a noise score/level, the specific noise sources to clear first, and recommended maintainer actions. Maintainer-authenticated; advisory only.",
   },
   {
-    name: "gittensory_preflight_pr",
+    name: "loopover_preflight_pr",
     description: "Preflight planned PR metadata against lane, duplicate, linked issue, test, and queue signals.",
   },
   {
-    name: "gittensory_validate_linked_issue",
+    name: "loopover_validate_linked_issue",
     description: "Report whether linking an issue will actually earn the standard linked-issue scoring multiplier for a planned PR — open, valid, single-owner, solvable by this PR — with the blocking reason if not. The raw multiplier value stays private.",
   },
   {
-    name: "gittensory_check_before_start",
+    name: "loopover_check_before_start",
     description: "Before writing any code, check whether an issue is already claimed or solved, whether a duplicate cluster is forming, and whether it is a valid target. Returns a go/raise/avoid recommendation with public-safe reasons from cached metadata.",
   },
   {
-    name: "gittensory_find_opportunities",
+    name: "loopover_find_opportunities",
     description: "Cross-repo discovery: find high-fit contribution opportunities across registered Gittensor repos. Returns a ranked, public-safe list filtered by your MinerGoalSpec (lane, min rank score, languages). Metadata-only, no GitHub writes.",
   },
   {
-    name: "gittensory_retrieve_issue_context",
+    name: "loopover_retrieve_issue_context",
     description: "Repo-scoped issue-centric RAG retrieval for the miner analyze phase. Returns related file paths and retrieval scores from issue title/body/labels — metadata only, never source text.",
   },
   {
-    name: "gittensory_lint_pr_text",
+    name: "loopover_lint_pr_text",
     description: "Lint a commit message + PR body against the gittensor traceability/no-issue-rationale and Conventional Commit rubric before submitting. Returns a deterministic verdict (strong/adequate/weak) plus specific public-safe fixes. No source upload.",
   },
   {
-    name: "gittensory_validate_config",
+    name: "loopover_validate_config",
     description: "Parse and validate a .gittensory.yml manifest string using the same focus-manifest parser as the server. Returns normalized config fields, parse warnings, and an ok/warn/error status. Metadata-only, no GitHub writes.",
   },
   {
-    name: "gittensory_check_slop_risk",
+    name: "loopover_check_slop_risk",
     description: "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns slopRisk (0-100), band, findings, and the rubric. No repo data needed.",
   },
   {
-    name: "gittensory_check_issue_slop",
+    name: "loopover_check_issue_slop",
     description: "Assess the deterministic slop risk of an issue from its title + body alone (no repo data) — flags clearly low-effort issues (empty body, an unfilled template) for triage. Returns slopRisk (0-100), band, findings, and the rubric. Advisory-only.",
   },
   {
-    name: "gittensory_preflight_local_diff",
+    name: "loopover_preflight_local_diff",
     description: "Inspect local git diff metadata and run Gittensory preflight without uploading source contents.",
   },
   {
-    name: "gittensory_get_registry_changes",
+    name: "loopover_get_registry_changes",
     description: "Return latest cached Gittensor registry change report.",
   },
   {
-    name: "gittensory_get_upstream_drift",
+    name: "loopover_get_upstream_drift",
     description: "Return the latest cached Gittensor upstream ruleset drift status (stale/drift warnings) for MCP planning.",
   },
   {
-    name: "gittensory_get_label_audit",
+    name: "loopover_get_label_audit",
     description:
       "Return the repo's label-policy audit (configured-vs-live labels, missing configured labels, suspicious status/source-style labels, and trusted-label-pipeline readiness) from the private Gittensory API.",
   },
   {
-    name: "gittensory_get_burden_forecast",
+    name: "loopover_get_burden_forecast",
     description:
       "Return the repo's cached maintainer burden forecast (projected review load, queue-growth risk, and stale-PR signals) with a freshness marker, from the private Gittensory API.",
   },
   {
-    name: "gittensory_preview_local_pr_score",
+    name: "loopover_preview_local_pr_score",
     description: "Inspect local diff metadata and request a private Gittensory scoring preview. No source contents are uploaded.",
   },
   {
-    name: "gittensory_explain_score_breakdown",
+    name: "loopover_explain_score_breakdown",
     description: "Explain a private score preview multiplier-by-multiplier with plain-English levers and the highest-impact improvement.",
   },
   {
-    name: "gittensory_get_decision_pack",
+    name: "loopover_get_decision_pack",
     description: "Return the canonical private contributor decision pack for a GitHub login.",
   },
   {
-    name: "gittensory_explain_repo_decision",
+    name: "loopover_explain_repo_decision",
     description: "Return the contributor/repo decision from the canonical decision pack.",
   },
   {
-    name: "gittensory_compare_pr_variants",
+    name: "loopover_compare_pr_variants",
     description: "Compare private Gittensory scoring previews across local/metadata variants.",
   },
   {
-    name: "gittensory_local_status",
+    name: "loopover_local_status",
     description: "Return local Gittensory MCP status, inferred git repo metadata, and privacy defaults.",
   },
   {
-    name: "gittensory_preflight_current_branch",
+    name: "loopover_preflight_current_branch",
     description: "Analyze the current git branch and return PR readiness. Sends metadata only.",
   },
   {
-    name: "gittensory_review_pr_before_push",
+    name: "loopover_review_pr_before_push",
     description: "Run a single composed pre-PR review of the current branch: preflight (lane/duplicate/linked-issue/test/queue fit), slop-risk, and PR-text lint, merged into one report with an overall pass/warn/fail status. Thin composition of the existing checks — does not reimplement any of them. Sends metadata only, no source upload.",
   },
   {
-    name: "gittensory_preview_current_branch_score",
+    name: "loopover_preview_current_branch_score",
     description: "Analyze the current git branch and return private scoreability context. Sends metadata only.",
   },
   {
-    name: "gittensory_rank_local_next_actions",
+    name: "loopover_rank_local_next_actions",
     description: "Analyze the current git branch and rank local next actions by private reward/risk and review friction.",
   },
   {
-    name: "gittensory_explain_local_blockers",
+    name: "loopover_explain_local_blockers",
     description: "Analyze the current git branch and explain private scoreability, lane, and review blockers.",
   },
   {
-    name: "gittensory_remediation_plan",
+    name: "loopover_remediation_plan",
     description: "Analyze the current git branch and return an ordered public-safe remediation checklist with rerun conditions.",
   },
   {
-    name: "gittensory_prepare_pr_packet",
+    name: "loopover_prepare_pr_packet",
     description: "Analyze the current git branch and return a public-safe PR packet. Sends metadata only.",
   },
   {
-    name: "gittensory_compare_local_variants",
+    name: "loopover_compare_local_variants",
     description: "Compare current-branch metadata variants without uploading source contents.",
   },
   {
-    name: "gittensory_agent_plan_next_work",
+    name: "loopover_agent_plan_next_work",
     description: "Run the deterministic Gittensory base-agent planner for a GitHub login.",
   },
   {
-    name: "gittensory_agent_start_run",
+    name: "loopover_agent_start_run",
     description: "Create a queued copilot-only Gittensory base-agent run.",
   },
   {
-    name: "gittensory_agent_get_run",
+    name: "loopover_agent_get_run",
     description: "Fetch a persisted Gittensory base-agent run.",
   },
   {
-    name: "gittensory_agent_explain_next_action",
+    name: "loopover_agent_explain_next_action",
     description: "Explain the next deterministic action and blocker context for a GitHub login.",
   },
   {
-    name: "gittensory_agent_prepare_pr_packet",
+    name: "loopover_agent_prepare_pr_packet",
     description: "Prepare a public-safe PR packet from current branch metadata. Sends metadata only.",
   },
   {
-    name: "gittensory_local_status_structured",
+    name: "loopover_local_status_structured",
     description: "Return local Gittensory MCP status with a validated structured output schema.",
   },
   {
-    name: "gittensory_feasibility_gate",
+    name: "loopover_feasibility_gate",
     description: "Pure local go/raise/avoid feasibility verdict from claim status, duplicate-cluster risk, and issue quality/lifecycle status — the same discriminants the analyze-phase feasibility gate branches on. When repoFullName/issueNumber are supplied and a local gittensory-miner install's claim ledger is present, claimStatus is read from that ledger instead of the caller-supplied value; otherwise falls back to the caller-supplied claimStatus unchanged. Advisory-only — never blocks, cancels, or overrides a claim or attempt; real claim-conflict resolution authority stays with the maintainer-only path. No API round-trip.",
   },
 ];
 
+// #4775: derive the deprecated gittensory_-prefixed alias name for a loopover_-prefixed primary name.
+function legacyAliasName(name) {
+  return name.replace(/^loopover_/, "gittensory_");
+}
+
+// #4775: every primary loopover_ tool plus its thin gittensory_ deprecated alias -- single source
+// of truth for stdio tool name + description, aliases included. `gittensory-mcp tools` and
+// `stdioToolDescription` both read this derived list so the alias count/descriptions stay in sync
+// with STDIO_TOOL_DESCRIPTORS automatically.
+const ALL_STDIO_TOOL_DESCRIPTORS = STDIO_TOOL_DESCRIPTORS.flatMap(({ name, description }) => [
+  { name, description },
+  {
+    name: legacyAliasName(name),
+    description: `${description} Deprecated: use \`${name}\` instead -- this alias will be removed in a future minor release.`,
+  },
+]);
+
 function stdioToolDescription(name) {
-  const tool = STDIO_TOOL_DESCRIPTORS.find((entry) => entry.name === name);
+  const tool = ALL_STDIO_TOOL_DESCRIPTORS.find((entry) => entry.name === name);
   if (!tool) throw new Error(`Unknown stdio tool descriptor: ${name}`);
   return tool.description;
 }
@@ -596,10 +615,21 @@ const server = new McpServer({
   version: packageVersion,
 });
 
-server.registerTool(
-  "gittensory_get_repo_context",
+// #4775: register a tool under its new loopover_ primary name, plus a thin, fully-working
+// gittensory_ alias with a deprecation notice appended to its description. Both names share the
+// exact same handler function reference -- identical behavior, no duplicated logic. Safe because
+// McpServer#registerTool keys tools purely by name string (no shared mutable state per name) and
+// no handler in this file reads back its own registered tool name.
+function registerToolWithLegacyAlias(name, config, handler) {
+  server.registerTool(name, config, handler);
+  const legacyName = legacyAliasName(name);
+  server.registerTool(legacyName, { ...config, description: stdioToolDescription(legacyName) }, handler);
+}
+
+registerToolWithLegacyAlias(
+  "loopover_get_repo_context",
   {
-    description: stdioToolDescription("gittensory_get_repo_context"),
+    description: stdioToolDescription("loopover_get_repo_context"),
     inputSchema: ownerRepoShape,
   },
   async ({ owner, repo }) => {
@@ -608,10 +638,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_get_maintainer_noise",
+registerToolWithLegacyAlias(
+  "loopover_get_maintainer_noise",
   {
-    description: stdioToolDescription("gittensory_get_maintainer_noise"),
+    description: stdioToolDescription("loopover_get_maintainer_noise"),
     inputSchema: ownerRepoShape,
   },
   async ({ owner, repo }) => {
@@ -620,19 +650,19 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_preflight_pr",
+registerToolWithLegacyAlias(
+  "loopover_preflight_pr",
   {
-    description: stdioToolDescription("gittensory_preflight_pr"),
+    description: stdioToolDescription("loopover_preflight_pr"),
     inputSchema: preflightShape,
   },
   async (input) => toolResult("Gittensory PR preflight.", await apiPost("/v1/preflight/pr", input)),
 );
 
-server.registerTool(
-  "gittensory_validate_linked_issue",
+registerToolWithLegacyAlias(
+  "loopover_validate_linked_issue",
   {
-    description: stdioToolDescription("gittensory_validate_linked_issue"),
+    description: stdioToolDescription("loopover_validate_linked_issue"),
     inputSchema: validateLinkedIssueShape,
   },
   async ({ owner, repo, issueNumber, plannedChange }) => {
@@ -642,10 +672,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_check_before_start",
+registerToolWithLegacyAlias(
+  "loopover_check_before_start",
   {
-    description: stdioToolDescription("gittensory_check_before_start"),
+    description: stdioToolDescription("loopover_check_before_start"),
     inputSchema: checkBeforeStartShape,
   },
   async ({ owner, repo, issueNumber, title, plannedPaths }) => {
@@ -659,10 +689,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_find_opportunities",
+registerToolWithLegacyAlias(
+  "loopover_find_opportunities",
   {
-    description: stdioToolDescription("gittensory_find_opportunities"),
+    description: stdioToolDescription("loopover_find_opportunities"),
     inputSchema: findOpportunitiesShape,
   },
   async ({ targets, searchQuery, goalSpec, limit }) => {
@@ -676,10 +706,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_retrieve_issue_context",
+registerToolWithLegacyAlias(
+  "loopover_retrieve_issue_context",
   {
-    description: stdioToolDescription("gittensory_retrieve_issue_context"),
+    description: stdioToolDescription("loopover_retrieve_issue_context"),
     inputSchema: issueRagShape,
   },
   async ({ owner, repo, title, body, labels, topK }) => {
@@ -695,46 +725,46 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_lint_pr_text",
+registerToolWithLegacyAlias(
+  "loopover_lint_pr_text",
   {
-    description: stdioToolDescription("gittensory_lint_pr_text"),
+    description: stdioToolDescription("loopover_lint_pr_text"),
     inputSchema: lintPrTextShape,
   },
   async (input) => toolResult("Gittensory PR-text lint.", await apiPost("/v1/lint/pr-text", input)),
 );
 
-server.registerTool(
-  "gittensory_validate_config",
+registerToolWithLegacyAlias(
+  "loopover_validate_config",
   {
-    description: stdioToolDescription("gittensory_validate_config"),
+    description: stdioToolDescription("loopover_validate_config"),
     inputSchema: validateConfigShape,
   },
   async (input) => toolResult("Gittensory manifest validation.", await apiPost("/v1/validate/focus-manifest", input)),
 );
 
-server.registerTool(
-  "gittensory_check_slop_risk",
+registerToolWithLegacyAlias(
+  "loopover_check_slop_risk",
   {
-    description: stdioToolDescription("gittensory_check_slop_risk"),
+    description: stdioToolDescription("loopover_check_slop_risk"),
     inputSchema: checkSlopRiskShape,
   },
   async (input) => toolResult("Gittensory slop-risk self-check.", await apiPost("/v1/lint/slop-risk", input)),
 );
 
-server.registerTool(
-  "gittensory_check_issue_slop",
+registerToolWithLegacyAlias(
+  "loopover_check_issue_slop",
   {
-    description: stdioToolDescription("gittensory_check_issue_slop"),
+    description: stdioToolDescription("loopover_check_issue_slop"),
     inputSchema: checkIssueSlopShape,
   },
   async (input) => toolResult("Gittensory issue-slop self-check.", await apiPost("/v1/lint/issue-slop", input)),
 );
 
-server.registerTool(
-  "gittensory_preflight_local_diff",
+registerToolWithLegacyAlias(
+  "loopover_preflight_local_diff",
   {
-    description: stdioToolDescription("gittensory_preflight_local_diff"),
+    description: stdioToolDescription("loopover_preflight_local_diff"),
     inputSchema: localDiffShape,
   },
   async (input) => {
@@ -758,28 +788,28 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_get_registry_changes",
+registerToolWithLegacyAlias(
+  "loopover_get_registry_changes",
   {
-    description: stdioToolDescription("gittensory_get_registry_changes"),
+    description: stdioToolDescription("loopover_get_registry_changes"),
     inputSchema: {},
   },
   async () => toolResult("Gittensory registry changes.", await apiGet("/v1/registry/changes")),
 );
 
-server.registerTool(
-  "gittensory_get_upstream_drift",
+registerToolWithLegacyAlias(
+  "loopover_get_upstream_drift",
   {
-    description: stdioToolDescription("gittensory_get_upstream_drift"),
+    description: stdioToolDescription("loopover_get_upstream_drift"),
     inputSchema: {},
   },
   async () => toolResult("Gittensory upstream drift status.", await apiGet("/v1/upstream/drift")),
 );
 
-server.registerTool(
-  "gittensory_get_label_audit",
+registerToolWithLegacyAlias(
+  "loopover_get_label_audit",
   {
-    description: stdioToolDescription("gittensory_get_label_audit"),
+    description: stdioToolDescription("loopover_get_label_audit"),
     inputSchema: ownerRepoShape,
   },
   async ({ owner, repo }) => {
@@ -793,10 +823,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_get_burden_forecast",
+registerToolWithLegacyAlias(
+  "loopover_get_burden_forecast",
   {
-    description: stdioToolDescription("gittensory_get_burden_forecast"),
+    description: stdioToolDescription("loopover_get_burden_forecast"),
     inputSchema: ownerRepoShape,
   },
   async ({ owner, repo }) => {
@@ -811,19 +841,19 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_preview_local_pr_score",
+registerToolWithLegacyAlias(
+  "loopover_preview_local_pr_score",
   {
-    description: stdioToolDescription("gittensory_preview_local_pr_score"),
+    description: stdioToolDescription("loopover_preview_local_pr_score"),
     inputSchema: localScoreShape,
   },
   async (input) => toolResult("Gittensory private local PR scoring preview.", await previewLocalScore(await withClientWorkspaceRoots(input))),
 );
 
-server.registerTool(
-  "gittensory_explain_score_breakdown",
+registerToolWithLegacyAlias(
+  "loopover_explain_score_breakdown",
   {
-    description: stdioToolDescription("gittensory_explain_score_breakdown"),
+    description: stdioToolDescription("loopover_explain_score_breakdown"),
     inputSchema: localScoreShape,
   },
   async (input) => {
@@ -868,10 +898,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_get_decision_pack",
+registerToolWithLegacyAlias(
+  "loopover_get_decision_pack",
   {
-    description: stdioToolDescription("gittensory_get_decision_pack"),
+    description: stdioToolDescription("loopover_get_decision_pack"),
     inputSchema: loginShape,
   },
   async ({ login }) => {
@@ -880,10 +910,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_explain_repo_decision",
+registerToolWithLegacyAlias(
+  "loopover_explain_repo_decision",
   {
-    description: stdioToolDescription("gittensory_explain_repo_decision"),
+    description: stdioToolDescription("loopover_explain_repo_decision"),
     inputSchema: loginRepoShape,
   },
   async ({ login, owner, repo }) => {
@@ -892,10 +922,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_compare_pr_variants",
+registerToolWithLegacyAlias(
+  "loopover_compare_pr_variants",
   {
-    description: stdioToolDescription("gittensory_compare_pr_variants"),
+    description: stdioToolDescription("loopover_compare_pr_variants"),
     inputSchema: variantsShape,
   },
   async ({ variants }) => {
@@ -907,10 +937,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_local_status",
+registerToolWithLegacyAlias(
+  "loopover_local_status",
   {
-    description: stdioToolDescription("gittensory_local_status"),
+    description: stdioToolDescription("loopover_local_status"),
     inputSchema: {
       cwd: z.string().optional(),
       baseRef: z.string().optional(),
@@ -943,10 +973,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_preflight_current_branch",
+registerToolWithLegacyAlias(
+  "loopover_preflight_current_branch",
   {
-    description: stdioToolDescription("gittensory_preflight_current_branch"),
+    description: stdioToolDescription("loopover_preflight_current_branch"),
     inputSchema: currentBranchShape,
   },
   async (input) => {
@@ -960,19 +990,19 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_review_pr_before_push",
+registerToolWithLegacyAlias(
+  "loopover_review_pr_before_push",
   {
-    description: stdioToolDescription("gittensory_review_pr_before_push"),
+    description: stdioToolDescription("loopover_review_pr_before_push"),
     inputSchema: currentBranchShape,
   },
   async (input) => toolResult("Gittensory pre-PR review.", await reviewLocalPr(await withClientWorkspaceRoots(input))),
 );
 
-server.registerTool(
-  "gittensory_preview_current_branch_score",
+registerToolWithLegacyAlias(
+  "loopover_preview_current_branch_score",
   {
-    description: stdioToolDescription("gittensory_preview_current_branch_score"),
+    description: stdioToolDescription("loopover_preview_current_branch_score"),
     inputSchema: currentBranchShape,
   },
   async (input) => {
@@ -987,10 +1017,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_rank_local_next_actions",
+registerToolWithLegacyAlias(
+  "loopover_rank_local_next_actions",
   {
-    description: stdioToolDescription("gittensory_rank_local_next_actions"),
+    description: stdioToolDescription("loopover_rank_local_next_actions"),
     inputSchema: currentBranchShape,
   },
   async (input) => {
@@ -999,10 +1029,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_explain_local_blockers",
+registerToolWithLegacyAlias(
+  "loopover_explain_local_blockers",
   {
-    description: stdioToolDescription("gittensory_explain_local_blockers"),
+    description: stdioToolDescription("loopover_explain_local_blockers"),
     inputSchema: currentBranchShape,
   },
   async (input) => {
@@ -1019,10 +1049,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_remediation_plan",
+registerToolWithLegacyAlias(
+  "loopover_remediation_plan",
   {
-    description: stdioToolDescription("gittensory_remediation_plan"),
+    description: stdioToolDescription("loopover_remediation_plan"),
     inputSchema: currentBranchShape,
   },
   async (input) => {
@@ -1033,10 +1063,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_prepare_pr_packet",
+registerToolWithLegacyAlias(
+  "loopover_prepare_pr_packet",
   {
-    description: stdioToolDescription("gittensory_prepare_pr_packet"),
+    description: stdioToolDescription("loopover_prepare_pr_packet"),
     inputSchema: currentBranchShape,
   },
   async (input) => {
@@ -1045,10 +1075,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_compare_local_variants",
+registerToolWithLegacyAlias(
+  "loopover_compare_local_variants",
   {
-    description: stdioToolDescription("gittensory_compare_local_variants"),
+    description: stdioToolDescription("loopover_compare_local_variants"),
     inputSchema: currentBranchVariantsShape,
   },
   async ({ variants }) => {
@@ -1072,19 +1102,19 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_agent_plan_next_work",
+registerToolWithLegacyAlias(
+  "loopover_agent_plan_next_work",
   {
-    description: stdioToolDescription("gittensory_agent_plan_next_work"),
+    description: stdioToolDescription("loopover_agent_plan_next_work"),
     inputSchema: agentPlanShape,
   },
   async (input) => toolResult(`Gittensory base-agent plan for ${input.login}.`, await apiPost("/v1/agent/plan-next-work", input)),
 );
 
-server.registerTool(
-  "gittensory_agent_start_run",
+registerToolWithLegacyAlias(
+  "loopover_agent_start_run",
   {
-    description: stdioToolDescription("gittensory_agent_start_run"),
+    description: stdioToolDescription("loopover_agent_start_run"),
     inputSchema: agentRunShape,
   },
   async (input) =>
@@ -1103,19 +1133,19 @@ server.registerTool(
     ),
 );
 
-server.registerTool(
-  "gittensory_agent_get_run",
+registerToolWithLegacyAlias(
+  "loopover_agent_get_run",
   {
-    description: stdioToolDescription("gittensory_agent_get_run"),
+    description: stdioToolDescription("loopover_agent_get_run"),
     inputSchema: agentRunIdShape,
   },
   async ({ runId }) => toolResult(`Gittensory base-agent run ${runId}.`, await apiGet(`/v1/agent/runs/${encodeURIComponent(runId)}`)),
 );
 
-server.registerTool(
-  "gittensory_agent_explain_next_action",
+registerToolWithLegacyAlias(
+  "loopover_agent_explain_next_action",
   {
-    description: stdioToolDescription("gittensory_agent_explain_next_action"),
+    description: stdioToolDescription("loopover_agent_explain_next_action"),
     inputSchema: agentPlanShape,
   },
   async (input) => {
@@ -1127,10 +1157,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_agent_prepare_pr_packet",
+registerToolWithLegacyAlias(
+  "loopover_agent_prepare_pr_packet",
   {
-    description: stdioToolDescription("gittensory_agent_prepare_pr_packet"),
+    description: stdioToolDescription("loopover_agent_prepare_pr_packet"),
     inputSchema: currentBranchShape,
   },
   async (input) => toolResult("Gittensory base-agent public-safe PR packet.", await agentPreparePrPacket(await withClientWorkspaceRoots(input))),
@@ -1199,10 +1229,10 @@ const agentPlanOutputSchema = {
 // Attach outputSchema to key tools via registerTool with zod output schemas.
 // All other tools continue to return unschematized text+structured content.
 
-server.registerTool(
-  "gittensory_local_status_structured",
+registerToolWithLegacyAlias(
+  "loopover_local_status_structured",
   {
-    description: stdioToolDescription("gittensory_local_status_structured"),
+    description: stdioToolDescription("loopover_local_status_structured"),
     inputSchema: {
       cwd: z.string().optional(),
       baseRef: z.string().optional(),
@@ -1243,10 +1273,10 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "gittensory_feasibility_gate",
+registerToolWithLegacyAlias(
+  "loopover_feasibility_gate",
   {
-    description: stdioToolDescription("gittensory_feasibility_gate"),
+    description: stdioToolDescription("loopover_feasibility_gate"),
     inputSchema: feasibilityGateShape,
   },
   async ({ claimStatus, duplicateClusterRisk, issueStatus, found, repoFullName, issueNumber }) => {
@@ -2381,7 +2411,7 @@ function printVersion(options) {
 }
 
 function toolsCommand(options) {
-  const tools = STDIO_TOOL_DESCRIPTORS.map(({ name, description }) => ({ name, description }));
+  const tools = ALL_STDIO_TOOL_DESCRIPTORS.map(({ name, description }) => ({ name, description }));
   const payload = { count: tools.length, tools };
   if (options.json) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);

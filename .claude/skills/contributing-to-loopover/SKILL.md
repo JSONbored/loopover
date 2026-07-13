@@ -104,9 +104,11 @@ gittensory-mcp init-client --print claude  # or --print cursor — prints the co
 
 Use that generator instead of hand-writing config (**Codex uses TOML, Claude/Cursor use JSON** — a
 pasted JSON block will not work in Codex). You'll use these tools in Phases 1 and 6 (inputs in
-`reference.md`): `gittensory_check_before_start`, `gittensory_validate_linked_issue`,
-`gittensory_check_slop_risk`, `gittensory_lint_pr_text`, `gittensory_predict_gate` — all metadata-only
-(no source upload, no secrets).
+`reference.md`): `loopover_check_before_start`, `loopover_validate_linked_issue`,
+`loopover_check_slop_risk`, `loopover_lint_pr_text`, `gittensory_predict_gate` — all metadata-only
+(no source upload, no secrets). The first four are the new `loopover_`-prefixed primary names (#4775);
+their old `gittensory_`-prefixed names still work, unchanged, as deprecated aliases for one full
+minor-version deprecation cycle.
 
 ---
 
@@ -116,14 +118,14 @@ pasted JSON block will not work in Codex). You'll use these tools in Phases 1 an
   signal. And only link an issue that is **open, not assigned to someone else, not maintainer-only,
   and (on scored repos) carries a point label**: linking an owner-assigned / maintainer-only /
   ineligible issue trips a **deterministic linked-issue hard rule that auto-closes your PR**. Verify
-  with `gittensory_check_before_start` + `gittensory_validate_linked_issue`.
+  with `loopover_check_before_start` + `loopover_validate_linked_issue`.
 - **A linked, currently-open, unassigned, eligible issue is always required before opening a PR** —
   there is no "small enough to skip it" exemption, no matter how self-evident the fix looks. This
   holds regardless of what the committed root `.gittensory.yml`'s `linkedIssuePolicy` says: that
   file is a non-representative **example** checked into the repo, not the live enforced rule. If no
   suitable open issue exists, open one yourself first, then link it from the PR.
-- **Run the pre-start checks** via MCP: `gittensory_check_before_start` (is it claimed / a duplicate
-  cluster / already solved?) and, if linking an issue, `gittensory_validate_linked_issue`.
+- **Run the pre-start checks** via MCP: `loopover_check_before_start` (is it claimed / a duplicate
+  cluster / already solved?) and, if linking an issue, `loopover_validate_linked_issue`.
 - **Stay in scope.** The gate's `wantedPaths` are `src/`, `packages/`, `test/`, `migrations/`,
   `scripts/`, `review-enrichment/`, `.github/workflows/`, `wrangler.jsonc`, `apps/gittensory-ui/`. Avoid `blockedPaths`
   (`site/`, `CNAME`, `**/lovable/**`). Keep the PR narrow — one coherent change.
@@ -243,9 +245,9 @@ named **`Gittensory Orb Review Agent`** — watch both go green/passing.
 
 Run the MCP predictor with your actual PR shape:
 
-- `gittensory_check_slop_risk` — keep slop **low**: fill the PR description, include tests, keep the
+- `loopover_check_slop_risk` — keep slop **low**: fill the PR description, include tests, keep the
   diff focused (no lockfile/docs/generated noise dominating), real source ratio.
-- `gittensory_lint_pr_text` — your commit + PR body must read as **strong**: Conventional Commit
+- `loopover_lint_pr_text` — your commit + PR body must read as **strong**: Conventional Commit
   subject, traceability (a linked, currently-open, eligible issue — no no-issue rationale accepted),
   and a body that says what changed, why, and how it was validated.
 - `gittensory_predict_gate` — simulate the repo's public `.gittensory.yml` gate. Resolve any

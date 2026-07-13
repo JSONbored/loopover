@@ -99,9 +99,11 @@ describe("PortfolioQueueView (#4306, per-repo detail added by #4846)", () => {
 });
 
 describe("PortfolioPage (#4306)", () => {
+  const loadPortfolioQueueItems = async () => ({ ok: true as const, items: [] });
+
   it("loads the summary through the injected loader and renders the cards", async () => {
     const loadPortfolioQueue = async (): Promise<PortfolioQueueResult> => ({ ok: true, summary: fixtureSummary });
-    render(<PortfolioPage loadPortfolioQueue={loadPortfolioQueue} />);
+    render(<PortfolioPage loadPortfolioQueue={loadPortfolioQueue} loadPortfolioQueueItems={loadPortfolioQueueItems} />);
     expect(screen.getByRole("heading", { name: "Portfolio queue" })).toBeTruthy();
     await waitFor(() => expect(screen.getByText("Queued", { selector: "dt" }).nextSibling?.textContent).toBe("2"));
   });
@@ -117,7 +119,13 @@ describe("PortfolioPage (#4306)", () => {
         ok: true,
         summary: fixtureSummary,
       }));
-      render(<PortfolioPage loadPortfolioQueue={loadPortfolioQueue} pollIntervalMs={1000} />);
+      render(
+        <PortfolioPage
+          loadPortfolioQueue={loadPortfolioQueue}
+          loadPortfolioQueueItems={loadPortfolioQueueItems}
+          pollIntervalMs={1000}
+        />,
+      );
 
       await vi.waitFor(() => expect(loadPortfolioQueue).toHaveBeenCalledTimes(1));
       await vi.advanceTimersByTimeAsync(1000);

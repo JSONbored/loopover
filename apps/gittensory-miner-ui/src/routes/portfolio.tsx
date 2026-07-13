@@ -1,8 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useCallback, useEffect, useState } from "react";
 
+import { Button } from "@loopover/ui-kit/components/button";
 import { Card, CardContent, CardHeader } from "@loopover/ui-kit/components/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@loopover/ui-kit/components/table";
 
+import {
+  fetchPortfolioQueueItems,
+  requeuePortfolioQueueItem,
+  releasePortfolioQueueItem,
+} from "../lib/portfolio-queue-actions";
+import type { PortfolioQueueActionItem, PortfolioQueueItemsResult } from "../lib/portfolio-queue-actions";
 import { DEFAULT_POLL_INTERVAL_MS, usePolledFetch } from "../lib/use-polled-fetch";
 import { fetchPortfolioQueue, type PortfolioQueueResult, type QueueStatus } from "../lib/portfolio-queue";
 
@@ -11,10 +19,7 @@ export const Route = createFileRoute("/portfolio")({
 });
 
 // Portfolio/queue summary cards + per-repo table (#4306, reunified with the CLI's own richer `queue dashboard`
-// by #4846): read-only counts by status over the local `miner_portfolio_queue` store, now broken out per repo
-// exactly as `gittensory-miner queue dashboard` already shows -- the miner-ui no longer maintains a narrower,
-// global-only aggregation. Same 4-state pattern as the run-history view (loading / error / fresh-install empty
-// / populated).
+// by #4846), plus release/requeue controls (#4857) backed by the same store methods the CLI uses.
 
 const STATUS_LABELS: Record<QueueStatus, string> = {
   queued: "Queued",
@@ -22,8 +27,6 @@ const STATUS_LABELS: Record<QueueStatus, string> = {
   done: "Done",
 };
 
-// Semantic tone per status, sourced from the shared design system's success/warning
-// tokens rather than arbitrary color utilities — kept separate from the accent hue.
 const STATUS_TONE: Record<QueueStatus, string> = {
   queued: "text-muted-foreground",
   in_progress: "text-[var(--warning)]",
@@ -89,25 +92,121 @@ export function PortfolioQueueView({ result }: { result: PortfolioQueueResult | 
   );
 }
 
+export function PortfolioQueueActionsSection({
+  result,
+  pending,
+  onRelease,
+  onRequeue,
+}: {
+  result: PortfolioQueueItemsResult | null;
+  pending: boolean;
+  onRelease: (item: PortfolioQueueActionItem) => void;
+  onRequeue: (item: PortfolioQueueActionItem) => void;
+}) {
+  return (
+    <section className="grid gap-3">
+      <h3 className="font-display text-token-base font-semibold">Queue actions</h3>
+      {result === null ? (
+        <p className="text-token-sm text-muted-foreground">Loading actionable queue items…</p>
+      ) : !result.ok ? (
+        <p role="alert" className="text-token-sm text-[var(--danger)]">
+          Could not read actionable queue items: {result.error}
+        </p>
+      ) : result.items.length === 0 ? (
+        <p className="text-token-sm text-muted-foreground">
+          No in-progress or completed items to release or requeue right now.
+        </p>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Repository</TableHead>
+              <TableHead>Identifier</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Action</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {result.items.map((item) => (
+              <TableRow key={`${item.apiBaseUrl}:${item.repoFullName}:${item.identifier}`}>
+                <TableCell className="font-mono text-foreground">{item.repoFullName}</TableCell>
+                <TableCell className="font-mono">{item.identifier}</TableCell>
+                <TableCell>{STATUS_LABELS[item.status]}</TableCell>
+                <TableCell>
+                  {item.status === "in_progress" ? (
+                    <Button size="sm" variant="outline" disabled={pending} onClick={() => onRelease(item)}>
+                      Release
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="outline" disabled={pending} onClick={() => onRequeue(item)}>
+                      Requeue
+                    </Button>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </section>
+  );
+}
+
 export function PortfolioPage({
   loadPortfolioQueue = fetchPortfolioQueue,
+  loadPortfolioQueueItems = fetchPortfolioQueueItems,
+  releaseItem = releasePortfolioQueueItem,
+  requeueItem = requeuePortfolioQueueItem,
   pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
 }: {
   loadPortfolioQueue?: () => Promise<PortfolioQueueResult>;
+  loadPortfolioQueueItems?: () => Promise<PortfolioQueueItemsResult>;
+  releaseItem?: typeof releasePortfolioQueueItem;
+  requeueItem?: typeof requeuePortfolioQueueItem;
   pollIntervalMs?: number;
 }) {
-  const result = usePolledFetch(loadPortfolioQueue, pollIntervalMs);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [actionPending, setActionPending] = useState(false);
+  const [itemsResult, setItemsResult] = useState<PortfolioQueueItemsResult | null>(null);
+
+  const loadSummary = useCallback(() => loadPortfolioQueue(), [loadPortfolioQueue, refreshKey]);
+  const summaryResult = usePolledFetch(loadSummary, pollIntervalMs);
+
+  const refreshItems = useCallback(() => {
+    void loadPortfolioQueueItems().then(setItemsResult);
+  }, [loadPortfolioQueueItems, refreshKey]);
+
+  useEffect(() => {
+    refreshItems();
+  }, [refreshItems]);
+
+  const runQueueAction = (action: () => Promise<unknown>) => {
+    setActionPending(true);
+    void action().then(() => {
+      setRefreshKey((key) => key + 1);
+      refreshItems();
+      setActionPending(false);
+    });
+  };
 
   return (
     <Card>
       <CardHeader>
         <h2 className="font-display text-token-lg font-semibold">Portfolio queue</h2>
         <p className="text-token-sm text-muted-foreground">
-          Local, read-only summary of the miner&apos;s portfolio queue (`miner_portfolio_queue`).
+          Local summary and controls for the miner&apos;s portfolio queue (`miner_portfolio_queue`).
         </p>
       </CardHeader>
       <CardContent>
-        <PortfolioQueueView result={result} />
+        <div className="grid gap-6">
+          <PortfolioQueueView result={summaryResult} />
+          <PortfolioQueueActionsSection
+            result={itemsResult}
+            pending={actionPending}
+            onRelease={(item) => runQueueAction(() => releaseItem(item))}
+            onRequeue={(item) => runQueueAction(() => requeueItem(item))}
+          />
+        </div>
       </CardContent>
     </Card>
   );

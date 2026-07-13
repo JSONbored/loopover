@@ -10,10 +10,7 @@ import type { Plugin } from "vite";
 // invented here, and this file never touches governor-chokepoint.js/governor-chokepoint-persisted.js (the
 // governor's actual decision-to-proceed logic stays untouched, per #4857's own scope note).
 //
-// Queue release/requeue actions (the other half of #4857) are deliberately NOT included here: they need a
-// per-item `identifier`, which the read-only portfolio-queue API intentionally never republishes over the wire
-// (see vite-portfolio-queue-api.ts's own header comment) -- exposing identifiers safely is a separate design
-// question, not a trivial wire-up, and is left for a follow-up.
+// Queue release/requeue actions live in vite-portfolio-queue-actions-api.ts (#4857, the queue half).
 //
 // Same read-only-safe fresh-install rule as the sibling GET endpoints for the READ route only: `loadPauseState()`
 // lazily initializes the default store, which would CREATE the SQLite file (a write) on a fresh install -- so

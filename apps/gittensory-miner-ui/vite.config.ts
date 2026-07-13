@@ -7,6 +7,7 @@ import tsconfigPaths from "vite-tsconfig-paths";
 import { authPlugin } from "./vite-auth";
 import { governorApiPlugin } from "./vite-governor-api";
 import { ledgersApiPlugin } from "./vite-ledgers-api";
+import { portfolioQueueActionsApiPlugin } from "./vite-portfolio-queue-actions-api";
 import { portfolioQueueApiPlugin } from "./vite-portfolio-queue-api";
 import { rankedCandidatesApiPlugin } from "./vite-ranked-candidates-api";
 import { runStateApiPlugin } from "./vite-run-state-api";
@@ -22,6 +23,7 @@ export default defineConfig({
     authPlugin(),
     runStateApiPlugin(),
     portfolioQueueApiPlugin(),
+    portfolioQueueActionsApiPlugin(),
     ledgersApiPlugin(),
     governorApiPlugin(),
     rankedCandidatesApiPlugin(),

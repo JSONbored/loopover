@@ -58,7 +58,7 @@ these for a normal PR:**
 
 | Local command | Why it's not in the table above |
 |---|---|
-| `npm run test:engine-parity`, `npm run test:driver-parity` | Plain `test/contract/*.test.ts` files — no dedicated CI job, but they DO run in CI as part of whichever `test (1/2)` shard happens to contain them (sharded `vitest run`). |
+| `npm run test:engine-parity`, `npm run test:live-gate-parity`, `npm run test:driver-parity` | Plain `test/contract/*.test.ts` files — no dedicated CI job, but they DO run in CI as part of whichever `test (1/2)` shard happens to contain them (sharded `vitest run`). |
 | `npm run test --workspace @jsonbored/gittensory-engine` | The engine package's own `node --test` suite. **Not run by `ci.yml` on a PR at all** — only by `.github/workflows/publish-engine.yml` at release time. A regression here is invisible to Codecov and to every PR-gating CI check; `test:ci` locally is the only pre-merge signal. |
 | `npm run manifest:drift-check`, `npm run engine-parity:drift-check` | Appear in `test:ci` only — not in `ci.yml` under any job. |
 

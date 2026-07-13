@@ -221,7 +221,7 @@ npm audit --audit-level=moderate          # the dependency-review job's local eq
 
 `npm run test:ci` runs, and must pass, **all of**: `actionlint`, `db:migrations:check`,
 `db:schema-drift:check`, `selfhost:env-reference:check`, `selfhost:validate-observability`,
-`cf-typegen:check`, `typecheck`, `test:coverage`, `test:engine-parity`, `test:driver-parity`, the
+`cf-typegen:check`, `typecheck`, `test:coverage`, `test:engine-parity`, `test:live-gate-parity`, `test:driver-parity`, the
 `@jsonbored/gittensory-engine` workspace's own test run, `test:workers`, `build:mcp`, `test:mcp-pack`,
 `build:miner`, `test:miner-pack`, `rees:test`, `ui:openapi:check`, `ui:openapi:settings-parity`,
 `ui:version-audit`, `docs:drift-check`, `manifest:drift-check`, `engine-parity:drift-check`,

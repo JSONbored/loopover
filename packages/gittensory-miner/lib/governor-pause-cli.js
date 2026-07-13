@@ -8,17 +8,22 @@
 
 import { openGovernorState } from "./governor-state.js";
 
-const GOVERNOR_PAUSE_USAGE = "Usage: gittensory-miner governor pause [--reason <text>] [--json]";
-const GOVERNOR_RESUME_USAGE = "Usage: gittensory-miner governor resume [--json]";
+const GOVERNOR_PAUSE_USAGE = "Usage: gittensory-miner governor pause [--reason <text>] [--dry-run] [--json]";
+const GOVERNOR_RESUME_USAGE = "Usage: gittensory-miner governor resume [--dry-run] [--json]";
 const GOVERNOR_STATUS_USAGE = "Usage: gittensory-miner governor status [--json]";
 
 export function parseGovernorPauseArgs(args) {
-  const options = { json: false, reason: null };
+  const options = { json: false, dryRun: false, reason: null };
 
   for (let index = 0; index < args.length; index += 1) {
     const token = args[index];
     if (token === "--json") {
       options.json = true;
+      continue;
+    }
+    // #4847: reports what pausing would do and returns before writing to governor-state.
+    if (token === "--dry-run") {
+      options.dryRun = true;
       continue;
     }
     if (token === "--reason") {
@@ -29,6 +34,25 @@ export function parseGovernorPauseArgs(args) {
       continue;
     }
     return { error: `Unknown option: ${token}` };
+  }
+
+  return options;
+}
+
+export function parseGovernorResumeArgs(args) {
+  const options = { json: false, dryRun: false };
+
+  for (const token of args) {
+    if (token === "--json") {
+      options.json = true;
+      continue;
+    }
+    // #4847: reports what resuming would do and returns before writing to governor-state.
+    if (token === "--dry-run") {
+      options.dryRun = true;
+      continue;
+    }
+    return { error: GOVERNOR_RESUME_USAGE };
   }
 
   return options;
@@ -63,6 +87,17 @@ export async function runGovernorPause(args, options = {}) {
     return 2;
   }
 
+  if (parsed.dryRun) {
+    const dryRunResult = { outcome: "dry_run", paused: true, reason: parsed.reason };
+    if (parsed.json) {
+      console.log(JSON.stringify(dryRunResult));
+    } else {
+      const reason = parsed.reason ? ` (${parsed.reason})` : "";
+      console.log(`DRY RUN: would pause the governor${reason}. No governor-state write was made.`);
+    }
+    return 0;
+  }
+
   try {
     return await withGovernorState(options, (governorState) => {
       const pauseState = governorState.savePauseState({ paused: true, reason: parsed.reason });
@@ -80,10 +115,20 @@ export async function runGovernorPause(args, options = {}) {
 }
 
 export async function runGovernorResume(args, options = {}) {
-  const parsed = parseNoArgsSubcommand(args, GOVERNOR_RESUME_USAGE);
+  const parsed = parseGovernorResumeArgs(args);
   if ("error" in parsed) {
     console.error(parsed.error);
     return 2;
+  }
+
+  if (parsed.dryRun) {
+    const dryRunResult = { outcome: "dry_run", paused: false };
+    if (parsed.json) {
+      console.log(JSON.stringify(dryRunResult));
+    } else {
+      console.log("DRY RUN: would resume the governor. No governor-state write was made.");
+    }
+    return 0;
   }
 
   try {

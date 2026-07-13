@@ -1,0 +1,56 @@
+# Runs the miner-ui dashboard (apps/gittensory-miner-ui) as a persistent local service via `vite preview`
+# (port 4174 by default -- see apps/gittensory-miner-ui/vite.config.ts), so a fleet/bare-host operator gets a
+# durable dashboard instead of a dev-server-only experience. This is a companion service to
+# gittensory-miner.service.example, not a replacement -- the loop daemon still does the actual discover ->
+# attempt -> manage work; this unit only serves the read-only dashboard over it.
+#
+# WHY vite preview, NOT a new CLI subcommand: apps/gittensory-miner-ui is a private workspace app (no
+# published bin), and its Vite plugins (vite-ledgers-api.ts, vite-portfolio-queue-api.ts, vite-run-state-api.ts)
+# already wire their local-SQLite-backed API routes into BOTH `configureServer` (dev) and
+# `configurePreviewServer` (preview), so `npm run preview` already serves the built dashboard AND its data
+# routes with no extra server code needed.
+#
+# WHY A PERSISTENT SERVICE, NOT A .timer: like gittensory-miner.service.example, this is a long-running HTTP
+# server, not a periodic batch job -- a Type=simple service supervised by systemd is the right shape, the
+# same way loopover-docker-prune.*.example (a genuine periodic job) is NOT.
+#
+# Install (adjust the placeholders below to your host; run from a full monorepo checkout, not a global
+# npm install -- this app has no published package):
+#   git clone <your fork/checkout> /var/lib/gittensory-miner/src
+#   cd /var/lib/gittensory-miner/src && npm ci
+#   npm --workspace @loopover/ui-miner run build
+#   sudo cp systemd/gittensory-miner-ui.service.example /etc/systemd/system/gittensory-miner-ui.service
+#   sudo $EDITOR /etc/systemd/system/gittensory-miner-ui.service   # fix User/WorkingDirectory/env
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gittensory-miner-ui.service
+#   journalctl -u gittensory-miner-ui -f                # follow the dashboard server's output
+#
+# The dashboard reads the SAME local SQLite stores gittensory-miner.service.example's loop daemon writes to
+# (see packages/gittensory-miner/README.md's "Local storage" table) -- point GITTENSORY_MINER_CONFIG_DIR at
+# the same directory as the loop service's unit if you run both on one host.
+
+[Unit]
+Description=Gittensory miner-ui dashboard (read-only, local)
+# Loopback-only by default (see the miner extension's host-permission scoping); no network dependency to
+# wait on, but keep the ordering consistent with the loop service it complements.
+After=network-online.target
+
+[Service]
+Type=simple
+# REQUIRED: run as a dedicated non-root user with read access to the miner's local state directory.
+User=gittensory
+# REQUIRED: absolute path to the monorepo checkout built in the install steps above.
+WorkingDirectory=/var/lib/gittensory-miner/src
+# REQUIRED: absolute path to the workspace-scoped npm binary (see `which npm`; typically /usr/bin or
+# /usr/local/bin, or an nvm/asdf shim path). `vite preview` binds 127.0.0.1 by default -- do not add
+# `--host` unless you have put real auth in front of this port; the dashboard has none of its own.
+ExecStart=/usr/bin/npm --workspace @loopover/ui-miner run preview
+# A crashed dashboard should come back; it holds no in-memory state of its own to lose.
+Restart=on-failure
+RestartSec=10
+# Optional overrides (see packages/gittensory-miner/README.md's "Local storage" table for the full list):
+#   Environment=GITTENSORY_MINER_CONFIG_DIR=/var/lib/gittensory-miner/config
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

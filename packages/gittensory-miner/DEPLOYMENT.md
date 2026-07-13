@@ -142,6 +142,8 @@ sudo systemctl enable --now gittensory-miner.service
 
 Because `loop` is a **long-running daemon that schedules its own cycles**, it is a persistent `Type=simple` service (with `Restart=on-failure`) — **not** a oneshot unit driven by a `.timer`, unlike the periodic `loopover-docker-prune.*.example` hygiene job in [`systemd/`](../../systemd/). Keep `GITHUB_TOKEN` (and any coding-agent credentials) in a root-owned `0600` `EnvironmentFile`, never in the unit file. Follow the loop with `journalctl -u gittensory-miner -f`; `systemctl stop` sends SIGTERM, which the loop handles cleanly at its next kill-switch check.
 
+Want the dashboard too? [`systemd/gittensory-miner-ui.service.example`](../../systemd/gittensory-miner-ui.service.example) is a companion unit that serves `apps/gittensory-miner-ui` persistently over the same local state — see that app's [README](../../apps/gittensory-miner-ui/README.md#running-as-a-persistent-service).
+
 ## Invariants
 
 - Core miner bookkeeping (claims, plans, queues, ledgers) works offline after install.

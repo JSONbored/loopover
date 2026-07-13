@@ -45,24 +45,46 @@ describe("renderGovernorMetrics() (#5187)", () => {
     expect(output.endsWith("\n")).toBe(true);
   });
 
-  it("renders a global bucket's remaining ratio against DEFAULT_WRITE_RATE_LIMIT_POLICIES", () => {
-    // global.open_pr policy: limit 30, windowMs 60_000. count=27 within the window -> evaluateLocalRateLimit's
-    // remaining = limit - effectiveCount - 1 (it reports headroom AFTER a hypothetical next write) = 2.
+  it("renders a global bucket's TRUE current headroom, not evaluateLocalRateLimit's next-write-adjusted remaining", () => {
+    // global.open_pr policy: limit 30, windowMs 60_000. count=27 within the window -> effectiveCount=27,
+    // allowed=true (27<30). evaluateLocalRateLimit's own `remaining` field is limit-effectiveCount-1=2 (headroom
+    // AFTER one more hypothetical write), so the renderer must add 1 back to recover current headroom (3) before
+    // dividing by limit -- using `remaining` directly would under-report by exactly one slot.
     const output = renderGovernorMetrics(
       { buckets: { global: { open_pr: { count: 27, windowStartMs: NOW } }, perRepo: {} }, backoffAttempts: {} },
       EMPTY_CAP_USAGE,
       NOW,
     );
     expect(output).toContain(
-      `${GOVERNOR_RATE_LIMIT_REMAINING_RATIO}{scope="global",action_class="open_pr"} ${2 / 30}`,
+      `${GOVERNOR_RATE_LIMIT_REMAINING_RATIO}{scope="global",action_class="open_pr"} ${3 / 30}`,
     );
   });
 
-  it("renders a per-repo bucket's remaining ratio, splitting the composite actionClass:repo key", () => {
-    // perRepo.open_pr policy: limit 3, windowMs 60_000. count=2 within the window -> remaining = 3 - 2 - 1 = 0.
+  it("renders a per-repo bucket's TRUE current headroom, splitting the composite actionClass:repo key", () => {
+    // perRepo.open_pr policy: limit 3, windowMs 60_000. count=2 within the window -> effectiveCount=2,
+    // allowed=true (2<3): ONE write is still allowed even though evaluateLocalRateLimit's own `remaining` field
+    // is already 0 at this count (3-2-1). Current headroom is 1, not 0 -- this is the exact case a prior
+    // version of this renderer got wrong (indistinguishable from a fully exhausted bucket).
     const output = renderGovernorMetrics(
       {
         buckets: { global: {}, perRepo: { "open_pr:acme/widgets": { count: 2, windowStartMs: NOW } } },
+        backoffAttempts: {},
+      },
+      EMPTY_CAP_USAGE,
+      NOW,
+    );
+    expect(output).toContain(
+      `${GOVERNOR_RATE_LIMIT_REMAINING_RATIO}{scope="per_repo",action_class="open_pr",repo="acme/widgets"} ${1 / 3}`,
+    );
+  });
+
+  it("renders 0 headroom for a bucket that has genuinely reached its limit (count === limit, not allowed)", () => {
+    // perRepo.open_pr policy: limit 3. count=3 -> effectiveCount=3, allowed=false (3 is NOT < 3): this is the
+    // ACTUAL exhausted case, distinct from the count=2 "one write left" case above -- both must not render the
+    // same ratio, which is exactly the bug this test (and the one above) guards against together.
+    const output = renderGovernorMetrics(
+      {
+        buckets: { global: {}, perRepo: { "open_pr:acme/widgets": { count: 3, windowStartMs: NOW } } },
         backoffAttempts: {},
       },
       EMPTY_CAP_USAGE,
@@ -114,14 +136,13 @@ describe("renderGovernorMetrics() (#5187)", () => {
       EMPTY_CAP_USAGE,
       NOW,
     );
-    // count=0 for every bucket -> remaining = limit - 0 - 1 = limit - 1 (evaluateLocalRateLimit's "next write"
-    // headroom), so the ratio is (limit - 1) / limit, not 1.
+    // count=0 for every bucket -> full current headroom (limit - 0 = limit), so the ratio is 1 for all of them.
     const seriesLines = output.split("\n").filter((line) => line.startsWith(GOVERNOR_RATE_LIMIT_REMAINING_RATIO + "{"));
     expect(seriesLines).toEqual([
-      `${GOVERNOR_RATE_LIMIT_REMAINING_RATIO}{scope="global",action_class="comment"} ${59 / 60}`,
-      `${GOVERNOR_RATE_LIMIT_REMAINING_RATIO}{scope="global",action_class="open_pr"} ${29 / 30}`,
-      `${GOVERNOR_RATE_LIMIT_REMAINING_RATIO}{scope="per_repo",action_class="open_pr",repo="acme/repo"} ${2 / 3}`,
-      `${GOVERNOR_RATE_LIMIT_REMAINING_RATIO}{scope="per_repo",action_class="open_pr",repo="zeta/repo"} ${2 / 3}`,
+      `${GOVERNOR_RATE_LIMIT_REMAINING_RATIO}{scope="global",action_class="comment"} 1`,
+      `${GOVERNOR_RATE_LIMIT_REMAINING_RATIO}{scope="global",action_class="open_pr"} 1`,
+      `${GOVERNOR_RATE_LIMIT_REMAINING_RATIO}{scope="per_repo",action_class="open_pr",repo="acme/repo"} 1`,
+      `${GOVERNOR_RATE_LIMIT_REMAINING_RATIO}{scope="per_repo",action_class="open_pr",repo="zeta/repo"} 1`,
     ]);
   });
 
@@ -149,10 +170,8 @@ describe("runGovernorMetrics (#5187)", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     expect(await runGovernorMetrics([], { openGovernorState: () => governorState, nowMs: NOW })).toBe(0);
     const output = String(log.mock.calls[0]?.[0]);
-    // limit 30, count 15 -> remaining = 30 - 15 - 1 = 14, ratio = 14/30.
-    expect(output).toContain(
-      `${GOVERNOR_RATE_LIMIT_REMAINING_RATIO}{scope="global",action_class="open_pr"} ${14 / 30}`,
-    );
+    // limit 30, count 15 -> current headroom = 30 - 15 = 15, ratio = 15/30 = 0.5.
+    expect(output).toContain(`${GOVERNOR_RATE_LIMIT_REMAINING_RATIO}{scope="global",action_class="open_pr"} 0.5`);
     expect(output.endsWith("\n")).toBe(false); // console.log adds its own trailing newline
   });
 

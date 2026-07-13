@@ -49,10 +49,17 @@ function splitPerRepoKey(key) {
   return { actionClass: key.slice(0, separatorIndex), repoFullName: key.slice(separatorIndex + 1) };
 }
 
-// Every actionClass this loop reaches has already passed the DEFAULT_WRITE_RATE_LIMIT_POLICIES lookup above, so
-// decision.limit is always one of the frozen, non-zero policy limits -- no zero-limit guard needed.
+// evaluateLocalRateLimit's own `remaining` field answers "how many MORE writes are allowed AFTER one more write
+// right now" (rate-limit.ts: `remaining = allowed ? limit - effectiveCount - 1 : 0`) -- it is NOT current
+// headroom. At count=2/limit=3 that field is already 0, identical to a fully exhausted count=3/limit=3 bucket,
+// even though the count=2 bucket still has one write available. Recover true current headroom algebraically
+// instead: when allowed, decision.remaining + 1 is exactly limit - effectiveCount (undo the "-1 for this next
+// write" the decision already applied); when not allowed, headroom is 0. Every actionClass this loop reaches
+// has already passed the DEFAULT_WRITE_RATE_LIMIT_POLICIES lookup above, so decision.limit is always one of the
+// frozen, non-zero policy limits -- no zero-limit guard needed.
 function remainingRatio(decision) {
-  return decision.remaining / decision.limit;
+  const headroom = decision.allowed ? decision.remaining + 1 : 0;
+  return headroom / decision.limit;
 }
 
 function collectRateLimitRows(buckets, nowMs) {

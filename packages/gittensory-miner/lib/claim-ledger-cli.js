@@ -2,8 +2,9 @@ import { CLAIM_STATUSES, openClaimLedger } from "./claim-ledger.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const CLAIM_CLAIM_USAGE =
-  "Usage: gittensory-miner claim claim <owner/repo> <issue#> [--note <text>] [--dry-run] [--json]";
-const CLAIM_RELEASE_USAGE = "Usage: gittensory-miner claim release <owner/repo> <issue#> [--dry-run] [--json]";
+  "Usage: gittensory-miner claim claim <owner/repo> <issue#> [--note <text>] [--api-base-url <url>] [--dry-run] [--json]";
+const CLAIM_RELEASE_USAGE =
+  "Usage: gittensory-miner claim release <owner/repo> <issue#> [--api-base-url <url>] [--dry-run] [--json]";
 const CLAIM_LIST_USAGE =
   "Usage: gittensory-miner claim list [--repo <owner/repo>] [--status active|released|expired] [--json]";
 
@@ -27,7 +28,7 @@ function parseIssueNumberArg(value, usage) {
 }
 
 export function parseClaimClaimArgs(args) {
-  const options = { json: false, note: undefined, dryRun: false };
+  const options = { json: false, note: undefined, dryRun: false, apiBaseUrl: undefined };
   const positional = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -47,6 +48,17 @@ export function parseClaimClaimArgs(args) {
         return { error: CLAIM_CLAIM_USAGE };
       }
       options.note = note;
+      index += 1;
+      continue;
+    }
+    // #5563: scope the claim to a non-default forge host, so it doesn't collide with (or get confused for) a
+    // same-named repo on the default github.com host.
+    if (token === "--api-base-url") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) {
+        return { error: CLAIM_CLAIM_USAGE };
+      }
+      options.apiBaseUrl = value;
       index += 1;
       continue;
     }
@@ -71,20 +83,31 @@ export function parseClaimClaimArgs(args) {
     note: options.note,
     dryRun: options.dryRun,
     json: options.json,
+    apiBaseUrl: options.apiBaseUrl,
   };
 }
 
 export function parseClaimReleaseArgs(args) {
-  const options = { json: false, dryRun: false };
+  const options = { json: false, dryRun: false, apiBaseUrl: undefined };
   const positional = [];
 
-  for (const token of args) {
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
     if (token === "--json") {
       options.json = true;
       continue;
     }
     if (token === "--dry-run") {
       options.dryRun = true;
+      continue;
+    }
+    if (token === "--api-base-url") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) {
+        return { error: CLAIM_RELEASE_USAGE };
+      }
+      options.apiBaseUrl = value;
+      index += 1;
       continue;
     }
     if (token.startsWith("-")) {
@@ -107,6 +130,7 @@ export function parseClaimReleaseArgs(args) {
     issueNumber: issue.issueNumber,
     dryRun: options.dryRun,
     json: options.json,
+    apiBaseUrl: options.apiBaseUrl,
   };
 }
 
@@ -216,6 +240,7 @@ export function runClaimClaim(args, options = {}) {
         parsed.repoFullName,
         parsed.issueNumber,
         parsed.note,
+        parsed.apiBaseUrl,
       );
       if (parsed.json) {
         console.log(JSON.stringify({ claim }, null, 2));
@@ -247,7 +272,7 @@ export function runClaimRelease(args, options = {}) {
 
   try {
     return withClaimLedger(options, (claimLedger) => {
-      const claim = claimLedger.releaseClaim(parsed.repoFullName, parsed.issueNumber);
+      const claim = claimLedger.releaseClaim(parsed.repoFullName, parsed.issueNumber, parsed.apiBaseUrl);
       if (!claim) {
         return reportCliFailure(parsed.json, "claim_not_found");
       }

@@ -105,10 +105,36 @@ describe("gittensory-miner claim ledger CLI (#4290)", () => {
     });
   });
 
+  it("parseClaimClaimArgs and parseClaimReleaseArgs accept --api-base-url (#5563)", () => {
+    expect(parseClaimClaimArgs(["acme/widgets", "42", "--api-base-url", "https://ghe.example.com/api/v3"])).toEqual({
+      repoFullName: "acme/widgets",
+      issueNumber: 42,
+      note: undefined,
+      dryRun: false,
+      json: false,
+      apiBaseUrl: "https://ghe.example.com/api/v3",
+    });
+    expect(parseClaimClaimArgs(["acme/widgets", "42", "--api-base-url"])).toEqual({
+      error: expect.stringContaining("Usage: gittensory-miner claim claim"),
+    });
+
+    expect(parseClaimReleaseArgs(["acme/widgets", "7", "--api-base-url", "https://ghe.example.com/api/v3"])).toEqual({
+      repoFullName: "acme/widgets",
+      issueNumber: 7,
+      dryRun: false,
+      json: false,
+      apiBaseUrl: "https://ghe.example.com/api/v3",
+    });
+    expect(parseClaimReleaseArgs(["acme/widgets", "7", "--api-base-url"])).toEqual({
+      error: expect.stringContaining("Usage: gittensory-miner claim release"),
+    });
+  });
+
   it("renderClaimsTable formats claim rows and empty output", () => {
     const entries: ClaimEntry[] = [
       {
         id: 1,
+        apiBaseUrl: "https://api.github.com",
         repoFullName: "acme/widgets",
         issueNumber: 7,
         status: "active",
@@ -155,6 +181,36 @@ describe("gittensory-miner claim ledger CLI (#4290)", () => {
         note: "on it",
       }),
     });
+  });
+
+  it("runClaimClaim and runClaimRelease thread --api-base-url through, so two hosts don't collide (#5563)", () => {
+    const claimLedger = tempClaimLedger();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    expect(
+      runClaimClaim(["acme/widgets", "1", "--api-base-url", "https://api.github.com"], {
+        openClaimLedger: () => claimLedger,
+      }),
+    ).toBe(0);
+    expect(
+      runClaimClaim(["acme/widgets", "1", "--api-base-url", "https://ghe.example.com/api/v3"], {
+        openClaimLedger: () => claimLedger,
+      }),
+    ).toBe(0);
+    expect(claimLedger.listClaims({ repoFullName: "acme/widgets" })).toHaveLength(2);
+
+    // Releasing the GHE host's claim must not touch the github.com host's claim.
+    log.mockClear();
+    expect(
+      runClaimRelease(["acme/widgets", "1", "--api-base-url", "https://ghe.example.com/api/v3", "--json"], {
+        openClaimLedger: () => claimLedger,
+      }),
+    ).toBe(0);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      claim: expect.objectContaining({ apiBaseUrl: "https://ghe.example.com/api/v3", status: "released" }),
+    });
+    const active = claimLedger.listClaims({ repoFullName: "acme/widgets", status: "active" });
+    expect(active).toEqual([expect.objectContaining({ apiBaseUrl: "https://api.github.com" })]);
   });
 
   it("#4847: --dry-run reports what would happen and returns 0 without opening the claim ledger", () => {

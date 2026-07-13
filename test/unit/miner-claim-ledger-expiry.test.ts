@@ -26,6 +26,7 @@ function tempLedger() {
 function claim(overrides: Record<string, unknown> = {}) {
   return {
     id: 1,
+    apiBaseUrl: "https://api.github.com",
     repoFullName: "o/a",
     issueNumber: 1,
     claimedAt: "2026-01-01T00:00:00.000Z",
@@ -113,5 +114,25 @@ describe("gittensory-miner claim ledger expiry (#2316)", () => {
     ledger.releaseClaim("o/a", 9);
     expect(ledger.expireClaim("o/a", 9)).toBeNull();
     expect(ledger.expireClaim("o/a", 404)).toBeNull();
+  });
+
+  it("REGRESSION: sweepExpiredClaims echoes each claim's own apiBaseUrl, so it can't expire the wrong host's row (#5563)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-01T00:00:00.000Z"));
+    const ledger = tempLedger();
+    const maxAgeMs = 7 * 24 * 60 * 60 * 1000;
+
+    // Two forge hosts each claim the SAME repo/issue pair -- only possible post-#5563's scoped uniqueness. The
+    // GHE claim is recorded first (stale by nowMs); the github.com claim is recorded a week later (still fresh).
+    ledger.recordClaim({ repoFullName: "acme/widgets", issueNumber: 1, apiBaseUrl: "https://ghe.example.com/api/v3" });
+    vi.setSystemTime(new Date("2026-06-08T00:00:00.000Z"));
+    ledger.recordClaim({ repoFullName: "acme/widgets", issueNumber: 1, apiBaseUrl: "https://api.github.com" });
+
+    const nowMs = Date.parse("2026-06-09T00:00:00.000Z");
+    const transitioned = sweepExpiredClaims(ledger, nowMs, maxAgeMs);
+    expect(transitioned).toEqual([expect.objectContaining({ apiBaseUrl: "https://ghe.example.com/api/v3", status: "expired" })]);
+
+    const active = ledger.listClaims({ repoFullName: "acme/widgets", status: "active" });
+    expect(active).toEqual([expect.objectContaining({ apiBaseUrl: "https://api.github.com" })]);
   });
 });

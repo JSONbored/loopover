@@ -93,9 +93,37 @@ export function compareToBaseline(results, baseline, options = {}) {
         regressed: false,
       };
     }
+    // A legitimately zero-mean baseline (an all-zero-duration run below clock granularity) has no meaningful
+    // ratio, so it reports a 0% delta rather than dividing by zero. This can in principle mask a real slowdown
+    // from 0 -> nonzero; such a case is a signal the iteration count is too low to time, not a silent pass —
+    // regenerate the baseline with more `--iterations` so the case produces a nonzero mean.
     const deltaPct = base.meanMs > 0 ? (result.meanMs - base.meanMs) / base.meanMs : 0;
     return { name: result.name, baseline: base.meanMs, current: result.meanMs, deltaPct, regressed: deltaPct > tolerance };
   });
+}
+
+/**
+ * Identify cases a `--check` run cannot meaningfully regression-check (#4845): a case that did not produce an `ok`
+ * result in this run (no current number), or whose committed baseline entry exists but is non-`ok` (nothing to
+ * compare against). `compareToBaseline` reports both as `regressed: false`, so without this a non-`ok` committed
+ * baseline would silently disable regression detection for that case. A brand-new case that ran `ok` but is absent
+ * from the baseline is NOT flagged — it is simply new and cannot regress yet. Returns `{ name, reason }[]`.
+ */
+export function findUncheckableCases(results, baseline) {
+  const baselineByName = new Map((baseline?.results ?? []).map((entry) => [entry.name, entry]));
+  const uncheckable = [];
+  for (const result of results) {
+    const base = baselineByName.get(result.name);
+    const currentOk = result.status === "ok";
+    const baselineOk = base ? base.status === "ok" : false;
+    if (currentOk && baselineOk) continue;
+    if (currentOk && !base) continue;
+    const reason = !currentOk
+      ? `current run is ${result.status}${result.reason ? ` (${result.reason})` : ""}`
+      : `baseline is ${base.status}${base.reason ? ` (${base.reason})` : ""}`;
+    uncheckable.push({ name: result.name, reason });
+  }
+  return uncheckable;
 }
 
 /** Serialize results into the committed baseline document shape (rounded numbers + provenance metadata). */

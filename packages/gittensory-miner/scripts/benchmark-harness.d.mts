@@ -49,6 +49,12 @@ export type BenchmarkComparison = {
   regressed: boolean;
 };
 
+/** A case that cannot be regression-checked, with a human-readable reason (non-`ok` current run or baseline). */
+export type UncheckableCase = {
+  name: string;
+  reason: string;
+};
+
 export type RunBenchmarkOptions = {
   iterations?: number;
   warmup?: number;
@@ -78,6 +84,11 @@ export declare function compareToBaseline(
   baseline: BenchmarkBaselineDocument | null | undefined,
   options?: { tolerance?: number },
 ): BenchmarkComparison[];
+
+export declare function findUncheckableCases(
+  results: BenchmarkResultLike[],
+  baseline: BenchmarkBaselineDocument | null | undefined,
+): UncheckableCase[];
 
 export declare function renderBaselineDocument(
   results: BenchmarkResultLike[],

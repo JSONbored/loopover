@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   compareToBaseline,
+  findUncheckableCases,
   formatBenchmarkReport,
   renderBaselineDocument,
   roundMetric,
@@ -146,6 +147,55 @@ describe("gittensory-miner benchmark harness (#4845)", () => {
       expect(compareToBaseline([{ name: "x", status: "ok", meanMs: 1 }], null)).toEqual([
         { name: "x", baseline: null, current: 1, deltaPct: null, regressed: false },
       ]);
+    });
+  });
+
+  describe("findUncheckableCases", () => {
+    const baseline = {
+      results: [
+        { name: "ok_case", status: "ok", meanMs: 10 },
+        { name: "stale_unavailable", status: "unavailable", reason: "no node:sqlite" },
+      ],
+    };
+
+    it("flags a case whose committed baseline is non-ok even when it ran ok now", () => {
+      const uncheckable = findUncheckableCases(
+        [
+          { name: "ok_case", status: "ok", meanMs: 9 },
+          { name: "stale_unavailable", status: "ok", meanMs: 3 },
+        ],
+        baseline,
+      );
+      expect(uncheckable).toEqual([
+        { name: "stale_unavailable", reason: "baseline is unavailable (no node:sqlite)" },
+      ]);
+    });
+
+    it("flags a case that did not run ok in the current run", () => {
+      const uncheckable = findUncheckableCases(
+        [{ name: "ok_case", status: "unavailable", reason: "no node:sqlite" }],
+        baseline,
+      );
+      expect(uncheckable).toEqual([
+        { name: "ok_case", reason: "current run is unavailable (no node:sqlite)" },
+      ]);
+    });
+
+    it("omits the reason detail when a non-ok status carries no reason", () => {
+      const uncheckable = findUncheckableCases([{ name: "ok_case", status: "errored" }], baseline);
+      expect(uncheckable).toEqual([{ name: "ok_case", reason: "current run is errored" }]);
+    });
+
+    it("does not flag a brand-new case that ran ok but is absent from the baseline", () => {
+      expect(findUncheckableCases([{ name: "brand_new", status: "ok", meanMs: 1 }], baseline)).toEqual([]);
+    });
+
+    it("does not flag a case that is ok in both the run and the baseline", () => {
+      expect(findUncheckableCases([{ name: "ok_case", status: "ok", meanMs: 10 }], baseline)).toEqual([]);
+    });
+
+    it("tolerates a null/empty baseline document (new cases are not uncheckable)", () => {
+      expect(findUncheckableCases([{ name: "ok_case", status: "ok", meanMs: 1 }], null)).toEqual([]);
     });
   });
 

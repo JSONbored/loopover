@@ -12,6 +12,7 @@ import { resolveForgeConfig } from "../lib/forge-config.js";
 import { fetchWithRetry } from "../lib/http-retry.js";
 import {
   compareToBaseline,
+  findUncheckableCases,
   formatBenchmarkReport,
   renderBaselineDocument,
   runBenchmark,
@@ -29,6 +30,16 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_BASELINE_PATH = resolve(HERE, "../benchmarks/baseline.json");
 
+// Per-case work sizes and defaults, named so a future tuner can see the intent rather than a bare literal. Each is
+// chosen to push the timed unit well above clock granularity (steadier numbers) without making a run slow.
+const THROTTLE_SWEEP_MAX_REMAINING = 300; // rate-limit-remaining values the throttle decision is swept across
+const CONFIG_BATCH_SIZE = 50; // forge-config / http-retry calls batched per timed iteration
+const SCHEDULER_ITEM_COUNT = 500; // items fed to the fanout scheduler / events seeded for the read case
+const FANOUT_CONCURRENCY = 5; // in-flight worker cap the scheduler benchmark drives
+const DEFAULT_ITERATIONS = 100;
+const DEFAULT_WARMUP = 10;
+const DEFAULT_REGRESSION_TOLERANCE = 0.25; // a case regresses when its mean exceeds baseline by more than this
+
 /** Each case's `make()` returns `{ fn, teardown? }`, or throws to mark the case unavailable in this environment. */
 const CASES = [
   {
@@ -37,9 +48,9 @@ const CASES = [
     make() {
       // The rate-limit-aware concurrency decision the fanout re-evaluates on every worker-loop iteration (#4844).
       const fn = () => {
-        for (let remaining = 0; remaining <= 300; remaining += 3) {
+        for (let remaining = 0; remaining <= THROTTLE_SWEEP_MAX_REMAINING; remaining += 3) {
           resolveThrottledConcurrency(
-            5,
+            FANOUT_CONCURRENCY,
             remaining,
             DEFAULT_RATE_LIMIT_LOW_WATER_MARK,
             DEFAULT_RATE_LIMIT_HIGH_WATER_MARK,
@@ -57,7 +68,7 @@ const CASES = [
       // granularity and the number is steadier.
       const overrides = { apiBaseUrl: "https://ghe.example.com/api/v3", userAgent: "gittensory-bench" };
       const fn = () => {
-        for (let index = 0; index < 50; index += 1) {
+        for (let index = 0; index < CONFIG_BATCH_SIZE; index += 1) {
           resolveForgeConfig(overrides);
           resolveForgeConfig({});
         }
@@ -74,7 +85,7 @@ const CASES = [
       const okFetch = async () => ({ status: 200 });
       const instantSleep = async () => {};
       const fn = async () => {
-        for (let index = 0; index < 50; index += 1) {
+        for (let index = 0; index < CONFIG_BATCH_SIZE; index += 1) {
           await fetchWithRetry(okFetch, "https://api.example.com/x", undefined, { sleepFn: instantSleep });
         }
       };
@@ -88,10 +99,10 @@ const CASES = [
       // The real bounded-concurrency scheduler that drives the fanout over many repos. Requires the package runtime
       // (the module imports the engine, which uses JSON import attributes).
       const { mapWithConcurrency } = await import("../lib/opportunity-fanout.js");
-      const items = Array.from({ length: 500 }, (_unused, index) => index);
+      const items = Array.from({ length: SCHEDULER_ITEM_COUNT }, (_unused, index) => index);
       const instantSleep = async () => {};
       const fn = async () => {
-        await mapWithConcurrency(items, 5, async (value) => value * 2, () => 5, instantSleep);
+        await mapWithConcurrency(items, FANOUT_CONCURRENCY, async (value) => value * 2, () => FANOUT_CONCURRENCY, instantSleep);
       };
       return { fn };
     },
@@ -127,7 +138,7 @@ const CASES = [
       const { initEventLedger } = await import("../lib/event-ledger.js"); // requires node:sqlite (Node >= 22.5)
       const root = mkdtempSync(join(tmpdir(), "gittensory-miner-bench-read-"));
       const ledger = initEventLedger(join(root, "event-ledger.sqlite3"));
-      for (let index = 0; index < 500; index += 1) {
+      for (let index = 0; index < SCHEDULER_ITEM_COUNT; index += 1) {
         ledger.appendEvent({ type: "discovered_issue", repoFullName: "acme/widgets", payload: { n: index } });
       }
       const fn = () => {
@@ -149,9 +160,9 @@ export function parseBenchmarkArgs(argv) {
     json: false,
     update: false,
     check: false,
-    iterations: 100,
-    warmup: 10,
-    tolerance: 0.25,
+    iterations: DEFAULT_ITERATIONS,
+    warmup: DEFAULT_WARMUP,
+    tolerance: DEFAULT_REGRESSION_TOLERANCE,
     baselinePath: DEFAULT_BASELINE_PATH,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -215,7 +226,11 @@ function readBaseline(baselinePath) {
   if (!existsSync(baselinePath)) return null;
   try {
     return JSON.parse(readFileSync(baselinePath, "utf8"));
-  } catch {
+  } catch (error) {
+    // Surface the parse failure instead of swallowing it: a corrupted baseline must not look identical to "no
+    // baseline", which would silently disable regression checking on a bad commit (#4845).
+    const detail = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`benchmark: failed to parse baseline at ${baselinePath}: ${detail}\n`);
     return null;
   }
 }
@@ -260,7 +275,19 @@ async function main(argv) {
           "\n",
       );
     }
-    if (options.check && regressions.length > 0) process.exit(1);
+    // A non-`ok` current run or a non-`ok` committed baseline yields `regressed: false`, so a `--check` that only
+    // looked at regressions would silently pass a baseline that cannot detect regressions for those cases (#4845).
+    // Fail `--check` loudly instead, pointing at the supported-runtime regeneration that produces a full baseline.
+    const uncheckable = options.check ? findUncheckableCases(results, baseline) : [];
+    if (options.check && uncheckable.length > 0) {
+      process.stderr.write(
+        "\nUncheckable cases (no regression signal; regenerate the baseline on the package-supported runtime " +
+          "(Node >= 22.13) with `npm run miner:bench -- --update-baseline`):\n" +
+          uncheckable.map((entry) => `  ${entry.name}: ${entry.reason}`).join("\n") +
+          "\n",
+      );
+    }
+    if (options.check && (regressions.length > 0 || uncheckable.length > 0)) process.exit(1);
   } else if (options.check) {
     process.stderr.write("benchmark: no baseline to check against; run with --update-baseline first.\n");
     process.exit(1);

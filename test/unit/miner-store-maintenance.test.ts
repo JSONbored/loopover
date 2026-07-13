@@ -4,13 +4,16 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  CLAIM_LEDGER_PURGE_SPEC,
   EVENT_LEDGER_RETENTION_SPEC,
   LEDGER_RETENTION_DAYS_ENV,
   LEDGER_RETENTION_MAX_ROWS_ENV,
   checkStoreIntegrity,
   classifyIntegrityRows,
+  countStoreByRepo,
   describeError,
   pruneLedgerByRetention,
+  purgeStoreByRepo,
   resolveLedgerRetentionPolicy,
 } from "../../packages/gittensory-miner/lib/store-maintenance.js";
 
@@ -34,6 +37,18 @@ function seedLedger(rows: Array<{ createdAt: string }>): DatabaseSync {
 }
 function rowCount(db: DatabaseSync): number {
   return Number((db.prepare("SELECT COUNT(*) AS n FROM miner_event_ledger").get() as { n: number }).n);
+}
+
+// A minimal store matching CLAIM_LEDGER_PURGE_SPEC's shape (table miner_claims, repoColumn repo_full_name).
+function seedPurgeTable(rows: Array<{ repoFullName: string }>): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE miner_claims (id INTEGER PRIMARY KEY AUTOINCREMENT, repo_full_name TEXT NOT NULL)");
+  const insert = db.prepare("INSERT INTO miner_claims (repo_full_name) VALUES (?)");
+  for (const row of rows) insert.run(row.repoFullName);
+  return db;
+}
+function purgeTableRowCount(db: DatabaseSync): number {
+  return Number((db.prepare("SELECT COUNT(*) AS n FROM miner_claims").get() as { n: number }).n);
 }
 
 describe("classifyIntegrityRows (#4834)", () => {
@@ -194,6 +209,66 @@ describe("pruneLedgerByRetention (#4834)", () => {
     ).toThrow();
     // the original ledger is untouched, and the failed transaction left no open transaction behind
     expect(rowCount(db)).toBe(1);
+    db.close();
+  });
+});
+
+describe("purgeStoreByRepo (#5564)", () => {
+  it("deletes every row for one repo and leaves other repos untouched", () => {
+    const db = seedPurgeTable([
+      { repoFullName: "acme/widgets" },
+      { repoFullName: "acme/widgets" },
+      { repoFullName: "acme/gadgets" },
+    ]);
+    expect(purgeStoreByRepo(db, CLAIM_LEDGER_PURGE_SPEC, "acme/widgets")).toBe(2);
+    expect(purgeTableRowCount(db)).toBe(1);
+    const remaining = db.prepare("SELECT repo_full_name FROM miner_claims").get() as { repo_full_name: string };
+    expect(remaining.repo_full_name).toBe("acme/gadgets");
+    db.close();
+  });
+
+  it("returns 0 when no row matches the repo", () => {
+    const db = seedPurgeTable([{ repoFullName: "acme/gadgets" }]);
+    expect(purgeStoreByRepo(db, CLAIM_LEDGER_PURGE_SPEC, "acme/widgets")).toBe(0);
+    expect(purgeTableRowCount(db)).toBe(1);
+    db.close();
+  });
+
+  it("rejects an unsafe SQL identifier in the spec", () => {
+    const db = seedPurgeTable([]);
+    expect(() => purgeStoreByRepo(db, { table: "bad; DROP TABLE t", repoColumn: "repo_full_name" }, "acme/widgets")).toThrow(
+      /unsafe SQL identifier/,
+    );
+    expect(() => purgeStoreByRepo(db, { table: "miner_claims", repoColumn: "bad; --" }, "acme/widgets")).toThrow(
+      /unsafe SQL identifier/,
+    );
+    db.close();
+  });
+});
+
+describe("countStoreByRepo (#5564)", () => {
+  it("counts matching rows without deleting anything", () => {
+    const db = seedPurgeTable([
+      { repoFullName: "acme/widgets" },
+      { repoFullName: "acme/widgets" },
+      { repoFullName: "acme/gadgets" },
+    ]);
+    expect(countStoreByRepo(db, CLAIM_LEDGER_PURGE_SPEC, "acme/widgets")).toBe(2);
+    expect(purgeTableRowCount(db)).toBe(3); // nothing deleted
+    db.close();
+  });
+
+  it("returns 0 when no row matches the repo", () => {
+    const db = seedPurgeTable([{ repoFullName: "acme/gadgets" }]);
+    expect(countStoreByRepo(db, CLAIM_LEDGER_PURGE_SPEC, "acme/widgets")).toBe(0);
+    db.close();
+  });
+
+  it("rejects an unsafe SQL identifier in the spec", () => {
+    const db = seedPurgeTable([]);
+    expect(() => countStoreByRepo(db, { table: "bad; DROP TABLE t", repoColumn: "repo_full_name" }, "acme/widgets")).toThrow(
+      /unsafe SQL identifier/,
+    );
     db.close();
   });
 });

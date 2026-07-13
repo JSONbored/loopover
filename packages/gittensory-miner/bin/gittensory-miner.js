@@ -14,6 +14,7 @@ import { runManageStatus } from "../lib/manage-status.js";
 import { runMetrics } from "../lib/metrics-cli.js";
 import { runPlanCli } from "../lib/plan-store-cli.js";
 import { runClaimCli } from "../lib/claim-ledger-cli.js";
+import { runPurge } from "../lib/purge-cli.js";
 import { runQueueCli } from "../lib/portfolio-queue-cli.js";
 import { runOrbExportCli } from "../lib/orb-export.js";
 import { installCliSignalHandlers } from "../lib/process-lifecycle.js";
@@ -114,6 +115,12 @@ if (cliArgs[0] === "governor") {
 
 if (cliArgs[0] === "feasibility") {
   process.exit(runFeasibilityCli(cliArgs.slice(1)));
+}
+
+// `purge` (#5564) is strictly local + offline like `queue`/`claim`/`governor` above -- it only opens the local
+// SQLite stores, so it is dispatched here too, before the opportunistic npm-registry update check ever starts.
+if (cliArgs[0] === "purge") {
+  process.exit(runPurge(cliArgs.slice(1)));
 }
 
 const packageName = "@jsonbored/gittensory-miner";

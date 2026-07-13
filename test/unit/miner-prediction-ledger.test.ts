@@ -81,4 +81,30 @@ describe("miner prediction ledger (#4263)", () => {
     expect(ledger.readPredictions({ repoFullName: "owner/repo-a" }).map((entry) => entry.targetId)).toEqual([1, 3]);
     expect(ledger.readPredictions()).toHaveLength(3);
   });
+
+  describe("purgeByRepo (#5564)", () => {
+    it("deletes every prediction for one repo and leaves other repos untouched", () => {
+      const ledger = tempLedger();
+      ledger.appendPrediction({ ...VALID, repoFullName: "owner/repo-a", targetId: 1 });
+      ledger.appendPrediction({ ...VALID, repoFullName: "owner/repo-a", targetId: 2 });
+      ledger.appendPrediction({ ...VALID, repoFullName: "owner/repo-b", targetId: 3 });
+
+      expect(ledger.purgeByRepo("owner/repo-a")).toBe(2);
+      expect(ledger.readPredictions({ repoFullName: "owner/repo-a" })).toEqual([]);
+      expect(ledger.readPredictions()).toHaveLength(1);
+    });
+
+    it("returns 0 when nothing matches the repo", () => {
+      const ledger = tempLedger();
+      ledger.appendPrediction({ ...VALID, repoFullName: "owner/repo-b" });
+      expect(ledger.purgeByRepo("owner/repo-a")).toBe(0);
+      expect(ledger.readPredictions()).toHaveLength(1);
+    });
+
+    it("rejects a missing/malformed repoFullName rather than silently no-opping", () => {
+      const ledger = tempLedger();
+      expect(() => ledger.purgeByRepo(undefined as never)).toThrow("invalid_repo_full_name");
+      expect(() => ledger.purgeByRepo("no-slash")).toThrow("invalid_repo_full_name");
+    });
+  });
 });

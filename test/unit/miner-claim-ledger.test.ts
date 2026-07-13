@@ -213,6 +213,33 @@ describe("gittensory-miner claim ledger (#2314)", () => {
     writable.close();
   });
 
+  describe("purgeByRepo (#5564)", () => {
+    it("deletes every claim for one repo, across all statuses, and leaves other repos untouched", () => {
+      const ledger = tempLedger();
+      ledger.claimIssue("acme/widgets", 1);
+      ledger.claimIssue("acme/widgets", 2);
+      ledger.releaseClaim("acme/widgets", 2);
+      ledger.claimIssue("acme/other", 3);
+
+      expect(ledger.purgeByRepo("acme/widgets")).toBe(2);
+      expect(ledger.listClaims({ repoFullName: "acme/widgets" })).toEqual([]);
+      expect(ledger.listClaims({ repoFullName: "acme/other" })).toHaveLength(1);
+    });
+
+    it("returns 0 when nothing matches the repo", () => {
+      const ledger = tempLedger();
+      ledger.claimIssue("acme/other", 1);
+      expect(ledger.purgeByRepo("acme/widgets")).toBe(0);
+      expect(ledger.listClaims()).toHaveLength(1);
+    });
+
+    it("rejects a missing/malformed repoFullName rather than silently no-opping", () => {
+      const ledger = tempLedger();
+      expect(() => ledger.purgeByRepo(undefined as never)).toThrow("invalid_repo_full_name");
+      expect(() => ledger.purgeByRepo("no-slash")).toThrow("invalid_repo_full_name");
+    });
+  });
+
   describe("openClaimLedgerReadOnly (#5157)", () => {
     it("lists active claims matching the writable ledger's own state, scoped to the given repo", () => {
       const ledger = tempLedger();

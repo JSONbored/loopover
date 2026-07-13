@@ -32,6 +32,7 @@ export type PredictionLedger = {
   dbPath: string;
   appendPrediction(input: AppendPredictionInput): PredictionLedgerEntry;
   readPredictions(filter?: ReadPredictionsFilter): PredictionLedgerEntry[];
+  purgeByRepo(repoFullName: string): number;
   close(): void;
 };
 

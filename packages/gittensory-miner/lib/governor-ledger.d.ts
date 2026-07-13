@@ -31,6 +31,7 @@ export type GovernorLedger = {
   readGovernorEvents(filter?: ReadGovernorEventsFilter): GovernorLedgerEntry[];
   /** Read-only decision-log projection; excludes `payload` by construction (explicit named-column SELECT). */
   readGovernorDecisions(filter?: ReadGovernorEventsFilter): GovernorDecisionEntry[];
+  purgeByRepo(repoFullName: string): number;
   close(): void;
 };
 

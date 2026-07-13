@@ -1,15 +1,24 @@
 import { isDeepStrictEqual } from "node:util";
 import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
-import { pruneLedgerByRetention, resolveLedgerRetentionPolicy, EVENT_LEDGER_RETENTION_SPEC } from "./store-maintenance.js";
+import {
+  EVENT_LEDGER_PURGE_SPEC,
+  EVENT_LEDGER_RETENTION_SPEC,
+  purgeStoreByRepo,
+  pruneLedgerByRetention,
+  resolveLedgerRetentionPolicy,
+} from "./store-maintenance.js";
 
 // The miner's local, append-only event ledger (#2290): an immutable audit trail of every significant miner-loop
 // event (discovered_issue, plan_built, plan_step_completed, pr_prepared, … — a small fixed vocabulary for this
 // foundation phase that grows in later phases), each stamped with a module-maintained monotonic `seq` and a
-// timestamp. IMMUTABILITY INVARIANT: this module only ever issues INSERT and SELECT — it NEVER rewrites or removes
-// a row, so a contributor auditing the miner's history later can trust it was not retroactively edited. Keep it
-// that way: do not add any statement that mutates or removes an existing row. The database is 100% local; this
-// module never uploads, syncs, or phones home with its contents. Mirrors the local-store pattern of run-state.js.
+// timestamp. IMMUTABILITY INVARIANT: `appendEvent`/`readEvents` only ever issue INSERT and SELECT — they NEVER
+// rewrite or remove a row, so a contributor auditing the miner's history later can trust it was not retroactively
+// edited. Keep it that way: do not add mutation to the day-to-day append/read path. The two documented exceptions
+// are opt-in retention pruning (#4834, automatic, age/size-bounded) and `purgeByRepo` (#5564, always explicit and
+// operator-invoked, never automatic) — both are separate, clearly-labeled maintenance operations, not part of the
+// ledger's normal operation. The database is 100% local; this module never uploads, syncs, or phones home with
+// its contents. Mirrors the local-store pattern of run-state.js.
 
 const defaultDbFileName = "event-ledger.sqlite3";
 let defaultEventLedger = null;
@@ -165,6 +174,15 @@ export function initEventLedger(dbPath = resolveEventLedgerDbPath()) {
         rows = readAllStatement.all();
       }
       return rows.map(rowToEntry);
+    },
+    // Explicit, operator-invoked right-to-be-forgotten purge (#5564) — never runs automatically. See the
+    // IMMUTABILITY INVARIANT note above: this is a deliberate, separate exception, not a normal ledger write.
+    // Requires a real repoFullName (unlike the optional filter above): a purge must never silently no-op on a
+    // missing/blank argument.
+    purgeByRepo(repoFullName) {
+      const normalized = normalizeOptionalRepoFullName(repoFullName);
+      if (normalized === null) throw new Error("invalid_repo_full_name");
+      return purgeStoreByRepo(db, EVENT_LEDGER_PURGE_SPEC, normalized);
     },
     close() {
       db.close();

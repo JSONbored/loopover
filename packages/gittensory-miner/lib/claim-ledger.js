@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
+import { CLAIM_LEDGER_PURGE_SPEC, purgeStoreByRepo } from "./store-maintenance.js";
 
 // The miner's local soft-claim ledger (#2314): a 100% client-side record of "I'm working on issue #N in repo X",
 // so Phase 2's soft-claim adjudication (sibling issues) has somewhere to persist claims. Schema + CRUD only — no
@@ -168,6 +169,11 @@ export function openClaimLedger(dbPath = resolveClaimLedgerDbPath()) {
       const filter = { status: "active" };
       if (repoFullName !== undefined) filter.repoFullName = repoFullName;
       return ledger.listClaims(filter);
+    },
+    // Explicit, operator-invoked right-to-be-forgotten purge (#5564) — never runs automatically. Distinct from
+    // this store's normal claim/release/expire lifecycle: deletes every row for a repo outright.
+    purgeByRepo(repoFullName) {
+      return purgeStoreByRepo(db, CLAIM_LEDGER_PURGE_SPEC, normalizeRepoFullName(repoFullName));
     },
     close() {
       db.close();

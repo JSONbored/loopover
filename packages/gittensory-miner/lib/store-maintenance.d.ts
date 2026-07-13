@@ -8,6 +8,12 @@ export const EVENT_LEDGER_RETENTION_SPEC: LedgerRetentionSpec;
 export const GOVERNOR_LEDGER_RETENTION_SPEC: LedgerRetentionSpec;
 export const PREDICTION_LEDGER_RETENTION_SPEC: LedgerRetentionSpec;
 
+export type LedgerPurgeSpec = { table: string; repoColumn: string };
+export const CLAIM_LEDGER_PURGE_SPEC: LedgerPurgeSpec;
+export const EVENT_LEDGER_PURGE_SPEC: LedgerPurgeSpec;
+export const GOVERNOR_LEDGER_PURGE_SPEC: LedgerPurgeSpec;
+export const PREDICTION_LEDGER_PURGE_SPEC: LedgerPurgeSpec;
+
 export type StoreIntegrityResult = { name: string; ok: boolean; detail: string };
 export type LedgerRetentionPolicy = { maxAgeMs?: number; maxRows?: number };
 
@@ -21,3 +27,5 @@ export function pruneLedgerByRetention(
   policy: LedgerRetentionPolicy | null,
   nowMs: number,
 ): number;
+export function purgeStoreByRepo(db: DatabaseSync, spec: LedgerPurgeSpec, repoFullName: string): number;
+export function countStoreByRepo(db: DatabaseSync, spec: LedgerPurgeSpec, repoFullName: string): number;

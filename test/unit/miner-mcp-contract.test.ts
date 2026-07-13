@@ -160,11 +160,20 @@ const READ_ONLY_TOOLS: ToolContract[] = [
             createdAt: "2026-01-01T00:00:00.000Z",
           },
         ],
+        purgeByRepo: readThrows,
         close() {},
       }),
     },
     missing: { initEventLedger: openerThrows },
-    corrupt: { initEventLedger: () => ({ dbPath: "", appendEvent: readThrows, readEvents: readThrows, close() {} }) },
+    corrupt: {
+      initEventLedger: () => ({
+        dbPath: "",
+        appendEvent: readThrows,
+        readEvents: readThrows,
+        purgeByRepo: readThrows,
+        close() {},
+      }),
+    },
     excluded: ["payload", "payload_json", "token"],
   },
   {

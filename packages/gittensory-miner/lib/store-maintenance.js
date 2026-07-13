@@ -1,11 +1,14 @@
 // Local-store maintenance for the miner (#4834): SQLite integrity checks + append-only ledger retention.
 //
-// Two independent, side-effect-light helpers used by `doctor` and the ledgers:
+// Three independent, side-effect-light helpers used by `doctor`, the ledgers, and `purge-cli.js`:
 //   1. checkStoreIntegrity — run `PRAGMA integrity_check` on one store file and report health, so `doctor` can
 //      flag a corrupted store instead of only probing a single one with `SELECT 1`.
 //   2. resolveLedgerRetentionPolicy / pruneLedgerByRetention — an opt-in, age- and/or size-based retention
 //      policy for the unbounded append-only ledgers (event, governor, prediction), which otherwise grow forever.
 //      OFF by default: retention only runs when an operator sets the env opt-in.
+//   3. purgeStoreByRepo — an explicit, operator-invoked delete of every row for one repo (#5564, right-to-be-
+//      forgotten). Distinct from retention pruning: never runs automatically, always caller-initiated via
+//      `purge-cli.js`, and always reports how many rows it removed so a purge is never silent.
 // Pure control flow over injected inputs (a DB handle, an env object, a caller-supplied clock) — no network, and
 // no internal clock read in the prune path so it stays deterministic and unit-testable.
 import { existsSync } from "node:fs";
@@ -20,6 +23,15 @@ export const LEDGER_RETENTION_MAX_ROWS_ENV = "GITTENSORY_MINER_LEDGER_RETENTION_
 export const EVENT_LEDGER_RETENTION_SPEC = { table: "miner_event_ledger", timestampColumn: "created_at", orderColumn: "id" };
 export const GOVERNOR_LEDGER_RETENTION_SPEC = { table: "governor_events", timestampColumn: "ts", orderColumn: "id" };
 export const PREDICTION_LEDGER_RETENTION_SPEC = { table: "predictions", timestampColumn: "ts", orderColumn: "id" };
+
+/** Fixed purge specs (#5564) for the four stores whose rows are directly scoped by a `repoColumn`. Same
+ *  internal-constant-only discipline as the retention specs above. `attempt-log.js` is deliberately absent: its
+ *  payload is a free-form `Record<string, unknown>` with no dedicated repo column, so a precise per-repo purge
+ *  isn't possible there without risking false matches — `purge-cli.js` reports it as not-purgeable instead. */
+export const CLAIM_LEDGER_PURGE_SPEC = { table: "miner_claims", repoColumn: "repo_full_name" };
+export const EVENT_LEDGER_PURGE_SPEC = { table: "miner_event_ledger", repoColumn: "repo_full_name" };
+export const GOVERNOR_LEDGER_PURGE_SPEC = { table: "governor_events", repoColumn: "repo_full_name" };
+export const PREDICTION_LEDGER_PURGE_SPEC = { table: "predictions", repoColumn: "repo_full_name" };
 
 const SQL_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -131,4 +143,38 @@ export function pruneLedgerByRetention(db, spec, policy, nowMs) {
     throw error;
   }
   return deleted;
+}
+
+/**
+ * Delete every row for one repo from a store (#5564). Unlike `pruneLedgerByRetention`, this never runs
+ * automatically — it exists solely so `purge-cli.js` can give an operator a real right-to-be-forgotten path.
+ * `repoFullName` is caller-normalized (owner/repo) before reaching here; this function only guards the SQL
+ * identifiers, matching `pruneLedgerByRetention`'s own defence-in-depth discipline.
+ * @param {import("node:sqlite").DatabaseSync} db
+ * @param {{ table: string, repoColumn: string }} spec
+ * @param {string} repoFullName
+ * @returns {number} rows deleted
+ */
+export function purgeStoreByRepo(db, spec, repoFullName) {
+  for (const identifier of [spec.table, spec.repoColumn]) {
+    if (!SQL_IDENTIFIER.test(identifier)) throw new Error(`unsafe SQL identifier: ${identifier}`);
+  }
+  const info = db.prepare(`DELETE FROM ${spec.table} WHERE ${spec.repoColumn} = ?`).run(repoFullName);
+  return Number(info.changes);
+}
+
+/**
+ * Count rows for one repo in a store without deleting anything (#5564) — the read-only counterpart to
+ * `purgeStoreByRepo`, used by `purge-cli.js --dry-run` to report what a real purge would remove.
+ * @param {import("node:sqlite").DatabaseSync} db
+ * @param {{ table: string, repoColumn: string }} spec
+ * @param {string} repoFullName
+ * @returns {number} matching row count
+ */
+export function countStoreByRepo(db, spec, repoFullName) {
+  for (const identifier of [spec.table, spec.repoColumn]) {
+    if (!SQL_IDENTIFIER.test(identifier)) throw new Error(`unsafe SQL identifier: ${identifier}`);
+  }
+  const row = db.prepare(`SELECT COUNT(*) AS count FROM ${spec.table} WHERE ${spec.repoColumn} = ?`).get(repoFullName);
+  return Number(row.count);
 }

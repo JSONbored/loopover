@@ -4,10 +4,19 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { normalizeGovernorLedgerEvent } from "@jsonbored/gittensory-engine";
 import { applySchemaMigrations } from "./schema-version.js";
-import { pruneLedgerByRetention, resolveLedgerRetentionPolicy, GOVERNOR_LEDGER_RETENTION_SPEC } from "./store-maintenance.js";
+import {
+  GOVERNOR_LEDGER_PURGE_SPEC,
+  GOVERNOR_LEDGER_RETENTION_SPEC,
+  purgeStoreByRepo,
+  pruneLedgerByRetention,
+  resolveLedgerRetentionPolicy,
+} from "./store-maintenance.js";
 
 // Append-only governor decision ledger (#2328): every allowed/denied/throttled/kill-switch outcome lands in a
-// local SQLite table for contributor audit. IMMUTABILITY INVARIANT: INSERT + SELECT only — never UPDATE/DELETE.
+// local SQLite table for contributor audit. IMMUTABILITY INVARIANT: `appendGovernorEvent`/`readGovernorEvents`
+// only ever issue INSERT and SELECT — never UPDATE/DELETE. Two documented exceptions, both separate maintenance
+// operations rather than part of normal ledger operation: opt-in retention pruning (#4834, automatic) and
+// `purgeByRepo` (#5564, always explicit and operator-invoked, never automatic).
 // This module does not enforce governor policy; it only persists structured events other phases will emit.
 
 const defaultDbFileName = "governor-ledger.sqlite3";
@@ -159,6 +168,14 @@ export function initGovernorLedger(dbPath = resolveGovernorLedgerDbPath()) {
           ? readDecisionsAllStatement.all()
           : readDecisionsByRepoStatement.all(repoFullName);
       return rows.map(rowToDecision);
+    },
+    // Explicit, operator-invoked right-to-be-forgotten purge (#5564) — never runs automatically. See the
+    // IMMUTABILITY INVARIANT note above: this is a deliberate, separate exception, not a normal ledger write.
+    // Requires a real repoFullName (unlike the optional filters above): a purge must never silently no-op.
+    purgeByRepo(repoFullName) {
+      const normalized = normalizeOptionalRepoFullName(repoFullName);
+      if (normalized === undefined) throw new Error("invalid_repo_full_name");
+      return purgeStoreByRepo(db, GOVERNOR_LEDGER_PURGE_SPEC, normalized);
     },
     close() {
       db.close();

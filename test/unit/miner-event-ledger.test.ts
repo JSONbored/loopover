@@ -152,8 +152,36 @@ describe("gittensory-miner event ledger (#2290)", () => {
     expect(ledger.readEvents()).toContainEqual(entry);
   });
 
-  it("is append-only: the module source issues no UPDATE or DELETE against the ledger", () => {
+  it("is append-only: the module's own source issues no inline UPDATE or DELETE against the ledger (#5564: the sole exception, purgeByRepo, delegates its DELETE to store-maintenance.js's shared helper, never inline SQL here)", () => {
     const source = readFileSync("packages/gittensory-miner/lib/event-ledger.js", "utf8");
     expect(source).not.toMatch(/\b(UPDATE|DELETE)\b/i);
+    expect(source).toContain("purgeByRepo");
+  });
+
+  describe("purgeByRepo (#5564)", () => {
+    it("deletes every event for one repo and leaves other repos (and unscoped events) untouched", () => {
+      const ledger = tempLedger();
+      ledger.appendEvent({ type: "discovered_issue", repoFullName: "acme/widgets", payload: {} });
+      ledger.appendEvent({ type: "plan_built", repoFullName: "acme/widgets", payload: {} });
+      ledger.appendEvent({ type: "discovered_issue", repoFullName: "acme/other", payload: {} });
+      ledger.appendEvent({ type: "plan_built", payload: {} }); // no repo scope
+
+      expect(ledger.purgeByRepo("acme/widgets")).toBe(2);
+      expect(ledger.readEvents({ repoFullName: "acme/widgets" })).toEqual([]);
+      expect(ledger.readEvents()).toHaveLength(2);
+    });
+
+    it("returns 0 when nothing matches the repo", () => {
+      const ledger = tempLedger();
+      ledger.appendEvent({ type: "discovered_issue", repoFullName: "acme/other", payload: {} });
+      expect(ledger.purgeByRepo("acme/widgets")).toBe(0);
+      expect(ledger.readEvents()).toHaveLength(1);
+    });
+
+    it("rejects a missing/malformed repoFullName rather than silently no-opping", () => {
+      const ledger = tempLedger();
+      expect(() => ledger.purgeByRepo(undefined as never)).toThrow("invalid_repo_full_name");
+      expect(() => ledger.purgeByRepo("no-slash")).toThrow("invalid_repo_full_name");
+    });
   });
 });

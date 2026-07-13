@@ -52,6 +52,8 @@ export function printHelp(input) {
       "  gittensory-miner state get <owner/repo> [--json]",
       "  gittensory-miner state set <owner/repo> <idle|discovering|planning|preparing> [--dry-run] [--json]",
       "  gittensory-miner orb export [--enable] [--dry-run] [--json]   Build the opt-in anonymized telemetry batch",
+      "  gittensory-miner purge --repo <owner/repo> [--dry-run] [--json]",
+      "                                                                 Right-to-be-forgotten: delete a repo's rows from every local store",
       "",
       "Options:",
       "  --no-update-check  Skip the npm registry version nudge (also GITTENSORY_MINER_NO_UPDATE_CHECK=1)",

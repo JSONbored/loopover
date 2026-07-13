@@ -28,6 +28,7 @@ export type ClaimLedger = {
   expireClaim(repoFullName: string, issueNumber: number): ClaimEntry | null;
   listClaims(filter?: ListClaimsFilter): ClaimEntry[];
   listActiveClaims(repoFullName?: string): ClaimEntry[];
+  purgeByRepo(repoFullName: string): number;
   close(): void;
 };
 

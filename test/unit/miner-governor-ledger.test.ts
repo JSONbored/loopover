@@ -138,6 +138,62 @@ describe("gittensory-miner governor ledger (#2328)", () => {
     expect(killSwitch.repoFullName).toBeNull();
   });
 
+  describe("purgeByRepo (#5564)", () => {
+    it("deletes every event for one repo and leaves other repos (and unscoped events) untouched", () => {
+      const ledger = tempLedger();
+      ledger.appendGovernorEvent({
+        eventType: "denied",
+        repoFullName: "acme/widgets",
+        actionClass: "write",
+        decision: "block",
+        reason: "house rule",
+      });
+      ledger.appendGovernorEvent({
+        eventType: "throttled",
+        repoFullName: "acme/widgets",
+        actionClass: "write",
+        decision: "retry",
+        reason: "rate limit",
+      });
+      ledger.appendGovernorEvent({
+        eventType: "allowed",
+        repoFullName: "acme/other",
+        actionClass: "analyze",
+        decision: "allow",
+        reason: "within budget",
+      });
+      ledger.appendGovernorEvent({
+        eventType: "kill_switch",
+        actionClass: "write",
+        decision: "block",
+        reason: "operator halt",
+      });
+
+      expect(ledger.purgeByRepo("acme/widgets")).toBe(2);
+      expect(ledger.readGovernorEvents({ repoFullName: "acme/widgets" })).toEqual([]);
+      expect(ledger.readGovernorEvents()).toHaveLength(2);
+    });
+
+    it("returns 0 when nothing matches the repo", () => {
+      const ledger = tempLedger();
+      ledger.appendGovernorEvent({
+        eventType: "allowed",
+        repoFullName: "acme/other",
+        actionClass: "analyze",
+        decision: "allow",
+        reason: "within budget",
+      });
+      expect(ledger.purgeByRepo("acme/widgets")).toBe(0);
+      expect(ledger.readGovernorEvents()).toHaveLength(1);
+    });
+
+    it("rejects a missing/malformed repoFullName rather than silently no-opping", () => {
+      const ledger = tempLedger();
+      expect(() => ledger.purgeByRepo(undefined as never)).toThrow("invalid_repo_full_name");
+      expect(() => ledger.purgeByRepo("no-slash")).toThrow("invalid_repo_full_name");
+    });
+  });
+
   it("uses the default singleton ledger helpers and closes cleanly", () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-governor-default-"));
     roots.push(root);

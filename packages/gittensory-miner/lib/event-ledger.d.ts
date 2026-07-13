@@ -22,6 +22,7 @@ export type EventLedger = {
   dbPath: string;
   appendEvent(event: AppendEventInput): LedgerEntry;
   readEvents(filter?: ReadEventsFilter): LedgerEntry[];
+  purgeByRepo(repoFullName: string): number;
   close(): void;
 };
 

@@ -2,14 +2,23 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { pruneLedgerByRetention, resolveLedgerRetentionPolicy, PREDICTION_LEDGER_RETENTION_SPEC } from "./store-maintenance.js";
+import {
+  PREDICTION_LEDGER_PURGE_SPEC,
+  PREDICTION_LEDGER_RETENTION_SPEC,
+  purgeStoreByRepo,
+  pruneLedgerByRetention,
+  resolveLedgerRetentionPolicy,
+} from "./store-maintenance.js";
 
 // Append-only prediction ledger (#4263): every predicted-gate verdict the miner computes for a target lands in
 // a local SQLite table so a later self-improve pass can score the prediction against the realized pr_outcome.
-// IMMUTABILITY INVARIANT: INSERT + SELECT only — never UPDATE/DELETE. Rows are kept small and stable for later
-// diffing: blocker/warning CODES only (no free-text detail), plus the ENGINE_VERSION that produced the call so
-// a row self-reports which engine build made it. Mirrors governor-ledger.js's shape; normalization is local
-// (like event-ledger.js) so the offline miner package pulls in no engine module.
+// IMMUTABILITY INVARIANT: `appendPrediction`/`readPredictions` only ever issue INSERT and SELECT — never
+// UPDATE/DELETE. Two documented exceptions, both separate maintenance operations rather than part of normal
+// ledger operation: opt-in retention pruning (#4834, automatic) and `purgeByRepo` (#5564, always explicit and
+// operator-invoked, never automatic). Rows are kept small and stable for later diffing: blocker/warning CODES
+// only (no free-text detail), plus the ENGINE_VERSION that produced the call so a row self-reports which engine
+// build made it. Mirrors governor-ledger.js's shape; normalization is local (like event-ledger.js) so the
+// offline miner package pulls in no engine module.
 
 const defaultDbFileName = "prediction-ledger.sqlite3";
 let defaultPredictionLedger = null;
@@ -181,6 +190,11 @@ export function initPredictionLedger(dbPath = resolvePredictionLedgerDbPath()) {
       const repoFullName = normalizeOptionalRepoFullName(filter.repoFullName);
       const rows = repoFullName === undefined ? readAllStatement.all() : readByRepoStatement.all(repoFullName);
       return rows.map(rowToEntry);
+    },
+    // Explicit, operator-invoked right-to-be-forgotten purge (#5564) — never runs automatically. See the
+    // IMMUTABILITY INVARIANT note above: this is a deliberate, separate exception, not a normal ledger write.
+    purgeByRepo(repoFullName) {
+      return purgeStoreByRepo(db, PREDICTION_LEDGER_PURGE_SPEC, normalizeRepoFullName(repoFullName));
     },
     close() {
       db.close();

@@ -1,4 +1,5 @@
 import { runGovernorPause, runGovernorResume, runGovernorStatus } from "./governor-pause-cli.js";
+import { runGovernorMetrics } from "./governor-metrics-cli.js";
 
 /** Must match `GOVERNOR_LEDGER_EVENT_TYPES` in `@loopover/engine`. */
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
@@ -18,6 +19,7 @@ const GOVERNOR_SUBCOMMAND_USAGE = [
   "       gittensory-miner governor pause [--reason <text>] [--json]",
   "       gittensory-miner governor resume [--json]",
   "       gittensory-miner governor status [--json]",
+  "       gittensory-miner governor metrics",
 ].join("\n");
 
 function parseRepoArg(value, usage) {
@@ -148,6 +150,7 @@ export async function runGovernorCli(subcommand, args, options = {}) {
   if (subcommand === "pause") return runGovernorPause(args, options);
   if (subcommand === "resume") return runGovernorResume(args, options);
   if (subcommand === "status") return runGovernorStatus(args, options);
+  if (subcommand === "metrics") return runGovernorMetrics(args, options);
   return reportCliFailure(
     argsWantJson(args),
     `Unknown governor subcommand: ${subcommand ?? ""}.\n${GOVERNOR_SUBCOMMAND_USAGE}`,

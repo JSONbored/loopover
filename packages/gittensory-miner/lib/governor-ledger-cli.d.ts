@@ -28,5 +28,5 @@ export function runGovernorList(
 export function runGovernorCli(
   subcommand: string | undefined,
   args: string[],
-  options?: { initGovernorLedger?: () => GovernorLedger } & GovernorPauseCliOptions,
+  options?: { initGovernorLedger?: () => GovernorLedger; nowMs?: number } & GovernorPauseCliOptions,
 ): Promise<number>;

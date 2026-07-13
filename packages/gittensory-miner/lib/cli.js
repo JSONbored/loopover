@@ -48,6 +48,7 @@ export function printHelp(input) {
       "  gittensory-miner governor pause [--reason <text>] [--dry-run] [--json]  Stop the loop before its next cycle",
       "  gittensory-miner governor resume [--dry-run] [--json]         Let a paused loop continue",
       "  gittensory-miner governor status [--json]                     Show whether the governor is paused",
+      "  gittensory-miner governor metrics                              Print governor rate-limit/cap-usage counters in Prometheus text format",
       "  gittensory-miner calibration [--json]                         Report predicted-vs-realized gate accuracy",
       "  gittensory-miner feasibility <claimStatus> <duplicateClusterRisk> <issueStatus> [--not-found] [--json]",
       "  gittensory-miner hooks check --tool <name> --input <json> [--json]",

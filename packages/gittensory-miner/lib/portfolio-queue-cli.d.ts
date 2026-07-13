@@ -24,6 +24,10 @@ export function parseQueueNextArgs(args: string[]): ParsedQueueNextArgs;
 
 export function parseQueueDoneArgs(args: string[]): ParsedQueueDoneArgs;
 
+export function parseQueueReleaseArgs(args: string[]): ParsedQueueDoneArgs;
+
+export function parseQueueRequeueArgs(args: string[]): ParsedQueueDoneArgs;
+
 export type ParsedQueueClaimBatchArgs =
   | { json: boolean; globalWipCap: number; perRepoWipCap: number }
   | { error: string };
@@ -43,6 +47,16 @@ export function runQueueNext(
 ): number;
 
 export function runQueueDone(
+  args: string[],
+  options?: { initPortfolioQueue?: () => PortfolioQueueStore },
+): number;
+
+export function runQueueRelease(
+  args: string[],
+  options?: { initPortfolioQueue?: () => PortfolioQueueStore },
+): number;
+
+export function runQueueRequeue(
   args: string[],
   options?: { initPortfolioQueue?: () => PortfolioQueueStore },
 ): number;

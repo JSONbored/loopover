@@ -31,6 +31,7 @@ export type PortfolioQueueStore = {
   markDone(repoFullName: string, identifier: string): QueueEntry | null;
   markFailed(repoFullName: string, identifier: string): QueueEntry | null;
   reclaimStuckItem(repoFullName: string, identifier: string): QueueEntry | null;
+  requeueItem(repoFullName: string, identifier: string): QueueEntry | null;
   batchClaim(
     selectFn: (entries: QueueEntry[]) => Array<{ repoFullName: string; identifier: string }>,
   ): QueueEntry[];

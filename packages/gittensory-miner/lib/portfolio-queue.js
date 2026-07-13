@@ -156,6 +156,14 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
     WHERE repo_full_name = ? AND identifier = ? AND status = 'in_progress'
     RETURNING *
   `);
+  // Requeue only ever targets a COMPLETED ('done') row — an in-flight item is released via reclaimStatement, and
+  // an already-'queued' item is a no-op — so a caller's manual requeue can never disturb an active claim. The
+  // row keeps its rowid/enqueued_at, so it re-enters the queue at its original FIFO position, not the back.
+  const requeueStatement = db.prepare(`
+    UPDATE miner_portfolio_queue SET status = 'queued', leased_at = NULL
+    WHERE repo_full_name = ? AND identifier = ? AND status = 'done'
+    RETURNING *
+  `);
   const claimTargetStatement = db.prepare(`
     UPDATE miner_portfolio_queue SET status = 'in_progress', leased_at = ?
     WHERE repo_full_name = ? AND identifier = ? AND status = 'queued'
@@ -184,6 +192,17 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
      *  no longer 'in_progress' (already finished/reclaimed by another sweep). The sweep target of #4827. */
     reclaimStuckItem(repoFullName, identifier) {
       const row = reclaimStatement.get(
+        normalizeRepoFullName(repoFullName),
+        normalizeIdentifier(identifier),
+      );
+      return row ? rowToEntry(row) : null;
+    },
+    /** Requeue a COMPLETED ('done') item back to 'queued' so it is picked up again, keeping its FIFO position
+     *  (rowid/enqueued_at unchanged). Returns the entry, or null when there is no 'done' item to requeue — i.e.
+     *  it is already 'queued', is currently 'in_progress' (release it via {@link reclaimStuckItem} instead), or
+     *  does not exist. The manual counterpart to {@link reclaimStuckItem} for the queue CLI's escape hatch (#4828). */
+    requeueItem(repoFullName, identifier) {
+      const row = requeueStatement.get(
         normalizeRepoFullName(repoFullName),
         normalizeIdentifier(identifier),
       );

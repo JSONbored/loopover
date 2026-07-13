@@ -5,6 +5,8 @@ import { runPortfolioDashboard } from "./portfolio-dashboard.js";
 const QUEUE_LIST_USAGE = "Usage: gittensory-miner queue list [--repo <owner/repo>] [--json]";
 const QUEUE_NEXT_USAGE = "Usage: gittensory-miner queue next [--json]";
 const QUEUE_DONE_USAGE = "Usage: gittensory-miner queue done <owner/repo> <identifier> [--json]";
+const QUEUE_RELEASE_USAGE = "Usage: gittensory-miner queue release <owner/repo> <identifier> [--json]";
+const QUEUE_REQUEUE_USAGE = "Usage: gittensory-miner queue requeue <owner/repo> <identifier> [--json]";
 const QUEUE_CLAIM_BATCH_USAGE =
   "Usage: gittensory-miner queue claim-batch [--global-wip <n>] [--per-repo-wip <n>] [--json]";
 
@@ -79,19 +81,21 @@ export function parseQueueNextArgs(args) {
   return { json: parsed.json };
 }
 
-export function parseQueueDoneArgs(args) {
+/** Shared `<owner/repo> <identifier> [--json]` parse for the item-targeting subcommands (done/release/requeue).
+ *  `usage` is the command-specific message surfaced on a malformed argv. */
+function parseRepoIdentifierArgs(args, usage) {
   const parsed = parseJsonFlag(args);
   if ("error" in parsed) return parsed;
   if (parsed.positional.length !== 2) {
-    return { error: QUEUE_DONE_USAGE };
+    return { error: usage };
   }
 
-  const repo = parseRepoArg(parsed.positional[0], QUEUE_DONE_USAGE);
+  const repo = parseRepoArg(parsed.positional[0], usage);
   if ("error" in repo) return repo;
 
   const identifier = parsed.positional[1]?.trim();
   if (!identifier) {
-    return { error: QUEUE_DONE_USAGE };
+    return { error: usage };
   }
 
   return {
@@ -99,6 +103,18 @@ export function parseQueueDoneArgs(args) {
     identifier,
     json: parsed.json,
   };
+}
+
+export function parseQueueDoneArgs(args) {
+  return parseRepoIdentifierArgs(args, QUEUE_DONE_USAGE);
+}
+
+export function parseQueueReleaseArgs(args) {
+  return parseRepoIdentifierArgs(args, QUEUE_RELEASE_USAGE);
+}
+
+export function parseQueueRequeueArgs(args) {
+  return parseRepoIdentifierArgs(args, QUEUE_REQUEUE_USAGE);
 }
 
 function display(value) {
@@ -210,6 +226,65 @@ export function runQueueDone(args, options = {}) {
   }
 }
 
+/** `release <owner/repo> <identifier>`: manually give up a CLAIMED (in_progress) item, returning it to the queue
+ *  (the manual counterpart to the automated stuck-lease sweep). Exit 2 when there is no in-flight item to release. */
+export function runQueueRelease(args, options = {}) {
+  const parsed = parseQueueReleaseArgs(args);
+  if ("error" in parsed) {
+    console.error(parsed.error);
+    return 2;
+  }
+
+  try {
+    return withPortfolioQueue(options, (portfolioQueue) => {
+      const entry = portfolioQueue.reclaimStuckItem(parsed.repoFullName, parsed.identifier);
+      if (!entry) {
+        console.error("queue_entry_not_in_progress");
+        return 2;
+      }
+      if (parsed.json) {
+        console.log(JSON.stringify({ entry }, null, 2));
+      } else {
+        console.log(entry.status);
+      }
+      return 0;
+    });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 2;
+  }
+}
+
+/** `requeue <owner/repo> <identifier>`: manually put a COMPLETED (done) item back on the queue so it is picked up
+ *  again, keeping its original FIFO position. Exit 2 when there is no done item to requeue (already queued,
+ *  in-flight — release it instead — or absent). */
+export function runQueueRequeue(args, options = {}) {
+  const parsed = parseQueueRequeueArgs(args);
+  if ("error" in parsed) {
+    console.error(parsed.error);
+    return 2;
+  }
+
+  try {
+    return withPortfolioQueue(options, (portfolioQueue) => {
+      const entry = portfolioQueue.requeueItem(parsed.repoFullName, parsed.identifier);
+      if (!entry) {
+        console.error("queue_entry_not_requeuable");
+        return 2;
+      }
+      if (parsed.json) {
+        console.log(JSON.stringify({ entry }, null, 2));
+      } else {
+        console.log(entry.status);
+      }
+      return 0;
+    });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 2;
+  }
+}
+
 export function parseQueueClaimBatchArgs(args) {
   const options = { json: false, globalWipCap: 1, perRepoWipCap: 1 };
   for (let index = 0; index < args.length; index += 1) {
@@ -269,6 +344,8 @@ export function runQueueCli(subcommand, args, options = {}) {
   if (subcommand === "list") return runQueueList(args, options);
   if (subcommand === "next") return runQueueNext(args, options);
   if (subcommand === "done") return runQueueDone(args, options);
+  if (subcommand === "release") return runQueueRelease(args, options);
+  if (subcommand === "requeue") return runQueueRequeue(args, options);
   if (subcommand === "claim-batch") return runQueueClaimBatch(args, options);
   if (subcommand === "dashboard") return runPortfolioDashboard(args, options);
   console.error(`Unknown queue subcommand: ${subcommand ?? ""}. ${QUEUE_LIST_USAGE}`);

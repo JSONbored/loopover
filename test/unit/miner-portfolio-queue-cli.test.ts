@@ -10,11 +10,15 @@ import {
   parseQueueDoneArgs,
   parseQueueListArgs,
   parseQueueNextArgs,
+  parseQueueReleaseArgs,
+  parseQueueRequeueArgs,
   renderQueueTable,
   runQueueCli,
   runQueueDone,
   runQueueList,
   runQueueNext,
+  runQueueRelease,
+  runQueueRequeue,
 } from "../../packages/gittensory-miner/lib/portfolio-queue-cli.js";
 import type { QueueEntry } from "../../packages/gittensory-miner/lib/portfolio-queue.d.ts";
 
@@ -163,5 +167,141 @@ describe("gittensory-miner portfolio queue CLI (#2292)", () => {
     expect(runQueueCli("peek", [])).toBe(2);
     expect(runQueueList(["--verbose"])).toBe(2);
     expect(String(error.mock.calls[0]?.[0])).toContain("Unknown queue subcommand");
+  });
+
+  describe("release / requeue escape hatch (#4828)", () => {
+    it("parseQueueReleaseArgs and parseQueueRequeueArgs validate argv with their own usage", () => {
+      expect(parseQueueReleaseArgs(["acme/widgets", "issue:1"])).toEqual({
+        repoFullName: "acme/widgets",
+        identifier: "issue:1",
+        json: false,
+      });
+      expect(parseQueueRequeueArgs(["acme/widgets", "issue:1", "--json"])).toEqual({
+        repoFullName: "acme/widgets",
+        identifier: "issue:1",
+        json: true,
+      });
+      // Wrong positional count surfaces the command-specific usage string.
+      expect(parseQueueReleaseArgs(["only-one"])).toEqual({ error: expect.stringContaining("queue release") });
+      expect(parseQueueRequeueArgs([])).toEqual({ error: expect.stringContaining("queue requeue") });
+    });
+
+    it("release returns a CLAIMED (in-progress) item to the queue", () => {
+      const portfolioQueue = tempQueueStore();
+      portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:7", priority: 1 });
+      portfolioQueue.dequeueNext(); // claim it → in_progress
+      const options = { initPortfolioQueue: () => portfolioQueue };
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      expect(runQueueRelease(["acme/widgets", "issue:7"], options)).toBe(0);
+      expect(log).toHaveBeenCalledWith("queued");
+      expect(portfolioQueue.listQueue("acme/widgets")[0]?.status).toBe("queued");
+    });
+
+    it("release emits the full entry as JSON under --json", () => {
+      const portfolioQueue = tempQueueStore();
+      portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:7b", priority: 2 });
+      portfolioQueue.dequeueNext(); // → in_progress
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      expect(
+        runQueueRelease(["acme/widgets", "issue:7b", "--json"], { initPortfolioQueue: () => portfolioQueue }),
+      ).toBe(0);
+      const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+      expect(printed.entry).toMatchObject({ identifier: "issue:7b", status: "queued" });
+    });
+
+    it("release exits 2 when the item is not in-progress (nothing to release)", () => {
+      const portfolioQueue = tempQueueStore();
+      portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:8", priority: 1 }); // still 'queued'
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      expect(runQueueRelease(["acme/widgets", "issue:8"], { initPortfolioQueue: () => portfolioQueue })).toBe(2);
+      expect(error).toHaveBeenCalledWith("queue_entry_not_in_progress");
+    });
+
+    it("requeue puts a COMPLETED (done) item back on the queue, keeping its position", () => {
+      const portfolioQueue = tempQueueStore();
+      portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:9", priority: 5 });
+      portfolioQueue.markDone("acme/widgets", "issue:9"); // → done
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      expect(
+        runQueueRequeue(["acme/widgets", "issue:9", "--json"], { initPortfolioQueue: () => portfolioQueue }),
+      ).toBe(0);
+      const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+      expect(printed.entry).toMatchObject({ repoFullName: "acme/widgets", identifier: "issue:9", status: "queued", priority: 5 });
+      expect(portfolioQueue.listQueue("acme/widgets")[0]?.status).toBe("queued");
+    });
+
+    it("requeue exits 2 when the item is not a completed entry (already queued / in-flight / absent)", () => {
+      const portfolioQueue = tempQueueStore();
+      portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:10", priority: 1 }); // 'queued'
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      expect(runQueueRequeue(["acme/widgets", "issue:10"], { initPortfolioQueue: () => portfolioQueue })).toBe(2);
+      expect(error).toHaveBeenCalledWith("queue_entry_not_requeuable");
+      // Absent item too.
+      expect(runQueueRequeue(["acme/widgets", "issue:404"], { initPortfolioQueue: () => portfolioQueue })).toBe(2);
+    });
+
+    it("the shared parser rejects a bad option, a malformed repo, and an empty identifier", () => {
+      expect(parseQueueReleaseArgs(["--bad"])).toEqual({ error: expect.stringContaining("Unknown option") });
+      expect(parseQueueRequeueArgs(["notarepo", "issue:1"])).toEqual({
+        error: "Repository must be in owner/repo form.",
+      });
+      expect(parseQueueReleaseArgs(["acme/widgets", "   "])).toEqual({ error: expect.stringContaining("queue release") });
+    });
+
+    it("release and requeue each surface a parse error before touching the store", () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      expect(runQueueRelease(["only-one"], {})).toBe(2);
+      expect(String(error.mock.calls[0]?.[0])).toContain("queue release");
+      expect(runQueueRequeue(["only-one"], {})).toBe(2);
+      expect(String(error.mock.calls[1]?.[0])).toContain("queue requeue");
+    });
+
+    it("release and requeue fail-safe (exit 2) when the store throws", () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const throwingStore = {
+        reclaimStuckItem() {
+          throw new Error("db_locked");
+        },
+        requeueItem() {
+          throw new Error("db_locked");
+        },
+      } as unknown as ReturnType<typeof initPortfolioQueueStore>;
+      expect(runQueueRelease(["acme/widgets", "issue:1"], { initPortfolioQueue: () => throwingStore })).toBe(2);
+      expect(runQueueRequeue(["acme/widgets", "issue:1"], { initPortfolioQueue: () => throwingStore })).toBe(2);
+      expect(error).toHaveBeenCalledWith("db_locked");
+
+      // A thrown non-Error is stringified rather than crashing (the String(error) fallback branch).
+      const throwingNonError = {
+        reclaimStuckItem() {
+          throw "raw_string_fault";
+        },
+        requeueItem() {
+          throw "raw_string_fault";
+        },
+      } as unknown as ReturnType<typeof initPortfolioQueueStore>;
+      expect(runQueueRelease(["acme/widgets", "issue:1"], { initPortfolioQueue: () => throwingNonError })).toBe(2);
+      expect(runQueueRequeue(["acme/widgets", "issue:1"], { initPortfolioQueue: () => throwingNonError })).toBe(2);
+      expect(error).toHaveBeenCalledWith("raw_string_fault");
+    });
+
+    it("runQueueCli dispatches release and requeue", () => {
+      const portfolioQueue = tempQueueStore();
+      portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:11", priority: 1 });
+      portfolioQueue.dequeueNext(); // in_progress
+      const options = { initPortfolioQueue: () => portfolioQueue };
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      expect(runQueueCli("release", ["acme/widgets", "issue:11"], options)).toBe(0);
+      expect(portfolioQueue.listQueue("acme/widgets")[0]?.status).toBe("queued");
+
+      portfolioQueue.markDone("acme/widgets", "issue:11");
+      expect(runQueueCli("requeue", ["acme/widgets", "issue:11"], options)).toBe(0);
+      expect(portfolioQueue.listQueue("acme/widgets")[0]?.status).toBe("queued");
+    });
   });
 });

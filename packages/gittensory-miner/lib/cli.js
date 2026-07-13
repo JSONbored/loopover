@@ -30,6 +30,8 @@ export function printHelp(input) {
       "  gittensory-miner queue next [--json]                          Claim the highest-priority queued item",
       "  gittensory-miner queue claim-batch [--global-wip <n>] [--per-repo-wip <n>] [--json]",
       "  gittensory-miner queue done <owner/repo> <identifier> [--json]",
+      "  gittensory-miner queue release <owner/repo> <identifier> [--json]  Return a claimed item to the queue",
+      "  gittensory-miner queue requeue <owner/repo> <identifier> [--json]  Put a completed item back on the queue",
       "  gittensory-miner claim claim <owner/repo> <issue#> [--note <text>] [--json]",
       "  gittensory-miner claim release <owner/repo> <issue#> [--json]",
       "  gittensory-miner claim list [--repo <owner/repo>] [--status active|released|expired] [--json]",

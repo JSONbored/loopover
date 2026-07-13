@@ -46,6 +46,18 @@ describe("miner extension opportunity badge", () => {
     expect(manifest.content_scripts[0].css).toEqual(["styles.css"]);
   });
 
+  it("grants loopback host permissions so the options page can live-fetch the local miner-ui (#4859)", () => {
+    expect(manifest.host_permissions).toContain("https://github.com/*");
+    expect(manifest.host_permissions).toContain("http://localhost/*");
+    expect(manifest.host_permissions).toContain("http://127.0.0.1/*");
+  });
+
+  it("exposes a miner-ui base URL field and a live-fetch button, keeping the paste box as a fallback (#4859)", () => {
+    expect(optionsHtml).toMatch(/id="minerUiBaseUrl"/);
+    expect(optionsHtml).toMatch(/id="fetchLive"/);
+    expect(optionsHtml).toMatch(/paste fallback/i);
+  });
+
   it("detects GitHub issue routes without matching pull requests", () => {
     const internals = loadContentInternals();
     expect(internals.matchGitHubIssueTarget("/JSONbored/gittensory/issues/145")).toEqual({
@@ -146,6 +158,162 @@ describe("miner extension opportunity badge", () => {
     expect(internals.parseRankedCandidatesJson('[{"repoFullName":"a/b","issueNumber":1}]')).toHaveLength(1);
     expect(() => internals.parseRankedCandidatesJson("{")).toThrow();
     expect(() => internals.parseRankedCandidatesJson('{"not":"array"}')).toThrow();
+  });
+
+  it("normalizes the miner-ui base URL: empty -> default, loopback origins accepted, others rejected (#4859)", () => {
+    const internals = loadOptionsInternals();
+    expect(internals.DEFAULT_MINER_UI_BASE_URL).toBe("http://localhost:5174");
+    expect(internals.normalizeMinerUiBaseUrl("")).toBe("http://localhost:5174");
+    expect(internals.normalizeMinerUiBaseUrl("   ")).toBe("http://localhost:5174");
+    expect(internals.normalizeMinerUiBaseUrl(null)).toBe("http://localhost:5174");
+    expect(internals.normalizeMinerUiBaseUrl("http://localhost:5174")).toBe("http://localhost:5174");
+    expect(internals.normalizeMinerUiBaseUrl("http://localhost:5174/")).toBe("http://localhost:5174");
+    expect(internals.normalizeMinerUiBaseUrl("http://127.0.0.1:4174")).toBe("http://127.0.0.1:4174");
+    expect(internals.normalizeMinerUiBaseUrl("https://localhost")).toBe("https://localhost");
+    expect(() => internals.normalizeMinerUiBaseUrl("http://evil.example.com")).toThrow(/localhost/);
+    expect(() => internals.normalizeMinerUiBaseUrl("ftp://localhost:5174")).toThrow(/localhost/);
+    expect(() => internals.normalizeMinerUiBaseUrl("not a url")).toThrow(/localhost/);
+  });
+
+  it("live-fetches ranked candidates from the miner-ui discovery endpoint (#4859)", async () => {
+    const internals = loadOptionsInternals();
+    const requested: string[] = [];
+    const candidates = [{ repoFullName: "acme/widgets", issueNumber: 1, rankScore: 0.7 }];
+    const fetchImpl = (async (url: string) => {
+      requested.push(url);
+      return { ok: true, json: async () => ({ rankedCandidates: candidates }) };
+    }) as unknown as typeof fetch;
+
+    const result = await internals.fetchLiveRankedCandidates("http://localhost:5174/", fetchImpl);
+    expect(result).toEqual(candidates);
+    expect(requested).toEqual(["http://localhost:5174/api/discovery"]);
+  });
+
+  it("surfaces a friendly error for a non-OK discovery response (#4859)", async () => {
+    const internals = loadOptionsInternals();
+    const fetchImpl = (async () => ({ ok: false, status: 503, json: async () => ({}) })) as unknown as typeof fetch;
+    await expect(internals.fetchLiveRankedCandidates("http://localhost:5174", fetchImpl)).rejects.toThrow(
+      /responded 503/,
+    );
+  });
+
+  it("rejects a discovery response that is not a ranked-candidates list (#4859)", async () => {
+    const internals = loadOptionsInternals();
+    const missing = (async () => ({ ok: true, json: async () => ({}) })) as unknown as typeof fetch;
+    await expect(internals.fetchLiveRankedCandidates("http://localhost:5174", missing)).rejects.toThrow(
+      /ranked-candidates list/,
+    );
+    const nullBody = (async () => ({ ok: true, json: async () => null })) as unknown as typeof fetch;
+    await expect(internals.fetchLiveRankedCandidates("http://localhost:5174", nullBody)).rejects.toThrow(
+      /ranked-candidates list/,
+    );
+  });
+
+  it("reports an unreachable miner-ui instead of leaking the raw network error (#4859)", async () => {
+    const internals = loadOptionsInternals();
+    const fetchImpl = (async () => {
+      throw new Error("Failed to fetch");
+    }) as unknown as typeof fetch;
+    await expect(internals.fetchLiveRankedCandidates("http://localhost:5174", fetchImpl)).rejects.toThrow(
+      /Could not reach the miner UI/,
+    );
+  });
+
+  it("the live-fetch button caches candidates + savedAt and persists the base URL (#4859)", async () => {
+    const localSetCalls: Array<Record<string, unknown>> = [];
+    const syncSetCalls: Array<Record<string, unknown>> = [];
+    const candidates = [{ repoFullName: "acme/widgets", issueNumber: 3, rankScore: 0.66 }];
+    const fakeNowMs = Date.parse("2026-07-11T09:00:00.000Z");
+    const elements = {
+      "#settings": createFormMock(),
+      "#status": { textContent: "" },
+      "#watchedRepos": { value: "acme/widgets" },
+      "#rankedCandidatesJson": { value: "" },
+      "#minerUiBaseUrl": { value: "http://127.0.0.1:5174" },
+      "#fetchLive": createButtonMock(),
+    };
+    const context: Record<string, unknown> = {
+      __GITTENSORY_MINER_EXTENSION_TEST__: true,
+      Date: { now: () => fakeNowMs },
+      document: { querySelector: (selector: string) => elements[selector as keyof typeof elements] ?? null },
+      fetch: async (url: string) => {
+        expect(url).toBe("http://127.0.0.1:5174/api/discovery");
+        return { ok: true, json: async () => ({ rankedCandidates: candidates }) };
+      },
+      chrome: {
+        storage: {
+          sync: {
+            get: async () => ({ watchedRepos: [], minerUiBaseUrl: "http://127.0.0.1:5174" }),
+            set: async (value: Record<string, unknown>) => {
+              syncSetCalls.push(value);
+            },
+            remove: async () => {},
+          },
+          local: {
+            get: async () => ({ rankedCandidates: [] }),
+            set: async (value: Record<string, unknown>) => {
+              localSetCalls.push(value);
+            },
+          },
+        },
+      },
+      window: { setTimeout: () => 0 },
+    };
+    context.globalThis = context;
+    const vmContext = createContext(context);
+    new Script(optionsScript).runInContext(vmContext);
+    await flushPromises();
+
+    await elements["#fetchLive"].dispatchClick();
+    await flushPromises();
+
+    expect(localSetCalls).toEqual([
+      { rankedCandidates: candidates, rankedCandidatesSavedAt: fakeNowMs },
+    ]);
+    expect(syncSetCalls).toContainEqual({ minerUiBaseUrl: "http://127.0.0.1:5174" });
+    expect(elements["#status"].textContent).toMatch(/Fetched 1 ranked candidate/);
+  });
+
+  it("the live-fetch button shows the error and writes nothing when the miner-ui is unreachable (#4859)", async () => {
+    const localSetCalls: Array<Record<string, unknown>> = [];
+    const elements = {
+      "#settings": createFormMock(),
+      "#status": { textContent: "" },
+      "#watchedRepos": { value: "" },
+      "#rankedCandidatesJson": { value: "" },
+      "#minerUiBaseUrl": { value: "" },
+      "#fetchLive": createButtonMock(),
+    };
+    const context: Record<string, unknown> = {
+      __GITTENSORY_MINER_EXTENSION_TEST__: true,
+      Date: { now: () => 0 },
+      document: { querySelector: (selector: string) => elements[selector as keyof typeof elements] ?? null },
+      fetch: async () => {
+        throw new Error("Failed to fetch");
+      },
+      chrome: {
+        storage: {
+          sync: { get: async () => ({ watchedRepos: [], minerUiBaseUrl: "" }), set: async () => {}, remove: async () => {} },
+          local: {
+            get: async () => ({ rankedCandidates: [] }),
+            set: async (value: Record<string, unknown>) => {
+              localSetCalls.push(value);
+            },
+          },
+        },
+      },
+      window: { setTimeout: () => 0 },
+    };
+    context.globalThis = context;
+    const vmContext = createContext(context);
+    new Script(optionsScript).runInContext(vmContext);
+    await flushPromises();
+
+    await elements["#fetchLive"].dispatchClick();
+    await flushPromises();
+
+    expect(localSetCalls).toEqual([]);
+    expect(elements["#status"].textContent).toMatch(/Could not reach the miner UI/);
   });
 
   it("REGRESSION (dead-field removal): no discoveryIndexUrl config field remains in the UI or background reads", () => {
@@ -368,6 +536,18 @@ function createFormMock() {
   };
 }
 
+function createButtonMock() {
+  let clickHandler: (() => unknown) | null = null;
+  return {
+    addEventListener: (type: string, handler: typeof clickHandler) => {
+      if (type === "click") clickHandler = handler;
+    },
+    dispatchClick: async () => {
+      await clickHandler?.();
+    },
+  };
+}
+
 function createMockContainer() {
   const container = {
     hidden: false,
@@ -482,5 +662,9 @@ function loadOptionsInternals() {
     parseWatchedRepos: (text: string) => string[];
     parseRankedCandidatesJson: (text: string) => unknown[];
     removeLegacyDiscoveryIndexUrl: () => Promise<void>;
+    normalizeMinerUiBaseUrl: (value: unknown) => string;
+    fetchLiveRankedCandidates: (baseUrl: string, fetchImpl: typeof fetch) => Promise<unknown[]>;
+    DEFAULT_MINER_UI_BASE_URL: string;
+    DISCOVERY_API_PATH: string;
   };
 }

@@ -65,7 +65,24 @@
           <textarea id="watchedRepos" name="watchedRepos" placeholder="owner/repo, one per line"></textarea>
         </label>
         <label>
-          Ranked candidates JSON (local cache)
+          Miner UI base URL (live fetch)
+          <input
+            id="minerUiBaseUrl"
+            name="minerUiBaseUrl"
+            type="url"
+            placeholder="http://localhost:5174"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </label>
+        <button id="fetchLive" type="button">Fetch live from miner</button>
+        <p>
+          Fetch pulls the ranked candidates straight from your local miner-ui
+          <code>/api/discovery</code> endpoint. The paste box below is a fallback for when the miner-ui is not
+          running.
+        </p>
+        <label>
+          Ranked candidates JSON (paste fallback)
           <textarea
             id="rankedCandidatesJson"
             name="rankedCandidatesJson"

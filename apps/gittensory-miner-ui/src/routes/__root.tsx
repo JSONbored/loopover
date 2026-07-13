@@ -24,6 +24,9 @@ function RootLayout() {
             <Link to="/portfolio" className="hover-surface rounded-token-sm px-2 py-1 hover:text-foreground">
               Portfolio
             </Link>
+            <Link to="/ledgers" className="hover-surface rounded-token-sm px-2 py-1 hover:text-foreground">
+              Ledgers
+            </Link>
           </nav>
         </div>
       </header>

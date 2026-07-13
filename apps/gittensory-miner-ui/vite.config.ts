@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 
+import { ledgersApiPlugin } from "./vite-ledgers-api";
 import { portfolioQueueApiPlugin } from "./vite-portfolio-queue-api";
 import { runStateApiPlugin } from "./vite-run-state-api";
 
@@ -15,6 +16,7 @@ export default defineConfig({
     tsconfigPaths(),
     runStateApiPlugin(),
     portfolioQueueApiPlugin(),
+    ledgersApiPlugin(),
   ],
   server: {
     // Offset from gittensory-ui (5173) so both apps can run side-by-side locally.

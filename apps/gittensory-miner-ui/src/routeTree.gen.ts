@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as RunHistoryRouteImport } from './routes/run-history'
 import { Route as PortfolioRouteImport } from './routes/portfolio'
+import { Route as LedgersRouteImport } from './routes/ledgers'
 import { Route as IndexRouteImport } from './routes/index'
 
 const RunHistoryRoute = RunHistoryRouteImport.update({
@@ -23,6 +24,11 @@ const PortfolioRoute = PortfolioRouteImport.update({
   path: '/portfolio',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LedgersRoute = LedgersRouteImport.update({
+  id: '/ledgers',
+  path: '/ledgers',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -31,30 +37,34 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/ledgers': typeof LedgersRoute
   '/portfolio': typeof PortfolioRoute
   '/run-history': typeof RunHistoryRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/ledgers': typeof LedgersRoute
   '/portfolio': typeof PortfolioRoute
   '/run-history': typeof RunHistoryRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/ledgers': typeof LedgersRoute
   '/portfolio': typeof PortfolioRoute
   '/run-history': typeof RunHistoryRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/portfolio' | '/run-history'
+  fullPaths: '/' | '/ledgers' | '/portfolio' | '/run-history'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/portfolio' | '/run-history'
-  id: '__root__' | '/' | '/portfolio' | '/run-history'
+  to: '/' | '/ledgers' | '/portfolio' | '/run-history'
+  id: '__root__' | '/' | '/ledgers' | '/portfolio' | '/run-history'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  LedgersRoute: typeof LedgersRoute
   PortfolioRoute: typeof PortfolioRoute
   RunHistoryRoute: typeof RunHistoryRoute
 }
@@ -75,6 +85,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PortfolioRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ledgers': {
+      id: '/ledgers'
+      path: '/ledgers'
+      fullPath: '/ledgers'
+      preLoaderRoute: typeof LedgersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -87,6 +104,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  LedgersRoute: LedgersRoute,
   PortfolioRoute: PortfolioRoute,
   RunHistoryRoute: RunHistoryRoute,
 }

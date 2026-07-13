@@ -21,6 +21,7 @@ import { installCliSignalHandlers } from "../lib/process-lifecycle.js";
 import { runStateCli } from "../lib/run-state-cli.js";
 import { runInit } from "../lib/laptop-init.js";
 import { loadMinerFileSecrets } from "../lib/env-file-indirection.js";
+import { runBackup, runRestore } from "../lib/backup-cli.js";
 import { runMigrate } from "../lib/migrate-cli.js";
 import { runDoctor, runStatus } from "../lib/status.js";
 import {
@@ -73,6 +74,16 @@ if (cliArgs[0] === "doctor") {
 // dispatched here too, before the opportunistic npm-registry update check is ever started.
 if (cliArgs[0] === "migrate") {
   process.exit(runMigrate(cliArgs.slice(1)));
+}
+
+// `backup`/`restore` are strictly local + offline (they only read/write the local SQLite stores), so they are
+// dispatched here too, before the opportunistic npm-registry update check is ever started (#4872).
+if (cliArgs[0] === "backup") {
+  process.exit(await runBackup(cliArgs.slice(1)));
+}
+
+if (cliArgs[0] === "restore") {
+  process.exit(runRestore(cliArgs.slice(1)));
 }
 
 // `metrics` is strictly local + offline like `status`/`doctor` (it reads only the local prediction ledger), so it

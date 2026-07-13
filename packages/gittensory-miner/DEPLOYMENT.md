@@ -149,7 +149,7 @@ Because `loop` is a **long-running daemon that schedules its own cycles**, it is
 - Discovery/ranking primitives that touch GitHub only run when explicitly invoked and only perform documented GETs unless a future command says otherwise.
 - Operators own secret injection; images and packages ship without embedded tokens.
 
-See [`docs/operations-runbook.md`](docs/operations-runbook.md) for operational scenarios: ledger corruption, two miners on one state dir, and post-upgrade schema migration ([#4875](https://github.com/JSONbored/gittensory/issues/4875)).
+See [`docs/operations-runbook.md`](docs/operations-runbook.md) for operational scenarios: ledger corruption, two miners on one state dir, backup/restore, and post-upgrade schema migration ([#4875](https://github.com/JSONbored/gittensory/issues/4875)).
 
 ## Optional hosted discovery plane (opt-in)
 

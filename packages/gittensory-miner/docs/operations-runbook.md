@@ -128,18 +128,22 @@ gittensory-miner status --json
 2. **Backup the whole state directory** (even damaged files help post-mortems):
 
    ```sh
-   cp -a "$STATE_DIR" "${STATE_DIR}.bak.$(date +%Y%m%d%H%M%S)"
+   gittensory-miner backup "${STATE_DIR}.bak.$(date +%Y%m%d%H%M%S)"
    ```
+
+   (A raw `cp -a`/`tar` also works once the miner is stopped, but `backup` needs no stop/start at all — it
+   uses SQLite's online backup API, safe against a store the miner still has open.)
 
 3. Choose a recovery tier:
 
    | Tier | When | Action |
    |------|------|--------|
    | **A — single store reset** | One ledger is corrupt; others healthy; you accept losing that store's history | Remove only the bad `*.sqlite3` (and any `-wal`/`-shm` siblings). Next command recreates an empty store. |
-   | **B — restore from backup** | You have a recent quiesced backup | Stop miner → restore the known-good file → restart. |
+   | **B — restore from backup** | You have a recent quiesced backup | Stop miner → `gittensory-miner restore <backupDir> --force` → restart. |
    | **C — full re-init** | Multiple files suspect or state is disposable | Archive dir → `gittensory-miner init` → reconfigure env/goals. Rebuild claims/plans from GitHub metadata as needed. |
 
-4. **Never copy a live SQLite file** from a running miner as backup — stop first, or use SQLite's `.backup` command:
+4. **Never copy a live SQLite file** from a running miner as backup — stop first, use SQLite's own `.backup`
+   command for a single file, or `gittensory-miner backup <destDir>` for every store at once (same mechanism):
 
    ```sh
    sqlite3 "$DB" ".backup '${DB}.safe-copy'"
@@ -167,9 +171,11 @@ Stores use the lightweight **`schema-version.js`** convention ([#4832](https://g
 
    ```sh
    gittensory-miner doctor --json > /tmp/miner-pre-upgrade-doctor.json
-   STATE_DIR="$(gittensory-miner status --json | jq -r .stateDir)"
-   tar -czf "/tmp/gittensory-miner-state-$(date +%Y%m%d).tar.gz" -C "$(dirname "$STATE_DIR")" "$(basename "$STATE_DIR")"
+   gittensory-miner backup "/tmp/gittensory-miner-backup-$(date +%Y%m%d)" --json
    ```
+
+   (`backup` uses SQLite's own online backup API per store — safe even if a loop is still running against
+   it, unlike a raw `tar`/`cp` of a live database file. See "Scenario: backup/restore" below.)
 
 2. **Stop** supervised loops (`systemctl stop gittensory-miner.service`, `docker compose stop miner`, etc.).
 
@@ -195,7 +201,7 @@ Stores use the lightweight **`schema-version.js`** convention ([#4832](https://g
    gittensory-miner migrate --json   # re-run: every store should now report "up-to-date"
    ```
 
-6. If a migration throws on startup, **do not delete files immediately** — restore the pre-upgrade tarball, pin the previous package version, and file an issue with the failing `user_version` and store filename.
+6. If a migration throws on startup, **do not delete files immediately** — `gittensory-miner restore "/tmp/gittensory-miner-backup-<date>" --force` the pre-upgrade backup, pin the previous package version, and file an issue with the failing `user_version` and store filename.
 
 **Rolling fleet upgrades:** upgrade and restart **one worker/state dir at a time** so isolated workers never share a directory mid-migration.
 

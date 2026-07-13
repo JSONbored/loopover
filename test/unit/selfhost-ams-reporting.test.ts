@@ -49,7 +49,28 @@ function runExporter(
   });
 }
 
-function seedAttemptLog(db: string, rows: Array<{ seq: number; attemptId: string; eventType: string; actionClass: string; mode: string; reason: string; payloadJson: string; createdAt: string }>): void {
+function sqlLiteral(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "NULL";
+  if (typeof value === "number") return String(value);
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function seedAttemptLog(
+  db: string,
+  rows: Array<{
+    seq: number;
+    attemptId: string;
+    eventType: string;
+    actionClass: string;
+    mode: string;
+    reason: string;
+    payloadJson: string;
+    provider?: string | null;
+    costUsd?: number | null;
+    tokensUsed?: number | null;
+    createdAt: string;
+  }>,
+): void {
   sqlite(
     db,
     `
@@ -62,12 +83,15 @@ function seedAttemptLog(db: string, rows: Array<{ seq: number; attemptId: string
       mode TEXT NOT NULL,
       reason TEXT NOT NULL,
       payload_json TEXT NOT NULL,
+      provider TEXT,
+      cost_usd REAL,
+      tokens_used INTEGER,
       created_at TEXT NOT NULL
     );
     ${rows
       .map(
         (r) =>
-          `INSERT INTO attempt_log_events (seq, attempt_id, event_type, action_class, mode, reason, payload_json, created_at) VALUES (${r.seq}, '${r.attemptId}', '${r.eventType}', '${r.actionClass}', '${r.mode}', '${r.reason.replace(/'/g, "''")}', '${r.payloadJson.replace(/'/g, "''")}', '${r.createdAt}');`,
+          `INSERT INTO attempt_log_events (seq, attempt_id, event_type, action_class, mode, reason, payload_json, provider, cost_usd, tokens_used, created_at) VALUES (${r.seq}, '${r.attemptId}', '${r.eventType}', '${r.actionClass}', '${r.mode}', '${r.reason.replace(/'/g, "''")}', '${r.payloadJson.replace(/'/g, "''")}', ${sqlLiteral(r.provider ?? null)}, ${sqlLiteral(r.costUsd ?? null)}, ${sqlLiteral(r.tokensUsed ?? null)}, '${r.createdAt}');`,
       )
       .join("\n")}
   `,
@@ -130,6 +154,49 @@ describe("scripts/export-ams-reporting-db.sh", () => {
       ),
     ).toBe("1|attempt-1|started|write|live|2026-07-12T00:00:00Z");
     expect(sqlite(outDb, "SELECT count(*) FROM pragma_table_info('attempt_log_events') WHERE name IN ('reason', 'payload_json');")).toBe("0");
+  });
+
+  it("exports attempt_log_events' provider/cost_usd/tokens_used (#5185) unchanged, NULL when unset", () => {
+    const root = tmpRoot();
+    const src = join(root, "attempt-log.sqlite3");
+    seedAttemptLog(src, [
+      {
+        seq: 1,
+        attemptId: "attempt-1",
+        eventType: "attempt_outcome_summary",
+        actionClass: "attempt_submitted",
+        mode: "live",
+        reason: "attempt finished",
+        payloadJson: "{}",
+        provider: "claude-cli",
+        costUsd: 0.42,
+        tokensUsed: 1000,
+        createdAt: "2026-07-12T00:00:00Z",
+      },
+      {
+        seq: 2,
+        attemptId: "attempt-1",
+        eventType: "attempt_started",
+        actionClass: "codegen",
+        mode: "live",
+        reason: "live run",
+        payloadJson: "{}",
+        createdAt: "2026-07-12T00:00:01Z",
+      },
+    ]);
+
+    runExporter(root, { attemptLogSource: src });
+
+    const outDb = join(root, "reporting", "ams-attempt-log.sqlite");
+    expect(
+      sqlite(outDb, "SELECT provider || '|' || cost_usd || '|' || tokens_used FROM attempt_log_events WHERE seq = 1;"),
+    ).toBe("claude-cli|0.42|1000");
+    expect(
+      sqlite(
+        outDb,
+        "SELECT COALESCE(provider, 'NULL') || '|' || COALESCE(cost_usd, 'NULL') || '|' || COALESCE(tokens_used, 'NULL') FROM attempt_log_events WHERE seq = 2;",
+      ),
+    ).toBe("NULL|NULL|NULL");
   });
 
   it("exports predictions with every column intact (already bounded/structured, no free text)", () => {

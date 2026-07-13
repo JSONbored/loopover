@@ -10,6 +10,7 @@ vi.mock("@loopover/engine", async () => {
 import { closeDefaultClaimLedger, openClaimLedger } from "../../packages/gittensory-miner/lib/claim-ledger.js";
 import { closeDefaultEventLedger, initEventLedger } from "../../packages/gittensory-miner/lib/event-ledger.js";
 import { closeDefaultAttemptLog, initAttemptLog } from "../../packages/gittensory-miner/lib/attempt-log.js";
+import type { AttemptLog } from "../../packages/gittensory-miner/lib/attempt-log.js";
 import { closeDefaultGovernorLedger, initGovernorLedger } from "../../packages/gittensory-miner/lib/governor-ledger.js";
 import { closeDefaultWorktreeAllocator, openWorktreeAllocator } from "../../packages/gittensory-miner/lib/worktree-allocator.js";
 import { buildAttemptDeps, parseAttemptArgs, runAttempt } from "../../packages/gittensory-miner/lib/attempt-cli.js";
@@ -302,6 +303,10 @@ describe("runAttempt (#5132)", () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const releaseSpy = vi.spyOn(allocator, "release");
+    // attemptLog is closed in runAttempt's own `finally` block once it returns (same DI convention documented at
+    // the claim-ledger test below) -- so the appended event is asserted via a spy recorded DURING the call, not
+    // by re-querying the ledger once it's already closed.
+    const appendAttemptLogEventSpy = vi.spyOn(attemptLog, "appendAttemptLogEvent");
     const worktreeResult = fakeWorktreeResult();
     const cleanupAttemptWorktreeSpy = vi.fn().mockResolvedValue({ ok: true, removed: true });
     const runMinerAttemptSpy = vi.fn().mockResolvedValue({
@@ -369,6 +374,85 @@ describe("runAttempt (#5132)", () => {
     expect(input.governor.capLimits).toEqual(DEFAULT_AMS_POLICY_SPEC.capLimits);
     expect(deps).toBeDefined();
     expect(typeof deps.driver.run).toBe("function");
+
+    // #5185: one real attempt_outcome_summary call per completed attempt, carrying the real configured provider
+    // and the real accumulated cost -- not a per-iteration event iterate-loop.ts already writes.
+    const summaryCalls = appendAttemptLogEventSpy.mock.calls
+      .map(([event]) => event)
+      .filter((event) => event.eventType === "attempt_outcome_summary");
+    expect(summaryCalls).toHaveLength(1);
+    expect(summaryCalls[0]).toMatchObject({
+      attemptId: "fixed-attempt-id",
+      actionClass: "attempt_submitted",
+      mode: "dry_run",
+      provider: "noop",
+      costUsd: 0.42,
+    });
+    expect(summaryCalls[0]).not.toHaveProperty("tokensUsed");
+  });
+
+  it("#5185: writes attempt_outcome_summary with the real provider/cost on a non-submitted outcome too", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const appendAttemptLogEventSpy = vi.spyOn(attemptLog, "appendAttemptLogEvent");
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({
+      outcome: "abandon",
+      reason: "self_review_ambiguous",
+      loopResult: { outcome: "abandon", totalTurnsUsed: 1, totalCostUsd: 0, iterationsUsed: 1 },
+    });
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "codex-cli" },
+      nowMs: 999,
+      attemptId: "abandoned-attempt-id",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+    });
+
+    expect(exitCode).toBe(7);
+    const summaryCalls = appendAttemptLogEventSpy.mock.calls
+      .map(([event]) => event)
+      .filter((event) => event.eventType === "attempt_outcome_summary");
+    expect(summaryCalls).toHaveLength(1);
+    expect(summaryCalls[0]).toMatchObject({ actionClass: "attempt_abandon", provider: "codex-cli", costUsd: 0 });
+  });
+
+  it("#5185: a broken appendAttemptLogEvent never fails an otherwise-successful attempt", async () => {
+    const { allocator, claimLedger, eventLedger, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({
+      outcome: "submitted",
+      spec: { command: "gh pr create", cwd: "/tmp/work", timeoutMs: 1000 },
+      execResult: { code: 0 },
+      loopResult: { outcome: "handoff", totalTurnsUsed: 1, totalCostUsd: 0, iterationsUsed: 1 },
+    });
+    const brokenAttemptLog: AttemptLog = {
+      dbPath: ":memory:",
+      appendAttemptLogEvent: vi.fn().mockImplementation(() => {
+        throw new Error("disk full");
+      }),
+      readAttemptLogEvents: () => [],
+      exportAttemptLogJsonl: () => "",
+      close: () => {},
+    };
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      nowMs: 999,
+      attemptId: "resilient-attempt-id",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => brokenAttemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+    });
+
+    expect(exitCode).toBe(0);
   });
 
   it("REGRESSION (#4848): a real submitted outcome with a recoverable PR number runs the real claim-conflict check and surfaces its result", async () => {

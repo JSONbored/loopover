@@ -57,6 +57,9 @@ function rowToEntry(row) {
     mode: row.mode,
     reason: row.reason,
     payload,
+    provider: row.provider,
+    costUsd: row.cost_usd,
+    tokensUsed: row.tokens_used,
     createdAt: row.created_at,
   };
 }
@@ -69,7 +72,29 @@ function rowToNormalized(row) {
     mode: row.mode,
     reason: row.reason,
     payloadJson: row.payload_json,
+    provider: row.provider,
+    costUsd: row.cost_usd,
+    tokensUsed: row.tokens_used,
   };
+}
+
+// Add the provider/cost_usd/tokens_used columns (#5185) to an on-disk file created before they existed. `CREATE
+// TABLE IF NOT EXISTS` above is a no-op against an already-existing table, so a pre-#5185 file needs this
+// explicit ALTER -- guarded by a per-column presence check (same technique as governor-state.js's own
+// ensurePauseColumns) so a file missing only one of the three still gets exactly what it's missing.
+function ensureOutcomeColumns(db) {
+  const existingColumns = new Set(
+    db.prepare("PRAGMA table_info(attempt_log_events)").all().map((column) => column.name),
+  );
+  if (!existingColumns.has("provider")) {
+    db.exec("ALTER TABLE attempt_log_events ADD COLUMN provider TEXT");
+  }
+  if (!existingColumns.has("cost_usd")) {
+    db.exec("ALTER TABLE attempt_log_events ADD COLUMN cost_usd REAL");
+  }
+  if (!existingColumns.has("tokens_used")) {
+    db.exec("ALTER TABLE attempt_log_events ADD COLUMN tokens_used INTEGER");
+  }
 }
 
 /**
@@ -93,6 +118,7 @@ export function initAttemptLog(dbPath = resolveAttemptLogDbPath()) {
       created_at TEXT NOT NULL
     )
   `);
+  ensureOutcomeColumns(db);
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_attempt_log_attempt ON attempt_log_events (attempt_id, seq)",
   );
@@ -100,9 +126,10 @@ export function initAttemptLog(dbPath = resolveAttemptLogDbPath()) {
   const nextSeqStatement = db.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS nextSeq FROM attempt_log_events");
   const appendStatement = db.prepare(`
     INSERT INTO attempt_log_events (
-      seq, attempt_id, event_type, action_class, mode, reason, payload_json, created_at
+      seq, attempt_id, event_type, action_class, mode, reason, payload_json, provider, cost_usd, tokens_used,
+      created_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const getByIdStatement = db.prepare("SELECT * FROM attempt_log_events WHERE id = ?");
   const readAllStatement = db.prepare("SELECT * FROM attempt_log_events ORDER BY seq ASC");
@@ -126,6 +153,9 @@ export function initAttemptLog(dbPath = resolveAttemptLogDbPath()) {
           normalized.mode,
           normalized.reason,
           normalized.payloadJson,
+          normalized.provider,
+          normalized.costUsd,
+          normalized.tokensUsed,
           createdAt,
         );
         const entry = rowToEntry(getByIdStatement.get(Number(result.lastInsertRowid)));

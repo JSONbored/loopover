@@ -11,7 +11,9 @@ The miner writes append-only SQLite ledgers under `GITTENSORY_MINER_CONFIG_DIR` 
 [`DEPLOYMENT.md`](../DEPLOYMENT.md)):
 
 - **`attempt-log.sqlite3`** — the driver-level attempt event trace (event type, action class, mode, reason,
-  timestamps), table `attempt_log_events`.
+  timestamps), table `attempt_log_events`. One `attempt_outcome_summary` row per completed attempt also carries
+  the real configured `provider` and the real accumulated `cost_usd` (#5185) — `tokens_used` is always `NULL`
+  today, an honest gap rather than a fabricated `0`: no coding-agent driver reports real token usage yet (#5395).
 - **`prediction-ledger.sqlite3`** — recorded predicted-gate verdicts for later scoring.
 
 Those live files can contain free-form payloads, repo/target identifiers, readiness scores, and blocker/warning

@@ -138,7 +138,9 @@ DETACH report;
 
 # attempt_log_events: DROP `reason` and `payload_json` -- both free-form (payload_json in particular can nest
 # arbitrary per-event-type detail, up to and including file paths/diffs/prompt fragments). Every other column is
-# a bounded-vocabulary identifier/enum/timestamp, safe for a shared reporting export.
+# a bounded-vocabulary identifier/enum/timestamp, safe for a shared reporting export -- including provider/
+# cost_usd/tokens_used (#5185, added by attempt-cli.js's own attempt_outcome_summary event), each a real
+# structured value (provider name, a dollar figure, a token count), never free text.
 export_ledger \
   "attempt-log" \
   "$ATTEMPT_LOG_SOURCE_DB" \
@@ -152,11 +154,14 @@ export_ledger \
     event_type TEXT NOT NULL,
     action_class TEXT NOT NULL,
     mode TEXT NOT NULL,
+    provider TEXT,
+    cost_usd REAL,
+    tokens_used INTEGER,
     created_at TEXT NOT NULL
   );
   CREATE INDEX attempt_log_events_attempt_idx ON attempt_log_events(attempt_id, seq);
   CREATE INDEX attempt_log_events_created_idx ON attempt_log_events(created_at);" \
-  "id, seq, attempt_id, event_type, action_class, mode, created_at"
+  "id, seq, attempt_id, event_type, action_class, mode, provider, cost_usd, tokens_used, created_at"
 
 # predictions: kept as-is. Unlike attempt_log_events, every column here is already a bounded identifier, enum,
 # score, or a fixed-vocabulary code array (blocker_codes_json/warning_codes_json -- engine-defined codes, never

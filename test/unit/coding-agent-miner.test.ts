@@ -116,8 +116,51 @@ describe("attempt log normalization (#4294)", () => {
       "attempt_succeeded",
       "attempt_failed",
       "attempt_aborted",
+      "attempt_outcome_summary",
     ]);
     expect(Object.isFrozen(ATTEMPT_LOG_EVENT_TYPES)).toBe(true);
+  });
+
+  it("leaves provider/costUsd/tokensUsed null when omitted, real values when set (#5185)", () => {
+    const omitted = normalizeAttemptLogEvent({
+      eventType: "attempt_started",
+      attemptId: "a-1",
+      actionClass: "codegen",
+      mode: "live",
+      reason: "live run",
+    });
+    expect(omitted.provider).toBeNull();
+    expect(omitted.costUsd).toBeNull();
+    expect(omitted.tokensUsed).toBeNull();
+
+    const withValues = normalizeAttemptLogEvent({
+      eventType: "attempt_outcome_summary",
+      attemptId: "a-1",
+      actionClass: "attempt_submitted",
+      mode: "live",
+      reason: "attempt finished",
+      provider: "codex-cli",
+      costUsd: 0,
+      tokensUsed: 0,
+    });
+    expect(withValues.provider).toBe("codex-cli");
+    expect(withValues.costUsd).toBe(0);
+    expect(withValues.tokensUsed).toBe(0);
+  });
+
+  it("rejects a negative/non-finite/non-numeric costUsd or tokensUsed, and a blank provider (#5185)", () => {
+    const base = {
+      eventType: "attempt_outcome_summary",
+      attemptId: "a-1",
+      actionClass: "attempt_submitted",
+      mode: "live",
+      reason: "attempt finished",
+    };
+    expect(() => normalizeAttemptLogEvent({ ...base, costUsd: -1 })).toThrow(/invalid_cost_usd/);
+    expect(() => normalizeAttemptLogEvent({ ...base, costUsd: Number.NaN })).toThrow(/invalid_cost_usd/);
+    expect(() => normalizeAttemptLogEvent({ ...base, costUsd: "0.5" } as unknown)).toThrow(/invalid_cost_usd/);
+    expect(() => normalizeAttemptLogEvent({ ...base, tokensUsed: -1 })).toThrow(/invalid_tokens_used/);
+    expect(() => normalizeAttemptLogEvent({ ...base, provider: "  " })).toThrow(/invalid_provider/);
   });
 
   it("normalizes a valid event with payload round-trip", () => {

@@ -12,7 +12,7 @@
 // governor.convergenceInput is an honest first-attempt-shaped literal, not a real per-issue attempt-history
 // query (attempt-log.js's schema has no repo+issue index, and reenqueue counts aren't tracked anywhere yet).
 
-import { resolveCodingAgentModeFromConfig } from "@loopover/engine";
+import { resolveCodingAgentModeFromConfig, resolveFirstConfiguredCodingAgentDriverName } from "@loopover/engine";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 import { constructProductionCodingAgentDriver } from "./coding-agent-construction.js";
 import { runSlopAssessment } from "./slop-assessment.js";
@@ -476,6 +476,28 @@ export async function runAttempt(args, options = {}) {
       // PR's number genuinely couldn't be parsed (an honest gap, not silently swallowed).
       ...(claimConflict !== undefined ? { claimConflict } : {}),
     };
+
+    // One summary row per completed attempt (#5185), for the Grafana per-provider usage dashboard the redacted
+    // AMS reporting export exposes -- distinct from the per-iteration attempt_started/attempt_tool_edit/... trail
+    // iterate-loop.ts already writes. No fallback for an unconfigured provider: buildAttemptDeps already fails
+    // closed (throws) on the same env before a worktree is even allocated, so reaching this point guarantees
+    // resolveFirstConfiguredCodingAgentDriverName(env) resolves a real name. tokensUsed is deliberately omitted
+    // (normalizes to null): no driver reports real token usage today (#5395), and null-for-"no signal" is more
+    // honest here than a fabricated 0. A logging failure must never fail an otherwise-successful attempt --
+    // mirrors iterate-loop.ts's own safeAppendAttemptLogEvent non-fatal handling.
+    try {
+      attemptLog.appendAttemptLogEvent({
+        eventType: "attempt_outcome_summary",
+        attemptId,
+        actionClass: finalResult.outcome,
+        mode,
+        reason: `attempt finished with outcome: ${result.outcome}`,
+        provider: resolveFirstConfiguredCodingAgentDriverName(env),
+        costUsd: finalResult.totalCostUsd,
+      });
+    } catch {
+      // Deliberately swallowed -- see comment above.
+    }
 
     if (parsed.json) {
       console.log(JSON.stringify(finalResult, null, 2));

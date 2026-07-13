@@ -11,6 +11,11 @@ export const ATTEMPT_LOG_EVENT_TYPES = Object.freeze([
   "attempt_succeeded",
   "attempt_failed",
   "attempt_aborted",
+  // #5185: one summary row per completed attempt, written by the miner CLI (attempt-cli.js) once `runIterateLoop`
+  // returns -- distinct from the five iteration-level types above (all written from inside iterate-loop.ts's own
+  // per-iteration decision trail). Carries provider/costUsd, the two real (never-fabricated) signals a
+  // per-provider usage dashboard needs that no iteration-level event captures today.
+  "attempt_outcome_summary",
 ] as const);
 
 export type AttemptLogEventType = (typeof ATTEMPT_LOG_EVENT_TYPES)[number];
@@ -22,6 +27,15 @@ export type AttemptLogEvent = {
   mode: CodingAgentExecutionMode;
   reason: string;
   payload?: Record<string, unknown> | undefined;
+  /** Coding-agent provider name (claude-cli/codex-cli/agent-sdk/noop) this attempt used, when known (#5185).
+   *  Optional: every event type that predates this field omits it; only `attempt_outcome_summary` sets it. */
+  provider?: string | undefined;
+  /** Real dollar cost, mirroring `CodingAgentDriverResult.costUsd`'s own convention: absent (not zero) when the
+   *  provider never reports a cost signal, never fabricated (#5185). */
+  costUsd?: number | undefined;
+  /** Real token count, when some future driver reports one. Always absent today -- no driver reports real token
+   *  usage yet (#5395) -- an honest gap, not a fabricated zero. */
+  tokensUsed?: number | undefined;
 };
 
 export type NormalizedAttemptLogEvent = {
@@ -31,6 +45,9 @@ export type NormalizedAttemptLogEvent = {
   mode: CodingAgentExecutionMode;
   reason: string;
   payloadJson: string;
+  provider: string | null;
+  costUsd: number | null;
+  tokensUsed: number | null;
 };
 
 const attemptEventTypeSet = new Set<string>(ATTEMPT_LOG_EVENT_TYPES);
@@ -84,6 +101,21 @@ function normalizeMode(value: unknown): CodingAgentExecutionMode {
   return mode as CodingAgentExecutionMode;
 }
 
+/** `undefined` -> `null` ("not set"); any other non-empty-string value must be a valid string, or this fails
+ *  closed rather than silently coercing (#5185). */
+function normalizeOptionalString(value: unknown, code: string): string | null {
+  if (value === undefined) return null;
+  return normalizeRequiredString(value, code);
+}
+
+/** `undefined` -> `null` ("no signal, never fabricated as 0"); any other value must be a finite number >= 0
+ *  (#5185) -- mirrors `CodingAgentDriverResult.costUsd`'s own absent-vs-zero distinction. */
+function normalizeOptionalNonNegativeNumber(value: unknown, code: string): number | null {
+  if (value === undefined) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new Error(code);
+  return value;
+}
+
 /** Validate and normalize an attempt-log row before append. Fail-closed on unknown types/modes. */
 export function normalizeAttemptLogEvent(input: unknown): NormalizedAttemptLogEvent {
   if (!input || typeof input !== "object") throw new Error("invalid_event");
@@ -97,6 +129,9 @@ export function normalizeAttemptLogEvent(input: unknown): NormalizedAttemptLogEv
     mode: normalizeMode(event.mode),
     reason: normalizeRequiredString(event.reason, "invalid_reason"),
     payloadJson: serializePayload(event.payload),
+    provider: normalizeOptionalString(event.provider, "invalid_provider"),
+    costUsd: normalizeOptionalNonNegativeNumber(event.costUsd, "invalid_cost_usd"),
+    tokensUsed: normalizeOptionalNonNegativeNumber(event.tokensUsed, "invalid_tokens_used"),
   };
 }
 

@@ -15,7 +15,50 @@ test("ATTEMPT_LOG_EVENT_TYPES is a fixed vocabulary", () => {
     "attempt_succeeded",
     "attempt_failed",
     "attempt_aborted",
+    "attempt_outcome_summary",
   ]);
+});
+
+test("normalizeAttemptLogEvent leaves provider/costUsd/tokensUsed null when omitted, and passes through real values", () => {
+  const omitted = normalizeAttemptLogEvent({
+    eventType: "attempt_started",
+    attemptId: "a-1",
+    actionClass: "codegen",
+    mode: "live",
+    reason: "live run",
+  });
+  assert.equal(omitted.provider, null);
+  assert.equal(omitted.costUsd, null);
+  assert.equal(omitted.tokensUsed, null);
+
+  const withValues = normalizeAttemptLogEvent({
+    eventType: "attempt_outcome_summary",
+    attemptId: "a-1",
+    actionClass: "attempt_submitted",
+    mode: "live",
+    reason: "attempt finished",
+    provider: "claude-cli",
+    costUsd: 0.42,
+    tokensUsed: 1000,
+  });
+  assert.equal(withValues.provider, "claude-cli");
+  assert.equal(withValues.costUsd, 0.42);
+  assert.equal(withValues.tokensUsed, 1000);
+});
+
+test("normalizeAttemptLogEvent rejects a negative/non-finite costUsd or tokensUsed, never coercing to 0", () => {
+  const base = {
+    eventType: "attempt_outcome_summary",
+    attemptId: "a-1",
+    actionClass: "attempt_submitted",
+    mode: "live",
+    reason: "attempt finished",
+  };
+  assert.throws(() => normalizeAttemptLogEvent({ ...base, costUsd: -1 }), /invalid_cost_usd/);
+  assert.throws(() => normalizeAttemptLogEvent({ ...base, costUsd: Number.NaN }), /invalid_cost_usd/);
+  assert.throws(() => normalizeAttemptLogEvent({ ...base, costUsd: "0.5" }), /invalid_cost_usd/);
+  assert.throws(() => normalizeAttemptLogEvent({ ...base, tokensUsed: -1 }), /invalid_tokens_used/);
+  assert.throws(() => normalizeAttemptLogEvent({ ...base, provider: "" }), /invalid_provider/);
 });
 
 test("normalizeAttemptLogEvent validates mode and payload round-trip", () => {

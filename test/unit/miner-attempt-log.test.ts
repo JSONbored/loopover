@@ -231,4 +231,89 @@ describe("gittensory-miner attempt log (#4294)", () => {
     const source = readFileSync("packages/gittensory-miner/lib/attempt-log.js", "utf8");
     expect(source).not.toMatch(/\b(UPDATE|DELETE)\b/i);
   });
+
+  it("appends and reads back provider/costUsd/tokensUsed, null when omitted (#5185)", () => {
+    const log = tempAttemptLog();
+    const withValues = log.appendAttemptLogEvent({
+      eventType: "attempt_outcome_summary",
+      ...baseEvent,
+      actionClass: "attempt_submitted",
+      reason: "attempt finished",
+      provider: "claude-cli",
+      costUsd: 0.42,
+      tokensUsed: 1000,
+    });
+    expect(withValues).toMatchObject({ provider: "claude-cli", costUsd: 0.42, tokensUsed: 1000 });
+
+    const omitted = log.appendAttemptLogEvent({ eventType: "attempt_started", ...baseEvent });
+    expect(omitted).toMatchObject({ provider: null, costUsd: null, tokensUsed: null });
+
+    expect(log.readAttemptLogEvents()).toEqual([withValues, omitted]);
+  });
+
+  it("migrates a pre-#5185 on-disk file missing provider/cost_usd/tokens_used columns", () => {
+    const root = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-log-migrate-"));
+    roots.push(root);
+    const dbPath = join(root, "attempt-log.sqlite3");
+    const raw = new DatabaseSync(dbPath);
+    raw.exec(`
+      CREATE TABLE attempt_log_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        seq INTEGER NOT NULL UNIQUE,
+        attempt_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        action_class TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )
+    `);
+    raw
+      .prepare(
+        "INSERT INTO attempt_log_events (seq, attempt_id, event_type, action_class, mode, reason, payload_json, created_at) VALUES (1, 'attempt-1', 'attempt_started', 'codegen', 'live', 'live run', '{}', '2026-01-01T00:00:00.000Z')",
+      )
+      .run();
+    raw.close();
+
+    const log = initAttemptLog(dbPath);
+    logs.push(log);
+    const preExisting = log.readAttemptLogEvents();
+    expect(preExisting).toHaveLength(1);
+    expect(preExisting[0]).toMatchObject({ provider: null, costUsd: null, tokensUsed: null });
+
+    const appended = log.appendAttemptLogEvent({
+      eventType: "attempt_outcome_summary",
+      ...baseEvent,
+      actionClass: "attempt_submitted",
+      reason: "attempt finished",
+      provider: "agent-sdk",
+      costUsd: 1.5,
+    });
+    expect(appended).toMatchObject({ provider: "agent-sdk", costUsd: 1.5, tokensUsed: null });
+  });
+
+  it("re-opening an already-migrated file is a no-op: no duplicate/failing ALTER TABLE", () => {
+    const root = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-log-reopen-"));
+    roots.push(root);
+    const dbPath = join(root, "attempt-log.sqlite3");
+
+    const first = initAttemptLog(dbPath);
+    first.appendAttemptLogEvent({ eventType: "attempt_started", ...baseEvent });
+    first.close();
+
+    // ensureOutcomeColumns runs again on this second open; provider/cost_usd/tokens_used are already present from
+    // the first open's own migration, so every per-column ALTER TABLE this time must be skipped, not re-run.
+    const second = initAttemptLog(dbPath);
+    logs.push(second);
+    expect(second.readAttemptLogEvents()).toHaveLength(1);
+    const appended = second.appendAttemptLogEvent({
+      eventType: "attempt_outcome_summary",
+      ...baseEvent,
+      actionClass: "attempt_submitted",
+      reason: "attempt finished",
+      provider: "claude-cli",
+    });
+    expect(appended).toMatchObject({ provider: "claude-cli", costUsd: null, tokensUsed: null });
+  });
 });

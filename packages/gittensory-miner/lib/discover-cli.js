@@ -10,6 +10,7 @@ import { initPolicyDocCacheStore } from "./policy-doc-cache.js";
 import { initPolicyVerdictCacheStore } from "./policy-verdict-cache.js";
 import { enqueueRankedDiscovery } from "./portfolio-discovery.js";
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
+import { initRankedCandidatesStore } from "./ranked-candidates.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const DISCOVER_USAGE =
@@ -240,6 +241,22 @@ export async function runDiscover(args, options = {}) {
     policyVerdictCache = null;
     ownsPolicyVerdictCache = false;
   }
+
+  // Snapshot of this run's full ranked output (#4859 prerequisite), so a local HTTP endpoint (and eventually the
+  // miner-ui/browser-extension live-fetch it's meant for) can serve the same per-issue breakdown `--json` prints,
+  // without the operator re-running discover or hand-pasting its output. Same "own try/catch, degrade to null"
+  // discipline as the two caches above: a corrupt/unwritable snapshot store must never abort discovery's actual
+  // job (fan out, rank, enqueue). Unlike the caches, this store is a WRITE target, not a read optimization -- the
+  // save call itself gets its own try/catch below for the same reason.
+  let rankedCandidatesStore = null;
+  let ownsRankedCandidatesStore = false;
+  try {
+    ownsRankedCandidatesStore = options.initRankedCandidatesStore === undefined;
+    rankedCandidatesStore = (options.initRankedCandidatesStore ?? initRankedCandidatesStore)();
+  } catch {
+    rankedCandidatesStore = null;
+    ownsRankedCandidatesStore = false;
+  }
   const fanOutOptions = { apiBaseUrl, forge: options.forge, policyDocCache, policyVerdictCache };
 
   try {
@@ -257,6 +274,16 @@ export async function runDiscover(args, options = {}) {
       goalSpecContentByRepo: options.goalSpecContentByRepo,
     });
     const enqueueSummary = enqueue(rankedSummary.issues, { queueStore: portfolioQueue, apiBaseUrl });
+
+    try {
+      // Optional chaining rather than an `if (rankedCandidatesStore)` guard: a null store (open failed above)
+      // short-circuits to a no-op read, so the same try/catch below also covers the open-failed case without a
+      // second explicit branch.
+      rankedCandidatesStore?.saveRankedCandidates(rankedSummary.issues, options.nowMs);
+    } catch {
+      // Non-fatal: the ranked-candidates snapshot is a nice-to-have for the local HTTP endpoint, not a
+      // requirement for discover's own job (fan out, rank, enqueue), which already succeeded above.
+    }
 
     const result = {
       fanOutCount: fanOut.issues.length,
@@ -280,5 +307,6 @@ export async function runDiscover(args, options = {}) {
     if (ownsPortfolioQueue && portfolioQueue) portfolioQueue.close();
     if (ownsPolicyDocCache && policyDocCache) policyDocCache.close();
     if (ownsPolicyVerdictCache && policyVerdictCache) policyVerdictCache.close();
+    if (ownsRankedCandidatesStore && rankedCandidatesStore) rankedCandidatesStore.close();
   }
 }

@@ -14,6 +14,7 @@ import type { PolicyDocCacheStore } from "./policy-doc-cache.js";
 import type { PolicyVerdictCacheStore } from "./policy-verdict-cache.js";
 import type { EnqueueRankedDiscoverySummary } from "./portfolio-discovery.js";
 import type { PortfolioQueueStore } from "./portfolio-queue.js";
+import type { RankedCandidatesStore } from "./ranked-candidates.js";
 
 export type ParsedDiscoverArgs =
   | {
@@ -65,6 +66,7 @@ export type RunDiscoverOptions = {
   initPortfolioQueue?: () => PortfolioQueueStore;
   initPolicyDocCache?: () => PolicyDocCacheStore;
   initPolicyVerdictCache?: () => PolicyVerdictCacheStore;
+  initRankedCandidatesStore?: () => RankedCandidatesStore;
   fetchCandidateIssuesWithSummary?: (
     targets: FanoutTarget[],
     githubToken: string,

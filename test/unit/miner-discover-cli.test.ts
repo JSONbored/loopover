@@ -8,6 +8,7 @@ import {
   closeDefaultPortfolioQueueStore,
   initPortfolioQueueStore,
 } from "../../packages/gittensory-miner/lib/portfolio-queue.js";
+import { initRankedCandidatesStore } from "../../packages/gittensory-miner/lib/ranked-candidates.js";
 import {
   parseDiscoverArgs,
   renderDiscoverSummary,
@@ -45,6 +46,15 @@ function tempPolicyVerdictCacheStore() {
   const root = mkdtempSync(join(tmpdir(), "gittensory-miner-discover-cli-pvc-"));
   roots.push(root);
   const store = initPolicyVerdictCacheStore(join(root, "policy-verdict-cache.sqlite3"));
+  stores.push(store);
+  return store;
+}
+
+// Same reasoning as tempPolicyDocCacheStore above, for the ranked-candidates snapshot store (#4859 prerequisite).
+function tempRankedCandidatesStore() {
+  const root = mkdtempSync(join(tmpdir(), "gittensory-miner-discover-cli-rc-"));
+  roots.push(root);
+  const store = initRankedCandidatesStore(join(root, "ranked-candidates.sqlite3"));
   stores.push(store);
   return store;
 }
@@ -325,6 +335,7 @@ describe("runDiscover (#4247)", () => {
       initPortfolioQueue: () => portfolioQueue,
       initPolicyDocCache: () => tempPolicyDocCacheStore(),
       initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
       fetchCandidateIssuesWithSummary,
       searchCandidateIssuesWithSummary,
     });
@@ -353,6 +364,7 @@ describe("runDiscover (#4247)", () => {
     const initPortfolioQueue = vi.fn();
     const initPolicyDocCache = vi.fn();
     const initPolicyVerdictCache = vi.fn();
+    const initRankedCandidatesStore = vi.fn();
     const fetchCandidateIssuesWithSummary = vi.fn(async (targets, token, fanOutOptions) => {
       expect(fanOutOptions).toMatchObject({ policyDocCache: null, policyVerdictCache: null });
       return {
@@ -369,6 +381,7 @@ describe("runDiscover (#4247)", () => {
       initPortfolioQueue,
       initPolicyDocCache,
       initPolicyVerdictCache,
+      initRankedCandidatesStore,
       fetchCandidateIssuesWithSummary,
     });
 
@@ -376,6 +389,7 @@ describe("runDiscover (#4247)", () => {
     expect(initPortfolioQueue).not.toHaveBeenCalled();
     expect(initPolicyDocCache).not.toHaveBeenCalled();
     expect(initPolicyVerdictCache).not.toHaveBeenCalled();
+    expect(initRankedCandidatesStore).not.toHaveBeenCalled();
     const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
     expect(payload.outcome).toBe("dry_run");
     expect(payload.fanOutCount).toBe(1);
@@ -388,6 +402,7 @@ describe("runDiscover (#4247)", () => {
       initPortfolioQueue,
       initPolicyDocCache,
       initPolicyVerdictCache,
+      initRankedCandidatesStore,
       fetchCandidateIssuesWithSummary,
     });
     expect(textExitCode).toBe(0);
@@ -470,6 +485,7 @@ describe("runDiscover (#4247)", () => {
       initPortfolioQueue: () => portfolioQueue,
       initPolicyDocCache: () => tempPolicyDocCacheStore(),
       initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
       fetchCandidateIssuesWithSummary,
       searchCandidateIssuesWithSummary,
     });
@@ -495,6 +511,7 @@ describe("runDiscover (#4247)", () => {
       initPortfolioQueue: () => portfolioQueue,
       initPolicyDocCache: () => tempPolicyDocCacheStore(),
       initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
       fetchCandidateIssuesWithSummary,
     });
 
@@ -544,6 +561,7 @@ describe("runDiscover (#4247)", () => {
       initPortfolioQueue: () => portfolioQueue,
       initPolicyDocCache: () => tempPolicyDocCacheStore(),
       initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
       fetchCandidateIssuesWithSummary,
     });
 
@@ -571,6 +589,7 @@ describe("runDiscover (#4247)", () => {
         fetchCandidateIssuesWithSummary,
         initPolicyDocCache: () => tempPolicyDocCacheStore(),
         initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+        initRankedCandidatesStore: () => tempRankedCandidatesStore(),
       });
       expect(exitCode).toBe(0);
 
@@ -605,6 +624,7 @@ describe("runDiscover (#4247)", () => {
           initPortfolioQueue: () => portfolioQueue,
           initPolicyDocCache: () => tempPolicyDocCacheStore(),
           initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+          initRankedCandidatesStore: () => tempRankedCandidatesStore(),
           fetchCandidateIssuesWithSummary,
         },
       );
@@ -644,6 +664,7 @@ describe("runDiscover (#4247)", () => {
         initPortfolioQueue: () => portfolioQueue,
         initPolicyDocCache: () => tempPolicyDocCacheStore(),
         initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+        initRankedCandidatesStore: () => tempRankedCandidatesStore(),
         fetchCandidateIssuesWithSummary,
         forge: { tokenEnvVar: "FORGE_PAT" },
       });
@@ -675,6 +696,7 @@ describe("runDiscover (#4247)", () => {
       initPortfolioQueue: () => portfolioQueue,
       initPolicyDocCache: () => tempPolicyDocCacheStore(),
       initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
       fetchCandidateIssuesWithSummary,
       githubToken: "explicit-token",
       apiBaseUrl: "https://programmatic.example.com",
@@ -721,6 +743,7 @@ describe("runDiscover (#4247)", () => {
       initPortfolioQueue: () => portfolioQueue,
       initPolicyDocCache: () => tempPolicyDocCacheStore(),
       initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
       fetchCandidateIssuesWithSummary,
       rankCandidateIssuesWithSummary,
       goalSpecContentByRepo,
@@ -758,6 +781,7 @@ describe("runDiscover (#4247)", () => {
         fetchCandidateIssuesWithSummary,
         initPortfolioQueue: () => portfolioQueue,
         initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+        initRankedCandidatesStore: () => tempRankedCandidatesStore(),
       });
       expect(exitCode).toBe(0);
       expect(existsSync(cacheDbPath)).toBe(true);
@@ -789,6 +813,7 @@ describe("runDiscover (#4247)", () => {
       initPortfolioQueue: () => portfolioQueue,
       initPolicyDocCache,
       initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
       fetchCandidateIssuesWithSummary,
     });
 
@@ -826,6 +851,7 @@ describe("runDiscover (#4247)", () => {
         fetchCandidateIssuesWithSummary,
         initPortfolioQueue: () => portfolioQueue,
         initPolicyDocCache: () => tempPolicyDocCacheStore(),
+        initRankedCandidatesStore: () => tempRankedCandidatesStore(),
       });
       expect(exitCode).toBe(0);
       expect(existsSync(cacheDbPath)).toBe(true);
@@ -857,6 +883,7 @@ describe("runDiscover (#4247)", () => {
       initPortfolioQueue: () => portfolioQueue,
       initPolicyDocCache: () => tempPolicyDocCacheStore(),
       initPolicyVerdictCache,
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
       fetchCandidateIssuesWithSummary,
     });
 
@@ -869,6 +896,142 @@ describe("runDiscover (#4247)", () => {
       "",
       expect.objectContaining({ policyVerdictCache: null }),
     );
+  });
+
+  it("#4859 prerequisite: persists the full ranked-candidates snapshot after a real (non-dry-run) discover", async () => {
+    const portfolioQueue = tempQueueStore();
+    const rankedCandidatesStore = tempRankedCandidatesStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [
+        fanOutIssue({ issueNumber: 1, title: "Add retry helper" }),
+        fanOutIssue({ issueNumber: 2, title: "Fix flaky test" }),
+      ],
+      warnings: [],
+      rateLimitRemaining: null,
+      rateLimitResetAt: null,
+    }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runDiscover(["acme/widgets"], {
+      nowMs: NOW,
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => rankedCandidatesStore,
+      fetchCandidateIssuesWithSummary,
+    });
+
+    expect(exitCode).toBe(0);
+    const snapshot = rankedCandidatesStore.listRankedCandidates();
+    expect(snapshot.map((entry) => entry.issueNumber).sort()).toEqual([1, 2]);
+    expect(snapshot.every((entry) => entry.rankedAt === new Date(NOW).toISOString())).toBe(true);
+    // Every field opportunity-badge.js's badge needs must survive the round trip, not just rankScore.
+    expect(snapshot[0]).toMatchObject({
+      repoFullName: "acme/widgets",
+      title: expect.any(String),
+      rankScore: expect.any(Number),
+      laneFit: expect.any(Number),
+      freshness: expect.any(Number),
+      potential: expect.any(Number),
+      feasibility: expect.any(Number),
+      dupRisk: expect.any(Number),
+    });
+  });
+
+  it("opens and closes the default on-disk ranked-candidates store when no override is supplied", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gittensory-miner-discover-cli-rc-default-"));
+    roots.push(root);
+    const rankedCandidatesDbPath = join(root, "ranked-candidates.sqlite3");
+    const previousDbPath = process.env.GITTENSORY_MINER_RANKED_CANDIDATES_DB;
+    process.env.GITTENSORY_MINER_RANKED_CANDIDATES_DB = rankedCandidatesDbPath;
+    try {
+      const portfolioQueue = tempQueueStore();
+      const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+        issues: [fanOutIssue()],
+        warnings: [],
+        rateLimitRemaining: null,
+        rateLimitResetAt: null,
+      }));
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      // No initRankedCandidatesStore override: runDiscover opens the default on-disk store at the env path and
+      // closes it in its finally block. Reopening the same file confirms the default code path wrote the snapshot.
+      const exitCode = await runDiscover(["acme/widgets"], {
+        nowMs: NOW,
+        fetchCandidateIssuesWithSummary,
+        initPortfolioQueue: () => portfolioQueue,
+        initPolicyDocCache: () => tempPolicyDocCacheStore(),
+        initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      });
+      expect(exitCode).toBe(0);
+      expect(existsSync(rankedCandidatesDbPath)).toBe(true);
+
+      const reopened = initRankedCandidatesStore(rankedCandidatesDbPath);
+      stores.push(reopened);
+      expect(reopened.listRankedCandidates()).toHaveLength(1);
+    } finally {
+      if (previousDbPath === undefined) delete process.env.GITTENSORY_MINER_RANKED_CANDIDATES_DB;
+      else process.env.GITTENSORY_MINER_RANKED_CANDIDATES_DB = previousDbPath;
+    }
+  });
+
+  it("REGRESSION: an unopenable ranked-candidates store degrades to no snapshot instead of failing discovery", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue()],
+      warnings: [],
+      rateLimitRemaining: null,
+      rateLimitResetAt: null,
+    }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const initRankedCandidatesStore = vi.fn(() => {
+      throw new Error("disk full");
+    });
+
+    const exitCode = await runDiscover(["acme/widgets"], {
+      nowMs: NOW,
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore,
+      fetchCandidateIssuesWithSummary,
+    });
+
+    // Same discipline as the two caches above: a nice-to-have, not a requirement, so an open failure must never
+    // abort discovery's actual job (fan out, rank, enqueue).
+    expect(exitCode).toBe(0);
+    expect(initRankedCandidatesStore).toHaveBeenCalledTimes(1);
+  });
+
+  it("REGRESSION: a save failure on an otherwise-open ranked-candidates store still doesn't fail discovery", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue()],
+      warnings: [],
+      rateLimitRemaining: null,
+      rateLimitResetAt: null,
+    }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const saveRankedCandidates = vi.fn(() => {
+      throw new Error("disk full mid-write");
+    });
+
+    const exitCode = await runDiscover(["acme/widgets"], {
+      nowMs: NOW,
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => ({
+        dbPath: ":memory:",
+        saveRankedCandidates,
+        listRankedCandidates: () => [],
+        close: () => undefined,
+      }),
+      fetchCandidateIssuesWithSummary,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(saveRankedCandidates).toHaveBeenCalledTimes(1);
   });
 });
 

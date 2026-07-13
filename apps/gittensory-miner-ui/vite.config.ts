@@ -8,6 +8,7 @@ import { authPlugin } from "./vite-auth";
 import { governorApiPlugin } from "./vite-governor-api";
 import { ledgersApiPlugin } from "./vite-ledgers-api";
 import { portfolioQueueApiPlugin } from "./vite-portfolio-queue-api";
+import { rankedCandidatesApiPlugin } from "./vite-ranked-candidates-api";
 import { runStateApiPlugin } from "./vite-run-state-api";
 
 export default defineConfig({
@@ -23,6 +24,7 @@ export default defineConfig({
     portfolioQueueApiPlugin(),
     ledgersApiPlugin(),
     governorApiPlugin(),
+    rankedCandidatesApiPlugin(),
   ],
   server: {
     // Offset from gittensory-ui (5173) so both apps can run side-by-side locally.

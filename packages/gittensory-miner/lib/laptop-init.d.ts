@@ -41,6 +41,8 @@ export function checkCodexCliPresent(options?: {
   resolveCodexAuthPath?: () => string;
 }): DoctorCheck;
 
+export function resolveCodexAuthPath(env?: Record<string, string | undefined>): string;
+
 export function verifyGithubToken(options?: {
   githubToken?: string;
   fetchImpl?: typeof fetch;

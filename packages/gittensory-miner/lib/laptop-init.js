@@ -105,8 +105,9 @@ export function checkDockerPresent(options = {}) {
 
 // Codex stores credentials at `$CODEX_HOME/auth.json`, else `$HOME/.codex/auth.json` — mirrors
 // resolveCodexAuthPath in src/selfhost/ai.ts, kept local so the offline miner package never imports the
-// Worker AI module.
-function resolveCodexAuthPath(env = process.env) {
+// Worker AI module. Exported so `doctor`'s provider-credential check (status.js, #5170) resolves the SAME
+// path this file's own codex auth probe uses, instead of duplicating the location logic.
+export function resolveCodexAuthPath(env = process.env) {
   const base = env.CODEX_HOME ?? join(env.HOME ?? homedir(), ".codex");
   return join(base, "auth.json");
 }

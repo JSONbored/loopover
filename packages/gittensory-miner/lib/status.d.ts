@@ -27,6 +27,13 @@ export function runStatus(args?: string[], env?: Record<string, string | undefin
 
 export function checkConfigContent(cwd: string, readImpl?: (path: string, encoding: "utf8") => string): DoctorCheck;
 
+export function checkGitHubTokenPresent(env?: Record<string, string | undefined>): DoctorCheck;
+
+export function checkCodingAgentCredential(
+  env?: Record<string, string | undefined>,
+  resolveAuthPath?: (env: Record<string, string | undefined>) => string,
+): DoctorCheck;
+
 export function runDoctorChecks(env?: Record<string, string | undefined>, cwd?: string): DoctorCheck[];
 
 export function runDoctor(args?: string[], env?: Record<string, string | undefined>, cwd?: string): number;

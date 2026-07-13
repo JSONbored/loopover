@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { checkClaudeCliPresent, checkCodexCliPresent } from "../../packages/gittensory-miner/lib/laptop-init.js";
-import { runDoctorChecks } from "../../packages/gittensory-miner/lib/status.js";
+import {
+  checkCodingAgentCredential,
+  checkGitHubTokenPresent,
+  runDoctorChecks,
+} from "../../packages/gittensory-miner/lib/status.js";
 
 const roots: string[] = [];
 function tempRoot() {
@@ -339,5 +343,137 @@ describe("gittensory-miner doctor — coding-agent CLI checks (#4304)", () => {
       for (const check of hardFailures) expect(check.ok).toBe(false);
       for (const check of alwaysAdvisory) expect(check.ok).toBe(true);
     });
+  });
+});
+
+describe("gittensory-miner doctor — credential presence checks (#5170)", () => {
+  describe("checkGitHubTokenPresent", () => {
+    it("passes when GITHUB_TOKEN is set and non-empty", () => {
+      const check = checkGitHubTokenPresent({ GITHUB_TOKEN: "ghp_present" });
+      expect(check).toMatchObject({ name: "github-token", ok: true, detail: "GITHUB_TOKEN is set" });
+    });
+
+    it("fails with an actionable message when GITHUB_TOKEN is unset", () => {
+      const check = checkGitHubTokenPresent({});
+      expect(check.ok).toBe(false);
+      expect(check.detail).toBe("GITHUB_TOKEN is not set — attempts that push a branch or open a PR will fail");
+    });
+
+    it("fails when GITHUB_TOKEN is present but empty (the length>0 branch)", () => {
+      expect(checkGitHubTokenPresent({ GITHUB_TOKEN: "" }).ok).toBe(false);
+    });
+  });
+
+  describe("checkCodingAgentCredential", () => {
+    const readableAuth = () => {
+      const authFile = join(tempRoot(), "auth.json");
+      writeFileSync(authFile, "{}");
+      return authFile;
+    };
+    const missingAuth = () => join(tempRoot(), "does-not-exist.json");
+
+    it("skips (ok) when no provider is configured", () => {
+      const check = checkCodingAgentCredential({});
+      expect(check).toMatchObject({ name: "coding-agent-credential", ok: true });
+      expect(check.detail).toBe("no coding-agent provider configured (skipped)");
+    });
+
+    it("skips (ok) for the noop driver", () => {
+      const check = checkCodingAgentCredential({ MINER_CODING_AGENT_PROVIDER: "noop" });
+      expect(check.ok).toBe(true);
+      expect(check.detail).toBe("noop driver needs no credential");
+    });
+
+    it("claude-cli: passes when CLAUDE_CODE_OAUTH_TOKEN is set", () => {
+      const check = checkCodingAgentCredential({
+        MINER_CODING_AGENT_PROVIDER: "claude-cli",
+        CLAUDE_CODE_OAUTH_TOKEN: "tok",
+      });
+      expect(check.ok).toBe(true);
+      expect(check.detail).toBe("claude-cli: Claude credential is set");
+    });
+
+    it("claude-cli: fails with a specific remediation when no Claude credential is set", () => {
+      const check = checkCodingAgentCredential({ MINER_CODING_AGENT_PROVIDER: "claude-cli" });
+      expect(check.ok).toBe(false);
+      expect(check.detail).toBe(
+        "claude-cli: no Claude credential — set CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY)",
+      );
+    });
+
+    it("agent-sdk: accepts a raw ANTHROPIC_API_KEY as the credential (the API-key branch)", () => {
+      const check = checkCodingAgentCredential({
+        MINER_CODING_AGENT_PROVIDER: "agent-sdk",
+        ANTHROPIC_API_KEY: "sk-ant-xyz",
+      });
+      expect(check.ok).toBe(true);
+      expect(check.detail).toBe("agent-sdk: Claude credential is set");
+    });
+
+    it("agent-sdk: fails when neither Claude credential is present", () => {
+      expect(checkCodingAgentCredential({ MINER_CODING_AGENT_PROVIDER: "agent-sdk" }).ok).toBe(false);
+    });
+
+    it("codex-cli: passes when auth.json is readable", () => {
+      const authPath = readableAuth();
+      const check = checkCodingAgentCredential({ MINER_CODING_AGENT_PROVIDER: "codex-cli" }, () => authPath);
+      expect(check.ok).toBe(true);
+      expect(check.detail).toBe(`codex-cli: auth.json is readable at ${authPath}`);
+    });
+
+    it("codex-cli: fails with the `codex auth` remediation when auth.json is missing", () => {
+      const authPath = missingAuth();
+      const check = checkCodingAgentCredential({ MINER_CODING_AGENT_PROVIDER: "codex-cli" }, () => authPath);
+      expect(check.ok).toBe(false);
+      expect(check.detail).toBe(
+        `codex-cli: auth.json missing or unreadable at ${authPath} — run \`codex auth\``,
+      );
+    });
+
+    it("resolves the credential for the FIRST configured provider in a fallback chain", () => {
+      // "agent-sdk,codex-cli" resolves to agent-sdk first, so its Claude credential is what's checked.
+      const check = checkCodingAgentCredential({
+        MINER_CODING_AGENT_PROVIDER: "agent-sdk,codex-cli",
+        CLAUDE_CODE_OAUTH_TOKEN: "tok",
+      });
+      expect(check.ok).toBe(true);
+      expect(check.detail).toBe("agent-sdk: Claude credential is set");
+    });
+  });
+
+  it("runDoctorChecks now includes the github-token and coding-agent-credential checks", () => {
+    const names = runDoctorChecks({ GITTENSORY_MINER_CONFIG_DIR: tempRoot() }).map((check) => check.name);
+    expect(names).toContain("github-token");
+    expect(names).toContain("coding-agent-credential");
+  });
+
+  it("REGRESSION (#5170): claude-cli configured + CLI present but no token now FAILS doctor (the gap the CLI-present advisory left open)", () => {
+    // Before this check, checkClaudeCliPresent stayed ok:true when only the credential was missing (#5165), so
+    // doctor passed cleanly and the operator only learned of the missing token when a live attempt failed.
+    const checks = runDoctorChecks({
+      MINER_CODING_AGENT_PROVIDER: "claude-cli",
+      GITHUB_TOKEN: "ghp_present",
+      GITTENSORY_MINER_CONFIG_DIR: tempRoot(),
+    });
+    const credential = checks.find((check) => check.name === "coding-agent-credential");
+    expect(credential?.ok).toBe(false);
+  });
+
+  it("invariant: doctor never prints a credential VALUE, only presence + env-var/file names", () => {
+    const SECRET_GH = "ghp_super_secret_token_value";
+    const SECRET_CLAUDE = "oauth_super_secret_value";
+    const SECRET_ANTHROPIC = "sk-ant-super-secret-value";
+    const checks = runDoctorChecks({
+      MINER_CODING_AGENT_PROVIDER: "agent-sdk",
+      GITHUB_TOKEN: SECRET_GH,
+      CLAUDE_CODE_OAUTH_TOKEN: SECRET_CLAUDE,
+      ANTHROPIC_API_KEY: SECRET_ANTHROPIC,
+      GITTENSORY_MINER_CONFIG_DIR: tempRoot(),
+    });
+    for (const check of checks) {
+      expect(check.detail).not.toContain(SECRET_GH);
+      expect(check.detail).not.toContain(SECRET_CLAUDE);
+      expect(check.detail).not.toContain(SECRET_ANTHROPIC);
+    }
   });
 });

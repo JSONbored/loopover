@@ -100,7 +100,9 @@ describe("gittensory-miner status/doctor (#2288)", () => {
 
   it("doctor passes on a healthy setup (writable state dir, initialized sqlite, optional Docker)", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const env = { GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state") };
+    // A healthy setup now also requires GITHUB_TOKEN (#5170); no coding-agent provider is configured, so the
+    // provider-credential check is a clean skip.
+    const env = { GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state"), GITHUB_TOKEN: "ghp_present" };
     initLaptopState(env);
     const cwd = tempRoot(); // a config-less working dir ⇒ config-content check is a clean pass
     const checks = runDoctorChecks(env, cwd);
@@ -114,6 +116,8 @@ describe("gittensory-miner status/doctor (#2288)", () => {
       "docker-present",
       "claude-cli-present",
       "codex-cli-present",
+      "github-token",
+      "coding-agent-credential",
       "config-content",
       "store-integrity:event-ledger",
       "store-integrity:governor-ledger",
@@ -238,7 +242,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
 
   it("runDoctor supports --json output", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const env = { GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state") };
+    const env = { GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state"), GITHUB_TOKEN: "ghp_present" };
     initLaptopState(env);
     expect(runDoctor(["--json"], env)).toBe(0);
     expect(JSON.parse(String(log.mock.calls[0]?.[0])).checks).toBeDefined();

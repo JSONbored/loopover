@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,7 @@ import {
   checkDockerPresent,
   checkLaptopStateSqlite,
   findExecutableOnPath,
+  resolveCodexAuthPath,
 } from "./laptop-init.js";
 import { resolveMinerVersion } from "./version.js";
 import { checkStoreIntegrity, describeError } from "./store-maintenance.js";
@@ -329,6 +330,74 @@ export function checkConfigContent(cwd, readImpl = readFileSync) {
     : { name: "config-content", ok: false, detail: `${configPath}: ${warnings.join("; ")}` };
 }
 
+function nonEmptyEnv(value) {
+  return typeof value === "string" && value.length > 0;
+}
+
+/** `GITHUB_TOKEN` presence (#5170). A purely offline string check — `doctor` never calls GitHub — but a missing
+ *  token fails every real attempt the moment it tries to push a branch or open a PR, so surface it up front
+ *  rather than mid-run. Reports presence only; the token value itself is never included in the detail. */
+export function checkGitHubTokenPresent(env = process.env) {
+  const present = nonEmptyEnv(env.GITHUB_TOKEN);
+  return {
+    name: "github-token",
+    ok: present,
+    detail: present
+      ? "GITHUB_TOKEN is set"
+      : "GITHUB_TOKEN is not set — attempts that push a branch or open a PR will fail",
+  };
+}
+
+/** Credential presence for the CONFIGURED coding-agent provider (#5170). Distinct from the CLI-present checks,
+ *  which by design keep `ok: true` when only the credential is missing (#5165): this FAILS `doctor` when the
+ *  resolved provider's credential is absent, so an operator learns before an attempt fails partway through.
+ *  Fully offline — an env-var string check for the Claude backends, a file-readability check for codex — and it
+ *  never prints the credential value, only the env-var names / file path. `resolveAuthPath` is injectable for
+ *  tests, mirroring `checkCodexCliPresent`. */
+export function checkCodingAgentCredential(env = process.env, resolveAuthPath = resolveCodexAuthPath) {
+  const provider = resolveFirstConfiguredCodingAgentDriverName(env) ?? null;
+  if (provider === null || provider === "noop") {
+    return {
+      name: "coding-agent-credential",
+      ok: true,
+      detail:
+        provider === "noop"
+          ? "noop driver needs no credential"
+          : "no coding-agent provider configured (skipped)",
+    };
+  }
+  if (provider === "claude-cli" || provider === "agent-sdk") {
+    // Both run the Claude backend (a `claude` subprocess vs the in-process Agent SDK) off the same subscription
+    // OAuth token the rest of the tree reads (CLAUDE_CODE_OAUTH_TOKEN; see createClaudeCodeAi in
+    // src/selfhost/ai.ts). The SDK additionally accepts a raw ANTHROPIC_API_KEY, so either satisfies the credential.
+    const present = nonEmptyEnv(env.CLAUDE_CODE_OAUTH_TOKEN) || nonEmptyEnv(env.ANTHROPIC_API_KEY);
+    return {
+      name: "coding-agent-credential",
+      ok: present,
+      detail: present
+        ? `${provider}: Claude credential is set`
+        : `${provider}: no Claude credential — set CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY)`,
+    };
+  }
+  // codex-cli: the only remaining configured provider — its credential is a readable auth.json, the same
+  // read-only condition checkCodexCliPresent probes (reusing resolveCodexAuthPath so the location never drifts).
+  const authPath = resolveAuthPath(env);
+  let readable = false;
+  try {
+    accessSync(authPath, constants.R_OK);
+    readable = true;
+  } catch {
+    // missing or unreadable — codex would fail for lack of credentials at attempt time.
+  }
+  return {
+    name: "coding-agent-credential",
+    ok: readable,
+    detail: readable
+      ? `codex-cli: auth.json is readable at ${authPath}`
+      : `codex-cli: auth.json missing or unreadable at ${authPath} — run \`codex auth\``,
+  };
+}
+
 /** Run the doctor checks. Returns an array of { name, ok, detail }; only writes a transient probe in the state dir,
  *  never touches the network. */
 export function runDoctorChecks(env = process.env, cwd = process.cwd()) {
@@ -352,6 +421,8 @@ export function runDoctorChecks(env = process.env, cwd = process.cwd()) {
     checkDockerPresent(),
     checkClaudeCliPresent({ env }),
     checkCodexCliPresent({ env }),
+    checkGitHubTokenPresent(env),
+    checkCodingAgentCredential(env),
     checkConfigContent(cwd),
     ...storeIntegrityChecks(env),
   ];

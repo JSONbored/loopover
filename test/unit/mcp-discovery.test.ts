@@ -66,7 +66,7 @@ describe("MCP workspace root boundaries", () => {
 
     try {
       await rootedClient.connect(rootedTransport);
-      const result = await rootedClient.callTool({ name: "gittensory_local_status_structured", arguments: { cwd: privateRepo } });
+      const result = await rootedClient.callTool({ name: "loopover_local_status_structured", arguments: { cwd: privateRepo } });
       expect(result.isError).toBeFalsy();
       expect(result.structuredContent).toMatchObject({
         git: { error: "Selected workspace is outside the MCP roots exposed by the client." },

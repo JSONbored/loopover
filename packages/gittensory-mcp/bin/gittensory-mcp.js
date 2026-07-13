@@ -427,8 +427,6 @@ const agentRunIdShape = {
 
 // Single source of truth for stdio tool name + one-line description (#2233).
 // Registration and `gittensory-mcp tools` both read this list.
-// #4775: these are the canonical loopover_-prefixed primary names. Each also gets a thin,
-// fully-working gittensory_-prefixed deprecated alias — see ALL_STDIO_TOOL_DESCRIPTORS below.
 const STDIO_TOOL_DESCRIPTORS = [
   {
     name: "loopover_get_repo_context",
@@ -582,25 +580,8 @@ const STDIO_TOOL_DESCRIPTORS = [
   },
 ];
 
-// #4775: derive the deprecated gittensory_-prefixed alias name for a loopover_-prefixed primary name.
-function legacyAliasName(name) {
-  return name.replace(/^loopover_/, "gittensory_");
-}
-
-// #4775: every primary loopover_ tool plus its thin gittensory_ deprecated alias -- single source
-// of truth for stdio tool name + description, aliases included. `gittensory-mcp tools` and
-// `stdioToolDescription` both read this derived list so the alias count/descriptions stay in sync
-// with STDIO_TOOL_DESCRIPTORS automatically.
-const ALL_STDIO_TOOL_DESCRIPTORS = STDIO_TOOL_DESCRIPTORS.flatMap(({ name, description }) => [
-  { name, description },
-  {
-    name: legacyAliasName(name),
-    description: `${description} Deprecated: use \`${name}\` instead -- this alias will be removed in a future minor release.`,
-  },
-]);
-
 function stdioToolDescription(name) {
-  const tool = ALL_STDIO_TOOL_DESCRIPTORS.find((entry) => entry.name === name);
+  const tool = STDIO_TOOL_DESCRIPTORS.find((entry) => entry.name === name);
   if (!tool) throw new Error(`Unknown stdio tool descriptor: ${name}`);
   return tool.description;
 }
@@ -615,18 +596,13 @@ const server = new McpServer({
   version: packageVersion,
 });
 
-// #4775: register a tool under its new loopover_ primary name, plus a thin, fully-working
-// gittensory_ alias with a deprecation notice appended to its description. Both names share the
-// exact same handler function reference -- identical behavior, no duplicated logic. Safe because
-// McpServer#registerTool keys tools purely by name string (no shared mutable state per name) and
-// no handler in this file reads back its own registered tool name.
-function registerToolWithLegacyAlias(name, config, handler) {
+// #4777: register a stdio tool under its loopover_ name. Thin wrapper kept so all 37 call sites
+// stay uniform with the rest of this file's registration style.
+function registerStdioTool(name, config, handler) {
   server.registerTool(name, config, handler);
-  const legacyName = legacyAliasName(name);
-  server.registerTool(legacyName, { ...config, description: stdioToolDescription(legacyName) }, handler);
 }
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_get_repo_context",
   {
     description: stdioToolDescription("loopover_get_repo_context"),
@@ -638,7 +614,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_get_maintainer_noise",
   {
     description: stdioToolDescription("loopover_get_maintainer_noise"),
@@ -650,7 +626,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_preflight_pr",
   {
     description: stdioToolDescription("loopover_preflight_pr"),
@@ -659,7 +635,7 @@ registerToolWithLegacyAlias(
   async (input) => toolResult("Gittensory PR preflight.", await apiPost("/v1/preflight/pr", input)),
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_validate_linked_issue",
   {
     description: stdioToolDescription("loopover_validate_linked_issue"),
@@ -672,7 +648,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_check_before_start",
   {
     description: stdioToolDescription("loopover_check_before_start"),
@@ -689,7 +665,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_find_opportunities",
   {
     description: stdioToolDescription("loopover_find_opportunities"),
@@ -706,7 +682,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_retrieve_issue_context",
   {
     description: stdioToolDescription("loopover_retrieve_issue_context"),
@@ -725,7 +701,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_lint_pr_text",
   {
     description: stdioToolDescription("loopover_lint_pr_text"),
@@ -734,7 +710,7 @@ registerToolWithLegacyAlias(
   async (input) => toolResult("Gittensory PR-text lint.", await apiPost("/v1/lint/pr-text", input)),
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_validate_config",
   {
     description: stdioToolDescription("loopover_validate_config"),
@@ -743,7 +719,7 @@ registerToolWithLegacyAlias(
   async (input) => toolResult("Gittensory manifest validation.", await apiPost("/v1/validate/focus-manifest", input)),
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_check_slop_risk",
   {
     description: stdioToolDescription("loopover_check_slop_risk"),
@@ -752,7 +728,7 @@ registerToolWithLegacyAlias(
   async (input) => toolResult("Gittensory slop-risk self-check.", await apiPost("/v1/lint/slop-risk", input)),
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_check_issue_slop",
   {
     description: stdioToolDescription("loopover_check_issue_slop"),
@@ -761,7 +737,7 @@ registerToolWithLegacyAlias(
   async (input) => toolResult("Gittensory issue-slop self-check.", await apiPost("/v1/lint/issue-slop", input)),
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_preflight_local_diff",
   {
     description: stdioToolDescription("loopover_preflight_local_diff"),
@@ -788,7 +764,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_get_registry_changes",
   {
     description: stdioToolDescription("loopover_get_registry_changes"),
@@ -797,7 +773,7 @@ registerToolWithLegacyAlias(
   async () => toolResult("Gittensory registry changes.", await apiGet("/v1/registry/changes")),
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_get_upstream_drift",
   {
     description: stdioToolDescription("loopover_get_upstream_drift"),
@@ -806,7 +782,7 @@ registerToolWithLegacyAlias(
   async () => toolResult("Gittensory upstream drift status.", await apiGet("/v1/upstream/drift")),
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_get_label_audit",
   {
     description: stdioToolDescription("loopover_get_label_audit"),
@@ -823,7 +799,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_get_burden_forecast",
   {
     description: stdioToolDescription("loopover_get_burden_forecast"),
@@ -841,7 +817,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_preview_local_pr_score",
   {
     description: stdioToolDescription("loopover_preview_local_pr_score"),
@@ -850,7 +826,7 @@ registerToolWithLegacyAlias(
   async (input) => toolResult("Gittensory private local PR scoring preview.", await previewLocalScore(await withClientWorkspaceRoots(input))),
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_explain_score_breakdown",
   {
     description: stdioToolDescription("loopover_explain_score_breakdown"),
@@ -898,7 +874,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_get_decision_pack",
   {
     description: stdioToolDescription("loopover_get_decision_pack"),
@@ -910,7 +886,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_explain_repo_decision",
   {
     description: stdioToolDescription("loopover_explain_repo_decision"),
@@ -922,7 +898,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_compare_pr_variants",
   {
     description: stdioToolDescription("loopover_compare_pr_variants"),
@@ -937,7 +913,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_local_status",
   {
     description: stdioToolDescription("loopover_local_status"),
@@ -973,7 +949,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_preflight_current_branch",
   {
     description: stdioToolDescription("loopover_preflight_current_branch"),
@@ -990,7 +966,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_review_pr_before_push",
   {
     description: stdioToolDescription("loopover_review_pr_before_push"),
@@ -999,7 +975,7 @@ registerToolWithLegacyAlias(
   async (input) => toolResult("Gittensory pre-PR review.", await reviewLocalPr(await withClientWorkspaceRoots(input))),
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_preview_current_branch_score",
   {
     description: stdioToolDescription("loopover_preview_current_branch_score"),
@@ -1017,7 +993,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_rank_local_next_actions",
   {
     description: stdioToolDescription("loopover_rank_local_next_actions"),
@@ -1029,7 +1005,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_explain_local_blockers",
   {
     description: stdioToolDescription("loopover_explain_local_blockers"),
@@ -1049,7 +1025,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_remediation_plan",
   {
     description: stdioToolDescription("loopover_remediation_plan"),
@@ -1063,7 +1039,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_prepare_pr_packet",
   {
     description: stdioToolDescription("loopover_prepare_pr_packet"),
@@ -1075,7 +1051,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_compare_local_variants",
   {
     description: stdioToolDescription("loopover_compare_local_variants"),
@@ -1102,7 +1078,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_agent_plan_next_work",
   {
     description: stdioToolDescription("loopover_agent_plan_next_work"),
@@ -1111,7 +1087,7 @@ registerToolWithLegacyAlias(
   async (input) => toolResult(`Gittensory base-agent plan for ${input.login}.`, await apiPost("/v1/agent/plan-next-work", input)),
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_agent_start_run",
   {
     description: stdioToolDescription("loopover_agent_start_run"),
@@ -1133,7 +1109,7 @@ registerToolWithLegacyAlias(
     ),
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_agent_get_run",
   {
     description: stdioToolDescription("loopover_agent_get_run"),
@@ -1142,7 +1118,7 @@ registerToolWithLegacyAlias(
   async ({ runId }) => toolResult(`Gittensory base-agent run ${runId}.`, await apiGet(`/v1/agent/runs/${encodeURIComponent(runId)}`)),
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_agent_explain_next_action",
   {
     description: stdioToolDescription("loopover_agent_explain_next_action"),
@@ -1157,7 +1133,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_agent_prepare_pr_packet",
   {
     description: stdioToolDescription("loopover_agent_prepare_pr_packet"),
@@ -1229,7 +1205,7 @@ const agentPlanOutputSchema = {
 // Attach outputSchema to key tools via registerTool with zod output schemas.
 // All other tools continue to return unschematized text+structured content.
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_local_status_structured",
   {
     description: stdioToolDescription("loopover_local_status_structured"),
@@ -1273,7 +1249,7 @@ registerToolWithLegacyAlias(
   },
 );
 
-registerToolWithLegacyAlias(
+registerStdioTool(
   "loopover_feasibility_gate",
   {
     description: stdioToolDescription("loopover_feasibility_gate"),
@@ -2411,7 +2387,7 @@ function printVersion(options) {
 }
 
 function toolsCommand(options) {
-  const tools = ALL_STDIO_TOOL_DESCRIPTORS.map(({ name, description }) => ({ name, description }));
+  const tools = STDIO_TOOL_DESCRIPTORS.map(({ name, description }) => ({ name, description }));
   const payload = { count: tools.length, tools };
   if (options.json) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);

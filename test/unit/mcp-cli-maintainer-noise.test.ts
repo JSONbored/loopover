@@ -46,18 +46,18 @@ async function disconnect() {
   if (configDir) rmSync(configDir, { recursive: true, force: true });
 }
 
-describe("gittensory_get_maintainer_noise stdio proxy", () => {
+describe("loopover_get_maintainer_noise stdio proxy", () => {
   beforeEach(connect);
   afterEach(disconnect);
 
   it("registers the tool in the stdio server tool list", async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((tool) => tool.name)).toContain("gittensory_get_maintainer_noise");
+    expect(tools.map((tool) => tool.name)).toContain("loopover_get_maintainer_noise");
   });
 
   it("proxies the call to /maintainer-noise via apiGet and returns the payload", async () => {
     const result = await client.callTool({
-      name: "gittensory_get_maintainer_noise",
+      name: "loopover_get_maintainer_noise",
       arguments: { owner: "owner", repo: "repo" },
     });
     expect(capturedRequests.length).toBe(1);
@@ -76,7 +76,7 @@ describe("gittensory_get_maintainer_noise stdio proxy", () => {
     const payload = JSON.parse(run(["tools", "--json"])) as {
       tools: Array<{ name: string; description: string }>;
     };
-    const tool = payload.tools.find((entry) => entry.name === "gittensory_get_maintainer_noise");
+    const tool = payload.tools.find((entry) => entry.name === "loopover_get_maintainer_noise");
     expect(tool?.description).toMatch(/maintainer queue-noise triage report/i);
     expect(tool?.description.trim().length).toBeGreaterThan(0);
   });

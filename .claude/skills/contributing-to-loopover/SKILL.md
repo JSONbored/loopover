@@ -106,9 +106,7 @@ Use that generator instead of hand-writing config (**Codex uses TOML, Claude/Cur
 pasted JSON block will not work in Codex). You'll use these tools in Phases 1 and 6 (inputs in
 `reference.md`): `loopover_check_before_start`, `loopover_validate_linked_issue`,
 `loopover_check_slop_risk`, `loopover_lint_pr_text`, `gittensory_predict_gate` — all metadata-only
-(no source upload, no secrets). The first four are the new `loopover_`-prefixed primary names (#4775);
-their old `gittensory_`-prefixed names still work, unchanged, as deprecated aliases for one full
-minor-version deprecation cycle.
+(no source upload, no secrets).
 
 ---
 

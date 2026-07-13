@@ -54,19 +54,19 @@ async function disconnect() {
   if (configDir) rmSync(configDir, { recursive: true, force: true });
 }
 
-describe("gittensory_retrieve_issue_context stdio proxy", () => {
+describe("loopover_retrieve_issue_context stdio proxy", () => {
   beforeEach(connect);
   afterEach(disconnect);
 
   it("registers the tool in the stdio server's tool list", async () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name);
-    expect(names).toContain("gittensory_retrieve_issue_context");
+    expect(names).toContain("loopover_retrieve_issue_context");
   });
 
   it("proxies the call to /v1/issue-rag/retrieve via apiPost", async () => {
     await client.callTool({
-      name: "gittensory_retrieve_issue_context",
+      name: "loopover_retrieve_issue_context",
       arguments: {
         owner: "JSONbored",
         repo: "gittensory",
@@ -97,7 +97,7 @@ describe("gittensory_retrieve_issue_context stdio proxy", () => {
 
   it("returns metadata-only retrieval telemetry", async () => {
     const result = await client.callTool({
-      name: "gittensory_retrieve_issue_context",
+      name: "loopover_retrieve_issue_context",
       arguments: {
         owner: "JSONbored",
         repo: "gittensory",

@@ -32,20 +32,20 @@ async function disconnect() {
   if (configDir) rmSync(configDir, { recursive: true, force: true });
 }
 
-describe("gittensory_feasibility_gate stdio tool (#4270)", () => {
+describe("loopover_feasibility_gate stdio tool (#4270)", () => {
   beforeEach(connect);
   afterEach(disconnect);
 
   it("registers the tool in the stdio server tool list", async () => {
     const { tools } = await client.listTools();
-    const tool = tools.find((t) => t.name === "gittensory_feasibility_gate");
+    const tool = tools.find((t) => t.name === "loopover_feasibility_gate");
     expect(tool).toBeDefined();
     expect(tool?.description).toContain("No API round-trip");
   });
 
   it("returns a go verdict for a clean, unclaimed, low-risk issue — with no network call", async () => {
     const result = await client.callTool({
-      name: "gittensory_feasibility_gate",
+      name: "loopover_feasibility_gate",
       arguments: { claimStatus: "unclaimed", duplicateClusterRisk: "none", issueStatus: "ready" },
     });
     expect(result.isError).toBeFalsy();
@@ -60,7 +60,7 @@ describe("gittensory_feasibility_gate stdio tool (#4270)", () => {
 
   it("returns an avoid verdict when the issue is already solved", async () => {
     const result = await client.callTool({
-      name: "gittensory_feasibility_gate",
+      name: "loopover_feasibility_gate",
       arguments: { claimStatus: "solved", duplicateClusterRisk: "none", issueStatus: "ready" },
     });
     expect(result.isError).toBeFalsy();
@@ -71,7 +71,7 @@ describe("gittensory_feasibility_gate stdio tool (#4270)", () => {
 
   it("returns a raise verdict when found is explicitly false", async () => {
     const result = await client.callTool({
-      name: "gittensory_feasibility_gate",
+      name: "loopover_feasibility_gate",
       arguments: { claimStatus: "unclaimed", duplicateClusterRisk: "none", issueStatus: "ready", found: false },
     });
     expect(result.isError).toBeFalsy();
@@ -82,7 +82,7 @@ describe("gittensory_feasibility_gate stdio tool (#4270)", () => {
 
   it("rejects an invalid duplicateClusterRisk enum value", async () => {
     const result = await client.callTool({
-      name: "gittensory_feasibility_gate",
+      name: "loopover_feasibility_gate",
       arguments: { claimStatus: "unclaimed", duplicateClusterRisk: "extreme", issueStatus: "ready" },
     });
     expect(result.isError).toBe(true);
@@ -90,7 +90,7 @@ describe("gittensory_feasibility_gate stdio tool (#4270)", () => {
 
   it("never leaks private financial terminology in the response", async () => {
     const result = await client.callTool({
-      name: "gittensory_feasibility_gate",
+      name: "loopover_feasibility_gate",
       arguments: { claimStatus: "claimed", duplicateClusterRisk: "high", issueStatus: "duplicate" },
     });
     expect(result.isError).toBeFalsy();
@@ -99,7 +99,7 @@ describe("gittensory_feasibility_gate stdio tool (#4270)", () => {
   });
 });
 
-describe("gittensory_feasibility_gate: local claim-ledger sourcing (#5157)", () => {
+describe("loopover_feasibility_gate: local claim-ledger sourcing (#5157)", () => {
   let ledgerRoot: string;
   let ledgerDbPath: string;
   let ledgerClient: Client;
@@ -134,7 +134,7 @@ describe("gittensory_feasibility_gate: local claim-ledger sourcing (#5157)", () 
     await connectWithLedgerDb(ledgerDbPath);
 
     const result = await ledgerClient.callTool({
-      name: "gittensory_feasibility_gate",
+      name: "loopover_feasibility_gate",
       arguments: {
         claimStatus: "unclaimed", // caller-supplied, contradicts the real ledger state
         duplicateClusterRisk: "none",
@@ -158,7 +158,7 @@ describe("gittensory_feasibility_gate: local claim-ledger sourcing (#5157)", () 
     await connectWithLedgerDb(ledgerDbPath);
 
     const result = await ledgerClient.callTool({
-      name: "gittensory_feasibility_gate",
+      name: "loopover_feasibility_gate",
       arguments: {
         claimStatus: "solved", // caller-supplied, would normally trigger an avoid verdict
         duplicateClusterRisk: "none",
@@ -176,7 +176,7 @@ describe("gittensory_feasibility_gate: local claim-ledger sourcing (#5157)", () 
     await connectWithLedgerDb(join(ledgerRoot, "does-not-exist.sqlite3"));
 
     const result = await ledgerClient.callTool({
-      name: "gittensory_feasibility_gate",
+      name: "loopover_feasibility_gate",
       arguments: {
         claimStatus: "solved",
         duplicateClusterRisk: "none",
@@ -203,7 +203,7 @@ describe("gittensory_feasibility_gate: local claim-ledger sourcing (#5157)", () 
     await connectWithLedgerDb(ledgerDbPath);
 
     const result = await ledgerClient.callTool({
-      name: "gittensory_feasibility_gate",
+      name: "loopover_feasibility_gate",
       arguments: {
         claimStatus: "solved",
         duplicateClusterRisk: "none",
@@ -229,7 +229,7 @@ describe("gittensory_feasibility_gate: local claim-ledger sourcing (#5157)", () 
     await connectWithLedgerDb(ledgerDbPath);
 
     const result = await ledgerClient.callTool({
-      name: "gittensory_feasibility_gate",
+      name: "loopover_feasibility_gate",
       arguments: {
         claimStatus: "unclaimed",
         duplicateClusterRisk: "none",
@@ -256,7 +256,7 @@ describe("gittensory_feasibility_gate: local claim-ledger sourcing (#5157)", () 
     await connectWithLedgerDb(ledgerDbPath);
 
     const result = await ledgerClient.callTool({
-      name: "gittensory_feasibility_gate",
+      name: "loopover_feasibility_gate",
       arguments: { claimStatus: "solved", duplicateClusterRisk: "none", issueStatus: "ready" },
     });
     expect(result.isError).toBeFalsy();
@@ -273,7 +273,7 @@ describe("gittensory_feasibility_gate: local claim-ledger sourcing (#5157)", () 
     await connectWithLedgerDb(ledgerDbPath);
 
     const result = await ledgerClient.callTool({
-      name: "gittensory_feasibility_gate",
+      name: "loopover_feasibility_gate",
       arguments: {
         claimStatus: "unclaimed",
         duplicateClusterRisk: "none",
@@ -295,7 +295,7 @@ describe("gittensory_feasibility_gate: local claim-ledger sourcing (#5157)", () 
   it("tool description documents the ledger-sourcing behavior and advisory-only guarantee", async () => {
     await connectWithLedgerDb(undefined);
     const { tools } = await ledgerClient.listTools();
-    const tool = tools.find((t) => t.name === "gittensory_feasibility_gate");
+    const tool = tools.find((t) => t.name === "loopover_feasibility_gate");
     expect(tool?.description).toContain("Advisory-only");
     expect(tool?.description).toContain("local gittensory-miner install's claim ledger");
   });

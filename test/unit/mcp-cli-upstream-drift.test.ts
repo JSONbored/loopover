@@ -46,17 +46,17 @@ async function disconnect() {
   if (configDir) rmSync(configDir, { recursive: true, force: true });
 }
 
-describe("gittensory_get_upstream_drift stdio proxy", () => {
+describe("loopover_get_upstream_drift stdio proxy", () => {
   beforeEach(connect);
   afterEach(disconnect);
 
   it("registers the tool in the stdio server tool list", async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).toContain("gittensory_get_upstream_drift");
+    expect(tools.map((t) => t.name)).toContain("loopover_get_upstream_drift");
   });
 
   it("proxies the call to /v1/upstream/drift via apiGet and returns the payload", async () => {
-    const result = await client.callTool({ name: "gittensory_get_upstream_drift", arguments: {} });
+    const result = await client.callTool({ name: "loopover_get_upstream_drift", arguments: {} });
     expect(capturedRequests.length).toBe(1);
     const captured = capturedRequests[0]!;
     expect(captured.url).toContain("/v1/upstream/drift");

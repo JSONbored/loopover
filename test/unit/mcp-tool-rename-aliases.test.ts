@@ -1,9 +1,7 @@
-// #4775: MCP tool rename (gittensory_ -> loopover_). Every stdio tool now has a primary
-// loopover_-prefixed name plus a thin, fully-working gittensory_-prefixed deprecated alias that
-// shares the exact same handler. This suite verifies the acceptance criteria literally: calling a
-// representative sample of tools by BOTH the old and new name produces IDENTICAL behavior (same
-// result shape, same content), every legacy alias's description says it's deprecated and names its
-// replacement, no primary loopover_ tool's description carries a deprecation notice, and the CLI's
+// #4777: retire every gittensory_-prefixed deprecated alias that #4775 left in place for one
+// minor-version deprecation cycle. This suite pins the post-retirement shape: exactly the 37
+// canonical loopover_-prefixed stdio tools are registered, none of their old gittensory_-prefixed
+// alias names resolve anymore, no description carries a stale deprecation notice, and the CLI's
 // `tools --json` listing stays in lockstep with what the live server actually registers.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -41,88 +39,61 @@ async function disconnect() {
   if (configDir) rmSync(configDir, { recursive: true, force: true });
 }
 
-describe("MCP tool rename (#4775) — discovery invariants", () => {
+describe("MCP legacy alias retirement (#4777) — discovery invariants", () => {
   beforeEach(async () => {
     const apiUrl = await startFixtureServer();
     await connect(apiUrl);
   });
   afterEach(disconnect);
 
-  it("lists exactly 74 tools: 37 loopover_ primary names plus their 37 gittensory_ aliases", async () => {
+  it("lists exactly 37 loopover_ tools and zero gittensory_-prefixed aliases", async () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name);
     const primary = names.filter((n) => n.startsWith("loopover_"));
     const legacy = names.filter((n) => n.startsWith("gittensory_"));
     expect(primary.length).toBe(37);
-    expect(legacy.length).toBe(37);
-    expect(names.length).toBe(74);
-    // Every legacy alias has a corresponding primary name, and vice versa.
-    const primarySuffixes = new Set(primary.map((n) => n.slice("loopover_".length)));
-    const legacySuffixes = new Set(legacy.map((n) => n.slice("gittensory_".length)));
-    expect([...legacySuffixes].sort()).toEqual([...primarySuffixes].sort());
+    expect(legacy.length).toBe(0);
+    expect(names.length).toBe(37);
   });
 
-  it("every gittensory_ alias's description is marked deprecated and names its loopover_ replacement", async () => {
+  it("no loopover_ tool's description carries a stale deprecation notice", async () => {
     const { tools } = await client.listTools();
-    for (const tool of tools.filter((t) => t.name.startsWith("gittensory_"))) {
-      const replacement = `loopover_${tool.name.slice("gittensory_".length)}`;
-      expect(tool.description ?? "", `${tool.name} description`).toMatch(/deprecated/i);
-      expect(tool.description ?? "", `${tool.name} description should name ${replacement}`).toContain(replacement);
-    }
-  });
-
-  it("no loopover_ primary tool's description carries a deprecation notice", async () => {
-    const { tools } = await client.listTools();
-    for (const tool of tools.filter((t) => t.name.startsWith("loopover_"))) {
+    for (const tool of tools) {
       expect(tool.description ?? "", `${tool.name} description`).not.toMatch(/deprecated/i);
     }
   });
 
-  it("`gittensory-mcp tools --json` reports the same 74-tool count the live server registers", async () => {
+  it("`gittensory-mcp tools --json` reports the same 37-tool count the live server registers", async () => {
     const { tools } = await client.listTools();
     const payload = JSON.parse(run(["tools", "--json"])) as { count: number; tools: Array<{ name: string }> };
     expect(payload.count).toBe(tools.length);
-    expect(payload.count).toBe(74);
+    expect(payload.count).toBe(37);
     expect([...payload.tools.map((t) => t.name)].sort()).toEqual([...tools.map((t) => t.name)].sort());
   });
 });
 
-describe("MCP tool rename (#4775) — old/new behavioral identity", () => {
+describe("MCP legacy alias retirement (#4777) — old names no longer resolve", () => {
   beforeEach(async () => {
     const apiUrl = await startFixtureServer();
     await connect(apiUrl);
   });
   afterEach(disconnect);
 
-  // Representative sample spanning distinct tool categories: an authenticated API GET proxy
-  // (repo intelligence), a source-free API POST self-check (slop risk), a no-argument API GET
-  // (upstream drift), an API GET with a path parameter (agent run), pure local logic with no
-  // network call (feasibility gate), and a tool with a validated Zod outputSchema (structured
-  // local status).
-  const cases: Array<{ label: string; newName: string; oldName: string; args: Record<string, unknown> }> = [
-    { label: "repo intelligence (API GET proxy)", newName: "loopover_get_repo_context", oldName: "gittensory_get_repo_context", args: { owner: "owner", repo: "repo" } },
-    { label: "slop-risk self-check (API POST, source-free)", newName: "loopover_check_slop_risk", oldName: "gittensory_check_slop_risk", args: { description: "fix a bug", changedFiles: [{ path: "src/x.ts", additions: 3, deletions: 1 }] } },
-    { label: "upstream drift (no-argument API GET)", newName: "loopover_get_upstream_drift", oldName: "gittensory_get_upstream_drift", args: {} },
-    { label: "agent run lookup (API GET with path param)", newName: "loopover_agent_get_run", oldName: "gittensory_agent_get_run", args: { runId: "run-1" } },
-    { label: "feasibility gate (pure local logic, no network)", newName: "loopover_feasibility_gate", oldName: "gittensory_feasibility_gate", args: { claimStatus: "unclaimed", duplicateClusterRisk: "none", issueStatus: "ready" } },
-    { label: "structured local status (validated outputSchema)", newName: "loopover_local_status_structured", oldName: "gittensory_local_status_structured", args: {} },
+  // Representative sample spanning distinct tool categories (mirrors the pre-retirement suite's
+  // coverage): an authenticated API GET proxy, a source-free API POST self-check, a no-argument
+  // API GET, an API GET with a path parameter, and pure local logic with no network call.
+  const retiredNames = [
+    "gittensory_get_repo_context",
+    "gittensory_check_slop_risk",
+    "gittensory_get_upstream_drift",
+    "gittensory_agent_get_run",
+    "gittensory_feasibility_gate",
+    "gittensory_local_status_structured",
+    "gittensory_local_status",
   ];
 
-  it.each(cases)("$label: calling by the old name and the new name produces identical content", async ({ newName, oldName, args }) => {
-    const viaNew = await client.callTool({ name: newName, arguments: args });
-    const viaOld = await client.callTool({ name: oldName, arguments: args });
-
-    expect(viaOld.isError).toBe(viaNew.isError);
-    expect(viaOld.content).toEqual(viaNew.content);
-    if (viaNew.structuredContent !== undefined || viaOld.structuredContent !== undefined) {
-      expect(viaOld.structuredContent).toEqual(viaNew.structuredContent);
-    }
-  });
-
-  it("local status (no outputSchema variant) also behaves identically under both names", async () => {
-    const viaNew = await client.callTool({ name: "loopover_local_status", arguments: {} });
-    const viaOld = await client.callTool({ name: "gittensory_local_status", arguments: {} });
-    expect(viaOld.isError).toBe(viaNew.isError);
-    expect(viaOld.content).toEqual(viaNew.content);
+  it.each(retiredNames)("calling the retired alias %s errors instead of falling through to the handler", async (oldName) => {
+    const result = await client.callTool({ name: oldName, arguments: {} });
+    expect(result.isError).toBe(true);
   });
 });

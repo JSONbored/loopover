@@ -46,17 +46,17 @@ async function disconnect() {
   if (configDir) rmSync(configDir, { recursive: true, force: true });
 }
 
-describe("gittensory_get_burden_forecast stdio proxy", () => {
+describe("loopover_get_burden_forecast stdio proxy", () => {
   beforeEach(connect);
   afterEach(disconnect);
 
   it("registers the tool in the stdio server tool list", async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).toContain("gittensory_get_burden_forecast");
+    expect(tools.map((t) => t.name)).toContain("loopover_get_burden_forecast");
   });
 
   it("proxies owner/repo to /v1/repos/:owner/:repo/intelligence via apiGet and returns the burden forecast", async () => {
-    const result = await client.callTool({ name: "gittensory_get_burden_forecast", arguments: { owner: "owner", repo: "repo" } });
+    const result = await client.callTool({ name: "loopover_get_burden_forecast", arguments: { owner: "owner", repo: "repo" } });
     expect(capturedRequests.length).toBe(1);
     const captured = capturedRequests[0]!;
     expect(captured.url).toContain("/v1/repos/owner/repo/intelligence");

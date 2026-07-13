@@ -54,19 +54,19 @@ async function disconnect() {
   if (configDir) rmSync(configDir, { recursive: true, force: true });
 }
 
-describe("gittensory_find_opportunities stdio proxy", () => {
+describe("loopover_find_opportunities stdio proxy", () => {
   beforeEach(connect);
   afterEach(disconnect);
 
   it("registers the tool in the stdio server's tool list", async () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name);
-    expect(names).toContain("gittensory_find_opportunities");
+    expect(names).toContain("loopover_find_opportunities");
   });
 
   it("proxies the call to /v1/opportunities/find via apiPost", async () => {
     await client.callTool({
-      name: "gittensory_find_opportunities",
+      name: "loopover_find_opportunities",
       arguments: { searchQuery: "test coverage", limit: 3 },
     });
     expect(capturedRequests.length).toBe(1);
@@ -80,7 +80,7 @@ describe("gittensory_find_opportunities stdio proxy", () => {
 
   it("returns a ranked, public-safe list of opportunities", async () => {
     const result = await client.callTool({
-      name: "gittensory_find_opportunities",
+      name: "loopover_find_opportunities",
       arguments: { searchQuery: "scoring", limit: 2 },
     });
     expect(result.isError).toBeFalsy();
@@ -93,7 +93,7 @@ describe("gittensory_find_opportunities stdio proxy", () => {
 
   it("strips undefined optional fields from the proxied body", async () => {
     await client.callTool({
-      name: "gittensory_find_opportunities",
+      name: "loopover_find_opportunities",
       arguments: { searchQuery: "minimum" },
     });
     expect(capturedRequests.length).toBe(1);

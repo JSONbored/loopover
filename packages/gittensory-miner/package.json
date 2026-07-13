@@ -30,6 +30,10 @@
   "files": [
     "bin",
     "lib",
+    "docs",
+    "schema",
+    "DEPLOYMENT.md",
+    "Dockerfile",
     "expected-engine.version"
   ],
   "scripts": {

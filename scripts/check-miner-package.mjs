@@ -11,8 +11,20 @@ const ALLOWED = [
   /^package\.json$/,
   /^README\.md$/,
   /^expected-engine\.version$/,
+  // Operational material shipped for `npm install -g` users so the quickstart doesn't require a repo visit (#4874):
+  /^DEPLOYMENT\.md$/,
+  /^Dockerfile$/,
+  /^docs\/[a-z0-9-]+\.md$/,
+  /^schema\/[a-z0-9.-]+\.json$/,
 ];
-const REQUIRED = ["bin/gittensory-miner.js", "package.json"];
+const REQUIRED = [
+  "bin/gittensory-miner.js",
+  "package.json",
+  // The operational files #4874 shipped — asserted present so they can never silently drop out of the package again.
+  "DEPLOYMENT.md",
+  "Dockerfile",
+  "schema/miner-goal-spec.schema.json",
+];
 const FORBIDDEN_PATH = /(^|\/)(\.dev\.vars|\.env|\.npmrc|.*\.pem|.*private.*key.*|.*secret.*)$/i;
 const FORBIDDEN_CONTENT =
   /(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+|gts_[0-9a-f]{64}|[A-Z0-9_]*(TOKEN|SECRET|PRIVATE_KEY)=)/;
@@ -30,6 +42,9 @@ export function validateMinerPackFileList(files, readContent) {
   }
   if (!paths.some((file) => /^lib\/([a-z0-9-]+\/)?[a-z0-9-]+\.js$/.test(file))) {
     throw new Error("Miner package is missing lib/*.js artifacts");
+  }
+  if (!paths.some((file) => /^docs\/[a-z0-9-]+\.md$/.test(file))) {
+    throw new Error("Miner package is missing docs/*.md operational documentation");
   }
   return paths;
 }

@@ -85,7 +85,14 @@ describe("check-miner-package script", () => {
 
   it("rejects a package missing lib artifacts", () => {
     const result = runChecker({
-      CHECK_MINER_PACK_TEST_FILES: JSON.stringify(["package.json", "bin/gittensory-miner.js"]),
+      // Every REQUIRED file present so the check reaches (and fails on) the lib-artifacts guard specifically.
+      CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
+        "package.json",
+        "bin/gittensory-miner.js",
+        "DEPLOYMENT.md",
+        "Dockerfile",
+        "schema/miner-goal-spec.schema.json",
+      ]),
       CHECK_MINER_PACK_TEST_CONTENT: "{}",
     });
     expect(result.status).toBe(1);
@@ -100,5 +107,65 @@ describe("check-miner-package script", () => {
     });
     expect(result.status).toBe(1);
     expect(result.out).toContain("Secret-like content found in miner package file:");
+  });
+
+  describe("operational files (#4874)", () => {
+    // A complete, valid package including the operational material — DEPLOYMENT.md, the Dockerfile, a docs/*.md,
+    // and the schema — is accepted.
+    const FULL_PACKAGE = [
+      "package.json",
+      "bin/gittensory-miner.js",
+      "lib/cli.js",
+      "DEPLOYMENT.md",
+      "Dockerfile",
+      "docs/coding-agent-driver.md",
+      "schema/miner-goal-spec.schema.json",
+    ];
+
+    it("accepts DEPLOYMENT.md, the Dockerfile, docs/*.md, and schema/*.json", () => {
+      const result = runChecker({
+        CHECK_MINER_PACK_TEST_FILES: JSON.stringify(FULL_PACKAGE),
+        CHECK_MINER_PACK_TEST_CONTENT: "operational docs, nothing secret",
+      });
+      expect(result.status).toBe(0);
+      expect(result.out).toMatch(/^Miner package dry-run ok:/);
+      expect(result.out).toContain("DEPLOYMENT.md");
+      expect(result.out).toContain("docs/coding-agent-driver.md");
+      expect(result.out).toContain("schema/miner-goal-spec.schema.json");
+    });
+
+    it("requires DEPLOYMENT.md to be published (regression guard for #4874)", () => {
+      const result = runChecker({
+        CHECK_MINER_PACK_TEST_FILES: JSON.stringify(FULL_PACKAGE.filter((f) => f !== "DEPLOYMENT.md")),
+        CHECK_MINER_PACK_TEST_CONTENT: "ok",
+      });
+      expect(result.status).toBe(1);
+      expect(result.out).toContain("Miner package is missing required file: DEPLOYMENT.md");
+    });
+
+    it("requires at least one docs/*.md file to be published", () => {
+      const result = runChecker({
+        CHECK_MINER_PACK_TEST_FILES: JSON.stringify(FULL_PACKAGE.filter((f) => !f.startsWith("docs/"))),
+        CHECK_MINER_PACK_TEST_CONTENT: "ok",
+      });
+      expect(result.status).toBe(1);
+      expect(result.out).toContain("Miner package is missing docs/*.md operational documentation");
+    });
+
+    it("keeps the docs allowlist tight — a non-.md or nested docs file is still rejected", () => {
+      const nonMarkdown = runChecker({
+        CHECK_MINER_PACK_TEST_FILES: JSON.stringify([...FULL_PACKAGE, "docs/notes.txt"]),
+        CHECK_MINER_PACK_TEST_CONTENT: "ok",
+      });
+      expect(nonMarkdown.status).toBe(1);
+      expect(nonMarkdown.out).toContain("Unexpected file in miner package: docs/notes.txt");
+
+      const nested = runChecker({
+        CHECK_MINER_PACK_TEST_FILES: JSON.stringify([...FULL_PACKAGE, "docs/nested/guide.md"]),
+        CHECK_MINER_PACK_TEST_CONTENT: "ok",
+      });
+      expect(nested.status).toBe(1);
+      expect(nested.out).toContain("Unexpected file in miner package: docs/nested/guide.md");
+    });
   });
 });

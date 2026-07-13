@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { closeDefaultGovernorState, openGovernorState } from "../../packages/gittensory-miner/lib/governor-state.js";
 import {
   parseGovernorPauseArgs,
+  parseGovernorResumeArgs,
   runGovernorPause,
   runGovernorResume,
   runGovernorStatus,
@@ -30,12 +31,13 @@ afterEach(() => {
 
 describe("parseGovernorPauseArgs (#4851)", () => {
   it("defaults to no reason and non-JSON output", () => {
-    expect(parseGovernorPauseArgs([])).toEqual({ json: false, reason: null });
+    expect(parseGovernorPauseArgs([])).toEqual({ json: false, dryRun: false, reason: null });
   });
 
-  it("parses --reason and --json together", () => {
-    expect(parseGovernorPauseArgs(["--reason", "investigating a bad PR", "--json"])).toEqual({
+  it("parses --reason, --dry-run, and --json together", () => {
+    expect(parseGovernorPauseArgs(["--reason", "investigating a bad PR", "--dry-run", "--json"])).toEqual({
       json: true,
+      dryRun: true,
       reason: "investigating a bad PR",
     });
   });
@@ -51,6 +53,22 @@ describe("parseGovernorPauseArgs (#4851)", () => {
 
   it("rejects an unknown option", () => {
     expect(parseGovernorPauseArgs(["--verbose"])).toEqual({ error: "Unknown option: --verbose" });
+  });
+});
+
+describe("parseGovernorResumeArgs (#4847)", () => {
+  it("defaults to non-dry-run, non-JSON output", () => {
+    expect(parseGovernorResumeArgs([])).toEqual({ json: false, dryRun: false });
+  });
+
+  it("parses --dry-run and --json together", () => {
+    expect(parseGovernorResumeArgs(["--dry-run", "--json"])).toEqual({ json: true, dryRun: true });
+  });
+
+  it("rejects an unrecognized token", () => {
+    expect(parseGovernorResumeArgs(["extra"])).toEqual({
+      error: expect.stringContaining("Usage: gittensory-miner governor resume"),
+    });
   });
 });
 
@@ -105,6 +123,50 @@ describe("gittensory-miner governor pause/resume/status CLI (#4851)", () => {
     error.mockClear();
     expect(await runGovernorStatus(["extra"])).toBe(2);
     expect(String(error.mock.calls[0]?.[0])).toContain("Usage: gittensory-miner governor status");
+  });
+
+  it("#4847: --dry-run reports what pause/resume would do and returns 0 without opening the governor state", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const openGovernorStateSpy = vi.fn();
+
+    expect(
+      await runGovernorPause(["--reason", "operator requested", "--dry-run", "--json"], {
+        openGovernorState: openGovernorStateSpy,
+      }),
+    ).toBe(0);
+    expect(openGovernorStateSpy).not.toHaveBeenCalled();
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      outcome: "dry_run",
+      paused: true,
+      reason: "operator requested",
+    });
+
+    log.mockClear();
+    expect(await runGovernorPause(["--dry-run"], { openGovernorState: openGovernorStateSpy })).toBe(0);
+    expect(openGovernorStateSpy).not.toHaveBeenCalled();
+    expect(String(log.mock.calls[0]?.[0])).toBe("DRY RUN: would pause the governor. No governor-state write was made.");
+
+    log.mockClear();
+    expect(
+      await runGovernorPause(["--reason", "operator requested", "--dry-run"], {
+        openGovernorState: openGovernorStateSpy,
+      }),
+    ).toBe(0);
+    expect(String(log.mock.calls[0]?.[0])).toBe(
+      "DRY RUN: would pause the governor (operator requested). No governor-state write was made.",
+    );
+
+    log.mockClear();
+    expect(
+      await runGovernorResume(["--dry-run", "--json"], { openGovernorState: openGovernorStateSpy }),
+    ).toBe(0);
+    expect(openGovernorStateSpy).not.toHaveBeenCalled();
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({ outcome: "dry_run", paused: false });
+
+    log.mockClear();
+    expect(await runGovernorResume(["--dry-run"], { openGovernorState: openGovernorStateSpy })).toBe(0);
+    expect(openGovernorStateSpy).not.toHaveBeenCalled();
+    expect(String(log.mock.calls[0]?.[0])).toBe("DRY RUN: would resume the governor. No governor-state write was made.");
   });
 
   it("rejects an unknown pause option before opening any store", async () => {

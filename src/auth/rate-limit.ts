@@ -123,7 +123,7 @@ export function routeClassForPath(path: string): RateLimitClass {
   if (path === "/v1/orb/ingest") return "strict";
   if (path === "/v1/auth/session" || path === "/v1/auth/logout") return "normal";
   if (path.startsWith("/v1/auth/")) return "strict";
-  if (path === "/gittensory/shot") return "expensive";
+  if (path === "/loopover/shot") return "expensive";
   if (
     path.includes("/branch-analysis") ||
     path.includes("/v1/agent/") ||

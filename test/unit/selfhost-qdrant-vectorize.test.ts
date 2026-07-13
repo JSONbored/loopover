@@ -162,15 +162,15 @@ describe("createQdrantVectorize (#1217 Qdrant adapter)", () => {
     vi.stubGlobal("fetch", mockFetch(503));
     const v = createQdrantVectorize(BASE);
     await expect(v.upsert([{ id: "x", values: [1] }])).rejects.toThrow(/HTTP 503/);
-    expect(await renderMetrics()).toContain('gittensory_qdrant_errors_total{op="upsert"}');
+    expect(await renderMetrics()).toContain('loopover_qdrant_errors_total{op="upsert"}');
   });
 
-  it("successful upsert increments gittensory_qdrant_upserts_total by vector count", async () => {
+  it("successful upsert increments loopover_qdrant_upserts_total by vector count", async () => {
     vi.stubGlobal("fetch", mockFetch(200));
     const v = createQdrantVectorize(BASE);
     await v.upsert([{ id: "a", values: [1] }, { id: "b", values: [0] }]);
     const metrics = await renderMetrics();
-    expect(metrics).toMatch(/gittensory_qdrant_upserts_total 2/);
+    expect(metrics).toMatch(/loopover_qdrant_upserts_total 2/);
   });
 
   it("same string ID always produces the same UUID (deterministic mapping)", async () => {
@@ -224,7 +224,7 @@ describe("createQdrantVectorize (#1217 Qdrant adapter)", () => {
     const v = createQdrantVectorize(BASE);
     const { matches } = await v.query([1, 0], { topK: 5 });
     expect(matches).toEqual([]);
-    expect(await renderMetrics()).toContain('gittensory_qdrant_errors_total{op="query"}');
+    expect(await renderMetrics()).toContain('loopover_qdrant_errors_total{op="query"}');
   });
 
   it("query returns empty matches on non-OK HTTP response (graceful degrade) and tracks error", async () => {
@@ -232,15 +232,15 @@ describe("createQdrantVectorize (#1217 Qdrant adapter)", () => {
     const v = createQdrantVectorize(BASE);
     const { matches } = await v.query([1, 0], { topK: 5 });
     expect(matches).toEqual([]);
-    expect(await renderMetrics()).toContain('gittensory_qdrant_errors_total{op="query"}');
+    expect(await renderMetrics()).toContain('loopover_qdrant_errors_total{op="query"}');
   });
 
-  it("successful query increments gittensory_qdrant_queries_total", async () => {
+  it("successful query increments loopover_qdrant_queries_total", async () => {
     vi.stubGlobal("fetch", mockFetch(200, { result: [] }));
     const v = createQdrantVectorize(BASE);
     await v.query([1], {});
     await v.query([0], {});
-    expect(await renderMetrics()).toMatch(/gittensory_qdrant_queries_total 2/);
+    expect(await renderMetrics()).toMatch(/loopover_qdrant_queries_total 2/);
   });
 
   it("query returns match without metadata when payload has no extra fields", async () => {
@@ -290,7 +290,7 @@ describe("createQdrantVectorize (#1217 Qdrant adapter)", () => {
     vi.stubGlobal("fetch", mockFetch(400));
     const v = createQdrantVectorize(BASE);
     await expect(v.deleteByIds(["id"])).rejects.toThrow(/HTTP 400/);
-    expect(await renderMetrics()).toContain('gittensory_qdrant_errors_total{op="delete"}');
+    expect(await renderMetrics()).toContain('loopover_qdrant_errors_total{op="delete"}');
   });
 
   it("trailing slash in URL is stripped", async () => {

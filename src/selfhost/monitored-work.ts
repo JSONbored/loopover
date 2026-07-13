@@ -82,7 +82,7 @@ export async function drainOrbRelayWithMonitor(args: {
       // BEFORE the per-event enqueue loop so a downstream enqueue failure still counts as drain progress
       // (the relay connection, not the local queue, is what registration-alerting cares about).
       args.state.lastDrainAtMs = args.nowMs ?? Date.now();
-      incr("gittensory_orb_relay_drains_total", {
+      incr("loopover_orb_relay_drains_total", {
         result: events.length > 0 ? "events" : "empty",
       });
       for (const ev of events) {
@@ -100,7 +100,7 @@ export async function drainOrbRelayWithMonitor(args: {
             ev.rawBody,
           );
         } catch (error) {
-          incr("gittensory_orb_webhook_total", {
+          incr("loopover_orb_webhook_total", {
             event: orbRelayMetricEvent(ev.eventName),
             result: "enqueue_failed",
           });
@@ -114,7 +114,7 @@ export async function drainOrbRelayWithMonitor(args: {
           );
           continue;
         }
-        incr("gittensory_orb_webhook_total", {
+        incr("loopover_orb_webhook_total", {
           event: orbRelayMetricEvent(ev.eventName),
           result,
         });
@@ -185,18 +185,18 @@ export async function registerOrbRelayWithMonitor(args: {
     const mode = args.env.ORB_RELAY_MODE === "pull" ? "pull" : "push";
     const log = args.log ?? console.log;
     if (result.status === "registered") {
-      incr("gittensory_orb_relay_register_total", { mode, result: "registered" });
+      incr("loopover_orb_relay_register_total", { mode, result: "registered" });
       // attempts === 1 means this succeeded on the very first try (parity with the original boot-only log);
       // a higher count means it recovered after one or more prior failures -- a distinct, more alertable event.
       if (args.state.attempts > 1) {
-        incr("gittensory_orb_relay_register_total", { mode, result: "recovered" });
+        incr("loopover_orb_relay_register_total", { mode, result: "recovered" });
         log(JSON.stringify({ event: "selfhost_orb_relay_register_recovered", mode, attempts: args.state.attempts }));
       } else {
         log(JSON.stringify({ event: "selfhost_orb_relay_register", mode, attempts: args.state.attempts }));
       }
       return;
     }
-    incr("gittensory_orb_relay_register_total", { mode, result: "failed" });
+    incr("loopover_orb_relay_register_total", { mode, result: "failed" });
     // A failed registration is fatal for PUSH mode (the Orb can't reach our public relay URL → the container
     // looks alive but reviews NOTHING → error). In PULL mode the outbound drain loop delivers events once a
     // later attempt succeeds, so a failed announce is only degraded telemetry -- UNLESS the streak/no-progress

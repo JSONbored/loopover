@@ -282,7 +282,7 @@
   ],
   "refresh": "30s",
   "schemaVersion": 38,
-  "tags": ["gittensory", "infra", "observability"],
+  "tags": ["loopover", "infra", "observability"],
   "templating": {
     "list": [
       { "current": {}, "hide": 0, "includeAll": false, "name": "DS_PROMETHEUS", "options": [], "query": "prometheus", "refresh": 1, "type": "datasource" }
@@ -291,7 +291,7 @@
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Gittensory — Infra Health (Host/Container/Redis/Qdrant)",
-  "uid": "gittensory-infra-health",
+  "title": "LoopOver — Infra Health (Host/Container/Redis/Qdrant)",
+  "uid": "loopover-infra-health",
   "version": 1
 }

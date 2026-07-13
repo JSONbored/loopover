@@ -263,7 +263,7 @@ describe("timeoutFetch", () => {
       resetAt: "2026-06-24T12:10:00.000Z",
       observedAtMs: now,
     });
-    expect(await renderMetrics()).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="installation",remaining_bucket="1-75"} 1');
+    expect(await renderMetrics()).toContain('loopover_github_rest_rate_limit_observations_total{key_scope="installation",remaining_bucket="1-75"} 1');
     expect(latestGitHubRestRateLimitObservation(otherKey)).toBeNull();
 
     headers = new Headers({
@@ -333,10 +333,10 @@ describe("timeoutFetch", () => {
     });
 
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="installation",remaining_bucket="0"} 1');
-    expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="installation",remaining_bucket="1-75"} 1');
-    expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="other",remaining_bucket="76-150"} 1');
-    expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="other",remaining_bucket="151+"} 1');
+    expect(metrics).toContain('loopover_github_rest_rate_limit_observations_total{key_scope="installation",remaining_bucket="0"} 1');
+    expect(metrics).toContain('loopover_github_rest_rate_limit_observations_total{key_scope="installation",remaining_bucket="1-75"} 1');
+    expect(metrics).toContain('loopover_github_rest_rate_limit_observations_total{key_scope="other",remaining_bucket="76-150"} 1');
+    expect(metrics).toContain('loopover_github_rest_rate_limit_observations_total{key_scope="other",remaining_bucket="151+"} 1');
   });
 
   it("labels public-token REST observations separately from installation and unknown buckets", async () => {
@@ -359,7 +359,7 @@ describe("timeoutFetch", () => {
     });
 
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="public",remaining_bucket="1-75"} 1');
+    expect(metrics).toContain('loopover_github_rest_rate_limit_observations_total{key_scope="public",remaining_bucket="1-75"} 1');
     expect(latestGitHubRestRateLimitObservation(githubRateLimitAdmissionKeyForPublicToken())).toMatchObject({
       remaining: 22,
       resetAt: "2026-06-24T12:10:00.000Z",
@@ -417,9 +417,9 @@ describe("timeoutFetch", () => {
     expect(getFetches).toBe(1);
     expect([...store.keys()].some((url) => url.endsWith("/repos/o/r"))).toBe(true);
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_github_response_cache_total{class="metadata",result="miss"} 1');
-    expect(metrics).toContain('gittensory_github_response_cache_total{class="metadata",result="hit"} 1');
-    expect(metrics).toContain('gittensory_github_response_cache_total{class="metadata",result="set"} 1');
+    expect(metrics).toContain('loopover_github_response_cache_total{class="metadata",result="miss"} 1');
+    expect(metrics).toContain('loopover_github_response_cache_total{class="metadata",result="hit"} 1');
+    expect(metrics).toContain('loopover_github_response_cache_total{class="metadata",result="set"} 1');
   });
 
   it("single-flights concurrent cacheable Octokit GET misses before Redis is warm", async () => {
@@ -461,7 +461,7 @@ describe("timeoutFetch", () => {
       expect.objectContaining({ data: { contexts: ["ci"] } }),
     ]);
     expect(getFetches).toBe(1);
-    expect(await renderMetrics()).toContain('gittensory_github_response_cache_total{class="branch_protection",result="coalesced"} 1');
+    expect(await renderMetrics()).toContain('loopover_github_response_cache_total{class="branch_protection",result="coalesced"} 1');
   });
 
   it("keys safe GitHub GETs by auth identity and response-shaping headers without storing the token", async () => {
@@ -697,8 +697,8 @@ describe("timeoutFetch", () => {
     expect(getFetches).toBe(4);
     expect(set).not.toHaveBeenCalled();
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_github_rest_rate_limit_responses_total{key_scope="unknown",retry="scheduled",status="403"} 3');
-    expect(metrics).toContain('gittensory_github_rest_rate_limit_responses_total{key_scope="unknown",retry="exhausted",status="403"} 1');
+    expect(metrics).toContain('loopover_github_rest_rate_limit_responses_total{key_scope="unknown",retry="scheduled",status="403"} 3');
+    expect(metrics).toContain('loopover_github_rest_rate_limit_responses_total{key_scope="unknown",retry="exhausted",status="403"} 1');
   });
 
   it("does not negative-cache stable metadata denials outside branch protection", async () => {
@@ -823,7 +823,7 @@ describe("timeoutFetch", () => {
     }
 
     expect(getFetches).toBe(decisionCases.length * 2);
-    expect(await renderMetrics()).toContain(`gittensory_github_response_cache_total{class="sensitive",result="bypassed"} ${decisionCases.length * 2}`);
+    expect(await renderMetrics()).toContain(`loopover_github_response_cache_total{class="sensitive",result="bypassed"} ${decisionCases.length * 2}`);
   });
 
   it("bypasses mutable PR and issue subresources instead of replaying stale coordination state", async () => {
@@ -860,7 +860,7 @@ describe("timeoutFetch", () => {
     }
 
     expect(getFetches).toBe(mutableCases.length * 2);
-    expect(await renderMetrics()).toContain(`gittensory_github_response_cache_total{class="sensitive",result="bypassed"} ${mutableCases.length * 2}`);
+    expect(await renderMetrics()).toContain(`loopover_github_response_cache_total{class="sensitive",result="bypassed"} ${mutableCases.length * 2}`);
   });
 
   it("single-flights concurrent mutable GitHub GETs without persisting them in Redis", async () => {
@@ -907,8 +907,8 @@ describe("timeoutFetch", () => {
     expect(cacheGet).not.toHaveBeenCalled();
     expect(cacheSet).not.toHaveBeenCalled();
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_github_response_cache_total{class="sensitive",result="bypassed"} 2');
-    expect(metrics).toContain('gittensory_github_response_cache_total{class="sensitive",result="coalesced"} 1');
+    expect(metrics).toContain('loopover_github_response_cache_total{class="sensitive",result="bypassed"} 2');
+    expect(metrics).toContain('loopover_github_response_cache_total{class="sensitive",result="coalesced"} 1');
   });
 
   it("single-flights concurrent mutable GitHub GETs even when Redis is disabled", async () => {
@@ -1131,7 +1131,7 @@ describe("timeoutFetch", () => {
     await expect(second).rejects.toThrow("caller aborted");
     releaseFetch();
     await expect(first.then((response) => response.json())).resolves.toEqual({ state: "live" });
-    expect(await renderMetrics()).toContain('gittensory_github_response_cache_total{class="sensitive",result="coalesced"} 2');
+    expect(await renderMetrics()).toContain('loopover_github_response_cache_total{class="sensitive",result="coalesced"} 2');
   });
 
   it("bypasses conditional GitHub GETs so validator headers keep shaping the live response", async () => {
@@ -1149,7 +1149,7 @@ describe("timeoutFetch", () => {
     expect(await first.json()).toEqual({ fetches: 1 });
     expect(await second.json()).toEqual({ fetches: 2 });
     expect(store.size).toBe(0);
-    expect(await renderMetrics()).toContain('gittensory_github_response_cache_total{class="conditional",result="bypassed"} 2');
+    expect(await renderMetrics()).toContain('loopover_github_response_cache_total{class="conditional",result="bypassed"} 2');
   });
 
   it("normalizes Request inputs for GitHub cache detection and auth-aware keys", async () => {
@@ -1302,7 +1302,7 @@ describe("timeoutFetch", () => {
     expect(cacheReads).toBe(1);
     expect(cacheWrites).toBe(1);
     expect(getFetches).toBe(1);
-    expect(await renderMetrics()).toContain('gittensory_github_response_cache_total{class="metadata",result="error"} 2');
+    expect(await renderMetrics()).toContain('loopover_github_response_cache_total{class="metadata",result="error"} 2');
   });
 
   it("counts bypassed non-GET, non-GitHub, and sensitive GitHub requests", async () => {
@@ -1317,9 +1317,9 @@ describe("timeoutFetch", () => {
     await timeoutFetch("https://api.github.com/repos/o/r/collaborators/alice/permission");
 
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_github_response_cache_total{class="non_get",result="bypassed"} 1');
-    expect(metrics).toContain('gittensory_github_response_cache_total{class="non_github",result="bypassed"} 1');
-    expect(metrics).toContain('gittensory_github_response_cache_total{class="sensitive",result="bypassed"} 1');
+    expect(metrics).toContain('loopover_github_response_cache_total{class="non_get",result="bypassed"} 1');
+    expect(metrics).toContain('loopover_github_response_cache_total{class="non_github",result="bypassed"} 1');
+    expect(metrics).toContain('loopover_github_response_cache_total{class="sensitive",result="bypassed"} 1');
   });
 });
 

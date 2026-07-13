@@ -42,3 +42,7 @@ already persisted locally, loopback-only.
 
 When the miner-ui is not running, you can still paste JSON from a `discover --json` run into the **Ranked candidates
 JSON (paste fallback)** box and save. This is the original workflow, kept as a fallback for laptop-mode installs.
+
+The extension does not request the `unlimitedStorage` permission, so a paste is rejected with a clear error before
+being parsed or saved once it exceeds a conservative size bound well under `chrome.storage.local`'s default 10 MiB
+quota, instead of silently failing to save or leaving storage partially written.

@@ -308,7 +308,7 @@ export function createPgQueue(
       );
     const recovered = await recoverProcessingJobs();
     if (recovered) {
-      await recordQueueMetric("gittensory_jobs_recovered_total", recovered);
+      await recordQueueMetric("loopover_jobs_recovered_total", recovered);
       console.log(
         JSON.stringify({ event: "selfhost_queue_recovered", count: recovered }),
       );
@@ -598,7 +598,7 @@ export function createPgQueue(
   async function reviveDeadLetterJobs(): Promise<number> {
     const revived = await reviveEligibleDeadJobs();
     if (revived) {
-      await recordQueueMetric("gittensory_jobs_dead_letter_revived_total", revived);
+      await recordQueueMetric("loopover_jobs_dead_letter_revived_total", revived);
       console.log(JSON.stringify({ event: "selfhost_queue_dead_letter_revived", count: revived }));
       kickAll();
     }
@@ -725,9 +725,9 @@ export function createPgQueue(
       else releasedByRateLimitClear += rowsChanged;
     }
     if (released) {
-      await recordQueueMetric("gittensory_jobs_foreground_liveness_released_total", released);
-      if (releasedByAge) incr("gittensory_jobs_foreground_liveness_released_by_reason_total", { reason: "age" }, releasedByAge);
-      if (releasedByRateLimitClear) incr("gittensory_jobs_foreground_liveness_released_by_reason_total", { reason: "rate_limit_cleared" }, releasedByRateLimitClear);
+      await recordQueueMetric("loopover_jobs_foreground_liveness_released_total", released);
+      if (releasedByAge) incr("loopover_jobs_foreground_liveness_released_by_reason_total", { reason: "age" }, releasedByAge);
+      if (releasedByRateLimitClear) incr("loopover_jobs_foreground_liveness_released_by_reason_total", { reason: "rate_limit_cleared" }, releasedByRateLimitClear);
       console.warn(
         JSON.stringify({
           level: "warn",
@@ -834,7 +834,7 @@ export function createPgQueue(
         )
       ).rows[0] as { id: string } | undefined;
       if (existingFull) {
-        await recordQueueMetric("gittensory_jobs_coalesced_total");
+        await recordQueueMetric("loopover_jobs_coalesced_total");
         kickOne();
         return;
       }
@@ -872,7 +872,7 @@ export function createPgQueue(
             [mergedPayload, runAfter, now, priority, mergedKey, mergeCandidate.id, mergeCandidate.job_key, claimSortKey],
           );
           if (merged.rowCount) {
-            await recordQueueMetric("gittensory_jobs_coalesced_total");
+            await recordQueueMetric("loopover_jobs_coalesced_total");
             kickOne();
             return;
           }
@@ -907,7 +907,7 @@ export function createPgQueue(
            WHERE status='pending' AND id<>$1 AND job_key IS NOT NULL AND left(job_key, $2)=$3`,
           [existing.id, supersededKeyPrefix.length, supersededKeyPrefix],
         );
-        await recordQueueMetric("gittensory_jobs_coalesced_total");
+        await recordQueueMetric("loopover_jobs_coalesced_total");
         kickOne();
         return;
       }
@@ -935,7 +935,7 @@ export function createPgQueue(
            WHERE id=$5`,
           [payload, runAfter, priority, lane, existing.id, claimSortKey],
         );
-        await recordQueueMetric("gittensory_jobs_coalesced_total");
+        await recordQueueMetric("loopover_jobs_coalesced_total");
         kickOne();
         return;
       }
@@ -944,7 +944,7 @@ export function createPgQueue(
       `INSERT INTO ${TABLE} (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance, foreground_lane, claim_sort_key) VALUES ($1,'pending',0,$2,$3,$4,$5,$6,$7,$8)`,
       [payload, runAfter, now, priority, key, isMaintenanceJobType(message.type) ? 1 : 0, lane, claimSortKey],
     );
-    await recordQueueMetric("gittensory_jobs_enqueued_total");
+    await recordQueueMetric("loopover_jobs_enqueued_total");
     kickOne();
   }
 
@@ -1000,7 +1000,7 @@ export function createPgQueue(
     const lanePriorityFloor = unclassifiedPriority ?? FOREGROUND_QUEUE_PRIORITY_FLOOR;
     if (lane === "fresh") {
       const freshRow = await claimNextWhere(now, lanePriorityPredicate, { sql: "candidate.foreground_lane='fresh'", params: [] }, lanePriorityFloor);
-      if (freshRow) incr("gittensory_jobs_claimed_by_lane_total", { lane: "fresh" });
+      if (freshRow) incr("loopover_jobs_claimed_by_lane_total", { lane: "fresh" });
       return freshRow;
     }
     const backlogRes = await pool.query(
@@ -1022,7 +1022,7 @@ export function createPgQueue(
     }, lanePriorityFloor);
     if (row) {
       await pool.query(`UPDATE ${FAIRNESS_TABLE} SET last_backlog_repo=$1 WHERE id='singleton'`, [repo]);
-      incr("gittensory_jobs_claimed_by_lane_total", { lane: "backlog" });
+      incr("loopover_jobs_claimed_by_lane_total", { lane: "backlog" });
     }
     return row;
   }
@@ -1074,7 +1074,7 @@ export function createPgQueue(
   async function processOne(): Promise<boolean> {
     const recovered = await reclaimExpiredProcessingJobs();
     if (recovered) {
-      await recordQueueMetric("gittensory_jobs_recovered_total", recovered);
+      await recordQueueMetric("loopover_jobs_recovered_total", recovered);
       console.warn(
         JSON.stringify({
           level: "warn",
@@ -1103,7 +1103,7 @@ export function createPgQueue(
           `UPDATE ${TABLE} SET status='dead', attempts=attempts+1, last_error='unparseable payload', dead_at=$1 WHERE id=$2`,
           [Date.now(), job.id],
         );
-        await recordQueueMetric("gittensory_jobs_dead_total");
+        await recordQueueMetric("loopover_jobs_dead_total");
         logAudit({
           event: "job_dead",
           ts: Date.now(),
@@ -1148,8 +1148,8 @@ export function createPgQueue(
               "selfhost_queue_pg_connection_lost_on_rate_limit_defer",
             );
             if (update?.rowCount) {
-              await recordQueueMetric("gittensory_jobs_rate_limit_deferred_total");
-              incr("gittensory_jobs_rate_limit_admission_deferred_total", rateLimitMetric.labels);
+              await recordQueueMetric("loopover_jobs_rate_limit_deferred_total");
+              incr("loopover_jobs_rate_limit_admission_deferred_total", rateLimitMetric.labels);
               console.warn(
                 JSON.stringify({
                   level: "warn",
@@ -1191,8 +1191,8 @@ export function createPgQueue(
                 "selfhost_queue_pg_connection_lost_on_maintenance_defer",
               );
               if (update?.rowCount) {
-                await recordQueueMetric("gittensory_jobs_maintenance_admission_deferred_total");
-                incr("gittensory_jobs_maintenance_admission_deferred_by_reason_total", {
+                await recordQueueMetric("loopover_jobs_maintenance_admission_deferred_total");
+                incr("loopover_jobs_maintenance_admission_deferred_by_reason_total", {
                   reason: decision.reason,
                   job_type: message.type,
                 });
@@ -1217,8 +1217,8 @@ export function createPgQueue(
         // counters distinguishes "load-shed maintenance is working as designed" from "maintenance is chronically
         // starved and only ever runs via the trickle floor" (the "truly stuck" signal operators need).
         if (decision.reason === "trickle_max_defer_age") {
-          await recordQueueMetric("gittensory_jobs_maintenance_trickle_admitted_total");
-          incr("gittensory_jobs_maintenance_trickle_admitted_by_type_total", { job_type: message.type });
+          await recordQueueMetric("loopover_jobs_maintenance_trickle_admitted_total");
+          incr("loopover_jobs_maintenance_trickle_admitted_by_type_total", { job_type: message.type });
           console.warn(
             JSON.stringify({
               level: "warn",
@@ -1233,7 +1233,7 @@ export function createPgQueue(
         // so an operator can trend "how often does pressure admission get overridden at all" without needing to
         // sum multiple per-reason metrics.
         if (isMaintenanceAdmissionGrantedUnderPressure(decision.reason)) {
-          incr("gittensory_jobs_maintenance_admission_granted_under_pressure_total", {
+          incr("loopover_jobs_maintenance_admission_granted_under_pressure_total", {
             reason: decision.reason,
             job_type: message.type,
           });
@@ -1272,8 +1272,8 @@ export function createPgQueue(
                 "selfhost_queue_pg_connection_lost_on_installation_concurrency_defer",
               );
               if (update?.rowCount) {
-                await recordQueueMetric("gittensory_jobs_installation_concurrency_deferred_total");
-                incr("gittensory_jobs_installation_concurrency_deferred_by_reason_total", {
+                await recordQueueMetric("loopover_jobs_installation_concurrency_deferred_total");
+                incr("loopover_jobs_installation_concurrency_deferred_by_reason_total", {
                   reason: decision.reason,
                   job_type: message.type,
                 });
@@ -1322,7 +1322,7 @@ export function createPgQueue(
           }
           throw deleteErr;
         }
-        await recordQueueMetric("gittensory_jobs_processed_total");
+        await recordQueueMetric("loopover_jobs_processed_total");
         logAudit({
           event: "job_complete",
           ts: Date.now(),
@@ -1361,8 +1361,8 @@ export function createPgQueue(
           const deferred = target ? await deferPendingJobsForRateLimit(rateLimitDelayMs, now, target) : 0;
           const rateLimitMetric = githubRateLimitMetricContext(message, target);
           if (target !== null && deferred > 0) {
-            await recordQueueMetric("gittensory_jobs_rate_limit_deferred_total", deferred);
-            incr("gittensory_jobs_rate_limit_budget_deferred_total", rateLimitMetric.labels, deferred);
+            await recordQueueMetric("loopover_jobs_rate_limit_deferred_total", deferred);
+            incr("loopover_jobs_rate_limit_budget_deferred_total", rateLimitMetric.labels, deferred);
             console.warn(
               JSON.stringify({
                 level: "warn",
@@ -1373,15 +1373,15 @@ export function createPgQueue(
             );
           }
           if (job.job_key && (await mergeRescheduledJobIntoPending(job as JobRow & { job_key: string }, retryAfter, errMsg))) {
-            await recordQueueMetric("gittensory_jobs_coalesced_total");
+            await recordQueueMetric("loopover_jobs_coalesced_total");
           } else {
             await pool.query(
               `UPDATE ${TABLE} SET status='pending', run_after=$1, last_error=$2 WHERE id=$3`,
               [retryAfter, errMsg, job.id],
             );
           }
-          await recordQueueMetric("gittensory_jobs_rate_limited_total");
-          incr("gittensory_jobs_rate_limited_by_type_total", rateLimitMetric.labels);
+          await recordQueueMetric("loopover_jobs_rate_limited_total");
+          incr("loopover_jobs_rate_limited_by_type_total", rateLimitMetric.labels);
           logAudit({
             event: "job_rate_limited",
             ts: Date.now(),
@@ -1395,13 +1395,13 @@ export function createPgQueue(
           }, jobTraceParent);
           return true;
         }
-        await recordQueueMetric("gittensory_jobs_failed_total");
+        await recordQueueMetric("loopover_jobs_failed_total");
         if (attempts >= maxRetries) {
           await pool.query(
             `UPDATE ${TABLE} SET status='dead', attempts=$1, last_error=$2, dead_at=$3 WHERE id=$4`,
             [attempts, errMsg, Date.now(), job.id],
           );
-          await recordQueueMetric("gittensory_jobs_dead_total");
+          await recordQueueMetric("loopover_jobs_dead_total");
           console.error(
             JSON.stringify({
               level: "error",

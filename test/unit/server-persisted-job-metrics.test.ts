@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const read = (path: string) => readFileSync(path, "utf8");
 
-// Regression for #2508: gittensory_jobs_deferred_total was registered as a persisted gauge in server.ts
+// Regression for #2508: loopover_jobs_deferred_total was registered as a persisted gauge in server.ts
 // but no queue driver ever called recordQueueMetric with that name -- dead instrumentation that always
 // reported 0. Pin the invariant the fix establishes: every metric name in server.ts's persisted-gauge list
 // must have a real recordQueueMetric call site in BOTH queue drivers, so a future dead entry can't sneak
@@ -28,6 +28,6 @@ describe("server.ts persisted job-queue metrics (#2508)", () => {
       expect(pgQueue.includes(`recordQueueMetric("${name}"`), `pg-queue.ts never calls recordQueueMetric for "${name}"`).toBe(true);
     }
 
-    expect(registered).not.toContain("gittensory_jobs_deferred_total");
+    expect(registered).not.toContain("loopover_jobs_deferred_total");
   });
 });

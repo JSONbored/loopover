@@ -45,15 +45,15 @@ write_metrics() {
   mkdir -p "$OUT"
   tmp="$FILE.tmp"
   {
-    echo "# HELP gittensory_backup_latest_timestamp_seconds Unix timestamp of the newest retained self-host backup file by target."
-    echo "# TYPE gittensory_backup_latest_timestamp_seconds gauge"
+    echo "# HELP loopover_backup_latest_timestamp_seconds Unix timestamp of the newest retained self-host backup file by target."
+    echo "# TYPE loopover_backup_latest_timestamp_seconds gauge"
     for target in postgres sqlite qdrant; do
-      echo "gittensory_backup_latest_timestamp_seconds{target=\"$target\"} $(latest_timestamp "$ROOT/$target")"
+      echo "loopover_backup_latest_timestamp_seconds{target=\"$target\"} $(latest_timestamp "$ROOT/$target")"
     done
-    echo "# HELP gittensory_backup_files Retained self-host backup files by target."
-    echo "# TYPE gittensory_backup_files gauge"
+    echo "# HELP loopover_backup_files Retained self-host backup files by target."
+    echo "# TYPE loopover_backup_files gauge"
     for target in postgres sqlite qdrant; do
-      echo "gittensory_backup_files{target=\"$target\"} $(file_count "$ROOT/$target")"
+      echo "loopover_backup_files{target=\"$target\"} $(file_count "$ROOT/$target")"
     done
   } > "$tmp"
   mv "$tmp" "$FILE"

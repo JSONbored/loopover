@@ -5,14 +5,14 @@
 //
 // Why this exists: the filesystem-backed store (REVIEW_AUDIT_DIR) persists screenshots on the SAME host that
 // runs the review container, so the images embedded in a public GitHub PR comment are only reachable through
-// that host's own public origin (PUBLIC_API_ORIGIN) and the /gittensory/shot proxy route -- if an operator
+// that host's own public origin (PUBLIC_API_ORIGIN) and the /loopover/shot proxy route -- if an operator
 // keeps their instance behind a private network (Tailscale, a firewall, no public DNS at all), those images
 // are unreachable for anyone outside that network, GitHub's own servers included. Storing in a genuinely
 // public bucket instead decouples "does my review pipeline run on my own infrastructure" from "are the
 // resulting public-facing images reachable by anyone" -- this store still only does get/put/delete; making the
 // resulting keys PUBLICLY SERVABLE (a public r2.dev URL, or a custom domain connected to the bucket) is the
 // operator's own one-time bucket setup, and `resolveShotUrl` (capture.ts) is what points served links directly
-// at REVIEW_AUDIT_S3_PUBLIC_URL instead of this instance's own /gittensory/shot proxy once it's configured.
+// at REVIEW_AUDIT_S3_PUBLIC_URL instead of this instance's own /loopover/shot proxy once it's configured.
 //
 // MODULAR + off by default: unset REVIEW_AUDIT_S3_BUCKET (+ _ENDPOINT/_ACCESS_KEY_ID/_SECRET_ACCESS_KEY) ⇒ no
 // REVIEW_AUDIT_S3 binding ⇒ server.ts falls back to REVIEW_AUDIT_DIR (or, if that's unset too, on-demand
@@ -38,7 +38,7 @@ export type S3BlobStoreConfig = {
 const S3_CLIENT_RETRIES = 3;
 
 /** Build an S3-compatible-bucket-backed REVIEW_AUDIT store. Keys are app-generated
- *  (`gittensory/shots/<hash>.png`, already validated by the /gittensory/shot serve route's own prefix +
+ *  (`loopover/shots/<hash>.png`, already validated by the /loopover/shot serve route's own prefix +
  *  traversal check) and passed straight through as the S3 object key -- no additional encoding beyond the
  *  URL-path escaping every S3 REST call needs regardless of key shape. */
 export function createS3BlobStore(config: S3BlobStoreConfig): R2Bucket {

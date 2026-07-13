@@ -262,7 +262,7 @@ export async function drainOrbRelay(
       }
       // #zero-trace-webhook-loss: a batch entry missing/mistyping one of the three required fields was
       // previously discarded with no record anywhere — indistinguishable from the Orb never having relayed it.
-      incr("gittensory_orb_relay_malformed_events_total");
+      incr("loopover_orb_relay_malformed_events_total");
       console.error(
         JSON.stringify({
           level: "error",

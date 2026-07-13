@@ -50,7 +50,7 @@ export async function getCachedReviewSuppressions(env: Env, repoFullName: string
   if (hit && nowMs - hit.at < REVIEW_SUPPRESSION_CACHE_TTL_MS) {
     // #4448: mirrors repo-culture-profile's #4509 cache hit/miss instrumentation exactly -- one of the six
     // AI-touching capabilities that had no reuse-rate signal at all before this.
-    incr("gittensory_review_memory_cache_hit_total");
+    incr("loopover_review_memory_cache_hit_total");
     await recordAuditEvent(env, {
       eventType: "github_app.review_memory_cache_hit",
       targetKey: repoFullName,
@@ -60,7 +60,7 @@ export async function getCachedReviewSuppressions(env: Env, repoFullName: string
     }).catch(() => undefined);
     return hit.signals;
   }
-  incr("gittensory_review_memory_cache_miss_total");
+  incr("loopover_review_memory_cache_miss_total");
   await recordAuditEvent(env, {
     eventType: "github_app.review_memory_cache_miss",
     targetKey: repoFullName,

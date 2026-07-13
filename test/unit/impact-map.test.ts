@@ -456,8 +456,8 @@ describe("computeImpactMap", () => {
       await computeImpactMap(env, symbols, { infra, project: "acme", repo: "telemetry-widgets" }); // same query -- a hit
 
       const rendered = await renderMetrics();
-      expect(rendered).toContain("gittensory_impact_map_cache_hit_total 1");
-      expect(rendered).not.toContain("gittensory_impact_map_cache_miss_total");
+      expect(rendered).toContain("loopover_impact_map_cache_hit_total 1");
+      expect(rendered).not.toContain("loopover_impact_map_cache_miss_total");
       const hitEvent = await auditEvent(env, "github_app.impact_map_cache_hit", "acme/telemetry-widgets");
       expect(hitEvent?.outcome).toBe("completed");
       expect(await auditEvent(env, "github_app.impact_map_cache_miss", "acme/telemetry-widgets")).toBeUndefined();
@@ -472,8 +472,8 @@ describe("computeImpactMap", () => {
       await computeImpactMap(env, symbols, { infra, project: "acme", repo: "telemetry-widgets-2" });
 
       const rendered = await renderMetrics();
-      expect(rendered).toContain("gittensory_impact_map_cache_miss_total 1");
-      expect(rendered).not.toContain("gittensory_impact_map_cache_hit_total");
+      expect(rendered).toContain("loopover_impact_map_cache_miss_total 1");
+      expect(rendered).not.toContain("loopover_impact_map_cache_hit_total");
       const missEvent = await auditEvent(env, "github_app.impact_map_cache_miss", "acme/telemetry-widgets-2");
       expect(missEvent?.outcome).toBe("completed");
       expect(await auditEvent(env, "github_app.impact_map_cache_hit", "acme/telemetry-widgets-2")).toBeUndefined();

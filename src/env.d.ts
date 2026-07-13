@@ -33,17 +33,20 @@ declare global {
      *  Workers-AI-safe constant (96) when unset — this override exists for self-host operators tuning
      *  throughput on their own hardware (e.g. GPU-accelerated Ollama), not to change the hosted default. */
     AI_EMBED_BATCH?: string;
-    /** Optional self-host review audit + visual-capture blob store. The Node runtime injects a filesystem-backed
-     *  store when REVIEW_AUDIT_DIR is set, or an S3-compatible-bucket-backed store (an operator's own Cloudflare
-     *  R2 bucket, or any other S3-compatible provider) when REVIEW_AUDIT_S3_BUCKET + _ENDPOINT +
-     *  _ACCESS_KEY_ID + _SECRET_ACCESS_KEY are all set (takes priority when both are configured); the
-     *  Cloudflare API worker no longer binds the review R2 bucket. */
+    /** Review audit + visual-capture blob store. The Cloudflare API worker binds this natively to its own R2
+     *  bucket (see wrangler.jsonc's r2_buckets). Self-host has no native binding, so the Node runtime injects a
+     *  filesystem-backed store when REVIEW_AUDIT_DIR is set, or an S3-compatible-bucket-backed store (an
+     *  operator's own Cloudflare R2 bucket, or any other S3-compatible provider) when REVIEW_AUDIT_S3_BUCKET +
+     *  _ENDPOINT + _ACCESS_KEY_ID + _SECRET_ACCESS_KEY are all set (takes priority when both are configured). */
     REVIEW_AUDIT?: R2Bucket;
+    /** Reserved R2 binding for a future split of public-facing screenshot storage away from the private
+     *  review-audit bucket (see wrangler.jsonc's r2_buckets) — not yet read or written by any code path. */
+    VISUAL_CAPTURE_PUBLIC?: R2Bucket;
     /** Public base URL for an S3-compatible REVIEW_AUDIT bucket's own public read access (an R2 `r2.dev` public
      *  bucket URL, or a custom domain connected to the bucket) -- see src/selfhost/s3-blob-store.ts. When set,
      *  capture.ts's resolveShotUrl links screenshots DIRECTLY at `${this}/${key}` so GitHub's image proxy (and
      *  every other viewer) fetches straight from the bucket's own CDN, never touching this instance's
-     *  PUBLIC_API_ORIGIN at all. Unset (default) ⇒ served through this instance's own /gittensory/shot?key=
+     *  PUBLIC_API_ORIGIN at all. Unset (default) ⇒ served through this instance's own /loopover/shot?key=
      *  proxy route instead, exactly as before -- the bucket still gets used for storage, just not linked to
      *  directly. Only meaningful alongside a configured REVIEW_AUDIT_S3_* bucket; ignored otherwise. */
     REVIEW_AUDIT_S3_PUBLIC_URL?: string;
@@ -298,7 +301,7 @@ declare global {
      *  isVisualPath). "before" = production (PUBLIC_SITE_ORIGIN); "after" = the PR's preview deploy. Each shot
      *  is rendered via the optional BROWSER binding, stored through REVIEW_AUDIT when configured, and embedded
      *  in the unified PR comment as a "Visual preview" table — served either from this instance's own PUBLIC
-     *  /gittensory/shot route, or, when REVIEW_AUDIT_S3_PUBLIC_URL is set, directly from the operator's own
+     *  /loopover/shot route, or, when REVIEW_AUDIT_S3_PUBLIC_URL is set, directly from the operator's own
      *  S3-compatible bucket instead (see src/selfhost/s3-blob-store.ts). Self-host equivalents are
      *  BROWSER_WS_ENDPOINT + (REVIEW_AUDIT_DIR or the REVIEW_AUDIT_S3_* bucket vars); degrades gracefully
      *  (placeholders / dashes) without them. Backend .ts/.md/.json/.py PRs NEVER trigger capture. Capture runs

@@ -2551,7 +2551,7 @@ describe("queue processors", () => {
         ).resolves.toBeUndefined();
         expect(liveCiSpy).toHaveBeenCalled();
         // No "hit" recorded -- the corrupted row was NOT trusted; the live-fetched aggregate overwrote it.
-        expect(await renderMetrics()).not.toContain('gittensory_ci_state_cache_total{field="aggregate",result="hit"}');
+        expect(await renderMetrics()).not.toContain('loopover_ci_state_cache_total{field="aggregate",result="hit"}');
         expect(await getPullRequestDetailSyncState(env, "owner/agent-repo", 7)).toMatchObject({ ciState: "failed", ciFailingDetailsJson: "[]" });
       } finally {
         liveCiSpy.mockRestore();
@@ -2588,8 +2588,8 @@ describe("queue processors", () => {
         await processJob(env, { type: "agent-regate-pr", deliveryId: "cross-job-pass-1", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
         const callsAfterPass1 = liveCiSpy.mock.calls.length;
         expect(callsAfterPass1).toBeGreaterThan(0);
-        expect(await renderMetrics()).toContain('gittensory_ci_state_cache_total{field="aggregate",result="miss"} 1');
-        expect(await renderMetrics()).toContain('gittensory_ci_state_cache_total{field="aggregate",result="forced"} 1');
+        expect(await renderMetrics()).toContain('loopover_ci_state_cache_total{field="aggregate",result="miss"} 1');
+        expect(await renderMetrics()).toContain('loopover_ci_state_cache_total{field="aggregate",result="forced"} 1');
 
         // Pass 2: SAME PR, SAME head_sha, no invalidating webhook in between. Readiness's cachedLiveCiAggregate
         // now HITS the row pass 1's disposition planner wrote through -- one fewer live call than pass 1, even
@@ -2597,9 +2597,9 @@ describe("queue processors", () => {
         await processJob(env, { type: "agent-regate-pr", deliveryId: "cross-job-pass-2", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
         const callsDuringPass2 = liveCiSpy.mock.calls.length - callsAfterPass1;
         expect(callsDuringPass2).toBeLessThan(callsAfterPass1);
-        expect(await renderMetrics()).toContain('gittensory_ci_state_cache_total{field="aggregate",result="hit"} 1');
+        expect(await renderMetrics()).toContain('loopover_ci_state_cache_total{field="aggregate",result="hit"} 1');
         // The disposition planner's forced refresh fired again on pass 2 too (now 2 total across both passes).
-        expect(await renderMetrics()).toContain('gittensory_ci_state_cache_total{field="aggregate",result="forced"} 2');
+        expect(await renderMetrics()).toContain('loopover_ci_state_cache_total{field="aggregate",result="forced"} 2');
       } finally {
         liveCiSpy.mockRestore();
         requiredContextsSpy.mockRestore();
@@ -2631,7 +2631,7 @@ describe("queue processors", () => {
       try {
         resetMetrics();
         await processJob(env, { type: "agent-regate-pr", deliveryId: "invalidate-pass-1", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
-        expect(await renderMetrics()).toContain('gittensory_ci_state_cache_total{field="aggregate",result="miss"} 1');
+        expect(await renderMetrics()).toContain('loopover_ci_state_cache_total{field="aggregate",result="miss"} 1');
         // The durable row now has a fresh ciState, well within the 60s TTL.
         expect(await getPullRequestDetailSyncState(env, "owner/agent-repo", 7)).toMatchObject({ ciState: "passed" });
 
@@ -2658,7 +2658,7 @@ describe("queue processors", () => {
         // A subsequent readiness check misses again -- proving invalidation, not just a coincidental TTL expiry.
         resetMetrics();
         await processJob(env, { type: "agent-regate-pr", deliveryId: "invalidate-pass-2", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
-        expect(await renderMetrics()).toContain('gittensory_ci_state_cache_total{field="aggregate",result="miss"} 1');
+        expect(await renderMetrics()).toContain('loopover_ci_state_cache_total{field="aggregate",result="miss"} 1');
       } finally {
         liveCiSpy.mockRestore();
         requiredContextsSpy.mockRestore();
@@ -2760,7 +2760,7 @@ describe("queue processors", () => {
         resetMetrics();
         await processJob(env, { type: "agent-regate-pr", deliveryId: "required-contexts-lookup-recovers", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
         expect(liveCiSpy.mock.calls.length).toBeGreaterThan(liveReadsAfterFailedLookup);
-        expect(await renderMetrics()).toContain('gittensory_ci_state_cache_total{field="aggregate",result="miss"} 1');
+        expect(await renderMetrics()).toContain('loopover_ci_state_cache_total{field="aggregate",result="miss"} 1');
         expect(await getPullRequestDetailSyncState(env, "owner/agent-repo", 7)).toMatchObject({ ciState: "passed", ciRequiredContextsKey: JSON.stringify(["trusted-required-ci"]) });
       } finally {
         liveCiSpy.mockRestore();

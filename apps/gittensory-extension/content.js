@@ -27,9 +27,9 @@ function mountOverlay(target) {
   container.innerHTML = `
     <div class="gittensory-overlay__header">
       <span class="gittensory-overlay__mark">G</span>
-      <span>Gittensory</span>
+      <span>LoopOver</span>
       <span class="gittensory-overlay__privacy">Private</span>
-      <button type="button" class="gittensory-overlay__refresh" aria-label="Refresh Gittensory context">Refresh</button>
+      <button type="button" class="gittensory-overlay__refresh" aria-label="Refresh LoopOver context">Refresh</button>
     </div>
     <div class="gittensory-overlay__body">Loading private context...</div>
   `;

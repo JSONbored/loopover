@@ -190,7 +190,7 @@ describe("fallbackShotR2Key", () => {
     const a = await fallbackShotR2Key("deadbeef", "/pricing", "desktop");
     const b = await fallbackShotR2Key("deadbeef", "/pricing", "desktop");
     expect(a).toBe(b);
-    expect(a.startsWith("gittensory/shots/actions-fallback/")).toBe(true);
+    expect(a.startsWith("loopover/shots/actions-fallback/")).toBe(true);
     expect(a.endsWith(".png")).toBe(true);
   });
 
@@ -431,7 +431,7 @@ describe("isFallbackDispatchInFlight / markFallbackDispatched / clearFallbackDis
     const store = memoryFallbackMarkerStore();
     const env = createTestEnv({ REVIEW_AUDIT: store });
     const fingerprint = await sha256Hex(`${HEAD_SHA}:actions-fallback:dispatch-marker`);
-    const key = `gittensory/fallback-dispatch/${fingerprint.slice(0, 40)}.json`;
+    const key = `loopover/fallback-dispatch/${fingerprint.slice(0, 40)}.json`;
     await store.put(key, "not json");
     await expect(isFallbackDispatchInFlight(env, HEAD_SHA)).resolves.toBe(false);
   });
@@ -440,7 +440,7 @@ describe("isFallbackDispatchInFlight / markFallbackDispatched / clearFallbackDis
     const store = memoryFallbackMarkerStore();
     const env = createTestEnv({ REVIEW_AUDIT: store });
     const fingerprint = await sha256Hex(`${HEAD_SHA}:actions-fallback:dispatch-marker`);
-    const key = `gittensory/fallback-dispatch/${fingerprint.slice(0, 40)}.json`;
+    const key = `loopover/fallback-dispatch/${fingerprint.slice(0, 40)}.json`;
     await store.put(key, JSON.stringify({ someOtherField: true }));
     await expect(isFallbackDispatchInFlight(env, HEAD_SHA)).resolves.toBe(false);
   });

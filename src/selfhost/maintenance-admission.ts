@@ -77,7 +77,7 @@ export interface MaintenancePressureSignals {
   /** Foreground-priority rows in pending/processing regardless of run_after -- includes work deliberately
    *  scheduled for later (e.g. agent-regate-pr's staggered/rate-deferred per-PR backlog, index.ts:24-29's
    *  "normal, expected, can legitimately stay nonzero for long periods"). Retained ONLY for the
-   *  gittensory_queue_live_pending observability gauge (server.ts) -- evaluateMaintenanceAdmission deliberately
+   *  loopover_queue_live_pending observability gauge (server.ts) -- evaluateMaintenanceAdmission deliberately
    *  does NOT gate on this (#selfhost-maintenance-admission-runnable-signal): a raw count would starve
    *  maintenance on backlog that was never actually competing for a claim slot. Use liveRunnableNowCount for
    *  any real pressure decision. */

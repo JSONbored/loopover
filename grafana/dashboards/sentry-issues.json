@@ -84,7 +84,7 @@
   ],
   "refresh": "5m",
   "schemaVersion": 38,
-  "tags": ["gittensory", "sentry", "observability"],
+  "tags": ["loopover", "sentry", "observability"],
   "templating": {
     "list": [
       { "current": {}, "hide": 0, "includeAll": false, "name": "DS_SENTRY", "options": [], "query": "grafana-sentry-datasource", "refresh": 1, "type": "datasource" }
@@ -93,7 +93,7 @@
   "time": { "from": "now-24h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Gittensory — Sentry issues",
-  "uid": "gittensory-sentry",
+  "title": "LoopOver — Sentry issues",
+  "uid": "loopover-sentry",
   "version": 1
 }

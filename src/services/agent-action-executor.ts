@@ -308,12 +308,12 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     //    before the freshness/live-CI GitHub calls below so a known-denied action never spends that API budget on
     //    an outcome that cannot change until the maintainer re-consents (#selfhost-runtime-drift).
     if (PR_WRITE_CLASSES.has(action.actionClass) && resolveAgentPermissionReadiness({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions, actionClass: action.actionClass }) !== "ready") {
-      incr("gittensory_agent_action_permission_denied_total", { actionClass: action.actionClass });
+      incr("loopover_agent_action_permission_denied_total", { actionClass: action.actionClass });
       const cooldownKey = writePermissionDenialKey(ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.actionClass);
       if (shouldSuppressWritePermissionDenial(cooldownKey, Date.now())) {
         // Already denied + audited for this exact installation/repo/action-class within the cooldown window --
         // count it (the denial stays visible in metrics) without re-writing an identical audit record every pass.
-        incr("gittensory_agent_action_permission_denied_suppressed_total", { actionClass: action.actionClass });
+        incr("loopover_agent_action_permission_denied_suppressed_total", { actionClass: action.actionClass });
         outcomes.push({
           actionClass: action.actionClass,
           outcome: "denied",
@@ -509,7 +509,7 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
         nowMs: Date.now(),
       });
       if (decision.wait) {
-        incr("gittensory_merge_train_deferred_total", { repo: ctx.repoFullName, mode: ctx.mergeTrainMode });
+        incr("loopover_merge_train_deferred_total", { repo: ctx.repoFullName, mode: ctx.mergeTrainMode });
         if (ctx.mergeTrainMode === "enforce") {
           await audit("denied", `merge train: waiting for older mergeable sibling #${decision.blockingPr} — action not executed`);
           continue;

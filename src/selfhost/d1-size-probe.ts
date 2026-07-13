@@ -180,7 +180,7 @@ function redactD1ProbeSecret(message: string, apiToken: string): string {
 }
 
 function logD1ProbeError(config: D1SizeProbeConfig, part: "database_info" | "table_row_count", error: unknown, table?: string): void {
-  incr("gittensory_d1_probe_errors_total", { part });
+  incr("loopover_d1_probe_errors_total", { part });
   console.error(
     JSON.stringify({
       level: "error",
@@ -197,7 +197,7 @@ function logD1ProbeError(config: D1SizeProbeConfig, part: "database_info" | "tab
  * {@link resolveD1SizeProbeConfig} returns null (probe disabled/unconfigured).
  *
  * Size and each monitored table's row count are fetched independently and a failure in one never blanks the
- * other: a failed fetch keeps its PREVIOUS reading (recorded via `gittensory_d1_probe_errors_total`) instead
+ * other: a failed fetch keeps its PREVIOUS reading (recorded via `loopover_d1_probe_errors_total`) instead
  * of resetting to -1 or dropping out of the row-count vector, so a transient Cloudflare API hiccup reads on
  * the dashboard as "stale" rather than a false "suddenly zero" or a gap.
  */
@@ -229,7 +229,7 @@ export async function runD1SizeProbe(env: D1SizeProbeEnv, fetchImpl: typeof fetc
   };
 }
 
-/** -1 sentinel (matching gittensory_host_load_avg1_per_core's convention): distinguishes "probe disabled or
+/** -1 sentinel (matching loopover_host_load_avg1_per_core's convention): distinguishes "probe disabled or
  *  has never completed a successful sample" from a genuine 0-byte reading. */
 export function d1DatabaseSizeBytesSample(): number {
   return lastSample?.fileSizeBytes ?? -1;

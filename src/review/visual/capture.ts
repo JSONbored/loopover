@@ -4,7 +4,7 @@
 // after = the PR's preview-deploy URL, discovered the
 // provider-agnostic way (Deployments API → commit checks → cloudflare-bot PR comment). Each page is
 // rendered once here (in the queue consumer, which has the time budget), stored as a PNG in R2
-// (env.REVIEW_AUDIT), and embedded either as <PUBLIC_API_ORIGIN>/gittensory/shot?key=<r2key> (this
+// (env.REVIEW_AUDIT), and embedded either as <PUBLIC_API_ORIGIN>/loopover/shot?key=<r2key> (this
 // instance's own proxy route) or, when REVIEW_AUDIT_S3_PUBLIC_URL is configured (an operator's own
 // publicly-readable S3-compatible bucket — see src/selfhost/s3-blob-store.ts), a direct link at the
 // bucket's own public URL — see resolveShotUrl below. Either way, GitHub's image proxy fetches a fast
@@ -31,7 +31,7 @@ import { captureScrollFrames, captureShot, DESKTOP_VIEWPORT, MOBILE_VIEWPORT, ty
 import { compareCapturedScreenshots, isVisualDiffAvailable, type VisualDiffOutcome } from "./pixel-diff";
 import { encodeScrollGif, isScrollGifAvailable } from "./scroll-gif";
 
-const NAMESPACE = "gittensory";
+const NAMESPACE = "loopover";
 const DEFAULT_ROUTES = ["/"];
 // The app-folder segment is a wildcard, not hardcoded to gittensory-ui: metagraphed's UI (apps/ui/src/routes/)
 // uses the identical TanStack flat-file convention `routeForFile` below implements, just under a different app
@@ -297,7 +297,7 @@ function routeForFile(raw: string): string {
  * The publicly-servable URL for an already-stored REVIEW_AUDIT key. Prefers a direct link at the operator's
  * own S3-compatible bucket (REVIEW_AUDIT_S3_PUBLIC_URL) so GitHub's image proxy — and every other viewer —
  * fetches straight from that bucket's own CDN, never touching this instance at all. Falls back to this
- * instance's own /gittensory/shot?key= proxy route (today's only option, and still the only option for the
+ * instance's own /loopover/shot?key= proxy route (today's only option, and still the only option for the
  * filesystem-backed self-host store, which has no public URL of its own). Empty string when neither is
  * configured, matching every call site's existing "no shotBase" degradation.
  */
@@ -310,7 +310,7 @@ function resolveShotUrl(env: Env, key: string): string {
 }
 
 /**
- * Render `page`, store the PNG in R2, and return its /gittensory/shot?key= URL. Falls back to an on-demand
+ * Render `page`, store the PNG in R2, and return its /loopover/shot?key= URL. Falls back to an on-demand
  * ?url= link if R2 or the render is unavailable; returns {} when there is no page (no preview deploy yet) so
  * the cell shows a dash. Reuses an identical cached fingerprint (a deployment_status re-run filling "after"
  * cells would otherwise re-render the same screenshot — Browser Rendering is the costliest binding).
@@ -336,7 +336,7 @@ async function capturePage(
   themeStorageKey?: string | undefined,
 ): Promise<{ url?: string | undefined; png?: Uint8Array | undefined }> {
   if (!page) return {};
-  const shotBase = env.PUBLIC_API_ORIGIN; // this worker's public origin (serves /gittensory/shot)
+  const shotBase = env.PUBLIC_API_ORIGIN; // this worker's public origin (serves /loopover/shot)
   // Carries the theme (#3678) and, when set, the storage key (#4109) so a LATER on-demand fetch of this
   // exact URL (e.g. a failed/never-persisted render retried by GitHub's image proxy) still requests the
   // matching prefers-color-scheme/localStorage forcing, not the default — handleShot's Mode B reads these

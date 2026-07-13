@@ -106,7 +106,7 @@ export async function runOpenPrReconciliation(env: Env): Promise<OpenPrDivergenc
         const result = await reconcileOpenPullRequests(env, repo.fullName);
         if (result.missingNumbers.length === 0) continue;
         found.push({ repoFullName: repo.fullName, remoteOpenCount: result.remoteOpenCount, localOpenCount: result.localOpenCount, missingNumbers: result.missingNumbers });
-        incr("gittensory_open_pr_reconciliation_missing_total", { repo: repo.fullName }, result.missingNumbers.length);
+        incr("loopover_open_pr_reconciliation_missing_total", { repo: repo.fullName }, result.missingNumbers.length);
         console.error(
           JSON.stringify({
             level: "error",

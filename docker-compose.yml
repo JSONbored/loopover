@@ -38,7 +38,7 @@
 # (chrony/ntpd), not just one. A single dead NTP source silently drifts the clock with no local
 # symptom until GitHub App JWT auth starts failing ("Bad credentials") once the drift exceeds the
 # JWT's 60s skew tolerance. See docs/self-hosting/operations → "Host clock sync (NTP)" and the
-# gittensory_clock_skew_seconds Grafana panel/alert (--profile observability) for live drift.
+# loopover_clock_skew_seconds Grafana panel/alert (--profile observability) for live drift.
 
 # Bounded container logging (#audit-rate-headroom): every service below defaults to Docker's
 # json-file driver, which has NO size cap on its own -- a long-running 24/7 stack can fill the
@@ -1160,7 +1160,7 @@ services:
       - -c
       - "apk add --no-cache busybox-extras && sh /scripts/backup-metrics.sh"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9101/metrics | grep -q '^gittensory_backup_latest_timestamp_seconds'"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9101/metrics | grep -q '^loopover_backup_latest_timestamp_seconds'"]
       interval: 30s
       retries: 5
 

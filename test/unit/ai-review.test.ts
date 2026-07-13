@@ -754,7 +754,7 @@ describe("runGittensoryAiReview block mode (consensus)", () => {
     expect(result.inconclusive).toBe(true); // FAIL-CLOSED: a missing second opinion holds the PR, never passes it
     expect(result.advisoryNotes).not.toBeNull(); // notes still come from the one parseable opinion
     // Observability (#2540): the single canonical increment fires once for this inconclusive review.
-    expect(await renderMetrics()).toContain('gittensory_ai_review_inconclusive_total{mode="block"} 1');
+    expect(await renderMetrics()).toContain('loopover_ai_review_inconclusive_total{mode="block"} 1');
   });
 
   it("a clean dual review is NOT inconclusive (both models parsed, neither blocks → passes)", async () => {
@@ -768,7 +768,7 @@ describe("runGittensoryAiReview block mode (consensus)", () => {
     expect(result.status === "ok" && result.consensusDefect).toBeNull();
     expect(result.status === "ok" && result.inconclusive).toBe(false);
     // A non-inconclusive review must NOT increment the inconclusive counter.
-    expect(await renderMetrics()).not.toContain("gittensory_ai_review_inconclusive_total");
+    expect(await renderMetrics()).not.toContain("loopover_ai_review_inconclusive_total");
   });
 
   it("block mode with BYOK: provider writes the advisory, the free Workers-AI pair drives consensus", async () => {
@@ -1586,7 +1586,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
     expect(result.consensusDefect?.title).toContain("Race condition");
     expect(seen).toEqual(["codex", "codex", "codex", "claude-code"]);
     expect(await renderMetrics()).toContain(
-      'gittensory_ai_review_model_fallback_total{fallback="claude-code",primary="codex"} 1',
+      'loopover_ai_review_model_fallback_total{fallback="claude-code",primary="codex"} 1',
     );
   });
 
@@ -1752,7 +1752,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
       });
       if (result.status !== "ok") throw new Error("expected ok");
       expect(result.consensusDefect?.title).toContain("Lone blocker"); // "either" honored unchanged
-      expect(await renderMetrics()).not.toContain("gittensory_ai_review_onmerge_clamped_total"); // no clamp fired
+      expect(await renderMetrics()).not.toContain("loopover_ai_review_onmerge_clamped_total"); // no clamp fired
     });
 
     it("a repo tightening either -> either against an either floor is a no-op, not a clamp", async () => {
@@ -1771,7 +1771,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
       });
       if (result.status !== "ok") throw new Error("expected ok");
       expect(result.consensusDefect?.title).toContain("Lone blocker");
-      expect(await renderMetrics()).not.toContain("gittensory_ai_review_onmerge_clamped_total"); // not a clamp
+      expect(await renderMetrics()).not.toContain("loopover_ai_review_onmerge_clamped_total"); // not a clamp
     });
 
     it("a repo attempting to LOOSEN either -> both against an either floor is clamped back to either, and it is metered (not silently ignored)", async () => {
@@ -1797,7 +1797,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
       expect(result.consensusDefect?.title).toContain("Lone blocker");
       expect([...seen].sort()).toEqual(["claude-code", "codex"]);
       // Surfaced via a metric, not silently dropped.
-      expect(await renderMetrics()).toContain('gittensory_ai_review_onmerge_clamped_total{mode="block"} 1');
+      expect(await renderMetrics()).toContain('loopover_ai_review_onmerge_clamped_total{mode="block"} 1');
     });
 
     it("a repo picking both against a both (or unset) operator floor is honored unclamped", async () => {
@@ -1817,7 +1817,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
       if (result.status !== "ok") throw new Error("expected ok");
       // Under "both", a single reviewer's blocker does NOT decide the outcome on its own.
       expect(result.consensusDefect).toBeNull();
-      expect(await renderMetrics()).not.toContain("gittensory_ai_review_onmerge_clamped_total");
+      expect(await renderMetrics()).not.toContain("loopover_ai_review_onmerge_clamped_total");
     });
 
     it("a synthesis operator plan with no onMerge still clamps repo both against the implicit either floor", async () => {
@@ -1836,7 +1836,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
       });
       if (result.status !== "ok") throw new Error("expected ok");
       expect(result.consensusDefect?.title).toContain("Lone blocker");
-      expect(await renderMetrics()).toContain('gittensory_ai_review_onmerge_clamped_total{mode="block"} 1');
+      expect(await renderMetrics()).toContain('loopover_ai_review_onmerge_clamped_total{mode="block"} 1');
     });
   });
 });
@@ -2319,7 +2319,7 @@ describe("pure helpers", () => {
       expect(primaryAttempts).toBe(3);
       expect(run).toHaveBeenCalledTimes(4);
       expect(await renderMetrics()).toContain(
-        'gittensory_ai_review_model_fallback_total{fallback="fallback-model",primary="primary-model"} 1',
+        'loopover_ai_review_model_fallback_total{fallback="fallback-model",primary="primary-model"} 1',
       );
       expect(diagnostics.some((d) => d.status === "unparseable_output")).toBe(true);
       expect(diagnostics.some((d) => d.status === "parsed")).toBe(true);
@@ -2558,7 +2558,7 @@ describe("pure helpers", () => {
       expect(result.split).toBe(true);
       expect(result.consensusDefect).toBeNull();
       expect(await renderMetrics()).toContain(
-        'gittensory_ai_review_tiebreak_order_unstable_total{mode="block"} 1',
+        'loopover_ai_review_tiebreak_order_unstable_total{mode="block"} 1',
       );
       expect(run).toHaveBeenCalledTimes(4);
     });
@@ -2594,7 +2594,7 @@ describe("pure helpers", () => {
       expect(result.split).toBe(false);
       expect(result.consensusDefect?.title).toContain("Null deref");
       expect(await renderMetrics()).not.toContain(
-        "gittensory_ai_review_tiebreak_order_unstable_total",
+        "loopover_ai_review_tiebreak_order_unstable_total",
       );
       expect(judgeCalls).toBe(2);
     });
@@ -2624,7 +2624,7 @@ describe("pure helpers", () => {
       if (result.status !== "ok") throw new Error("expected ok");
       expect(result.split).toBe(true);
       expect(await renderMetrics()).not.toContain(
-        "gittensory_ai_review_tiebreak_order_unstable_total",
+        "loopover_ai_review_tiebreak_order_unstable_total",
       );
     });
 
@@ -2764,7 +2764,7 @@ describe("pure helpers", () => {
       expect(result.split).toBe(true);
       expect(judgeCalls).toBe(2);
       expect(await renderMetrics()).not.toContain(
-        "gittensory_ai_review_tiebreak_order_unstable_total",
+        "loopover_ai_review_tiebreak_order_unstable_total",
       );
     });
 

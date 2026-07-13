@@ -4,7 +4,7 @@ apiVersion: 1
 datasources:
   - name: LoopoverDB
     type: frser-sqlite-datasource
-    uid: gittensory-db
+    uid: loopover-db
     access: proxy
     editable: false
     jsonData:

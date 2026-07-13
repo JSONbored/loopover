@@ -383,7 +383,7 @@ describe("drainOrbRelay (pull-mode drain)", () => {
     expect(calls[0]?.url).toBe("https://gittensory-api.aethereal.dev/v1/orb/relay/pull");
     expect((calls[0]?.init?.headers as Record<string, string>).authorization).toBe("Bearer s");
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ ack: ["prev-1"] });
-    expect(counterValue("gittensory_orb_relay_malformed_events_total")).toBe(1);
+    expect(counterValue("loopover_orb_relay_malformed_events_total")).toBe(1);
     const logged = errors.mock.calls.map((c) => String(c[0])).find((line) => line.includes("orb_relay_malformed_event_dropped"));
     expect(logged).toBeDefined();
     expect(JSON.parse(logged!)).toMatchObject({ level: "error", event: "orb_relay_malformed_event_dropped", hasDeliveryId: true, hasEventName: true, hasRawBody: false });

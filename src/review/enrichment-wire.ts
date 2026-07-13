@@ -13,8 +13,8 @@ import { neutralizePromptInjection } from "./prompt-injection";
 import { REES_ANALYZER_NAMES, REES_ANALYZER_NAME_SET, type ReesAnalyzerName } from "./enrichment-analyzer-names";
 import type { PullRequestFileRecord } from "../types";
 
-const REES_ENRICH_REQUESTS_TOTAL = "gittensory_rees_enrich_requests_total";
-const REES_ENRICH_REQUEST_DURATION_SECONDS = "gittensory_rees_enrich_request_duration_seconds";
+const REES_ENRICH_REQUESTS_TOTAL = "loopover_rees_enrich_requests_total";
+const REES_ENRICH_REQUEST_DURATION_SECONDS = "loopover_rees_enrich_request_duration_seconds";
 
 /** Records the client-observable outcome of one /v1/enrich attempt. `elapsedMs` is omitted for the
  *  skipped-before-any-network-attempt case (the auth-rejected circuit breaker), since no call was timed. */

@@ -289,7 +289,7 @@ GITHUB_METADATA_CACHE_TTL_SECONDS=600`}
         above so operators can keep repeated policy reads hot without broadening stale cache risk.
         Live CI status, check-run, check-suite, pull/issue subresources, pull mergeability, token
         minting, rate-limit, and collaborator-permission endpoints are never served from this cache.
-        Prometheus exports <code>gittensory_github_response_cache_total</code>, and the bundled
+        Prometheus exports <code>loopover_github_response_cache_total</code>, and the bundled
         self-host Grafana dashboard includes the hit/miss/coalesced/error breakdown.
       </Callout>
 

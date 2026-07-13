@@ -326,7 +326,7 @@ export async function recordPrOutcome(
   const decision = merged ? "merged" : "closed";
   // Observability (#reviews-dashboard): realized human outcome (merged vs closed) for the Grafana panel + as the
   // ground truth to compare against the engine's gate verdicts.
-  incr("gittensory_pr_outcomes_total", { outcome: decision });
+  incr("loopover_pr_outcomes_total", { outcome: decision });
   const targetId = reviewAuditTargetId(repoFullName, pr.number);
 
   await appendReviewAudit(env, {

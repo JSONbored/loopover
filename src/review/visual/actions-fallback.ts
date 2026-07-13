@@ -148,7 +148,7 @@ export function parseFallbackRunCorrelation(displayTitle: string | undefined | n
 // Dispatch in-flight marker -- a persisted R2 sentinel, not a live GitHub API query (#4112 review fix).
 // ---------------------------------------------------------------------------------------------------------
 
-const FALLBACK_DISPATCH_MARKER_NAMESPACE = "gittensory/fallback-dispatch/";
+const FALLBACK_DISPATCH_MARKER_NAMESPACE = "loopover/fallback-dispatch/";
 
 /** The workflow's own `timeout-minutes: 15` (visual-capture-fallback.yml) plus a buffer for GitHub's own
  *  runner-queueing delay before the job even starts -- a marker older than this is treated as abandoned
@@ -459,7 +459,7 @@ export function fallbackShotFileName(path: string, viewport: "desktop" | "mobile
 // fingerprint against (capturePage's own key scheme needs a real "page" url; a fallback shot has none).
 // ---------------------------------------------------------------------------------------------------------
 
-const FALLBACK_SHOT_NAMESPACE = "gittensory/shots/actions-fallback/";
+const FALLBACK_SHOT_NAMESPACE = "loopover/shots/actions-fallback/";
 
 /** The R2 key a fallback-captured shot is stored/read under for one PR head + route + viewport. Pure content
  *  address (no preview URL involved) -- deterministic so the write side (webhook handler) and the read side

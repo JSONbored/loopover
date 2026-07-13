@@ -350,24 +350,24 @@ const PR_DETAIL_BATCH_SIZE: Record<BackfillMode, number> = { light: 12, full: 40
 // in a single job execution, draining the shared installation bucket before the once-per-segment rate check
 // runs again (#audit-rate-headroom). Any PR left un-hydrated this run stays a candidate on the next page/run.
 const MERGED_PR_FILE_HYDRATION_BATCH_SIZE: Record<BackfillMode, number> = { light: 10, full: 20, resume: 20 };
-const PULL_REQUEST_FILES_FETCH_METRIC = "gittensory_github_pull_request_files_fetch_total";
+const PULL_REQUEST_FILES_FETCH_METRIC = "loopover_github_pull_request_files_fetch_total";
 // #selfhost-runtime-pressure: a bare 403 on the branch-protection probe (no admin:read on this installation/fork,
 // the common case) is a PERMISSION/config gap, not GitHub rate-limit exhaustion -- GitHubApiError.rateLimited
 // already makes that distinction (see isRateLimitedGitHubFailure below). Counted separately from the rate-limit
 // metrics so a dashboard can tell "GitHub is throttling us" apart from "this token can't read branch protection
 // (expected for most installations/forks)" instead of a permission gap inflating an apparent rate-limit signal.
-const BRANCH_PROTECTION_PERMISSION_DENIED_METRIC = "gittensory_github_branch_protection_permission_denied_total";
+const BRANCH_PROTECTION_PERMISSION_DENIED_METRIC = "loopover_github_branch_protection_permission_denied_total";
 type PullRequestFilesFetchCaller = "backfill_open_pr_details" | "backfill_merged_history" | "live_review";
 // #2537: durable-cache counter for the bare PR-state read, mirroring PULL_REQUEST_FILES_FETCH_METRIC's bounded-
 // label style (no per-PR-number labels — cardinality-safe).
-const PR_STATE_CACHE_METRIC = "gittensory_pr_state_cache_total";
+const PR_STATE_CACHE_METRIC = "loopover_pr_state_cache_total";
 // Safety-net max age for a webhook-invalidated PR-state cache row (a dropped/missed webhook must not pin a stale
 // value forever). Short enough that a missed synchronize/closed/reopened event self-heals within one sweep tick.
 const PR_STATE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 // #selfhost-ci-verification: durable-cache counter for the CI-state snapshot cache, sibling to PR_STATE_CACHE_METRIC.
 // Exported: the cache-check/hit/miss orchestration lives in queue/processors.ts (see writeThroughCiStateCache's
 // own doc comment for why), which needs this same metric name.
-export const CI_STATE_CACHE_METRIC = "gittensory_ci_state_cache_total";
+export const CI_STATE_CACHE_METRIC = "loopover_ci_state_cache_total";
 // Shorter than PR_STATE_CACHE_MAX_AGE_MS (5min): CI state changes faster and more consequentially than bare PR
 // state, and check_run/check_suite `completed` webhooks already invalidate this cache explicitly (see
 // invalidateCiStateCache below) -- this is purely the backstop for a delayed/missed webhook delivery.
@@ -1299,7 +1299,7 @@ async function refreshStoredInstallation(
       // minted token's own installationId (parsed from the broker's response payload) against the row
       // being probed; a mismatch (or a missing/zero id from an older broker) must not be reported healthy.
       if (minted.installationId === 0 || minted.installationId !== installation.id) {
-        incr("gittensory_installation_health_broker_probe_total", { result: "mismatched_installation" });
+        incr("loopover_installation_health_broker_probe_total", { result: "mismatched_installation" });
         return {
           installation,
           errorSummary: `Token broker minted a token for installation ${minted.installationId || "unknown"}, not ${installation.id}.`,
@@ -1313,10 +1313,10 @@ async function refreshStoredInstallation(
       if (refreshedInstallation !== installation) {
         await updateInstallationPermissions(env, installation.id, refreshedInstallation.permissions);
       }
-      incr("gittensory_installation_health_broker_probe_total", { result: "ok" });
+      incr("loopover_installation_health_broker_probe_total", { result: "ok" });
       return { installation: refreshedInstallation, authMode: "broker" };
     } catch (error) {
-      incr("gittensory_installation_health_broker_probe_total", { result: "failed" });
+      incr("loopover_installation_health_broker_probe_total", { result: "failed" });
       return {
         installation,
         errorSummary: strippedErrorMessage(error, "Token broker did not mint an installation token."),

@@ -1,7 +1,7 @@
 apiVersion: 1
 providers:
-  - name: gittensory
-    folder: Gittensory
+  - name: loopover
+    folder: LoopOver
     type: file
     disableDeletion: true
     editable: false

@@ -339,7 +339,7 @@ export type UnifiedCommentBridgeArgs = {
   /** Headline brand (default "LoopOver review"). */
   brand?: string | undefined;
   /** Visual before/after capture routes (visual-capture port). When present + non-empty, a "Visual preview"
-   *  collapsible (a markdown table of <img> tags pointing at the public /gittensory/shot URLs) is appended.
+   *  collapsible (a markdown table of <img> tags pointing at the public /loopover/shot URLs) is appended.
    *  Public-safe: only URLs + route paths — no private terms. Default OFF (the processor passes this only
    *  when screenshotsAllowed + the PR touches web-visible files). */
   beforeAfter?: CaptureRoute[] | undefined;
@@ -436,7 +436,7 @@ export function buildVisualFindingsCollapsible(findings: string[]): UnifiedColla
  * pixel-diff provider is available and finds a real visual difference — absent on hosted builds and any
  * unchanged/no-diff cell, which render as a dash like every other missing shot. Emitted as TRUSTED raw HTML
  * (`rawHtml: true`) so the `<a>/<img>` survive — public-safe by construction: every value is a first-party
- * minted /gittensory/shot URL or a route path (no private rubric / scoring terms), and a stray `"` in a URL
+ * minted /loopover/shot URL or a route path (no private rubric / scoring terms), and a stray `"` in a URL
  * is neutralized so it can't break out of the attribute. Returns null when nothing is renderable (no route
  * has any shot URL), so the section is omitted rather than shown empty.
  */

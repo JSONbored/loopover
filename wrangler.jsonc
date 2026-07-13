@@ -235,6 +235,20 @@
       "custom_domain": true,
     },
   ],
+  // R2 bucket bindings were previously configured directly via the dashboard, not tracked in code (#5332).
+  // REVIEW_AUDIT backs both the review-audit ledger and the /loopover/shot screenshot cache (key-prefixed);
+  // VISUAL_CAPTURE_PUBLIC is provisioned for a future split of public-facing screenshot storage but is not
+  // yet read/written by any code path.
+  "r2_buckets": [
+    {
+      "binding": "REVIEW_AUDIT",
+      "bucket_name": "loopover-review-audit",
+    },
+    {
+      "binding": "VISUAL_CAPTURE_PUBLIC",
+      "bucket_name": "loopover-visual-capture-public",
+    },
+  ],
   "d1_databases": [
     {
       "binding": "DB",

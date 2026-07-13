@@ -703,11 +703,11 @@ function cliUsageFromStdout(provider: string, model: string, effort: string, std
 function recordCliUsageMetrics(provider: string, model: string, effort: string, stdout: string): AiUsage & { model: string } {
   const usage = cliUsageFromStdout(provider, model, effort, stdout);
   const labels = { provider, model: usage.model, effort };
-  incr("gittensory_ai_requests_total", labels);
-  incr("gittensory_ai_cost_usd_total", { provider: labels.provider }, usage.costUsd ?? 0);
-  if (usage.inputTokens !== undefined) incr("gittensory_ai_input_tokens_total", { ...labels, kind: "review" }, usage.inputTokens);
-  if (usage.outputTokens !== undefined) incr("gittensory_ai_output_tokens_total", { ...labels, kind: "review" }, usage.outputTokens);
-  if (usage.totalTokens !== undefined) incr("gittensory_ai_total_tokens_total", labels, usage.totalTokens);
+  incr("loopover_ai_requests_total", labels);
+  incr("loopover_ai_cost_usd_total", { provider: labels.provider }, usage.costUsd ?? 0);
+  if (usage.inputTokens !== undefined) incr("loopover_ai_input_tokens_total", { ...labels, kind: "review" }, usage.inputTokens);
+  if (usage.outputTokens !== undefined) incr("loopover_ai_output_tokens_total", { ...labels, kind: "review" }, usage.outputTokens);
+  if (usage.totalTokens !== undefined) incr("loopover_ai_total_tokens_total", labels, usage.totalTokens);
   return usage;
 }
 
@@ -1247,7 +1247,7 @@ async function runProviderWithOtel(
 ): Promise<AiResult> {
   const circuit = aiProviderCircuits.get(provider.name);
   if (circuit && circuit.cooldownUntil > Date.now()) {
-    incr("gittensory_ai_provider_circuit_open_total", { provider: provider.name });
+    incr("loopover_ai_provider_circuit_open_total", { provider: provider.name });
     throw new Error(
       `circuit_open: provider "${provider.name}" is in cooldown after ${AI_PROVIDER_FAILURE_THRESHOLD} consecutive failures — skipping this attempt`,
     );
@@ -1260,7 +1260,7 @@ async function runProviderWithOtel(
       { "ai.provider": provider.name, "ai.model": model || "default", "ai.request_kind": requestKindLabel },
       () => provider.ai.run(model, options),
     );
-    observe("gittensory_ai_provider_request_duration_seconds", (Date.now() - startedAtMs) / 1000, {
+    observe("loopover_ai_provider_request_duration_seconds", (Date.now() - startedAtMs) / 1000, {
       provider: provider.name,
       request_kind: requestKindLabel,
     });
@@ -1277,13 +1277,13 @@ async function runProviderWithOtel(
     }
     return result;
   } catch (error) {
-    observe("gittensory_ai_provider_request_duration_seconds", (Date.now() - startedAtMs) / 1000, {
+    observe("loopover_ai_provider_request_duration_seconds", (Date.now() - startedAtMs) / 1000, {
       provider: provider.name,
       request_kind: requestKindLabel,
     });
     if (isExpectedEmbeddingRoutingError(options, error)) throw error;
-    incr("gittensory_ai_provider_failures_total", { provider: provider.name });
-    incr("gittensory_ai_provider_request_errors_total", { provider: provider.name, request_kind: requestKindLabel });
+    incr("loopover_ai_provider_failures_total", { provider: provider.name });
+    incr("loopover_ai_provider_request_errors_total", { provider: provider.name, request_kind: requestKindLabel });
     // Re-read the map here rather than reusing the `circuit` captured above: that read happened BEFORE the
     // `await` on the real provider call, so under concurrent same-provider calls it can be stale by the time
     // this catch runs, and computing `failures` from it would clobber a sibling call's write (lost-update race)

@@ -81,7 +81,7 @@ function renderOpportunityBadgeMarkup(badge, lastSyncedLabel) {
   return `
     <div class="gittensory-miner-opportunity-badge__header">
       <span class="gittensory-miner-opportunity-badge__mark">G</span>
-      <span>Gittensory opportunity</span>
+      <span>LoopOver opportunity</span>
       <span class="gittensory-miner-opportunity-badge__read-only">Read-only</span>
     </div>
     <div class="gittensory-miner-opportunity-badge__score">

@@ -13,13 +13,13 @@ export function webhookDeliveryCacheKey(deliveryId: string): string {
 }
 
 /** Returns true when this GitHub webhook delivery ID was already processed (Redis dedup hit).
- *  Increments `gittensory_webhook_dedup_total{backend="redis"}` on a hit. Does NOT mark the
+ *  Increments `loopover_webhook_dedup_total{backend="redis"}` on a hit. Does NOT mark the
  *  delivery — the caller marks only after a successful response (#2506 / #2572). */
 export async function isWebhookDeliveryDuplicate(cache: RedisCache, deliveryId: string): Promise<boolean> {
   try {
     const seen = await cache.get(webhookDeliveryCacheKey(deliveryId));
     if (seen) {
-      incr("gittensory_webhook_dedup_total", { backend: "redis" });
+      incr("loopover_webhook_dedup_total", { backend: "redis" });
       return true;
     }
     return false;

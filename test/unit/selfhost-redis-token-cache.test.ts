@@ -32,7 +32,7 @@ describe("createRedisTokenCache (#perf installation-token persistence)", () => {
     expect(await createRedisTokenCache(redis).get(42)).toBeNull();
 
     expect(await renderMetrics()).toContain(
-      'gittensory_redis_token_cache_total{result="miss"} 1',
+      'loopover_redis_token_cache_total{result="miss"} 1',
     );
   });
 
@@ -47,7 +47,7 @@ describe("createRedisTokenCache (#perf installation-token persistence)", () => {
 
     const metrics = await renderMetrics();
     expect(metrics).toContain(
-      'gittensory_redis_token_cache_total{result="hit"} 1',
+      'loopover_redis_token_cache_total{result="hit"} 1',
     );
     expect(metrics).not.toContain("sensitive-value");
   });
@@ -67,7 +67,7 @@ describe("createRedisTokenCache (#perf installation-token persistence)", () => {
     expect(await createRedisTokenCache(f.redis).get(9)).toBeNull();
 
     expect(await renderMetrics()).toContain(
-      'gittensory_redis_token_cache_total{result="miss"} 1',
+      'loopover_redis_token_cache_total{result="miss"} 1',
     );
   });
 
@@ -80,7 +80,7 @@ describe("createRedisTokenCache (#perf installation-token persistence)", () => {
     expect(await createRedisTokenCache(f.redis).get(9)).toBeNull();
 
     expect(await renderMetrics()).toContain(
-      'gittensory_redis_token_cache_total{result="miss"} 1',
+      'loopover_redis_token_cache_total{result="miss"} 1',
     );
   });
 
@@ -93,7 +93,7 @@ describe("createRedisTokenCache (#perf installation-token persistence)", () => {
     expect(await createRedisTokenCache(f.redis).get(9)).toBeNull();
 
     expect(await renderMetrics()).toContain(
-      'gittensory_redis_token_cache_total{result="miss"} 1',
+      'loopover_redis_token_cache_total{result="miss"} 1',
     );
   });
 });

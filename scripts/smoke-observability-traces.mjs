@@ -2,7 +2,7 @@
 import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 
-const composeService = process.env.SELFHOST_SERVICE ?? "gittensory";
+const composeService = process.env.SELFHOST_SERVICE ?? "loopover";
 const timeoutMs = Number(process.env.OBSERVABILITY_SMOKE_TIMEOUT_MS ?? "30000");
 const pollIntervalMs = Number(
   process.env.OBSERVABILITY_SMOKE_POLL_MS ?? "1000",
@@ -26,12 +26,12 @@ const body = {
   resourceSpans: [{
     resource: {
       attributes: [
-        { key: "service.name", value: { stringValue: "gittensory-selfhost-smoke" } },
+        { key: "service.name", value: { stringValue: "loopover-selfhost-smoke" } },
         { key: "deployment.environment.name", value: { stringValue: "selfhost-smoke" } }
       ]
     },
     scopeSpans: [{
-      scope: { name: "gittensory-selfhost-smoke" },
+      scope: { name: "loopover-selfhost-smoke" },
       spans: [{
         traceId,
         spanId,

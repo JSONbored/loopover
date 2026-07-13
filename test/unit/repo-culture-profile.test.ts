@@ -461,8 +461,8 @@ describe("extractRepoCultureProfile: cache hit/miss telemetry (#4509)", () => {
     expect(second.present).toBe(true);
 
     const rendered = await renderMetrics();
-    expect(rendered).toContain("gittensory_repo_culture_profile_cache_hit_total 1");
-    expect(rendered).not.toContain("gittensory_repo_culture_profile_cache_miss_total");
+    expect(rendered).toContain("loopover_repo_culture_profile_cache_hit_total 1");
+    expect(rendered).not.toContain("loopover_repo_culture_profile_cache_miss_total");
     const hitEvent = await auditEvent(env, "github_app.repo_culture_profile_cache_hit");
     expect(hitEvent?.outcome).toBe("completed");
     expect(await auditEvent(env, "github_app.repo_culture_profile_cache_miss")).toBeUndefined();
@@ -492,8 +492,8 @@ describe("extractRepoCultureProfile: cache hit/miss telemetry (#4509)", () => {
     expect(second.present).toBe(true);
 
     const rendered = await renderMetrics();
-    expect(rendered).toContain("gittensory_repo_culture_profile_cache_miss_total 1");
-    expect(rendered).not.toContain("gittensory_repo_culture_profile_cache_hit_total");
+    expect(rendered).toContain("loopover_repo_culture_profile_cache_miss_total 1");
+    expect(rendered).not.toContain("loopover_repo_culture_profile_cache_hit_total");
     const missEvent = await auditEvent(env, "github_app.repo_culture_profile_cache_miss");
     expect(missEvent?.outcome).toBe("completed");
     expect(await auditEvent(env, "github_app.repo_culture_profile_cache_hit")).toBeUndefined();
@@ -517,8 +517,8 @@ describe("extractRepoCultureProfile: cache hit/miss telemetry (#4509)", () => {
     expect(refreshed.pullRequestNorms.sampleSize).toBe(MIN_SAMPLE_PULL_REQUESTS + 1); // confirms the drift path actually re-derived
 
     const rendered = await renderMetrics();
-    expect(rendered).toContain("gittensory_repo_culture_profile_cache_miss_total 1");
-    expect(rendered).not.toContain("gittensory_repo_culture_profile_cache_hit_total");
+    expect(rendered).toContain("loopover_repo_culture_profile_cache_miss_total 1");
+    expect(rendered).not.toContain("loopover_repo_culture_profile_cache_hit_total");
     expect((await auditEvent(env, "github_app.repo_culture_profile_cache_miss"))?.outcome).toBe("completed");
   });
 });

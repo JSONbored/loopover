@@ -1,8 +1,8 @@
 import { countRecentDeadLetters } from "../db/repositories";
 
 // Trailing window for the "is the DLQ dead-lettering right now?" gauge (#2083). Operators alert on the RATE of
-// recent DLQ-consumer drops, which the cumulative `gittensory_dlq_dead_lettered_total` counter and the point-in-time
-// `gittensory_queue_dead` depth gauge can't express on their own.
+// recent DLQ-consumer drops, which the cumulative `loopover_dlq_dead_lettered_total` counter and the point-in-time
+// `loopover_queue_dead` depth gauge can't express on their own.
 export const DLQ_RECENT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
 /** ISO-8601 timestamp `windowMs` before `now` (default: current time). Pure given `now`; the injectable clock keeps

@@ -1035,9 +1035,9 @@ export function createApp() {
   // an allowlisted public host. The route's own Cache-Control headers (per mode) are set inside handleShot;
   // the rate-limit middleware classifies it as 'normal' (a sane public class) via routeClassForPath.
   // Flag-OFF = TRULY inert: when GITTENSORY_REVIEW_SCREENSHOTS is off nothing references this route (no comment
-  // carries a /gittensory/shot URL), so 404 it outright — that removes the on-demand `?url=` render surface
+  // carries a /loopover/shot URL), so 404 it outright — that removes the on-demand `?url=` render surface
   // entirely until the feature is deliberately enabled, rather than relying on the host allowlist alone.
-  app.get("/gittensory/shot", (c) => {
+  app.get("/loopover/shot", (c) => {
     if (!isScreenshotsEnabled(c.env)) return c.notFound();
     return handleShot(c.req.raw, c.env, {
       ...(c.env.PUBLIC_SITE_ORIGIN ? { productionUrl: c.env.PUBLIC_SITE_ORIGIN } : {}),

@@ -8,7 +8,7 @@ import type { Redis } from "ioredis";
 import type { InstallationTokenStore } from "../github/app";
 import { incr } from "./metrics";
 
-const REDIS_TOKEN_CACHE_METRIC = "gittensory_redis_token_cache_total";
+const REDIS_TOKEN_CACHE_METRIC = "loopover_redis_token_cache_total";
 
 const keyFor = (installationId: number): string =>
   `gh:insttoken:${installationId}`;

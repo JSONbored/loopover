@@ -50,12 +50,12 @@ describe("backup-metrics.sh", () => {
 
     const metrics = runExporterOnce(root);
 
-    expect(metrics).toContain(`gittensory_backup_latest_timestamp_seconds{target="postgres"} ${newestPostgres}`);
-    expect(metrics).toContain(`gittensory_backup_latest_timestamp_seconds{target="sqlite"} ${sqlite}`);
-    expect(metrics).toContain(`gittensory_backup_latest_timestamp_seconds{target="qdrant"} ${qdrant}`);
-    expect(metrics).toContain('gittensory_backup_files{target="postgres"} 2');
-    expect(metrics).toContain('gittensory_backup_files{target="sqlite"} 1');
-    expect(metrics).toContain('gittensory_backup_files{target="qdrant"} 1');
+    expect(metrics).toContain(`loopover_backup_latest_timestamp_seconds{target="postgres"} ${newestPostgres}`);
+    expect(metrics).toContain(`loopover_backup_latest_timestamp_seconds{target="sqlite"} ${sqlite}`);
+    expect(metrics).toContain(`loopover_backup_latest_timestamp_seconds{target="qdrant"} ${qdrant}`);
+    expect(metrics).toContain('loopover_backup_files{target="postgres"} 2');
+    expect(metrics).toContain('loopover_backup_files{target="sqlite"} 1');
+    expect(metrics).toContain('loopover_backup_files{target="qdrant"} 1');
   });
 
   it("exports zeroes for missing backup directories instead of failing the scrape", () => {
@@ -63,11 +63,11 @@ describe("backup-metrics.sh", () => {
 
     const metrics = runExporterOnce(root);
 
-    expect(metrics).toContain('gittensory_backup_latest_timestamp_seconds{target="postgres"} 0');
-    expect(metrics).toContain('gittensory_backup_latest_timestamp_seconds{target="sqlite"} 0');
-    expect(metrics).toContain('gittensory_backup_latest_timestamp_seconds{target="qdrant"} 0');
-    expect(metrics).toContain('gittensory_backup_files{target="postgres"} 0');
-    expect(metrics).toContain('gittensory_backup_files{target="sqlite"} 0');
-    expect(metrics).toContain('gittensory_backup_files{target="qdrant"} 0');
+    expect(metrics).toContain('loopover_backup_latest_timestamp_seconds{target="postgres"} 0');
+    expect(metrics).toContain('loopover_backup_latest_timestamp_seconds{target="sqlite"} 0');
+    expect(metrics).toContain('loopover_backup_latest_timestamp_seconds{target="qdrant"} 0');
+    expect(metrics).toContain('loopover_backup_files{target="postgres"} 0');
+    expect(metrics).toContain('loopover_backup_files{target="sqlite"} 0');
+    expect(metrics).toContain('loopover_backup_files{target="qdrant"} 0');
   });
 });

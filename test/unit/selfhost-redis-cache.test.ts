@@ -111,21 +111,21 @@ describe("isWebhookDeliveryDuplicate (#2075)", () => {
   it("returns false and does not increment on a first-time delivery", async () => {
     const cache = createRedisCache(fakeRedis());
     await expect(isWebhookDeliveryDuplicate(cache, "delivery-1")).resolves.toBe(false);
-    expect(await renderMetrics()).not.toContain('gittensory_webhook_dedup_total{backend="redis"}');
+    expect(await renderMetrics()).not.toContain('loopover_webhook_dedup_total{backend="redis"}');
   });
 
-  it("returns true and increments gittensory_webhook_dedup_total{backend=\"redis\"} when already seen", async () => {
+  it("returns true and increments loopover_webhook_dedup_total{backend=\"redis\"} when already seen", async () => {
     const cache = createRedisCache(fakeRedis());
     await cache.set(webhookDeliveryCacheKey("delivery-2"), "1", 300);
     await expect(isWebhookDeliveryDuplicate(cache, "delivery-2")).resolves.toBe(true);
-    expect(await renderMetrics()).toContain('gittensory_webhook_dedup_total{backend="redis"} 1');
+    expect(await renderMetrics()).toContain('loopover_webhook_dedup_total{backend="redis"} 1');
   });
 
   it("returns false without incrementing when Redis get throws", async () => {
     const brokenRedis = { async get() { throw new Error("connection refused"); } } as unknown as Redis;
     const cache = createRedisCache(brokenRedis);
     await expect(isWebhookDeliveryDuplicate(cache, "delivery-3")).resolves.toBe(false);
-    expect(await renderMetrics()).not.toContain('gittensory_webhook_dedup_total{backend="redis"}');
+    expect(await renderMetrics()).not.toContain('loopover_webhook_dedup_total{backend="redis"}');
   });
 
   it("rememberWebhookDelivery stores the delivery key for later dedup", async () => {

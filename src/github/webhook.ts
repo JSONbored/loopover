@@ -73,7 +73,7 @@ function recordWebhookEnqueueMetric(
   action: unknown,
   result: EnqueueWebhookResult,
 ): void {
-  incr("gittensory_webhook_enqueue_total", {
+  incr("loopover_webhook_enqueue_total", {
     action: webhookMetricAction(action),
     event: webhookMetricEvent(eventName),
     result,

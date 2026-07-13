@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 
-const composeService = process.env.SELFHOST_SERVICE ?? "gittensory";
+const composeService = process.env.SELFHOST_SERVICE ?? "loopover";
 const timeoutMs = Number(process.env.OBSERVABILITY_SMOKE_TIMEOUT_MS ?? "30000");
 const pollIntervalMs = Number(
   process.env.OBSERVABILITY_SMOKE_POLL_MS ?? "1000",
 );
-const metricName = `gittensory_selfhost_smoke_${Date.now()}_total`;
+const metricName = `loopover_selfhost_smoke_${Date.now()}_total`;
 
 await main();
 
@@ -23,11 +23,11 @@ const body = {
   resourceMetrics: [{
     resource: {
       attributes: [
-        { key: "service.name", value: { stringValue: "gittensory-selfhost-smoke" } }
+        { key: "service.name", value: { stringValue: "loopover-selfhost-smoke" } }
       ]
     },
     scopeMetrics: [{
-      scope: { name: "gittensory-selfhost-smoke" },
+      scope: { name: "loopover-selfhost-smoke" },
       metrics: [{
         name: metricName,
         sum: {
@@ -63,8 +63,8 @@ while (Date.now() <= deadline) {
       const appRes = await fetch("http://localhost:8787/metrics");
       if (!appRes.ok) throw new Error("app /metrics returned " + appRes.status);
       const appText = await appRes.text();
-      if (!appText.includes("# HELP gittensory_uptime_seconds") || !appText.includes("# TYPE gittensory_uptime_seconds gauge")) {
-        throw new Error("app /metrics is missing expected HELP/TYPE shape for gittensory_uptime_seconds");
+      if (!appText.includes("# HELP loopover_uptime_seconds") || !appText.includes("# TYPE loopover_uptime_seconds gauge")) {
+        throw new Error("app /metrics is missing expected HELP/TYPE shape for loopover_uptime_seconds");
       }
       console.log(JSON.stringify({ ok: true, metricName }));
       process.exit(0);

@@ -313,7 +313,7 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
     expect(row?.anomalies.some((a) => /review burst/.test(a))).toBe(true);
     // #ops-anomaly-metric: the Prometheus counterpart to the log line, labeled by kind (self-host mode preserves
     // the repo label so the assertion can target the exact series without relying on cloud-worker redaction).
-    expect(counterValue("gittensory_ops_anomaly_total", { repo: "owner/repo", kind: "review_burst" })).toBe(1);
+    expect(counterValue("loopover_ops_anomaly_total", { repo: "owner/repo", kind: "review_burst" })).toBe(1);
   });
 
   it("detects and reports a review FAILURE burst end-to-end -- reproduces the #3747 incident shape (repeated inconclusive calls, zero publishes) (#review-burst-blind-spot)", async () => {

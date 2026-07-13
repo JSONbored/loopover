@@ -336,7 +336,7 @@ describe("indexRepo: full repo index (tree → chunk → embed → upsert)", () 
     await expect(indexRepo(throwingEnv as typeof env, PROJECT, REPO)).resolves.toEqual({ indexed: 0, files: 0, capped: false });
     const parsed = errSpy.mock.calls.map((c) => JSON.parse(c[0] as string));
     expect(parsed.some((p) => p.level === "error" && p.event === "rag_index_repo_error" && p.ev === "rag_index_repo_error")).toBe(true);
-    expect(await renderMetrics()).toContain('gittensory_rag_pipeline_errors_total{op="index_repo"}');
+    expect(await renderMetrics()).toContain('loopover_rag_pipeline_errors_total{op="index_repo"}');
     errSpy.mockRestore();
   });
 });
@@ -810,7 +810,7 @@ describe("reindexChangedPaths: delete + re-upsert only the changed paths", () =>
     await expect(reindexChangedPaths(throwingEnv as typeof env, PROJECT, REPO, ["src/a.ts"])).resolves.toEqual({ indexed: 0, files: 0, capped: false });
     const parsed = errSpy.mock.calls.map((c) => JSON.parse(c[0] as string));
     expect(parsed.some((p) => p.level === "error" && p.event === "rag_reindex_paths_error" && p.ev === "rag_reindex_paths_error")).toBe(true);
-    expect(await renderMetrics()).toContain('gittensory_rag_pipeline_errors_total{op="reindex_paths"}');
+    expect(await renderMetrics()).toContain('loopover_rag_pipeline_errors_total{op="reindex_paths"}');
     errSpy.mockRestore();
   });
 });

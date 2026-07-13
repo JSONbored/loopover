@@ -230,8 +230,8 @@ describe("runD1SizeProbe", () => {
 
     expect(d1DatabaseSizeBytesSample()).toBe(1_000_000); // stale, not reset to -1
     expect(d1TableRowCountSamples().length).toBeGreaterThan(0); // stale rows kept, not blanked
-    expect(counterValue("gittensory_d1_probe_errors_total", { part: "database_info" })).toBeGreaterThan(0);
-    expect(counterValue("gittensory_d1_probe_errors_total", { part: "table_row_count" })).toBeGreaterThan(0);
+    expect(counterValue("loopover_d1_probe_errors_total", { part: "database_info" })).toBeGreaterThan(0);
+    expect(counterValue("loopover_d1_probe_errors_total", { part: "table_row_count" })).toBeGreaterThan(0);
   });
 
   it("reads -1 on the very first tick when everything fails (no previous sample to fall back to)", async () => {
@@ -285,7 +285,7 @@ describe("runD1SizeProbe", () => {
     expect(samples).toContainEqual({ labels: { table: "audit_events" }, value: 1 }); // stale, kept from tick 1
     expect(samples).toContainEqual({ labels: { table: "signal_snapshots" }, value: 100 }); // freshly updated
     expect(d1SignalSnapshotsRowsPerKeySample()).toBeCloseTo(20 / 5, 6); // ratio reflects the FRESH sample
-    expect(counterValue("gittensory_d1_probe_errors_total", { part: "table_row_count" })).toBeGreaterThan(0);
+    expect(counterValue("loopover_d1_probe_errors_total", { part: "table_row_count" })).toBeGreaterThan(0);
   });
 
   it("keeps size at its previous value when only the database-info fetch fails but tables succeed", async () => {
@@ -331,9 +331,9 @@ describe("d1SignalSnapshotsRowsPerKeySample", () => {
 
 describe("D1 metrics end-to-end via renderMetrics()", () => {
   it("renders gauges and vector series with the registered HELP/TYPE metadata after a successful probe", async () => {
-    gauge("gittensory_d1_database_size_bytes", () => d1DatabaseSizeBytesSample());
-    gaugeVector("gittensory_d1_table_row_count", () => d1TableRowCountSamples());
-    gauge("gittensory_signal_snapshots_rows_per_key", () => d1SignalSnapshotsRowsPerKeySample());
+    gauge("loopover_d1_database_size_bytes", () => d1DatabaseSizeBytesSample());
+    gaugeVector("loopover_d1_table_row_count", () => d1TableRowCountSamples());
+    gauge("loopover_signal_snapshots_rows_per_key", () => d1SignalSnapshotsRowsPerKeySample());
 
     await runD1SizeProbe(
       FULL_ENV,
@@ -344,23 +344,23 @@ describe("D1 metrics end-to-end via renderMetrics()", () => {
     );
 
     const out = await renderMetrics();
-    expect(out).toContain("# TYPE gittensory_d1_database_size_bytes gauge");
-    expect(out).toContain("gittensory_d1_database_size_bytes 3890057216");
-    expect(out).toContain("# TYPE gittensory_d1_table_row_count gauge");
-    expect(out).toContain('gittensory_d1_table_row_count{table="signal_snapshots"} 107');
-    expect(out).toContain("# TYPE gittensory_signal_snapshots_rows_per_key gauge");
-    expect(out).toMatch(/gittensory_signal_snapshots_rows_per_key 2\.9\d+/);
+    expect(out).toContain("# TYPE loopover_d1_database_size_bytes gauge");
+    expect(out).toContain("loopover_d1_database_size_bytes 3890057216");
+    expect(out).toContain("# TYPE loopover_d1_table_row_count gauge");
+    expect(out).toContain('loopover_d1_table_row_count{table="signal_snapshots"} 107');
+    expect(out).toContain("# TYPE loopover_signal_snapshots_rows_per_key gauge");
+    expect(out).toMatch(/loopover_signal_snapshots_rows_per_key 2\.9\d+/);
   });
 
   it("renders -1 sentinels and an empty vector before the probe ever runs", async () => {
-    gauge("gittensory_d1_database_size_bytes", () => d1DatabaseSizeBytesSample());
-    gaugeVector("gittensory_d1_table_row_count", () => d1TableRowCountSamples());
-    gauge("gittensory_signal_snapshots_rows_per_key", () => d1SignalSnapshotsRowsPerKeySample());
+    gauge("loopover_d1_database_size_bytes", () => d1DatabaseSizeBytesSample());
+    gaugeVector("loopover_d1_table_row_count", () => d1TableRowCountSamples());
+    gauge("loopover_signal_snapshots_rows_per_key", () => d1SignalSnapshotsRowsPerKeySample());
 
     const out = await renderMetrics();
-    expect(out).toContain("gittensory_d1_database_size_bytes -1");
-    expect(out).toContain("gittensory_signal_snapshots_rows_per_key -1");
-    expect(out).toContain("# TYPE gittensory_d1_table_row_count gauge");
-    expect(out).not.toContain('gittensory_d1_table_row_count{table=');
+    expect(out).toContain("loopover_d1_database_size_bytes -1");
+    expect(out).toContain("loopover_signal_snapshots_rows_per_key -1");
+    expect(out).toContain("# TYPE loopover_d1_table_row_count gauge");
+    expect(out).not.toContain('loopover_d1_table_row_count{table=');
   });
 });

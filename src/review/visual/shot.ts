@@ -4,15 +4,15 @@
 //   • puppeteer import unchanged (@cloudflare/puppeteer), SSRF guard now isSafeHttpUrl from ../content-lane/safe-url
 //   • bindings: env.BROWSER (Browser Rendering) + env.REVIEW_AUDIT (R2) — gittensory's R2 binding is
 //     REVIEW_AUDIT, NOT reviewbot's env.AUDIT.
-//   • r2 key prefix default 'gittensory/shots/'; on-demand render allowlist's production host = PUBLIC_SITE_ORIGIN.
+//   • r2 key prefix default 'loopover/shots/'; on-demand render allowlist's production host = PUBLIC_SITE_ORIGIN.
 //   • no reviewbot REVIEWBOT_* secrets / REST fallback — gittensory renders via the BROWSER binding only.
 //
 // Two modes:
-//   GET /gittensory/shot?key=<r2key>  -> stream a pre-rendered PNG from R2 (fast; GitHub's image proxy
+//   GET /loopover/shot?key=<r2key>  -> stream a pre-rendered PNG from R2 (fast; GitHub's image proxy
 //                                       fetches this static object instead of waiting on a live render).
-//   GET /gittensory/shot?url=<page>   -> render <page> on demand and return a PNG (host-allowlisted +
+//   GET /loopover/shot?url=<page>   -> render <page> on demand and return a PNG (host-allowlisted +
 //                                       SSRF-guarded). A fallback / manual-check path.
-//   GET /gittensory/shot?placeholder=loading|failed|auth -> a static SVG card (no render).
+//   GET /loopover/shot?placeholder=loading|failed|auth -> a static SVG card (no render).
 //
 // Rendering uses the Cloudflare Browser Rendering *binding* (env.BROWSER) via @cloudflare/puppeteer — no
 // account API token. Returns null on any failure so callers degrade gracefully (the cell becomes a dash).
@@ -78,7 +78,7 @@ const THEME_STORAGE_WRITE_TIMEOUT_MS = 2_000;
 const THEME_STORAGE_RELOAD_TIMEOUT_MS = 20000;
 
 /** Per-call shot-route options: the R2 namespace (key prefix) + the production host for the on-demand render
- *  allowlist. Defaults to gittensory so the /gittensory/shot route works with no options. */
+ *  allowlist. Defaults to loopover so the /loopover/shot route works with no options. */
 export interface ShotOptions {
   namespace?: string;
   productionUrl?: string;
@@ -443,7 +443,7 @@ export async function captureScrollFrames(env: Env, url: string, viewport: Viewp
 
 export async function handleShot(request: Request, env: Env, opts: ShotOptions = {}): Promise<Response> {
   const params = new URL(request.url).searchParams;
-  const r2Prefix = `${opts.namespace ?? "gittensory"}/shots/`;
+  const r2Prefix = `${opts.namespace ?? "loopover"}/shots/`;
 
   // Mode 0: a placeholder for an "after" cell with no real screenshot yet — the animated spinner (preview
   // still building), the static "deploy failed" card (preview won't come), or the auth-wall card.

@@ -31,11 +31,11 @@ function env(): Env {
 }
 
 function request(url: string): Request {
-  return new Request(`https://api.example.test/gittensory/shot?url=${encodeURIComponent(url)}`);
+  return new Request(`https://api.example.test/loopover/shot?url=${encodeURIComponent(url)}`);
 }
 
 function shotRequest(query: string): Request {
-  return new Request(`https://api.example.test/gittensory/shot?${query}`);
+  return new Request(`https://api.example.test/loopover/shot?${query}`);
 }
 
 // Minimal R2 stub: REVIEW_AUDIT.get(key) returns an object whose `.body` is a byte stream, or null.
@@ -628,7 +628,7 @@ describe("visual screenshot placeholder cards", () => {
 describe("visual screenshot R2 key serve + traversal guard", () => {
   it("streams a stored PNG for a valid key inside the namespace", async () => {
     const png = new Uint8Array([10, 20, 30, 40]);
-    const key = "gittensory/shots/abc.png";
+    const key = "loopover/shots/abc.png";
     const response = await handleShot(shotRequest(`key=${encodeURIComponent(key)}`), r2Env({ [key]: png }));
 
     expect(response.status).toBe(200);
@@ -639,7 +639,7 @@ describe("visual screenshot R2 key serve + traversal guard", () => {
 
   it("serves a .gif key with an image/gif content-type (#3612) — extension-derived, not stored httpMetadata", async () => {
     const gif = new Uint8Array([1, 2, 3, 4]);
-    const key = "gittensory/shots/abc.gif";
+    const key = "loopover/shots/abc.gif";
     const response = await handleShot(shotRequest(`key=${encodeURIComponent(key)}`), r2Env({ [key]: gif }));
 
     expect(response.status).toBe(200);
@@ -649,7 +649,7 @@ describe("visual screenshot R2 key serve + traversal guard", () => {
 
   it("returns 404 for a valid key that is absent from R2", async () => {
     const response = await handleShot(
-      shotRequest(`key=${encodeURIComponent("gittensory/shots/missing.png")}`),
+      shotRequest(`key=${encodeURIComponent("loopover/shots/missing.png")}`),
       r2Env({}),
     );
 
@@ -659,7 +659,7 @@ describe("visual screenshot R2 key serve + traversal guard", () => {
 
   it("rejects a key that traverses with ..", async () => {
     const response = await handleShot(
-      shotRequest(`key=${encodeURIComponent("gittensory/shots/../../etc/passwd")}`),
+      shotRequest(`key=${encodeURIComponent("loopover/shots/../../etc/passwd")}`),
       r2Env({}),
     );
 

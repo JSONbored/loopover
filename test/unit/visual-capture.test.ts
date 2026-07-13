@@ -56,7 +56,7 @@ function reviewAuditWithBrokenCachedBody(key: string): R2Bucket {
 
 async function shotKey(prNumber: number, slot: "before" | "after", viewportName: "desktop" | "mobile", page: string): Promise<string> {
   const fingerprint = await sha256Hex(`${prNumber}:${slot}:${viewportName}:${page}`);
-  return `gittensory/shots/${fingerprint.slice(0, 40)}.png`;
+  return `loopover/shots/${fingerprint.slice(0, 40)}.png`;
 }
 
 afterEach(() => {
@@ -118,8 +118,8 @@ describe("visual capture preview discovery", () => {
         path: "/app",
         beforeUrl: undefined,
         beforeUrlMobile: undefined,
-        afterUrl: "https://worker.example/gittensory/shot?placeholder=failed",
-        afterUrlMobile: "https://worker.example/gittensory/shot?placeholder=failed",
+        afterUrl: "https://worker.example/loopover/shot?placeholder=failed",
+        afterUrlMobile: "https://worker.example/loopover/shot?placeholder=failed",
       },
     ]);
     expect(latestGitHubRestRateLimitObservation(key)).toEqual({
@@ -158,8 +158,8 @@ describe("visual capture preview discovery", () => {
         path: "/app",
         beforeUrl: undefined,
         beforeUrlMobile: undefined,
-        afterUrl: `https://worker.example/gittensory/shot?url=${encodeURIComponent("https://pr-42-abc1234.preview.example.com/app")}&w=1440&h=900`,
-        afterUrlMobile: `https://worker.example/gittensory/shot?url=${encodeURIComponent("https://pr-42-abc1234.preview.example.com/app")}&w=390&h=844`,
+        afterUrl: `https://worker.example/loopover/shot?url=${encodeURIComponent("https://pr-42-abc1234.preview.example.com/app")}&w=1440&h=900`,
+        afterUrlMobile: `https://worker.example/loopover/shot?url=${encodeURIComponent("https://pr-42-abc1234.preview.example.com/app")}&w=390&h=844`,
       },
     ]);
   });
@@ -492,8 +492,8 @@ describe("buildCapture pixel-diff wiring (#3674)", () => {
         { repoFullName: "owner/repo", prNumber: 2, previewUrl: "https://preview.example.com" },
         ["apps/gittensory-ui/src/routes/app.index.tsx"],
       );
-      expect(result.routes[0]?.diffUrl).toContain("/gittensory/shot?key=");
-      expect(result.routes[0]?.diffUrlMobile).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.diffUrl).toContain("/loopover/shot?key=");
+      expect(result.routes[0]?.diffUrlMobile).toContain("/loopover/shot?key=");
       expect(result.routes[0]?.diffUrl).not.toBe(result.routes[0]?.diffUrlMobile);
     } finally {
       availableSpy.mockRestore();
@@ -588,7 +588,7 @@ describe("buildCapture pixel-diff wiring (#3674)", () => {
       ["apps/gittensory-ui/src/routes/app.index.tsx"],
     );
 
-    expect(result.routes[0]?.beforeUrl).toContain("/gittensory/shot?key=");
+    expect(result.routes[0]?.beforeUrl).toContain("/loopover/shot?key=");
     expect(result.routes[0]?.diffUrl).toBeUndefined();
   });
 
@@ -610,7 +610,7 @@ describe("buildCapture pixel-diff wiring (#3674)", () => {
         ["apps/gittensory-ui/src/routes/app.index.tsx"],
       );
 
-      expect(result.routes[0]?.beforeUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.beforeUrl).toContain("/loopover/shot?key=");
     } finally {
       availableSpy.mockRestore();
       compareSpy.mockRestore();
@@ -634,7 +634,7 @@ describe("buildCapture pixel-diff wiring (#3674)", () => {
       );
 
       expect(captureShotSpy).toHaveBeenCalled();
-      expect(result.routes[0]?.beforeUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.beforeUrl).toContain("/loopover/shot?key=");
       expect(result.routes[0]?.diffUrl).toBeUndefined();
     } finally {
       captureShotSpy.mockRestore();
@@ -691,7 +691,7 @@ describe("buildCapture pixel-diff wiring (#3674)", () => {
         ["apps/gittensory-ui/src/routes/app.index.tsx"],
       );
 
-      expect(result.routes[0]?.diffUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.diffUrl).toContain("/loopover/shot?key=");
     } finally {
       availableSpy.mockRestore();
       compareSpy.mockRestore();
@@ -700,7 +700,7 @@ describe("buildCapture pixel-diff wiring (#3674)", () => {
 });
 
 describe("buildCapture with REVIEW_AUDIT_S3_PUBLIC_URL configured (direct bucket links)", () => {
-  it("links an already-cached shot directly at the bucket instead of this instance's /gittensory/shot proxy", async () => {
+  it("links an already-cached shot directly at the bucket instead of this instance's /loopover/shot proxy", async () => {
     const env = createTestEnv({
       PUBLIC_API_ORIGIN: "https://worker.example",
       PUBLIC_SITE_ORIGIN: "https://prod.example.com",
@@ -716,7 +716,7 @@ describe("buildCapture with REVIEW_AUDIT_S3_PUBLIC_URL configured (direct bucket
       ["apps/gittensory-ui/src/routes/app.index.tsx"],
     );
     expect(result.routes[0]?.afterUrl).toBe(`https://pub-abc123.r2.dev/${afterKey}`);
-    expect(result.routes[0]?.afterUrl).not.toContain("/gittensory/shot?key=");
+    expect(result.routes[0]?.afterUrl).not.toContain("/loopover/shot?key=");
   });
 
   it("strips a trailing slash from REVIEW_AUDIT_S3_PUBLIC_URL before joining the key", async () => {
@@ -769,7 +769,7 @@ describe("buildCapture with REVIEW_AUDIT_S3_PUBLIC_URL configured (direct bucket
       { repoFullName: "owner/repo", prNumber: 23, previewUrl: "https://preview.example.com" },
       ["apps/gittensory-ui/src/routes/app.index.tsx"],
     );
-    expect(result.routes[0]?.afterUrl).toContain("worker.example/gittensory/shot?url=");
+    expect(result.routes[0]?.afterUrl).toContain("worker.example/loopover/shot?url=");
   });
 
   it("uploadDiffImage links directly at the bucket even when PUBLIC_API_ORIGIN is unset (S3 public URL alone is enough)", async () => {
@@ -925,7 +925,7 @@ describe("buildCapture theme matrix (#3678)", () => {
         { themes: ["dark"] },
       );
       expect(result.routes[0]?.theme).toBe("dark");
-      expect(result.routes[0]?.diffUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.diffUrl).toContain("/loopover/shot?key=");
       // Same path/PR, but tagged "dark" — must not reuse the untagged diff's fingerprint (theme is part of the key).
       const untaggedFingerprint = await sha256Hex(`25:diff:desktop:/app`);
       expect(result.routes[0]?.diffUrl).not.toContain(untaggedFingerprint.slice(0, 40));
@@ -984,7 +984,7 @@ describe("buildCapture theme-storage-key wiring (#4109)", () => {
       { themes: ["dark"], themeStorageKey: "theme" },
     );
     expect(result.routes[0]?.beforeUrl).toBe(
-      `https://worker.example/gittensory/shot?url=${encodeURIComponent("https://prod.example.com/app")}&w=1440&h=900&theme=dark&themeStorageKey=${encodeURIComponent("theme")}`,
+      `https://worker.example/loopover/shot?url=${encodeURIComponent("https://prod.example.com/app")}&w=1440&h=900&theme=dark&themeStorageKey=${encodeURIComponent("theme")}`,
     );
   });
 
@@ -997,7 +997,7 @@ describe("buildCapture theme-storage-key wiring (#4109)", () => {
       undefined,
       { themeStorageKey: "theme" },
     );
-    expect(result.routes[0]?.beforeUrl).toBe(`https://worker.example/gittensory/shot?url=${encodeURIComponent("https://prod.example.com/app")}&w=1440&h=900`);
+    expect(result.routes[0]?.beforeUrl).toBe(`https://worker.example/loopover/shot?url=${encodeURIComponent("https://prod.example.com/app")}&w=1440&h=900`);
   });
 
   it("threads the theme storage key into the shot fingerprint too, so it never collides with an untagged-key capture of the same theme", async () => {
@@ -1013,7 +1013,7 @@ describe("buildCapture theme-storage-key wiring (#4109)", () => {
         { themes: ["dark"], themeStorageKey: "theme" },
       );
       expect(result.routes[0]?.theme).toBe("dark");
-      expect(result.routes[0]?.beforeUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.beforeUrl).toContain("/loopover/shot?key=");
       // Same PR/path/theme, but tagged with a storage key — must not reuse the untagged-key fingerprint.
       const untaggedFingerprint = await sha256Hex(`42:before:desktop:https://prod.example.com/app:dark`);
       expect(result.routes[0]?.beforeUrl).not.toContain(untaggedFingerprint.slice(0, 40));
@@ -1040,7 +1040,7 @@ describe("buildCapture theme-storage-key wiring (#4109)", () => {
         { gif: true, themes: ["dark"], themeStorageKey: "theme" },
       );
       expect(result.routes[0]?.theme).toBe("dark");
-      expect(result.routes[0]?.afterGifUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.afterGifUrl).toContain("/loopover/shot?key=");
       const untaggedFingerprint = await sha256Hex(`43:scrollgif:after:desktop:https://preview.example.com/app:dark`);
       expect(result.routes[0]?.afterGifUrl).not.toContain(untaggedFingerprint.slice(0, 40));
       expect(captureScrollSpy.mock.calls.some(([, , , opts]) => opts?.themeStorageKey === "theme")).toBe(true);
@@ -1112,8 +1112,8 @@ describe("buildCapture scroll-GIF wiring (#3612)", () => {
       );
       expect(captureScrollSpy).toHaveBeenCalledTimes(2); // before + after
       expect(encodeSpy).toHaveBeenCalledTimes(2);
-      expect(result.routes[0]?.beforeGifUrl).toContain("/gittensory/shot?key=");
-      expect(result.routes[0]?.afterGifUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.beforeGifUrl).toContain("/loopover/shot?key=");
+      expect(result.routes[0]?.afterGifUrl).toContain("/loopover/shot?key=");
       expect(result.routes[0]?.beforeGifUrl).not.toBe(result.routes[0]?.afterGifUrl);
     } finally {
       gifAvailableSpy.mockRestore();
@@ -1171,7 +1171,7 @@ describe("buildCapture scroll-GIF wiring (#3612)", () => {
         { gif: true },
       );
       expect(captureScrollSpy).toHaveBeenCalledTimes(1); // before only
-      expect(result.routes[0]?.beforeGifUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.beforeGifUrl).toContain("/loopover/shot?key=");
       expect(result.routes[0]?.afterGifUrl).toBeUndefined();
     } finally {
       gifAvailableSpy.mockRestore();
@@ -1273,7 +1273,7 @@ describe("buildCapture scroll-GIF wiring (#3612)", () => {
       );
       expect(captureScrollSpy).toHaveBeenCalledTimes(1); // after only — before has no page to capture
       expect(result.routes[0]?.beforeGifUrl).toBeUndefined();
-      expect(result.routes[0]?.afterGifUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.afterGifUrl).toContain("/loopover/shot?key=");
     } finally {
       gifAvailableSpy.mockRestore();
       captureScrollSpy.mockRestore();
@@ -1321,7 +1321,7 @@ describe("buildCapture scroll-GIF wiring (#3612)", () => {
         { gif: true, themes: ["dark"] },
       );
       expect(result.routes[0]?.theme).toBe("dark");
-      expect(result.routes[0]?.afterGifUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.afterGifUrl).toContain("/loopover/shot?key=");
       const untaggedFingerprint = await sha256Hex(`39:scrollgif:after:desktop:https://preview.example.com/app`);
       expect(result.routes[0]?.afterGifUrl).not.toContain(untaggedFingerprint.slice(0, 40));
     } finally {
@@ -1353,7 +1353,7 @@ describe("buildCapture scroll-GIF wiring (#3612)", () => {
         { gif: true },
       );
       expect(captureScrollSpy).toHaveBeenCalled(); // cache lookup failed -> falls through to a fresh capture
-      expect(result.routes[0]?.beforeGifUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.beforeGifUrl).toContain("/loopover/shot?key=");
     } finally {
       gifAvailableSpy.mockRestore();
       captureScrollSpy.mockRestore();
@@ -1403,8 +1403,8 @@ describe("buildCapture scroll-GIF wiring (#3612)", () => {
         undefined,
         { gif: true },
       );
-      expect(result.routes[0]?.beforeGifUrl).toContain("/gittensory/shot?key=");
-      expect(result.routes[0]?.afterGifUrl).toContain("/gittensory/shot?key=");
+      expect(result.routes[0]?.beforeGifUrl).toContain("/loopover/shot?key=");
+      expect(result.routes[0]?.afterGifUrl).toContain("/loopover/shot?key=");
     } finally {
       gifAvailableSpy.mockRestore();
       captureScrollSpy.mockRestore();
@@ -1414,12 +1414,12 @@ describe("buildCapture scroll-GIF wiring (#3612)", () => {
 });
 
 describe("hasSuccessfulBotCapture (#4110)", () => {
-  const REAL_BEFORE = "https://api.example/gittensory/shot?key=gittensory%2Fshots%2Fbefore.png";
-  const REAL_AFTER = "https://api.example/gittensory/shot?key=gittensory%2Fshots%2Fafter.png";
-  const ON_DEMAND_BEFORE = "https://api.example/gittensory/shot?url=https%3A%2F%2Fprod.example%2Fapp&w=1440&h=900";
-  const ON_DEMAND_AFTER = "https://api.example/gittensory/shot?url=https%3A%2F%2Fpreview.example%2Fapp&w=1440&h=900";
-  const LOADING_PLACEHOLDER = "https://api.example/gittensory/shot?placeholder=loading";
-  const FAILED_PLACEHOLDER = "https://api.example/gittensory/shot?placeholder=failed";
+  const REAL_BEFORE = "https://api.example/loopover/shot?key=gittensory%2Fshots%2Fbefore.png";
+  const REAL_AFTER = "https://api.example/loopover/shot?key=gittensory%2Fshots%2Fafter.png";
+  const ON_DEMAND_BEFORE = "https://api.example/loopover/shot?url=https%3A%2F%2Fprod.example%2Fapp&w=1440&h=900";
+  const ON_DEMAND_AFTER = "https://api.example/loopover/shot?url=https%3A%2F%2Fpreview.example%2Fapp&w=1440&h=900";
+  const LOADING_PLACEHOLDER = "https://api.example/loopover/shot?placeholder=loading";
+  const FAILED_PLACEHOLDER = "https://api.example/loopover/shot?placeholder=failed";
 
   function route(overrides: Partial<CaptureRoute> = {}): CaptureRoute {
     return { path: "/app", ...overrides };
@@ -1722,7 +1722,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
       { actionsFallback: true },
     );
 
-    expect(result.routes[0]?.afterUrl).toBe(`https://worker.example/gittensory/shot?key=${encodeURIComponent(key)}`);
+    expect(result.routes[0]?.afterUrl).toBe(`https://worker.example/loopover/shot?key=${encodeURIComponent(key)}`);
   });
 
   it("links an already-stored fallback shot directly at the bucket when REVIEW_AUDIT_S3_PUBLIC_URL is configured", async () => {
@@ -1833,18 +1833,18 @@ describe("fetchShotContentBlock (#4111)", () => {
 
   it("returns a base64-encoded image content block on a successful fetch", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array([137, 80, 78, 71]), { status: 200 })));
-    const block = await fetchShotContentBlock("https://x/gittensory/shot?key=before");
+    const block = await fetchShotContentBlock("https://x/loopover/shot?key=before");
     expect(block).toEqual({ type: "image", data: Buffer.from([137, 80, 78, 71]).toString("base64"), mimeType: "image/png" });
   });
 
   it("returns undefined on a non-2xx response", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("not found", { status: 404 })));
-    await expect(fetchShotContentBlock("https://x/gittensory/shot?key=missing")).resolves.toBeUndefined();
+    await expect(fetchShotContentBlock("https://x/loopover/shot?key=missing")).resolves.toBeUndefined();
   });
 
   it("returns undefined (never throws) when fetch itself rejects", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network down"); }));
-    await expect(fetchShotContentBlock("https://x/gittensory/shot?key=broken")).resolves.toBeUndefined();
+    await expect(fetchShotContentBlock("https://x/loopover/shot?key=broken")).resolves.toBeUndefined();
   });
 });
 

@@ -287,7 +287,7 @@ export async function extractRepoCultureProfile(env: Env, repoFullName: string, 
       // hit/miss telemetry, one of the six capability gaps #4448 identified. readCachedCultureProfile's null
       // return covers EVERY invalidation reason uniformly (no snapshot, TTL expiry, drift, malformed row), so
       // this single hit/miss branch point correctly counts the merged-PR-count drift path as a miss too.
-      incr("gittensory_repo_culture_profile_cache_hit_total");
+      incr("loopover_repo_culture_profile_cache_hit_total");
       await recordAuditEvent(env, {
         eventType: "github_app.repo_culture_profile_cache_hit",
         targetKey: repoFullName,
@@ -298,7 +298,7 @@ export async function extractRepoCultureProfile(env: Env, repoFullName: string, 
       return cached;
     }
   }
-  incr("gittensory_repo_culture_profile_cache_miss_total");
+  incr("loopover_repo_culture_profile_cache_miss_total");
   await recordAuditEvent(env, {
     eventType: "github_app.repo_culture_profile_cache_miss",
     targetKey: repoFullName,

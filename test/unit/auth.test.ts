@@ -105,7 +105,7 @@ describe("private-beta auth and rate limiting", () => {
     expect(routeClassForPath("/v1/orb/ingest")).toBe("strict"); // open telemetry ingest — abuse-capped per IP
     expect(routeClassForPath("/v1/auth/github/device/start")).toBe("strict");
     expect(routeClassForPath("/v1/local/branch-analysis")).toBe("expensive");
-    expect(routeClassForPath("/gittensory/shot")).toBe("expensive");
+    expect(routeClassForPath("/loopover/shot")).toBe("expensive");
     expect(routeClassForPath("/v1/scoring/preview")).toBe("expensive");
     expect(routeClassForPath("/v1/upstream/status")).toBe("expensive");
     expect(routeClassForPath("/v1/contributors/jsonbored/decision-pack")).toBe("expensive");

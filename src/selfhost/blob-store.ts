@@ -1,5 +1,5 @@
 // Self-host blob store (#10). A minimal R2Bucket-compatible store backed by the local filesystem — the persistence
-// the visual-review screenshot path (src/review/visual/capture.ts + the /gittensory/shot serve route) reads/writes
+// the visual-review screenshot path (src/review/visual/capture.ts + the /loopover/shot serve route) reads/writes
 // through `env.REVIEW_AUDIT`. The cloud uses the Cloudflare R2 binding; self-host has none, so visual captures
 // previously could not be cached/persisted (they degraded to on-demand re-render). This implements only the get/put
 // surface those two paths use; every other R2Bucket method is unused on self-host. Node-only (fs import never
@@ -9,7 +9,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 
 /** Build a filesystem-backed REVIEW_AUDIT store rooted at `baseDir`. Keys are app-generated
- *  (`gittensory/shots/<hash>.png`) and the serve route already prefix-checks + rejects `..`, but the path is
+ *  (`loopover/shots/<hash>.png`) and the serve route already prefix-checks + rejects `..`, but the path is
  *  resolved + boundary-checked here too so a key can never escape the base directory. */
 export function createFsBlobStore(baseDir: string): R2Bucket {
   const base = resolve(baseDir);

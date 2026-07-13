@@ -91,7 +91,12 @@ export async function runInteractiveInit(env, cwd, io) {
   const stateDir = resolveMinerStateDir(env);
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const envFilePath = resolveWizardEnvFilePath(env);
-  writeFileSync(envFilePath, renderWizardEnvFile(entries));
+  // { mode: 0o600 } on writeFileSync applies only when the file is newly created -- an existing file (e.g. from
+  // a prior wizard run, or hand-created by the operator with looser permissions) keeps its current mode across
+  // a write. The chmodSync below still runs unconditionally so the end state is always 0600 either way; the
+  // writeFileSync mode option exists so a BRAND NEW file is never briefly readable at the default umask
+  // permissions between being created and being locked down.
+  writeFileSync(envFilePath, renderWizardEnvFile(entries), { mode: 0o600 });
   chmodSync(envFilePath, 0o600);
   io.writeLine(`wrote ${envFilePath}`);
 

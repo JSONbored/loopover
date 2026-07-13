@@ -169,7 +169,10 @@ describe("miner extension opportunity badge", () => {
     expect(internals.normalizeMinerUiBaseUrl("http://localhost:5174")).toBe("http://localhost:5174");
     expect(internals.normalizeMinerUiBaseUrl("http://localhost:5174/")).toBe("http://localhost:5174");
     expect(internals.normalizeMinerUiBaseUrl("http://127.0.0.1:4174")).toBe("http://127.0.0.1:4174");
-    expect(internals.normalizeMinerUiBaseUrl("https://localhost")).toBe("https://localhost");
+    // https:// is rejected: manifest.json only grants http://localhost/* + http://127.0.0.1/* host permissions,
+    // so an accepted https URL would fetch without the declared permission (#4859 review blocker).
+    expect(() => internals.normalizeMinerUiBaseUrl("https://localhost")).toThrow(/localhost/);
+    expect(() => internals.normalizeMinerUiBaseUrl("https://127.0.0.1:5174")).toThrow(/localhost/);
     expect(() => internals.normalizeMinerUiBaseUrl("http://evil.example.com")).toThrow(/localhost/);
     expect(() => internals.normalizeMinerUiBaseUrl("ftp://localhost:5174")).toThrow(/localhost/);
     expect(() => internals.normalizeMinerUiBaseUrl("not a url")).toThrow(/localhost/);
@@ -388,7 +391,7 @@ describe("miner extension opportunity badge", () => {
     elements["#rankedCandidatesJson"].value = "x".repeat(internals.MAX_RANKED_CANDIDATES_JSON_BYTES + 1);
     await elements["#settings"].dispatchSubmit();
 
-    expect(elements["#status"].textContent).toMatch(/too large/i);
+    expect(elements["#status"].textContent).toMatch(/too large/i);~~
     expect(localSetCalls).toHaveLength(0);
   });
 

@@ -35,9 +35,12 @@ function parseRankedCandidatesJson(text) {
 // `discover --json` output. The default matches miner-ui's fixed dev port (apps/gittensory-miner-ui/vite.config.ts).
 const DEFAULT_MINER_UI_BASE_URL = "http://localhost:5174";
 const DISCOVERY_API_PATH = "/api/discovery";
-// Loopback only, on purpose: the endpoint serves the operator's own local discovery scores and is itself
-// loopback-guarded, so pointing the extension at an arbitrary remote host is never valid. Empty -> the default.
-const MINER_UI_BASE_URL_PATTERN = /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d{1,5})?\/?$/i;
+// Loopback + plain-HTTP only, on purpose: the endpoint serves the operator's own local discovery scores and is
+// itself loopback-guarded, so pointing the extension at an arbitrary remote host is never valid. http:// only --
+// manifest.json declares host permissions for http://localhost/* and http://127.0.0.1/* ONLY, so an https:// URL
+// accepted here would pass validation but the extension-origin fetch would then lack the declared host permission.
+// Empty -> the default.
+const MINER_UI_BASE_URL_PATTERN = /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d{1,5})?\/?$/i;
 
 function normalizeMinerUiBaseUrl(value) {
   const trimmed = String(value ?? "").trim();

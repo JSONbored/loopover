@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { runAttempt } from "../lib/attempt-cli.js";
 import { printHelp, printVersion, runCli } from "../lib/cli.js";
+import { configureLogger, extractLogOptions } from "../lib/logger.js";
 import { runDenyCheck } from "../lib/deny-check.js";
 import { runDiscover } from "../lib/discover-cli.js";
 import { runFeasibilityCli } from "../lib/feasibility-cli.js";
@@ -31,7 +32,11 @@ import { resolveMinerVersion } from "../lib/version.js";
 // cleanly instead of dying mid-write (#4826). Covers every subcommand below, including the local ones.
 installCliSignalHandlers();
 
-const cliArgs = process.argv.slice(2);
+// Peel the global logging flags (--quiet/--verbose/--log-level) off the front of argv and configure the
+// process-wide logger once (#4835), so every command below shares one level-aware logger without re-parsing
+// them; the stripped `cliArgs` is what the command dispatch sees.
+const { options: logOptions, rest: cliArgs } = extractLogOptions(process.argv.slice(2));
+configureLogger({ ...logOptions, env: process.env });
 
 // `status` and `doctor` are strictly local, offline commands — their contract is to make NO network calls.
 // `init` stays local by default and only makes a network call when the operator explicitly passes

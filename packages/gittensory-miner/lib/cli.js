@@ -52,6 +52,9 @@ export function printHelp(input) {
       "",
       "Options:",
       "  --no-update-check  Skip the npm registry version nudge (also GITTENSORY_MINER_NO_UPDATE_CHECK=1)",
+      "  --quiet            Log only warnings and errors (also GITTENSORY_MINER_LOG_LEVEL=error)",
+      "  --verbose          Log debug-level diagnostics (also GITTENSORY_MINER_LOG_LEVEL=debug)",
+      "  --log-level <lvl>  Set the log level explicitly: silent|error|warn|info|debug",
     ].join("\n"),
   );
 }

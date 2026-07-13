@@ -1,0 +1,139 @@
+{
+  "uid": "gittensory-miner-usage",
+  "title": "Gittensory miner — coding-agent usage",
+  "tags": ["gittensory", "miner", "ams"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-7d", "to": "now" },
+  "description": "AMS coding-agent driver attempt outcomes, token totals, and cost from the redacted attempt-log reporting export (datasource uid ams-attempt-log). Filterable by $provider across claude-cli, codex-cli, and agent-sdk in a single dashboard. For LoopOver ORB reviewer AI usage (ai_usage_events, Prometheus counters, Claude Code OTEL), use /d/loopover-ai-usage instead — these dashboards answer different questions and never share a datasource.",
+  "links": [
+    {
+      "title": "LoopOver — AI usage (ORB reviewers)",
+      "type": "link",
+      "url": "/d/loopover-ai-usage",
+      "icon": "dashboard",
+      "targetBlank": false,
+      "tooltip": "ORB durable ai_usage_events + Prometheus + Claude OTEL — not AMS miner attempts"
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "provider",
+        "label": "Provider",
+        "type": "query",
+        "datasource": { "type": "frser-sqlite-datasource", "uid": "ams-attempt-log" },
+        "query": {
+          "queryType": "table",
+          "queryText": "SELECT DISTINCT driver_provider FROM attempt_log_events WHERE driver_provider IS NOT NULL AND driver_provider != '' ORDER BY driver_provider",
+          "rawQueryText": "SELECT DISTINCT driver_provider FROM attempt_log_events WHERE driver_provider IS NOT NULL AND driver_provider != '' ORDER BY driver_provider"
+        },
+        "includeAll": true,
+        "allValue": "$__all",
+        "multi": false,
+        "current": { "text": "All", "value": "$__all" },
+        "refresh": 2,
+        "sort": 1
+      }
+    ]
+  },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Summary (AMS attempt log, filtered)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Attempt successes",
+      "description": "Terminal attempt_succeeded rows in the redacted attempt-log export, scoped by $provider and the selected time range.",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "ams-attempt-log" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "green" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "justifyMode": "center" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT count(*) AS successes FROM attempt_log_events WHERE event_type = 'attempt_succeeded' AND driver_provider IS NOT NULL AND driver_provider != '' AND (${provider:sqlstring} = '$__all' OR driver_provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT count(*) AS successes FROM attempt_log_events WHERE event_type = 'attempt_succeeded' AND driver_provider IS NOT NULL AND driver_provider != '' AND (${provider:sqlstring} = '$__all' OR driver_provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Attempt failures",
+      "description": "Terminal attempt_failed + attempt_aborted rows in the redacted attempt-log export.",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "ams-attempt-log" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "red" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "justifyMode": "center" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT count(*) AS failures FROM attempt_log_events WHERE event_type IN ('attempt_failed', 'attempt_aborted') AND driver_provider IS NOT NULL AND driver_provider != '' AND (${provider:sqlstring} = '$__all' OR driver_provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT count(*) AS failures FROM attempt_log_events WHERE event_type IN ('attempt_failed', 'attempt_aborted') AND driver_provider IS NOT NULL AND driver_provider != '' AND (${provider:sqlstring} = '$__all' OR driver_provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Total tokens",
+      "description": "Sum of tokens_used on terminal attempt rows. Drivers report an honest 0 today when no real token signal exists.",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "ams-attempt-log" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "purple" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "justifyMode": "center" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT coalesce(sum(tokens_used), 0) AS total_tokens FROM attempt_log_events WHERE event_type IN ('attempt_succeeded', 'attempt_failed', 'attempt_aborted') AND driver_provider IS NOT NULL AND driver_provider != '' AND (${provider:sqlstring} = '$__all' OR driver_provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT coalesce(sum(tokens_used), 0) AS total_tokens FROM attempt_log_events WHERE event_type IN ('attempt_succeeded', 'attempt_failed', 'attempt_aborted') AND driver_provider IS NOT NULL AND driver_provider != '' AND (${provider:sqlstring} = '$__all' OR driver_provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Total cost",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "ams-attempt-log" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 4, "color": { "mode": "fixed", "fixedColor": "blue" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "justifyMode": "center" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT coalesce(sum(cost_usd), 0) AS cost_usd FROM attempt_log_events WHERE event_type IN ('attempt_succeeded', 'attempt_failed', 'attempt_aborted') AND driver_provider IS NOT NULL AND driver_provider != '' AND (${provider:sqlstring} = '$__all' OR driver_provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT coalesce(sum(cost_usd), 0) AS cost_usd FROM attempt_log_events WHERE event_type IN ('attempt_succeeded', 'attempt_failed', 'attempt_aborted') AND driver_provider IS NOT NULL AND driver_provider != '' AND (${provider:sqlstring} = '$__all' OR driver_provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Terminal outcomes over time",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 6 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "ams-attempt-log" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "stacking": { "mode": "normal" } } } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT unixepoch(created_at) AS time, count(*) AS outcomes FROM attempt_log_events WHERE event_type IN ('attempt_succeeded', 'attempt_failed', 'attempt_aborted') AND driver_provider IS NOT NULL AND driver_provider != '' AND (${provider:sqlstring} = '$__all' OR driver_provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY 1 ORDER BY 1",
+          "rawQueryText": "SELECT unixepoch(created_at) AS time, count(*) AS outcomes FROM attempt_log_events WHERE event_type IN ('attempt_succeeded', 'attempt_failed', 'attempt_aborted') AND driver_provider IS NOT NULL AND driver_provider != '' AND (${provider:sqlstring} = '$__all' OR driver_provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY 1 ORDER BY 1"
+        }
+      ]
+    }
+  ]
+}

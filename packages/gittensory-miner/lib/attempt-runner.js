@@ -106,6 +106,7 @@ export async function runMinerAttempt(input, deps) {
     driver: deps.driver,
     runSlopAssessment: deps.runSlopAssessment,
     appendAttemptLogEvent: deps.appendAttemptLogEvent,
+    ...(deps.driverProvider !== undefined ? { driverProvider: deps.driverProvider } : {}),
   });
 
   if (loopResult.outcome === "abandon") {

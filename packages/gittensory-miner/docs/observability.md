@@ -44,9 +44,10 @@ not under the miner config directory.
    [`scripts/export-ams-reporting-db.sh`](../../../scripts/export-ams-reporting-db.sh) on an interval
    (`GITTENSORY_AMS_REPORTING_EXPORT_INTERVAL_SECONDS`, default 30s), and writes the redacted snapshots into the
    same `reporting` volume Grafana already reads — Grafana itself never mounts the live ledgers. The exported
-   schema drops `attempt_log_events.reason`/`.payload_json` (the free-form fields) entirely; every other column,
-   including the `predictions` table's `blocker_codes_json`/`warning_codes_json` (fixed, engine-defined codes —
-   never free text), passes through unchanged.
+   schema drops `attempt_log_events.reason`/`.payload_json` (the free-form fields) entirely and materializes
+   bounded driver-usage columns (`driver_provider`, `turns_used`, `tokens_used`, `cost_usd`) from the live
+   payload at export time; every other column, including the `predictions` table's `blocker_codes_json`/
+   `warning_codes_json` (fixed, engine-defined codes — never free text), passes through unchanged.
 
 3. **Restart Grafana.** The two datasources appear under **Connections → Data sources**, already provisioned
    (non-editable) so they survive restarts.
@@ -54,10 +55,12 @@ not under the miner config directory.
 ## Load a dashboard
 
 Dashboards live in [`grafana/dashboards/`](../../../grafana/dashboards/) and are auto-provisioned from that
-directory. To visualize AMS activity, add a dashboard JSON there — or import one at runtime via the Grafana UI
-(**Dashboards → Import**) — and point its panels at the `AMS Attempt Log` / `AMS Prediction Ledger` datasources
-above. Panels should query only the redacted reporting schema (e.g. `SELECT * FROM attempt_log_events`), never a
-`payload_json`/`reason` column — the exporter drops both, so a panel referencing them returns no such column.
+directory. For AMS coding-agent usage, open **`miner-usage.json`** (uid `gittensory-miner-usage`) — it queries
+the redacted `attempt_log_events` export via the `AMS Attempt Log` datasource. You can also import a dashboard
+at runtime via the Grafana UI (**Dashboards → Import**) and point its panels at the `AMS Attempt Log` /
+`AMS Prediction Ledger` datasources above. Panels should query only the redacted reporting schema (e.g.
+`SELECT * FROM attempt_log_events`), never a `payload_json`/`reason` column — the exporter drops both, so a
+panel referencing them returns no such column.
 
 ## Prometheus metrics (opt-in)
 

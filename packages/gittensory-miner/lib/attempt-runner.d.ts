@@ -46,6 +46,8 @@ export type AttemptDeps = {
   governorState?: GovernorState;
   sessionStartMs?: number;
   nowMs: number;
+  /** Primary configured coding-agent provider name for attempt-log/Grafana attribution (#5185). */
+  driverProvider?: string;
   executeLocalWrite: (spec: LocalWriteActionSpec) => Promise<unknown>;
 };
 

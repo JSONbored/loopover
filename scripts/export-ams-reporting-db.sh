@@ -16,7 +16,7 @@ set -eu
 # Bump whenever this script's own mapping/redaction logic changes (not just when a source table gains a column):
 # the incremental fast-path below only fingerprints SOURCE ROW COUNT + latest timestamp, so a logic-only edit
 # would otherwise serve the previous run's output forever.
-SCRIPT_VERSION="${GITTENSORY_AMS_REPORTING_SCRIPT_VERSION:-1}"
+SCRIPT_VERSION="${GITTENSORY_AMS_REPORTING_SCRIPT_VERSION:-2}"
 
 OUT_DIR="${GITTENSORY_REPORTING_DIR:-/reporting}"
 ATTEMPT_LOG_SOURCE_DB="${GITTENSORY_AMS_ATTEMPT_LOG_SOURCE_DB:-/ams-ledgers/attempt-log.sqlite3}"
@@ -73,6 +73,7 @@ persist_fingerprint() {
 #
 # $1 label (for log lines)   $2 source db   $3 out db   $4 source table   $5 time column
 # $6 redacted CREATE TABLE DDL   $7 redacted SELECT column list (source-table column names, in DDL column order)
+# $8 optional full INSERT...SELECT body (column list + SELECT) when payload_json must be transformed at export time
 export_ledger() {
   label="$1"
   src="$2"
@@ -81,10 +82,17 @@ export_ledger() {
   time_col="$5"
   ddl="$6"
   select_cols="$7"
+  insert_select="${8:-}"
 
   tmp="${out}.tmp"
   fp_file="${out}.fingerprint"
   rm -f "$tmp" "$tmp-wal" "$tmp-shm"
+
+  if [ -n "$insert_select" ]; then
+    insert_stmt="INSERT INTO report.$tbl $insert_select"
+  else
+    insert_stmt="INSERT INTO report.$tbl SELECT $select_cols FROM main.$tbl"
+  fi
 
   if [ ! -s "$src" ]; then
     if [ -s "$out" ]; then
@@ -122,7 +130,7 @@ export_ledger() {
   out_sql="$(printf "%s" "$tmp" | sed "s/'/''/g")"
   sqlite3 -cmd ".timeout 5000" "$src" "
 ATTACH '$out_sql' AS report;
-INSERT INTO report.$tbl SELECT $select_cols FROM main.$tbl;
+$insert_stmt;
 DETACH report;
 "
   if ! sqlite3 "$tmp" "PRAGMA quick_check;" | grep -qx "ok"; then
@@ -137,8 +145,9 @@ DETACH report;
 }
 
 # attempt_log_events: DROP `reason` and `payload_json` -- both free-form (payload_json in particular can nest
-# arbitrary per-event-type detail, up to and including file paths/diffs/prompt fragments). Every other column is
-# a bounded-vocabulary identifier/enum/timestamp, safe for a shared reporting export.
+# arbitrary per-event-type detail, up to and including file paths/diffs/prompt fragments). Bounded driver-usage
+# fields (driver_provider / turns_used / tokens_used / cost_usd) are materialized at export time from the live
+# payload_json via json_extract and never copied wholesale into the reporting snapshot (#5185).
 export_ledger \
   "attempt-log" \
   "$ATTEMPT_LOG_SOURCE_DB" \
@@ -152,11 +161,29 @@ export_ledger \
     event_type TEXT NOT NULL,
     action_class TEXT NOT NULL,
     mode TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    driver_provider TEXT,
+    turns_used INTEGER NOT NULL DEFAULT 0,
+    tokens_used INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0.0
   );
   CREATE INDEX attempt_log_events_attempt_idx ON attempt_log_events(attempt_id, seq);
-  CREATE INDEX attempt_log_events_created_idx ON attempt_log_events(created_at);" \
-  "id, seq, attempt_id, event_type, action_class, mode, created_at"
+  CREATE INDEX attempt_log_events_created_idx ON attempt_log_events(created_at);
+  CREATE INDEX attempt_log_events_driver_provider_idx ON attempt_log_events(driver_provider, created_at);" \
+  "id, seq, attempt_id, event_type, action_class, mode, created_at" \
+  "(id, seq, attempt_id, event_type, action_class, mode, created_at, driver_provider, turns_used, tokens_used, cost_usd) SELECT
+    id,
+    seq,
+    attempt_id,
+    event_type,
+    action_class,
+    mode,
+    created_at,
+    NULLIF(json_extract(payload_json, '$.driverProvider'), ''),
+    COALESCE(CAST(json_extract(payload_json, '$.turnsUsed') AS INTEGER), 0),
+    COALESCE(CAST(json_extract(payload_json, '$.tokensUsed') AS INTEGER), 0),
+    COALESCE(CAST(json_extract(payload_json, '$.costUsd') AS REAL), 0.0)
+  FROM main.attempt_log_events"
 
 # predictions: kept as-is. Unlike attempt_log_events, every column here is already a bounded identifier, enum,
 # score, or a fixed-vocabulary code array (blocker_codes_json/warning_codes_json -- engine-defined codes, never

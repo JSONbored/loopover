@@ -12,7 +12,7 @@
 // governor.convergenceInput is an honest first-attempt-shaped literal, not a real per-issue attempt-history
 // query (attempt-log.js's schema has no repo+issue index, and reenqueue counts aren't tracked anywhere yet).
 
-import { resolveCodingAgentModeFromConfig } from "@loopover/engine";
+import { resolveCodingAgentModeFromConfig, resolveFirstConfiguredCodingAgentDriverName, buildAttemptLogDriverUsagePayload } from "@loopover/engine";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 import { constructProductionCodingAgentDriver } from "./coding-agent-construction.js";
 import { runSlopAssessment } from "./slop-assessment.js";
@@ -126,6 +126,7 @@ export function parseAttemptArgs(args) {
  * @returns {import("./attempt-runner.js").AttemptDeps}
  */
 export function buildAttemptDeps(env, ledgers) {
+  const driverProvider = resolveFirstConfiguredCodingAgentDriverName(env);
   return {
     driver: constructProductionCodingAgentDriver(env),
     runSlopAssessment: (input) => runSlopAssessment(input),
@@ -136,6 +137,7 @@ export function buildAttemptDeps(env, ledgers) {
     governorLedgerAppend: (event) => ledgers.governorLedger.appendGovernorEvent(event),
     nowMs: ledgers.nowMs,
     executeLocalWrite: (spec) => executeLocalWrite(spec),
+    ...(driverProvider !== undefined ? { driverProvider } : {}),
   };
 }
 
@@ -207,6 +209,12 @@ export async function runAttempt(args, options = {}) {
     eventLedger = (options.initEventLedger ?? initEventLedger)();
     attemptLog = (options.initAttemptLog ?? initAttemptLog)();
     governorLedger = (options.initGovernorLedger ?? initGovernorLedger)();
+    const configuredDriverProvider = resolveFirstConfiguredCodingAgentDriverName(env);
+    const abortedAttemptUsagePayload = buildAttemptLogDriverUsagePayload({
+      driverProvider: configuredDriverProvider,
+      meterTotals: { tokens: 0, turns: 0, wallClockMs: 0, costUsd: 0 },
+      includeMetering: true,
+    });
 
     // Checked before acquiring a worktree slot: a banned repo should never consume one. This resolves the
     // first of rejectionSignaled's two documented triggers (an explicit AI-usage-policy ban, #5132 follow-up)
@@ -222,7 +230,7 @@ export async function runAttempt(args, options = {}) {
         actionClass: "open_pr",
         mode,
         reason,
-        payload: { repoFullName: parsed.repoFullName, issueNumber: parsed.issueNumber },
+        payload: { repoFullName: parsed.repoFullName, issueNumber: parsed.issueNumber, ...abortedAttemptUsagePayload },
       });
       eventLedger.appendEvent({
         type: "attempt_blocked",
@@ -280,7 +288,7 @@ export async function runAttempt(args, options = {}) {
         actionClass: "open_pr",
         mode,
         reason,
-        payload: { repoFullName: parsed.repoFullName, issueNumber: parsed.issueNumber },
+        payload: { repoFullName: parsed.repoFullName, issueNumber: parsed.issueNumber, ...abortedAttemptUsagePayload },
       });
       eventLedger.appendEvent({
         type: "attempt_blocked",
@@ -342,7 +350,7 @@ export async function runAttempt(args, options = {}) {
         actionClass: "open_pr",
         mode,
         reason,
-        payload: { repoFullName: parsed.repoFullName, issueNumber: parsed.issueNumber, feasibility: codingTaskSpec.feasibility },
+        payload: { repoFullName: parsed.repoFullName, issueNumber: parsed.issueNumber, feasibility: codingTaskSpec.feasibility, ...abortedAttemptUsagePayload },
       });
       eventLedger.appendEvent({
         type: "attempt_blocked",

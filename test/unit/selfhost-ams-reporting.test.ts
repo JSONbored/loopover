@@ -132,6 +132,34 @@ describe("scripts/export-ams-reporting-db.sh", () => {
     expect(sqlite(outDb, "SELECT count(*) FROM pragma_table_info('attempt_log_events') WHERE name IN ('reason', 'payload_json');")).toBe("0");
   });
 
+  it("materializes bounded driver-usage columns from live payload_json at export time", () => {
+    const root = tmpRoot();
+    const src = join(root, "attempt-log.sqlite3");
+    seedAttemptLog(src, [
+      {
+        seq: 1,
+        attemptId: "attempt-2",
+        eventType: "attempt_succeeded",
+        actionClass: "iterate_loop",
+        mode: "live",
+        reason: "handed off",
+        payloadJson:
+          '{"driverProvider":"claude-cli","turnsUsed":3,"tokensUsed":0,"costUsd":0.12,"iterationNumber":1,"action":"handoff"}',
+        createdAt: "2026-07-12T01:00:00Z",
+      },
+    ]);
+
+    runExporter(root, { attemptLogSource: src, scriptVersion: "2" });
+
+    const outDb = join(root, "reporting", "ams-attempt-log.sqlite");
+    expect(
+      sqlite(
+        outDb,
+        "SELECT driver_provider || '|' || turns_used || '|' || tokens_used || '|' || cost_usd FROM attempt_log_events;",
+      ),
+    ).toBe("claude-cli|3|0|0.12");
+  });
+
   it("exports predictions with every column intact (already bounded/structured, no free text)", () => {
     const root = tmpRoot();
     const src = join(root, "prediction-ledger.sqlite3");

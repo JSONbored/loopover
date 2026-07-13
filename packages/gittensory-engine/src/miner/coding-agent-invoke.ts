@@ -7,13 +7,37 @@ import {
   type CodingAgentExecutionMode,
 } from "./coding-agent-mode.js";
 import type { AttemptLogEvent } from "./attempt-log.js";
+import { buildAttemptLogDriverUsagePayload } from "./attempt-log-usage-payload.js";
 
 export type AttemptLogSink = {
   append(event: AttemptLogEvent): void;
 };
 
+export type InvokeCodingAgentDriverOptions = {
+  driverProvider?: string | undefined;
+};
+
 function shadowSummary(task: CodingAgentDriverTask): string {
   return `dry-run: would invoke coding agent in ${task.workingDirectory} (≤${task.maxTurns} turns, criteria ${task.acceptanceCriteriaPath})`;
+}
+
+function mergeUsagePayload(
+  payload: Record<string, unknown>,
+  options: InvokeCodingAgentDriverOptions | undefined,
+  includeMetering: boolean,
+  meterTotals?: { tokens: number; turns: number; costUsd: number },
+): Record<string, unknown> {
+  return {
+    ...payload,
+    ...buildAttemptLogDriverUsagePayload({
+      driverProvider: options?.driverProvider,
+      meterTotals:
+        meterTotals === undefined
+          ? undefined
+          : { tokens: meterTotals.tokens, turns: meterTotals.turns, wallClockMs: 0, costUsd: meterTotals.costUsd },
+      includeMetering,
+    }),
+  };
 }
 
 /**
@@ -25,6 +49,7 @@ export async function invokeCodingAgentDriver(
   mode: CodingAgentExecutionMode,
   task: CodingAgentDriverTask,
   log?: AttemptLogSink | undefined,
+  options?: InvokeCodingAgentDriverOptions,
 ): Promise<CodingAgentDriverResult> {
   const base = { attemptId: task.attemptId, actionClass: "codegen", mode } as const;
 
@@ -33,7 +58,11 @@ export async function invokeCodingAgentDriver(
       eventType: "attempt_aborted",
       ...base,
       reason: "coding_agent_paused",
-      payload: { workingDirectory: task.workingDirectory },
+      payload: mergeUsagePayload({ workingDirectory: task.workingDirectory }, options, true, {
+        tokens: 0,
+        turns: 0,
+        costUsd: 0,
+      }),
     });
     return {
       ok: false,
@@ -48,11 +77,15 @@ export async function invokeCodingAgentDriver(
       eventType: "attempt_shadow",
       ...base,
       reason: "dry-run: would invoke coding agent without spawning underlying session",
-      payload: {
-        workingDirectory: task.workingDirectory,
-        acceptanceCriteriaPath: task.acceptanceCriteriaPath,
-        maxTurns: task.maxTurns,
-      },
+      payload: mergeUsagePayload(
+        {
+          workingDirectory: task.workingDirectory,
+          acceptanceCriteriaPath: task.acceptanceCriteriaPath,
+          maxTurns: task.maxTurns,
+        },
+        options,
+        false,
+      ),
     });
     return {
       ok: true,
@@ -66,7 +99,11 @@ export async function invokeCodingAgentDriver(
     eventType: "attempt_started",
     ...base,
     reason: "live coding-agent invocation",
-    payload: { workingDirectory: task.workingDirectory, maxTurns: task.maxTurns },
+    payload: mergeUsagePayload(
+      { workingDirectory: task.workingDirectory, maxTurns: task.maxTurns },
+      options,
+      false,
+    ),
   });
 
   try {
@@ -75,11 +112,15 @@ export async function invokeCodingAgentDriver(
       eventType: result.ok ? "attempt_succeeded" : "attempt_failed",
       ...base,
       reason: result.summary,
-      payload: {
-        changedFiles: [...result.changedFiles],
-        turnsUsed: result.turnsUsed ?? null,
-        error: result.error ?? null,
-      },
+      payload: mergeUsagePayload(
+        {
+          changedFiles: [...result.changedFiles],
+          error: result.error ?? null,
+        },
+        options,
+        true,
+        { tokens: 0, turns: result.turnsUsed ?? 0, costUsd: result.costUsd ?? 0 },
+      ),
     });
     return result;
   } catch (error) {
@@ -88,7 +129,7 @@ export async function invokeCodingAgentDriver(
       eventType: "attempt_failed",
       ...base,
       reason: message,
-      payload: { thrown: true },
+      payload: mergeUsagePayload({ thrown: true }, options, true, { tokens: 0, turns: 0, costUsd: 0 }),
     });
     return {
       ok: false,

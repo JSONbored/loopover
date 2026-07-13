@@ -325,6 +325,8 @@ export {
   type RunCodingAgentAttemptOptions,
 } from "./miner/driver-factory.js";
 export * from "./miner/attempt-metering.js";
+export * from "./miner/attempt-log-usage-payload.js";
+export * from "./miner/ams-miner-usage-grafana.js";
 export {
   buildRepoMap,
   extractRepoMapSymbols,

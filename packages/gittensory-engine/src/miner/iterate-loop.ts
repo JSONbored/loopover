@@ -32,6 +32,7 @@ import type { CodingAgentDriver, CodingAgentDriverResult, CodingAgentDriverTask 
 import { codingAgentModeExecutes, type CodingAgentExecutionMode } from "./coding-agent-mode.js";
 import { invokeCodingAgentDriver } from "./coding-agent-invoke.js";
 import type { AttemptLogEvent, AttemptLogEventType } from "./attempt-log.js";
+import { buildAttemptLogDriverUsagePayload } from "./attempt-log-usage-payload.js";
 import { runSelfReview, type AttemptDiffState, type SelfReviewAdapterDeps, type SelfReviewContext, type SelfReviewVerdict } from "./self-review-adapter.js";
 import { decideNextActionWithReason, deriveSelfReviewOutcome, type IterateLoopDecision, type HandoffPacket, type IterationState, type SelfReviewOutcome } from "./iterate-policy.js";
 import { accumulateAttemptUsage, evaluateAttemptBudget, type AttemptBudget, type AttemptBudgetAxis, type AttemptMeterTotals } from "./attempt-metering.js";
@@ -90,6 +91,8 @@ export type IterateLoopDeps = {
   driver: CodingAgentDriver;
   runSlopAssessment: SelfReviewAdapterDeps["runSlopAssessment"];
   appendAttemptLogEvent: (event: AttemptLogEvent) => void;
+  /** Resolved `MINER_CODING_AGENT_PROVIDER` primary name, stamped into attempt-log payloads for Grafana (#5185). */
+  driverProvider?: string | undefined;
   /** Injected clock for real per-iteration wall-clock measurement (#5395), mirroring this package's own
    *  injected-dependency discipline elsewhere (never a hardcoded `Date.now()` a test can't control). Defaults
    *  to the real `Date.now` when omitted. */
@@ -168,9 +171,15 @@ function evaluateSelfReviewOutcome(input: IterateLoopInput, driverResult: Coding
  *  are also resolved here, at the driver boundary, so paused/dry-run attempts never spawn the underlying agent. */
 async function runDriverSafely(input: IterateLoopInput, deps: IterateLoopDeps, task: CodingAgentDriverTask): Promise<CodingAgentDriverResult> {
   if (!codingAgentModeExecutes(input.mode)) {
-    return invokeCodingAgentDriver(deps.driver, input.mode, task, {
-      append: (event) => safeAppendAttemptLogEvent(deps, event),
-    });
+    return invokeCodingAgentDriver(
+      deps.driver,
+      input.mode,
+      task,
+      {
+        append: (event) => safeAppendAttemptLogEvent(deps, event),
+      },
+      { driverProvider: deps.driverProvider },
+    );
   }
   try {
     return await deps.driver.run(task);
@@ -200,15 +209,21 @@ function safeAppendAttemptLogEvent(deps: IterateLoopDeps, event: AttemptLogEvent
   }
 }
 
+function isTerminalAttemptLogEventType(eventType: AttemptLogEventType): boolean {
+  return eventType === "attempt_succeeded" || eventType === "attempt_failed" || eventType === "attempt_aborted";
+}
+
 function logDecision(
   input: IterateLoopInput,
   deps: IterateLoopDeps,
   iterationNumber: number,
   decision: IterateLoopDecision,
   budgetBreaches: readonly AttemptBudgetAxis[],
+  tracker: MeterTracker,
 ): void {
+  const eventType = attemptLogEventTypeForDecision(decision);
   safeAppendAttemptLogEvent(deps, {
-    eventType: attemptLogEventTypeForDecision(decision),
+    eventType,
     attemptId: input.attemptId,
     actionClass: "iterate_loop",
     mode: input.mode,
@@ -221,6 +236,11 @@ function logDecision(
       // in the loop body before self-review even runs -- see that check site's own comment) -- an operator
       // reading the attempt log back otherwise has no way to see which axis actually tripped.
       ...(budgetBreaches.length > 0 ? { budgetBreaches } : {}),
+      ...buildAttemptLogDriverUsagePayload({
+        driverProvider: deps.driverProvider,
+        meterTotals: tracker.totals,
+        includeMetering: isTerminalAttemptLogEventType(eventType),
+      }),
     },
   });
 }
@@ -270,13 +290,23 @@ function immediateAbandonNoIterationsPermitted(input: IterateLoopInput, deps: It
     abandonReason: "max_iterations_reached",
     reason: `maxIterations (${input.maxIterations}) permits no iterations; abandoning without invoking the driver.`,
   };
+  const tracker: MeterTracker = { totals: ZERO_METER_TOTALS, breaches: [] };
   safeAppendAttemptLogEvent(deps, {
     eventType: "attempt_aborted",
     attemptId: input.attemptId,
     actionClass: "iterate_loop",
     mode: input.mode,
     reason: decision.reason,
-    payload: { iterationNumber: 0, action: decision.action, abandonReason: decision.abandonReason },
+    payload: {
+      iterationNumber: 0,
+      action: decision.action,
+      abandonReason: decision.abandonReason,
+      ...buildAttemptLogDriverUsagePayload({
+        driverProvider: deps.driverProvider,
+        meterTotals: tracker.totals,
+        includeMetering: true,
+      }),
+    },
   });
   return { outcome: "abandon", finalDecision: decision, iterationsUsed: 0, totalTurnsUsed: 0, totalCostUsd: 0, iterations: [] };
 }
@@ -307,7 +337,11 @@ async function runIterateLoopCore(input: IterateLoopInput, deps: IterateLoopDeps
     actionClass: "iterate_loop",
     mode: input.mode,
     reason: "iterate_loop_started",
-    payload: { maxIterations, maxTurnsPerIteration: input.maxTurnsPerIteration },
+    payload: {
+      maxIterations,
+      maxTurnsPerIteration: input.maxTurnsPerIteration,
+      ...buildAttemptLogDriverUsagePayload({ driverProvider: deps.driverProvider }),
+    },
   });
 
   const nowMs = deps.nowMs ?? Date.now;
@@ -350,7 +384,7 @@ async function runIterateLoopCore(input: IterateLoopInput, deps: IterateLoopDeps
         abandonReason: "cost_ceiling_reached",
         reason: `Reached the attempt's budget ceiling (${tracker.breaches.join(", ")}) on iteration ${iterationNumber}; abandoning regardless of this iteration's own result.`,
       };
-      logDecision(input, deps, iterationNumber, decision, tracker.breaches);
+      logDecision(input, deps, iterationNumber, decision, tracker.breaches, tracker);
       iterations.push({ iterationNumber, driverResult, decision });
       return { outcome: "abandon", finalDecision: decision, iterationsUsed: iterationNumber, totalTurnsUsed, totalCostUsd, iterations };
     }
@@ -365,7 +399,7 @@ async function runIterateLoopCore(input: IterateLoopInput, deps: IterateLoopDeps
       rejectionSignaled: input.rejectionSignaled,
     };
     const decision = decideNextActionWithReason(state);
-    logDecision(input, deps, iterationNumber, decision, []);
+    logDecision(input, deps, iterationNumber, decision, [], tracker);
     iterations.push({ iterationNumber, driverResult, decision });
 
     if (decision.action === "handoff") {

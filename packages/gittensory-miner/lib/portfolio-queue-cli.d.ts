@@ -77,6 +77,20 @@ export function runQueueClaimBatch(
   options?: { initPortfolioQueueManager?: (opts: unknown) => PortfolioQueueManager },
 ): number;
 
+export const QUEUE_ITEMS: string;
+export const QUEUE_OLDEST_IN_PROGRESS_LEASE_AGE_SECONDS: string;
+
+export function renderPortfolioQueueMetrics(
+  queueEntries: Array<{ status: string }>,
+  leaseEntries: Array<{ leasedAt: string | null }>,
+  nowMs: number,
+): string;
+
+export function runQueueMetrics(
+  args: string[],
+  options?: { initPortfolioQueue?: () => PortfolioQueueStore; nowMs?: number },
+): number;
+
 export function runQueueCli(
   subcommand: string | undefined,
   args: string[],

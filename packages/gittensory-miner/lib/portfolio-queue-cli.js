@@ -497,6 +497,82 @@ export function runQueueClaimBatch(args, options = {}) {
   }
 }
 
+const QUEUE_METRICS_USAGE = "Usage: gittensory-miner queue metrics";
+
+// Prometheus metric names for the portfolio-queue gauges (#5186). Mirrors the `gittensory_miner_*` naming and
+// HELP/TYPE/label conventions of event-ledger-cli.js's renderEventLedgerMetrics / the engine's
+// renderMinerPredictionMetrics, rather than importing across the package boundary.
+export const QUEUE_ITEMS = "gittensory_miner_portfolio_queue_items";
+export const QUEUE_OLDEST_IN_PROGRESS_LEASE_AGE_SECONDS = "gittensory_miner_portfolio_queue_oldest_in_progress_lease_age_seconds";
+
+/** HELP-text escaping — backslash + newline (mirrors miner-prediction-metrics.ts's escapeHelpText). */
+function escapeMetricsHelpText(help) {
+  return help.replace(/\\/g, "\\\\").replace(/\n/g, "\\n");
+}
+
+/**
+ * Render portfolio-queue backlog health as Prometheus text-exposition gauges: current item count per status, and
+ * the age of the OLDEST still-in-flight lease -- the concrete "is anything stuck" signal a
+ * `loopover_queue_oldest_maintenance_pending_age_seconds`-style alert rule can threshold on (#5186). Pure and
+ * side-effect-free: the caller supplies the rows and `nowMs` (no internal clock read, matching
+ * store-maintenance.js's pruneLedgerByRetention convention) and prints the result. Deterministic (status series
+ * sorted); always emits HELP/TYPE so an empty queue is still a well-formed exposition document, and the lease-age
+ * gauge reads 0 (never stuck) rather than being omitted when nothing is in-flight.
+ * @param {Array<{ status: string }>} queueEntries - every row, any status (e.g. store.listQueue()'s output).
+ * @param {Array<{ leasedAt: string | null }>} leaseEntries - in-flight rows only (store.listInProgress()'s output).
+ * @param {number} nowMs
+ */
+export function renderPortfolioQueueMetrics(queueEntries, leaseEntries, nowMs) {
+  const countByStatus = new Map();
+  for (const entry of queueEntries) {
+    countByStatus.set(entry.status, (countByStatus.get(entry.status) ?? 0) + 1);
+  }
+
+  let oldestLeaseAgeSeconds = 0;
+  for (const lease of leaseEntries) {
+    const leasedAtMs = Date.parse(lease.leasedAt ?? "");
+    if (!Number.isFinite(leasedAtMs)) continue;
+    const ageSeconds = Math.max(0, (nowMs - leasedAtMs) / 1000);
+    if (ageSeconds > oldestLeaseAgeSeconds) oldestLeaseAgeSeconds = ageSeconds;
+  }
+
+  const lines = [
+    `# HELP ${QUEUE_ITEMS} ${escapeMetricsHelpText("Current portfolio-queue item count, by status.")}`,
+    `# TYPE ${QUEUE_ITEMS} gauge`,
+  ];
+  for (const [status, count] of [...countByStatus.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    lines.push(`${QUEUE_ITEMS}{status="${status}"} ${count}`);
+  }
+
+  lines.push(
+    `# HELP ${QUEUE_OLDEST_IN_PROGRESS_LEASE_AGE_SECONDS} ${escapeMetricsHelpText("Age in seconds of the oldest still-in-flight (in_progress) claim lease. 0 when nothing is in-flight.")}`,
+  );
+  lines.push(`# TYPE ${QUEUE_OLDEST_IN_PROGRESS_LEASE_AGE_SECONDS} gauge`);
+  lines.push(`${QUEUE_OLDEST_IN_PROGRESS_LEASE_AGE_SECONDS} ${oldestLeaseAgeSeconds}`);
+
+  return `${lines.join("\n")}\n`;
+}
+
+export function runQueueMetrics(args, options = {}) {
+  if (args.length > 0) {
+    return reportCliFailure(argsWantJson(args), QUEUE_METRICS_USAGE);
+  }
+
+  try {
+    return withPortfolioQueue(options, (portfolioQueue) => {
+      const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+      // renderPortfolioQueueMetrics returns a newline-terminated document; console.log re-adds the terminator, so
+      // trim it to emit exactly one trailing newline (mirrors metrics-cli.js's runMetrics).
+      console.log(
+        renderPortfolioQueueMetrics(portfolioQueue.listQueue(), portfolioQueue.listInProgress(), nowMs).trimEnd(),
+      );
+      return 0;
+    });
+  } catch (error) {
+    return reportCliFailure(argsWantJson(args), describeCliError(error));
+  }
+}
+
 export function runQueueCli(subcommand, args, options = {}) {
   if (subcommand === "list") return runQueueList(args, options);
   if (subcommand === "next") return runQueueNext(args, options);
@@ -504,6 +580,7 @@ export function runQueueCli(subcommand, args, options = {}) {
   if (subcommand === "release") return runQueueRelease(args, options);
   if (subcommand === "requeue") return runQueueRequeue(args, options);
   if (subcommand === "claim-batch") return runQueueClaimBatch(args, options);
+  if (subcommand === "metrics") return runQueueMetrics(args, options);
   if (subcommand === "dashboard") return runPortfolioDashboard(args, options);
   return reportCliFailure(argsWantJson(args), `Unknown queue subcommand: ${subcommand ?? ""}. ${QUEUE_LIST_USAGE}`);
 }

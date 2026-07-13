@@ -663,3 +663,42 @@ groups:
           summary: "gittensory miner prediction calibration has drifted"
           description: "{{ $value | humanizePercentage }} of the miner's recently resolved gate predictions were incorrect over the last 6h (sustained 30m). Predicted-gate accuracy has drifted out of tolerance."
           runbook: "Compare gittensory_miner_prediction_correct_total vs gittensory_miner_prediction_incorrect_total and review the miner's own calibration report (`gittensory-miner calibration`). Sustained drift usually means the predicted-gate heuristics need recalibration against the repo(s) the miner now targets, or a recent upstream gate-behavior change the predictor hasn't caught up to."
+
+  # ── Miner portfolio-queue backlog health (#5186) ──────────────────────────
+  # Same DORMANT-until-a-scrape-target-exists posture as gittensory-miner-prediction above: an operator runs
+  # `gittensory-miner queue metrics` (packages/gittensory-miner/lib/portfolio-queue-cli.js's
+  # renderPortfolioQueueMetrics) to a file/pushgateway their Prometheus scrapes. Absent
+  # gittensory_miner_portfolio_queue_* series simply yield no result, so this loads cleanly via
+  # `selfhost:validate-observability` and never false-fires on an install with no miner scrape configured.
+  - name: gittensory-miner-portfolio-queue
+    rules:
+      - alert: GittensoryMinerPortfolioQueueItemStuck
+        # The concrete "is a claimed item actually stuck" signal, distinct from #4827 (the lease/timeout/reclaim
+        # CLI logic itself, which already self-heals a stuck lease past DEFAULT_MAX_LEASE_MS = 30m) and #4840
+        # (alerting guidance docs, not a rule definition) -- this is the rule that pages an operator when the
+        # self-heal ISN'T running (no cron/scheduled `queue claim-batch`/reclaim sweep configured) or is itself
+        # stuck, so a lease sits well past its own 30m default with nothing automatically reclaiming it.
+        # 3600s (1h) is a generous multiple of DEFAULT_MAX_LEASE_MS so a healthy install's own reclaim sweep
+        # always clears this long before the alert would fire; tune down if your reclaim cadence is tighter.
+        expr: gittensory_miner_portfolio_queue_oldest_in_progress_lease_age_seconds > 3600
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory miner has a claimed portfolio-queue item stuck in progress"
+          description: "The oldest in-flight portfolio-queue claim lease is {{ $value | printf \"%.0f\" }}s old (sustained 15m), well past the 30m default reclaim window. A crashed/killed attempt process's lease isn't being automatically reclaimed."
+          runbook: "Run `gittensory-miner queue list --json` to find the stuck item, and `gittensory-miner queue claim-batch` (or a scheduled reclaim sweep) to trigger the lease-expiry self-heal (portfolio-queue-expiry.js's sweepStuckItems). If it stays stuck after that, release it manually with `gittensory-miner queue release <owner/repo> <identifier>`."
+
+      - alert: GittensoryMinerPortfolioQueueBacklogHigh
+        # Standing size of the queued (not yet claimed) backlog, the miner counterpart of
+        # LoopoverQueueBacklogHigh above -- a sustained high queued count means discovery is outpacing
+        # claiming, mirroring the main product's own "queue > threshold for N minutes" shape. 200 is a
+        # generous default for a single-host laptop-mode install; tune to your normal steady-state depth.
+        expr: gittensory_miner_portfolio_queue_items{status="queued"} > 200
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory miner portfolio-queue backlog above 200"
+          description: "{{ $value | printf \"%.0f\" }} portfolio-queue items are queued (sustained 30m) -- claiming/attempting is falling behind discovery."
+          runbook: "Check whether `queue next` / `loop` is running at all (a laptop-mode miner only drains the queue while actively invoked), or whether WIP caps (#4850's --global-wip/--per-repo-wip) are set low enough to bottleneck throughput relative to discovery volume."

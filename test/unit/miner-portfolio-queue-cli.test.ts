@@ -12,10 +12,12 @@ import {
   parseQueueNextArgs,
   parseQueueReleaseArgs,
   parseQueueRequeueArgs,
+  renderPortfolioQueueMetrics,
   renderQueueTable,
   runQueueCli,
   runQueueDone,
   runQueueList,
+  runQueueMetrics,
   runQueueNext,
   runQueueRelease,
   runQueueRequeue,
@@ -378,6 +380,88 @@ describe("gittensory-miner portfolio queue CLI (#2292)", () => {
       error: expect.stringContaining("Unknown queue subcommand"),
     });
     expect(error).not.toHaveBeenCalled();
+  });
+
+  describe("renderPortfolioQueueMetrics() / runQueueMetrics (#5186)", () => {
+    it("emits per-status counts and the oldest in-flight lease age", () => {
+      const now = Date.parse("2026-07-13T12:00:00.000Z");
+      const output = renderPortfolioQueueMetrics(
+        [{ status: "queued" }, { status: "queued" }, { status: "in_progress" }, { status: "done" }],
+        [
+          { leasedAt: "2026-07-13T11:50:00.000Z" }, // 600s old -- the oldest, seen first
+          { leasedAt: "2026-07-13T11:55:00.000Z" }, // 300s old -- younger than the running max, must not replace it
+        ],
+        now,
+      );
+      expect(output).toContain('gittensory_miner_portfolio_queue_items{status="queued"} 2');
+      expect(output).toContain('gittensory_miner_portfolio_queue_items{status="in_progress"} 1');
+      expect(output).toContain('gittensory_miner_portfolio_queue_items{status="done"} 1');
+      expect(output).toContain("gittensory_miner_portfolio_queue_oldest_in_progress_lease_age_seconds 600");
+      expect(output).toContain("# HELP gittensory_miner_portfolio_queue_items");
+      expect(output).toContain("# TYPE gittensory_miner_portfolio_queue_items gauge");
+      expect(output.endsWith("\n")).toBe(true);
+      expect(output.endsWith("\n\n")).toBe(false);
+    });
+
+    it("is well-formed (HELP/TYPE always present, lease age 0) for an empty queue", () => {
+      const output = renderPortfolioQueueMetrics([], [], Date.parse("2026-07-13T12:00:00.000Z"));
+      expect(output).toContain("# TYPE gittensory_miner_portfolio_queue_items gauge");
+      expect(output).toContain("gittensory_miner_portfolio_queue_oldest_in_progress_lease_age_seconds 0");
+      expect(output).not.toContain('gittensory_miner_portfolio_queue_items{status=');
+    });
+
+    it("ignores a lease row with an unparseable leasedAt rather than corrupting the max", () => {
+      const output = renderPortfolioQueueMetrics(
+        [{ status: "in_progress" }],
+        [{ leasedAt: null }, { leasedAt: "not-a-date" }],
+        Date.parse("2026-07-13T12:00:00.000Z"),
+      );
+      expect(output).toContain("gittensory_miner_portfolio_queue_oldest_in_progress_lease_age_seconds 0");
+    });
+
+    it("runQueueMetrics prints the rendered document from the real store", () => {
+      const portfolioQueue = tempQueueStore();
+      portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", priority: 1 });
+      portfolioQueue.dequeueNext();
+
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      expect(
+        runQueueMetrics([], { initPortfolioQueue: () => portfolioQueue, nowMs: Date.parse("2026-07-13T12:00:00.000Z") }),
+      ).toBe(0);
+      const output = String(log.mock.calls[0]?.[0]);
+      expect(output).toContain('gittensory_miner_portfolio_queue_items{status="in_progress"} 1');
+      expect(output.endsWith("\n")).toBe(false); // console.log adds its own trailing newline
+    });
+
+    it("runQueueMetrics defaults nowMs to the real clock when not injected", () => {
+      const portfolioQueue = tempQueueStore();
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      expect(runQueueMetrics([], { initPortfolioQueue: () => portfolioQueue })).toBe(0);
+      expect(String(log.mock.calls[0]?.[0])).toContain("gittensory_miner_portfolio_queue_oldest_in_progress_lease_age_seconds 0");
+    });
+
+    it("rejects unexpected positional args and surfaces a store failure", () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      expect(runQueueMetrics(["extra"])).toBe(2);
+      expect(String(error.mock.calls[0]?.[0])).toContain("Usage: gittensory-miner queue metrics");
+
+      error.mockClear();
+      expect(
+        runQueueMetrics([], {
+          initPortfolioQueue: () => {
+            throw new Error("store_broken");
+          },
+        }),
+      ).toBe(2);
+      expect(error).toHaveBeenCalledWith("store_broken");
+    });
+
+    it("runQueueCli dispatches the metrics subcommand", () => {
+      const portfolioQueue = tempQueueStore();
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      expect(runQueueCli("metrics", [], { initPortfolioQueue: () => portfolioQueue })).toBe(0);
+      expect(log).toHaveBeenCalled();
+    });
   });
 
   describe("release / requeue escape hatch (#4828)", () => {

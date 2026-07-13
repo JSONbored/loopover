@@ -33,6 +33,7 @@ export function printHelp(input) {
       "  gittensory-miner queue next [--global-wip <n>] [--per-repo-wip <n>] [--dry-run] [--json]",
       "                                                                 Claim the highest-priority queued item, optionally WIP-cap-aware",
       "  gittensory-miner queue claim-batch [--global-wip <n>] [--per-repo-wip <n>] [--dry-run] [--json]",
+      "  gittensory-miner queue metrics                                Print portfolio-queue counters in Prometheus text format",
       "  gittensory-miner queue done <owner/repo> <identifier> [--dry-run] [--json]",
       "  gittensory-miner queue release <owner/repo> <identifier> [--dry-run] [--json]  Return a claimed item to the queue",
       "  gittensory-miner queue requeue <owner/repo> <identifier> [--dry-run] [--json]  Put a completed item back on the queue",

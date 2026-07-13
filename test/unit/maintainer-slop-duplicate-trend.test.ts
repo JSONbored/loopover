@@ -321,7 +321,9 @@ describe("slopBandLabelFromRate", () => {
     expect(slopBandLabelFromRate(null)).toBeNull();
     expect(slopBandLabelFromRate(0)).toBe("clean");
     expect(slopBandLabelFromRate(10)).toBe("low");
+    expect(slopBandLabelFromRate(25)).toBe("elevated");
     expect(slopBandLabelFromRate(40)).toBe("elevated");
+    expect(slopBandLabelFromRate(60)).toBe("high");
     expect(slopBandLabelFromRate(75)).toBe("high");
   });
 });

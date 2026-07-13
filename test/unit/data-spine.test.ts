@@ -21,6 +21,7 @@ import {
   listRecentMergedPullRequests,
   listRepoLabels,
   listLatestSignalSnapshotsForTargets,
+  listRecentSignalSnapshotsForTargets,
   listRepoSyncStates,
   listSignalSnapshots,
   countOpenIssues,
@@ -569,5 +570,43 @@ describe("listLatestSignalSnapshotsForTargets (#3202 — bulk latest-per-target 
     expect(result.get("owner/repo-0")?.id).toBe("batched-0");
     expect(result.get("owner/repo-94")?.id).toBe("batched-94");
     expect(boundCounts).toEqual([91, 6]);
+  });
+});
+
+describe("listRecentSignalSnapshotsForTargets (#2202 — bulk recent-per-target history)", () => {
+  it("returns an empty map without querying the DB for an empty target-key list", async () => {
+    const env = createTestEnv();
+    expect(await listRecentSignalSnapshotsForTargets(env, "queue-health", [])).toEqual(new Map());
+  });
+
+  it("returns the most recent snapshots per target key up to maxPerTarget, with payloads", async () => {
+    const env = createTestEnv();
+    for (const [id, generatedAt] of [
+      ["qh-1", "2026-01-01T00:00:00.000Z"],
+      ["qh-2", "2026-02-01T00:00:00.000Z"],
+      ["qh-3", "2026-03-01T00:00:00.000Z"],
+    ] as const) {
+      await persistSignalSnapshot(env, {
+        id,
+        signalType: "queue-health",
+        targetKey: "owner/a",
+        payload: { signals: { openPullRequests: Number(id.split("-")[1]) } },
+        generatedAt,
+      });
+    }
+    await persistSignalSnapshot(env, {
+      id: "qh-b",
+      signalType: "queue-health",
+      targetKey: "owner/b",
+      payload: { signals: { openPullRequests: 9 } },
+      generatedAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    const result = await listRecentSignalSnapshotsForTargets(env, "queue-health", ["owner/a", "owner/b", "owner/c"], 2);
+
+    expect(result.get("owner/a")?.map((row) => row.id)).toEqual(["qh-3", "qh-2"]);
+    expect(result.get("owner/a")?.[0]?.payload).toMatchObject({ signals: { openPullRequests: 3 } });
+    expect(result.get("owner/b")?.map((row) => row.id)).toEqual(["qh-b"]);
+    expect(result.has("owner/c")).toBe(false);
   });
 });

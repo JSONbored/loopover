@@ -84,6 +84,7 @@ import {
   listRepoSyncStates,
   summarizeRepoSyncOpenPullRequests,
   listSignalSnapshots,
+  listRecentSignalSnapshotsForTargets,
   listPullRequests,
   listRepositories,
   getLatestUpstreamRulesetSnapshot,
@@ -267,7 +268,7 @@ import { loadPublicAccuracyTrend } from "../services/public-accuracy-trend";
 import { loadPublicReuseRateTrend } from "../services/public-reuse-rate-trend";
 import { loadPublicReviewVolumeTrend } from "../services/public-review-volume-trend";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
-import { buildMaintainerSlopDuplicateTrend } from "../services/maintainer-slop-duplicate-trend";
+import { buildMaintainerSlopDuplicateTrend, SLOP_DUPLICATE_TREND_SNAPSHOT_LIMIT } from "../services/maintainer-slop-duplicate-trend";
 import { buildGateOutcomeBreakdown, GATE_OUTCOME_BREAKDOWN_WINDOW_DAYS } from "../services/gate-outcome-breakdown";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES, normalizeReadinessGateMode } from "../signals/focus-manifest";
@@ -1400,16 +1401,19 @@ export function createApp() {
     const scopedSyncCompletions = allSyncStates.filter((state) => qualityRepoNames.has(state.repoFullName.toLowerCase())).map((state) => state.lastCompletedAt);
     const generatedAt = nowIso();
     const qualityStale = isMaintainerQualityDataStale({ lastCompletedAts: scopedSyncCompletions, repoCount: qualityRepos.length, nowMs: Date.parse(generatedAt) });
-    const queueHealthHistories = await Promise.all(
-      qualityRepos.map((repo) => listSignalSnapshots(c.env, "queue-health", repo.fullName)),
+    const queueHealthHistoriesByRepo = await listRecentSignalSnapshotsForTargets(
+      c.env,
+      "queue-health",
+      qualityRepos.map((repo) => repo.fullName),
+      SLOP_DUPLICATE_TREND_SNAPSHOT_LIMIT,
     );
     const slopDuplicateTrend = buildMaintainerSlopDuplicateTrend({
-      repos: qualityRepoInputs.map((input, index) => {
+      repos: qualityRepoInputs.map((input) => {
         const collisions = buildCollisionReport(input.repo.fullName, input.issues, input.pullRequests);
         const currentQueueHealth = buildQueueHealth(input.repo, input.issues, input.pullRequests, collisions);
         return {
           repoFullName: input.repo.fullName,
-          queueHealthSnapshots: queueHealthHistories[index],
+          queueHealthSnapshots: queueHealthHistoriesByRepo.get(input.repo.fullName) ?? [],
           currentQueueHealth,
         };
       }),

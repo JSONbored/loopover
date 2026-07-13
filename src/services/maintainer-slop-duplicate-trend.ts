@@ -7,8 +7,12 @@ import { isoWeekStart } from "./public-quality-metrics";
 // Public-safe: band labels and observable rates only — never raw slop-risk or credibility numbers.
 
 export const SLOP_DUPLICATE_TREND_WEEKS = 8;
+/** Max queue-health snapshots read per repo when shaping the maintainer trend card — two per week of history. */
+export const SLOP_DUPLICATE_TREND_SNAPSHOT_LIMIT = SLOP_DUPLICATE_TREND_WEEKS * 2;
 const MS_PER_WEEK = 7 * 86_400_000;
 const MIN_OPEN_PRS_FOR_RATE = 1;
+const SLOP_BAND_LOW_MAX_PCT = 25;
+const SLOP_BAND_ELEVATED_MAX_PCT = 60;
 
 export type SlopBandLabel = "clean" | "low" | "elevated" | "high";
 
@@ -88,8 +92,8 @@ export function buildMaintainerSlopDuplicateTrend(args: {
 export function slopBandLabelFromRate(ratePct: number | null): SlopBandLabel | null {
   if (ratePct == null) return null;
   if (ratePct <= 0) return "clean";
-  if (ratePct < 25) return "low";
-  if (ratePct < 60) return "elevated";
+  if (ratePct < SLOP_BAND_LOW_MAX_PCT) return "low";
+  if (ratePct < SLOP_BAND_ELEVATED_MAX_PCT) return "elevated";
   return "high";
 }
 

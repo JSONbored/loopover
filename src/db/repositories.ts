@@ -5025,6 +5025,65 @@ export async function listLatestSignalSnapshotsForTargets(
   return result;
 }
 
+/** Bulk variant of `listSignalSnapshots` for callers that need the most recent N snapshots per target key
+ *  across many repos in bounded round trips (#2202 maintainer-dashboard trend card; mirrors
+ *  listLatestSignalSnapshotsForTargets' batching). */
+export async function listRecentSignalSnapshotsForTargets(
+  env: Env,
+  signalType: string,
+  targetKeys: readonly string[],
+  maxPerTarget = 16,
+): Promise<Map<string, SignalSnapshotRecord[]>> {
+  const result = new Map<string, SignalSnapshotRecord[]>();
+  if (targetKeys.length === 0) return result;
+  const perTargetLimit = Math.max(1, Math.min(maxPerTarget, 100));
+  for (let i = 0; i < targetKeys.length; i += SIGNAL_SNAPSHOT_TARGET_KEY_SQL_BATCH) {
+    const batch = targetKeys.slice(i, i + SIGNAL_SNAPSHOT_TARGET_KEY_SQL_BATCH);
+    const placeholders = batch.map(() => "?").join(", ");
+    const { results } = await env.DB.prepare(
+      `
+        SELECT id, signal_type, target_key, repo_full_name, generated_at, payload_json
+        FROM (
+          SELECT
+            id,
+            signal_type,
+            target_key,
+            repo_full_name,
+            generated_at,
+            payload_json,
+            row_number() OVER (PARTITION BY target_key ORDER BY generated_at DESC, rowid DESC) AS snapshot_rank
+          FROM signal_snapshots
+          WHERE signal_type = ? AND target_key IN (${placeholders})
+        )
+        WHERE snapshot_rank <= ?
+        ORDER BY target_key, generated_at DESC
+      `,
+    )
+      .bind(signalType, ...batch, perTargetLimit)
+      .all<{
+        id: string;
+        signal_type: string;
+        target_key: string;
+        repo_full_name: string | null;
+        generated_at: string;
+        payload_json: string;
+      }>();
+    for (const row of results) {
+      const snapshots = result.get(row.target_key) ?? [];
+      snapshots.push({
+        id: row.id,
+        signalType: row.signal_type,
+        targetKey: row.target_key,
+        repoFullName: row.repo_full_name,
+        payload: parseJson<Record<string, never>>(row.payload_json, {}),
+        generatedAt: row.generated_at,
+      });
+      result.set(row.target_key, snapshots);
+    }
+  }
+  return result;
+}
+
 export async function listLatestSignalSnapshotsByTarget(
   env: Env,
   options: { limit?: number; generatedAfter?: string; maxTargetKeyChars?: number } = {},

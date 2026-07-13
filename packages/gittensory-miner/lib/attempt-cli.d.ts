@@ -42,6 +42,7 @@ export type AttemptCliResult =
       submissionMode: "observe" | "enforce";
       totalTurnsUsed: number;
       totalCostUsd: number;
+      totalTokensUsed: number;
       iterationsUsed: number;
       reason?: string;
       decision?: unknown;

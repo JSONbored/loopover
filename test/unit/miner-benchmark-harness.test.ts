@@ -114,12 +114,12 @@ describe("gittensory-miner benchmark harness (#4845)", () => {
     it("flags a case that regressed beyond the tolerance", () => {
       const [entry] = compareToBaseline([{ name: "fast", status: "ok", meanMs: 14 }], baseline, { tolerance: 0.25 });
       expect(entry).toMatchObject({ name: "fast", baseline: 10, current: 14, regressed: true });
-      expect(entry.deltaPct).toBeCloseTo(0.4, 5);
+      expect(entry?.deltaPct).toBeCloseTo(0.4, 5);
     });
 
     it("does not flag a case within tolerance (default 25%)", () => {
       const [entry] = compareToBaseline([{ name: "fast", status: "ok", meanMs: 11 }], baseline);
-      expect(entry.regressed).toBe(false);
+      expect(entry?.regressed).toBe(false);
     });
 
     it("treats a zero-mean baseline as a 0% delta", () => {

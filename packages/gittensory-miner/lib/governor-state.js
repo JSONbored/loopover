@@ -1,3 +1,4 @@
+import { DEFAULT_FORGE_CONFIG } from "./forge-config.js";
 import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 
 // Governor cross-attempt state persistence (#5134, Wave 3.5). Every governor-*.js wrapper
@@ -39,6 +40,14 @@ function normalizeRepoFullName(repoFullName) {
   return `${owner}/${repo}`;
 }
 
+/** Optional forge host, scoping rows so two hosts serving the same owner/repo name never collide (#5563).
+ *  Omitted/nullish → the github.com default, so every pre-existing single-forge caller is unaffected. */
+function normalizeApiBaseUrl(apiBaseUrl) {
+  if (apiBaseUrl === undefined || apiBaseUrl === null) return DEFAULT_FORGE_CONFIG.apiBaseUrl;
+  if (typeof apiBaseUrl !== "string" || !apiBaseUrl.trim()) throw new Error("invalid_api_base_url");
+  return apiBaseUrl.trim();
+}
+
 function parseJsonColumn(value, fallback) {
   if (typeof value !== "string") return fallback;
   try {
@@ -72,6 +81,39 @@ function ensurePauseColumns(db) {
   }
 }
 
+// Rebuild governor_reputation_history's bare `repo_full_name` PRIMARY KEY into a (api_base_url, repo_full_name)
+// composite (#5563) -- two forge hosts serving a same-named owner/repo must not share one reputation row.
+// SQLite cannot ALTER a PRIMARY KEY in place, so this rebuilds the table: create the new shape, copy every
+// existing row with the pre-#4784 implicit single-forge default backfilled, drop the old table, rename the new
+// one in. Guarded by a column-presence check (matching ensurePauseColumns' idempotence) so this only runs once
+// per file, same technique as portfolio-queue.js's own post-creation migration.
+function ensureReputationHistoryForgeScope(db) {
+  const hasApiBaseUrlColumn = db
+    .prepare("PRAGMA table_info(governor_reputation_history)")
+    .all()
+    .some((column) => column.name === "api_base_url");
+  if (hasApiBaseUrlColumn) return;
+  db.exec(`
+    CREATE TABLE governor_reputation_history_v2 (
+      api_base_url TEXT NOT NULL,
+      repo_full_name TEXT NOT NULL,
+      decided INTEGER NOT NULL,
+      unfavorable INTEGER NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (api_base_url, repo_full_name)
+    )
+  `);
+  // OR IGNORE: a source row that somehow violates the rebuilt table's NOT NULL columns (a hand-edited or
+  // otherwise corrupted file) is skipped rather than aborting the whole migration -- same fail-closed posture
+  // as run-state.js's own #5563 migration.
+  db.prepare(
+    `INSERT OR IGNORE INTO governor_reputation_history_v2 (api_base_url, repo_full_name, decided, unfavorable, updated_at)
+     SELECT ?, repo_full_name, decided, unfavorable, updated_at FROM governor_reputation_history`,
+  ).run(DEFAULT_FORGE_CONFIG.apiBaseUrl);
+  db.exec("DROP TABLE governor_reputation_history");
+  db.exec("ALTER TABLE governor_reputation_history_v2 RENAME TO governor_reputation_history");
+}
+
 /** Opens the local governor-state store, creating tables on first use. */
 export function openGovernorState(dbPath = resolveGovernorStateDbPath()) {
   const resolvedPath = normalizeDbPath(dbPath);
@@ -102,6 +144,7 @@ export function openGovernorState(dbPath = resolveGovernorStateDbPath()) {
       updated_at TEXT NOT NULL
     )
   `);
+  ensureReputationHistoryForgeScope(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS governor_own_submissions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -128,11 +171,13 @@ export function openGovernorState(dbPath = resolveGovernorStateDbPath()) {
       paused_at = excluded.paused_at,
       updated_at = excluded.updated_at
   `);
-  const getReputationStatement = db.prepare("SELECT * FROM governor_reputation_history WHERE repo_full_name = ?");
+  const getReputationStatement = db.prepare(
+    "SELECT * FROM governor_reputation_history WHERE api_base_url = ? AND repo_full_name = ?",
+  );
   const upsertReputationStatement = db.prepare(`
-    INSERT INTO governor_reputation_history (repo_full_name, decided, unfavorable, updated_at)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(repo_full_name) DO UPDATE SET
+    INSERT INTO governor_reputation_history (api_base_url, repo_full_name, decided, unfavorable, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(api_base_url, repo_full_name) DO UPDATE SET
       decided = excluded.decided,
       unfavorable = excluded.unfavorable,
       updated_at = excluded.updated_at
@@ -225,17 +270,19 @@ export function openGovernorState(dbPath = resolveGovernorStateDbPath()) {
       );
       return { paused, reason, pausedAt };
     },
-    loadReputationHistory(repoFullName) {
-      const normalized = normalizeRepoFullName(repoFullName);
-      const row = getReputationStatement.get(normalized);
+    loadReputationHistory(repoFullName, apiBaseUrl) {
+      const normalizedForge = normalizeApiBaseUrl(apiBaseUrl);
+      const normalizedRepo = normalizeRepoFullName(repoFullName);
+      const row = getReputationStatement.get(normalizedForge, normalizedRepo);
       if (!row) return { ...DEFAULT_REPUTATION_HISTORY };
       return { decided: row.decided, unfavorable: row.unfavorable };
     },
-    saveReputationHistory(repoFullName, history) {
-      const normalized = normalizeRepoFullName(repoFullName);
+    saveReputationHistory(repoFullName, history, apiBaseUrl) {
+      const normalizedForge = normalizeApiBaseUrl(apiBaseUrl);
+      const normalizedRepo = normalizeRepoFullName(repoFullName);
       const decided = Number.isInteger(history?.decided) ? history.decided : 0;
       const unfavorable = Number.isInteger(history?.unfavorable) ? history.unfavorable : 0;
-      upsertReputationStatement.run(normalized, decided, unfavorable, new Date().toISOString());
+      upsertReputationStatement.run(normalizedForge, normalizedRepo, decided, unfavorable, new Date().toISOString());
       return { decided, unfavorable };
     },
     recordOwnSubmission(record) {
@@ -293,12 +340,12 @@ export function savePauseState(pauseState) {
   return getDefaultGovernorState().savePauseState(pauseState);
 }
 
-export function loadReputationHistory(repoFullName) {
-  return getDefaultGovernorState().loadReputationHistory(repoFullName);
+export function loadReputationHistory(repoFullName, apiBaseUrl) {
+  return getDefaultGovernorState().loadReputationHistory(repoFullName, apiBaseUrl);
 }
 
-export function saveReputationHistory(repoFullName, history) {
-  return getDefaultGovernorState().saveReputationHistory(repoFullName, history);
+export function saveReputationHistory(repoFullName, history, apiBaseUrl) {
+  return getDefaultGovernorState().saveReputationHistory(repoFullName, history, apiBaseUrl);
 }
 
 export function recordOwnSubmission(record) {

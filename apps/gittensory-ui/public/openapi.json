@@ -14340,6 +14340,16 @@
           {
             "GittensorySessionCookie": []
           }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
         ]
       }
     },
@@ -14367,6 +14377,16 @@
           {
             "GittensorySessionCookie": []
           }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
         ]
       }
     },
@@ -14393,6 +14413,16 @@
           },
           {
             "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
           }
         ]
       }
@@ -14587,6 +14617,24 @@
           {
             "GittensorySessionCookie": []
           }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
         ]
       }
     },
@@ -14610,6 +14658,24 @@
           },
           {
             "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
           }
         ]
       }
@@ -14638,6 +14704,24 @@
           {
             "GittensorySessionCookie": []
           }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
         ]
       }
     },
@@ -14665,6 +14749,24 @@
           {
             "GittensorySessionCookie": []
           }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
         ]
       }
     },
@@ -14689,6 +14791,24 @@
           {
             "GittensorySessionCookie": []
           }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
         ]
       }
     },
@@ -14712,6 +14832,24 @@
           },
           {
             "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
           }
         ]
       }
@@ -14742,6 +14880,24 @@
           },
           {
             "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
           }
         ]
       },
@@ -14774,6 +14930,24 @@
           {
             "GittensorySessionCookie": []
           }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
         ]
       }
     },
@@ -14803,6 +14977,24 @@
           },
           {
             "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
           }
         ]
       }
@@ -14932,6 +15124,24 @@
           {
             "GittensorySessionCookie": []
           }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
         ]
       }
     },
@@ -14992,6 +15202,24 @@
           {
             "GittensorySessionCookie": []
           }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
         ]
       }
     },
@@ -15024,6 +15252,24 @@
           },
           {
             "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
           }
         ]
       }
@@ -15058,6 +15304,24 @@
           {
             "GittensorySessionCookie": []
           }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
         ]
       }
     },
@@ -15081,6 +15345,24 @@
           },
           {
             "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
           }
         ]
       }
@@ -15109,6 +15391,24 @@
           {
             "GittensorySessionCookie": []
           }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
         ]
       }
     },
@@ -15132,6 +15432,32 @@
           },
           {
             "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "number",
+            "in": "path"
           }
         ]
       }
@@ -15157,6 +15483,32 @@
           {
             "GittensorySessionCookie": []
           }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "number",
+            "in": "path"
+          }
         ]
       }
     },
@@ -15180,6 +15532,16 @@
           },
           {
             "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
           }
         ]
       }
@@ -15215,6 +15577,16 @@
           {
             "GittensorySessionCookie": []
           }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
         ]
       }
     },
@@ -15238,6 +15610,16 @@
           },
           {
             "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
           }
         ]
       }
@@ -15272,6 +15654,32 @@
           },
           {
             "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
           }
         ]
       }
@@ -15475,6 +15883,16 @@
           },
           {
             "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
           }
         ]
       }
@@ -15690,6 +16108,16 @@
           {
             "GittensorySessionCookie": []
           }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
         ]
       }
     },
@@ -15716,6 +16144,16 @@
           },
           {
             "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
           }
         ]
       }

@@ -300,6 +300,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/installations/{id}/health",
+    request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "GitHub App installation health", content: { "application/json": { schema: InstallationHealthSchema } } },
       404: { description: "Installation health not found" },
@@ -308,6 +309,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/installations/{id}/repair",
+    request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "GitHub App installation repair diagnostics", content: { "application/json": { schema: InstallationRepairSchema } } },
       404: { description: "Installation health not found" },
@@ -316,6 +318,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/installations/{id}/repair/refresh",
+    request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "Refreshed GitHub App installation repair diagnostics", content: { "application/json": { schema: InstallationRepairSchema } } },
       404: { description: "Installation not found" },
@@ -370,6 +373,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Repository detail", content: { "application/json": { schema: RepositorySchema } } },
       404: { description: "Repository not found" },
@@ -378,6 +382,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/intelligence",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Canonical repository intelligence bundle", content: { "application/json": { schema: RepoIntelligenceSchema } } },
     },
@@ -385,6 +390,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/issue-quality",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Cached or computed issue quality report for the repo", content: { "application/json": { schema: IssueQualityResponseSchema } } },
       404: { description: "Repo is unknown or has no issue-quality coverage yet" },
@@ -393,6 +399,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/outcome-patterns",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Cached or freshly-computed per-repo accepted/rejected PR outcome patterns with freshness envelope and explicit evidence-completeness", content: { "application/json": { schema: RepoOutcomePatternsResponseSchema } } },
       404: { description: "Repo is unknown or has no outcome-pattern coverage yet" },
@@ -401,6 +408,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/registration-readiness",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Gittensor registration readiness signal for repo owners", content: { "application/json": { schema: RegistrationReadinessSchema } } },
     },
@@ -408,6 +416,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/gittensor-config-recommendation",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Private Gittensor config recommendation for repo owners", content: { "application/json": { schema: GittensorConfigRecommendationSchema } } },
     },
@@ -415,6 +424,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/focus-manifest",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Repo focus manifest and compiled policy for maintainers", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       403: { description: "Insufficient role" },
@@ -423,6 +433,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/focus-manifest/refresh",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Refresh the persisted focus manifest cache from the repo file", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       403: { description: "Insufficient role" },
@@ -431,6 +442,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "put",
     path: "/v1/repos/{owner}/{repo}/focus-manifest",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Persist API-backed focus manifest for a repo", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       400: { description: "Malformed JSON request body" },
@@ -440,6 +452,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/agent/audit-feed",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: {
         description:
@@ -493,6 +506,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/self-dogfood-registration-pack",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Private self-dogfood registration pack when repo matches configured Gittensory target", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       403: { description: "Insufficient role or repo is not the configured self-dogfood target" },
@@ -501,6 +515,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/onboarding-pack/preview",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Preview-only repo onboarding pack for accepted repositories", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       403: { description: "Insufficient role" },
@@ -510,6 +525,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/contributor-issue-drafts/generate",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Generate maintainer-reviewed contributor issue drafts from repo policy (dry-run by default)", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       400: { description: "Invalid request or explicit create without dryRun false" },
@@ -519,6 +535,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/settings",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Gittensory repository automation settings", content: { "application/json": { schema: RepositorySettingsSchema } } },
     },
@@ -526,6 +543,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/settings-preview",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Maintainer dry-run preview of the public surface decision for a sample PR (no GitHub mutation)", content: { "application/json": { schema: RepoSettingsPreviewSchema } } },
       400: { description: "Invalid settings preview request" },
@@ -534,6 +552,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/pulls/{number}/maintainer-packet",
+    request: { params: z.object({ owner: z.string(), repo: z.string(), number: z.string() }) },
     responses: {
       200: { description: "PR-specific maintainer review packet", content: { "application/json": { schema: PullRequestMaintainerPacketSchema } } },
     },
@@ -541,6 +560,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/pulls/{number}/reviewability",
+    request: { params: z.object({ owner: z.string(), repo: z.string(), number: z.string() }) },
     responses: {
       200: { description: "Private PR reviewability score and maintainer action", content: { "application/json": { schema: PullRequestReviewabilitySchema } } },
     },
@@ -548,6 +568,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/contributors/{login}/profile",
+    request: { params: z.object({ login: z.string() }) },
     responses: {
       200: { description: "Contributor evidence profile", content: { "application/json": { schema: ContributorProfileSchema } } },
     },
@@ -555,6 +576,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/contributors/{login}/decision-pack",
+    request: { params: z.object({ login: z.string() }) },
     responses: {
       200: {
         description: "Canonical private contributor decision pack. May carry freshness 'stale' or 'rebuilding' when a background rebuild is in progress.",
@@ -566,6 +588,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/contributors/{login}/open-pr-monitor",
+    request: { params: z.object({ login: z.string() }) },
     responses: {
       200: {
         description: "Contributor open-PR monitor with classifications and public-safe next-step packets from cached metadata.",
@@ -576,6 +599,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/contributors/{login}/repos/{owner}/{repo}/decision",
+    request: { params: z.object({ login: z.string(), owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Repo-specific contributor decision from decision pack. May carry freshness 'stale' or 'rebuilding'.", content: { "application/json": { schema: RepoDecisionResponseSchema } } },
       202: { description: "Decision pack snapshot is missing; a background rebuild has been requested", content: { "application/json": { schema: DecisionPackRefreshNeededSchema } } },
@@ -649,6 +673,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/agent/runs/{id}",
+    request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "Persisted agent run bundle", content: { "application/json": { schema: AgentRunBundleSchema } } },
       404: { description: "Agent run not found" },
@@ -676,6 +701,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/bounties/{id}/advisory",
+    request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "Bounty lifecycle advisory", content: { "application/json": { schema: BountyAdvisorySchema } } },
       404: { description: "Bounty not found" },
@@ -684,6 +710,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/bounties/{id}/lifecycle",
+    request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "Bounty lifecycle transition history", content: { "application/json": { schema: BountyLifecycleEventsSchema } } },
       404: { description: "Bounty not found" },

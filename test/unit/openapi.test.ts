@@ -129,4 +129,18 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/auth/logout"]?.post?.security).toBeUndefined();
     expect(spec.paths["/v1/auth/extension/session"]?.post?.security).toEqual([{ GittensoryBearer: [] }, { GittensorySessionCookie: [] }]);
   });
+
+  it("declares an `in: path` parameter for every {templated} path segment (Cloudflare schema-validation warning 30046)", () => {
+    const spec = buildOpenApiSpec();
+    for (const [path, methods] of Object.entries(spec.paths ?? {})) {
+      const templateParams = [...path.matchAll(/\{(\w+)\}/g)].map((m) => m[1]!);
+      if (templateParams.length === 0) continue;
+      for (const [method, operation] of Object.entries(methods as Record<string, { parameters?: Array<{ name: string; in: string }> }>)) {
+        const declared = new Set((operation.parameters ?? []).filter((p) => p.in === "path").map((p) => p.name));
+        for (const param of templateParams) {
+          expect(declared.has(param), `${method.toUpperCase()} ${path} is missing a declared path parameter for {${param}}`).toBe(true);
+        }
+      }
+    }
+  });
 });

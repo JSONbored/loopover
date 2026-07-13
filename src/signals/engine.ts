@@ -99,6 +99,10 @@ export type QueueHealth = {
     draftPullRequests: number;
     maintainerAuthoredPullRequests: number;
     collisionClusters: number;
+    /** Open PRs with slop band elevated or high (public-safe flag count for trend snapshots). */
+    slopFlaggedPullRequests: number;
+    /** Open PRs in a high-risk duplicate cluster with 2+ pull requests (public-safe flag count). */
+    duplicateFlaggedPullRequests: number;
     ageBuckets: {
       under7Days: number;
       days7To30: number;
@@ -957,6 +961,23 @@ export function buildQueueHealth(
   const stalePullRequests = openPullRequests.filter((pr) => daysSince(pr.updatedAt ?? pr.createdAt) >= 14);
   const draftPullRequests = openPullRequests.filter((pr) => pr.isDraft);
   const maintainerAuthoredPullRequests = openPullRequests.filter((pr) => isMaintainerAssociation(pr.authorAssociation));
+  const slopFlaggedPullRequests = openPullRequests.filter(
+    (pr) => pr.slopBand === "elevated" || pr.slopBand === "high",
+  ).length;
+  const highRiskDuplicatePrNumbers = new Set(
+    collisions.clusters
+      .filter(
+        (cluster) =>
+          cluster.risk === "high" &&
+          cluster.items.filter((item) => item.type === "pull_request").length >= 2,
+      )
+      .flatMap((cluster) =>
+        cluster.items.filter((item) => item.type === "pull_request").map((item) => item.number),
+      ),
+  );
+  const duplicateFlaggedPullRequests = openPullRequests.filter((pr) =>
+    highRiskDuplicatePrNumbers.has(pr.number),
+  ).length;
   const cachedLikelyReviewablePullRequests = openPullRequests.filter((pr) => pr.linkedIssues.length > 0 && daysSince(pr.updatedAt ?? pr.createdAt) < 30).length;
   const likelyReviewablePullRequests = Math.min(openPullRequestCount, Math.max(cachedLikelyReviewablePullRequests, countOverrides.likelyReviewablePullRequests ?? 0));
   const ageBuckets = {
@@ -1030,6 +1051,8 @@ export function buildQueueHealth(
       draftPullRequests: draftPullRequests.length,
       maintainerAuthoredPullRequests: maintainerAuthoredPullRequests.length,
       collisionClusters: collisions.summary.clusterCount,
+      slopFlaggedPullRequests,
+      duplicateFlaggedPullRequests,
       ageBuckets,
       likelyReviewablePullRequests,
       cachedOpenPullRequests: openPullRequests.length,

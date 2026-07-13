@@ -27,6 +27,8 @@ import {
   QueueHealthCard,
   type MaintainerQueueHealth,
 } from "@/components/site/app-panels/queue-health-card";
+import { SlopDuplicateTrendCard } from "@/components/site/app-panels/slop-duplicate-trend-card";
+import type { MaintainerSlopDuplicateTrend } from "@/components/site/app-panels/slop-duplicate-trend-card-model";
 import { MaintainerSettings } from "@/components/site/app-panels/maintainer-settings";
 import { OnboardingPreviewCard } from "@/components/site/app-panels/onboarding-preview-card";
 import { CheckRunReadinessTable } from "@/components/site/check-run-readiness-table";
@@ -92,6 +94,7 @@ type MaintainerDashboard = {
     topContributors: MaintainerTopContributor[];
     gateOutcomeBreakdown: GateOutcomeCardData;
     queueHealth?: MaintainerQueueHealth;
+    slopDuplicateTrend?: MaintainerSlopDuplicateTrend;
   };
 };
 
@@ -387,6 +390,10 @@ function MaintainerDashboardView({
           <GateOutcomeCard breakdown={data.qualityDashboard.gateOutcomeBreakdown} />
 
           <QueueHealthCard queueHealth={data.qualityDashboard.queueHealth} />
+
+          {data.qualityDashboard.slopDuplicateTrend ? (
+            <SlopDuplicateTrendCard trend={data.qualityDashboard.slopDuplicateTrend} />
+          ) : null}
 
           <ContributorQualityTable topContributors={data.qualityDashboard.topContributors} />
 

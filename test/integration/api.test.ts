@@ -2227,6 +2227,7 @@ describe("api routes", () => {
         repoQuality: Array<{ repoFullName: string; queueBand: string }>;
         topContributors: Array<{ login: string; band: string }>;
         qualitySignals: { openPrs: number };
+        slopDuplicateTrend: { generatedAt: string; stale: boolean; weeks: Array<{ weekStart: string }>; summary: string };
         summary: string;
         gateOutcomeBreakdown: {
           windowDays: number;
@@ -2244,6 +2245,8 @@ describe("api routes", () => {
     expect(body.qualityDashboard.repoQuality.every((entry) => ["low", "medium", "high", "critical"].includes(entry.queueBand))).toBe(true);
     expect(body.qualityDashboard.topContributors.every((entry) => ["strong", "developing", "early"].includes(entry.band))).toBe(true);
     expect(body.qualityDashboard.qualitySignals.openPrs).toBeGreaterThanOrEqual(0);
+    expect(body.qualityDashboard.slopDuplicateTrend.generatedAt).toEqual(expect.any(String));
+    expect(body.qualityDashboard.slopDuplicateTrend.weeks.length).toBeGreaterThan(0);
     expect(body.qualityDashboard.summary).toContain("open PR(s)");
     expect(body.qualityDashboard.gateOutcomeBreakdown.windowDays).toBeGreaterThan(0);
     expect(body.qualityDashboard.gateOutcomeBreakdown.total).toBeGreaterThanOrEqual(0);

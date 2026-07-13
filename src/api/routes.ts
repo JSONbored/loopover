@@ -267,6 +267,7 @@ import { loadPublicAccuracyTrend } from "../services/public-accuracy-trend";
 import { loadPublicReuseRateTrend } from "../services/public-reuse-rate-trend";
 import { loadPublicReviewVolumeTrend } from "../services/public-review-volume-trend";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
+import { buildMaintainerSlopDuplicateTrend } from "../services/maintainer-slop-duplicate-trend";
 import { buildGateOutcomeBreakdown, GATE_OUTCOME_BREAKDOWN_WINDOW_DAYS } from "../services/gate-outcome-breakdown";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES, normalizeReadinessGateMode } from "../signals/focus-manifest";
@@ -1397,9 +1398,35 @@ export function createApp() {
     ]);
     const qualityRepoNames = new Set(qualityRepos.map((repo) => repo.fullName.toLowerCase()));
     const scopedSyncCompletions = allSyncStates.filter((state) => qualityRepoNames.has(state.repoFullName.toLowerCase())).map((state) => state.lastCompletedAt);
-    const qualityStale = isMaintainerQualityDataStale({ lastCompletedAts: scopedSyncCompletions, repoCount: qualityRepos.length, nowMs: Date.parse(nowIso()) });
-    const qualityDashboard = buildMaintainerQualityDashboard({ repos: qualityRepoInputs, generatedAt: nowIso(), stale: qualityStale, repoTotal: repositories.length });
-    const gateOutcomeSinceIso = new Date(Date.parse(nowIso()) - GATE_OUTCOME_BREAKDOWN_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const generatedAt = nowIso();
+    const qualityStale = isMaintainerQualityDataStale({ lastCompletedAts: scopedSyncCompletions, repoCount: qualityRepos.length, nowMs: Date.parse(generatedAt) });
+    const queueHealthHistories = await Promise.all(
+      qualityRepos.map((repo) => listSignalSnapshots(c.env, "queue-health", repo.fullName)),
+    );
+    const slopDuplicateTrend = buildMaintainerSlopDuplicateTrend({
+      repos: qualityRepoInputs.map((input, index) => {
+        const collisions = buildCollisionReport(input.repo.fullName, input.issues, input.pullRequests);
+        const currentQueueHealth = buildQueueHealth(input.repo, input.issues, input.pullRequests, collisions);
+        return {
+          repoFullName: input.repo.fullName,
+          queueHealthSnapshots: queueHealthHistories[index],
+          currentQueueHealth,
+        };
+      }),
+      generatedAt,
+      stale: qualityStale,
+      nowMs: Date.parse(generatedAt),
+    });
+    const qualityDashboard = {
+      ...buildMaintainerQualityDashboard({
+        repos: qualityRepoInputs,
+        generatedAt,
+        stale: qualityStale,
+        repoTotal: repositories.length,
+      }),
+      slopDuplicateTrend,
+    };
+    const gateOutcomeSinceIso = new Date(Date.parse(generatedAt) - GATE_OUTCOME_BREAKDOWN_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const gateOutcomeRollups = await listGateOutcomeAuditEventRollups(c.env, {
       repoFullNames: repositories.map((repo) => repo.fullName),
       sinceIso: gateOutcomeSinceIso,
@@ -1407,10 +1434,10 @@ export function createApp() {
     const gateOutcomeBreakdown = buildGateOutcomeBreakdown({
       rollups: gateOutcomeRollups,
       windowDays: GATE_OUTCOME_BREAKDOWN_WINDOW_DAYS,
-      generatedAt: nowIso(),
+      generatedAt,
     });
     return c.json({
-      generatedAt: nowIso(),
+      generatedAt,
       installations,
       health: health.map(enrichInstallationHealth),
       metrics: [

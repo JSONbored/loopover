@@ -349,7 +349,7 @@ describe("predicted-gate engine branch coverage (#2283)", () => {
       burdenScore: 0,
       level: "low",
       summary: "s",
-      signals: { openIssues: 0, openPullRequests: 0, unlinkedPullRequests: 0, stalePullRequests: 0, draftPullRequests: 0, maintainerAuthoredPullRequests: 0, collisionClusters: 0, ageBuckets: { under7Days: 0, days7To30: 0, over30Days: 0 }, likelyReviewablePullRequests: 0, cachedOpenPullRequests: 0, likelyReviewablePullRequestsSource: "cache" },
+      signals: { openIssues: 0, openPullRequests: 0, unlinkedPullRequests: 0, stalePullRequests: 0, draftPullRequests: 0, maintainerAuthoredPullRequests: 0, collisionClusters: 0, slopFlaggedPullRequests: 0, duplicateFlaggedPullRequests: 0, ageBuckets: { under7Days: 0, days7To30: 0, over30Days: 0 }, likelyReviewablePullRequests: 0, cachedOpenPullRequests: 0, likelyReviewablePullRequestsSource: "cache" },
       findings: [],
     });
     expect(emptyQueue.evidence).toContain("0 likely reviewable");

@@ -1,5 +1,5 @@
-// Bounded retry-with-backoff around a single HTTP call (#4829). The miner's pollers (ci-poller, gate-verdict-
-// poller) previously let a single brief 5xx from GitHub kill the whole poll loop, because their own attempt loop
+// Bounded retry-with-backoff around a single HTTP call (#4829). The miner's pollers (ci-poller and others)
+// previously let a single brief 5xx from GitHub kill the whole poll loop, because their own attempt loop
 // only re-polls while a conclusion is genuinely "pending", never after a server error. This wraps ONE fetch so a
 // transient SERVER error (a 5xx RESPONSE) is retried a bounded number of times, DISTINCT from that pending-
 // polling, sleeping an exponential backoff between attempts and giving up after `maxAttempts`. A 2xx/3xx/4xx

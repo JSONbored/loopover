@@ -383,9 +383,9 @@ export async function runLoop(args, options = {}) {
         if (prNumber !== null) {
           // Real CI-status observation (#5394): recorded BEFORE the disposition poll below, so a submitted
           // PR's check-run state is captured even while it's still open, not just at its eventual merge/close.
-          // gate-verdict-poller.js (#4273) was the originally preferred source for this signal but has no real
-          // caller-reachable endpoint today (see its own header) -- ci-poller.js's real GitHub check-run
-          // polling is the documented fallback for exactly this case.
+          // ci-poller.js's real GitHub check-run polling is a heuristic proxy for the gate verdict; the
+          // authoritative terminal merge/close outcome comes from pollPrDispositionFn below, sourced directly
+          // from GitHub's own PR state rather than a server-internal endpoint (#5450).
           const ciStatus = await pollCheckRunsFn(claimed.repoFullName, prNumber, {
             githubToken,
             apiBaseUrl: options.apiBaseUrl,

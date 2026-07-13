@@ -94,7 +94,7 @@ function fakeResponse() {
 }
 
 describe("authPlugin (#4858)", () => {
-  it("stamps the Set-Cookie header on every response, including a request that falls through", () => {
+  it("stamps the Set-Cookie header on a non-/api/ request that falls through (the initial page load)", () => {
     const middleware = captureMiddleware();
     const { res, headers } = fakeResponse();
     let calledNext = false;
@@ -105,9 +105,13 @@ describe("authPlugin (#4858)", () => {
     expect(calledNext).toBe(true);
   });
 
-  it("rejects an unauthenticated /api/* request with 401 and never calls next()", () => {
+  it("rejects an unauthenticated /api/* request with 401, never calls next(), and NEVER leaks the token via Set-Cookie", () => {
+    // Regression test: an earlier version set Set-Cookie on every response BEFORE checking auth, so an
+    // unauthenticated caller could read the valid token straight off this 401's own headers and replay it --
+    // completely defeating the mechanism. The token must only ever reach a caller that is already
+    // authenticated, or a non-/api/* (page/asset) request.
     const middleware = captureMiddleware();
-    const { res, getEnded, getStatus } = fakeResponse();
+    const { res, headers, getEnded, getStatus } = fakeResponse();
     let calledNext = false;
     middleware({ url: "/api/portfolio-queue", headers: {} }, res, () => {
       calledNext = true;
@@ -117,16 +121,18 @@ describe("authPlugin (#4858)", () => {
       error: "unauthenticated: missing or invalid local miner-ui session cookie",
     });
     expect(calledNext).toBe(false);
+    expect(headers["Set-Cookie"]).toBeUndefined();
   });
 
-  it("lets an authenticated /api/* request fall through to the next middleware", () => {
+  it("lets an authenticated /api/* request fall through and re-stamps the same cookie", () => {
     const middleware = captureMiddleware();
-    const { res } = fakeResponse();
+    const { res, headers } = fakeResponse();
     let calledNext = false;
     middleware({ url: "/api/portfolio-queue", headers: { cookie: `gittensory_miner_ui_token=${TOKEN}` } }, res, () => {
       calledNext = true;
     });
     expect(calledNext).toBe(true);
+    expect(headers["Set-Cookie"]).toBe(`gittensory_miner_ui_token=${TOKEN}; HttpOnly; SameSite=Strict; Path=/`);
   });
 
   it("uses deps.generateToken so a fixed test token is deterministic across requests", () => {

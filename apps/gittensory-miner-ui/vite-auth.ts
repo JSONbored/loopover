@@ -9,8 +9,10 @@ import type { Plugin } from "vite";
 //
 // This adds a minimal-but-real mechanism instead of touching each API file individually: a random token
 // generated ONCE per dev-server process, delivered to the browser as a same-origin HttpOnly SameSite=Strict
-// cookie on every response (so the very first page load already carries it going forward), and required on
-// every /api/* request thereafter. HttpOnly keeps it unreachable from any XSS in the SPA itself; SameSite=Strict
+// cookie on every response the caller is authorized to receive (so the very first page load already carries
+// it going forward -- NOT on an unauthenticated /api/* request's own 401, which must never leak the token it
+// is rejecting the caller for lacking), and required on every /api/* request thereafter. HttpOnly keeps it
+// unreachable from any XSS in the SPA itself; SameSite=Strict
 // means a cross-origin page -- including one from a DNS-rebinding attack, which resolves an ATTACKER-CONTROLLED
 // hostname to 127.0.0.1 rather than reusing this dev server's own origin -- never has it attached automatically
 // by the browser. Because it rides on the browser's own cookie jar, no client-side fetch call needs to change:
@@ -69,8 +71,14 @@ export function handleAuthRequest(
   };
 }
 
-/** Vite dev/preview middleware: generates one token per process and (a) stamps it onto every response as a
- *  same-origin cookie, and (b) rejects any /api/* request that doesn't present it. */
+/** Vite dev/preview middleware: generates one token per process and (a) rejects any /api/* request that
+ *  doesn't present it, before (b) stamping the cookie onto a response that's allowed to proceed. The ORDER
+ *  matters: handleAuthRequest returns non-null (a rejection) ONLY for an unauthenticated /api/* request, so
+ *  the Set-Cookie header must never be set on that response -- otherwise the token itself would ride along
+ *  with the very 401 that was supposed to deny the caller, letting anyone who can reach the loopback port
+ *  read the token off a single unauthenticated request and replay it, defeating the whole mechanism. Every
+ *  request that reaches the setHeader call below is either already authenticated or isn't an /api/* request
+ *  at all (the initial page/asset load a real browser session is meant to obtain the cookie from). */
 export function authPlugin(deps: AuthDeps = defaultDeps): Plugin {
   const token = deps.generateToken();
   const attach = (middlewares: {
@@ -83,12 +91,15 @@ export function authPlugin(deps: AuthDeps = defaultDeps): Plugin {
     ) => void;
   }) => {
     middlewares.use((req, res, next) => {
-      res.setHeader("Set-Cookie", `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Strict; Path=/`);
       const rejection = handleAuthRequest(req.url, req.headers.cookie, token);
-      if (!rejection) return next();
-      res.statusCode = rejection.status;
-      res.setHeader("Content-Type", "application/json");
-      res.end(rejection.body);
+      if (rejection) {
+        res.statusCode = rejection.status;
+        res.setHeader("Content-Type", "application/json");
+        res.end(rejection.body);
+        return;
+      }
+      res.setHeader("Set-Cookie", `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Strict; Path=/`);
+      next();
     });
   };
   return {

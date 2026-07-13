@@ -65,6 +65,7 @@ describe("gittensory-miner CLI helpers", () => {
     expect(text).toContain("gittensory-miner --help");
     expect(text).toContain("gittensory-miner version");
     expect(text).toContain("gittensory-miner metrics");
+    expect(text).toContain("gittensory-miner migrate [--json]");
     expect(text).toContain("gittensory-miner ledger metrics");
     expect(text).toContain("--no-update-check");
   });

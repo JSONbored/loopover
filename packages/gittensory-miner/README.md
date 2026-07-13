@@ -159,7 +159,7 @@ gittensory-miner doctor
 gittensory-miner status
 ```
 
-`init` creates `~/.config/gittensory-miner/` (or `GITTENSORY_MINER_CONFIG_DIR` / `XDG_CONFIG_HOME` overrides) and a local `laptop-state.sqlite3` bootstrap file. Re-running `init` is idempotent. Pass `--verify-token` to make one authenticated GitHub API call up front and fail fast if `GITHUB_TOKEN` is invalid or missing repository access scopes. `doctor` reports Node, the state directory, SQLite readiness, and whether Docker is installed (informational only).
+`init` creates `~/.config/gittensory-miner/` (or `GITTENSORY_MINER_CONFIG_DIR` / `XDG_CONFIG_HOME` overrides) and a local `laptop-state.sqlite3` bootstrap file. Re-running `init` is idempotent. Pass `--verify-token` to make one authenticated GitHub API call up front and fail fast if `GITHUB_TOKEN` is invalid or missing repository access scopes. `doctor` reports Node, the state directory, SQLite readiness, and whether Docker is installed (informational only). Every local store already applies its own pending schema migrations automatically the moment some other command first opens it, but `migrate` lets an operator proactively bring every EXISTING store file up to date in one pass (e.g. right after upgrading) instead of relying on whichever command happens to touch a given store first; a store file that hasn't been created yet is reported as skipped, not created.
 
 From a local checkout:
 
@@ -203,6 +203,7 @@ gittensory-miner version
 gittensory-miner init [--json] [--verify-token]
 gittensory-miner status [--json]
 gittensory-miner doctor [--json]
+gittensory-miner migrate [--json]
 gittensory-miner manage status [--json]
 gittensory-miner manage poll <owner/repo> <pr#> [--branch <name>] [--json]
 ```

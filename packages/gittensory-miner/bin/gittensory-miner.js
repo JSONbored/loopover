@@ -18,6 +18,7 @@ import { runOrbExportCli } from "../lib/orb-export.js";
 import { installCliSignalHandlers } from "../lib/process-lifecycle.js";
 import { runStateCli } from "../lib/run-state-cli.js";
 import { runInit } from "../lib/laptop-init.js";
+import { runMigrate } from "../lib/migrate-cli.js";
 import { runDoctor, runStatus } from "../lib/status.js";
 import {
   awaitOpportunisticUpdateCheck,
@@ -47,6 +48,12 @@ if (cliArgs[0] === "status") {
 
 if (cliArgs[0] === "doctor") {
   process.exit(runDoctor(cliArgs.slice(1)));
+}
+
+// `migrate` is strictly local + offline like `status`/`doctor` (it only opens the local SQLite stores), so it is
+// dispatched here too, before the opportunistic npm-registry update check is ever started.
+if (cliArgs[0] === "migrate") {
+  process.exit(runMigrate(cliArgs.slice(1)));
 }
 
 // `metrics` is strictly local + offline like `status`/`doctor` (it reads only the local prediction ledger), so it

@@ -17,6 +17,7 @@ export function printHelp(input) {
       "  gittensory-miner init [--json] [--verify-token]              Bootstrap laptop-mode local SQLite state",
       "  gittensory-miner status [--json]                              Show installed versions + local state paths",
       "  gittensory-miner doctor [--json]                              Check this laptop is set up correctly",
+      "  gittensory-miner migrate [--json]                             Apply pending schema migrations to existing local stores",
       "  gittensory-miner metrics                                      Print prediction-calibration counters in Prometheus text format",
       "  gittensory-miner manage status [--json]                       Show managed PR rows from local portfolio + ledger",
       "  gittensory-miner manage poll <owner/repo> <pr#> [--branch <name>] [--json]",

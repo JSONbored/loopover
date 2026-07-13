@@ -175,18 +175,24 @@ Stores use the lightweight **`schema-version.js`** convention ([#4832](https://g
 
 3. **Install** the new version (`npm install -g @jsonbored/gittensory-miner@latest`, rebuild image, …). The CLI prints a one-line npm upgrade nudge when behind registry latest — informational only.
 
-4. **Start** one miner process. On first store open, pending migrations apply automatically (today: e.g. `portfolio-queue` adds `leased_at` when upgrading from pre-#4827 files).
+4. **Migrate**, before starting any miner process, so every existing store is brought up to date in one
+   deliberate pass instead of relying on whichever command happens to open a given store first:
 
-5. **Verify**:
+   ```sh
+   gittensory-miner migrate --json
+   ```
+
+   (Pending migrations still apply automatically on first open regardless — e.g. `portfolio-queue` adds
+   `leased_at` when upgrading from pre-#4827 files — `migrate` is the proactive, explicit alternative to
+   waiting for that implicit path. A store file that hasn't been created yet is reported as skipped, not
+   created; `migrate` never bootstraps fresh state.)
+
+5. **Start** one miner process, then **verify**:
 
    ```sh
    gittensory-miner doctor --json
    gittensory-miner status --json
-   # Optional: inspect schema versions
-   for f in "$STATE_DIR"/*.sqlite3; do
-     echo "== $f =="
-     sqlite3 "$f" "PRAGMA user_version;"
-   done
+   gittensory-miner migrate --json   # re-run: every store should now report "up-to-date"
    ```
 
 6. If a migration throws on startup, **do not delete files immediately** — restore the pre-upgrade tarball, pin the previous package version, and file an issue with the failing `user_version` and store filename.

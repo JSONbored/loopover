@@ -2,6 +2,7 @@ export type ParsedStateGetArgs =
   | {
       repoFullName: string;
       json: boolean;
+      apiBaseUrl: string | undefined;
     }
   | { error: string };
 
@@ -11,6 +12,7 @@ export type ParsedStateSetArgs =
       state: "idle" | "discovering" | "planning" | "preparing";
       dryRun: boolean;
       json: boolean;
+      apiBaseUrl: string | undefined;
     }
   | { error: string };
 

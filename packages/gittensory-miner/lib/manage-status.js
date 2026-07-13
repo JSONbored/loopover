@@ -125,6 +125,11 @@ export function collectRunPortfolio(sources) {
     list.push(row);
     prsByRepo.set(row.repoFullName, list);
   }
+  // NOTE (#5563): keyed by repoFullName alone, not apiBaseUrl -- this dashboard fold predates multi-forge run
+  // states and produces exactly ONE row per repo name. If the same repo name has a recorded run state on two
+  // different hosts, only one (the later entry in listRunStates' order) survives here; the other's row is still
+  // intact in the store, just not surfaced in this particular view. Safe (no data loss, no write), just a display
+  // limitation -- broadening this fold to be host-aware is a separate, larger dashboard-shape change.
   const runStateByRepo = new Map(runStateStore.listRunStates().map((entry) => [entry.repoFullName, entry]));
 
   const repoFullNames = new Set([...prsByRepo.keys(), ...runStateByRepo.keys()]);

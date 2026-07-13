@@ -399,7 +399,10 @@ export async function runAttempt(args, options = {}) {
       amsPolicySpec: amsPolicy.spec,
       branchRef: worktreeResult.branchName,
     });
-    const governor = buildAttemptGovernorContext(env, amsPolicy.spec, repoPaused);
+    // Real per-issue attempt history (#5654): the queue-driven caller (loop-cli) reads it from the portfolio-queue
+    // store and passes it through; a one-off direct attempt has none, so buildAttemptGovernorContext fails open to a
+    // fresh, never-attempted item rather than fabricating history here.
+    const governor = buildAttemptGovernorContext(env, amsPolicy.spec, repoPaused, options.convergenceInput);
 
     // Real soft-claim (#5393): recorded once we've committed to a real attempt (past feasibility), so a
     // sibling miner process on this machine sees it via claimLedger.listClaims/listActiveClaims while this

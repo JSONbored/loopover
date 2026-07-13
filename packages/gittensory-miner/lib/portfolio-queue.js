@@ -147,6 +147,23 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
       migrationDb.exec("DROP TABLE miner_portfolio_queue");
       migrationDb.exec("ALTER TABLE miner_portfolio_queue_v3 RENAME TO miner_portfolio_queue");
     },
+    // v3 -> v4 (#5654): grow the attempt-history columns the Governor's non-convergence detector needs
+    // (packages/gittensory-engine/src/portfolio/non-convergence.ts, whose header names the portfolio-queue table
+    // as where these belong). `attempts` counts claims, `reenqueues` counts in_progress -> queued transitions that
+    // never reached done, `consecutive_failures` is those same transitions since the last markDone. All three are
+    // NOT NULL DEFAULT 0, so every pre-existing row reads as "fresh, no history yet" until next claimed/requeued --
+    // an additive migration. Defensive per-column table_info check (same idiom as the `leased_at` migration above)
+    // so a store already carrying them is never re-altered into a duplicate-column error.
+    (migrationDb) => {
+      const columns = migrationDb.prepare("PRAGMA table_info(miner_portfolio_queue)").all();
+      const hasColumn = (name) => columns.some((column) => column.name === name);
+      if (!hasColumn("attempts"))
+        migrationDb.exec("ALTER TABLE miner_portfolio_queue ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0");
+      if (!hasColumn("consecutive_failures"))
+        migrationDb.exec("ALTER TABLE miner_portfolio_queue ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0");
+      if (!hasColumn("reenqueues"))
+        migrationDb.exec("ALTER TABLE miner_portfolio_queue ADD COLUMN reenqueues INTEGER NOT NULL DEFAULT 0");
+    },
   ]);
 
   // `rowid` is a stable, unique key assigned once at first insert (re-enqueue updates in place, never re-inserts),
@@ -174,8 +191,10 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
   // cross-host priority ordering, not a per-host one.
   // Claiming stamps `leased_at` with the caller-supplied claim time; leaving 'in_progress' (done/failed/reclaim)
   // clears it back to NULL so only genuinely in-flight rows carry a lease.
+  // Claiming counts an attempt (#5654): every queued -> in_progress flip is one more try on the item, so the
+  // Governor's non-convergence detector can tell a genuine Nth attempt from a first one.
   const dequeueStatement = db.prepare(`
-    UPDATE miner_portfolio_queue SET status = 'in_progress', leased_at = ?
+    UPDATE miner_portfolio_queue SET status = 'in_progress', leased_at = ?, attempts = attempts + 1
     WHERE rowid = (
       SELECT rowid FROM miner_portfolio_queue WHERE status = 'queued' ${ORDER} LIMIT 1
     )
@@ -183,13 +202,19 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
   `);
   // RETURNING (rather than a separate post-UPDATE SELECT) makes the "nothing to mark done" case observable
   // directly from one atomic statement.
+  // Reaching done resets the consecutive-failure streak to 0 (#5654): progress was made, so the item is no longer
+  // "stuck". `attempts`/`reenqueues` are cumulative lifetime totals and deliberately survive a done.
   const markDoneStatement = db.prepare(`
-    UPDATE miner_portfolio_queue SET status = 'done', leased_at = NULL
+    UPDATE miner_portfolio_queue SET status = 'done', leased_at = NULL, consecutive_failures = 0
     WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ? AND status <> 'done'
     RETURNING *
   `);
+  // A failed/halted attempt cycles in_progress -> queued WITHOUT reaching done (#5654) -- exactly non-convergence.ts's
+  // reenqueue trigger -- so bump both the lifetime reenqueue count and the consecutive-failure streak. (requeueItem,
+  // which cycles a COMPLETED done row, is deliberately excluded: it DID reach done, so it is not a stuck loop.)
   const markFailedStatement = db.prepare(`
-    UPDATE miner_portfolio_queue SET status = 'queued', leased_at = NULL
+    UPDATE miner_portfolio_queue
+    SET status = 'queued', leased_at = NULL, reenqueues = reenqueues + 1, consecutive_failures = consecutive_failures + 1
     WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ? AND status = 'in_progress'
     RETURNING *
   `);
@@ -203,8 +228,12 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
   const listInProgressStatement = db.prepare(
     `SELECT * FROM miner_portfolio_queue WHERE status = 'in_progress' ${ORDER}`,
   );
+  // The stuck-lease reclaim sweep is the other in_progress -> queued-without-done cycle (#5654): a crashed/killed
+  // run's lease is swept back to queued, which is the same non-convergence signal as an explicit failure, so it
+  // bumps the same two counters.
   const reclaimStatement = db.prepare(`
-    UPDATE miner_portfolio_queue SET status = 'queued', leased_at = NULL
+    UPDATE miner_portfolio_queue
+    SET status = 'queued', leased_at = NULL, reenqueues = reenqueues + 1, consecutive_failures = consecutive_failures + 1
     WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ? AND status = 'in_progress'
     RETURNING *
   `);
@@ -216,11 +245,15 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
     WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ? AND status = 'done'
     RETURNING *
   `);
+  // Batch claim is the same queued -> in_progress attempt as dequeueNext, so it counts an attempt too (#5654).
   const claimTargetStatement = db.prepare(`
-    UPDATE miner_portfolio_queue SET status = 'in_progress', leased_at = ?
+    UPDATE miner_portfolio_queue SET status = 'in_progress', leased_at = ?, attempts = attempts + 1
     WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ? AND status = 'queued'
     RETURNING *
   `);
+  const attemptHistoryStatement = db.prepare(
+    "SELECT attempts, consecutive_failures, reenqueues, status FROM miner_portfolio_queue WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ?",
+  );
 
   return {
     dbPath: resolvedPath,
@@ -285,6 +318,24 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
         normalizeIdentifier(identifier),
       );
       return row ? rowToEntry(row) : null;
+    },
+    /** Real per-item attempt history for the Governor's non-convergence detector (#5654): a genuine
+     *  `PortfolioConvergenceInput` (packages/gittensory-engine/src/portfolio/non-convergence.ts) instead of the
+     *  first-attempt-shaped literal `buildAttemptGovernorContext` used to hardcode. `reachedDone` is strictly
+     *  `status === 'done'`, never fabricated. An item never enqueued reads all-zero and not-done -- a fresh,
+     *  never-attempted item the detector treats as `converging`, matching the prior literal's fail-open posture. */
+    getAttemptHistory(repoFullName, identifier, apiBaseUrl) {
+      const row = attemptHistoryStatement.get(
+        normalizeApiBaseUrl(apiBaseUrl),
+        normalizeRepoFullName(repoFullName),
+        normalizeIdentifier(identifier),
+      );
+      return {
+        attempts: row?.attempts ?? 0,
+        consecutiveFailures: row?.consecutive_failures ?? 0,
+        reenqueues: row?.reenqueues ?? 0,
+        reachedDone: row?.status === "done",
+      };
     },
     /**
      * Transactional caps-aware batch claim hook used by portfolio-queue-manager.js: re-read active rows under an

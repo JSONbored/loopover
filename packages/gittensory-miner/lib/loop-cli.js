@@ -394,6 +394,10 @@ export async function runLoop(args, options = {}) {
       await runAttemptFn(attemptArgv, {
         ...(options.attemptOptions ?? {}),
         env,
+        // Real per-issue attempt history (#5654): the durable portfolio-queue counters (bumped by the claim above
+        // and every prior requeue/reclaim) feed this attempt's Governor chokepoint context, so its non-convergence
+        // detector sees genuine "Nth attempt, M prior re-enqueues" state instead of the old hardcoded "fresh" literal.
+        convergenceInput: portfolioQueue.getAttemptHistory(claimed.repoFullName, claimed.identifier, claimed.apiBaseUrl),
         onResult: (result) => {
           lastResult = result;
         },

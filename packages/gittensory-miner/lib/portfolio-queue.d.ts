@@ -1,3 +1,5 @@
+import type { PortfolioConvergenceInput } from "@loopover/engine";
+
 export type QueueStatus = "queued" | "in_progress" | "done";
 
 export type QueueEntry = {
@@ -35,6 +37,12 @@ export type PortfolioQueueStore = {
   markFailed(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
   reclaimStuckItem(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
   requeueItem(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
+  /** Real per-item attempt history (#5654) for the Governor's non-convergence detector. */
+  getAttemptHistory(
+    repoFullName: string,
+    identifier: string,
+    apiBaseUrl?: string,
+  ): PortfolioConvergenceInput;
   batchClaim(
     selectFn: (
       entries: QueueEntry[],

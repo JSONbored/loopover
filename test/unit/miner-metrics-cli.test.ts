@@ -85,8 +85,18 @@ describe("gittensory-miner metrics CLI (#4838)", () => {
 
   it("runMetrics rejects unexpected arguments with a usage error", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     expect(runMetrics(["--json"], { initPredictionLedger: () => tempLedger() })).toBe(2);
+    expect(error).not.toHaveBeenCalled();
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      ok: false,
+      error: "Usage: gittensory-miner metrics",
+    });
+    error.mockClear();
+    log.mockClear();
+    expect(runMetrics(["--nope"], { initPredictionLedger: () => tempLedger() })).toBe(2);
     expect(error).toHaveBeenCalledWith("Usage: gittensory-miner metrics");
+    expect(log).not.toHaveBeenCalled();
   });
 
   it("runMetrics surfaces a thrown Error message and exits non-zero", () => {

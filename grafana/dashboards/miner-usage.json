@@ -1,0 +1,266 @@
+{
+  "uid": "loopover-miner-usage",
+  "title": "LoopOver — Miner usage (AMS)",
+  "tags": ["loopover", "miner", "ams"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "description": "Per-provider coding-agent (claude-cli/codex-cli/agent-sdk) attempt outcomes, cost, and token usage for the Autonomous Miner System (AMS) -- a separate local CLI (gittensory-miner) from ORB, this dashboard's own AI usage. Reads the redacted attempt_outcome_summary rows exported from AMS's local attempt-log ledger (see packages/gittensory-miner/docs/observability.md) via the AMS Attempt Log SQLite datasource -- never the miner's live GITTENSORY_MINER_CONFIG_DIR ledgers, and never scraped from a Prometheus metrics path. All three coding-agent providers share one dashboard (a $provider template variable, not one dashboard per provider) since AMS's local ledger has far lower data volume than ORB's cloud reviewers. tokens_used is honestly 0/NULL until some future coding-agent driver reports real token usage (#5395) -- never fabricated.",
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "title": "AI usage (ORB)",
+      "type": "link",
+      "url": "/d/loopover-ai-usage/loopover-ai-usage",
+      "icon": "external link",
+      "targetBlank": false,
+      "tooltip": "ORB's own AI-usage dashboard (cloud review providers) -- a dual-role operator running both ORB and AMS on one box wants this one for cloud-review spend, this dashboard for the local miner's coding-agent spend."
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "provider",
+        "label": "Provider",
+        "type": "query",
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "ams-attempt-log"
+        },
+        "query": {
+          "queryType": "table",
+          "queryText": "SELECT DISTINCT provider FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND provider IS NOT NULL ORDER BY provider",
+          "rawQueryText": "SELECT DISTINCT provider FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND provider IS NOT NULL ORDER BY provider"
+        },
+        "includeAll": true,
+        "allValue": "$__all",
+        "multi": false,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "refresh": 2,
+        "sort": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Summary (AMS attempt outcomes, filtered)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Total attempts",
+      "description": "Every attempt_outcome_summary row (one per completed attempt) in the selected time range, filtered by Provider.",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "ams-attempt-log" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "fixed", "fixedColor": "blue" }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT count(*) AS attempts FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT count(*) AS attempts FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Succeeded",
+      "description": "attempt_outcome_summary rows whose action_class is attempt_submitted -- every other action_class (attempt_abandon/attempt_stale/attempt_blocked/attempt_governed) counts as not-succeeded.",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "ams-attempt-log" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "fixed", "fixedColor": "green" }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT count(*) AS succeeded FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND action_class = 'attempt_submitted' AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT count(*) AS succeeded FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND action_class = 'attempt_submitted' AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Total cost",
+      "description": "Real accumulated cost_usd, summed. 0 for a provider that never reports a cost signal (CLI-subprocess providers today) -- an honest running total, never fabricated.",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "ams-attempt-log" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 4,
+          "color": { "mode": "fixed", "fixedColor": "green" }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT coalesce(sum(cost_usd), 0) AS cost_usd FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT coalesce(sum(cost_usd), 0) AS cost_usd FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Total tokens",
+      "description": "Always 0 today: no coding-agent driver reports real token usage yet (#5395) -- an honest gap, not a fabricated number. Will populate automatically once a driver reports real usage; no dashboard change needed then.",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "ams-attempt-log" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "fixed", "fixedColor": "purple" }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT coalesce(sum(tokens_used), 0) AS tokens FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}",
+          "rawQueryText": "SELECT coalesce(sum(tokens_used), 0) AS tokens FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "By provider",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Usage by provider",
+      "description": "One row per provider: attempt success/fail counts, total cost, and total tokens -- everything #5185 asks this dashboard to show, in one place.",
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 7 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "ams-attempt-log" },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [{ "displayName": "total", "desc": true }]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "filterable": true }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT provider, sum(CASE WHEN action_class = 'attempt_submitted' THEN 1 ELSE 0 END) AS succeeded, sum(CASE WHEN action_class != 'attempt_submitted' THEN 1 ELSE 0 END) AS failed, count(*) AS total, coalesce(sum(cost_usd), 0) AS cost_usd, coalesce(sum(tokens_used), 0) AS tokens_used FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY provider ORDER BY total DESC",
+          "rawQueryText": "SELECT provider, sum(CASE WHEN action_class = 'attempt_submitted' THEN 1 ELSE 0 END) AS succeeded, sum(CASE WHEN action_class != 'attempt_submitted' THEN 1 ELSE 0 END) AS failed, count(*) AS total, coalesce(sum(cost_usd), 0) AS cost_usd, coalesce(sum(tokens_used), 0) AS tokens_used FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY provider ORDER BY total DESC"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "piechart",
+      "title": "Attempts by provider",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 7 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "ams-attempt-log" },
+      "fieldConfig": {
+        "defaults": { "unit": "short" }
+      },
+      "options": {
+        "pieType": "donut",
+        "legend": {
+          "showLegend": true,
+          "placement": "right",
+          "values": ["percent", "value"]
+        },
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "displayLabels": ["percent"]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT provider, count(*) AS attempts FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY provider ORDER BY attempts DESC",
+          "rawQueryText": "SELECT provider, count(*) AS attempts FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} GROUP BY provider ORDER BY attempts DESC"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "Recent activity",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Recent attempt outcomes",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "ams-attempt-log" },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [{ "displayName": "created_at", "desc": true }]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "filterable": true }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT created_at, attempt_id, provider, action_class, mode, coalesce(cost_usd, 0) AS cost_usd, tokens_used FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} ORDER BY created_at DESC LIMIT 100",
+          "rawQueryText": "SELECT created_at, attempt_id, provider, action_class, mode, coalesce(cost_usd, 0) AS cost_usd, tokens_used FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND (${provider:sqlstring} = '$__all' OR provider = ${provider:sqlstring}) AND unixepoch(created_at) >= ${__from:date:seconds} AND unixepoch(created_at) < ${__to:date:seconds} ORDER BY created_at DESC LIMIT 100"
+        }
+      ]
+    }
+  ]
+}

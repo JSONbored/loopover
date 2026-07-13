@@ -95,23 +95,27 @@ afterEach(() => {
 
 describe("parseAttemptArgs (#5132)", () => {
   it("parses a full, valid argv", () => {
-    expect(parseAttemptArgs(["acme/widgets", "7", "--miner-login", "alice", "--base", "develop", "--live", "--json"])).toEqual({
+    expect(
+      parseAttemptArgs(["acme/widgets", "7", "--miner-login", "alice", "--base", "develop", "--live", "--dry-run", "--json"]),
+    ).toEqual({
       repoFullName: "acme/widgets",
       issueNumber: 7,
       minerLogin: "alice",
       base: "develop",
       live: true,
+      dryRun: true,
       json: true,
     });
   });
 
-  it("defaults base to main, live to false, and json to false", () => {
+  it("defaults base to main, live to false, dryRun to false, and json to false", () => {
     expect(parseAttemptArgs(["acme/widgets", "7", "--miner-login", "alice"])).toEqual({
       repoFullName: "acme/widgets",
       issueNumber: 7,
       minerLogin: "alice",
       base: "main",
       live: false,
+      dryRun: false,
       json: false,
     });
   });
@@ -232,6 +236,66 @@ describe("runAttempt (#5132)", () => {
     expect(exitCode).toBe(3);
     expect(error).toHaveBeenCalledWith(expect.stringContaining("globally paused"));
     expect(openWorktreeAllocatorSpy).not.toHaveBeenCalled();
+  });
+
+  it("#4847: --dry-run reports what would happen and returns 0 without opening any store", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const openWorktreeAllocatorSpy = vi.fn();
+    const openClaimLedgerSpy = vi.fn();
+    const initEventLedgerSpy = vi.fn();
+    const initAttemptLogSpy = vi.fn();
+    const initGovernorLedgerSpy = vi.fn();
+    const onResult = vi.fn();
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--dry-run", "--json"], {
+      openWorktreeAllocator: openWorktreeAllocatorSpy,
+      openClaimLedger: openClaimLedgerSpy,
+      initEventLedger: initEventLedgerSpy,
+      initAttemptLog: initAttemptLogSpy,
+      initGovernorLedger: initGovernorLedgerSpy,
+      onResult,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(openWorktreeAllocatorSpy).not.toHaveBeenCalled();
+    expect(openClaimLedgerSpy).not.toHaveBeenCalled();
+    expect(initEventLedgerSpy).not.toHaveBeenCalled();
+    expect(initAttemptLogSpy).not.toHaveBeenCalled();
+    expect(initGovernorLedgerSpy).not.toHaveBeenCalled();
+
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed).toMatchObject({
+      outcome: "dry_run",
+      repoFullName: "acme/widgets",
+      issueNumber: 7,
+      minerLogin: "alice",
+      base: "main",
+      mode: "dry_run",
+    });
+    expect(onResult).toHaveBeenCalledWith(printed);
+  });
+
+  it("#4847: --dry-run --live reports the live mode it would have used, and prints a human-readable message by default", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--dry-run", "--live"], {});
+    expect(exitCode).toBe(0);
+    const printed = String(log.mock.calls[0]?.[0]);
+    expect(printed).toContain("DRY RUN: would attempt acme/widgets#7 for alice");
+    expect(printed).toContain("mode: live");
+    expect(printed).toContain("No worktree, claim, or ledger writes were made.");
+  });
+
+  it("#4847: --dry-run still reports globally-paused mode, matching what a real (non-dry-run) run would refuse to do", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--dry-run"], {
+      env: { MINER_CODING_AGENT_PAUSED: "1" },
+    });
+    // The pause check runs BEFORE the dry-run short-circuit, so a dry run of a paused config still refuses --
+    // an honest reflection of what a real run would do, not a fabricated "would succeed."
+    expect(exitCode).toBe(3);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("globally paused"));
+    expect(log).not.toHaveBeenCalled();
   });
 
   it("REGRESSION: runs the full real pipeline end to end and reports a real submitted outcome (exit 0)", async () => {

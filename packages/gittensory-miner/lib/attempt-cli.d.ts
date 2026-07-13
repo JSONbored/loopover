@@ -27,6 +27,7 @@ type CommonAttemptResultFields = {
  *  the plain exit-code return runAttempt itself still returns, unchanged, so bin/gittensory-miner.js's own
  *  `process.exit(exitCode)` usage never breaks) -- the loop orchestrator's real caller for this data. */
 export type AttemptCliResult =
+  | (CommonAttemptResultFields & { outcome: "dry_run" })
   | (CommonAttemptResultFields & { outcome: "blocked_rejection_signaled"; reason: string })
   | (CommonAttemptResultFields & { outcome: "blocked_worktree_preparation_failed"; reason: string })
   | (CommonAttemptResultFields & {
@@ -51,7 +52,15 @@ export type AttemptCliResult =
 
 export type ParsedAttemptArgs =
   | { error: string }
-  | { repoFullName: string; issueNumber: number; minerLogin: string; base: string; live: boolean; json: boolean };
+  | {
+      repoFullName: string;
+      issueNumber: number;
+      minerLogin: string;
+      base: string;
+      live: boolean;
+      dryRun: boolean;
+      json: boolean;
+    };
 
 export function parseAttemptArgs(args: string[]): ParsedAttemptArgs;
 

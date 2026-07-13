@@ -15,6 +15,7 @@ export type ParsedLoopArgs =
       minerLogin: string;
       base: string;
       live: boolean;
+      dryRun: boolean;
       maxCycles: number | undefined;
       cycleDelayMs: number;
       json: boolean;

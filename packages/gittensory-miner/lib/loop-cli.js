@@ -44,7 +44,7 @@ import { parsePrNumberFromExecResult } from "./pr-number-parse.js";
 import { DEFAULT_AMS_POLICY_SPEC } from "@jsonbored/gittensory-engine";
 
 const LOOP_USAGE =
-  "Usage: gittensory-miner loop <owner/repo> [<owner/repo>...] | --search <query> --miner-login <login> [--base <branch>] [--live] [--max-cycles <n>] [--cycle-delay-ms <ms>] [--json]";
+  "Usage: gittensory-miner loop <owner/repo> [<owner/repo>...] | --search <query> --miner-login <login> [--base <branch>] [--live] [--dry-run] [--max-cycles <n>] [--cycle-delay-ms <ms>] [--json]";
 const DEFAULT_CYCLE_DELAY_MS = 60_000;
 const ISSUE_IDENTIFIER_PATTERN = /^issue:(\d+)$/;
 
@@ -64,7 +64,16 @@ function normalizeOptionalPositiveInt(value, label) {
 }
 
 export function parseLoopArgs(args) {
-  const options = { json: false, minerLogin: null, base: "main", live: false, search: null, maxCycles: undefined, cycleDelayMs: DEFAULT_CYCLE_DELAY_MS };
+  const options = {
+    json: false,
+    minerLogin: null,
+    base: "main",
+    live: false,
+    dryRun: false,
+    search: null,
+    maxCycles: undefined,
+    cycleDelayMs: DEFAULT_CYCLE_DELAY_MS,
+  };
   const targets = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -75,6 +84,12 @@ export function parseLoopArgs(args) {
     }
     if (token === "--live") {
       options.live = true;
+      continue;
+    }
+    // #4847: see attempt-cli.js's own --dry-run comment -- distinct from --live's absence, this short-circuits
+    // BEFORE governor state or any other store is opened, guaranteeing zero discovery/queue/ledger writes.
+    if (token === "--dry-run") {
+      options.dryRun = true;
       continue;
     }
     if (token === "--search") {
@@ -136,6 +151,7 @@ export function parseLoopArgs(args) {
     minerLogin: options.minerLogin,
     base: options.base,
     live: options.live,
+    dryRun: options.dryRun,
     maxCycles: options.maxCycles,
     cycleDelayMs: options.cycleDelayMs,
     json: options.json,
@@ -203,6 +219,31 @@ export async function runLoop(args, options = {}) {
   const sleepFn = options.sleepFn ?? ((delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)));
   const nowMsFn = () => options.nowMs ?? Date.now();
   const sessionStartMs = nowMsFn();
+
+  // #4847: reports what a real loop invocation would target and returns BEFORE governor state or any other
+  // store (event/governor ledger, portfolio queue, run state) is opened -- a provable zero-write path, not just
+  // "opened but didn't write." The loop's own discovery call enqueues newly-found candidates into the LOCAL
+  // portfolio queue even before any attempt happens, so a faithful dry run cannot call it either.
+  if (parsed.dryRun) {
+    const dryRunResult = {
+      outcome: "dry_run",
+      targets: parsed.targets,
+      search: parsed.search,
+      minerLogin: parsed.minerLogin,
+      base: parsed.base,
+      live: parsed.live,
+      maxCycles: parsed.maxCycles ?? null,
+    };
+    if (parsed.json) {
+      console.log(JSON.stringify(dryRunResult, null, 2));
+    } else {
+      const target = parsed.search !== null ? `--search ${parsed.search}` : parsed.targets.join(", ");
+      console.log(
+        `DRY RUN: would run an autonomous loop against ${target} for ${parsed.minerLogin} (base: ${parsed.base}, live: ${parsed.live}). No discovery, queue, or ledger writes were made.`,
+      );
+    }
+    return 0;
+  }
 
   let governorState;
   try {

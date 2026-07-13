@@ -92,6 +92,7 @@ describe("parseLoopArgs (#5135)", () => {
         "--base",
         "develop",
         "--live",
+        "--dry-run",
         "--max-cycles",
         "5",
         "--cycle-delay-ms",
@@ -104,6 +105,7 @@ describe("parseLoopArgs (#5135)", () => {
       minerLogin: "alice",
       base: "develop",
       live: true,
+      dryRun: true,
       maxCycles: 5,
       cycleDelayMs: 1000,
       json: true,
@@ -117,6 +119,7 @@ describe("parseLoopArgs (#5135)", () => {
       minerLogin: "alice",
       base: "main",
       live: false,
+      dryRun: false,
       maxCycles: undefined,
       cycleDelayMs: 60_000,
       json: false,
@@ -166,6 +169,65 @@ describe("runLoop (#5135)", () => {
     });
     expect(exitCode).toBe(3);
     expect(error).toHaveBeenCalledWith(expect.stringContaining("governor state cannot be loaded"));
+  });
+
+  it("#4847: --dry-run reports what would happen and returns 0 without opening any store", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const openGovernorStateSpy = vi.fn();
+    const initEventLedgerSpy = vi.fn();
+    const initGovernorLedgerSpy = vi.fn();
+    const initPortfolioQueueSpy = vi.fn();
+    const initRunStateStoreSpy = vi.fn();
+    const runDiscoverSpy = vi.fn();
+    const runAttemptSpy = vi.fn();
+
+    const exitCode = await runLoop(
+      ["acme/widgets", "acme/other", "--miner-login", "alice", "--base", "develop", "--dry-run", "--json"],
+      {
+        openGovernorState: openGovernorStateSpy,
+        initEventLedger: initEventLedgerSpy,
+        initGovernorLedger: initGovernorLedgerSpy,
+        initPortfolioQueue: initPortfolioQueueSpy,
+        initRunStateStore: initRunStateStoreSpy,
+        runDiscover: runDiscoverSpy,
+        runAttempt: runAttemptSpy,
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(openGovernorStateSpy).not.toHaveBeenCalled();
+    expect(initEventLedgerSpy).not.toHaveBeenCalled();
+    expect(initGovernorLedgerSpy).not.toHaveBeenCalled();
+    expect(initPortfolioQueueSpy).not.toHaveBeenCalled();
+    expect(initRunStateStoreSpy).not.toHaveBeenCalled();
+    expect(runDiscoverSpy).not.toHaveBeenCalled();
+    expect(runAttemptSpy).not.toHaveBeenCalled();
+
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed).toEqual({
+      outcome: "dry_run",
+      targets: ["acme/widgets", "acme/other"],
+      search: null,
+      minerLogin: "alice",
+      base: "develop",
+      live: false,
+      maxCycles: null,
+    });
+  });
+
+  it("#4847: --dry-run --search prints a human-readable message by default", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const openGovernorStateSpy = vi.fn();
+
+    const exitCode = await runLoop(["--search", "label:good-first-issue", "--miner-login", "alice", "--dry-run"], {
+      openGovernorState: openGovernorStateSpy,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(openGovernorStateSpy).not.toHaveBeenCalled();
+    const printed = String(log.mock.calls[0]?.[0]);
+    expect(printed).toContain("DRY RUN: would run an autonomous loop against --search label:good-first-issue for alice");
+    expect(printed).toContain("No discovery, queue, or ledger writes were made.");
   });
 
   it("halts immediately on an active kill switch, before running discovery or any attempt", async () => {

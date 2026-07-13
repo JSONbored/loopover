@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 
+import { AmsObservabilityCallout } from "@/components/site/ams-observability-callout";
 import { DocsPage } from "@/components/site/docs-page";
 import { CodeBlock, Callout } from "@/components/site/primitives";
 import { WorkflowMirror, type MirroredStep } from "@/components/site/workflow-mirror";
@@ -25,7 +26,7 @@ export const Route = createFileRoute("/docs/miner-workflow")({
   component: MinerWorkflow,
 });
 
-function MinerWorkflow() {
+export function MinerWorkflow() {
   const steps: MirroredStep[] = [
     {
       title: "Plan",
@@ -136,6 +137,7 @@ function MinerWorkflow() {
         commits, prefer cleaning open work over opening more — risk-adjusted priority is part of the
         score model.
       </Callout>
+      <AmsObservabilityCallout />
     </DocsPage>
   );
 }

@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 
+import { AmsObservabilityCallout } from "@/components/site/ams-observability-callout";
 import { DocsPage } from "@/components/site/docs-page";
 import { Callout, CodeBlock, FeatureRow } from "@/components/site/primitives";
 
@@ -25,7 +26,7 @@ export const Route = createFileRoute("/docs/self-hosting-operations")({
   component: SelfHostingOperations,
 });
 
-function SelfHostingOperations() {
+export function SelfHostingOperations() {
   return (
     <DocsPage
       eyebrow="Self-hosting"
@@ -96,6 +97,7 @@ selfhost_webhook_enqueue_binding_missing`}
         code={`docker compose --profile postgres --profile observability up -d
 docker compose --profile postgres --profile observability --profile backup up -d`}
       />
+      <AmsObservabilityCallout />
 
       <h2>Host clock sync (NTP)</h2>
       <Callout variant="warn" title="A single NTP source is a silent single point of failure">

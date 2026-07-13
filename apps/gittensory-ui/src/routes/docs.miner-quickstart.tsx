@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
+import { AmsObservabilityCallout } from "@/components/site/ams-observability-callout";
 import { DocsPage } from "@/components/site/docs-page";
 import { CodeBlock, Callout } from "@/components/site/primitives";
 import { Link } from "@tanstack/react-router";
@@ -26,7 +27,7 @@ export const Route = createFileRoute("/docs/miner-quickstart")({
   component: MinerQuickstart,
 });
 
-function MinerQuickstart() {
+export function MinerQuickstart() {
   return (
     <DocsPage
       eyebrow="Get started"
@@ -192,6 +193,7 @@ gittensory-mcp preflight --login your-login --repo owner/repo --base origin/main
         page with the <a href="/docs/miner-workflow">miner workflow</a> for the full loop and{" "}
         <a href="/docs/privacy-security">privacy &amp; security</a> for the boundary details.
       </Callout>
+      <AmsObservabilityCallout />
     </DocsPage>
   );
 }

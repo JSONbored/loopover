@@ -1,4 +1,6 @@
-// Pure logic for the ORB (self-host container image, ghcr.io/jsonbored/gittensory-selfhost) automated beta
+// Pure logic for the ORB (self-host container image, ghcr.io/jsonbored/loopover-selfhost -- #4770: the
+// pre-rename ghcr.io/jsonbored/gittensory-selfhost name remains a deprecated alias of the same build
+// during the deprecation window tracked by #4777) automated beta
 // channel. Deliberately independent of scripts/mcp-release-core.mjs (no shared imports/state) even though the
 // shape mirrors it closely -- ORB and the MCP package are versioned, tagged, and published on separate
 // schedules by separate automation, and keeping them decoupled means neither can accidentally regress the

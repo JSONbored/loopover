@@ -1,4 +1,6 @@
-# Automated ORB (self-host container image, ghcr.io/jsonbored/gittensory-selfhost) beta channel.
+# Automated ORB (self-host container image, ghcr.io/jsonbored/loopover-selfhost -- #4770: the pre-rename
+# ghcr.io/jsonbored/gittensory-selfhost name remains a deprecated alias of the same build during the
+# deprecation window tracked by #4777) beta channel.
 # Daily (or on demand via workflow_dispatch), checks whether any image-relevant commit has landed
 # since the last orb-v tag (scripts/check-orb-release-due.mjs / scripts/orb-release-core.mjs) and,
 # if so, cuts the next `orb-vX.Y.Z-beta.N` tag and dispatches release-selfhost.yml to build + publish

@@ -137,7 +137,11 @@ describe('release-selfhost.yml "GitHub Release" step changelog generation', () =
     });
     const r = harness.run();
     expect(r.status).toBe(0);
-    expect(r.notesPassed).toContain("docker pull ghcr.io/jsonbored/gittensory-selfhost:orb-v0.2.0");
+    expect(r.notesPassed).toContain("docker pull ghcr.io/jsonbored/loopover-selfhost:orb-v0.2.0");
+    // #4770: the notes must also tell an operator that the pre-rename image name still resolves to
+    // this identical build during the deprecation window, and point at #4777 for eventual removal.
+    expect(r.notesPassed).toContain("ghcr.io/jsonbored/gittensory-selfhost:orb-v0.2.0");
+    expect(r.notesPassed).toContain("#4777");
     expect(r.notesPassed).toContain("## What's Changed");
     expect(r.notesPassed).toContain("feat: something");
     // The tag being released must never be diffed against itself.
@@ -156,7 +160,7 @@ describe('release-selfhost.yml "GitHub Release" step changelog generation', () =
     const harness = createHarness({ tagList: ["orb-v0.2.0"], changelogBody: "## What's Changed\n* whatever" });
     const r = harness.run();
     expect(r.status).toBe(0);
-    expect(r.notesPassed).toContain("docker pull ghcr.io/jsonbored/gittensory-selfhost:orb-v0.2.0");
+    expect(r.notesPassed).toContain("docker pull ghcr.io/jsonbored/loopover-selfhost:orb-v0.2.0");
     expect(r.notesPassed).not.toContain("What's Changed");
     expect(r.calls).not.toContain("gh api");
   });
@@ -173,7 +177,7 @@ describe('release-selfhost.yml "GitHub Release" step changelog generation', () =
     expect(r.notesPassed).toContain("https://github.com/JSONbored/gittensory/compare/orb-v0.1.0...orb-v0.2.0");
     expect(r.notesPassed.length).toBeLessThan(121000);
     // The fallback must not drop the operator-critical pull command along with the oversized changelog.
-    expect(r.notesPassed).toContain("docker pull ghcr.io/jsonbored/gittensory-selfhost:orb-v0.2.0");
+    expect(r.notesPassed).toContain("docker pull ghcr.io/jsonbored/loopover-selfhost:orb-v0.2.0");
   });
 
   it("uses release create when the release does not exist yet, and release edit when it does", () => {
@@ -192,7 +196,7 @@ describe('release-selfhost.yml "GitHub Release" step changelog generation', () =
     const harness = createHarness({ tagList: ["orb-v0.2.0", "orb-v0.1.0"] }); // changelogBody omitted -> API call exits 1
     const r = harness.run();
     expect(r.status).toBe(0);
-    expect(r.notesPassed).toContain("docker pull ghcr.io/jsonbored/gittensory-selfhost:orb-v0.2.0");
+    expect(r.notesPassed).toContain("docker pull ghcr.io/jsonbored/loopover-selfhost:orb-v0.2.0");
     // A silent empty changelog would be indistinguishable from a genuinely empty PR range -- the run
     // log must say the API call itself failed.
     expect(r.stdout).toContain("::warning::Fetching the release changelog");

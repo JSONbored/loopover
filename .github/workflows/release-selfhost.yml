@@ -3,7 +3,12 @@
 #
 #   git tag orb-v0.1.0 && git push origin orb-v0.1.0
 #
-# Pull:  docker pull ghcr.io/<owner>/gittensory-selfhost:orb-v0.1.0
+# Pull:  docker pull ghcr.io/<owner>/loopover-selfhost:orb-v0.1.0
+#
+# #4770: `ghcr.io/<owner>/gittensory-selfhost` is a deprecated alias of the SAME image, published from this
+# same build/push so both names resolve to the byte-identical digest -- see the "Image metadata" step below.
+# Self-hosters pinned to the old name keep working unmodified during the deprecation window; do not remove
+# that alias without the sign-off tracked by #4777.
 #
 # Prerelease tags (#1937): orb-v0.1.0-rc.1 / orb-v0.1.0-beta.1 run the identical pipeline but never move
 # `latest` and are marked prerelease on the GitHub Release -- for beta-testing an image before it becomes
@@ -217,11 +222,21 @@ jobs:
             echo "GTORBTAGS"
           } >> "$GITHUB_OUTPUT"
 
+      # #4770: publish under BOTH the new "loopover-selfhost" name (primary going forward, listed first) and
+      # the legacy "gittensory-selfhost" name (deprecated alias) from this SAME buildx build/push below --
+      # docker/metadata-action applies the identical `tags:` set to every entry in a multi-line `images:`
+      # list, so both names resolve to the byte-identical multi-arch manifest with no second build and no
+      # extra registry round-trip. Self-hosters who pinned the old image reference in their own deployment
+      # config must keep working unmodified until the deprecation window closes. Removal of the alias is
+      # tracked by #4777 ("retire every deprecation shim") and requires an explicit, separately-announced
+      # window before it's dropped -- do not remove the second `images:` line without that sign-off.
       - name: Image metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
-          images: ghcr.io/${{ github.repository_owner }}/gittensory-selfhost
+          images: |
+            ghcr.io/${{ github.repository_owner }}/loopover-selfhost
+            ghcr.io/${{ github.repository_owner }}/gittensory-selfhost
           tags: ${{ steps.tags.outputs.list }}
           labels: |
             org.opencontainers.image.title=gittensory-orb
@@ -333,12 +348,16 @@ jobs:
           Gittensory Orb container image:
 
           \`\`\`bash
-          docker pull ghcr.io/${REPOSITORY_OWNER_LOWER}/gittensory-selfhost:${RELEASE_TAG}
+          docker pull ghcr.io/${REPOSITORY_OWNER_LOWER}/loopover-selfhost:${RELEASE_TAG}
           \`\`\`
 
           Multi-arch (linux/amd64 + linux/arm64). See https://gittensory.aethereal.dev/docs/maintainer-self-hosting for setup.
           Includes the Claude Code / Codex subscription CLIs by default; credentials stay runtime-only.
           Sentry release id baked into the image: \`${RELEASE_ID}\`.
+
+          #4770: \`ghcr.io/${REPOSITORY_OWNER_LOWER}/gittensory-selfhost:${RELEASE_TAG}\` (the pre-rename name)
+          still resolves to this identical build/digest during the deprecation window -- no action needed if
+          you're already pinned to it. Track eventual removal via #4777.
           EOF
           )"
           # #1937: a prerelease tag never becomes the repo's "Latest release" and is visibly marked as such

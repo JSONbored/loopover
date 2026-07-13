@@ -40,7 +40,21 @@ describe("self-host Sentry release wiring", () => {
     // notes block doesn't go through it).
     expect(releaseWorkflow).toContain('REPOSITORY_OWNER_LOWER="${REPOSITORY_OWNER,,}"');
     expect(releaseWorkflow).toContain(
-      "docker pull ghcr.io/${REPOSITORY_OWNER_LOWER}/gittensory-selfhost:${RELEASE_TAG}",
+      "docker pull ghcr.io/${REPOSITORY_OWNER_LOWER}/loopover-selfhost:${RELEASE_TAG}",
+    );
+    // #4770: the release notes must also point out that the pre-rename image name still resolves to
+    // the identical build during the deprecation window (tracked for eventual removal by #4777).
+    expect(releaseWorkflow).toContain(
+      "ghcr.io/${REPOSITORY_OWNER_LOWER}/gittensory-selfhost:${RELEASE_TAG}",
+    );
+    expect(releaseWorkflow).toContain("#4777");
+    // The "Image metadata" step must push BOTH names from the same buildx build so the two tags share
+    // a byte-identical digest -- no second build, no drift between them.
+    expect(releaseWorkflow).toContain(
+      "ghcr.io/${{ github.repository_owner }}/loopover-selfhost",
+    );
+    expect(releaseWorkflow).toContain(
+      "ghcr.io/${{ github.repository_owner }}/gittensory-selfhost",
     );
     expect(releaseWorkflow).not.toContain('"selfhost-v*"');
     expect(releaseWorkflow).not.toContain('VERSION="${REF_NAME#selfhost-v}"');

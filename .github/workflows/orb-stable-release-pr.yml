@@ -1,4 +1,6 @@
-# Automated ORB (self-host container image, ghcr.io/jsonbored/gittensory-selfhost) STABLE-channel Release PR --
+# Automated ORB (self-host container image, ghcr.io/jsonbored/loopover-selfhost -- #4770: the pre-rename
+# ghcr.io/jsonbored/gittensory-selfhost name remains a deprecated alias of the same build during the
+# deprecation window tracked by #4777) STABLE-channel Release PR --
 # the release-please-equivalent for ORB, whose cross-cutting image-relevant scoping (src/** shared with
 # UI/MCP-only subtrees it must exclude -- see orb-release-core.mjs's IMAGE_RELEVANT_PREFIXES/EXCLUDED_PREFIXES)
 # doesn't fit release-please's directory-component model the way packages/gittensory-mcp and

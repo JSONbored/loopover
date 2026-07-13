@@ -116,9 +116,14 @@ curl http://localhost:8787/ready`}
       </p>
       <CodeBlock
         lang="bash"
-        code={`./scripts/deploy-selfhost-image.sh ghcr.io/jsonbored/gittensory-selfhost:orb-v0.1.0
-GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost@sha256:... ./scripts/deploy-selfhost-image.sh`}
+        code={`./scripts/deploy-selfhost-image.sh ghcr.io/jsonbored/loopover-selfhost:orb-v0.1.0
+GITTENSORY_IMAGE=ghcr.io/jsonbored/loopover-selfhost@sha256:... ./scripts/deploy-selfhost-image.sh`}
       />
+      <p>
+        <code>ghcr.io/jsonbored/gittensory-selfhost</code> (the pre-rename name) remains available
+        as a deprecated alias of the identical image during the deprecation window — existing pins
+        keep working unmodified.
+      </p>
       <Callout variant="note" title="Building from source instead">
         Contributors and anyone customizing the Dockerfile can still build locally —{" "}
         <code>docker compose up -d --build</code> builds the <code>gittensory</code> service from

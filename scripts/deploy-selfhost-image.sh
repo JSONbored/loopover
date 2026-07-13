@@ -7,8 +7,13 @@
 #   ./scripts/deploy-selfhost-image.sh
 #
 # Pin production rollouts to a release tag or digest:
-#   ./scripts/deploy-selfhost-image.sh ghcr.io/jsonbored/gittensory-selfhost:orb-v0.1.0
-#   GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost@sha256:... ./scripts/deploy-selfhost-image.sh
+#   ./scripts/deploy-selfhost-image.sh ghcr.io/jsonbored/loopover-selfhost:orb-v0.1.0
+#   GITTENSORY_IMAGE=ghcr.io/jsonbored/loopover-selfhost@sha256:... ./scripts/deploy-selfhost-image.sh
+#
+# #4770: ghcr.io/jsonbored/gittensory-selfhost (the pre-rename name) is a deprecated alias of the SAME
+# build/digest during the deprecation window -- an existing GITTENSORY_IMAGE override or CLI argument
+# pinned to that old name keeps resolving unmodified; only DEFAULT_IMAGE below moves to the new name.
+# Removal of the alias is tracked by #4777.
 #
 # The image itself carries official release metadata. Set SENTRY_RELEASE only for custom images whose
 # source maps were uploaded under that exact id.
@@ -17,7 +22,7 @@ set -euo pipefail
 ENV_FILE="${SELFHOST_ENV_FILE:-.env}"
 SERVICE="${SELFHOST_SERVICE:-loopover}"
 HEALTH_TIMEOUT_SECONDS="${SELFHOST_HEALTH_TIMEOUT_SECONDS:-180}"
-DEFAULT_IMAGE="ghcr.io/jsonbored/gittensory-selfhost:latest"
+DEFAULT_IMAGE="ghcr.io/jsonbored/loopover-selfhost:latest"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/selfhost-deploy-common.sh

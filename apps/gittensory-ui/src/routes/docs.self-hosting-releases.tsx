@@ -52,9 +52,15 @@ function SelfHostingReleases() {
       />
       <CodeBlock
         lang="bash"
-        code={`docker pull ghcr.io/jsonbored/gittensory-selfhost:orb-v0.1.0
-docker pull ghcr.io/jsonbored/gittensory-selfhost:latest`}
+        code={`docker pull ghcr.io/jsonbored/loopover-selfhost:orb-v0.1.0
+docker pull ghcr.io/jsonbored/loopover-selfhost:latest`}
       />
+      <Callout variant="note" title="Renamed from gittensory-selfhost">
+        <code>ghcr.io/jsonbored/loopover-selfhost</code> is the current name. The pre-rename{" "}
+        <code>ghcr.io/jsonbored/gittensory-selfhost</code> remains available as a deprecated alias
+        of the byte-identical image during the deprecation window — existing pins keep working
+        unmodified.
+      </Callout>
 
       <h2>Prerelease (beta/rc) images</h2>
       <p>
@@ -65,7 +71,7 @@ docker pull ghcr.io/jsonbored/gittensory-selfhost:latest`}
       </p>
       <CodeBlock
         lang="bash"
-        code={`docker pull ghcr.io/jsonbored/gittensory-selfhost:orb-v0.1.0-rc.1`}
+        code={`docker pull ghcr.io/jsonbored/loopover-selfhost:orb-v0.1.0-rc.1`}
       />
       <Callout variant="note">
         Stable release behavior is unchanged: a plain <code>X.Y.Z</code> tag still moves{" "}
@@ -96,7 +102,7 @@ docker pull ghcr.io/jsonbored/gittensory-selfhost:latest`}
       <CodeBlock
         lang="bash"
         code={`# Recommended: pull a published tag, restart, wait for healthy
-./scripts/deploy-selfhost-image.sh ghcr.io/jsonbored/gittensory-selfhost:orb-v0.1.0
+./scripts/deploy-selfhost-image.sh ghcr.io/jsonbored/loopover-selfhost:orb-v0.1.0
 curl http://localhost:8787/ready
 
 # Building from the current checkout instead of pulling

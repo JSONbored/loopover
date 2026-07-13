@@ -12,7 +12,11 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const scriptPath = resolve("scripts/deploy-selfhost-image.sh");
-const defaultImage = "ghcr.io/jsonbored/gittensory-selfhost:latest";
+const defaultImage = "ghcr.io/jsonbored/loopover-selfhost:latest";
+// #4770: the pre-rename name is a deprecated alias of the identical image during the deprecation
+// window -- an operator who pinned it explicitly (CLI arg, env var, or .env value) must keep
+// resolving to that exact string unmodified, even though DEFAULT_IMAGE above now points at the new name.
+const legacyPinnedImage = "ghcr.io/jsonbored/gittensory-selfhost:orb-v0.1.0";
 
 interface RunOptions {
   args?: string[];
@@ -158,6 +162,21 @@ describe("self-host image deploy script", () => {
       expect(harness.readImages()).toContain("build: !reset null");
       expect(harness.readCalls()).toContain("up -d --no-build --no-deps loopover");
       expect(harness.readCalls()).not.toContain(" build ");
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  // REGRESSION (#4770): DEFAULT_IMAGE moved to the new "loopover-selfhost" name, but a self-hoster who
+  // explicitly pinned the pre-rename "gittensory-selfhost" image (as a CLI argument, GITTENSORY_IMAGE env
+  // var, or .env value) must keep resolving to that exact string, unmodified -- the deprecation alias is
+  // guaranteed by the release workflow's dual-tag push, not by rewriting an operator's existing pin here.
+  it("passes an explicit pre-rename image reference through unchanged despite the new default", () => {
+    const { harness, result } = runHarness({ args: [legacyPinnedImage] });
+    try {
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(harness.envPath, "utf8")).toContain(`GITTENSORY_IMAGE=${legacyPinnedImage}`);
+      expect(harness.readImages()).toContain(`image: "${legacyPinnedImage}"`);
     } finally {
       harness.cleanup();
     }

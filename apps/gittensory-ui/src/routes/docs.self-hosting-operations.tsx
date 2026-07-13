@@ -976,9 +976,14 @@ SENTRY_ORG_SLUG=<your-sentry-org-slug>
 ./scripts/deploy-selfhost-image.sh
 
 # Pin an exact release tag or content digest
-./scripts/deploy-selfhost-image.sh ghcr.io/jsonbored/gittensory-selfhost:orb-v0.1.0
-GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost@sha256:... ./scripts/deploy-selfhost-image.sh`}
+./scripts/deploy-selfhost-image.sh ghcr.io/jsonbored/loopover-selfhost:orb-v0.1.0
+GITTENSORY_IMAGE=ghcr.io/jsonbored/loopover-selfhost@sha256:... ./scripts/deploy-selfhost-image.sh`}
       />
+      <p>
+        <code>ghcr.io/jsonbored/gittensory-selfhost</code> (the pre-rename name) remains a
+        deprecated alias of the identical image during the deprecation window — an existing pin to
+        it keeps resolving unmodified.
+      </p>
       <p>
         The pull always runs with <code>--policy always</code>, so re-running the script against an
         unchanged tag is safe: if the registry has nothing new, it just restarts the same image and

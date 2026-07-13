@@ -1,8 +1,23 @@
+import { Buffer } from "node:buffer";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+export type ForgeFixtureRepo = {
+  owner: string;
+  repo: string;
+  issues?: Array<Record<string, unknown>>;
+  contributingContent?: string;
+};
+
+export type CliProcessResult = {
+  status: number;
+  stdout: string;
+  stderr: string;
+  output: string;
+};
 
 export const bin = join(
   process.cwd(),
@@ -28,6 +43,13 @@ export function run(args: string[], env: Record<string, string> = {}) {
 }
 
 export function runCapture(args: string[], env: Record<string, string> = {}) {
+  return runCliResult(args, env).output;
+}
+
+export function runCliResult(
+  args: string[],
+  env: Record<string, string> = {},
+): CliProcessResult {
   const result = spawnSync("node", [bin, ...args], {
     encoding: "utf8",
     env: {
@@ -35,11 +57,18 @@ export function runCapture(args: string[], env: Record<string, string> = {}) {
       ...env,
     },
   });
-  return `${result.stdout ?? ""}${result.stderr ?? ""}`;
+  const stdout = result.stdout ?? "";
+  const stderr = result.stderr ?? "";
+  return {
+    status: result.status ?? 1,
+    stdout,
+    stderr,
+    output: `${stdout}${stderr}`,
+  };
 }
 
 export function runAsync(args: string[], env: Record<string, string> = {}) {
-  return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+  return new Promise<CliProcessResult>((resolve) => {
     execFile(
       "node",
       [bin, ...args],
@@ -49,13 +78,22 @@ export function runAsync(args: string[], env: Record<string, string> = {}) {
           ...process.env,
           ...env,
         },
+        maxBuffer: 10 * 1024 * 1024,
       },
       (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(`${error.message}\n${stderr}`));
-          return;
-        }
-        resolve({ stdout, stderr });
+        const outStdout = stdout ?? "";
+        const outStderr = stderr ?? "";
+        resolve({
+          status:
+            error === null
+              ? 0
+              : typeof error.code === "number"
+                ? error.code
+                : 1,
+          stdout: outStdout,
+          stderr: outStderr,
+          output: `${outStdout}${outStderr}`,
+        });
       },
     );
   });
@@ -102,4 +140,124 @@ export async function startRegistryFixture(
 
 export function tempEnvPrefix() {
   return mkdtempSync(join(tmpdir(), "gittensory-miner-cli-"));
+}
+
+function defaultForgeIssue(number: number, owner: string, repo: string) {
+  return {
+    number,
+    title: `E2E fixture issue ${number}`,
+    labels: [{ name: "help wanted" }],
+    comments: 0,
+    created_at: "2026-07-01T00:00:00Z",
+    updated_at: "2026-07-01T01:00:00Z",
+    html_url: `https://github.com/${owner}/${repo}/issues/${number}`,
+  };
+}
+
+function encodeRepoDoc(content: string) {
+  return JSON.stringify({
+    type: "file",
+    encoding: "base64",
+    content: Buffer.from(content, "utf8").toString("base64"),
+  });
+}
+
+function resolveForgeRepo(
+  repos: ForgeFixtureRepo[],
+  owner: string,
+  repo: string,
+): ForgeFixtureRepo {
+  const key = `${owner}/${repo}`.toLowerCase();
+  const configured = repos.find(
+    (entry) => `${entry.owner}/${entry.repo}`.toLowerCase() === key,
+  );
+  if (configured) return configured;
+  return {
+    owner,
+    repo,
+    issues: [defaultForgeIssue(42, owner, repo)],
+    contributingContent: "Contributions welcome.",
+  };
+}
+
+/** Minimal GitHub-compatible forge HTTP fixture for true CLI discover runs (#4869). */
+export async function startForgeFixture(repos: ForgeFixtureRepo[] = []) {
+  server = createServer((request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const pathname = decodeURIComponent(url.pathname);
+
+    const contentsMatch = pathname.match(
+      /^\/repos\/([^/]+)\/([^/]+)\/contents\/([^/]+)$/,
+    );
+    if (contentsMatch) {
+      const [, owner, repo, docName] = contentsMatch;
+      const repoConfig = resolveForgeRepo(repos, owner, repo);
+      response.setHeader("content-type", "application/json");
+      if (docName === "AI-USAGE.md") {
+        response.statusCode = 404;
+        response.end(JSON.stringify({ message: "Not Found" }));
+        return;
+      }
+      if (docName === "CONTRIBUTING.md") {
+        response.statusCode = 200;
+        response.end(
+          encodeRepoDoc(repoConfig.contributingContent ?? "Contributions welcome."),
+        );
+        return;
+      }
+      response.statusCode = 404;
+      response.end(JSON.stringify({ message: "Not Found" }));
+      return;
+    }
+
+    const issuesMatch = pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/issues$/);
+    if (issuesMatch) {
+      const [, owner, repo] = issuesMatch;
+      const repoConfig = resolveForgeRepo(repos, owner, repo);
+      response.setHeader("content-type", "application/json");
+      response.setHeader("x-ratelimit-remaining", "4999");
+      response.setHeader("x-ratelimit-reset", "1893456000");
+      response.statusCode = 200;
+      response.end(JSON.stringify(repoConfig.issues ?? []));
+      return;
+    }
+
+    if (pathname === "/search/issues") {
+      const repoConfig = repos[0] ?? {
+        owner: "acme",
+        repo: "widgets",
+        issues: [defaultForgeIssue(21, "acme", "widgets")],
+        contributingContent: "Contributions welcome.",
+      };
+      const issue = (repoConfig.issues ?? [defaultForgeIssue(21, repoConfig.owner, repoConfig.repo)])[0];
+      response.setHeader("content-type", "application/json");
+      response.setHeader("x-ratelimit-remaining", "4999");
+      response.setHeader("x-ratelimit-reset", "1893456000");
+      response.statusCode = 200;
+      response.end(
+        JSON.stringify({
+          items: [
+            {
+              ...issue,
+              repository: {
+                full_name: `${repoConfig.owner}/${repoConfig.repo}`,
+              },
+            },
+          ],
+        }),
+      );
+      return;
+    }
+
+    response.statusCode = 404;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ message: "not_found", path: pathname }));
+  });
+  await new Promise<void>((resolve) =>
+    server?.listen(0, "127.0.0.1", () => resolve()),
+  );
+  const address = server.address();
+  if (!address || typeof address === "string")
+    throw new Error("forge fixture server failed to bind");
+  return `http://127.0.0.1:${address.port}`;
 }

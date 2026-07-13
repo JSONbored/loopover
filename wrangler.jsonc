@@ -275,11 +275,23 @@
       "new_sqlite_classes": ["RateLimiter"],
     },
   ],
+  // Queue rename (#4768): the producer now writes ONLY to the new loopover-jobs queue. The old gittensory-jobs
+  // queue is kept as a consumer below (drain window) so any message already in flight at cutover still gets
+  // processed -- remove the 2 gittensory-jobs* consumer entries once `wrangler queues info gittensory-jobs`
+  // shows it's been empty for a while, then retire the gittensory-jobs/-dlq queues themselves.
+  //
+  // gittensory-webhooks/-dlq are deliberately NOT part of this rename: the WEBHOOKS binding (src/env.d.ts) is
+  // only ever read by enqueueWebhookByEnv's self-host-only code path (gated behind isSelfHostedReviewRuntime,
+  // which is always false on this hosted Worker -- see src/github/webhook.ts) -- direct-review-app webhook
+  // enqueue is retired in favor of the Orb broker's /v1/orb/webhook ingress. The live gittensory-webhooks
+  // queue's consumer binding to this Worker appears to be leftover from before that retirement (0 producers,
+  // confirmed via `wrangler queues info gittensory-webhooks`) -- out of scope to migrate; flagging as a
+  // separate dead-infrastructure cleanup candidate rather than perpetuating it under a new name.
   "queues": {
     "producers": [
       {
         "binding": "JOBS",
-        "queue": "gittensory-jobs",
+        "queue": "loopover-jobs",
       },
     ],
     "consumers": [
@@ -292,7 +304,7 @@
         //    may tighten this to 2 once the sweep fans into tiny per-PR jobs.)
         //  - retry_delay 30: a failed job backs off 30s instead of re-delivering immediately and re-hammering
         //    the already-overloaded path.
-        "queue": "gittensory-jobs",
+        "queue": "loopover-jobs",
         "max_batch_size": 5,
         "max_batch_timeout": 5,
         "max_concurrency": 3,
@@ -300,13 +312,29 @@
         // rather than vanishing silently. The DLQ consumer below picks them up.
         "max_retries": 3,
         "retry_delay": 30,
-        "dead_letter_queue": "gittensory-jobs-dlq",
+        "dead_letter_queue": "loopover-jobs-dlq",
       },
       {
         // DLQ consumer: receives jobs that exhausted all main-queue retries. Logs each dead-lettered
         // job for observability (Cloudflare Workers logs + audit_events) and acks immediately — no
         // further retries (the job already failed max_retries times). max_retries: 0 prevents the
         // DLQ consumer itself from sending messages to a secondary DLQ on handler error.
+        "queue": "loopover-jobs-dlq",
+        "max_batch_size": 10,
+        "max_batch_timeout": 30,
+        "max_retries": 0,
+      },
+      // --- Drain-window consumers for the old gittensory-jobs* queues (#4768) -- remove once confirmed empty ---
+      {
+        "queue": "gittensory-jobs",
+        "max_batch_size": 5,
+        "max_batch_timeout": 5,
+        "max_concurrency": 3,
+        "max_retries": 3,
+        "retry_delay": 30,
+        "dead_letter_queue": "gittensory-jobs-dlq",
+      },
+      {
         "queue": "gittensory-jobs-dlq",
         "max_batch_size": 10,
         "max_batch_timeout": 30,

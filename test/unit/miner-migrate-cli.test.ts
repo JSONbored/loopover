@@ -85,15 +85,19 @@ describe("gittensory-miner migrate (#4871)", () => {
     const results = runMigrateChecks(env);
     const portfolioQueue = results.find((result) => result.name === "portfolio-queue");
 
-    // Runs BOTH post-baseline migrations in sequence: v1->v2 adds leased_at, v2->v3 adds api_base_url (#5563).
-    expect(portfolioQueue).toMatchObject({ ok: true, status: "migrated", versionBefore: 1, versionAfter: 3 });
+    // Runs ALL THREE post-baseline migrations in sequence: v1->v2 adds leased_at, v2->v3 adds api_base_url
+    // (#5563), v3->v4 adds the attempt-history counters (#5654).
+    expect(portfolioQueue).toMatchObject({ ok: true, status: "migrated", versionBefore: 1, versionAfter: 4 });
 
     const verifyDb = new DatabaseSync(dbPath, { readOnly: true });
     try {
       const columns = verifyDb.prepare("PRAGMA table_info(miner_portfolio_queue)").all().map((column) => column.name);
       expect(columns).toContain("leased_at");
       expect(columns).toContain("api_base_url");
-      expect(verifyDb.prepare("PRAGMA user_version").get()?.user_version).toBe(3);
+      expect(columns).toContain("attempts_count");
+      expect(columns).toContain("consecutive_failures");
+      expect(columns).toContain("reenqueue_count");
+      expect(verifyDb.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
     } finally {
       verifyDb.close();
     }

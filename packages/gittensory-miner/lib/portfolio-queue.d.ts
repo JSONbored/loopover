@@ -25,6 +25,15 @@ export type QueueLeaseEntry = {
   leasedAt: string | null;
 };
 
+/** A real per-item PortfolioConvergenceInput (non-convergence.ts, #5654), read from this store's own
+ *  attempt-history counters -- see getAttemptHistory. */
+export type QueueAttemptHistory = {
+  attempts: number;
+  consecutiveFailures: number;
+  reenqueues: number;
+  reachedDone: boolean;
+};
+
 export type PortfolioQueueStore = {
   dbPath: string;
   enqueue(item: EnqueueItem): QueueEntry;
@@ -40,6 +49,7 @@ export type PortfolioQueueStore = {
       entries: QueueEntry[],
     ) => Array<{ repoFullName: string; identifier: string; apiBaseUrl?: string }>,
   ): QueueEntry[];
+  getAttemptHistory(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueAttemptHistory;
   close(): void;
 };
 
@@ -58,5 +68,7 @@ export function listQueue(repoFullName?: string | null): QueueEntry[];
 export function markDone(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
 
 export function markFailed(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueEntry | null;
+
+export function getAttemptHistory(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueAttemptHistory;
 
 export function closeDefaultPortfolioQueueStore(): void;

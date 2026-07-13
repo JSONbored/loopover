@@ -147,6 +147,24 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
       migrationDb.exec("DROP TABLE miner_portfolio_queue");
       migrationDb.exec("ALTER TABLE miner_portfolio_queue_v3 RENAME TO miner_portfolio_queue");
     },
+    // v3 -> v4 (#5654): three attempt-history counters feeding non-convergence.ts's real
+    // PortfolioConvergenceInput (see getAttemptHistory below) -- additive columns, same
+    // defensive column-presence guard as the leased_at migration above.
+    (migrationDb) => {
+      const existingColumns = migrationDb
+        .prepare("PRAGMA table_info(miner_portfolio_queue)")
+        .all()
+        .map((column) => column.name);
+      if (!existingColumns.includes("attempts_count")) {
+        migrationDb.exec("ALTER TABLE miner_portfolio_queue ADD COLUMN attempts_count INTEGER NOT NULL DEFAULT 0");
+      }
+      if (!existingColumns.includes("consecutive_failures")) {
+        migrationDb.exec("ALTER TABLE miner_portfolio_queue ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0");
+      }
+      if (!existingColumns.includes("reenqueue_count")) {
+        migrationDb.exec("ALTER TABLE miner_portfolio_queue ADD COLUMN reenqueue_count INTEGER NOT NULL DEFAULT 0");
+      }
+    },
   ]);
 
   // `rowid` is a stable, unique key assigned once at first insert (re-enqueue updates in place, never re-inserts),
@@ -172,24 +190,33 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
   // flips it to 'in_progress', RETURNING it — so two processes sharing the file can't both claim the same row (a
   // separate SELECT-then-UPDATE would race). Deliberately global (no api_base_url filter): the queue is a single
   // cross-host priority ordering, not a per-host one.
-  // Claiming stamps `leased_at` with the caller-supplied claim time; leaving 'in_progress' (done/failed/reclaim)
-  // clears it back to NULL so only genuinely in-flight rows carry a lease.
+  // Claiming stamps `leased_at` with the caller-supplied claim time and increments the attempt-history
+  // `attempts_count` (#5654, non-convergence.ts's real PortfolioConvergenceInput.attempts) -- leaving
+  // 'in_progress' (done/failed/reclaim) clears leased_at back to NULL so only genuinely in-flight rows carry
+  // a lease.
   const dequeueStatement = db.prepare(`
-    UPDATE miner_portfolio_queue SET status = 'in_progress', leased_at = ?
+    UPDATE miner_portfolio_queue SET status = 'in_progress', leased_at = ?, attempts_count = attempts_count + 1
     WHERE rowid = (
       SELECT rowid FROM miner_portfolio_queue WHERE status = 'queued' ${ORDER} LIMIT 1
     )
     RETURNING *
   `);
   // RETURNING (rather than a separate post-UPDATE SELECT) makes the "nothing to mark done" case observable
-  // directly from one atomic statement.
+  // directly from one atomic statement. consecutive_failures resets to 0 on reaching done (#5654) -- the
+  // active failure streak breaks the moment an attempt actually succeeds; reenqueue_count is a lifetime
+  // total and deliberately untouched here (see getAttemptHistory's own doc comment).
   const markDoneStatement = db.prepare(`
-    UPDATE miner_portfolio_queue SET status = 'done', leased_at = NULL
+    UPDATE miner_portfolio_queue SET status = 'done', leased_at = NULL, consecutive_failures = 0
     WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ? AND status <> 'done'
     RETURNING *
   `);
+  // Releasing an in-flight item back to queued WITHOUT reaching done is exactly non-convergence.ts's own
+  // "cycling queued -> in_progress -> queued without ever reaching done" reenqueue trigger (#5654) -- same
+  // counters, same increment, as reclaimStuckItem below (both are this same transition, just different
+  // callers: a run-halt release here vs. a stale-lease sweep there).
   const markFailedStatement = db.prepare(`
-    UPDATE miner_portfolio_queue SET status = 'queued', leased_at = NULL
+    UPDATE miner_portfolio_queue SET status = 'queued', leased_at = NULL,
+      consecutive_failures = consecutive_failures + 1, reenqueue_count = reenqueue_count + 1
     WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ? AND status = 'in_progress'
     RETURNING *
   `);
@@ -203,24 +230,36 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
   const listInProgressStatement = db.prepare(
     `SELECT * FROM miner_portfolio_queue WHERE status = 'in_progress' ${ORDER}`,
   );
+  // A stale-lease sweep release is the SAME "in_progress -> queued without reaching done" event as
+  // markFailedStatement above (#5654) -- same counters, same increment.
   const reclaimStatement = db.prepare(`
-    UPDATE miner_portfolio_queue SET status = 'queued', leased_at = NULL
+    UPDATE miner_portfolio_queue SET status = 'queued', leased_at = NULL,
+      consecutive_failures = consecutive_failures + 1, reenqueue_count = reenqueue_count + 1
     WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ? AND status = 'in_progress'
     RETURNING *
   `);
   // Requeue only ever targets a COMPLETED ('done') row — an in-flight item is released via reclaimStatement, and
   // an already-'queued' item is a no-op — so a caller's manual requeue can never disturb an active claim. The
   // row keeps its rowid/enqueued_at, so it re-enters the queue at its original FIFO position, not the back.
+  // Deliberately leaves attempts_count/consecutive_failures/reenqueue_count untouched (#5654): this is a
+  // manual reopen of ALREADY-COMPLETED work, not the stuck queued->in_progress->queued cycle those counters
+  // track -- reachedDone (derived live from status) simply reads false again once requeued, same as any
+  // other non-done row, until the item is claimed and completed again.
   const requeueStatement = db.prepare(`
     UPDATE miner_portfolio_queue SET status = 'queued', leased_at = NULL
     WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ? AND status = 'done'
     RETURNING *
   `);
+  // Same attempts_count increment as dequeueStatement (#5654) -- batchClaim's per-item claim is just as much
+  // a real attempt as the single-item dequeueNext path.
   const claimTargetStatement = db.prepare(`
-    UPDATE miner_portfolio_queue SET status = 'in_progress', leased_at = ?
+    UPDATE miner_portfolio_queue SET status = 'in_progress', leased_at = ?, attempts_count = attempts_count + 1
     WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ? AND status = 'queued'
     RETURNING *
   `);
+  const attemptHistoryStatement = db.prepare(
+    "SELECT attempts_count, consecutive_failures, reenqueue_count, status FROM miner_portfolio_queue WHERE api_base_url = ? AND repo_full_name = ? AND identifier = ?",
+  );
 
   return {
     dbPath: resolvedPath,
@@ -313,6 +352,28 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
         throw error;
       }
     },
+    /**
+     * A real `PortfolioConvergenceInput` (non-convergence.ts) for one queue item (#5654), replacing the
+     * first-attempt-shaped literal attempt-input-builder.js previously hardcoded. An item never enqueued here
+     * (not yet tracked at all) reads the same honest zero-state as a genuine first attempt -- absence of
+     * history is not evidence of a problem, same rule non-convergence.ts's own header documents. `reachedDone`
+     * is derived live from the row's current `status`, not a separate persisted flag (see requeueStatement's
+     * comment above for why that's the deliberate choice).
+     */
+    getAttemptHistory(repoFullName, identifier, apiBaseUrl) {
+      const row = attemptHistoryStatement.get(
+        normalizeApiBaseUrl(apiBaseUrl),
+        normalizeRepoFullName(repoFullName),
+        normalizeIdentifier(identifier),
+      );
+      if (!row) return { attempts: 0, consecutiveFailures: 0, reenqueues: 0, reachedDone: false };
+      return {
+        attempts: row.attempts_count,
+        consecutiveFailures: row.consecutive_failures,
+        reenqueues: row.reenqueue_count,
+        reachedDone: row.status === "done",
+      };
+    },
     close() {
       db.close();
     },
@@ -342,6 +403,10 @@ export function markDone(repoFullName, identifier, apiBaseUrl) {
 
 export function markFailed(repoFullName, identifier, apiBaseUrl) {
   return getDefaultPortfolioQueueStore().markFailed(repoFullName, identifier, apiBaseUrl);
+}
+
+export function getAttemptHistory(repoFullName, identifier, apiBaseUrl) {
+  return getDefaultPortfolioQueueStore().getAttemptHistory(repoFullName, identifier, apiBaseUrl);
 }
 
 export function closeDefaultPortfolioQueueStore() {

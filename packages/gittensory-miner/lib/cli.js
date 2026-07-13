@@ -30,7 +30,7 @@ export function printHelp(input) {
       "  gittensory-miner loop --search <query> --miner-login <login> [--max-cycles <n>] [--cycle-delay-ms <ms>] [--dry-run] [--json]",
       "                                                                 Autonomous discover->claim->attempt->reenter loop",
       "  gittensory-miner queue list [--repo <owner/repo>] [--json]    List portfolio backlog rows",
-      "  gittensory-miner queue next [--dry-run] [--json]              Claim the highest-priority queued item",
+      "  gittensory-miner queue next [--global-wip <n>] [--per-repo-wip <n>] [--dry-run] [--json]  Claim next item under WIP caps",
       "  gittensory-miner queue claim-batch [--global-wip <n>] [--per-repo-wip <n>] [--dry-run] [--json]",
       "  gittensory-miner queue done <owner/repo> <identifier> [--dry-run] [--json]",
       "  gittensory-miner queue release <owner/repo> <identifier> [--dry-run] [--json]  Return a claimed item to the queue",

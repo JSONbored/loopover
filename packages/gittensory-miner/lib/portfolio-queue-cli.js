@@ -1,10 +1,12 @@
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
 import { initPortfolioQueueManager } from "./portfolio-queue-manager.js";
+import { resolvePortfolioQueueCaps } from "./portfolio-queue-caps.js";
 import { runPortfolioDashboard } from "./portfolio-dashboard.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const QUEUE_LIST_USAGE = "Usage: gittensory-miner queue list [--repo <owner/repo>] [--json]";
-const QUEUE_NEXT_USAGE = "Usage: gittensory-miner queue next [--dry-run] [--json]";
+const QUEUE_NEXT_USAGE =
+  "Usage: gittensory-miner queue next [--global-wip <n>] [--per-repo-wip <n>] [--dry-run] [--json]";
 const QUEUE_DONE_USAGE = "Usage: gittensory-miner queue done <owner/repo> <identifier> [--dry-run] [--json]";
 const QUEUE_RELEASE_USAGE = "Usage: gittensory-miner queue release <owner/repo> <identifier> [--dry-run] [--json]";
 const QUEUE_REQUEUE_USAGE = "Usage: gittensory-miner queue requeue <owner/repo> <identifier> [--dry-run] [--json]";
@@ -44,6 +46,38 @@ function parseJsonFlag(args) {
   return { positional, ...options };
 }
 
+function parsePortfolioQueueCapArgs(args, usage) {
+  const options = { json: false, dryRun: false, globalWipCap: undefined, perRepoWipCap: undefined };
+
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === "--json") {
+      options.json = true;
+      continue;
+    }
+    if (token === "--dry-run") {
+      options.dryRun = true;
+      continue;
+    }
+    if (token === "--global-wip" || token === "--per-repo-wip") {
+      const value = Number(args[index + 1]);
+      if (args[index + 1] === undefined || !Number.isFinite(value) || value < 0) {
+        return { error: usage };
+      }
+      if (token === "--global-wip") options.globalWipCap = value;
+      else options.perRepoWipCap = value;
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("-")) {
+      return { error: `Unknown option: ${token}` };
+    }
+    return { error: usage };
+  }
+
+  return options;
+}
+
 export function parseQueueListArgs(args) {
   const options = { json: false, repoFullName: null };
   const positional = [];
@@ -79,12 +113,7 @@ export function parseQueueListArgs(args) {
 }
 
 export function parseQueueNextArgs(args) {
-  const parsed = parseJsonFlag(args);
-  if ("error" in parsed) return parsed;
-  if (parsed.positional.length > 0) {
-    return { error: QUEUE_NEXT_USAGE };
-  }
-  return { json: parsed.json, dryRun: parsed.dryRun };
+  return parsePortfolioQueueCapArgs(args, QUEUE_NEXT_USAGE);
 }
 
 /** Shared `<owner/repo> <identifier> [--json]` parse for the item-targeting subcommands (done/release/requeue).
@@ -188,27 +217,44 @@ export function runQueueNext(args, options = {}) {
   }
 
   if (parsed.dryRun) {
-    const dryRunResult = { outcome: "dry_run" };
+    const caps = resolvePortfolioQueueCaps({
+      env: options.env ?? process.env,
+      cliCaps: { globalWipCap: parsed.globalWipCap, perRepoWipCap: parsed.perRepoWipCap },
+    });
+    const dryRunResult = { outcome: "dry_run", ...caps };
     if (parsed.json) {
       console.log(JSON.stringify(dryRunResult, null, 2));
     } else {
-      console.log("DRY RUN: would dequeue the highest-priority queued item. No portfolio-queue write was made.");
+      console.log(
+        `DRY RUN: would claim the next queued item (global-wip: ${caps.globalWipCap}, per-repo-wip: ${caps.perRepoWipCap}). No portfolio-queue write was made.`,
+      );
     }
     return 0;
   }
 
+  const caps = resolvePortfolioQueueCaps({
+    env: options.env ?? process.env,
+    cliCaps: { globalWipCap: parsed.globalWipCap, perRepoWipCap: parsed.perRepoWipCap },
+  });
+
+  const ownsManager = options.initPortfolioQueueManager === undefined;
+  let manager;
   try {
-    return withPortfolioQueue(options, (portfolioQueue) => {
-      const entry = portfolioQueue.dequeueNext();
-      if (parsed.json) {
-        console.log(JSON.stringify({ entry }, null, 2));
-      } else {
-        console.log(entry ? entry.identifier : "none");
-      }
-      return 0;
+    manager = (options.initPortfolioQueueManager ?? initPortfolioQueueManager)({
+      caps,
+      dbPath: options.dbPath,
     });
+    const entry = manager.claimNextBatch()[0] ?? null;
+    if (parsed.json) {
+      console.log(JSON.stringify({ entry }, null, 2));
+    } else {
+      console.log(entry ? entry.identifier : "none");
+    }
+    return 0;
   } catch (error) {
     return reportCliFailure(parsed.json, describeCliError(error));
+  } finally {
+    if (ownsManager) manager?.close();
   }
 }
 
@@ -320,30 +366,7 @@ export function runQueueRequeue(args, options = {}) {
 }
 
 export function parseQueueClaimBatchArgs(args) {
-  const options = { json: false, dryRun: false, globalWipCap: 1, perRepoWipCap: 1 };
-  for (let index = 0; index < args.length; index += 1) {
-    const token = args[index];
-    if (token === "--json") {
-      options.json = true;
-      continue;
-    }
-    if (token === "--dry-run") {
-      options.dryRun = true;
-      continue;
-    }
-    if (token === "--global-wip" || token === "--per-repo-wip") {
-      const value = Number(args[index + 1]);
-      if (args[index + 1] === undefined || !Number.isFinite(value) || value < 0) {
-        return { error: QUEUE_CLAIM_BATCH_USAGE };
-      }
-      if (token === "--global-wip") options.globalWipCap = value;
-      else options.perRepoWipCap = value;
-      index += 1;
-      continue;
-    }
-    return { error: QUEUE_CLAIM_BATCH_USAGE };
-  }
-  return options;
+  return parsePortfolioQueueCapArgs(args, QUEUE_CLAIM_BATCH_USAGE);
 }
 
 /** Claim the next caps-aware batch via the WIP-cap-aware batch claimer (portfolio-queue-manager.js), which also
@@ -354,13 +377,18 @@ export function runQueueClaimBatch(args, options = {}) {
     return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
+  const caps = resolvePortfolioQueueCaps({
+    env: options.env ?? process.env,
+    cliCaps: { globalWipCap: parsed.globalWipCap, perRepoWipCap: parsed.perRepoWipCap },
+  });
+
   if (parsed.dryRun) {
-    const dryRunResult = { outcome: "dry_run", globalWipCap: parsed.globalWipCap, perRepoWipCap: parsed.perRepoWipCap };
+    const dryRunResult = { outcome: "dry_run", ...caps };
     if (parsed.json) {
       console.log(JSON.stringify(dryRunResult, null, 2));
     } else {
       console.log(
-        `DRY RUN: would claim a batch (global-wip: ${parsed.globalWipCap}, per-repo-wip: ${parsed.perRepoWipCap}). No portfolio-queue write was made.`,
+        `DRY RUN: would claim a batch (global-wip: ${caps.globalWipCap}, per-repo-wip: ${caps.perRepoWipCap}). No portfolio-queue write was made.`,
       );
     }
     return 0;
@@ -372,7 +400,8 @@ export function runQueueClaimBatch(args, options = {}) {
   let manager;
   try {
     manager = (options.initPortfolioQueueManager ?? initPortfolioQueueManager)({
-      caps: { globalWipCap: parsed.globalWipCap, perRepoWipCap: parsed.perRepoWipCap },
+      caps,
+      dbPath: options.dbPath,
     });
     const claimed = manager.claimNextBatch();
     if (parsed.json) {

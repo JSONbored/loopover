@@ -46,6 +46,12 @@ describe("queue claim-batch — wires the WIP-cap-aware batch claimer (#4833)", 
       globalWipCap: 3,
       perRepoWipCap: 1,
     });
+    expect(parseQueueClaimBatchArgs(["--json"])).toEqual({
+      json: true,
+      dryRun: false,
+      globalWipCap: undefined,
+      perRepoWipCap: undefined,
+    });
     expect(parseQueueClaimBatchArgs(["--global-wip", "x"])).toHaveProperty("error");
     expect(parseQueueClaimBatchArgs(["--per-repo-wip", "-1"])).toHaveProperty("error");
     expect(parseQueueClaimBatchArgs(["--bogus"])).toHaveProperty("error");

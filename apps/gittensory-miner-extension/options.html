@@ -65,7 +65,16 @@
           <textarea id="watchedRepos" name="watchedRepos" placeholder="owner/repo, one per line"></textarea>
         </label>
         <label>
-          Ranked candidates JSON (local cache)
+          Local miner UI URL
+          <input id="minerUiUrl" name="minerUiUrl" type="url" placeholder="http://localhost:5174" />
+        </label>
+        <p>
+          Ranked candidates sync automatically from the URL above (checked every 10 minutes, and once whenever
+          Chrome or this extension starts) — no action needed once it's running. Use "Sync now" for an
+          immediate pull, or paste JSON below by hand as a fallback when the miner UI isn't reachable.
+        </p>
+        <label>
+          Ranked candidates JSON (manual fallback)
           <textarea
             id="rankedCandidatesJson"
             name="rankedCandidatesJson"
@@ -73,6 +82,7 @@
           ></textarea>
         </label>
         <button type="submit">Save</button>
+        <button type="button" id="syncNow">Sync ranked candidates now</button>
       </form>
       <p id="status" role="status"></p>
     </main>

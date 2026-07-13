@@ -40,12 +40,26 @@ async function removeLegacyDiscoveryIndexUrl() {
   await chrome.storage.sync.remove("discoveryIndexUrl");
 }
 
+// Mirrors background.js's own literal (#4859) -- these classic (non-ESM-importing) extension scripts share a
+// message-type "protocol" via matching string literals, the same convention content.js already uses for
+// ISSUE_CONTEXT_MESSAGE, not a cross-file import.
+const SYNC_RANKED_CANDIDATES_MESSAGE = "gittensory-miner:sync-ranked-candidates";
+const DEFAULT_MINER_UI_URL = "http://localhost:5174";
+
+function normalizeMinerUiUrl(text) {
+  const trimmed = String(text ?? "").trim();
+  return trimmed || DEFAULT_MINER_UI_URL;
+}
+
 if (globalThis.__GITTENSORY_MINER_EXTENSION_TEST__) {
   globalThis.__gittensoryMinerOptionsInternals = {
     parseWatchedRepos,
     parseRankedCandidatesJson,
     removeLegacyDiscoveryIndexUrl,
+    normalizeMinerUiUrl,
     MAX_RANKED_CANDIDATES_JSON_BYTES,
+    SYNC_RANKED_CANDIDATES_MESSAGE,
+    DEFAULT_MINER_UI_URL,
   };
 }
 
@@ -53,8 +67,10 @@ const form = document.querySelector("#settings");
 const status = document.querySelector("#status");
 const watchedRepos = document.querySelector("#watchedRepos");
 const rankedCandidatesJson = document.querySelector("#rankedCandidatesJson");
+const minerUiUrl = document.querySelector("#minerUiUrl");
+const syncNow = document.querySelector("#syncNow");
 
-if (!form || !status || !watchedRepos || !rankedCandidatesJson) {
+if (!form || !status || !watchedRepos || !rankedCandidatesJson || !minerUiUrl || !syncNow) {
   // options.html is not mounted (unit-test harness or partial load).
 } else {
 void refreshSettings();
@@ -64,7 +80,7 @@ form.addEventListener("submit", async (event) => {
   try {
     const repos = parseWatchedRepos(watchedRepos.value);
     const rankedCandidates = parseRankedCandidatesJson(rankedCandidatesJson.value);
-    await chrome.storage.sync.set({ watchedRepos: repos });
+    await chrome.storage.sync.set({ watchedRepos: repos, minerUiUrl: normalizeMinerUiUrl(minerUiUrl.value) });
     await chrome.storage.local.set({ rankedCandidates, rankedCandidatesSavedAt: Date.now() });
     await refreshSettings();
     showStatus(
@@ -76,14 +92,34 @@ form.addEventListener("submit", async (event) => {
     showStatus(error instanceof Error ? error.message : String(error));
   }
 });
+
+// Live-fetch trigger (#4859): asks background.js's syncRankedCandidatesFromMinerUi to pull the miner-ui's
+// current ranked candidates immediately, without waiting for the ambient alarm. Saves the URL field first so
+// a URL the user just typed (but hasn't submitted the form for yet) is what gets used.
+syncNow.addEventListener("click", async () => {
+  try {
+    await chrome.storage.sync.set({ minerUiUrl: normalizeMinerUiUrl(minerUiUrl.value) });
+    const response = await chrome.runtime.sendMessage({ type: SYNC_RANKED_CANDIDATES_MESSAGE });
+    const result = response?.payload;
+    if (!result?.ok) {
+      showStatus(`Could not reach the miner UI at ${result?.minerUiUrl ?? minerUiUrl.value}: ${result?.error ?? "unknown error"}. Falling back to the pasted JSON below.`);
+      return;
+    }
+    await refreshSettings();
+    showStatus(`Synced ${result.count} ranked candidate(s) from ${result.minerUiUrl}.`);
+  } catch (error) {
+    showStatus(error instanceof Error ? error.message : String(error));
+  }
+});
 }
 
 async function refreshSettings() {
-  const stored = await chrome.storage.sync.get({ watchedRepos: [] });
+  const stored = await chrome.storage.sync.get({ watchedRepos: [], minerUiUrl: DEFAULT_MINER_UI_URL });
   await removeLegacyDiscoveryIndexUrl();
   const local = await chrome.storage.local.get({ rankedCandidates: [] });
   const repos = Array.isArray(stored.watchedRepos) ? stored.watchedRepos : [];
   watchedRepos.value = repos.join("\n");
+  minerUiUrl.value = normalizeMinerUiUrl(stored.minerUiUrl);
   const rankedCandidates = Array.isArray(local.rankedCandidates) ? local.rankedCandidates : [];
   rankedCandidatesJson.value =
     rankedCandidates.length > 0 ? JSON.stringify(rankedCandidates, null, 2) : "";

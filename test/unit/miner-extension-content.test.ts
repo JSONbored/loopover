@@ -206,6 +206,8 @@ describe("miner extension opportunity badge", () => {
       "#status": { textContent: "" },
       "#watchedRepos": { value: "JSONbored/gittensory" },
       "#rankedCandidatesJson": { value: "" },
+      "#minerUiUrl": { value: "" },
+      "#syncNow": { addEventListener: () => {} },
     };
     const context: Record<string, unknown> = {
       __GITTENSORY_MINER_EXTENSION_TEST__: true,
@@ -343,6 +345,8 @@ describe("miner extension opportunity badge", () => {
       "#status": { textContent: "" },
       "#watchedRepos": { value: "JSONbored/gittensory" },
       "#rankedCandidatesJson": { value: "[]" },
+      "#minerUiUrl": { value: "" },
+      "#syncNow": { addEventListener: () => {} },
     };
     const context: Record<string, unknown> = {
       __GITTENSORY_MINER_EXTENSION_TEST__: true,
@@ -394,6 +398,8 @@ describe("miner extension opportunity badge", () => {
       "#status": { textContent: "" },
       "#watchedRepos": { value: "" },
       "#rankedCandidatesJson": { value: "" },
+      "#minerUiUrl": { value: "" },
+      "#syncNow": { addEventListener: () => {} },
     };
     const context: Record<string, unknown> = {
       __GITTENSORY_MINER_EXTENSION_TEST__: true,
@@ -432,7 +438,10 @@ describe("miner extension opportunity badge", () => {
     await elements["#settings"].dispatchSubmit();
 
     expect(setCalls).toHaveLength(1);
-    expect(setCalls[0]).toEqual({ watchedRepos: ["JSONbored/gittensory"] });
+    expect(setCalls[0]).toEqual({
+      watchedRepos: ["JSONbored/gittensory"],
+      minerUiUrl: "http://localhost:5174",
+    });
     expect(removeCalls).toEqual(["discoveryIndexUrl", "discoveryIndexUrl"]);
     expect("discoveryIndexUrl" in synced).toBe(false);
   });

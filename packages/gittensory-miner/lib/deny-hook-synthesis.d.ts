@@ -74,10 +74,19 @@ export type DenyHookSynthesisStore = {
     repoFullName: string,
     history: unknown,
     config?: SynthesisConfig,
+    apiBaseUrl?: string,
   ): DenyRuleProposal[];
-  listProposals(repoFullName: string): DenyRuleProposal[];
-  setProposalStatus(repoFullName: string, proposalId: string, status: DenyRuleProposalStatus): void;
-  resolveEffectiveRules(repoFullName: string, options?: { includeDefaults?: boolean }): DenyRule[];
+  listProposals(repoFullName: string, apiBaseUrl?: string): DenyRuleProposal[];
+  setProposalStatus(
+    repoFullName: string,
+    proposalId: string,
+    status: DenyRuleProposalStatus,
+    apiBaseUrl?: string,
+  ): void;
+  resolveEffectiveRules(
+    repoFullName: string,
+    options?: { includeDefaults?: boolean; apiBaseUrl?: string },
+  ): DenyRule[];
   close(): void;
 };
 

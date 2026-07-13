@@ -20,6 +20,7 @@ import { runOrbExportCli } from "../lib/orb-export.js";
 import { installCliSignalHandlers } from "../lib/process-lifecycle.js";
 import { runStateCli } from "../lib/run-state-cli.js";
 import { runInit } from "../lib/laptop-init.js";
+import { createWizardIo, runInteractiveInit } from "../lib/init-wizard.js";
 import { loadMinerFileSecrets } from "../lib/env-file-indirection.js";
 import { runMigrate } from "../lib/migrate-cli.js";
 import { runDoctor, runStatus } from "../lib/status.js";
@@ -58,6 +59,14 @@ configureLogger({ ...logOptions, env: process.env });
 // Dispatch the local commands BEFORE the opportunistic npm-registry update check is even started, so they can
 // never reach that network path (the update check runs for the remaining commands below).
 if (cliArgs[0] === "init") {
+  if (cliArgs.includes("--interactive")) {
+    const wizardIo = createWizardIo();
+    try {
+      process.exit(await runInteractiveInit(process.env, process.cwd(), wizardIo));
+    } finally {
+      wizardIo.close();
+    }
+  }
   process.exit(await runInit(cliArgs.slice(1)));
 }
 

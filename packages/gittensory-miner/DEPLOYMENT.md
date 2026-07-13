@@ -32,6 +32,7 @@ For provider selection and the CLI-specific model/timeout overrides, see
    gittensory-miner status
    gittensory-miner doctor
    gittensory-miner init --verify-token   # optional: validate GITHUB_TOKEN once before attempts
+   gittensory-miner init --interactive    # optional: guided prompt for GITHUB_TOKEN + provider, writes a starter .env, then reruns doctor
    ```
 
 3. Expected layout after first use (default paths):

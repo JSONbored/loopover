@@ -17,6 +17,7 @@ export function printHelp(input) {
       "  gittensory-miner help",
       "  gittensory-miner version",
       "  gittensory-miner init [--json] [--verify-token]              Bootstrap laptop-mode local SQLite state",
+      "  gittensory-miner init --interactive                           Guided first-run wizard: prompts for GITHUB_TOKEN + provider, writes a starter .env, then runs doctor",
       "  gittensory-miner status [--json]                              Show installed versions + local state paths",
       "  gittensory-miner doctor [--json]                              Check this laptop is set up correctly",
       "  gittensory-miner migrate [--json]                             Apply pending schema migrations to existing local stores",

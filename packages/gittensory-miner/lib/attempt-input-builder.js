@@ -6,13 +6,13 @@ import { isGlobalMinerKillSwitch, isGlobalMinerLiveModeOptIn } from "@loopover/e
 // same discipline as coding-task-spec.js's own composers.
 //
 // KNOWN, DOCUMENTED GAPS (not fabricated -- explicitly left as real, narrow follow-ups):
-//   - governor.convergenceInput is a first-attempt-shaped literal ({ attempts: 0, consecutiveFailures: 0,
-//     reenqueues: 0, reachedDone: false }), not a real per-issue query. attempt-log.js's schema has no
-//     repo+issue index (attemptId embeds a timestamp, so it's not a stable group key), and reenqueue counts
-//     aren't tracked ANYWHERE yet (non-convergence.ts's own header says that belongs on the portfolio-queue
-//     table once it grows attempt-history columns -- a real, separate schema change, not something to fake
-//     here). This literal is only ever an UNDER-estimate (reads "fresh, no prior failures" even on a real
-//     Nth attempt), which fails toward LETTING an attempt through, not blocking one -- documented, not silent.
+//   - governor.convergenceInput is now a REAL per-issue query (#5654): the caller reads the portfolio-queue's
+//     attempt-history columns (portfolio-queue.js's getAttemptHistory) and threads the resulting
+//     PortfolioConvergenceInput in through this composer's `convergenceInput` parameter, so the already-built
+//     non-convergence detector finally sees real attempt/reenqueue/failure counts instead of a permanent
+//     first-attempt literal. This composer stays pure -- it just forwards whatever the caller resolved,
+//     defaulting to the honest first-attempt shape ({ attempts: 0, ... }) when nothing is supplied (an item
+//     the queue has never seen, which reads as a converging first-look, not a fabricated history).
 //   - governor.reputationHistory/selfPlagiarismCandidate/selfPlagiarismRecentSubmissions are omitted, which
 //     chokepoint.ts's own design treats as "skip that stage entirely" -- an honest absence, not a fabricated
 //     "clean" verdict.
@@ -26,18 +26,24 @@ import { isGlobalMinerKillSwitch, isGlobalMinerLiveModeOptIn } from "@loopover/e
  * (miner-goal-spec.js's resolveMinerGoalSpec) -- this composer stays pure and just threads whatever the
  * caller already resolved through; passing nothing keeps the prior fails-open-on-that-axis-only behavior.
  *
+ * `convergenceInput` (#5654) is the caller's already-resolved real per-issue attempt history (from
+ * portfolio-queue.js's getAttemptHistory) -- this composer stays pure and just forwards it. Omitting it (an
+ * item the queue has never seen) falls back to the honest first-attempt shape, which the non-convergence
+ * detector reads as a converging first-look, not a fabricated history.
+ *
  * @param {Record<string, string | undefined>} env
  * @param {import("@loopover/engine").AmsPolicySpec} amsPolicySpec
  * @param {boolean} [repoPaused]
+ * @param {import("@loopover/engine").PortfolioConvergenceInput} [convergenceInput]
  * @returns {import("./attempt-runner.js").AttemptGovernorContext}
  */
-export function buildAttemptGovernorContext(env, amsPolicySpec, repoPaused) {
+export function buildAttemptGovernorContext(env, amsPolicySpec, repoPaused, convergenceInput) {
   return {
     killSwitchGlobal: isGlobalMinerKillSwitch(env),
     killSwitchRepoPaused: repoPaused,
     liveModeGlobalOptIn: isGlobalMinerLiveModeOptIn(env),
     capLimits: amsPolicySpec.capLimits,
-    convergenceInput: { attempts: 0, consecutiveFailures: 0, reenqueues: 0, reachedDone: false },
+    convergenceInput: convergenceInput ?? { attempts: 0, consecutiveFailures: 0, reenqueues: 0, reachedDone: false },
   };
 }
 

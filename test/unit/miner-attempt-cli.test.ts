@@ -13,6 +13,7 @@ import { closeDefaultAttemptLog, initAttemptLog } from "../../packages/gittensor
 import type { AttemptLog } from "../../packages/gittensory-miner/lib/attempt-log.js";
 import { closeDefaultGovernorLedger, initGovernorLedger } from "../../packages/gittensory-miner/lib/governor-ledger.js";
 import { closeDefaultWorktreeAllocator, openWorktreeAllocator } from "../../packages/gittensory-miner/lib/worktree-allocator.js";
+import { closeDefaultPortfolioQueueStore } from "../../packages/gittensory-miner/lib/portfolio-queue.js";
 import { buildAttemptDeps, parseAttemptArgs, runAttempt } from "../../packages/gittensory-miner/lib/attempt-cli.js";
 import type { PrepareAttemptWorktreeResult } from "../../packages/gittensory-miner/lib/attempt-worktree.js";
 import { DEFAULT_AMS_POLICY_SPEC, DEFAULT_MINER_GOAL_SPEC, parseFocusManifest } from "../../packages/gittensory-engine/src/index";
@@ -90,7 +91,9 @@ afterEach(() => {
   closeDefaultEventLedger();
   closeDefaultAttemptLog();
   closeDefaultGovernorLedger();
+  closeDefaultPortfolioQueueStore();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -1203,5 +1206,89 @@ describe("runAttempt: real claim-ledger wiring (#5393)", () => {
     });
 
     expect(claimIssueSpy).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION (#5654): threads the real portfolio-queue attempt history into the Governor convergenceInput", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const getAttemptHistorySpy = vi
+      .fn()
+      .mockReturnValue({ attempts: 4, consecutiveFailures: 3, reenqueues: 3, reachedDone: false });
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({ outcome: "abandon", loopResult: {} });
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      getAttemptHistory: getAttemptHistorySpy,
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+    });
+
+    // Read keyed the same `issue:<n>` way portfolio-discovery.js enqueues it, and forwarded verbatim.
+    expect(getAttemptHistorySpy).toHaveBeenCalledWith("acme/widgets", "issue:7");
+    expect(runMinerAttemptSpy.mock.calls[0]![0].governor.convergenceInput).toEqual({
+      attempts: 4,
+      consecutiveFailures: 3,
+      reenqueues: 3,
+      reachedDone: false,
+    });
+  });
+
+  it("#5654: falls back to the honest first-attempt convergenceInput when the history read throws (fail-open)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({ outcome: "abandon", loopResult: {} });
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      getAttemptHistory: () => {
+        throw new Error("db locked");
+      },
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+    });
+
+    // A governance signal must never fail an attempt: a throwing read degrades to the honest "fresh" shape.
+    expect(runMinerAttemptSpy.mock.calls[0]![0].governor.convergenceInput).toEqual({
+      attempts: 0,
+      consecutiveFailures: 0,
+      reenqueues: 0,
+      reachedDone: false,
+    });
+  });
+
+  it("#5654: defaults to the REAL portfolio-queue getAttemptHistory when none is injected", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-cli-cq-"));
+    roots.push(root);
+    vi.stubEnv("GITTENSORY_MINER_PORTFOLIO_QUEUE_DB", join(root, "portfolio-queue.sqlite3"));
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({ outcome: "abandon", loopResult: {} });
+
+    await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      // getAttemptHistory deliberately omitted -- exercises the real module-level default over an empty store.
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+    });
+
+    // The empty default store has never seen this item, so the real read returns the honest first-attempt shape.
+    expect(runMinerAttemptSpy.mock.calls[0]![0].governor.convergenceInput).toEqual({
+      attempts: 0,
+      consecutiveFailures: 0,
+      reenqueues: 0,
+      reachedDone: false,
+    });
   });
 });

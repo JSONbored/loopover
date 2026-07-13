@@ -8,9 +8,9 @@
 // claim-conflict resolution (#4848, claim-conflict-resolver.js) for the narrow race window
 // checkSubmissionFreshness cannot see (two miners submitting almost simultaneously).
 //
-// KNOWN, DOCUMENTED GAPS (not fabricated -- see attempt-input-builder.js's own header for the full list):
-// governor.convergenceInput is an honest first-attempt-shaped literal, not a real per-issue attempt-history
-// query (attempt-log.js's schema has no repo+issue index, and reenqueue counts aren't tracked anywhere yet).
+// governor.convergenceInput is now a REAL per-issue attempt-history query (#5654): this file reads the
+// portfolio-queue's real attempt/reenqueue/failure counts (portfolio-queue.js's getAttemptHistory) and threads
+// them into buildAttemptGovernorContext, so the already-built non-convergence detector finally sees real data.
 
 import { resolveCodingAgentModeFromConfig, resolveFirstConfiguredCodingAgentDriverName } from "@loopover/engine";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
@@ -33,6 +33,7 @@ import { buildCodingTaskSpec } from "./coding-task-spec.js";
 import { resolveAmsPolicy } from "./ams-policy.js";
 import { checkMinerKillSwitch } from "./governor-kill-switch.js";
 import { buildAttemptGovernorContext, buildAttemptLoopInput } from "./attempt-input-builder.js";
+import { getAttemptHistory } from "./portfolio-queue.js";
 import { runMinerAttempt } from "./attempt-runner.js";
 
 const ATTEMPT_USAGE =
@@ -399,7 +400,20 @@ export async function runAttempt(args, options = {}) {
       amsPolicySpec: amsPolicy.spec,
       branchRef: worktreeResult.branchName,
     });
-    const governor = buildAttemptGovernorContext(env, amsPolicy.spec, repoPaused);
+    // Real per-issue convergence history (#5654): read this exact item's attempt/reenqueue/failure counts from
+    // the portfolio queue (keyed the same `issue:<n>` way portfolio-discovery.js enqueues it) and thread them
+    // into the Governor context, so the non-convergence detector sees real data instead of a first-attempt
+    // literal. Fail-open: a read failure (or an item the queue has never seen) leaves convergenceInput
+    // undefined, which buildAttemptGovernorContext resolves to the honest "fresh" first-attempt shape -- a
+    // governance signal must never fail an attempt on its own, matching this pipeline's other fail-open reads.
+    const readAttemptHistory = options.getAttemptHistory ?? getAttemptHistory;
+    let convergenceInput;
+    try {
+      convergenceInput = readAttemptHistory(parsed.repoFullName, `issue:${parsed.issueNumber}`);
+    } catch {
+      convergenceInput = undefined;
+    }
+    const governor = buildAttemptGovernorContext(env, amsPolicy.spec, repoPaused, convergenceInput);
 
     // Real soft-claim (#5393): recorded once we've committed to a real attempt (past feasibility), so a
     // sibling miner process on this machine sees it via claimLedger.listClaims/listActiveClaims while this

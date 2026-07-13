@@ -8,11 +8,13 @@ import {
   closeDefaultPortfolioQueueStore,
   dequeueNext,
   enqueue,
+  getAttemptHistory,
   initPortfolioQueueStore,
   markDone,
   markFailed,
   resolvePortfolioQueueDbPath,
 } from "../../packages/gittensory-miner/lib/portfolio-queue.js";
+import { classifyPortfolioConvergence } from "../../packages/gittensory-engine/src/index";
 
 const roots: string[] = [];
 const stores: Array<{ close(): void }> = [];
@@ -321,6 +323,100 @@ describe("gittensory-miner portfolio/queue store (#2292)", () => {
       expect(geEntry.apiBaseUrl).toBe("https://ghe.example.com/api/v3");
     });
 
+    it("migrates a pre-#5654 file (leased_at+forge v3 shape) by adding the attempt-history columns and preserving rows", () => {
+      // A v3-shaped file (post-forge, pre-attempt-history) gains the v4 columns without disturbing the existing
+      // row (mirrors the leased_at / forge migration tests above). Covers the ADD-COLUMN (true) branch.
+      const root = mkdtempSync(join(tmpdir(), "gittensory-miner-portfolio-v3-"));
+      roots.push(root);
+      const dbPath = join(root, "v3.sqlite3");
+      const legacy = new DatabaseSync(dbPath);
+      legacy.exec(`
+        CREATE TABLE miner_portfolio_queue (
+          api_base_url TEXT NOT NULL,
+          repo_full_name TEXT NOT NULL,
+          identifier TEXT NOT NULL,
+          priority REAL NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'in_progress', 'done')),
+          enqueued_at TEXT NOT NULL,
+          leased_at TEXT,
+          PRIMARY KEY (api_base_url, repo_full_name, identifier)
+        )
+      `);
+      legacy.exec("PRAGMA user_version = 3");
+      legacy.exec(
+        "INSERT INTO miner_portfolio_queue (api_base_url, repo_full_name, identifier, priority, status, enqueued_at, leased_at) VALUES ('https://api.github.com', 'acme/widgets', 'issue:5', 3, 'queued', '2026-01-01T00:00:00.000Z', NULL)",
+      );
+      legacy.close();
+
+      const store = initPortfolioQueueStore(dbPath);
+      stores.push(store);
+      // Existing row preserved (the base entry shape is unchanged -- counters are surfaced only via getAttemptHistory).
+      expect(store.listQueue("acme/widgets")).toEqual([
+        {
+          apiBaseUrl: "https://api.github.com",
+          repoFullName: "acme/widgets",
+          identifier: "issue:5",
+          priority: 3,
+          status: "queued",
+          enqueuedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ]);
+      // The migrated row starts with a fresh 0/0/0 history, and the counters work after migration.
+      expect(store.getAttemptHistory("acme/widgets", "issue:5")).toEqual({
+        attempts: 0,
+        consecutiveFailures: 0,
+        reenqueues: 0,
+        reachedDone: false,
+      });
+      store.dequeueNext();
+      expect(store.getAttemptHistory("acme/widgets", "issue:5")).toMatchObject({ attempts: 1 });
+    });
+
+    it("is defensive: a file already carrying the attempt-history columns is not re-altered (idempotent v4 migration)", () => {
+      // A v3-versioned file that already ran the ADD COLUMNs (e.g. an ad-hoc ALTER) must not hit a
+      // duplicate-column error -- the per-column table_info presence check skips each already-present column.
+      // Covers the skip (false) branch of all three column checks.
+      const root = mkdtempSync(join(tmpdir(), "gittensory-miner-portfolio-v4-preadded-"));
+      roots.push(root);
+      const dbPath = join(root, "preadded.sqlite3");
+      const legacy = new DatabaseSync(dbPath);
+      legacy.exec(`
+        CREATE TABLE miner_portfolio_queue (
+          api_base_url TEXT NOT NULL,
+          repo_full_name TEXT NOT NULL,
+          identifier TEXT NOT NULL,
+          priority REAL NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'in_progress', 'done')),
+          enqueued_at TEXT NOT NULL,
+          leased_at TEXT,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          consecutive_failures INTEGER NOT NULL DEFAULT 0,
+          reenqueues INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (api_base_url, repo_full_name, identifier)
+        )
+      `);
+      // Still marked pre-v4, so the v4 migration runs and must no-op each ALTER rather than error.
+      legacy.exec("PRAGMA user_version = 3");
+      legacy.exec(
+        "INSERT INTO miner_portfolio_queue (api_base_url, repo_full_name, identifier, priority, status, enqueued_at, attempts, consecutive_failures, reenqueues) VALUES ('https://api.github.com', 'acme/widgets', 'issue:9', 1, 'queued', '2026-01-01T00:00:00.000Z', 4, 2, 3)",
+      );
+      legacy.close();
+
+      let opened: ReturnType<typeof initPortfolioQueueStore> | undefined;
+      expect(() => {
+        opened = initPortfolioQueueStore(dbPath);
+      }).not.toThrow();
+      const store = opened!;
+      stores.push(store);
+      // The pre-existing counter values survived: the ALTERs were skipped, not re-run with a DEFAULT-0 wipe.
+      expect(store.getAttemptHistory("acme/widgets", "issue:9")).toEqual({
+        attempts: 4,
+        consecutiveFailures: 2,
+        reenqueues: 3,
+        reachedDone: false,
+      });
+    });
+
     it("REGRESSION: a legacy row violating the rebuilt table's status CHECK constraint is dropped, not a migration-aborting crash", () => {
       const root = mkdtempSync(join(tmpdir(), "gittensory-miner-portfolio-legacy-corrupt-"));
       roots.push(root);
@@ -356,6 +452,122 @@ describe("gittensory-miner portfolio/queue store (#2292)", () => {
       stores.push(store);
       // The corrupt row was dropped, not migrated -- only the valid row survived the rebuild.
       expect(store.listQueue().map((entry) => entry.repoFullName)).toEqual(["acme/widgets"]);
+    });
+  });
+
+  describe("attempt-history for the non-convergence detector (#5654)", () => {
+    it("returns an all-zero first-attempt shape for an item the queue has never seen", () => {
+      // A missing row reads as a genuine first look (converging), never a fabricated history.
+      expect(tempStore().getAttemptHistory("o/a", "issue:1")).toEqual({
+        attempts: 0,
+        consecutiveFailures: 0,
+        reenqueues: 0,
+        reachedDone: false,
+      });
+    });
+
+    it("counts an attempt on claim and only flips reachedDone once the item is done", () => {
+      const store = tempStore();
+      store.enqueue({ repoFullName: "o/a", identifier: "issue:1", priority: 1 });
+      expect(store.getAttemptHistory("o/a", "issue:1")).toMatchObject({ attempts: 0, reachedDone: false });
+      store.dequeueNext(); // claim -> attempts 1
+      expect(store.getAttemptHistory("o/a", "issue:1")).toMatchObject({ attempts: 1, reachedDone: false });
+      store.markDone("o/a", "issue:1");
+      expect(store.getAttemptHistory("o/a", "issue:1")).toMatchObject({
+        attempts: 1,
+        consecutiveFailures: 0,
+        reachedDone: true,
+      });
+    });
+
+    it("bumps reenqueues + the failure streak on markFailed and reclaim, and resets the streak on markDone", () => {
+      const store = tempStore();
+      store.enqueue({ repoFullName: "o/a", identifier: "issue:1", priority: 1 });
+      // claim + markFailed (halted run): a failed attempt back to queued.
+      store.dequeueNext();
+      store.markFailed("o/a", "issue:1");
+      expect(store.getAttemptHistory("o/a", "issue:1")).toMatchObject({
+        attempts: 1,
+        reenqueues: 1,
+        consecutiveFailures: 1,
+        reachedDone: false,
+      });
+      // claim + reclaim (stuck sweep): a second failed attempt, both counters climb.
+      store.dequeueNext();
+      store.reclaimStuckItem("o/a", "issue:1");
+      expect(store.getAttemptHistory("o/a", "issue:1")).toMatchObject({
+        attempts: 2,
+        reenqueues: 2,
+        consecutiveFailures: 2,
+      });
+      // claim + markDone: the failure streak resets to 0 (progress), attempts keeps climbing, reenqueues holds.
+      store.dequeueNext();
+      expect(store.markDone("o/a", "issue:1")?.status).toBe("done");
+      expect(store.getAttemptHistory("o/a", "issue:1")).toMatchObject({
+        attempts: 3,
+        reenqueues: 2,
+        consecutiveFailures: 0,
+        reachedDone: true,
+      });
+    });
+
+    it("bumps only reenqueues (not the failure streak) when a completed item is manually requeued", () => {
+      const store = tempStore();
+      store.enqueue({ repoFullName: "o/a", identifier: "issue:1", priority: 1 });
+      store.dequeueNext();
+      store.markDone("o/a", "issue:1");
+      expect(store.requeueItem("o/a", "issue:1")?.status).toBe("queued");
+      // Requeuing a DONE item re-enqueues it (reenqueues 1) but is not a failure (streak stays 0); reachedDone
+      // flips back to false because the row is queued again.
+      expect(store.getAttemptHistory("o/a", "issue:1")).toMatchObject({
+        attempts: 1,
+        reenqueues: 1,
+        consecutiveFailures: 0,
+        reachedDone: false,
+      });
+    });
+
+    it("batchClaim counts an attempt on each claimed item", () => {
+      const store = tempStore();
+      store.enqueue({ repoFullName: "o/a", identifier: "issue:1", priority: 1 });
+      const claimed = store.batchClaim((entries) =>
+        entries.map((entry) => ({ repoFullName: entry.repoFullName, identifier: entry.identifier, apiBaseUrl: entry.apiBaseUrl })),
+      );
+      expect(claimed).toHaveLength(1);
+      expect(store.getAttemptHistory("o/a", "issue:1")).toMatchObject({ attempts: 1 });
+    });
+
+    it("REGRESSION: a genuinely non-convergent item (repeated reclaim, never done) now classifies as non_convergent", () => {
+      const store = tempStore();
+      store.enqueue({ repoFullName: "o/a", identifier: "issue:1", priority: 1 });
+      // Three claim -> reclaim cycles without ever reaching done: exactly the loop the detector is built to catch.
+      for (let cycle = 0; cycle < 3; cycle += 1) {
+        store.dequeueNext();
+        store.reclaimStuckItem("o/a", "issue:1");
+      }
+      const input = store.getAttemptHistory("o/a", "issue:1");
+      expect(input).toMatchObject({ attempts: 3, reenqueues: 3, consecutiveFailures: 3, reachedDone: false });
+      // The first time real portfolio-queue data drives the already-built detector to a real non-convergent verdict.
+      expect(classifyPortfolioConvergence(input).status).toBe("non_convergent");
+    });
+
+    it("reachedDone reflects only status === 'done', never a fabricated flag", () => {
+      const store = tempStore();
+      store.enqueue({ repoFullName: "o/a", identifier: "issue:1", priority: 1 });
+      expect(store.getAttemptHistory("o/a", "issue:1").reachedDone).toBe(false); // queued
+      store.dequeueNext();
+      expect(store.getAttemptHistory("o/a", "issue:1").reachedDone).toBe(false); // in_progress
+      store.markDone("o/a", "issue:1");
+      expect(store.getAttemptHistory("o/a", "issue:1").reachedDone).toBe(true); // done
+    });
+
+    it("module-level getAttemptHistory delegates to the default portfolio-queue store", () => {
+      const root = mkdtempSync(join(tmpdir(), "gittensory-miner-portfolio-default-"));
+      roots.push(root);
+      vi.stubEnv("GITTENSORY_MINER_PORTFOLIO_QUEUE_DB", join(root, "portfolio-queue.sqlite3"));
+      enqueue({ repoFullName: "o/a", identifier: "issue:1", priority: 1 });
+      dequeueNext();
+      expect(getAttemptHistory("o/a", "issue:1")).toMatchObject({ attempts: 1, reachedDone: false });
     });
   });
 });

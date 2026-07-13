@@ -13,6 +13,7 @@ import type { resolveAmsPolicy } from "./ams-policy.js";
 import type { checkMinerKillSwitch } from "./governor-kill-switch.js";
 import type { resolveMinerGoalSpec } from "./miner-goal-spec.js";
 import type { ClaimConflictResult, resolveClaimConflict } from "./claim-conflict-resolver.js";
+import type { getAttemptHistory } from "./portfolio-queue.js";
 
 type CommonAttemptResultFields = {
   repoFullName: string;
@@ -91,6 +92,9 @@ export type RunAttemptOptions = {
   resolveMinerGoalSpec?: typeof resolveMinerGoalSpec;
   runMinerAttempt?: typeof runMinerAttempt;
   resolveClaimConflict?: typeof resolveClaimConflict;
+  /** Real per-issue attempt-history read (#5654), injectable for tests; defaults to the portfolio queue's
+   *  own getAttemptHistory over the default store. */
+  getAttemptHistory?: typeof getAttemptHistory;
   /** Invoked with the real structured result at every return point, in addition to (never instead of) the
    *  plain exit-code return -- the loop orchestrator's real hook into what actually happened. */
   onResult?: (result: AttemptCliResult) => void;

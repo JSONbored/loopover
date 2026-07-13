@@ -53,7 +53,7 @@
     "ui:preview": "npm run ui:build && wrangler dev --config apps/gittensory-ui/dist/server/wrangler.json --ip 127.0.0.1 --port 4173 --local",
     "ui:lint": "npm run ui:kit:build && npm --workspace @loopover/ui run lint && npm --workspace @loopover/ui-miner run lint",
     "ui:typecheck": "npm run ui:kit:build && npm --workspace @loopover/ui run typecheck && npm --workspace @loopover/ui-miner run typecheck",
-    "ui:test": "npm run ui:kit:build && npm --workspace @loopover/ui run test && npm --workspace @loopover/ui-miner run test",
+    "ui:test": "npm run ui:kit:build && npm --workspace @loopover/ui run test && npm --workspace @loopover/ui-miner run test && npm --workspace @jsonbored/gittensory-miner-extension run test",
     "ui:openapi": "tsx scripts/write-ui-openapi.ts",
     "ui:openapi:check": "tsx scripts/write-ui-openapi.ts --check",
     "ui:openapi:settings-parity": "tsx scripts/check-openapi-settings-parity.mjs",

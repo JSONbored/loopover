@@ -46,5 +46,5 @@ job — the dashboard is a long-running HTTP server, not a periodic batch task.
 `npm test` runs with `--coverage` enabled (v8 provider) and enforces `vitest.config.ts`'s `coverage.thresholds`
 — a real measured baseline (#4865), not an aspirational target, so CI fails on a genuine regression (e.g. a
 large new feature landing with no tests) rather than staying silently unmeasured the way `apps/**` is by
-default at the repo root. `apps/gittensory-miner-extension` is not yet under this gate — its own test
-instrumentation needs to exist first (see #4865's own scope note).
+default at the repo root. `apps/gittensory-miner-extension` has its own matching gate (`npm test` in that workspace);
+see its README for scope notes on deferred `content.js`/`options.js` coverage.

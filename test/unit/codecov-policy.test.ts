@@ -85,6 +85,26 @@ describe("Codecov policy", () => {
     expect(ignore.some((entry) => typeof entry === "string" && entry.includes("gittensory-miner"))).toBe(false);
   });
 
+  it("keeps miner-ui and miner-extension under app-local coverage gates (#4865)", () => {
+    const minerUi = readFileSync("apps/gittensory-miner-ui/vitest.config.ts", "utf8");
+    const minerExtension = readFileSync("apps/gittensory-miner-extension/vitest.config.ts", "utf8");
+    const minerUiPkg = JSON.parse(readFileSync("apps/gittensory-miner-ui/package.json", "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    const minerExtensionPkg = JSON.parse(
+      readFileSync("apps/gittensory-miner-extension/package.json", "utf8"),
+    ) as { scripts: Record<string, string> };
+    const rootPkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
+
+    expect(minerUi).toMatch(/coverage:\s*\{/);
+    expect(minerUi).toMatch(/thresholds:/);
+    expect(minerExtension).toMatch(/coverage:\s*\{/);
+    expect(minerExtension).toMatch(/thresholds:/);
+    expect(minerUiPkg.scripts.test).toContain("--coverage");
+    expect(minerExtensionPkg.scripts.test).toContain("--coverage");
+    expect(rootPkg.scripts["ui:test"]).toContain("@jsonbored/gittensory-miner-extension run test");
+  });
+
   it("uploads fork PR coverage tokenlessly instead of silently skipping it", () => {
     // Fork PRs cannot read secrets.CODECOV_TOKEN. Previously the token-gated upload steps simply
     // excluded forks with no replacement, so codecov/patch had no report to compare against and fell

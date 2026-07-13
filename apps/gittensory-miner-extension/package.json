@@ -7,6 +7,10 @@
   "scripts": {
     "build": "node ../../scripts/build-miner-extension.mjs",
     "lint": "node --check background.js && node --check content.js && node --check opportunity-badge.js && node --check options.js && node --check toolbar-badge.js",
-    "typecheck": "npm run lint"
+    "typecheck": "npm run lint",
+    "test": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.9"
   }
 }

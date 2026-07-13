@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   emptyPortfolioQueueSummary,
@@ -104,6 +104,25 @@ describe("PortfolioPage (#4306)", () => {
     render(<PortfolioPage loadPortfolioQueue={loadPortfolioQueue} />);
     expect(screen.getByRole("heading", { name: "Portfolio queue" })).toBeTruthy();
     await waitFor(() => expect(screen.getByText("Queued", { selector: "dt" }).nextSibling?.textContent).toBe("2"));
+  });
+
+  describe("live refresh (#4856)", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("polls the injected loader again on the configured interval, without a manual page reload", async () => {
+      vi.useFakeTimers();
+      const loadPortfolioQueue = vi.fn(async (): Promise<PortfolioQueueResult> => ({
+        ok: true,
+        summary: fixtureSummary,
+      }));
+      render(<PortfolioPage loadPortfolioQueue={loadPortfolioQueue} pollIntervalMs={1000} />);
+
+      await vi.waitFor(() => expect(loadPortfolioQueue).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.waitFor(() => expect(loadPortfolioQueue).toHaveBeenCalledTimes(2));
+    });
   });
 });
 

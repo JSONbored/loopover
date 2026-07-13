@@ -1,5 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
 
 import { Badge } from "@jsonbored/gittensory-ui-kit/components/badge";
 import { Card, CardContent, CardHeader } from "@jsonbored/gittensory-ui-kit/components/card";
@@ -12,6 +11,7 @@ import {
   TableRow,
 } from "@jsonbored/gittensory-ui-kit/components/table";
 
+import { DEFAULT_POLL_INTERVAL_MS, usePolledFetch } from "../lib/use-polled-fetch";
 import { fetchRunStates, type RunHistoryResult, type RunStateRow } from "../lib/run-history";
 
 export const Route = createFileRoute("/run-history")({
@@ -73,20 +73,12 @@ export function RunHistoryView({ result }: { result: RunHistoryResult | null }) 
 
 export function RunHistoryPage({
   loadRunStates = fetchRunStates,
+  pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
 }: {
   loadRunStates?: () => Promise<RunHistoryResult>;
+  pollIntervalMs?: number;
 }) {
-  const [result, setResult] = useState<RunHistoryResult | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void loadRunStates().then((loaded) => {
-      if (!cancelled) setResult(loaded);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [loadRunStates]);
+  const result = usePolledFetch(loadRunStates, pollIntervalMs);
 
   return (
     <Card>

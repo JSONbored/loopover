@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { fetchRunStates, RUN_STATE_API_PATH, type RunHistoryResult, type RunStateRow } from "./lib/run-history";
 import { RunHistoryPage, RunHistoryView } from "./routes/run-history";
@@ -43,6 +43,22 @@ describe("RunHistoryPage (#4305)", () => {
     render(<RunHistoryPage loadRunStates={loadRunStates} />);
     expect(screen.getByRole("heading", { name: "Run history" })).toBeTruthy();
     await waitFor(() => expect(screen.getByText("acme/widgets")).toBeTruthy());
+  });
+
+  describe("live refresh (#4856)", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("polls the injected loader again on the configured interval, without a manual page reload", async () => {
+      vi.useFakeTimers();
+      const loadRunStates = vi.fn(async (): Promise<RunHistoryResult> => ({ ok: true, rows: fixtureRows }));
+      render(<RunHistoryPage loadRunStates={loadRunStates} pollIntervalMs={1000} />);
+
+      await vi.waitFor(() => expect(loadRunStates).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.waitFor(() => expect(loadRunStates).toHaveBeenCalledTimes(2));
+    });
   });
 });
 

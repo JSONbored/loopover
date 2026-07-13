@@ -1,5 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
 
 import { Card, CardContent, CardHeader } from "@jsonbored/gittensory-ui-kit/components/card";
 import {
@@ -11,6 +10,7 @@ import {
   TableRow,
 } from "@jsonbored/gittensory-ui-kit/components/table";
 
+import { DEFAULT_POLL_INTERVAL_MS, usePolledFetch } from "../lib/use-polled-fetch";
 import { fetchPortfolioQueue, type PortfolioQueueResult, type QueueStatus } from "../lib/portfolio-queue";
 
 export const Route = createFileRoute("/portfolio")({
@@ -98,20 +98,12 @@ export function PortfolioQueueView({ result }: { result: PortfolioQueueResult | 
 
 export function PortfolioPage({
   loadPortfolioQueue = fetchPortfolioQueue,
+  pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
 }: {
   loadPortfolioQueue?: () => Promise<PortfolioQueueResult>;
+  pollIntervalMs?: number;
 }) {
-  const [result, setResult] = useState<PortfolioQueueResult | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void loadPortfolioQueue().then((loaded) => {
-      if (!cancelled) setResult(loaded);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [loadPortfolioQueue]);
+  const result = usePolledFetch(loadPortfolioQueue, pollIntervalMs);
 
   return (
     <Card>

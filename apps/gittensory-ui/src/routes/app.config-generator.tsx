@@ -13,7 +13,7 @@ function ConfigGeneratorRoute() {
       <PageHeader
         eyebrow="Maintainer"
         title="Config generator"
-        description="Build a typed .gittensory.yml from field groups. Secrets never enter generated config — only public-safe keys and model names."
+        description="Build a typed .loopover.yml from field groups. Secrets never enter generated config — only public-safe keys and model names."
       />
       <ConfigGeneratorPanel />
     </div>

@@ -55,7 +55,7 @@ function SelfHostingConfiguration() {
           {
             title: "Public repo config",
             description:
-              "The repo .gittensory.yml. Useful for transparent policy, but not for thresholds or rules you need to keep private.",
+              "The repo .loopover.yml (legacy .gittensory.yml still works, #4773). Useful for transparent policy, but not for thresholds or rules you need to keep private.",
           },
           {
             title: "Built-in defaults",
@@ -72,15 +72,16 @@ function SelfHostingConfiguration() {
       </p>
       <ul>
         <li>
-          the repo&apos;s <code>.gittensory.yml</code> (public repo config, or the mounted private
-          per-repo config file below if <code>GITTENSORY_REPO_CONFIG_DIR</code> is set), then
+          the repo&apos;s <code>.loopover.yml</code> (public repo config, or the mounted private
+          per-repo config file below if <code>GITTENSORY_REPO_CONFIG_DIR</code> is set — the legacy{" "}
+          <code>.gittensory.yml</code> name still works everywhere, indefinitely, #4773), then
         </li>
         <li>the per-repo database settings (the dashboard), then</li>
         <li>built-in safe defaults.</li>
       </ul>
       <p>
-        Within <code>.gittensory.yml</code> itself, the typed <code>gate:</code> block is an alias
-        for the gate-related fields and wins over the generic <code>settings:</code> block for those
+        Within <code>.loopover.yml</code> itself, the typed <code>gate:</code> block is an alias for
+        the gate-related fields and wins over the generic <code>settings:</code> block for those
         same fields — so a value written under both <code>gate.duplicates</code> and{" "}
         <code>settings.duplicates</code> resolves to whatever <code>gate.duplicates</code> says. One
         exception to the whole precedence chain: hard path guardrails (
@@ -102,8 +103,9 @@ function SelfHostingConfiguration() {
       <p>
         Start from a template instead of reverse-engineering env flags, private-config precedence,
         and the parser. Every template uses the same schema for a public repo-root{" "}
-        <code>.gittensory.yml</code> or a container-private <code>GITTENSORY_REPO_CONFIG_DIR</code>{" "}
-        mount — only what you put in each file differs.
+        <code>.loopover.yml</code> (or the legacy <code>.gittensory.yml</code>, still fully
+        supported, #4773) or a container-private <code>GITTENSORY_REPO_CONFIG_DIR</code> mount —
+        only what you put in each file differs.
       </p>
       <FeatureRow
         items={[
@@ -132,19 +134,21 @@ function SelfHostingConfiguration() {
       <CodeBlock
         lang="bash"
         code={`# Public repo (contributor-visible)
-cp config/examples/gittensory.minimal.yml .gittensory.yml
+cp config/examples/gittensory.minimal.yml .loopover.yml
+# (an existing .gittensory.yml at repo root also still works -- #4773 -- no need to rename it)
 
 # Self-host private mount (operator-only policy)
 mkdir -p gittensory-config
-cp config/examples/global.gittensory.yml gittensory-config/.gittensory.yml`}
+cp config/examples/global.gittensory.yml gittensory-config/.loopover.yml`}
       />
       <Callout variant="note">
         Keep anti-abuse thresholds, maintainer allowlists, and autonomy dials in the{" "}
-        <strong>private</strong> mount — not in a public <code>.gittensory.yml</code> contributors
-        can read. <code>config/examples/TEMPLATES.md</code> documents the public-vs-private split
-        and how to apply the templates to <code>gittensory</code>, <code>awesome-claude</code>, and{" "}
+        <strong>private</strong> mount — not in a public <code>.loopover.yml</code> contributors can
+        read. <code>config/examples/TEMPLATES.md</code> documents the public-vs-private split and
+        how to apply the templates to <code>gittensory</code>, <code>awesome-claude</code>, and{" "}
         <code>metagraphed</code> without committing private policy. Lint before deploy:{" "}
-        <code>npx tsx scripts/gittensory-config-lint.ts path/to/.gittensory.yml</code>.
+        <code>npx tsx scripts/gittensory-config-lint.ts path/to/.loopover.yml</code> (or the legacy{" "}
+        <code>.gittensory.yml</code>, #4773).
       </Callout>
       <p>Authoritative copies in git:</p>
       <ul>
@@ -406,12 +410,12 @@ GITHUB_METADATA_CACHE_TTL_SECONDS=600`}
           {
             title: "Feature allowlist (env)",
             description:
-              "GITTENSORY_REVIEW_REPOS lists which repos run the converged per-PR path (safety, unified comment, grounding, RAG, reputation, …). Empty/unset ⇒ no repo runs those features, regardless of individual GITTENSORY_REVIEW_* flags. Per-repo features: overrides in a private or public .gittensory.yml features: block can force on/off per repo (subject to env kill-switches).",
+              "GITTENSORY_REVIEW_REPOS lists which repos run the converged per-PR path (safety, unified comment, grounding, RAG, reputation, …). Empty/unset ⇒ no repo runs those features, regardless of individual GITTENSORY_REVIEW_* flags. Per-repo features: overrides in a private or public .loopover.yml (or legacy .gittensory.yml, #4773) features: block can force on/off per repo (subject to env kill-switches).",
           },
           {
             title: "Gate activation (DB or private config)",
             description:
-              "The one-click POST …/activation endpoint bundles two independent axes into one advisory-first default: the review-check publish mode (reviewCheckMode: required, checkRunMode: enabled) and the actual per-dimension gate rules (linkedIssueGateMode, duplicatePrGateMode, qualityGateMode: all advisory; AI review still off). .gittensory.yml's gate.checkMode / gate.enabled only ever set the first axis (the check-run publish mode) — the dimension rules themselves are configured separately via gate.linkedIssue, gate.duplicates, gate.readiness.mode, etc. (see Tuning your reviews). Gate rule evaluation itself is never gated by checkMode/enabled/checkRunMode; those only control whether/how the check-run publishes on GitHub.",
+              "The one-click POST …/activation endpoint bundles two independent axes into one advisory-first default: the review-check publish mode (reviewCheckMode: required, checkRunMode: enabled) and the actual per-dimension gate rules (linkedIssueGateMode, duplicatePrGateMode, qualityGateMode: all advisory; AI review still off). .loopover.yml's (or legacy .gittensory.yml's, #4773) gate.checkMode / gate.enabled only ever set the first axis (the check-run publish mode) — the dimension rules themselves are configured separately via gate.linkedIssue, gate.duplicates, gate.readiness.mode, etc. (see Tuning your reviews). Gate rule evaluation itself is never gated by checkMode/enabled/checkRunMode; those only control whether/how the check-run publishes on GitHub.",
           },
           {
             title: "Gittensor registration (is_registered)",
@@ -451,22 +455,25 @@ GITTENSORY_REVIEW_REPUTATION=false`}
       <h2>Private per-repo config</h2>
       <p>
         Mount a gitignored directory and point <code>GITTENSORY_REPO_CONFIG_DIR</code> at it. If
-        either a per-repo file or the dir-root global default (<code>.gittensory.yml</code> at the
-        mount root) exists, the public repo <code>.gittensory.yml</code> is never fetched for that
+        either a per-repo file or the dir-root global default (<code>.loopover.yml</code> at the
+        mount root) exists, the public repo <code>.loopover.yml</code> is never fetched for that
         review. With only one of the two present, its contents are used as-is; with both present,
         they are deep-merged — the per-repo file overlaid onto the global default, nested mappings
-        merging key by key and arrays replacing wholesale.
+        merging key by key and arrays replacing wholesale. The legacy <code>.gittensory.yml</code>{" "}
+        name is accepted everywhere <code>.loopover.yml</code> is (#4773) — when both names exist at
+        the same location, the new-brand file wins outright rather than being merged with the legacy
+        one.
       </p>
       <CodeBlock
         filename="config directory"
         code={`gittensory-config/
-  owner__repo/.gittensory.yml
-  repo-name/.gittensory.yml
+  owner__repo/.loopover.yml           # new-brand -- also accepts .gittensory.yml (#4773)
+  repo-name/.loopover.yml
   owner__repo.yml
-  .gittensory.yml`}
+  .loopover.yml`}
       />
       <CodeBlock
-        filename="owner__repo/.gittensory.yml"
+        filename="owner__repo/.loopover.yml"
         code={`gate:
   checkMode: visible
   aiReview:
@@ -501,9 +508,9 @@ features:
       <h2>Config-as-code blocks with no dashboard equivalent</h2>
       <p>
         Everything above has a dashboard row it mirrors. The fields below exist{" "}
-        <strong>only</strong> in <code>.gittensory.yml</code> — there is no DB column or dashboard
-        toggle for them, so a self-host operator who never reads the example file may not know they
-        exist.
+        <strong>only</strong> in <code>.loopover.yml</code> (or the legacy{" "}
+        <code>.gittensory.yml</code>, #4773) — there is no DB column or dashboard toggle for them,
+        so a self-host operator who never reads the example file may not know they exist.
       </p>
       <h3>gate.checkMode</h3>
       <p>
@@ -673,7 +680,7 @@ features:
         — the whole block is ignored with a warning if either is missing).
       </p>
       <CodeBlock
-        filename=".gittensory.yml"
+        filename=".loopover.yml"
         lang="yaml"
         code={`contentLane:
   entryFileGlob: registry/*.json      # Glob for the structured entry files this lane reviews. Required.
@@ -693,7 +700,7 @@ features:
         <code>enabled: false</code>, means no repo-doc refresh ever runs for it.
       </p>
       <CodeBlock
-        filename=".gittensory.yml"
+        filename=".loopover.yml"
         lang="yaml"
         code={`repoDocGeneration:
   enabled: true                       # Opt in. Default: false (fully disabled).

@@ -900,7 +900,7 @@ SENTRY_ORG_SLUG=<your-sentry-org-slug>
           </li>
           <li>
             <code>./gittensory-config/</code> bind mount — private per-repo{" "}
-            <code>.gittensory.yml</code> policy.
+            <code>.loopover.yml</code> (or legacy <code>.gittensory.yml</code>, #4773) policy.
           </li>
           <li>
             Named data volumes — especially <code>loopover-data</code> (SQLite DB, Codex/Claude auth

@@ -102,7 +102,7 @@ function GittensoryCommandsReference() {
     <DocsPage
       eyebrow="Commands"
       title="@gittensory command reference"
-      description="The full PR and issue-comment control surface: Q&A verbs, maintainer digests, and PR action commands. Roles reflect the shipped default policy; maintainers can override per command in .gittensory.yml."
+      description="The full PR and issue-comment control surface: Q&A verbs, maintainer digests, and PR action commands. Roles reflect the shipped default policy; maintainers can override per command in .loopover.yml (or legacy .gittensory.yml)."
     >
       <Callout variant="safety" title="Gate vs auto-review">
         Commands never flip the gate to advisory and never bypass the one-shot disposition.{" "}
@@ -126,8 +126,9 @@ function GittensoryCommandsReference() {
       <h2>Per-command authorization overrides</h2>
       <p>
         Default allowed roles ship in the worker configuration. A maintainer can tighten or widen a
-        single verb via <code>commandAuthorization</code> in <code>.gittensory.yml</code> (resolved
-        in the same order as other per-repo settings: manifest → database → defaults).
+        single verb via <code>commandAuthorization</code> in <code>.loopover.yml</code> (or legacy{" "}
+        <code>.gittensory.yml</code>, #4773; resolved in the same order as other per-repo settings:
+        manifest → database → defaults).
       </p>
       <CodeBlock
         lang="yaml"

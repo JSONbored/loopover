@@ -150,6 +150,7 @@ const CONFIG_FILENAMES = new Set([
   ".env",
   ".env.example",
   ".env.selfhost.example",
+  ".loopover.yml", // new-brand manifest name (legacy .gittensory.yml kept below, dual-read indefinitely, #4773)
   ".gittensory.yml",
   "package.json",
   "package-lock.json",

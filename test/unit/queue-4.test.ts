@@ -4190,6 +4190,10 @@ describe("queue processors", () => {
       if (url === "https://raw.githubusercontent.com/JSONbored/gittensory/HEAD/.gittensory.yml") {
         return new Response("review:\n  tone: Keep findings terse and skip pleasantries\n");
       }
+      // Real GitHub raw-content 404s for every other manifest candidate (incl. the new-brand `.loopover.*`
+      // candidates tried first, #4773) -- without this, Response.json({}) below would 200 the first candidate
+      // tried and mask the review.tone config crafted above.
+      if (url.startsWith("https://raw.githubusercontent.com/")) return new Response("not found", { status: 404 });
       return Response.json({});
     });
 
@@ -4278,6 +4282,10 @@ describe("queue processors", () => {
       if (url === "https://raw.githubusercontent.com/JSONbored/gittensory/HEAD/.gittensory.yml") {
         return new Response('review:\n  exclude_paths:\n    - "**/*.generated.ts"\n');
       }
+      // Real GitHub raw-content 404s for every other manifest candidate (incl. the new-brand `.loopover.*`
+      // candidates tried first, #4773) -- without this, the generic Response.json({}) catch-all below would
+      // otherwise 200 the FIRST candidate tried and mask the exclude_paths config crafted above.
+      if (url.startsWith("https://raw.githubusercontent.com/")) return new Response("not found", { status: 404 });
       return Response.json({});
     });
 
@@ -4825,6 +4833,10 @@ describe("queue processors", () => {
       if (url === "https://raw.githubusercontent.com/JSONbored/gittensory/HEAD/.gittensory.yml") {
         return new Response("review:\n  inline_comments: true\n  finding_categories: true\n");
       }
+      // Real GitHub raw-content 404s for every other manifest candidate (incl. the new-brand `.loopover.*`
+      // candidates tried first, #4773) -- without this, Response.json({}) below would 200 the first candidate
+      // tried and mask the inline_comments/finding_categories config crafted above.
+      if (url.startsWith("https://raw.githubusercontent.com/")) return new Response("not found", { status: 404 });
       if (url.includes("/pulls/8/files"))
         return Response.json([{ filename: "src/db.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@ -1,1 +1,2 @@\n ctx\n+export const ok = true;" }]);
       if (url.endsWith("/pulls/8")) return Response.json({ number: 8, title: "Add query helper", state: "open", user: { login: "contributor" }, head: { sha: "a8" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
@@ -4950,6 +4962,10 @@ describe("queue processors", () => {
         // NOTE: the manifest key is camelCase `fixHandoff` (unlike snake-case `finding_categories`) — see focus-manifest parse.
         return new Response("review:\n  inline_comments: true\n  fixHandoff: true\n");
       }
+      // Real GitHub raw-content 404s for every other manifest candidate (incl. the new-brand `.loopover.*`
+      // candidates tried first, #4773) -- without this, Response.json({}) below would 200 the first candidate
+      // tried and mask the inline_comments/fixHandoff config crafted above.
+      if (url.startsWith("https://raw.githubusercontent.com/")) return new Response("not found", { status: 404 });
       if (url.includes("/pulls/9/files"))
         return Response.json([{ filename: "src/db.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@ -1,1 +1,2 @@\n ctx\n+export const ok = true;" }]);
       if (url.endsWith("/pulls/9")) return Response.json({ number: 9, title: "Add query helper", state: "open", user: { login: "contributor" }, head: { sha: "a9" }, labels: [], body: "Closes #1", mergeable_state: "clean" });

@@ -66,8 +66,8 @@ export function AiProviderModeFieldGroup({
         <Callout variant="safety" title="API keys stay out of this form">
           Provider API keys are configured via environment variables, encrypted key storage, or the
           maintainer BYOK dashboard — never in generated{" "}
-          <code className="font-mono">.gittensory.yml</code> files. This field group only records
-          mode and model <em>names</em>.
+          <code className="font-mono">.loopover.yml</code> files. This field group only records mode
+          and model <em>names</em>.
         </Callout>
       </div>
 

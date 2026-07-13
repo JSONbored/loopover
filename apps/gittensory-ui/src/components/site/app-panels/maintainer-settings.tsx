@@ -142,7 +142,7 @@ const GATE_FIELDS: FieldDef[] = [
     label: "Review agent check",
     kind: "select",
     // "visible" (publishes but never required in branch protection) is deliberately not offered here --
-    // this toggle keeps its historical off/enabled shape; set .gittensory.yml gate.checkMode: visible directly
+    // this toggle keeps its historical off/enabled shape; set .loopover.yml gate.checkMode: visible directly
     // for that finer-grained mode.
     options: [
       ["disabled", "off"],
@@ -718,7 +718,8 @@ type FocusManifestResponse = { manifest: unknown };
 
 /**
  * Edit the repo's focus manifest as JSON. The manifest is repo-public config-as-code (it mirrors
- * `.gittensory.yml`); this surface lets a maintainer edit the API-record copy without committing a file.
+ * `.loopover.yml`, or the legacy `.gittensory.yml`, #4773); this surface lets a maintainer edit the
+ * API-record copy without committing a file.
  */
 function FocusManifestEditor({ base }: { base: string | null }) {
   const [text, setText] = useState("");
@@ -776,8 +777,7 @@ function FocusManifestEditor({ base }: { base: string | null }) {
       </h3>
       <p className="mt-1 text-token-2xs text-muted-foreground">
         The repo&apos;s maintainer focus policy as JSON — wanted paths, linked-issue policy, test
-        expectations, and gate overrides. Mirrors <code className="font-mono">.gittensory.yml</code>
-        .
+        expectations, and gate overrides. Mirrors <code className="font-mono">.loopover.yml</code>.
       </p>
       <textarea
         value={loading ? "Loading…" : text}

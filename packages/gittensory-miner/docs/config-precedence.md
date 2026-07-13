@@ -93,4 +93,4 @@ If a future change adds yml or CLI for a setting documented here as env-only, up
 
 - [`miner-goal-spec.md`](miner-goal-spec.md) — goal-spec field reference
 - [`env-reference.md`](env-reference.md) — generated operator env list
-- ORB `.gittensory.yml` precedence (`yml > DB > defaults`) in the main app — analogous documentation style, different runtime
+- ORB `.loopover.yml` (or legacy `.gittensory.yml`, #4773) precedence (`yml > DB > defaults`) in the main app — analogous documentation style, different runtime

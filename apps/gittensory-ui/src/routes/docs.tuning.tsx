@@ -10,13 +10,13 @@ export const Route = createFileRoute("/docs/tuning")({
       {
         name: "description",
         content:
-          "Configure LoopOver CI and LoopOver review: gate modes, score thresholds, guardrails, and feature flags via .gittensory.yml and repo settings.",
+          "Configure LoopOver CI and LoopOver review: gate modes, score thresholds, guardrails, and feature flags via .loopover.yml (or legacy .gittensory.yml) and repo settings.",
       },
       { property: "og:title", content: "Tuning your reviews — LoopOver docs" },
       {
         property: "og:description",
         content:
-          "Configure LoopOver CI and LoopOver review: gate modes, score thresholds, guardrails, and feature flags via .gittensory.yml and repo settings.",
+          "Configure LoopOver CI and LoopOver review: gate modes, score thresholds, guardrails, and feature flags via .loopover.yml (or legacy .gittensory.yml) and repo settings.",
       },
       { property: "og:url", content: "/docs/tuning" },
     ],
@@ -30,7 +30,7 @@ function Tuning() {
     <DocsPage
       eyebrow="Operating"
       title="Tuning your reviews"
-      description="How to configure LoopOver CI and LoopOver review — gate modes, score thresholds, guardrails, and feature flags — through .gittensory.yml and your repo settings."
+      description="How to configure LoopOver CI and LoopOver review — gate modes, score thresholds, guardrails, and feature flags — through .loopover.yml (or legacy .gittensory.yml) and your repo settings."
     >
       <h2>How configuration fits together</h2>
       <p>
@@ -42,7 +42,8 @@ function Tuning() {
         <li>
           <strong>Per-repo settings</strong> — gate modes, score thresholds, guardrails, and which
           surfaces are enabled. Set them in the dashboard, or declare them as config-as-code in a{" "}
-          <code>.gittensory.yml</code> file in the repo.
+          <code>.loopover.yml</code> file in the repo (legacy <code>.gittensory.yml</code> also
+          still works, indefinitely — #4773).
         </li>
         <li>
           <strong>Feature flags</strong> — the <code>GITTENSORY_REVIEW_*</code> family of
@@ -68,18 +69,19 @@ function Tuning() {
 
       <Callout variant="safety" title="Defaults are safe and conservative">
         Every feature flag ships <strong>OFF</strong>. A repo with no settings and no{" "}
-        <code>.gittensory.yml</code> falls back to a quiet, non-blocking profile: the gate is{" "}
-        <code>off</code>, AI review is <code>off</code>, slop scoring is <code>off</code>, comments
-        go only to detected contributors, and no check-run is published. Turning anything on is
-        always an explicit opt-in — you roll capabilities forward, and back, one flag and one repo
-        at a time.
+        <code>.loopover.yml</code> (or legacy <code>.gittensory.yml</code>) falls back to a quiet,
+        non-blocking profile: the gate is <code>off</code>, AI review is <code>off</code>, slop
+        scoring is <code>off</code>, comments go only to detected contributors, and no check-run is
+        published. Turning anything on is always an explicit opt-in — you roll capabilities forward,
+        and back, one flag and one repo at a time.
       </Callout>
 
       <h2>Precedence</h2>
       <p>Most specific wins:</p>
       <ul>
         <li>
-          <code>.gittensory.yml</code> in the repo, then
+          <code>.loopover.yml</code> in the repo (or legacy <code>.gittensory.yml</code>, #4773),
+          then
         </li>
         <li>per-repo database settings, then</li>
         <li>built-in safe defaults.</li>
@@ -91,11 +93,13 @@ function Tuning() {
         means only those built-in invariants hold.
       </p>
       <p>
-        The friendly <code>gate:</code> block in <code>.gittensory.yml</code> is a typed alias for
-        the gate-related fields and wins over the generic <code>settings:</code> block for those
-        same fields. LoopOver looks for the manifest at the first match of{" "}
-        <code>.gittensory.yml</code> → <code>.github/gittensory.yml</code> →{" "}
-        <code>.gittensory.json</code> → <code>.github/gittensory.json</code>.
+        The friendly <code>gate:</code> block in <code>.loopover.yml</code> is a typed alias for the
+        gate-related fields and wins over the generic <code>settings:</code> block for those same
+        fields. LoopOver looks for the manifest at the first match of <code>.loopover.yml</code> →{" "}
+        <code>.github/loopover.yml</code> → <code>.loopover.json</code> →{" "}
+        <code>.github/loopover.json</code> → (legacy, #4773) <code>.gittensory.yml</code> →{" "}
+        <code>.github/gittensory.yml</code> → <code>.gittensory.json</code> →{" "}
+        <code>.github/gittensory.json</code>.
       </p>
 
       <h2>Feature flags (GITTENSORY_REVIEW_*)</h2>
@@ -136,8 +140,8 @@ function Tuning() {
         <li>
           <code>GITTENSORY_REVIEW_E2E_TESTS</code> — master kill-switch for the opt-in,
           maintainer-triggered AI-generated E2E test coverage feature. Off by default; a repo also
-          needs its own <code>features.e2eTests: true</code> override in{" "}
-          <code>.gittensory.yml</code> before the feature is active for it. Per-PR.
+          needs its own <code>features.e2eTests: true</code> override in <code>.loopover.yml</code>{" "}
+          before the feature is active for it. Per-PR.
         </li>
         <li>
           <code>GITTENSORY_REVIEW_IMPROVEMENT_SIGNAL</code> — master kill-switch for the read-only,
@@ -154,7 +158,7 @@ function Tuning() {
           <code>@gittensory review</code> as a maintainer) spends a fresh call. Truthy switches the
           fleet default to continuous — every push/CI-completion/sweep re-runs AI content
           generation. A repo's own <code>review.auto_review.cadence</code> in{" "}
-          <code>.gittensory.yml</code> always overrides this default, in either direction. Never
+          <code>.loopover.yml</code> always overrides this default, in either direction. Never
           affects the deterministic gate (CI status, mergeability, static-rule blockers), which
           always re-evaluates regardless.
         </li>
@@ -177,7 +181,7 @@ function Tuning() {
           reference block to the reviewer prompt: typical merged-PR size and common accepted labels,
           derived from this repo's own merge history. Additive reference only — never a gate or
           scoring input. Also requires the per-repo <code>review.culture_profile: true</code> opt-in
-          in <code>.gittensory.yml</code>. Per-PR.
+          in <code>.loopover.yml</code>. Per-PR.
         </li>
         <li>
           <code>GITTENSORY_REVIEW_MEMORY</code> — repeat-false-positive suppression: matches an
@@ -187,7 +191,7 @@ function Tuning() {
           <code>@gittensory resolve [finding-code]</code> (or a whole-PR{" "}
           <code>@gittensory resolve</code> ack). Advisory-only by construction — never applied to
           gate blockers, so it can never change the merge/close disposition. Also requires the
-          per-repo <code>review.memory: true</code> opt-in in <code>.gittensory.yml</code>. Per-PR.
+          per-repo <code>review.memory: true</code> opt-in in <code>.loopover.yml</code>. Per-PR.
         </li>
         <li>
           <code>GITTENSORY_REVIEW_REPUTATION</code> — submitter-reputation spend control. A new,
@@ -272,7 +276,7 @@ function Tuning() {
       <h2>Gate modes</h2>
       <p>
         Per-repo behavior is the <strong>effective settings</strong>: the database row for the repo,
-        overlaid with the repo's <code>.gittensory.yml</code>. Most gate dimensions are tri-state:
+        overlaid with the repo's <code>.loopover.yml</code>. Most gate dimensions are tri-state:
       </p>
       <ul>
         <li>
@@ -415,7 +419,7 @@ function Tuning() {
         </li>
       </ul>
       <Callout variant="safety">
-        The provider key itself never lives in <code>.gittensory.yml</code>. It is held only in the
+        The provider key itself never lives in <code>.loopover.yml</code>. It is held only in the
         encrypted key store and unlocked by the <code>TOKEN_ENCRYPTION_SECRET</code> worker secret —
         absent that secret, BYOK is unavailable and AI review silently falls back to the free
         built-in model pair.
@@ -423,7 +427,7 @@ function Tuning() {
 
       <h2>Guardrails and scope</h2>
       <p>
-        Top-level keys in <code>.gittensory.yml</code> declare the repo's focus and validation
+        Top-level keys in <code>.loopover.yml</code> declare the repo's focus and validation
         expectations. These feed deterministic findings such as <code>manifest_missing_tests</code>{" "}
         and — when <code>gate.manifestPolicy: block</code> — can become enforceable blockers. Manual
         path holds are configured only through <code>settings.hardGuardrailGlobs</code>.
@@ -463,7 +467,7 @@ function Tuning() {
       <h2>Other repo settings</h2>
       <p>
         Anything you can toggle in the dashboard can also be set as code under{" "}
-        <code>settings:</code> in <code>.gittensory.yml</code>. Common ones, all defaulting to the
+        <code>settings:</code> in <code>.loopover.yml</code>. Common ones, all defaulting to the
         safe values shown:
       </p>
       <ul>
@@ -523,13 +527,14 @@ function Tuning() {
         </li>
       </ul>
 
-      <h2>Example .gittensory.yml</h2>
+      <h2>Example .loopover.yml</h2>
       <p>
         A worked manifest: focus and validation up top, a refined gate, BYOK AI review, and a few
-        dashboard-equivalent overrides.
+        dashboard-equivalent overrides. Same schema, same effect, if you name the file{" "}
+        <code>.gittensory.yml</code> instead (legacy name, still fully supported — #4773).
       </p>
       <CodeBlock
-        filename=".gittensory.yml"
+        filename=".loopover.yml"
         lang="yaml"
         code={`# Focus / validation
 wantedPaths:

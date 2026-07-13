@@ -225,8 +225,9 @@ function MaintainerSelfHosting() {
         <li>
           Mount <code>./gittensory-config</code> and copy{" "}
           <code>config/examples/global.gittensory.yml</code> →{" "}
-          <code>gittensory-config/.gittensory.yml</code> for a centralized private default (per-repo
-          files deep-merge on top).
+          <code>gittensory-config/.loopover.yml</code> (the legacy{" "}
+          <code>gittensory-config/.gittensory.yml</code> name still works too, #4773) for a
+          centralized private default (per-repo files deep-merge on top).
         </li>
         <li>
           Add each pilot repo to <code>GITTENSORY_REVIEW_REPOS</code>, watch a PR in{" "}
@@ -245,12 +246,12 @@ function MaintainerSelfHosting() {
           {
             title: "Single-command repo onboarding",
             description:
-              "Today: edit .env allowlist, copy YAML templates, sign into the panel, click activate. Proposed: one CLI/API command that adds owner/repo to GITTENSORY_REVIEW_REPOS, seeds gittensory-config/owner__repo/.gittensory.yml from global.gittensory.yml, and POSTs activation — idempotent, dry-run aware.",
+              "Today: edit .env allowlist, copy YAML templates, sign into the panel, click activate. Proposed: one CLI/API command that adds owner/repo to GITTENSORY_REVIEW_REPOS, seeds gittensory-config/owner__repo/.loopover.yml (or legacy .gittensory.yml, #4773) from global.gittensory.yml, and POSTs activation — idempotent, dry-run aware.",
           },
           {
             title: "Centralized private default only",
             description:
-              "Most fleets need one gittensory-config/.gittensory.yml (already supported) with optional per-repo overrides — docs now treat that as the default story instead of implying every repo needs its own file.",
+              "Most fleets need one gittensory-config/.loopover.yml (legacy .gittensory.yml also still supported, #4773) with optional per-repo overrides — docs now treat that as the default story instead of implying every repo needs its own file.",
           },
           {
             title: "Advisory-by-default on first install",
@@ -337,7 +338,8 @@ function MaintainerSelfHosting() {
       </p>
       <p>
         <strong>
-          One thing genuinely does carry over: a repo&apos;s own <code>.gittensory.yml</code>
+          One thing genuinely does carry over: a repo&apos;s own <code>.loopover.yml</code> (or
+          legacy <code>.gittensory.yml</code>, #4773)
         </strong>{" "}
         (config-as-code), because it lives in the repository&apos;s git history, not in either
         service&apos;s database. <code>resolveRepositorySettings</code> overlays it on top of
@@ -367,11 +369,11 @@ function MaintainerSelfHosting() {
         reopens (see the callout above). Once it does, the reverse migration has the same shape and
         the same gap: uninstall your self-host App from the repo, install the shared hosted App (see{" "}
         <Link to="/docs/github-app">GitHub App configuration</Link>), and re-create any DB-backed
-        settings on the hosted side. <code>.gittensory.yml</code> again carries over for free since
-        it travels with the repo; nothing else does. Your self-host instance&apos;s data volumes are
-        untouched by this — see{" "}
-        <Link to="/docs/self-hosting-operations">Uninstalling and decommissioning</Link> if you also
-        intend to shut the instance down rather than keep it idle or reuse it for other repos.
+        settings on the hosted side. <code>.loopover.yml</code> (or legacy{" "}
+        <code>.gittensory.yml</code>, #4773) again carries over for free since it travels with the
+        repo; nothing else does. Your self-host instance&apos;s data volumes are untouched by this —
+        see <Link to="/docs/self-hosting-operations">Uninstalling and decommissioning</Link> if you
+        also intend to shut the instance down rather than keep it idle or reuse it for other repos.
       </p>
     </DocsPage>
   );

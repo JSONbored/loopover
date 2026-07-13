@@ -801,6 +801,10 @@ describe("queue processors", () => {
       if (url === "https://raw.githubusercontent.com/JSONbored/gittensory/HEAD/.gittensory.yml") {
         return new Response("review:\n  impact_map: true\n");
       }
+      // Real GitHub raw-content 404s for every other manifest candidate (incl. the new-brand `.loopover.*`
+      // candidates tried first, #4773) -- without this, Response.json({}) below would 200 the first candidate
+      // tried and mask the review.impact_map config crafted above.
+      if (url.startsWith("https://raw.githubusercontent.com/")) return new Response("not found", { status: 404 });
       return Response.json({});
     });
 

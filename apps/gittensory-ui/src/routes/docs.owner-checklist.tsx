@@ -63,11 +63,11 @@ GET /v1/repos/:owner/:repo/gittensor-config-recommendation`}
 
       <h2>2. Repo policy &amp; config quality</h2>
       <p>
-        Your policy lives in <code>.gittensory.yml</code> (sections: <code>settings</code>,{" "}
-        <code>gate</code>, <code>review</code>). The readiness report grades it as{" "}
-        <code>configQuality</code> (excellent / good / needs_attention / fragile); a{" "}
-        <strong>fragile</strong> config is a hard blocker. Preview exactly what a given config would
-        do on a real PR before you commit it:
+        Your policy lives in <code>.loopover.yml</code> (or legacy <code>.gittensory.yml</code>,
+        #4773; sections: <code>settings</code>, <code>gate</code>, <code>review</code>). The
+        readiness report grades it as <code>configQuality</code> (excellent / good / needs_attention
+        / fragile); a <strong>fragile</strong> config is a hard blocker. Preview exactly what a
+        given config would do on a real PR before you commit it:
       </p>
       <CodeBlock lang="http" code={`POST /v1/repos/:owner/:repo/settings-preview`} />
 
@@ -122,7 +122,7 @@ GET /v1/repos/:owner/:repo/gittensor-config-recommendation`}
 
       <h2>6. Validation expectations &amp; gate readiness</h2>
       <p>
-        Declare your validation commands in <code>.gittensory.yml</code> so contributors know what
+        Declare your validation commands in <code>.loopover.yml</code> so contributors know what
         &quot;done&quot; means, and so the gate can run. The report reports{" "}
         <code>testCoverageHealth</code> as <code>gate_ready</code> or <code>gate_unknown</code>;
         gate checks only run when you have explicitly configured them. Until then the gate stays

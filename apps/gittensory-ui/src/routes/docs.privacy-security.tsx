@@ -62,9 +62,10 @@ function PrivacySecurity() {
         <li>
           <strong>Per-repo settings</strong> — gate modes, score thresholds, and guardrails, stored
           in the operator's database (set through the dashboard/API) or declared as config-as-code
-          in a repo's <code>.gittensory.yml</code>. Choosing <code>gate.slop.minScore</code> or
-          setting <code>settings.hardGuardrailGlobs</code> tightens the gate without telling a
-          contributor how to bypass it.
+          in a repo's <code>.loopover.yml</code> (or legacy <code>.gittensory.yml</code>, #4773).
+          Choosing <code>gate.slop.minScore</code> or setting{" "}
+          <code>settings.hardGuardrailGlobs</code> tightens the gate without telling a contributor
+          how to bypass it.
         </li>
         <li>
           <strong>Operator feature flags</strong> — the <code>GITTENSORY_REVIEW_*</code> family of

@@ -55,9 +55,10 @@ function HowReviewsWork() {
         defaults.
       </p>
       <Callout variant="safety">
-        Defaults are quiet. With no settings and no <code>.gittensory.yml</code>, the gate is{" "}
-        <code>off</code>, AI review is <code>off</code>, and the comment is posted only to detected
-        contributors. Every capability is an explicit opt-in.
+        Defaults are quiet. With no settings and no <code>.loopover.yml</code> (or legacy{" "}
+        <code>.gittensory.yml</code>, #4773), the gate is <code>off</code>, AI review is{" "}
+        <code>off</code>, and the comment is posted only to detected contributors. Every capability
+        is an explicit opt-in.
       </Callout>
 
       <h2>1. The gate: advisory vs. block</h2>
@@ -169,7 +170,7 @@ function HowReviewsWork() {
         author on any repo, with no confirmed-contributor tracking at all).
       </p>
       <CodeBlock
-        filename=".gittensory.yml"
+        filename=".loopover.yml"
         code={`gate:
   enabled: true
   pack: gittensor

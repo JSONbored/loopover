@@ -282,7 +282,7 @@ Public GitHub surfaces:
   app/infra state) resolves to a neutral, non-blocking gate. Adding a blocker must keep it
   confirmed-contributor-gated through `evaluateGateCheck`.
 
-Config as code (`.gittensory.yml`) — every repository setting is controllable from the config file:
+Config as code (`.loopover.yml`; the legacy `.gittensory.yml` filename is dual-read indefinitely, #4773) — every repository setting is controllable from the config file:
 
 - **`settings:`** is a partial of the repository settings: any behaviour a maintainer can toggle in the
   dashboard can be set here as code — `commentMode`, `publicAudienceMode`, `publicSurface`, `checkRunMode`,
@@ -296,14 +296,15 @@ Config as code (`.gittensory.yml`) — every repository setting is controllable 
   `validationEvidence`, `openPrQueue`, `contributorContext`, `gateResult`). Maintainer text that fails the
   public-safe filter (reward/score/wallet/hotkey/etc.) is dropped, never published.
 - **`repoDocGeneration:`** opts a repo into the AGENTS.md/CLAUDE.md generation roadmap (#2993) — a
-  `.gittensory.yml`-only surface with no dashboard/DB counterpart. `enabled` (default `false`) turns it on;
+  `.loopover.yml`-only surface with no dashboard/DB counterpart. `enabled` (default `false`) turns it on;
   `scope` (default `["agents"]`) picks which generated file types are in play (`"agents"` for
   AGENTS.md/CLAUDE.md, plus `"skills"` once skill-file generation lands); `allowOverwriteExisting` (default
   `false`) is a separate opt-in required before the engine proposes an overwrite for a repo that already has
   a hand-maintained AGENTS.md/CLAUDE.md — absent it, an existing hand-written file is left alone and
   generation is skipped.
-- Precedence: `.gittensory.yml` `gate:` > `.gittensory.yml` `settings:` > dashboard repository settings >
-  safe defaults; unset fields fall back to the next layer. The committed root `.gittensory.yml` is the
+- Precedence: `.loopover.yml` `gate:` > `.loopover.yml` `settings:` > dashboard repository settings >
+  safe defaults; unset fields fall back to the next layer (the legacy `.gittensory.yml` filename works
+  identically wherever `.loopover.yml` does, #4773). The committed root `.gittensory.yml` is the
   worked example. Resolved once in `resolveRepositorySettings`, so the whole app honours the file.
 - The config chooses **what** LoopOver does (gate on/off, blockers, comments, labels, surface, panel
   content); it never changes **who** can be blocked — only confirmed Gittensor contributors are ever

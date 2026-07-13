@@ -10,28 +10,38 @@ See **[TEMPLATES.md](./TEMPLATES.md)** for the full template catalog (minimal + 
 `awesome-claude`, and `metagraphed` without committing private policy).
 
 The private config directory is read by `src/selfhost/private-config.ts` and is kept **out of the
-public GitHub repo** on purpose: contributors can read a public `.gittensory.yml`, so anti-abuse
-thresholds, maintainer/admin allowlists, autonomy dials, and model/effort settings belong here
-instead, where only the self-host operator can see them.
+public GitHub repo** on purpose: contributors can read a public manifest, so anti-abuse thresholds,
+maintainer/admin allowlists, autonomy dials, and model/effort settings belong here instead, where
+only the self-host operator can see them.
+
+> **Filename note (#4773):** the canonical manifest filename is now **`.loopover.yml`** (LoopOver's
+> new brand); the pre-rebrand name **`.gittensory.yml`** is still accepted everywhere `.loopover.yml`
+> is, indefinitely and with no code changes required from an existing self-hoster. Every path below
+> is shown with the new-brand name; mentally substitute `.gittensory.yml` anywhere you already have
+> one on disk today — it keeps working unchanged. When BOTH names exist at the exact same location,
+> the new-brand file wins outright (its content is used; the legacy file there is not merged in) —
+> see `src/selfhost/private-config.ts`'s `CONFIG_BASENAMES` for the authoritative precedence.
 
 ## Directory layout
 
 For a repo `owner/repo`, the reader tries, in priority order:
 
 ```
-${GITTENSORY_REPO_CONFIG_DIR}/owner__repo/.gittensory.yml   # 1. owner-qualified folder (recommended)
-${GITTENSORY_REPO_CONFIG_DIR}/repo/.gittensory.yml          # 2. bare repo-name folder
-${GITTENSORY_REPO_CONFIG_DIR}/owner__repo.yml               # 3. flat file (back-compat)
-${GITTENSORY_REPO_CONFIG_DIR}/.gittensory.yml               # 4. global default, shared by every repo
-${GITTENSORY_REPO_CONFIG_DIR}/_shared/.gittensory.yml       # 5. shared base (#1959), lowest priority
+${GITTENSORY_REPO_CONFIG_DIR}/owner__repo/.loopover.yml     # 1. owner-qualified folder (recommended)
+${GITTENSORY_REPO_CONFIG_DIR}/repo/.loopover.yml            # 2. bare repo-name folder
+${GITTENSORY_REPO_CONFIG_DIR}/owner__repo.yml               # 3. flat file (back-compat, brand-agnostic)
+${GITTENSORY_REPO_CONFIG_DIR}/.loopover.yml                 # 4. global default, shared by every repo
+${GITTENSORY_REPO_CONFIG_DIR}/_shared/.loopover.yml         # 5. shared base (#1959), lowest priority
 ```
 
-`.yaml` and `.json` are accepted everywhere `.yml` is. Every one of these files uses the **exact
-same schema** as the public `.gittensory.yml` — see [`gittensory.full.yml`](./gittensory.full.yml)
-(or [`.gittensory.yml.example`](../../.gittensory.yml.example) at the repo root) for the exhaustive,
-field-by-field reference. For the smallest safe starter, copy [`gittensory.minimal.yml`](./gittensory.minimal.yml)
-(or [`.gittensory.minimal.yml`](../../.gittensory.minimal.yml)) to your repo root as `.gittensory.yml`
-or into your private mount and customize from there.
+Every one of 1, 2, 4, and 5 above ALSO accepts the legacy `.gittensory.yml` name at that same
+location (tried after `.loopover.yml`, #4773) — omitted from the listing above purely for brevity,
+not because it stopped working. `.yaml` and `.json` are accepted everywhere `.yml` is, for both
+brand names. Every one of these files uses the **exact same schema** as the public manifest — see
+[`gittensory.full.yml`](./gittensory.full.yml) (or [`.gittensory.yml.example`](../../.gittensory.yml.example)
+at the repo root) for the exhaustive, field-by-field reference. For the smallest safe starter, copy
+[`gittensory.minimal.yml`](./gittensory.minimal.yml) (or [`.gittensory.minimal.yml`](../../.gittensory.minimal.yml))
+to your repo root as `.loopover.yml` or into your private mount and customize from there.
 
 ## Precedence chain
 
@@ -39,17 +49,19 @@ From highest to lowest priority:
 
 1. **Private per-repo file**, deep-merged over **2** and **3** when more than one exists (see
    below) — or used alone when it is the only private layer present.
-2. **Private global default** (`${GITTENSORY_REPO_CONFIG_DIR}/.gittensory.yml`) — deep-merged
-   under **1** when both exist; used alone when a repo has no per-repo file of its own and no
-   shared base is mounted.
-3. **Private shared base** (`${GITTENSORY_REPO_CONFIG_DIR}/_shared/.gittensory.yml`, #1959) — the
+2. **Private global default** (`${GITTENSORY_REPO_CONFIG_DIR}/.loopover.yml`, or legacy
+   `.gittensory.yml`, #4773) — deep-merged under **1** when both exist; used alone when a repo has
+   no per-repo file of its own and no shared base is mounted.
+3. **Private shared base** (`${GITTENSORY_REPO_CONFIG_DIR}/_shared/.loopover.yml`, #1959) — the
    lowest-priority private layer, deep-merged under both **1** and **2**. An operator running many
    repos writes a house review policy (e.g. a default `review.tone`, `path_filters`, or
    `exclude_paths`) here **once** instead of copy-pasting it into every repo's per-repo file or
-   the global default. `.yaml`/`.json` are accepted, same as every other candidate. Absent (the
-   default, common case) ⇒ byte-identical behavior to the pre-#1959 2-layer chain.
+   the global default. `.yaml`/`.json` are accepted, same as every other candidate, and so is the
+   legacy `.gittensory.yml` name (#4773). Absent (the default, common case) ⇒ byte-identical
+   behavior to the pre-#1959 2-layer chain.
 4. When **none** of the three private layers above exists, the loader falls back to the **public
-   repo `.gittensory.yml`** (or `.github/gittensory.yml`) fetched from GitHub.
+   repo `.loopover.yml`** (or `.github/loopover.yml`, or the legacy `.gittensory.yml`/
+   `.github/gittensory.yml`, #4773) fetched from GitHub.
 5. **Dashboard/API-stored settings** for the repo.
 6. **Built-in safe defaults.**
 
@@ -62,7 +74,7 @@ shipped first; the shared base is the newest, lowest layer, #1959).
 This chain governs *per-repo review policy* only. A separate, lower-level set of **deployment
 environment variables** (`GITTENSORY_REVIEW_*` flags, AI provider keys/models, self-host runtime
 knobs, etc.) configures the deployment itself and sits **underneath** all 5 layers above — a
-`.gittensory.yml`/private-config value never overrides an operator's env-level kill-switch, it only
+`.loopover.yml`/private-config value never overrides an operator's env-level kill-switch, it only
 narrows what's already permitted. See the generated, always-current
 [`SELFHOST_ENV_REFERENCE_ROWS`](../../apps/gittensory-ui/src/lib/selfhost-env-reference.ts) (built by
 `npm run selfhost:env-reference` from every `env.SOMETHING` read in the codebase) for the full list.
@@ -94,7 +106,7 @@ below for the shared base specifically):
 
 ### Example 1 — global defaults + a per-repo override
 
-`.gittensory.yml` (global default, at the config dir root):
+`.loopover.yml` (global default, at the config dir root; legacy `.gittensory.yml` works the same, #4773):
 
 ```yaml
 settings:
@@ -106,7 +118,7 @@ gate:
   duplicates: block
 ```
 
-`owner__repo/.gittensory.yml` (per-repo override — only touches what's different for this repo):
+`owner__repo/.loopover.yml` (per-repo override — only touches what's different for this repo):
 
 ```yaml
 gate:
@@ -123,7 +135,7 @@ The effective config for `owner/repo` has `gate.duplicates: block` (from global)
 ### Example 2 — disabling a global setting for one high-trust repo
 
 ```yaml
-# owner__repo/.gittensory.yml
+# owner__repo/.loopover.yml
 settings:
   contributorOpenPrCap: null   # explicitly clears the global cap of 3 for this repo only
 ```
@@ -134,7 +146,7 @@ Shared anti-abuse mechanisms (the review-request-nag cooldown, the contributor o
 exempt configured logins on top of the standing owner/admin/automation-bot exemption:
 
 ```yaml
-# .gittensory.yml (global default)
+# .loopover.yml (global default)
 settings:
   autoCloseExemptLogins:
     - your-trusted-regular
@@ -148,27 +160,27 @@ common `exclude_paths` — **once**, instead of copy-pasting it into every repo'
 even the global default. That policy lives at:
 
 ```
-${GITTENSORY_REPO_CONFIG_DIR}/_shared/.gittensory.yml
+${GITTENSORY_REPO_CONFIG_DIR}/_shared/.loopover.yml
 ```
 
-(`.yaml`/`.json` also accepted, same lookup order as every other candidate — see
-[`shared.gittensory.yml`](./shared.gittensory.yml) for a starter). It sits at the **lowest**
-priority of the three private layers: a per-repo file overlays a global default, which overlays
-the shared base — the shared base fills in only the fields a higher layer is silent on. This is
-the exact same deep-merge helper and array-replace/explicit-null-clear semantics described above,
-folded across one more layer; it is not a new merge algorithm.
+(`.yaml`/`.json`, and the legacy `.gittensory.yml`/`.yaml`/`.json` names (#4773), also accepted, same
+lookup order as every other candidate — see [`shared.gittensory.yml`](./shared.gittensory.yml) for a
+starter). It sits at the **lowest** priority of the three private layers: a per-repo file overlays a
+global default, which overlays the shared base — the shared base fills in only the fields a higher
+layer is silent on. This is the exact same deep-merge helper and array-replace/explicit-null-clear
+semantics described above, folded across one more layer; it is not a new merge algorithm.
 
-**Absent shared base is the default, common case** — with no `_shared/.gittensory.yml` mounted,
-behavior is byte-identical to the pre-#1959 2-layer chain. A malformed or unreadable shared file
-fails safe exactly like a malformed per-repo or global file always has: it is dropped from the
-merge and the remaining, still-valid layers combine as if it were never mounted — a broken shared
-base never blocks a review. When a shared `review:` block contributes, the parsed manifest carries
-`review.sharedConfigSource` (runtime provenance only, #2046) with the relative path of the shared
-file that supplied the base layer.
+**Absent shared base is the default, common case** — with no `_shared/.loopover.yml` (or legacy
+`_shared/.gittensory.yml`) mounted, behavior is byte-identical to the pre-#1959 2-layer chain. A
+malformed or unreadable shared file fails safe exactly like a malformed per-repo or global file
+always has: it is dropped from the merge and the remaining, still-valid layers combine as if it
+were never mounted — a broken shared base never blocks a review. When a shared `review:` block
+contributes, the parsed manifest carries `review.sharedConfigSource` (runtime provenance only,
+#2046) with the relative path of the shared file that supplied the base layer.
 
 ### Example 4 — shared base + global default + a per-repo override, all three present
 
-`_shared/.gittensory.yml` (shared base — one house policy for every repo on this instance):
+`_shared/.loopover.yml` (shared base — one house policy for every repo on this instance):
 
 ```yaml
 review:
@@ -177,14 +189,14 @@ gate:
   duplicates: block
 ```
 
-`.gittensory.yml` (global default — this instance's own baseline, silent on `review.tone`):
+`.loopover.yml` (global default — this instance's own baseline, silent on `review.tone`):
 
 ```yaml
 gate:
   enabled: true
 ```
 
-`owner__repo/.gittensory.yml` (per-repo override — only touches what's different for this repo):
+`owner__repo/.loopover.yml` (per-repo override — only touches what's different for this repo):
 
 ```yaml
 gate:
@@ -220,7 +232,7 @@ config-as-code only: omitting `settings.hardGuardrailGlobs` or setting it to `[]
 guardrails, and a concrete list replaces any lower-layer private global default.
 
 ```yaml
-# .gittensory.yml (global default) — recommended one-shot baseline
+# .loopover.yml (global default) — recommended one-shot baseline
 settings:
   autonomy:
     close: auto
@@ -238,7 +250,7 @@ one shared policy) to **also** throttle a thread's own author repeatedly @-menti
 maintainer login, counted independently per login and independently of the `@gittensory` counter:
 
 ```yaml
-# .gittensory.yml (global default)
+# .loopover.yml (global default)
 settings:
   reviewNagPolicy: hold
   reviewNagMonitoredMentions:
@@ -255,12 +267,12 @@ PR/issue never counts.
 the issue already carries it — the only mechanism that can ever select a maintainer-reward or
 moderation-weighted label; it is never inferred from a PR's title, changed files, AI output, or
 existing PR labels. If your labels carry that kind of weight, this is exactly the sort of rule that
-belongs in the private layer rather than the public `.gittensory.yml`, so a contributor can see
+belongs in the private layer rather than the public manifest, so a contributor can see
 *that* the mapping exists (via its effect) without being able to read the exact issue-label ->
 PR-label rules and game them:
 
 ```yaml
-# .gittensory.yml (global default)
+# .loopover.yml (global default)
 settings:
   linkedIssueLabelPropagation:
     enabled: true
@@ -274,18 +286,20 @@ settings:
 A per-repo override's `mappings` list **replaces** the global default wholesale (the standard
 array-replace overlay semantics above) — it does not merge with it.
 
-## What belongs here vs. in the public `.gittensory.yml`
+## What belongs here vs. in the public `.loopover.yml`
 
 - **Private config** (this directory): anti-abuse thresholds, the contributor cap, maintainer/
   admin exemption logins, autonomy dials, model/effort overrides, and anything else you don't want
   a contributor reading and gaming.
-- **Public `.gittensory.yml`** (repo root, contributor-visible): work-area guidance
-  (`wantedPaths`), test expectations, and review-panel presentation — nothing here
-  should describe your private enforcement strategy.
+- **Public `.loopover.yml`** (repo root, contributor-visible; legacy `.gittensory.yml` still works,
+  #4773): work-area guidance (`wantedPaths`), test expectations, and review-panel presentation —
+  nothing here should describe your private enforcement strategy.
 
 ## Safety
 
 Never commit real policy into this directory or into these example files: no maintainer usernames,
-no repo names, no thresholds beyond illustrative placeholders, no secrets or tokens. The two
-`.gittensory.yml` files shipped alongside this README are deliberately generic and inert — copy
-them into your own mounted `GITTENSORY_REPO_CONFIG_DIR` and edit the copy, not this one.
+no repo names, no thresholds beyond illustrative placeholders, no secrets or tokens. The
+`.gittensory.yml`-named template files shipped alongside this README (see the catalog in
+[TEMPLATES.md](./TEMPLATES.md)) are deliberately generic and inert — copy one into your own mounted
+`GITTENSORY_REPO_CONFIG_DIR`, name the copy `.loopover.yml` (or keep the legacy name, #4773 — both
+work), and edit the copy, not this one.

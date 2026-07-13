@@ -128,8 +128,11 @@ describe("Gittensory repo focus manifest", () => {
     }
   });
 
-  it("prefers YAML manifest file candidates before JSON", () => {
-    expect(MANIFEST_FILE_CANDIDATES[0]).toBe(".gittensory.yml");
+  it("prefers YAML manifest file candidates before JSON, and new-brand candidates before legacy ones (#4773)", () => {
+    expect(MANIFEST_FILE_CANDIDATES[0]).toBe(".loopover.yml");
+    expect(MANIFEST_FILE_CANDIDATES).toContain(".loopover.json");
+    expect(MANIFEST_FILE_CANDIDATES).toContain(".gittensory.yml"); // legacy — dual-read indefinitely
     expect(MANIFEST_FILE_CANDIDATES).toContain(".gittensory.json");
+    expect(MANIFEST_FILE_CANDIDATES.indexOf(".loopover.yml")).toBeLessThan(MANIFEST_FILE_CANDIDATES.indexOf(".gittensory.yml"));
   });
 });

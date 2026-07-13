@@ -13,7 +13,9 @@ describe("ConfigGeneratorYamlPreview", () => {
 
     expect(screen.getByText("Preview")).toBeTruthy();
     // The filename appears both in the descriptive copy and the CodeBlock's own filename label.
-    expect(screen.getAllByText(".gittensory.yml").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText(".loopover.yml").length).toBeGreaterThanOrEqual(2);
+    // The legacy filename is still mentioned as also-supported (#4773), not silently dropped.
+    expect(screen.getAllByText(".gittensory.yml").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/combine: consensus/)).toBeTruthy();
     expect(screen.getByText(/provider: anthropic/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Copy code" })).toBeTruthy();

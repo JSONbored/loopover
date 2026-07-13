@@ -15,10 +15,10 @@ Every field is optional. Unknown keys are ignored; a malformed field falls back 
 
 | File | Actor | Purpose |
 |------|-------|---------|
-| `.gittensory.yml` | Review stack | How a maintainer's repo **reviews** incoming PRs (focus manifest, gate, scoring knobs). |
-| `.gittensory-miner.yml` | Miner runtime | How a miner **searches for and prioritizes** work in a target repo. |
+| `.loopover.yml` (or legacy `.gittensory.yml`, dual-read indefinitely — #4773) | Review stack | How a maintainer's repo **reviews** incoming PRs (focus manifest, gate, scoring knobs). |
+| `.gittensory-miner.yml` | Miner runtime | How a miner **searches for and prioritizes** work in a target repo. Unrelated naming concern — not affected by the review-config rebrand above. |
 
-They are read by different components and do not conflict. A miner should still treat a target repo's public `.gittensory.yml` `wantedPaths` / `blockedPaths` as a hard floor when both files exist.
+They are read by different components and do not conflict. A miner should still treat a target repo's public `.loopover.yml`/`.gittensory.yml` `wantedPaths` / `blockedPaths` as a hard floor when both files exist.
 
 ## Fields
 

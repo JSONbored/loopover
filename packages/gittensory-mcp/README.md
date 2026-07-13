@@ -61,7 +61,7 @@ gittensory-mcp analyze-branch --login jsonbored --json
 gittensory-mcp preflight --login jsonbored --json
 gittensory-mcp review-pr --login jsonbored --commit "feat(mcp): add doctor grouping" --body "Fixes #160. Validated with npm test." --linked-issue 160 --json
 gittensory-mcp lint-pr-text --commit "feat(mcp): add doctor grouping" --body "Fixes #160. Validated with npm test." --linked-issue 160 --json
-gittensory-mcp validate-config --file ./.gittensory.yml --json
+gittensory-mcp validate-config --file ./.loopover.yml --json   # or ./.gittensory.yml (legacy name, #4773)
 gittensory-mcp slop-risk --changed-file src/widget.ts:80:2 --description "Adds retry handling." --test-file test/unit/widget.test.ts --json
 gittensory-mcp issue-slop --title "Add retry handling" --body "Widget reconnects fail without bounded retries." --json
 gittensory-mcp agent plan --login jsonbored --json

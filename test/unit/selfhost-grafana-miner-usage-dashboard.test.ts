@@ -7,7 +7,7 @@ import {
   AMS_MINER_USAGE_PROVIDER_NAMES,
   buildAmsMinerUsageProviderSqlFilter,
   buildAmsMinerUsageProviderWhereClause,
-} from "@loopover/engine";
+} from "../../packages/gittensory-engine/src/index";
 
 type DashboardTarget = {
   queryText?: string;

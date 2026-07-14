@@ -99,7 +99,7 @@ export function parsePythonNumberConstants(source: string, options: { knownOnly?
 }
 
 /**
- * Upstream operational/infra constants gittensory intentionally does not model in score previews.
+ * Upstream operational/infra constants loopover intentionally does not model in score previews.
  * They are not scoring dimensions — surfacing them as "unmodeled drift" is noise (#809).
  */
 const NON_SCORING_UPSTREAM_CONSTANT_NAMES = new Set([
@@ -120,12 +120,12 @@ const NON_SCORING_UPSTREAM_CONSTANT_NAMES = new Set([
   // false-positive unmodeled-scoring-drift warning (#809).
   "EMISSION_SHARE_TOLERANCE",
   // Fallback weight applied by the validator's load_programming_language_weights() for extensions absent from
-  // the JSON file; gittensory reads the JSON directly and does not track this loader default (#1692).
+  // the JSON file; loopover reads the JSON directly and does not track this loader default (#1692).
   "DEFAULT_PROGRAMMING_LANGUAGE_WEIGHT",
 ]);
 
 /**
- * Numeric constant names upstream gittensor defines that gittensory's scoring engine does NOT model.
+ * Numeric constant names upstream gittensor defines that loopover's scoring engine does NOT model.
  * The normal parse is `knownOnly` (it keeps only constants we already encode), which silently hides
  * upstream ADDITIONS — e.g. a newly-introduced time-decay constant. Surfacing these makes scoring
  * staleness visible: if upstream adds a scoring dimension, an operator sees it instead of the gate

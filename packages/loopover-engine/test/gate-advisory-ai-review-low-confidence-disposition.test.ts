@@ -17,8 +17,8 @@ function consensusAdvisory(confidence: number): Advisory {
   return {
     id: "advisory-1",
     targetType: "pull_request",
-    targetKey: "JSONbored/gittensory#1",
-    repoFullName: "JSONbored/gittensory",
+    targetKey: "JSONbored/loopover#1",
+    repoFullName: "JSONbored/loopover",
     conclusion: "action_required",
     severity: "critical",
     title: "LoopOver review",

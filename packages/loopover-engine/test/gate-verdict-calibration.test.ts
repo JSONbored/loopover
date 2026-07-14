@@ -109,7 +109,7 @@ test("resolveGateVerdictCalibrationConfig warns and fails closed on malformed op
 test("ingestGateVerdictCalibrationSignals accepts only currently opted-in structured dimensions", () => {
   const ingestion = ingestGateVerdictCalibrationSignals([
     {
-      repoFullName: "JSONbored/Gittensory",
+      repoFullName: "JSONbored/Loopover",
       replayRunId: "replay-1",
       gateRunId: "gate-1",
       optedIn: true,
@@ -124,7 +124,7 @@ test("ingestGateVerdictCalibrationSignals accepts only currently opted-in struct
 
   assert.deepEqual(ingestion.rejected, []);
   assert.equal(ingestion.accepted.length, 1);
-  assert.equal(ingestion.accepted[0]!.repoFullName, "jsonbored/gittensory");
+  assert.equal(ingestion.accepted[0]!.repoFullName, "jsonbored/loopover");
   assert.equal(ingestion.accepted[0]!.score, 0.466667);
   assert.deepEqual(ingestion.accepted[0]!.dimensions, [
     { dimension: "correctness", outcome: "pass", confidence: 1, score: 1 },
@@ -136,7 +136,7 @@ test("ingestGateVerdictCalibrationSignals accepts only currently opted-in struct
 test("ingestGateVerdictCalibrationSignals rejects a mid-flight opt-out at ingestion time", () => {
   const ingestion = ingestGateVerdictCalibrationSignals([
     {
-      repoFullName: "jsonbored/gittensory",
+      repoFullName: "jsonbored/loopover",
       replayRunId: "replay-2",
       gateRunId: "gate-2",
       optedIn: false,
@@ -147,7 +147,7 @@ test("ingestGateVerdictCalibrationSignals rejects a mid-flight opt-out at ingest
   assert.deepEqual(ingestion.accepted, []);
   assert.deepEqual(ingestion.rejected, [
     {
-      repoFullName: "jsonbored/gittensory",
+      repoFullName: "jsonbored/loopover",
       replayRunId: "replay-2",
       gateRunId: "gate-2",
       reason: "not_opted_in",
@@ -165,7 +165,7 @@ test("ingestGateVerdictCalibrationSignals rejects malformed repo and run identif
       dimensions: [{ dimension: "correctness", outcome: "pass" }],
     },
     {
-      repoFullName: "jsonbored/gittensory",
+      repoFullName: "jsonbored/loopover",
       replayRunId: "",
       gateRunId: "gate\nbad",
       optedIn: true,
@@ -177,7 +177,7 @@ test("ingestGateVerdictCalibrationSignals rejects malformed repo and run identif
   assert.deepEqual(ingestion.rejected, [
     { repoFullName: "not a repo", replayRunId: "replay-3", gateRunId: "gate-3", reason: "invalid_repo" },
     {
-      repoFullName: "jsonbored/gittensory",
+      repoFullName: "jsonbored/loopover",
       replayRunId: "",
       gateRunId: "gate\nbad",
       reason: "invalid_run_id",
@@ -188,7 +188,7 @@ test("ingestGateVerdictCalibrationSignals rejects malformed repo and run identif
 test("ingestGateVerdictCalibrationSignals drops unknown dimensions/outcomes and rejects empty structured rows", () => {
   const ingestion = ingestGateVerdictCalibrationSignals([
     {
-      repoFullName: "jsonbored/gittensory",
+      repoFullName: "jsonbored/loopover",
       replayRunId: "replay-4",
       gateRunId: "gate-4",
       optedIn: true,
@@ -202,7 +202,7 @@ test("ingestGateVerdictCalibrationSignals drops unknown dimensions/outcomes and 
   assert.deepEqual(ingestion.accepted, []);
   assert.deepEqual(ingestion.rejected, [
     {
-      repoFullName: "jsonbored/gittensory",
+      repoFullName: "jsonbored/loopover",
       replayRunId: "replay-4",
       gateRunId: "gate-4",
       reason: "empty_dimensions",
@@ -213,7 +213,7 @@ test("ingestGateVerdictCalibrationSignals drops unknown dimensions/outcomes and 
 test("ingestGateVerdictCalibrationSignals maps aliases and keeps the stricter duplicate dimension outcome", () => {
   const ingestion = ingestGateVerdictCalibrationSignals([
     {
-      repoFullName: "jsonbored/gittensory",
+      repoFullName: "jsonbored/loopover",
       replayRunId: "replay-5",
       gateRunId: "gate-5",
       optedIn: true,
@@ -241,7 +241,7 @@ test("ingestGateVerdictCalibrationSignals maps aliases and keeps the stricter du
 test("ingestGateVerdictCalibrationSignals normalizes malformed dates to null", () => {
   const ingestion = ingestGateVerdictCalibrationSignals([
     {
-      repoFullName: "jsonbored/gittensory",
+      repoFullName: "jsonbored/loopover",
       replayRunId: "replay-6",
       gateRunId: "gate-6",
       optedIn: true,
@@ -267,7 +267,7 @@ test("computeGateVerdictCompositeCalibrationScore combines objective-anchor, pai
     pairwise,
     gateVerdicts: [
       {
-        repoFullName: "JSONbored/Gittensory",
+        repoFullName: "JSONbored/Loopover",
         replayRunId: "replay-7",
         gateRunId: "gate-7",
         optedIn: true,
@@ -285,7 +285,7 @@ test("computeGateVerdictCompositeCalibrationScore combines objective-anchor, pai
   assert.equal(result.structuredGateVerdictScore, 0.75);
   assert.deepEqual(result.weights, { objectiveAnchor: 0.5, pairwiseJudge: 0.25, structuredGateVerdict: 0.25 });
   assert.equal(result.compositeScore, 0.7125);
-  assert.deepEqual(result.audit.contributingRepos.map((repo) => repo.repoFullName), ["jsonbored/gittensory"]);
+  assert.deepEqual(result.audit.contributingRepos.map((repo) => repo.repoFullName), ["jsonbored/loopover"]);
 });
 
 test("computeGateVerdictCompositeCalibrationScore renormalizes when pairwise or structured signals are unavailable", () => {
@@ -308,7 +308,7 @@ test("computeGateVerdictCompositeCalibrationScore carries rejected rows into the
     pairwise: 0.5,
     gateVerdicts: [
       {
-        repoFullName: "jsonbored/gittensory",
+        repoFullName: "jsonbored/loopover",
         replayRunId: "replay-8",
         gateRunId: "gate-8",
         optedIn: false,
@@ -320,7 +320,7 @@ test("computeGateVerdictCompositeCalibrationScore carries rejected rows into the
   assert.deepEqual(result.audit.contributingRepos, []);
   assert.deepEqual(result.audit.rejected, [
     {
-      repoFullName: "jsonbored/gittensory",
+      repoFullName: "jsonbored/loopover",
       replayRunId: "replay-8",
       gateRunId: "gate-8",
       reason: "not_opted_in",
@@ -368,7 +368,7 @@ test("computeGateVerdictCompositeCalibrationScore does not expose raw review tex
     pairwise: 0.5,
     gateVerdicts: [
       {
-        repoFullName: "jsonbored/gittensory",
+        repoFullName: "jsonbored/loopover",
         replayRunId: "replay-10",
         gateRunId: "gate-10",
         optedIn: true,
@@ -395,7 +395,7 @@ test("renderGateVerdictCalibrationAuditMarkdown renders aggregate scores and con
     pairwise: 0.75,
     gateVerdicts: [
       {
-        repoFullName: "jsonbored/gittensory",
+        repoFullName: "jsonbored/loopover",
         replayRunId: "replay-11",
         gateRunId: "gate-11",
         optedIn: true,
@@ -411,7 +411,7 @@ test("renderGateVerdictCalibrationAuditMarkdown renders aggregate scores and con
 
   assert.ok(markdown.startsWith("# Structured Gate-Verdict Calibration\n\nComposite score:"));
   assert.match(markdown, /## Component Scores\n\n- objectiveAnchor: 0\.500000\n- pairwiseJudge: 0\.750000/u);
-  assert.match(markdown, /### jsonbored\/gittensory/u);
+  assert.match(markdown, /### jsonbored\/loopover/u);
   assert.match(markdown, /\| correctness \| pass \| 1\.000000 \| 1\.000000 \|/u);
   assert.match(markdown, /\| tests \| warn \| 1\.000000 \| 0\.500000 \|/u);
 });
@@ -436,7 +436,7 @@ test("renderGateVerdictCalibrationAuditMarkdown includes rejected rows for audit
     pairwise: 0.5,
     gateVerdicts: [
       {
-        repoFullName: "jsonbored/gittensory",
+        repoFullName: "jsonbored/loopover",
         replayRunId: "replay-12",
         gateRunId: "gate-12",
         optedIn: false,
@@ -447,7 +447,7 @@ test("renderGateVerdictCalibrationAuditMarkdown includes rejected rows for audit
   const markdown = renderGateVerdictCalibrationAuditMarkdown(result);
 
   assert.match(markdown, /\| Repo \| Replay run \| Gate run \| Reason \|/u);
-  assert.match(markdown, /\| jsonbored\/gittensory \| replay-12 \| gate-12 \| not\\_opted\\_in \|/u);
+  assert.match(markdown, /\| jsonbored\/loopover \| replay-12 \| gate-12 \| not\\_opted\\_in \|/u);
 });
 
 test("renderGateVerdictCalibrationAuditMarkdown escapes markdown controls and collapses newlines", () => {
@@ -484,7 +484,7 @@ test("computeGateVerdictCompositeCalibrationScore sanitizes pre-ingested audit r
   const gateVerdicts = {
     accepted: [
       {
-        repoFullName: "JSONbored/Gittensory",
+        repoFullName: "JSONbored/Loopover",
         replayRunId: " replay-13 ",
         gateRunId: "gate-13",
         observedAt: "not an ISO timestamp",
@@ -499,7 +499,7 @@ test("computeGateVerdictCompositeCalibrationScore sanitizes pre-ingested audit r
     ],
     rejected: [
       {
-        repoFullName: "JSONbored/Gittensory",
+        repoFullName: "JSONbored/Loopover",
         replayRunId: "replay-13",
         gateRunId: "gate-13",
         reason: "not_opted_in",
@@ -517,7 +517,7 @@ test("computeGateVerdictCompositeCalibrationScore sanitizes pre-ingested audit r
   assert.equal(result.structuredGateVerdictScore, 1);
   assert.deepEqual(result.audit.contributingRepos, [
     {
-      repoFullName: "jsonbored/gittensory",
+      repoFullName: "jsonbored/loopover",
       replayRunId: "replay-13",
       gateRunId: "gate-13",
       observedAt: null,
@@ -527,7 +527,7 @@ test("computeGateVerdictCompositeCalibrationScore sanitizes pre-ingested audit r
   ]);
   assert.deepEqual(result.audit.rejected, [
     {
-      repoFullName: "jsonbored/gittensory",
+      repoFullName: "jsonbored/loopover",
       replayRunId: "replay-13",
       gateRunId: "gate-13",
       reason: "not_opted_in",
@@ -553,7 +553,7 @@ test("computeGateVerdictCompositeCalibrationScore ignores malformed pre-ingested
         dimensions: [{ dimension: "correctness", outcome: "pass", confidence: 1 }],
       },
       {
-        repoFullName: "jsonbored/gittensory",
+        repoFullName: "jsonbored/loopover",
         replayRunId: "replay-14",
         gateRunId: "gate-14",
         observedAt: "2026-07-04T17:00:00.000Z",
@@ -563,7 +563,7 @@ test("computeGateVerdictCompositeCalibrationScore ignores malformed pre-ingested
     ],
     rejected: [
       {
-        repoFullName: "jsonbored/gittensory",
+        repoFullName: "jsonbored/loopover",
         replayRunId: "replay-14",
         gateRunId: "gate-14",
         reason: "privateMetadata",

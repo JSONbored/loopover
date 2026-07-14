@@ -410,7 +410,7 @@ export type RepositorySettings = {
    *  touched. */
   contributorCapLabel?: string | null | undefined;
   /** Cancel in-flight CI runs on a contributor_cap close (#2462, anti-abuse): when true, after a PR is
-   *  auto-closed for exceeding {@link contributorOpenPrCap}, gittensory lists and cancels that PR's
+   *  auto-closed for exceeding {@link contributorOpenPrCap}, loopover lists and cancels that PR's
    *  in-progress/queued Actions runs at its head SHA. Requires the App installation to have granted
    *  `actions: write` -- degrades gracefully (skipped + logged, never blocks the close) when it hasn't.
    *  `null`/undefined (the DB-layer default) means "unset" and falls back to the
@@ -448,7 +448,7 @@ export type RepositorySettings = {
    *  or a login on {@link autoCloseExemptLogins}. */
   reviewNagMonitoredMentions?: string[] | undefined;
   /** Shared repo-scoped exemption list (#2463, anti-abuse): GitHub logins that are NEVER throttled or closed by
-   *  gittensory's deterministic anti-abuse mechanisms (review-nag and the per-contributor open-item cap above),
+   *  loopover's deterministic anti-abuse mechanisms (review-nag and the per-contributor open-item cap above),
    *  on top of the standing owner/admin/automation-bot exemption. Always populated by the DB layer (default
    *  `[]`); optional so existing settings fixtures/callers need not be touched. */
   autoCloseExemptLogins?: string[] | undefined;
@@ -470,7 +470,7 @@ export type RepositorySettings = {
    *  apply one manual-review label without enabling ready/changes-requested disposition labels. */
   manualReviewLabel?: string | null | undefined;
   /** Optional review-state label names. Config-as-code only; each `null` disables that specific label. These are
-   *  deliberately generic defaults rather than `gittensory:*` names so self-hosters can opt into their own
+   *  deliberately generic defaults rather than `loopover:*` names so self-hosters can opt into their own
    *  taxonomy without inheriting project-specific labels. */
   readyToMergeLabel?: string | null | undefined;
   changesRequestedLabel?: string | null | undefined;
@@ -548,7 +548,7 @@ export type RepositorySettings = {
    *  the global config's `bannedLabel` (itself defaulting to `"mod:banned"`). */
   moderationBannedLabel?: string | undefined;
   /** Review-evasion protection (#review-evasion-protection): a contributor closing or converting their OWN
-   *  PR to draft while gittensory has an ACTIVE review pass running against it is dodging the one-shot
+   *  PR to draft while loopover has an ACTIVE review pass running against it is dodging the one-shot
    *  review process. `"off"` (the default) disables detection entirely; `"close"` reopens (if needed) and
    *  re-closes as the App -- a close the contributor cannot themselves reopen (#one-shot-reopen) -- applies
    *  the configured label/comment, and records a `review_evasion` moderation strike. */

@@ -1,6 +1,6 @@
 // Per-tenant configuration layer (pure) — #4787, part of the Rent-a-Loop path #4778.
 //
-// A customer's own autonomy/config, scoped strictly to their rented repo and independent of gittensory's own
+// A customer's own autonomy/config, scoped strictly to their rented repo and independent of loopover's own
 // configuration. Deterministic and side-effect-free: it resolves a tenant's effective config from the defaults
 // plus their overrides, and holds per-tenant configs in an IMMUTABLE store. Isolation is guaranteed by
 // construction — every resolve returns a NEW config with freshly-copied collections, and every store update

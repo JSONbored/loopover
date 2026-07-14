@@ -6,7 +6,7 @@
 // just to save an AI call.
 //
 // Extracted out of `src/signals/unlinked-issue-candidates.ts` into the shared engine (#4883) so the published
-// gittensory-miner/gittensory-mcp CLIs can run the identical recall pass the maintainer gate uses, instead of
+// loopover-miner/loopover-mcp CLIs can run the identical recall pass the maintainer gate uses, instead of
 // a driftable second copy; `src/signals/unlinked-issue-candidates.ts` is now a thin re-export shim (imported
 // via relative source path, matching this repo's existing engine-consumption convention — see src/signals/slop.ts).
 

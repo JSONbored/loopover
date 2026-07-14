@@ -1,6 +1,6 @@
 // Shared subprocess env-allowlist + secret-redaction helpers (#4284). Any driver that spawns a locally-authenticated
 // CLI (the review `claude`/`codex` subprocess in src/selfhost/ai.ts, and the coding-agent drivers coming in
-// gittensory-miner) needs the SAME two safety primitives: hand the child a STRICT allowlisted env (never the full
+// loopover-miner) needs the SAME two safety primitives: hand the child a STRICT allowlisted env (never the full
 // worker/host env, which can carry runtime credentials into a prompt-injectable subprocess), and redact well-known
 // secret shapes out of the child's untrusted stderr before it reaches logs. This module is the single engine-hosted
 // source of truth for both, so those callers depend on one implementation instead of copy-pasting the pattern.

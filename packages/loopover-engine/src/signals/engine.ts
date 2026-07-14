@@ -4459,7 +4459,7 @@ export function buildPublicPrIntelligenceComment(args: {
   const gateHeld = gateEnabled && (gateConclusion === "neutral" || gateConclusion === "action_required");
   const missingLinkedIssue = args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
   const confirmedMiner = isOfficialContributorDetection(args.detection);
-  // Author with no Gittensor footprint at all (not detected via official API or cache): gittensory's
+  // Author with no Gittensor footprint at all (not detected via official API or cache): loopover's
   // contribution analysis is for Gittensor contributors, so fire MINIMALLY — a brief welcome + the
   // earn invite — instead of the full readiness panel. A KNOWN contributor (official or cached) still
   // gets the full review. The always-on footer CTA appears either way, so every PR keeps marketing.
@@ -4619,7 +4619,7 @@ export function buildPublicPrIntelligenceComment(args: {
   ].join("\n");
 }
 
-/** Minimal public comment for a non-registered contributor. gittensory's readiness/contribution
+/** Minimal public comment for a non-registered contributor. loopover's readiness/contribution
  *  analysis is for registered Gittensor contributors, so we skip the panel and post a brief welcome
  *  + earn invite; the always-on footer CTA does the conversion. Carries the same panel marker so it
  *  updates in place if the author later registers (the full panel then replaces it). */
@@ -4652,7 +4652,7 @@ export type PublicPrPanelSignalRow = { key: ReviewFieldKey; cells: [string, stri
  * Build the public PR panel's readiness signal rows (the `allRows` table) as a PURE function, from the
  * SAME inputs `buildPublicPrIntelligenceComment` uses. It calls the same private panel helpers, so the rows
  * are byte-identical to the legacy panel's. Exposed for the unified-comment bridge (convergence) so the
- * converged comment surfaces gittensory's exact signals; the legacy path is unchanged. The `key` lets the
+ * converged comment surfaces loopover's exact signals; the legacy path is unchanged. The `key` lets the
  * caller honor `.loopover.yml review.fields` visibility the same way the legacy renderer does.
  */
 export function buildPublicPrPanelSignalRows(args: {

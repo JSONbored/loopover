@@ -1,7 +1,7 @@
 import { isCodeFile, isTestPath } from "./test-evidence.js";
 
 // Pure, deterministic path matchers for slop classification (#561), extracted to
-// `@loopover/engine` (#4252) so the published gittensory-mcp/gittensory-miner CLIs can depend on
+// `@loopover/engine` (#4252) so the published loopover-mcp/loopover-miner CLIs can depend on
 // the same source instead of hand-porting it. Siblings to `isTestFile` / `isTestPath`: they identify changed
 // files that are NOT genuine hand-authored effort — machine-generated output, vendored/imported third-party
 // code, minified bundles, dependency lockfiles, and docs — so slop signals can tell a padded diff from real
@@ -16,7 +16,7 @@ export function isTestFile(file: string): boolean {
   return isTestPath(file);
 }
 
-// isCodeFile is the single source of truth the published gittensory-mcp/gittensory-miner CLIs also
+// isCodeFile is the single source of truth the published loopover-mcp/loopover-miner CLIs also
 // depend on — defined once in test-evidence.ts alongside the isSourcePath/isTestPath pair it composes,
 // re-exported here so this file's existing callers don't change.
 export { isCodeFile };

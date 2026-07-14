@@ -306,7 +306,7 @@ test("immediate abandon: finalMeterTotals/budgetBreaches are the honest zero/emp
   assert.deepEqual(result.budgetBreaches, []);
 });
 
-test("REGRESSION: a hard budget ceiling abandons even on the same iteration a passing self-review would have produced (ceiling wins, not pass) -- gittensory review #5437", async () => {
+test("REGRESSION: a hard budget ceiling abandons even on the same iteration a passing self-review would have produced (ceiling wins, not pass) -- loopover review #5437", async () => {
   let selfReviewRan = false;
   const { deps } = collectingDeps({
     driver: driverReturning(okResult(["src/upload.ts"], 999)),

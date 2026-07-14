@@ -64,7 +64,7 @@ test("resolveAiPolicyVerdict still lets non-empty AI-USAGE.md take precedence", 
 
 test("resolveAiPolicyFatigueVerdict returns no fatigue signal for quiet metadata", () => {
   const verdict = resolveAiPolicyFatigueVerdict({
-    repoFullName: "JSONbored/gittensory",
+    repoFullName: "JSONbored/loopover",
     now: NOW,
     docs: { aiUsage: null, contributing: "Please write tests and keep PRs focused." },
     pullRequests: [
@@ -92,7 +92,7 @@ test("resolveAiPolicyFatigueVerdict returns no fatigue signal for quiet metadata
 
 test("resolveAiPolicyFatigueVerdict detects fatigue-only metadata without hard skipping", () => {
   const verdict = resolveAiPolicyFatigueVerdict({
-    repoFullName: "JSONbored/gittensory",
+    repoFullName: "JSONbored/loopover",
     now: NOW,
     docs: { aiUsage: null, contributing: "Please keep changes focused." },
     pullRequests: [
@@ -123,7 +123,7 @@ test("resolveAiPolicyFatigueVerdict detects fatigue-only metadata without hard s
 
 test("resolveAiPolicyFatigueVerdict treats watch-level evidence as deprioritize, not skip", () => {
   const verdict = resolveAiPolicyFatigueVerdict({
-    repoFullName: "JSONbored/gittensory",
+    repoFullName: "JSONbored/loopover",
     now: NOW,
     docs: { aiUsage: null, contributing: "Normal contribution guide." },
     pullRequests: [aiPr({ id: "single", maintainerResponse: "neutral", reviewDecision: "none" })],
@@ -138,7 +138,7 @@ test("resolveAiPolicyFatigueVerdict treats watch-level evidence as deprioritize,
 
 test("resolveAiPolicyFatigueVerdict keeps formal bans authoritative over fatigue", () => {
   const verdict = resolveAiPolicyFatigueVerdict({
-    repoFullName: "JSONbored/gittensory",
+    repoFullName: "JSONbored/loopover",
     now: NOW,
     docs: { aiUsage: "AI-generated PRs are rejected.", contributing: null },
     pullRequests: [
@@ -165,7 +165,7 @@ test("resolveAiPolicyFatigueVerdict keeps formal bans authoritative over fatigue
 
 test("resolveAiPolicyFatigueVerdict ignores doc changes that are already formal ban phrases", () => {
   const verdict = resolveAiPolicyFatigueVerdict({
-    repoFullName: "JSONbored/gittensory",
+    repoFullName: "JSONbored/loopover",
     now: NOW,
     docs: { aiUsage: null, contributing: "Current policy has no formal ban." },
     docChanges: [
@@ -184,7 +184,7 @@ test("resolveAiPolicyFatigueVerdict ignores doc changes that are already formal 
 
 test("resolveAiPolicyFatigueVerdict ignores AI language outside policy docs", () => {
   const verdict = resolveAiPolicyFatigueVerdict({
-    repoFullName: "JSONbored/gittensory",
+    repoFullName: "JSONbored/loopover",
     now: NOW,
     docs: { aiUsage: null, contributing: "Normal guide." },
     pullRequests: [],
@@ -213,7 +213,7 @@ test("resolveAiPolicyFatigueVerdict ignores AI language outside policy docs", ()
 
 test("resolveAiPolicyFatigueVerdict recency-weights doc language", () => {
   const fresh = resolveAiPolicyFatigueVerdict({
-    repoFullName: "JSONbored/gittensory",
+    repoFullName: "JSONbored/loopover",
     now: NOW,
     docs: { aiUsage: null, contributing: "Normal guide." },
     docChanges: [
@@ -225,7 +225,7 @@ test("resolveAiPolicyFatigueVerdict recency-weights doc language", () => {
     ],
   });
   const stale = resolveAiPolicyFatigueVerdict({
-    repoFullName: "JSONbored/gittensory",
+    repoFullName: "JSONbored/loopover",
     now: NOW,
     docs: { aiUsage: null, contributing: "Normal guide." },
     docChanges: [
@@ -244,7 +244,7 @@ test("resolveAiPolicyFatigueVerdict recency-weights doc language", () => {
 
 test("resolveAiPolicyFatigueVerdict reuses fresh cache entries", () => {
   const cache = createAiPolicyFatigueCacheEntry({
-    repoFullName: "JSONbored/Gittensory",
+    repoFullName: "JSONbored/Loopover",
     computedAt: "2026-07-04T12:00:00Z",
     verdict: {
       level: "deprioritize",
@@ -262,14 +262,14 @@ test("resolveAiPolicyFatigueVerdict reuses fresh cache entries", () => {
     },
   });
   const verdict = resolveAiPolicyFatigueVerdict({
-    repoFullName: "JSONbored/gittensory",
+    repoFullName: "JSONbored/loopover",
     now: NOW,
     docs: { aiUsage: null, contributing: "Normal guide." },
     cache,
     pullRequests: [aiPr({ id: "ignored-by-cache" })],
   });
 
-  assert.equal(cache.repoFullName, "jsonbored/gittensory");
+  assert.equal(cache.repoFullName, "jsonbored/loopover");
   assert.equal(cache.computedAt, "2026-07-04T12:00:00.000Z");
   assert.equal(verdict.fatigue?.level, "deprioritize");
   assert.equal(verdict.fatigue?.score, 0.5);
@@ -292,7 +292,7 @@ test("resolveAiPolicyFatigueVerdict recomputes fresh cache entries for other rep
     },
   });
   const verdict = resolveAiPolicyFatigueVerdict({
-    repoFullName: "JSONbored/gittensory",
+    repoFullName: "JSONbored/loopover",
     now: NOW,
     docs: { aiUsage: null, contributing: "Normal guide." },
     cache,
@@ -307,7 +307,7 @@ test("resolveAiPolicyFatigueVerdict recomputes fresh cache entries for other rep
 
 test("describeAiPolicyFatigueCache reports fresh, expired, missing, and malformed entries", () => {
   const cache = createAiPolicyFatigueCacheEntry({
-    repoFullName: "JSONbored/Gittensory",
+    repoFullName: "JSONbored/Loopover",
     computedAt: "2026-07-04T12:00:00Z",
     verdict: {
       level: "watch",
@@ -319,14 +319,14 @@ test("describeAiPolicyFatigueCache reports fresh, expired, missing, and malforme
   });
 
   assert.deepEqual(describeAiPolicyFatigueCache(cache, NOW), {
-    repoFullName: "jsonbored/gittensory",
+    repoFullName: "jsonbored/loopover",
     computedAt: "2026-07-04T12:00:00.000Z",
     expiresAt: "2026-07-05T12:00:00.000Z",
     ageHours: 12,
     fresh: true,
   });
   assert.deepEqual(describeAiPolicyFatigueCache(cache, "2026-07-06T00:00:00Z"), {
-    repoFullName: "jsonbored/gittensory",
+    repoFullName: "jsonbored/loopover",
     computedAt: "2026-07-04T12:00:00.000Z",
     expiresAt: "2026-07-05T12:00:00.000Z",
     ageHours: 36,
@@ -372,11 +372,11 @@ test("createAiPolicyFatigueCacheEntry rejects malformed repo keys", () => {
 
 test("resolveAiPolicyFatigueVerdict recomputes expired cache entries", () => {
   const verdict = resolveAiPolicyFatigueVerdict({
-    repoFullName: "JSONbored/gittensory",
+    repoFullName: "JSONbored/loopover",
     now: NOW,
     docs: { aiUsage: null, contributing: "Normal guide." },
     cache: {
-      repoFullName: "jsonbored/gittensory",
+      repoFullName: "jsonbored/loopover",
       computedAt: "2026-07-01T00:00:00Z",
       verdict: {
         level: "defer",
@@ -396,7 +396,7 @@ test("resolveAiPolicyFatigueVerdict recomputes expired cache entries", () => {
 
 test("resolveAiPolicyFatigueVerdict recognizes AI-attribution aliases from metadata only", () => {
   const verdict = resolveAiPolicyFatigueVerdict({
-    repoFullName: "JSONbored/gittensory",
+    repoFullName: "JSONbored/loopover",
     now: NOW,
     docs: { aiUsage: null, contributing: "Normal guide." },
     pullRequests: [
@@ -414,7 +414,7 @@ test("resolveAiPolicyFatigueVerdict recognizes AI-attribution aliases from metad
 
 test("resolveAiPolicyFatigueVerdict ignores open and merged AI-attributed PRs for rejection fatigue", () => {
   const verdict = resolveAiPolicyFatigueVerdict({
-    repoFullName: "JSONbored/gittensory",
+    repoFullName: "JSONbored/loopover",
     now: NOW,
     docs: { aiUsage: null, contributing: "Normal guide." },
     pullRequests: [
@@ -431,7 +431,7 @@ test("resolveAiPolicyFatigueVerdict ignores open and merged AI-attributed PRs fo
 
 test("resolveAiPolicyFatigueVerdict handles malformed timestamps with conservative weights", () => {
   const verdict = resolveAiPolicyFatigueVerdict({
-    repoFullName: "JSONbored/gittensory",
+    repoFullName: "JSONbored/loopover",
     now: "not a date",
     docs: { aiUsage: null, contributing: "Normal guide." },
     pullRequests: [aiPr({ closedAt: "not a date", createdAt: null })],
@@ -445,7 +445,7 @@ test("resolveAiPolicyFatigueVerdict handles malformed timestamps with conservati
 
 test("renderAiPolicyFatigueMarkdown renders deterministic observability output", () => {
   const verdict = resolveAiPolicyFatigueVerdict({
-    repoFullName: "JSONbored/gittensory",
+    repoFullName: "JSONbored/loopover",
     now: NOW,
     docs: { aiUsage: null, contributing: "Normal guide." },
     pullRequests: [aiPr({ id: "pr-1" }), aiPr({ id: "pr-2" })],
@@ -495,7 +495,7 @@ test("renderAiPolicyFatigueMarkdown escapes summaries and policy source fields",
 
 test("resolveAiPolicyFatigueVerdict is byte-stable for the same metadata", () => {
   const input = {
-    repoFullName: "JSONbored/gittensory",
+    repoFullName: "JSONbored/loopover",
     now: NOW,
     docs: { aiUsage: null, contributing: "Normal guide." },
     pullRequests: [aiPr({ id: "a" }), aiPr({ id: "b" })],

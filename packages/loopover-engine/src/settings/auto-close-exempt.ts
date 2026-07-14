@@ -1,4 +1,4 @@
-// Shared repo-scoped exemption list (#2463) for gittensory's deterministic anti-abuse auto-close/throttle
+// Shared repo-scoped exemption list (#2463) for loopover's deterministic anti-abuse auto-close/throttle
 // mechanisms — currently the review-nag cooldown; intended to be reused by the per-contributor open-item cap
 // (#2270) once that lands, rather than each feature growing its own duplicate whitelist. A maintainer-named
 // GitHub login here is NEVER throttled or closed by either mechanism, on top of the standing owner/admin/

@@ -109,7 +109,7 @@ test("computeTrackRecordSummary derives a positive public record from matching o
     outcomes: [
       {
         id: 11,
-        repoFullName: "jsonbored/gittensory",
+        repoFullName: "jsonbored/loopover",
         authorLogin: "minerone",
         state: "merged",
         createdAt: "2026-06-01T00:00:00Z",

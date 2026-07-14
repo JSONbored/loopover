@@ -1,5 +1,5 @@
 // Deterministic reward/risk reasoning signals, extracted to `@loopover/engine` (#2281) so the
-// gittensory-miner can rank candidate work locally with the same logic the maintainer-side gate computes.
+// loopover-miner can rank candidate work locally with the same logic the maintainer-side gate computes.
 //
 // Unlike the earlier self-contained extractions, reward-risk sits on top of the maintainer signal stack in
 // `packages/loopover-engine/src/signals/engine.ts` (#4884; monorepo shim at `src/signals/engine.ts`).
@@ -925,7 +925,7 @@ function pickIssueTimestamp(issue: IssueRecord): string | null {
   return null;
 }
 
-/** Unknown/unparseable timestamps floor freshness (parity with gittensory-engine opportunity-freshness.ts). */
+/** Unknown/unparseable timestamps floor freshness (parity with loopover-engine opportunity-freshness.ts). */
 function issueAgeDays(value: string | null): number {
   if (!value) return Number.POSITIVE_INFINITY;
   const parsed = Date.parse(value);

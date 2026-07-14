@@ -36,7 +36,7 @@ const EXTENDED_SOURCE_EXTENSION = /\.(php|cpp|cc|c|h|hpp|m|vue|svelte|astro|dart
 /** cs/swift/groovy/kts plus php, C/C++/Objective-C, vue/svelte/astro, and dart — see isSourcePath for the
  *  canonical JVM/.NET/Swift/Groovy/Kotlin-script matcher kept symmetric with isTestPath. Generated Dart part
  *  files (.g.dart/.freezed.dart/.gr.dart) stay non-code (#3724). The single source of truth both the Worker
- *  (src/signals/path-matchers.ts) and the published @loopover/mcp/gittensory-miner CLIs delegate
+ *  (src/signals/path-matchers.ts) and the published @loopover/mcp/loopover-miner CLIs delegate
  *  to, so the three previously-independent hand-ports can't silently drift from each other again. */
 export function isCodeFile(file: string): boolean {
   if (isSourcePath(file)) return true;
